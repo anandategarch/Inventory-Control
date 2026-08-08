@@ -35,21 +35,40 @@ function toNum(v: unknown): number | null {
   // 4. Remove all spaces (e.g., "- 310 " → "-310", "1 345" → "1345")
   s = s.replace(/\s+/g, '');
 
-  // 5. Handle comma separators (Indonesian/European format)
-  //    "1,345" → could be thousands (1345) or decimal (1.345)
-  //    Heuristic: if last comma has exactly 3 digits after → thousands
-  //               if last comma has 1-2 digits after → decimal
-  if (s.includes(',')) {
+  // 5. Handle comma + dot separators (Indonesian/European/US formats)
+  //    BUG FIX #006: Handle "1.234,56" (dot=thousands, comma=decimal) correctly
+  //    Strategy:
+  //      a. If BOTH dot and comma present:
+  //         - Last separator is decimal, other is thousands
+  //         - "1.234,56" → comma=decimal, dot=thousands → "1234.56"
+  //         - "1,234.56" → dot=decimal, comma=thousands → "1234.56"
+  //      b. If only comma:
+  //         - 3 digits after → thousands: "1,345" → "1345"
+  //         - 1-2 digits after → decimal: "1,5" → "1.5"
+  //      c. If only dot:
+  //         - 3 digits after AND number > 9999 → thousands: "1.234" → "1234"
+  //         - Otherwise → decimal: "1.5" → "1.5"
+  if (s.includes(',') && s.includes('.')) {
+    // Both present — determine which is decimal (last one)
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      // Comma is decimal, dot is thousands: "1.234,56" → "1234.56"
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      // Dot is decimal, comma is thousands: "1,234.56" → "1234.56"
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes(',')) {
     const lastComma = s.lastIndexOf(',');
     const afterComma = s.slice(lastComma + 1);
     if (afterComma.length === 3 && /^\d+$/.test(afterComma)) {
-      // Thousands separator: "1,345" → "1345", "1,234,567" → "1234567"
+      // Thousands separator: "1,345" → "1345"
       s = s.replace(/,/g, '');
     } else if (afterComma.length >= 1 && afterComma.length <= 2 && /^\d+$/.test(afterComma)) {
       // Decimal separator: "1,5" → "1.5"
       s = s.replace(/,/g, '.');
     } else {
-      // Default: remove all commas (thousands)
       s = s.replace(/,/g, '');
     }
   }

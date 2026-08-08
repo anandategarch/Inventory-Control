@@ -337,33 +337,69 @@ export async function GET(req: NextRequest) {
       })
       .slice(0, 20);
 
-    // Trend — use lightweight aggregation query instead of loading all records
-    // OPTIMIZATION: Use Prisma groupBy to aggregate at DB level (much faster, less memory)
+    // Trend — use lightweight aggregation query
+    // BUG FIX #001: Sales must be deduplicated per outlet (not summed across item rows)
+    // BUG FIX #002: DevBom must use sum of ABSOLUTE pctQtyDeviasiToBom, not abs(sum)
+    //   because LOSS (+) and SURPLUS (-) cancel out when summed, making devBom look smaller
     const trendWhere: any = {};
     if (area) trendWhere.area = area;
     if (outletCode) trendWhere.outlet = { code: outletCode };
     if (itemName) trendWhere.item = { name: { contains: itemName } };
-    const trendAgg = await db.inventoryRecord.groupBy({
-      by: ['monthLabel', 'weekLabel'],
+
+    // Fetch records for trend (only needed fields, lightweight)
+    // We need per-outlet dedup for sales, and per-record abs for devBom
+    const trendRecs = await db.inventoryRecord.findMany({
       where: trendWhere,
-      _sum: {
-        nominalSales: true,
-        absNominalDeviasi: true,
-        qtyBom: true,
-        pctQtyDeviasiToBom: true,
+      select: {
+        monthLabel: true, weekLabel: true,
+        nominalSales: true, absNominalDeviasi: true,
+        pctQtyDeviasiToBom: true, qtyBom: true,
+        outletId: true,
       },
-      _count: { _all: true },
     });
-    const trend = trendAgg
-      .map((t) => {
-        const mk = monthKeyByLabel.get(t.monthLabel) || '0000-00';
+
+    // Group by (monthLabel, weekLabel) and compute metrics
+    const trendByPeriod = new Map<string, {
+      monthLabel: string; weekLabel: string; sortKey: string;
+      salesByOutlet: Map<number, number>; // dedup sales per outlet
+      nominal: number; devBomSum: number; devBomCount: number;
+    }>();
+
+    for (const r of trendRecs) {
+      const k = `${r.monthLabel}|${r.weekLabel}`;
+      const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+      const sortKey = `${mk}|${r.weekLabel}`;
+      let period = trendByPeriod.get(k);
+      if (!period) {
+        period = {
+          monthLabel: r.monthLabel, weekLabel: r.weekLabel, sortKey,
+          salesByOutlet: new Map(), nominal: 0, devBomSum: 0, devBomCount: 0,
+        };
+        trendByPeriod.set(k, period);
+      }
+      // Dedup sales: take 1 unique value per outlet
+      if (r.nominalSales != null && r.nominalSales > 0 && !period.salesByOutlet.has(r.outletId)) {
+        period.salesByOutlet.set(r.outletId, r.nominalSales);
+      }
+      period.nominal += r.absNominalDeviasi ?? 0;
+      // BUG FIX #002: Use ABSOLUTE value of pctQtyDeviasiToBom for averaging
+      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
+        period.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
+        period.devBomCount++;
+      }
+    }
+
+    const trend = [...trendByPeriod.values()]
+      .map((p) => {
+        // Sum deduplicated sales
+        let sales = 0;
+        for (const v of p.salesByOutlet.values()) sales += v;
         return {
-          weekLabel: `${t.weekLabel} ${t.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${t.weekLabel}`,
-          devBom: t._count._all > 0 && t._sum.pctQtyDeviasiToBom != null
-            ? Math.abs(t._sum.pctQtyDeviasiToBom) / t._count._all : 0,
-          sales: t._sum.nominalSales ?? 0,
-          nominal: t._sum.absNominalDeviasi ?? 0,
+          weekLabel: `${p.weekLabel} ${p.monthLabel.split(' ')[0].slice(0, 3)}`,
+          sortKey: p.sortKey,
+          devBom: p.devBomCount > 0 ? p.devBomSum / p.devBomCount : 0,
+          sales,
+          nominal: p.nominal,
         };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey))

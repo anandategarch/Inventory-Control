@@ -177,14 +177,13 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
   const byOutlet = new Map<number, {
     outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number;
     area: string; sales: number; // sales deduplicated (1 unique value per outlet)
+    lossAmount: number; surplusAmount: number; // BUG FIX #003: track direction
   }>();
   for (const r of recs) {
     const k = r.outletId;
     const existing = byOutlet.get(k);
     if (existing) {
       existing.absNominal += r.absNominalDeviasi ?? 0;
-      // BUG FIX #3: Sales is duplicated per item row in same outlet.
-      // Take 1 unique value (first non-null), do NOT sum.
       if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
         existing.sales = r.nominalSales;
       }
@@ -192,14 +191,18 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
         existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         existing.devBomCount++;
       }
+      // BUG FIX #003: Track loss vs surplus per outlet
+      if (r.nominalDeviasi != null && r.nominalDeviasi > 0) existing.lossAmount += r.nominalDeviasi;
+      else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) existing.surplusAmount += Math.abs(r.nominalDeviasi);
     } else {
       byOutlet.set(k, {
         outlet: r.outlet, absNominal: r.absNominalDeviasi ?? 0,
         devBomSum: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? Math.abs(r.pctQtyDeviasiToBom) : 0,
         devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
         area: r.area,
-        // BUG FIX #3: Take 1 unique sales value per outlet (not sum)
         sales: r.nominalSales ?? 0,
+        lossAmount: r.nominalDeviasi != null && r.nominalDeviasi > 0 ? r.nominalDeviasi : 0,
+        surplusAmount: r.nominalDeviasi != null && r.nominalDeviasi < 0 ? Math.abs(r.nominalDeviasi) : 0,
       });
     }
   }
@@ -224,7 +227,11 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
       absNominal: v.absNominal,
       devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
       areaAvg: areaFinal.get(v.area) ?? 0,
-      sales: v.sales, // deduplicated sales per outlet
+      sales: v.sales,
+      // BUG FIX #003: Include direction info for loss/surplus drill-down
+      lossAmount: v.lossAmount,
+      surplusAmount: v.surplusAmount,
+      direction: v.lossAmount > v.surplusAmount ? 'LOSS' : 'SURPLUS',
     }))
     .sort((a, b) => b.absNominal - a.absNominal)
     .slice(0, n);

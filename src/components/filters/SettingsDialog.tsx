@@ -76,6 +76,17 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [hasEdits, setHasEdits] = useState(false);
 
+  // BUG FIX #005: Reset unsaved edits when dialog closes
+  // Using React-recommended pattern (adjust state during render, not in effect)
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (!open) {
+      setHasEdits(false);
+      setEditValues({});
+    }
+  }
+
   // Get effective values: user edits if any, otherwise initial from server
   const effectiveValues = hasEdits ? editValues : initialValues;
 

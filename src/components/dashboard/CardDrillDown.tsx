@@ -115,25 +115,31 @@ const CARD_CONFIG: Record<string, {
   },
   loss: {
     title: 'Top 10 Outlets by Loss',
-    description: 'Outlet dengan total LOSS tertinggi',
+    description: 'Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi > 0)',
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'absNominal', label: 'Loss Amount', align: 'right', format: (v) => fmtIDR(v) },
       { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
     ],
-    getData: (data) => (data.topOutlets || []).filter((o: any) => o).sort((a: any, b: any) => b.absNominal - a.absNominal),
+    // BUG FIX #003: Filter by LOSS direction, not just absNominal
+    getData: (data) => (data.topOutlets || [])
+      .filter((o: any) => o && o.direction === 'LOSS')
+      .sort((a: any, b: any) => b.absNominal - a.absNominal),
   },
   surplus: {
     title: 'Top 10 Outlets by Surplus',
-    description: 'Outlet dengan total SURPLUS tertinggi',
+    description: 'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi < 0)',
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'absNominal', label: 'Surplus Amount', align: 'right', format: (v) => fmtIDR(v) },
       { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
     ],
-    getData: (data) => (data.topOutlets || []).filter((o: any) => o).sort((a: any, b: any) => a.absNominal - b.absNominal),
+    // BUG FIX #003: Filter by SURPLUS direction, not just absNominal
+    getData: (data) => (data.topOutlets || [])
+      .filter((o: any) => o && o.direction === 'SURPLUS')
+      .sort((a: any, b: any) => b.absNominal - a.absNominal),
   },
 };
 

@@ -68,7 +68,11 @@ export function SearchableComboBox({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(v) => {
+      setOpen(v);
+      // BUG FIX #004: Clear search when popover closes
+      if (!v) setSearch('');
+    }}>
       <PopoverTrigger asChild>
         <Button
           type="button"
