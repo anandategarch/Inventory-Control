@@ -1,0 +1,249 @@
+// ============================================================
+//  Inventory Control Intelligence Platform — Prisma Schema
+//  SQLite local-first, single-user
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+//  Source file tracking (idempotent ingest by file hash)
+// ------------------------------------------------------------
+model SourceFile {
+  id          Int      @id @default(autoincrement())
+  fileName    String   @unique
+  filePath    String
+  monthLabel  String   // "Juli 2026" (parsed from filename)
+  monthKey    String   // "2026-07" sortable
+  fileHash    String   @unique
+  rowCount    Int      @default(0)
+  dqStatus    String   @default("OK") // OK | WARNING | ERROR
+  dqErrorCount   Int   @default(0)
+  dqWarningCount Int   @default(0)
+  importedAt  DateTime @default(now())
+  records     InventoryRecord[]
+  weeks       Week[]
+  dqIssues    DQIssue[]
+}
+
+// ------------------------------------------------------------
+//  Week (period within a month). User confirmed:
+//  WEEK 1 = day 1-7, WEEK 2 = day 8-14, WEEK 3 = day 15-30/31
+// ------------------------------------------------------------
+model Week {
+  id            Int      @id @default(autoincrement())
+  sourceFileId  Int
+  sourceFile    SourceFile @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
+  weekLabel     String   // "WEEK 1"
+  weekKey       String   // "2026-07-W1" sortable unique
+  monthKey      String   // "2026-07"
+  periodStart   Int      // 1
+  periodEnd     Int      // 7
+  records       InventoryRecord[]
+
+  @@unique([sourceFileId, weekLabel])
+  @@index([monthKey])
+}
+
+// ------------------------------------------------------------
+//  Outlet (19 outlets, supports XXXX.NNNN and B.XXXX.NNNN formats)
+// ------------------------------------------------------------
+model Outlet {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique // "1030.BDGSET" or "B.1001.MLGPAR"
+  name      String   // "BDGSET"
+  outletCode String  // numeric part "1030" or "1001"
+  area      String   // "JAWA BARAT 1"
+  records   InventoryRecord[]
+}
+
+// ------------------------------------------------------------
+//  Item (raw material)
+// ------------------------------------------------------------
+model Item {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  satuan      String?  // UOM (per item, no cross-conversion)
+  category    String?  // BAHAN | PACKAGING (auto-detected if possible)
+  records     InventoryRecord[]
+}
+
+// ------------------------------------------------------------
+//  Main inventory record (one row per outlet × item × week × account)
+//  Natural key: (outletId, itemId, weekId, akunPenyesuaian)
+// ------------------------------------------------------------
+model InventoryRecord {
+  id                  Int      @id @default(autoincrement())
+  sourceFileId        Int
+  sourceFile          SourceFile @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
+  weekId              Int
+  week                Week     @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  outletId            Int
+  outlet              Outlet   @relation(fields: [outletId], references: [id])
+  itemId              Int
+  item                Item     @relation(fields: [itemId], references: [id])
+
+  // Raw columns from Excel (sign convention: BOM/COM/WASTE/SUSUT/TRIAL = negative)
+  akunPenyesuaian     String?  // "COM DEVIASI - RESTO"
+  status              String?  // "DEVIASI"
+  satuan              String?  // denormalized for traceability
+  qtyBom              Float?
+  qtyCom              Float?
+  qtyDeviasi          Float?
+  qtyWaste            Float?
+  qtySusut            Float?
+  qtyTrial            Float?
+  qtyLossSurplus      Float?
+  nominalDeviasi      Float?
+  nominalWaste        Float?
+  nominalSusut        Float?
+  nominalTrial        Float?
+  nominalLossSurplus  Float?
+  nominalSales        Float?   // from PENJUALAN column (outlet-level, denormalized)
+  avgPrice            Float?   // derived: |nominalDeviasi / qtyDeviasi| if applicable
+  tolerancePct        Float?   // null if "BELUM ADA TOLERANSI"
+  toleranceRaw        String?  // raw value for audit
+
+  // Pre-computed ratios from Excel (kept for audit; engine recomputes)
+  pctWasteSusut       Float?
+  pctQtyDeviasiToBom  Float?
+  pctQtyWasteToBom    Float?
+  pctQtySusutToBom    Float?
+  pctQtyTrialToBom    Float?
+  pctQtyLossToBom     Float?
+
+  // Engine-derived (computed at transform layer)
+  direction           String?  // LOSS | SURPLUS | NEUTRAL
+  residualQty         Float?   // qtyDeviasi - (qtyWaste + qtySusut + qtyTrial)
+  residualNominal     Float?
+  residualRatio       Float?   // residualQty / qtyDeviasi
+  absQtyDeviasi       Float?
+  absNominalDeviasi   Float?
+  absQtyLossSurplus   Float?
+  absNominalLossSurplus Float?
+
+  area                String   // denormalized for fast filtering
+  bulan               String   // "191.JULI 26"
+  bulan2              String?  // "19.JULI"
+  weekLabel           String   // "WEEK 1"
+  monthLabel          String
+
+  createdAt           DateTime @default(now())
+
+  @@unique([weekId, outletId, itemId, akunPenyesuaian])
+  @@index([outletId, weekId])
+  @@index([itemId, weekId])
+  @@index([area, weekId])
+  @@index([monthLabel, weekLabel])
+  @@index([direction])
+}
+
+// ------------------------------------------------------------
+//  Period comparison (curr vs prev week, per outlet × item)
+// ------------------------------------------------------------
+model PeriodComparison {
+  id                    Int      @id @default(autoincrement())
+  outletId              Int
+  itemId                Int
+  currentWeekId         Int
+  previousWeekId        Int?
+  salesGrowth           Float?
+  bomGrowth             Float?
+  qtyDeviasiGrowth      Float?
+  nominalDeviasiGrowth  Float?
+  priceGrowth           Float?
+  deviationToSalesRatio Float?
+  deviationToBomRatio   Float?
+  historicalAvgDevBom   Float?
+  historicalStdDev      Float?
+  benchmarkFlag         String? // ABOVE_AREA_AVG | ABOVE_NETWORK_AVG | NORMAL
+  zScore                Float?
+
+  @@unique([outletId, itemId, currentWeekId])
+  @@index([currentWeekId])
+  @@index([outletId])
+}
+
+// ------------------------------------------------------------
+//  Data Quality issues
+// ------------------------------------------------------------
+model DQIssue {
+  id          Int      @id @default(autoincrement())
+  sourceFileId Int
+  sourceFile  SourceFile @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
+  weekId      Int?
+  outletId    Int?
+  itemId      Int?
+  severity    String   // ERROR | WARNING | INFO
+  code        String   // MISSING_BOM | DUPLICATE | INVALID_NUMBER | TOLERANCE_NOT_SET | ...
+  message     String
+  rawValue    String?
+  rowNumber   Int?
+  createdAt   DateTime @default(now())
+
+  @@index([sourceFileId])
+  @@index([code, severity])
+}
+
+// ------------------------------------------------------------
+//  Anomaly rule definitions (config mirror; source of truth = rules.yaml)
+// ------------------------------------------------------------
+model AnomalyRule {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  category    String   // SALES | BOM | WASTE | TOLERANCE | BENCHMARK | RESIDUAL | DIRECTION
+  condition   String   // JSON DSL expression
+  severity    String   // NORMAL | WARNING | ABNORMAL
+  priority    Int      @default(50)
+  active      Boolean  @default(true)
+  narrativeTemplate String?
+}
+
+// ------------------------------------------------------------
+//  Anomaly flags (evaluated per record) — uses ruleCode string for decoupling
+// ------------------------------------------------------------
+model AnomalyFlag {
+  id          Int      @id @default(autoincrement())
+  ruleCode    String
+  outletId    Int
+  itemId      Int
+  weekId      Int
+  monthKey    String
+  severity    String
+  evidence    String   // JSON: {metric, value, threshold, growth, ...}
+  narrative   String?
+  createdAt   DateTime @default(now())
+
+  @@index([outletId, weekId])
+  @@index([itemId, weekId])
+  @@index([ruleCode])
+  @@index([monthKey])
+}
+
+// ------------------------------------------------------------
+//  Audit log (every ingest/calc/refresh)
+// ------------------------------------------------------------
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String   // INGEST | CALC | RULE_EVAL | NARRATIVE | REFRESH | DRILL
+  detail    String
+  duration  Int?     // ms
+  createdAt DateTime @default(now())
+}
+
+// ------------------------------------------------------------
+//  Materialized aggregation cache (pre-computed for performance)
+// ------------------------------------------------------------
+model AggregationCache {
+  id        Int      @id @default(autoincrement())
+  cacheKey  String   @unique // "summary|2026-07|WEEK 1|ALL|ALL"
+  payload   String   // JSON
+  computedAt DateTime @default(now())
+}

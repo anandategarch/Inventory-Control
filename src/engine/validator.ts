@@ -1,0 +1,162 @@
+// ============================================================
+//  Data Quality Validator — validates raw rows before analysis
+//  Produces DQIssue list. ERROR severity blocks analysis.
+// ============================================================
+import type { DQIssueSummary } from '@/types/inventory';
+import type { DQIssue } from '@prisma/client';
+import { CFG_RECON_SETTINGS } from '@/config/settings';
+
+export interface DQResult {
+  issues: DQIssueRow[];
+  severityCounts: { ERROR: number; WARNING: number; INFO: number };
+  status: 'OK' | 'WARNING' | 'ERROR';
+}
+
+export interface DQIssueRow {
+  severity: 'ERROR' | 'WARNING' | 'INFO';
+  code: string;
+  message: string;
+  rawValue?: string;
+  rowNumber?: number;
+  outletCode?: string;
+  itemName?: string;
+  weekLabel?: string;
+}
+
+function toNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  const n = Number(String(v).replace(/,/g, '.'));
+  return isNaN(n) ? null : n;
+}
+
+export function validateRow(
+  row: Record<string, unknown>,
+  rowNumber: number,
+  seenKeys: Set<string>
+): DQIssueRow[] {
+  const issues: DQIssueRow[] = [];
+  const resto = String(row.resto ?? '').trim();
+  const namaBahan = String(row.namaBahan ?? '').trim();
+  const weekLabel = String(row.weekLabel ?? '').trim();
+  const akun = String(row.akunPenyesuaian ?? '').trim();
+
+  // ERROR: missing required fields
+  if (!resto) {
+    issues.push({ severity: 'ERROR', code: 'MISSING_OUTLET', message: `Row ${rowNumber}: RESTO kosong`, rowNumber });
+  }
+  if (!namaBahan) {
+    issues.push({ severity: 'ERROR', code: 'MISSING_ITEM', message: `Row ${rowNumber}: NAMA BAHAN kosong`, rowNumber });
+  }
+  if (!weekLabel) {
+    issues.push({ severity: 'WARNING', code: 'MISSING_WEEK', message: `Row ${rowNumber}: STATUS BULAN (week) kosong`, rowNumber });
+  }
+
+  // ERROR: invalid number on critical numeric columns
+  const criticalNums = ['qtyBom', 'qtyDeviasi', 'nominalDeviasi'];
+  for (const col of criticalNums) {
+    const raw = row[col];
+    if (raw !== null && raw !== undefined && raw !== '') {
+      const n = toNum(raw);
+      if (n === null) {
+        issues.push({
+          severity: 'ERROR',
+          code: 'INVALID_NUMBER',
+          message: `Row ${rowNumber}: ${col} bukan angka valid: ${String(raw)}`,
+          rawValue: String(raw),
+          rowNumber,
+        });
+      }
+    }
+  }
+
+  // WARNING: missing BOM (cannot compute dev/bom ratio)
+  const qtyBom = toNum(row.qtyBom);
+  const qtyDeviasi = toNum(row.qtyDeviasi);
+  if (qtyBom === null || qtyBom === 0) {
+    issues.push({
+      severity: 'WARNING',
+      code: 'MISSING_BOM',
+      message: `Row ${rowNumber}: QTY BOM kosong/0 untuk ${namaBahan} @ ${resto}`,
+      rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+    });
+  }
+
+  // WARNING: tolerance not set (sentinel text)
+  const tolRaw = row.toleranceRaw;
+  if (tolRaw !== null && tolRaw !== undefined && typeof tolRaw === 'string' &&
+      tolRaw.toUpperCase().includes(CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase())) {
+    issues.push({
+      severity: 'INFO',
+      code: 'TOLERANCE_NOT_SET',
+      message: `Row ${rowNumber}: tolerance belum diset untuk ${namaBahan}`,
+      rawValue: String(tolRaw),
+      rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+    });
+  }
+
+  // ERROR: duplicate natural key
+  const key = `${resto}|${namaBahan}|${weekLabel}|${akun}`;
+  if (seenKeys.has(key)) {
+    issues.push({
+      severity: 'ERROR',
+      code: 'DUPLICATE',
+      message: `Row ${rowNumber}: duplikat key ${key}`,
+      rawValue: key,
+      rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+    });
+  } else {
+    seenKeys.add(key);
+  }
+
+  // WARNING: unexpected sign (BOM should be negative in this convention)
+  if (qtyBom !== null && qtyBom > 0) {
+    issues.push({
+      severity: 'WARNING',
+      code: 'BOM_POSITIVE',
+      message: `Row ${rowNumber}: QTY BOM positif (${qtyBom}) — konvensi normalnya negatif (konsumsi)`,
+      rawValue: String(qtyBom),
+      rowNumber, outletCode: resto, itemName: namaBahan,
+    });
+  }
+
+  // INFO: deviation direction
+  if (qtyDeviasi !== null && qtyDeviasi === 0) {
+    issues.push({
+      severity: 'INFO',
+      code: 'ZERO_DEVIATION',
+      message: `Row ${rowNumber}: QTY DEVIASI = 0 (NEUTRAL)`,
+      rowNumber, outletCode: resto, itemName: namaBahan,
+    });
+  }
+
+  return issues;
+}
+
+export function summarizeDQ(issues: DQIssueRow[]): {
+  summary: DQIssueSummary[];
+  severityCounts: { ERROR: number; WARNING: number; INFO: number };
+  status: 'OK' | 'WARNING' | 'ERROR';
+} {
+  const counts = { ERROR: 0, WARNING: 0, INFO: 0 };
+  const byCode = new Map<string, { severity: DQIssueRow['severity']; code: string; message: string; count: number }>();
+  for (const i of issues) {
+    counts[i.severity]++;
+    const k = i.code;
+    const existing = byCode.get(k);
+    if (existing) existing.count++;
+    else byCode.set(k, { severity: i.severity, code: i.code, message: i.message, count: 1 });
+  }
+  const summary: DQIssueSummary[] = [...byCode.values()].map((v) => ({
+    code: v.code,
+    severity: v.severity as 'ERROR' | 'WARNING' | 'INFO',
+    message: v.message.replace(/Row \d+:\s*/, ''),
+    count: v.count,
+  })).sort((a, b) => {
+    const sevOrder = { ERROR: 0, WARNING: 1, INFO: 2 };
+    return sevOrder[a.severity] - sevOrder[b.severity] || b.count - a.count;
+  });
+  const status: 'OK' | 'WARNING' | 'ERROR' =
+    counts.ERROR > 0 ? 'ERROR' : counts.WARNING > 0 ? 'WARNING' : 'OK';
+  return { summary, severityCounts: counts, status };
+}
