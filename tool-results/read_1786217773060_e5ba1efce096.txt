@@ -1,0 +1,635 @@
+     1→// ============================================================
+     2→//  Analysis Engine — ranking, benchmarking, priority, worklist
+     3→// ============================================================
+     4→import type { InventoryRecord, Outlet, Item, Week, Prisma } from '@prisma/client';
+     5→import type {
+     6→  PriorityScore,
+     7→  InvestigationItem,
+     8→  ExecutiveSummary,
+     9→  BenchmarkResult,
+    10→  GrowthMetrics,
+    11→} from '@/types/inventory';
+    12→import { CFG_THRESHOLDS } from '@/config/thresholds';
+    13→import type { RuntimeThresholds } from '@/lib/settings';
+    14→import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
+    15→import { calcGrowth, calcGrowthAbs, calcZScore, calcStdDev, safeRatio, calcAvgPrice } from '@/engine/calculations/growth';
+    16→
+    17→type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
+    18→
+    19→// ============================================================
+    20→//  Executive Summary — current week vs previous week
+    21→// ============================================================
+    22→export function buildExecutiveSummary(
+    23→  current: RecWithRels[],
+    24→  previous: RecWithRels[],
+    25→  monthLabel: string,
+    26→  weekLabel: string,
+    27→  prevWeekLabel: string | null
+    28→): ExecutiveSummary {
+    29→  // Sales is outlet-level denormalized — dedup by outlet
+    30→  const dedupSales = (recs: RecWithRels[]): number => {
+    31→    const seen = new Set<number>();
+    32→    let total = 0;
+    33→    for (const r of recs) {
+    34→      if (r.nominalSales != null && r.nominalSales > 0 && !seen.has(r.outletId)) {
+    35→        seen.add(r.outletId);
+    36→        total += r.nominalSales;
+    37→      }
+    38→    }
+    39→    return total;
+    40→  };
+    41→
+    42→  const sum = (recs: RecWithRels[], field: keyof InventoryRecord): number => {
+    43→    let s = 0;
+    44→    for (const r of recs) {
+    45→      const v = r[field];
+    46→      if (typeof v === 'number' && !isNaN(v)) s += v;
+    47→    }
+    48→    return s;
+    49→  };
+    50→
+    51→  // Sales uses absolute value? No — sales is positive. Use as-is.
+    52→  const salesCurr = dedupSales(current);
+    53→  const salesPrev = dedupSales(previous);
+    54→
+    55→  // BOM, COM are negative — use absolute sum for "magnitude"
+    56→  const qtyBomCurr = Math.abs(sum(current, 'qtyBom'));
+    57→  const qtyBomPrev = Math.abs(sum(previous, 'qtyBom'));
+    58→  const qtyDevCurr = sum(current, 'absQtyDeviasi');
+    59→  const qtyDevPrev = sum(previous, 'absQtyDeviasi');
+    60→  const qtyWasteCurr = Math.abs(sum(current, 'qtyWaste'));
+    61→  const qtyWastePrev = Math.abs(sum(previous, 'qtyWaste'));
+    62→  const qtySusutCurr = Math.abs(sum(current, 'qtySusut'));
+    63→  const qtySusutPrev = Math.abs(sum(previous, 'qtySusut'));
+    64→  const qtyTrialCurr = Math.abs(sum(current, 'qtyTrial'));
+    65→  const qtyTrialPrev = Math.abs(sum(previous, 'qtyTrial'));
+    66→  const qtyLSCurr = sum(current, 'absQtyLossSurplus');
+    67→  const qtyLSPrev = sum(previous, 'absQtyLossSurplus');
+    68→  const nomDevCurr = sum(current, 'absNominalDeviasi');
+    69→  const nomDevPrev = sum(previous, 'absNominalDeviasi');
+    70→
+    71→  // Loss / Surplus split
+    72→  let totalLoss = 0, totalSurplus = 0;
+    73→  for (const r of current) {
+    74→    if (r.nominalDeviasi == null) continue;
+    75→    if (r.nominalDeviasi > 0) totalLoss += r.nominalDeviasi;
+    76→    else if (r.nominalDeviasi < 0) totalSurplus += Math.abs(r.nominalDeviasi);
+    77→  }
+    78→
+    79→  // Residual
+    80→  let residualLossQty = 0;
+    81→  for (const r of current) {
+    82→    if (r.residualQty != null && r.residualQty > 0) residualLossQty += r.residualQty;
+    83→  }
+    84→  const residualLossPct = qtyDevCurr > 0 ? residualLossQty / qtyDevCurr : null;
+    85→
+    86→  return {
+    87→    period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
+    88→    sales: { current: salesCurr, previous: salesPrev || null, growth: calcGrowth(salesCurr, salesPrev || null) },
+    89→    nominalDeviasi: { current: nomDevCurr, previous: nomDevPrev || null, growth: calcGrowth(nomDevCurr, nomDevPrev || null) },
+    90→    qtyBom: { current: qtyBomCurr, previous: qtyBomPrev || null, growth: calcGrowth(qtyBomCurr, qtyBomPrev || null) },
+    91→    qtyDeviasi: { current: qtyDevCurr, previous: qtyDevPrev || null, growth: calcGrowth(qtyDevCurr, qtyDevPrev || null) },
+    92→    qtyWaste: { current: qtyWasteCurr, previous: qtyWastePrev || null, growth: calcGrowth(qtyWasteCurr, qtyWastePrev || null) },
+    93→    qtySusut: { current: qtySusutCurr, previous: qtySusutPrev || null, growth: calcGrowth(qtySusutCurr, qtySusutPrev || null) },
+    94→    qtyTrial: { current: qtyTrialCurr, previous: qtyTrialPrev || null, growth: calcGrowth(qtyTrialCurr, qtyTrialPrev || null) },
+    95→    qtyLossSurplus: { current: qtyLSCurr, previous: qtyLSPrev || null, growth: calcGrowth(qtyLSCurr, qtyLSPrev || null) },
+    96→    totalLoss, totalSurplus,
+    97→    lossToSales: salesCurr > 0 ? totalLoss / salesCurr : null,
+    98→    surplusToSales: salesCurr > 0 ? totalSurplus / salesCurr : null,
+    99→    deviationToBom: qtyBomCurr > 0 ? qtyDevCurr / qtyBomCurr : null,
+   100→    residualLossQty, residualLossPct,
+   101→  };
+   102→}
+   103→
+   104→// ============================================================
+   105→//  Per-record rule evaluation + context building
+   106→//  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
+   107→// ============================================================
+   108→export function buildRuleContext(
+   109→  curr: RecWithRels,
+   110→  prev: RecWithRels | null,
+   111→  historical: number[], // historical dev/bom ratios
+   112→  t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
+   113→): RuleContext {
+   114→  const bomGrowth = calcGrowthAbs(curr.qtyBom, prev?.qtyBom ?? null);
+   115→  const qtyDeviasiGrowth = calcGrowthAbs(curr.qtyDeviasi, prev?.qtyDeviasi ?? null);
+   116→  const nominalDeviasiGrowth = calcGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
+   117→  const salesGrowth = calcGrowth(curr.nominalSales, prev?.nominalSales ?? null);
+   118→  const currPrice = calcAvgPrice(curr.nominalDeviasi, curr.qtyDeviasi);
+   119→  const prevPrice = calcAvgPrice(prev?.nominalDeviasi ?? null, prev?.qtyDeviasi ?? null);
+   120→  const priceGrowth = calcGrowth(currPrice, prevPrice);
+   121→
+   122→  const stats = calcStdDev(historical);
+   123→  const zScore = stats && stats.stdDev > 0 ? calcZScore(curr.pctQtyDeviasiToBom, stats.mean, stats.stdDev) : null;
+   124→
+   125→  // benchmark flag from zScore (uses runtime thresholds)
+   126→  let benchmarkFlag: string | null = null;
+   127→  if (zScore != null) {
+   128→    if (zScore > t.BENCHMARK_NETWORK_FACTOR) benchmarkFlag = 'ABOVE_NETWORK_AVG';
+   129→    else if (zScore > t.BENCHMARK_AREA_FACTOR) benchmarkFlag = 'ABOVE_AREA_AVG';
+   130→  }
+   131→
+   132→  return {
+   133→    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth,
+   134→    deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
+   135→    deviationToBomRatio: safeRatio(curr.absQtyDeviasi, curr.qtyBom != null ? Math.abs(curr.qtyBom) : null),
+   136→    benchmarkFlag, zScore,
+   137→    qtyDeviasi: curr.qtyDeviasi, nominalDeviasi: curr.nominalDeviasi,
+   138→    qtyWaste: curr.qtyWaste, qtySusut: curr.qtySusut, qtyTrial: curr.qtyTrial,
+   139→    qtyLossSurplus: curr.qtyLossSurplus,
+   140→    residualQty: curr.residualQty, residualRatio: curr.residualRatio,
+   141→    tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
+   142→    direction: curr.direction,
+   143→    absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,
+   144→  };
+   145→}
+   146→
+   147→// ============================================================
+   148→//  Top items by various metrics
+   149→// ============================================================
+   150→export function topItemsByNominal(recs: RecWithRels[], n = 10) {
+   151→  return [...recs]
+   152→    .filter((r) => r.absNominalDeviasi != null && r.absNominalDeviasi > 0)
+   153→    .sort((a, b) => (b.absNominalDeviasi ?? 0) - (a.absNominalDeviasi ?? 0))
+   154→    .slice(0, n)
+   155→    .map((r) => ({
+   156→      itemName: r.item.name,
+   157→      outletCode: r.outlet.code,
+   158→      absNominal: r.absNominalDeviasi ?? 0,
+   159→      direction: r.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
+   160→    }));
+   161→}
+   162→
+   163→export function topItemsByDevBom(recs: RecWithRels[], n = 10) {
+   164→  return [...recs]
+   165→    .filter((r) => r.pctQtyDeviasiToBom != null && r.qtyBom !== 0)
+   166→    .sort((a, b) => Math.abs(b.pctQtyDeviasiToBom ?? 0) - Math.abs(a.pctQtyDeviasiToBom ?? 0))
+   167→    .slice(0, n)
+   168→    .map((r) => ({
+   169→      itemName: r.item.name,
+   170→      outletCode: r.outlet.code,
+   171→      devBom: r.pctQtyDeviasiToBom ?? 0,
+   172→      tolerance: r.tolerancePct,
+   173→    }));
+   174→}
+   175→
+   176→export function topOutlets(recs: RecWithRels[], n = 10) {
+   177→  const byOutlet = new Map<number, {
+   178→    outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number;
+   179→    area: string; sales: number; // sales deduplicated (1 unique value per outlet)
+   180→  }>();
+   181→  for (const r of recs) {
+   182→    const k = r.outletId;
+   183→    const existing = byOutlet.get(k);
+   184→    if (existing) {
+   185→      existing.absNominal += r.absNominalDeviasi ?? 0;
+   186→      // BUG FIX #3: Sales is duplicated per item row in same outlet.
+   187→      // Take 1 unique value (first non-null), do NOT sum.
+   188→      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+   189→        existing.sales = r.nominalSales;
+   190→      }
+   191→      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
+   192→        existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
+   193→        existing.devBomCount++;
+   194→      }
+   195→    } else {
+   196→      byOutlet.set(k, {
+   197→        outlet: r.outlet, absNominal: r.absNominalDeviasi ?? 0,
+   198→        devBomSum: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? Math.abs(r.pctQtyDeviasiToBom) : 0,
+   199→        devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
+   200→        area: r.area,
+   201→        // BUG FIX #3: Take 1 unique sales value per outlet (not sum)
+   202→        sales: r.nominalSales ?? 0,
+   203→      });
+   204→    }
+   205→  }
+   206→  // area averages
+   207→  const areaAvg = new Map<string, number>();
+   208→  const areaCount = new Map<string, number>();
+   209→  for (const v of byOutlet.values()) {
+   210→    if (v.devBomCount > 0) {
+   211→      const avg = v.devBomSum / v.devBomCount;
+   212→      areaAvg.set(v.area, (areaAvg.get(v.area) ?? 0) + avg);
+   213→      areaCount.set(v.area, (areaCount.get(v.area) ?? 0) + 1);
+   214→    }
+   215→  }
+   216→  const areaFinal = new Map<string, number>();
+   217→  for (const [area, sum] of areaAvg) {
+   218→    areaFinal.set(area, sum / (areaCount.get(area) ?? 1));
+   219→  }
+   220→
+   221→  return [...byOutlet.values()]
+   222→    .map((v) => ({
+   223→      outletCode: v.outlet.code, outletName: v.outlet.name, area: v.area,
+   224→      absNominal: v.absNominal,
+   225→      devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
+   226→      areaAvg: areaFinal.get(v.area) ?? 0,
+   227→      sales: v.sales, // deduplicated sales per outlet
+   228→    }))
+   229→    .sort((a, b) => b.absNominal - a.absNominal)
+   230→    .slice(0, n);
+   231→}
+   232→
+   233→// ============================================================
+   234→//  Top outlets by Sales (for card drill-down)
+   235→//  BUG FIX #3: Sales is duplicated per item row — take 1 unique per outlet
+   236→// ============================================================
+   237→export function topOutletsBySales(recs: RecWithRels[], n = 10) {
+   238→  const byOutlet = new Map<number, { outlet: Outlet; area: string; sales: number; absNominal: number }>();
+   239→  for (const r of recs) {
+   240→    const k = r.outletId;
+   241→    const existing = byOutlet.get(k);
+   242→    if (existing) {
+   243→      // Take first non-null sales value (deduplication)
+   244→      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+   245→        existing.sales = r.nominalSales;
+   246→      }
+   247→      existing.absNominal += r.absNominalDeviasi ?? 0;
+   248→    } else {
+   249→      byOutlet.set(k, {
+   250→        outlet: r.outlet, area: r.area,
+   251→        sales: r.nominalSales ?? 0,
+   252→        absNominal: r.absNominalDeviasi ?? 0,
+   253→      });
+   254→    }
+   255→  }
+   256→  return [...byOutlet.values()]
+   257→    .map((v) => ({
+   258→      outletCode: v.outlet.code, outletName: v.outlet.name, area: v.area,
+   259→      sales: v.sales, absNominal: v.absNominal,
+   260→      devToSalesRatio: v.sales > 0 ? v.absNominal / v.sales : null,
+   261→    }))
+   262→    .filter((v) => v.sales > 0)
+   263→    .sort((a, b) => b.sales - a.sales)
+   264→    .slice(0, n);
+   265→}
+   266→
+   267→// ============================================================
+   268→//  Top items by Waste (for card drill-down)
+   269→// ============================================================
+   270→export function topItemsByWaste(recs: RecWithRels[], n = 10) {
+   271→  return [...recs]
+   272→    .filter((r) => r.qtyWaste != null && Math.abs(r.qtyWaste) > 0)
+   273→    .sort((a, b) => Math.abs(b.qtyWaste ?? 0) - Math.abs(a.qtyWaste ?? 0))
+   274→    .slice(0, n)
+   275→    .map((r) => ({
+   276→      itemName: r.item.name, outletCode: r.outlet.code,
+   277→      qtyWaste: Math.abs(r.qtyWaste ?? 0),
+   278→      nominalWaste: Math.abs(r.nominalWaste ?? 0),
+   279→    }));
+   280→}
+   281→
+   282→// ============================================================
+   283→//  Top items by Susut (for card drill-down)
+   284→// ============================================================
+   285→export function topItemsBySusut(recs: RecWithRels[], n = 10) {
+   286→  return [...recs]
+   287→    .filter((r) => r.qtySusut != null && Math.abs(r.qtySusut) > 0)
+   288→    .sort((a, b) => Math.abs(b.qtySusut ?? 0) - Math.abs(a.qtySusut ?? 0))
+   289→    .slice(0, n)
+   290→    .map((r) => ({
+   291→      itemName: r.item.name, outletCode: r.outlet.code,
+   292→      qtySusut: Math.abs(r.qtySusut ?? 0),
+   293→      nominalSusut: Math.abs(r.nominalSusut ?? 0),
+   294→    }));
+   295→}
+   296→
+   297→// ============================================================
+   298→//  Top items by Trial (for card drill-down)
+   299→// ============================================================
+   300→export function topItemsByTrial(recs: RecWithRels[], n = 10) {
+   301→  return [...recs]
+   302→    .filter((r) => r.qtyTrial != null && Math.abs(r.qtyTrial) > 0)
+   303→    .sort((a, b) => Math.abs(b.qtyTrial ?? 0) - Math.abs(a.qtyTrial ?? 0))
+   304→    .slice(0, n)
+   305→    .map((r) => ({
+   306→      itemName: r.item.name, outletCode: r.outlet.code,
+   307→      qtyTrial: Math.abs(r.qtyTrial ?? 0),
+   308→      nominalTrial: Math.abs(r.nominalTrial ?? 0),
+   309→    }));
+   310→}
+   311→
+   312→// ============================================================
+   313→//  Top items by Loss/Surplus (for card drill-down)
+   314→// ============================================================
+   315→export function topItemsByLossSurplus(recs: RecWithRels[], n = 10) {
+   316→  return [...recs]
+   317→    .filter((r) => r.qtyLossSurplus != null && Math.abs(r.qtyLossSurplus) > 0)
+   318→    .sort((a, b) => Math.abs(b.qtyLossSurplus ?? 0) - Math.abs(a.qtyLossSurplus ?? 0))
+   319→    .slice(0, n)
+   320→    .map((r) => ({
+   321→      itemName: r.item.name, outletCode: r.outlet.code,
+   322→      qtyLossSurplus: Math.abs(r.qtyLossSurplus ?? 0),
+   323→      nominalLossSurplus: Math.abs(r.nominalLossSurplus ?? 0),
+   324→      direction: r.direction,
+   325→    }));
+   326→}
+   327→
+   328→// ============================================================
+   329→//  Deviation Breakdown (Waterfall)
+   330→// ============================================================
+   331→export function deviationBreakdown(recs: RecWithRels[]) {
+   332→  let waste = 0, susut = 0, trial = 0, residual = 0, total = 0;
+   333→  for (const r of recs) {
+   334→    waste += Math.abs(r.qtyWaste ?? 0);
+   335→    susut += Math.abs(r.qtySusut ?? 0);
+   336→    trial += Math.abs(r.qtyTrial ?? 0);
+   337→    residual += Math.abs(r.residualQty ?? 0);
+   338→    total += r.absQtyDeviasi ?? 0;
+   339→  }
+   340→  return { waste, susut, trial, residual, total };
+   341→}
+   342→
+   343→// ============================================================
+   344→//  Loss vs Surplus
+   345→// ============================================================
+   346→export function lossVsSurplus(recs: RecWithRels[]) {
+   347→  let loss = 0, surplus = 0, lossNominal = 0, surplusNominal = 0;
+   348→  for (const r of recs) {
+   349→    if (r.direction === 'LOSS') {
+   350→      loss += r.absQtyDeviasi ?? 0;
+   351→      lossNominal += r.absNominalDeviasi ?? 0;
+   352→    } else if (r.direction === 'SURPLUS') {
+   353→      surplus += r.absQtyDeviasi ?? 0;
+   354→      surplusNominal += r.absNominalDeviasi ?? 0;
+   355→    }
+   356→  }
+   357→  return { loss, surplus, lossNominal, surplusNominal };
+   358→}
+   359→
+   360→// ============================================================
+   361→//  Investigation Worklist
+   362→// ============================================================
+   363→export function buildWorklist(
+   364→  recs: RecWithRels[],
+   365→  prevByOutletItem: Map<string, RecWithRels>,
+   366→  historicalByOutletItem: Map<string, number[]>
+   367→): InvestigationItem[] {
+   368→  const items: InvestigationItem[] = [];
+   369→
+   370→  for (const curr of recs) {
+   371→    const key = `${curr.outletId}|${curr.itemId}`;
+   372→    const prev = prevByOutletItem.get(key) ?? null;
+   373→    const historical = historicalByOutletItem.get(key) ?? [];
+   374→    const ctx = buildRuleContext(curr, prev, historical);
+   375→    const flags = evaluateRules(ctx);
+   376→
+   377→    if (flags.length === 0) continue;
+   378→
+   379→    const top = flags[0];
+   380→    const priority: 'P1' | 'P2' | 'P3' =
+   381→      top.severity === 'ABNORMAL' ? 'P1' : top.severity === 'WARNING' ? 'P2' : 'P3';
+   382→
+   383→    items.push({
+   384→      priority,
+   385→      outletCode: curr.outlet.code,
+   386→      outletName: curr.outlet.name,
+   387→      area: curr.area,
+   388→      itemName: curr.item.name,
+   389→      issue: top.ruleName,
+   390→      evidence: top.narrative || JSON.stringify(top.evidence).slice(0, 200),
+   391→      recommendedAction: recommendAction(flags.map((f) => f.ruleCode)),
+   392→      ruleCodes: flags.map((f) => f.ruleCode),
+   393→      absNominalDeviasi: curr.absNominalDeviasi ?? 0,
+   394→      deviationToBom: curr.pctQtyDeviasiToBom,
+   395→      direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
+   396→    });
+   397→  }
+   398→
+   399→  // Sort: priority then absNominal
+   400→  const order = { P1: 0, P2: 1, P3: 2 };
+   401→  items.sort((a, b) => order[a.priority] - order[b.priority] || b.absNominalDeviasi - a.absNominalDeviasi);
+   402→  return items.slice(0, 100); // cap for UI
+   403→}
+   404→
+   405→// ============================================================
+   406→//  Recommendation Engine (rule-based)
+   407→// ============================================================
+   408→export function recommendAction(ruleCodes: string[]): string {
+   409→  const set = new Set(ruleCodes);
+   410→  const actions: string[] = [];
+   411→
+   412→  if (set.has('RESIDUAL_LOSS_HIGH') || set.has('RESIDUAL_LOSS_WARN')) {
+   413→    actions.push('Validasi Actual Usage vs SOC + sampling fisik + cek pencatatan Waste/Susut/Trial');
+   414→  }
+   415→  if (set.has('BOM_DEVIATION_MISMATCH') || set.has('BOM_DOWN_DEV_UP')) {
+   416→    actions.push('Rekonsiliasi BOM aktual vs sistem + periksa receiving/transfer/UOM conversion');
+   417→  }
+   418→  if (set.has('SALES_DEVIATION_MISMATCH') || set.has('SALES_DEV_DECREASE')) {
+   419→    actions.push('Cek apakah deviation naik karena quantity atau price effect + audit transaksi inventory');
+   420→  }
+   421→  if (set.has('TOLERANCE_BREACH') || set.has('TOLERANCE_BREACH_HIGH')) {
+   422→    actions.push('Review SOC/standard + sampling pemakaian aktual per menu');
+   423→  }
+   424→  if (set.has('TOLERANCE_NOT_SET_HIGH_DEV')) {
+   425→    actions.push('Set tolerance baseline + monitoring deviasi tanpa official tolerance');
+   426→  }
+   427→  if (set.has('BENCHMARK_ABOVE_AREA') || set.has('BENCHMARK_ABOVE_NETWORK')) {
+   428→    actions.push('Benchmarking vs outlet serupa + cek prosedur operasional');
+   429→  }
+   430→  if (set.has('HISTORICAL_ABNORMAL') || set.has('HISTORICAL_WARNING')) {
+   431→    actions.push('Investigasi pola abnormal vs historical behavior (outlier detection)');
+   432→  }
+   433→  if (set.has('HIGH_LOSS_NOMINAL')) {
+   434→    actions.push('Prioritas financial impact: cek transaksi adjustment + receiving discrepancy');
+   435→  }
+   436→
+   437→  return actions.length > 0 ? actions.join(' | ') : 'Investigasi lanjutan diperlukan';
+   438→}
+   439→
+   440→// ============================================================
+   441→//  Priority ranking
+   442→// ============================================================
+   443→export function computePriorities(
+   444→  recs: RecWithRels[],
+   445→  prevByOutletItem: Map<string, RecWithRels>,
+   446→  historicalByOutletItem: Map<string, number[]>
+   447→): PriorityScore[] {
+   448→  const scores: PriorityScore[] = [];
+   449→
+   450→  for (const curr of recs) {
+   451→    const key = `${curr.outletId}|${curr.itemId}`;
+   452→    const prev = prevByOutletItem.get(key) ?? null;
+   453→    const historical = historicalByOutletItem.get(key) ?? [];
+   454→    const ctx = buildRuleContext(curr, prev, historical);
+   455→    const flags = evaluateRules(ctx);
+   456→
+   457→    if (flags.length === 0) continue;
+   458→
+   459→    const top = flags[0];
+   460→    const t = CFG_THRESHOLDS;
+   461→
+   462→    const devBomScore = ctx.pctQtyDeviasiToBom != null ? Math.abs(ctx.pctQtyDeviasiToBom) : 0;
+   463→    const growthScore = Math.max(
+   464→      Math.abs(ctx.qtyDeviasiGrowth ?? 0),
+   465→      Math.abs(ctx.nominalDeviasiGrowth ?? 0),
+   466→    );
+   467→    const residualScore = Math.abs(ctx.residualRatio ?? 0);
+   468→    const tolBreach = ctx.tolerancePct != null && ctx.pctQtyDeviasiToBom != null
+   469→      ? Math.max(0, Math.abs(ctx.pctQtyDeviasiToBom) - Math.abs(ctx.tolerancePct))
+   470→      : Math.abs(ctx.pctQtyDeviasiToBom ?? 0) * 0.5; // fallback
+   471→    const histScore = Math.abs(ctx.zScore ?? 0);
+   472→
+   473→    const financialScore = (curr.absNominalDeviasi ?? 0) / 1_000_000; // per million
+   474→    const operationalScore =
+   475→      devBomScore * t.WEIGHT_DEV_BOM +
+   476→      Math.min(growthScore, 5) * t.WEIGHT_GROWTH +
+   477→      residualScore * t.WEIGHT_RESIDUAL +
+   478→      tolBreach * t.WEIGHT_TOLERANCE +
+   479→      Math.min(histScore, 5) * t.WEIGHT_HISTORY;
+   480→
+   481→    scores.push({
+   482→      itemId: curr.itemId,
+   483→      itemName: curr.item.name,
+   484→      outletId: curr.outletId,
+   485→      outletCode: curr.outlet.code,
+   486→      outletName: curr.outlet.name,
+   487→      area: curr.area,
+   488→      financialScore,
+   489→      operationalScore,
+   490→      financialRank: null,
+   491→      operationalRank: null,
+   492→      topAnomaly: top,
+   493→    });
+   494→  }
+   495→
+   496→  // Assign ranks
+   497→  const byFin = [...scores].sort((a, b) => b.financialScore - a.financialScore);
+   498→  byFin.forEach((s, i) => { s.financialRank = i + 1; });
+   499→  const byOps = [...scores].sort((a, b) => b.operationalScore - a.operationalScore);
+   500→  byOps.forEach((s, i) => { s.operationalRank = i + 1; });
+   501→
+   502→  return scores;
+   503→}
+   504→
+   505→// ============================================================
+   506→//  Trend (last N weeks for selected scope)
+   507→// ============================================================
+   508→export function buildTrend(
+   509→  recsByWeek: Array<{ weekLabel: string; recs: RecWithRels[] }>
+   510→) {
+   511→  return recsByWeek.map(({ weekLabel, recs }) => {
+   512→    const dedup = new Set<number>();
+   513→    let sales = 0;
+   514→    let devBomSum = 0, devBomCount = 0, nominal = 0;
+   515→    for (const r of recs) {
+   516→      if (r.nominalSales != null && r.nominalSales > 0 && !dedup.has(r.outletId)) {
+   517→        sales += r.nominalSales;
+   518→        dedup.add(r.outletId);
+   519→      }
+   520→      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
+   521→        devBomSum += Math.abs(r.pctQtyDeviasiToBom);
+   522→        devBomCount++;
+   523→      }
+   524→      nominal += r.absNominalDeviasi ?? 0;
+   525→    }
+   526→    return {
+   527→      weekLabel,
+   528→      devBom: devBomCount > 0 ? devBomSum / devBomCount : 0,
+   529→      sales,
+   530→      nominal,
+   531→    };
+   532→  });
+   533→}
+   534→
+   535→// ============================================================
+   536→//  OPTIMIZED: Build worklist from pre-computed flags
+   537→//  Avoids re-evaluating rules (which is the main bottleneck)
+   538→//  Optional `t` = runtime thresholds (not used in worklist itself,
+   539→//  but kept for API consistency)
+   540→// ============================================================
+   541→export function buildWorklistFromFlags(
+   542→  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+   543→  _t?: RuntimeThresholds | typeof CFG_THRESHOLDS,
+   544→): InvestigationItem[] {
+   545→  const items: InvestigationItem[] = [];
+   546→
+   547→  for (const { curr, flags } of recsWithFlags) {
+   548→    if (flags.length === 0) continue;
+   549→
+   550→    const top = flags[0];
+   551→    const priority: 'P1' | 'P2' | 'P3' =
+   552→      top.severity === 'ABNORMAL' ? 'P1' : top.severity === 'WARNING' ? 'P2' : 'P3';
+   553→
+   554→    items.push({
+   555→      priority,
+   556→      outletCode: curr.outlet.code,
+   557→      outletName: curr.outlet.name,
+   558→      area: curr.area,
+   559→      itemName: curr.item.name,
+   560→      issue: top.ruleName,
+   561→      evidence: top.narrative || JSON.stringify(top.evidence).slice(0, 200),
+   562→      recommendedAction: recommendAction(flags.map((f) => f.ruleCode)),
+   563→      ruleCodes: flags.map((f) => f.ruleCode),
+   564→      absNominalDeviasi: curr.absNominalDeviasi ?? 0,
+   565→      deviationToBom: curr.pctQtyDeviasiToBom,
+   566→      direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
+   567→    });
+   568→  }
+   569→
+   570→  const order = { P1: 0, P2: 1, P3: 2 };
+   571→  items.sort((a, b) => order[a.priority] - order[b.priority] || b.absNominalDeviasi - a.absNominalDeviasi);
+   572→  return items.slice(0, 100);
+   573→}
+   574→
+   575→// ============================================================
+   576→//  OPTIMIZED: Compute priorities from pre-computed flags
+   577→//  Avoids re-evaluating rules (which is the main bottleneck)
+   578→//  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
+   579→// ============================================================
+   580→export function computePrioritiesFromFlags(
+   581→  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+   582→  t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
+   583→): PriorityScore[] {
+   584→  const scores: PriorityScore[] = [];
+   585→
+   586→  for (const { curr, flags } of recsWithFlags) {
+   587→    if (flags.length === 0) continue;
+   588→
+   589→    const top = flags[0];
+   590→
+   591→    // Use fields directly from the record (already computed at transform time)
+   592→    const devBomScore = curr.pctQtyDeviasiToBom != null ? Math.abs(curr.pctQtyDeviasiToBom) : 0;
+   593→    const residualScore = Math.abs(curr.residualRatio ?? 0);
+   594→    const tolBreach = curr.tolerancePct != null && curr.pctQtyDeviasiToBom != null
+   595→      ? Math.max(0, Math.abs(curr.pctQtyDeviasiToBom) - Math.abs(curr.tolerancePct))
+   596→      : Math.abs(curr.pctQtyDeviasiToBom ?? 0) * 0.5;
+   597→    // Growth and zScore are in the evidence (from rule context)
+   598→    const evidence = top.evidence as any;
+   599→    const growthScore = Math.max(
+   600→      Math.abs(evidence.qtyDeviasiGrowth ?? 0),
+   601→      Math.abs(evidence.nominalDeviasiGrowth ?? 0),
+   602→    );
+   603→    const histScore = Math.abs(evidence.zScore ?? 0);
+   604→
+   605→    const financialScore = (curr.absNominalDeviasi ?? 0) / 1_000_000;
+   606→    const operationalScore =
+   607→      devBomScore * t.WEIGHT_DEV_BOM +
+   608→      Math.min(growthScore, 5) * t.WEIGHT_GROWTH +
+   609→      residualScore * t.WEIGHT_RESIDUAL +
+   610→      tolBreach * t.WEIGHT_TOLERANCE +
+   611→      Math.min(histScore, 5) * t.WEIGHT_HISTORY;
+   612→
+   613→    scores.push({
+   614→      itemId: curr.itemId,
+   615→      itemName: curr.item.name,
+   616→      outletId: curr.outletId,
+   617→      outletCode: curr.outlet.code,
+   618→      outletName: curr.outlet.name,
+   619→      area: curr.area,
+   620→      financialScore,
+   621→      operationalScore,
+   622→      financialRank: null,
+   623→      operationalRank: null,
+   624→      topAnomaly: top,
+   625→    });
+   626→  }
+   627→
+   628→  const byFin = [...scores].sort((a, b) => b.financialScore - a.financialScore);
+   629→  byFin.forEach((s, i) => { s.financialRank = i + 1; });
+   630→  const byOps = [...scores].sort((a, b) => b.operationalScore - a.operationalScore);
+   631→  byOps.forEach((s, i) => { s.operationalRank = i + 1; });
+   632→
+   633→  return scores;
+   634→}
+   635→
