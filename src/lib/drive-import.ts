@@ -5,10 +5,13 @@
 //  downloads .xlsx files, and feeds them to the existing ingestion pipeline.
 //
 //  Supported URL formats:
-//    - Folder: https://drive.google.com/drive/folders/{FOLDER_ID}
-//    - File:   https://drive.google.com/file/d/{FILE_ID}/view
-//    - File:   https://drive.google.com/open?id={FILE_ID}
-//    - File:   https://drive.google.com/uc?id={FILE_ID}
+//    - Folder:        https://drive.google.com/drive/folders/{FOLDER_ID}
+//    - File (Drive):  https://drive.google.com/file/d/{FILE_ID}/view
+//    - Open:          https://drive.google.com/open?id={FILE_ID}
+//    - Direct:        https://drive.google.com/uc?id={FILE_ID}
+//    - Sheets:        https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit
+//                     (auto-exported as .xlsx via /export?format=xlsx)
+//    - Raw ID:        {FILE_ID} (44 chars typical)
 // ============================================================
 import path from 'path';
 import fs from 'fs/promises';
@@ -34,21 +37,25 @@ export interface DriveImportResult {
 }
 
 // ============================================================
-//  Extract folder/file ID from various Google Drive URL formats
+//  Extract ID + type from various Google URL formats
+//  Returns type: 'folder' | 'file' | 'sheets'
 // ============================================================
-export function extractDriveId(url: string): { type: 'folder' | 'file'; id: string } | null {
+export type DriveIdType = { type: 'folder' | 'file' | 'sheets'; id: string };
+
+export function extractDriveId(url: string): DriveIdType | null {
   if (!url) return null;
   const trimmed = url.trim();
 
-  // Folder: https://drive.google.com/drive/folders/{ID}
-  let m = trimmed.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
+  // Google Sheets: https://docs.google.com/spreadsheets/d/{ID}/edit?usp=sharing
+  // Also matches /view, /copy, /export, /htmlview, etc.
+  let m = trimmed.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return { type: 'sheets', id: m[1] };
+
+  // Folder: https://drive.google.com/drive/folders/{ID} or with query
+  m = trimmed.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
   if (m) return { type: 'folder', id: m[1] };
 
-  // Folder with query: https://drive.google.com/drive/folders/{ID}?usp=sharing
-  m = trimmed.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)\?/);
-  if (m) return { type: 'folder', id: m[1] };
-
-  // File: https://drive.google.com/file/d/{ID}/view
+  // File: https://drive.google.com/file/d/{ID}/view (or any path after ID)
   m = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (m) return { type: 'file', id: m[1] };
 
@@ -56,7 +63,7 @@ export function extractDriveId(url: string): { type: 'folder' | 'file'; id: stri
   m = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (m) return { type: 'file', id: m[1] };
 
-  // Raw ID only (44 chars typical)
+  // Raw ID only (44 chars typical for Drive files)
   if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) {
     return { type: 'file', id: trimmed };
   }
@@ -221,7 +228,88 @@ export async function downloadDriveFile(
 }
 
 // ============================================================
+//  Download a Google Sheets as .xlsx file
+//  Uses the export endpoint: /spreadsheets/d/{ID}/export?format=xlsx
+//  Works for public spreadsheets (shared as "Anyone with link can view")
+// ============================================================
+export async function downloadGoogleSheetsAsXlsx(
+  sheetId: string,
+  fileName: string,
+  destDir: string
+): Promise<{ localPath: string; size: number }> {
+  await fs.mkdir(destDir, { recursive: true });
+  // Ensure filename ends with .xlsx
+  if (!fileName.toLowerCase().endsWith('.xlsx')) {
+    fileName = `${fileName}.xlsx`;
+  }
+  const localPath = path.join(destDir, fileName);
+
+  // Export URL — downloads as .xlsx with all sheets preserved
+  const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+
+  const res = await fetch(exportUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, */*',
+    },
+    redirect: 'follow',
+  });
+
+  if (!res.ok) {
+    throw new Error(`Google Sheets export failed: HTTP ${res.status} ${res.statusText}. Make sure the spreadsheet is shared as "Anyone with link can view".`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  // If we got HTML, the sheet is not public or requires sign-in
+  if (contentType.includes('text/html')) {
+    const sample = (await res.text()).slice(0, 300);
+    throw new Error(`Google Sheets returned HTML instead of xlsx. The spreadsheet may require sign-in or is not shared publicly. Sample: ${sample}`);
+  }
+
+  if (!res.body) throw new Error('No response body from Google Sheets export');
+  const stream = Readable.fromWeb(res.body as any);
+  const fileStream = createWriteStream(localPath);
+  await pipeline(stream, fileStream);
+
+  const stat = await fs.stat(localPath);
+  if (stat.size < 1024) {
+    const content = await fs.readFile(localPath, 'utf-8');
+    await fs.unlink(localPath);
+    throw new Error(`Exported file too small (${stat.size} bytes). Content: ${content.slice(0, 200)}`);
+  }
+
+  return { localPath, size: stat.size };
+}
+
+// ============================================================
+//  Fetch Google Sheets metadata (title) for filename
+// ============================================================
+async function getSheetsTitle(sheetId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://docs.google.com/spreadsheets/d/${sheetId}/edit`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    // Title format: "Sheet Name - Google Sheets"
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+    if (titleMatch) {
+      const rawTitle = titleMatch[1].replace(/\s*-\s*Google Sheets\s*$/i, '').trim();
+      if (rawTitle) return rawTitle;
+    }
+    // Fallback: og:title meta tag
+    const ogMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
+    if (ogMatch) return ogMatch[1];
+  } catch {
+    // ignore — fall back to default name
+  }
+  return null;
+}
+
+// ============================================================
 //  Main entry point: import from Google Drive URL
+//  Supports: folder, file, sheets
 // ============================================================
 export async function importFromDriveUrl(
   url: string,
@@ -229,7 +317,12 @@ export async function importFromDriveUrl(
 ): Promise<DriveImportResult> {
   const parsed = extractDriveId(url);
   if (!parsed) {
-    throw new Error('Invalid Google Drive URL. Please provide a folder or file link from drive.google.com');
+    throw new Error(
+      'Invalid Google URL. Supported formats:\n' +
+      '• Google Drive folder: https://drive.google.com/drive/folders/...\n' +
+      '• Google Drive file:   https://drive.google.com/file/d/...\n' +
+      '• Google Sheets:       https://docs.google.com/spreadsheets/d/...'
+    );
   }
 
   const downloadedFiles: DriveImportResult['downloadedFiles'] = [];
@@ -258,8 +351,35 @@ export async function importFromDriveUrl(
     }
 
     return { folderId: parsed.id, downloadedFiles };
+
+  } else if (parsed.type === 'sheets') {
+    // Google Sheets — export as xlsx
+    try {
+      // Try to get the spreadsheet title for a meaningful filename
+      const title = await getSheetsTitle(parsed.id);
+      let fileName = title || `google_sheets_${parsed.id}`;
+      // Sanitize filename — remove invalid chars
+      fileName = fileName.replace(/[<>:"/\\|?*]/g, '_').trim();
+      if (!fileName.toLowerCase().endsWith('.xlsx')) {
+        fileName = `${fileName}.xlsx`;
+      }
+
+      const { localPath, size } = await downloadGoogleSheetsAsXlsx(parsed.id, fileName, destDir);
+      downloadedFiles.push({ fileName, localPath, size, success: true });
+    } catch (e: any) {
+      downloadedFiles.push({
+        fileName: '',
+        localPath: '',
+        size: 0,
+        success: false,
+        error: e?.message || String(e),
+      });
+    }
+
+    return { folderId: null, downloadedFiles };
+
   } else {
-    // Single file
+    // Single Google Drive file
     try {
       // First, get file name from Drive metadata
       const metaRes = await fetch(`https://drive.google.com/file/d/${parsed.id}/view`, {

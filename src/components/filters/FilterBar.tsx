@@ -238,16 +238,17 @@ export function FilterBar() {
         </CardContent>
       </Card>
 
-      {/* Google Drive Import Dialog — with Folder/File tabs */}
+      {/* Google Drive Import Dialog — with Folder/File/Sheets tabs */}
       <Dialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CloudDownload className="h-5 w-5" />
-              Import from Google Drive
+              Import from Google
             </DialogTitle>
             <DialogDescription>
-              Pilih jenis import: <strong>Folder</strong> (semua file .xlsx sekaligus) atau <strong>File</strong> (satu file saja).
+              Pilih jenis import: <strong>Folder</strong> (semua file .xlsx sekaligus),
+              <strong> File Drive</strong> (satu file .xlsx), atau <strong>Google Sheets</strong> (auto-export ke .xlsx).
               Pastikan link share-nya diset ke &quot;Anyone with link can view&quot;.
             </DialogDescription>
           </DialogHeader>
@@ -256,12 +257,15 @@ export function FilterBar() {
             <>
               <div className="space-y-3 py-2">
                 <Tabs defaultValue="folder">
-                  <TabsList className="grid w-full grid-cols-2">
+                  <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="folder" className="text-xs">
                       <Folder className="h-3.5 w-3.5 mr-1.5" /> Folder
                     </TabsTrigger>
                     <TabsTrigger value="file" className="text-xs">
-                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" /> File Tunggal
+                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" /> File Drive
+                    </TabsTrigger>
+                    <TabsTrigger value="sheets" className="text-xs">
+                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" /> Google Sheets
                     </TabsTrigger>
                   </TabsList>
 
@@ -294,6 +298,23 @@ export function FilterBar() {
                       💡 Klik kanan file di Google Drive → Share → Copy link. Hanya file ini yang akan diproses.
                       <br />
                       Cocok untuk import file bulan terbaru, atau re-import file yang sebelumnya gagal.
+                    </p>
+                  </TabsContent>
+
+                  <TabsContent value="sheets" className="space-y-2 mt-3">
+                    <Label htmlFor="sheets-url" className="text-xs">Google Sheets URL</Label>
+                    <Input
+                      id="sheets-url"
+                      placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                      value={driveUrl}
+                      onChange={(e) => setDriveUrl(e.target.value)}
+                      disabled={driveImporting}
+                      className="text-xs"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      💡 Buka spreadsheet di Google Sheets → klik <strong>Share</strong> (kanan atas) → set &quot;Anyone with link&quot; → copy link.
+                      <br />
+                      Spreadsheet akan otomatis di-export ke format .xlsx (semua sheet dipertahankan).
                     </p>
                   </TabsContent>
                 </Tabs>
