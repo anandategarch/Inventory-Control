@@ -3,7 +3,7 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
@@ -13,7 +13,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useQueryClient } from '@tanstack/react-query';
+import { SettingsDialog } from '@/components/filters/SettingsDialog';
 
 export function FilterBar() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, setMonth, setWeek, setCompareWeek, setArea, setOutlet, reset } = useDashboard();
@@ -27,6 +29,9 @@ export function FilterBar() {
   const [driveImporting, setDriveImporting] = useState(false);
   const [driveResult, setDriveResult] = useState<any>(null);
   const queryClient = useQueryClient();
+
+  // Settings dialog state
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const months = status?.months || [];
   const weeks = (monthLabel && status?.weeksByMonth) ? Object.entries(status.weeksByMonth).find(([k]) => {
@@ -193,6 +198,15 @@ export function FilterBar() {
               <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings className="h-3.5 w-3.5 mr-1" />
+              Settings
+            </Button>
+            <Button
               variant="secondary"
               size="sm"
               className="h-9"
@@ -224,35 +238,65 @@ export function FilterBar() {
         </CardContent>
       </Card>
 
-      {/* Google Drive Import Dialog */}
+      {/* Google Drive Import Dialog — with Folder/File tabs */}
       <Dialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen}>
-        <DialogContent className="sm:max-w-[560px]">
+        <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CloudDownload className="h-5 w-5" />
               Import from Google Drive
             </DialogTitle>
             <DialogDescription>
-              Paste your Google Drive folder or file link below. The folder must be shared as
-              &quot;Anyone with link can view&quot;. All .xlsx files in the folder will be downloaded and processed automatically.
+              Pilih jenis import: <strong>Folder</strong> (semua file .xlsx sekaligus) atau <strong>File</strong> (satu file saja).
+              Pastikan link share-nya diset ke &quot;Anyone with link can view&quot;.
             </DialogDescription>
           </DialogHeader>
 
           {!driveResult && (
             <>
-              <div className="space-y-2 py-2">
-                <Label htmlFor="drive-url" className="text-xs">Google Drive URL</Label>
-                <Input
-                  id="drive-url"
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  value={driveUrl}
-                  onChange={(e) => setDriveUrl(e.target.value)}
-                  disabled={driveImporting}
-                  className="text-xs"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Supported: Folder links, File links, or direct <code>uc?id=</code> links.
-                </p>
+              <div className="space-y-3 py-2">
+                <Tabs defaultValue="folder">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="folder" className="text-xs">
+                      <Folder className="h-3.5 w-3.5 mr-1.5" /> Folder
+                    </TabsTrigger>
+                    <TabsTrigger value="file" className="text-xs">
+                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" /> File Tunggal
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="folder" className="space-y-2 mt-3">
+                    <Label htmlFor="folder-url" className="text-xs">Google Drive Folder URL</Label>
+                    <Input
+                      id="folder-url"
+                      placeholder="https://drive.google.com/drive/folders/..."
+                      value={driveUrl}
+                      onChange={(e) => setDriveUrl(e.target.value)}
+                      disabled={driveImporting}
+                      className="text-xs"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      💡 Klik kanan folder di Google Drive → Share → Copy link. Semua file .xlsx di folder akan otomatis didownload.
+                    </p>
+                  </TabsContent>
+
+                  <TabsContent value="file" className="space-y-2 mt-3">
+                    <Label htmlFor="file-url" className="text-xs">Google Drive File URL</Label>
+                    <Input
+                      id="file-url"
+                      placeholder="https://drive.google.com/file/d/.../view"
+                      value={driveUrl}
+                      onChange={(e) => setDriveUrl(e.target.value)}
+                      disabled={driveImporting}
+                      className="text-xs"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      💡 Klik kanan file di Google Drive → Share → Copy link. Hanya file ini yang akan diproses.
+                      <br />
+                      Cocok untuk import file bulan terbaru, atau re-import file yang sebelumnya gagal.
+                    </p>
+                  </TabsContent>
+                </Tabs>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={handleCloseDialog} disabled={driveImporting}>
@@ -347,6 +391,9 @@ export function FilterBar() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Settings Dialog */}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   );
 }

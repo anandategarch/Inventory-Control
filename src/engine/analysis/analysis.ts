@@ -10,6 +10,7 @@ import type {
   GrowthMetrics,
 } from '@/types/inventory';
 import { CFG_THRESHOLDS } from '@/config/thresholds';
+import type { RuntimeThresholds } from '@/lib/settings';
 import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
 import { calcGrowth, calcGrowthAbs, calcZScore, calcStdDev, safeRatio, calcAvgPrice } from '@/engine/calculations/growth';
 
@@ -102,11 +103,13 @@ export function buildExecutiveSummary(
 
 // ============================================================
 //  Per-record rule evaluation + context building
+//  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
 // ============================================================
 export function buildRuleContext(
   curr: RecWithRels,
   prev: RecWithRels | null,
-  historical: number[] // historical dev/bom ratios
+  historical: number[], // historical dev/bom ratios
+  t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
 ): RuleContext {
   const bomGrowth = calcGrowthAbs(curr.qtyBom, prev?.qtyBom ?? null);
   const qtyDeviasiGrowth = calcGrowthAbs(curr.qtyDeviasi, prev?.qtyDeviasi ?? null);
@@ -119,11 +122,11 @@ export function buildRuleContext(
   const stats = calcStdDev(historical);
   const zScore = stats && stats.stdDev > 0 ? calcZScore(curr.pctQtyDeviasiToBom, stats.mean, stats.stdDev) : null;
 
-  // benchmark flag from zScore
+  // benchmark flag from zScore (uses runtime thresholds)
   let benchmarkFlag: string | null = null;
   if (zScore != null) {
-    if (zScore > CFG_THRESHOLDS.BENCHMARK_NETWORK_FACTOR) benchmarkFlag = 'ABOVE_NETWORK_AVG';
-    else if (zScore > CFG_THRESHOLDS.BENCHMARK_AREA_FACTOR) benchmarkFlag = 'ABOVE_AREA_AVG';
+    if (zScore > t.BENCHMARK_NETWORK_FACTOR) benchmarkFlag = 'ABOVE_NETWORK_AVG';
+    else if (zScore > t.BENCHMARK_AREA_FACTOR) benchmarkFlag = 'ABOVE_AREA_AVG';
   }
 
   return {
@@ -426,9 +429,12 @@ export function buildTrend(
 // ============================================================
 //  OPTIMIZED: Build worklist from pre-computed flags
 //  Avoids re-evaluating rules (which is the main bottleneck)
+//  Optional `t` = runtime thresholds (not used in worklist itself,
+//  but kept for API consistency)
 // ============================================================
 export function buildWorklistFromFlags(
-  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>
+  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+  _t?: RuntimeThresholds | typeof CFG_THRESHOLDS,
 ): InvestigationItem[] {
   const items: InvestigationItem[] = [];
 
@@ -463,12 +469,13 @@ export function buildWorklistFromFlags(
 // ============================================================
 //  OPTIMIZED: Compute priorities from pre-computed flags
 //  Avoids re-evaluating rules (which is the main bottleneck)
+//  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
 // ============================================================
 export function computePrioritiesFromFlags(
-  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>
+  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+  t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
 ): PriorityScore[] {
   const scores: PriorityScore[] = [];
-  const t = CFG_THRESHOLDS;
 
   for (const { curr, flags } of recsWithFlags) {
     if (flags.length === 0) continue;

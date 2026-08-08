@@ -19,6 +19,7 @@ import {
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
 import { analysisCache } from '@/lib/cache';
+import { getRuntimeThresholds } from '@/lib/settings';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -47,8 +48,10 @@ export async function GET(req: NextRequest) {
       compareWeek = compareWeekRaw;
     }
 
-    // Cache key — include all filter dimensions including compareMonth
-    const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}`;
+    // Cache key — include all filter dimensions + thresholds version
+    // (thresholds version changes when user updates settings, invalidating cache)
+    const thresholdsVersion = await db.setting.count();
+    const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}|tv${thresholdsVersion}`;
     const cached = analysisCache.get(cacheKey);
     if (cached) {
       return NextResponse.json({ ...cached as object, cached: true, durationMs: Date.now() - startedAt });
@@ -201,6 +204,9 @@ export async function GET(req: NextRequest) {
     // Compute analysis
     const execSummary = buildExecutiveSummary(currentRecs, prevRecs, month!, week!, prevWeek);
 
+    // ===== Load runtime thresholds from DB (user-configurable via Settings) =====
+    const thresholds = await getRuntimeThresholds();
+
     // ===== OPTIMIZATION: Evaluate rules ONCE per record, reuse for health/worklist/priorities =====
     // Also skip records with zero/null deviation (no point evaluating rules on zero deviation)
     let normal = 0, warning = 0, abnormal = 0;
@@ -228,7 +234,7 @@ export async function GET(req: NextRequest) {
       const key = `${curr.outletId}|${curr.itemId}`;
       const prev = prevByOutletItem.get(key) ?? null;
       const historical = historicalByOutletItem.get(key) ?? [];
-      const ctx = buildRuleContext(curr, prev, historical);
+      const ctx = buildRuleContext(curr, prev, historical, thresholds);
       const flags = evaluateRules(ctx);
 
       recsWithFlags.push({ curr, flags });
@@ -267,7 +273,7 @@ export async function GET(req: NextRequest) {
     const lvs = lossVsSurplus(currentRecs);
 
     // Investigation worklist — use pre-computed flags (no re-evaluation)
-    const worklist = buildWorklistFromFlags(recsWithFlags);
+    const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
 
     // ===== BUG FIX #5: Compute aggregate priceGrowth from total nominal/qty =====
     const currAvgPrice = execSummary.nominalDeviasi.current > 0 && execSummary.qtyDeviasi.current > 0
@@ -355,7 +361,7 @@ export async function GET(req: NextRequest) {
     const recommendations = buildRecommendations(worklist);
 
     // Priorities (top 20) — use pre-computed flags
-    const priorities = computePrioritiesFromFlags(recsWithFlags).slice(0, 20);
+    const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
     const result = {
       success: true,

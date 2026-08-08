@@ -247,3 +247,20 @@ model AggregationCache {
   payload   String   // JSON
   computedAt DateTime @default(now())
 }
+
+// ------------------------------------------------------------
+//  Settings — user-configurable business standards & thresholds
+//  Stored as key-value pairs. Engine reads from here, falls back
+//  to hardcoded defaults in src/config/thresholds.ts if not set.
+// ------------------------------------------------------------
+model Setting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  value       String   // stored as string, parsed by consumer
+  category    String   // TOLERANCE | GROWTH | PRIORITY | BENCHMARK | GENERAL
+  label       String   // human-readable label
+  description String?
+  dataType    String   // number | percent | boolean | text
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?  // who changed it (for audit)
+}
