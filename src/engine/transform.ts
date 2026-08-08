@@ -9,9 +9,60 @@ import { parseOutletCode } from '@/lib/outlet';
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return isNaN(v) ? null : v;
-  const s = String(v).trim().replace(/,/g, '.');
+
+  let s = String(v).trim();
+  if (s === '') return null;
+
+  // ===== Handle Indonesian / accounting number formats =====
+
+  // 1. Remove "Rp" / "IDR" anywhere (Indonesian Rupiah): "Rp269", "-Rp269", "Rp 269"
+  s = s.replace(/Rp/i, '').replace(/IDR/i, '').trim();
+
+  // 2. Handle accounting format: "(310)" = -310, "(1,345)" = -1345
+  let isNegative = false;
+  if (s.startsWith('(') && s.endsWith(')')) {
+    isNegative = true;
+    s = s.slice(1, -1).trim();
+  }
+
+  // 3. Handle percentage suffix: "5%", "-1%", "0.00%"
+  let isPercent = false;
+  if (s.endsWith('%')) {
+    isPercent = true;
+    s = s.slice(0, -1).trim();
+  }
+
+  // 4. Remove all spaces (e.g., "- 310 " → "-310", "1 345" → "1345")
+  s = s.replace(/\s+/g, '');
+
+  // 5. Handle comma separators (Indonesian/European format)
+  //    "1,345" → could be thousands (1345) or decimal (1.345)
+  //    Heuristic: if last comma has exactly 3 digits after → thousands
+  //               if last comma has 1-2 digits after → decimal
+  if (s.includes(',')) {
+    const lastComma = s.lastIndexOf(',');
+    const afterComma = s.slice(lastComma + 1);
+    if (afterComma.length === 3 && /^\d+$/.test(afterComma)) {
+      // Thousands separator: "1,345" → "1345", "1,234,567" → "1234567"
+      s = s.replace(/,/g, '');
+    } else if (afterComma.length >= 1 && afterComma.length <= 2 && /^\d+$/.test(afterComma)) {
+      // Decimal separator: "1,5" → "1.5"
+      s = s.replace(/,/g, '.');
+    } else {
+      // Default: remove all commas (thousands)
+      s = s.replace(/,/g, '');
+    }
+  }
+
+  // 6. Parse the cleaned number
   const n = Number(s);
-  return isNaN(n) ? null : n;
+  if (isNaN(n)) return null;
+
+  // 7. Apply negative sign (from accounting format or existing minus)
+  const result = isNegative ? -Math.abs(n) : n;
+
+  // 8. Convert percentage to decimal (5% → 0.05)
+  return isPercent ? result / 100 : result;
 }
 
 function toStr(v: unknown): string | null {
