@@ -174,12 +174,20 @@ export function topItemsByDevBom(recs: RecWithRels[], n = 10) {
 }
 
 export function topOutlets(recs: RecWithRels[], n = 10) {
-  const byOutlet = new Map<number, { outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number; area: string }>();
+  const byOutlet = new Map<number, {
+    outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number;
+    area: string; sales: number; // sales deduplicated (1 unique value per outlet)
+  }>();
   for (const r of recs) {
     const k = r.outletId;
     const existing = byOutlet.get(k);
     if (existing) {
       existing.absNominal += r.absNominalDeviasi ?? 0;
+      // BUG FIX #3: Sales is duplicated per item row in same outlet.
+      // Take 1 unique value (first non-null), do NOT sum.
+      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+        existing.sales = r.nominalSales;
+      }
       if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
         existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         existing.devBomCount++;
@@ -190,6 +198,8 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
         devBomSum: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? Math.abs(r.pctQtyDeviasiToBom) : 0,
         devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
         area: r.area,
+        // BUG FIX #3: Take 1 unique sales value per outlet (not sum)
+        sales: r.nominalSales ?? 0,
       });
     }
   }
@@ -214,9 +224,105 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
       absNominal: v.absNominal,
       devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
       areaAvg: areaFinal.get(v.area) ?? 0,
+      sales: v.sales, // deduplicated sales per outlet
     }))
     .sort((a, b) => b.absNominal - a.absNominal)
     .slice(0, n);
+}
+
+// ============================================================
+//  Top outlets by Sales (for card drill-down)
+//  BUG FIX #3: Sales is duplicated per item row — take 1 unique per outlet
+// ============================================================
+export function topOutletsBySales(recs: RecWithRels[], n = 10) {
+  const byOutlet = new Map<number, { outlet: Outlet; area: string; sales: number; absNominal: number }>();
+  for (const r of recs) {
+    const k = r.outletId;
+    const existing = byOutlet.get(k);
+    if (existing) {
+      // Take first non-null sales value (deduplication)
+      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+        existing.sales = r.nominalSales;
+      }
+      existing.absNominal += r.absNominalDeviasi ?? 0;
+    } else {
+      byOutlet.set(k, {
+        outlet: r.outlet, area: r.area,
+        sales: r.nominalSales ?? 0,
+        absNominal: r.absNominalDeviasi ?? 0,
+      });
+    }
+  }
+  return [...byOutlet.values()]
+    .map((v) => ({
+      outletCode: v.outlet.code, outletName: v.outlet.name, area: v.area,
+      sales: v.sales, absNominal: v.absNominal,
+      devToSalesRatio: v.sales > 0 ? v.absNominal / v.sales : null,
+    }))
+    .filter((v) => v.sales > 0)
+    .sort((a, b) => b.sales - a.sales)
+    .slice(0, n);
+}
+
+// ============================================================
+//  Top items by Waste (for card drill-down)
+// ============================================================
+export function topItemsByWaste(recs: RecWithRels[], n = 10) {
+  return [...recs]
+    .filter((r) => r.qtyWaste != null && Math.abs(r.qtyWaste) > 0)
+    .sort((a, b) => Math.abs(b.qtyWaste ?? 0) - Math.abs(a.qtyWaste ?? 0))
+    .slice(0, n)
+    .map((r) => ({
+      itemName: r.item.name, outletCode: r.outlet.code,
+      qtyWaste: Math.abs(r.qtyWaste ?? 0),
+      nominalWaste: Math.abs(r.nominalWaste ?? 0),
+    }));
+}
+
+// ============================================================
+//  Top items by Susut (for card drill-down)
+// ============================================================
+export function topItemsBySusut(recs: RecWithRels[], n = 10) {
+  return [...recs]
+    .filter((r) => r.qtySusut != null && Math.abs(r.qtySusut) > 0)
+    .sort((a, b) => Math.abs(b.qtySusut ?? 0) - Math.abs(a.qtySusut ?? 0))
+    .slice(0, n)
+    .map((r) => ({
+      itemName: r.item.name, outletCode: r.outlet.code,
+      qtySusut: Math.abs(r.qtySusut ?? 0),
+      nominalSusut: Math.abs(r.nominalSusut ?? 0),
+    }));
+}
+
+// ============================================================
+//  Top items by Trial (for card drill-down)
+// ============================================================
+export function topItemsByTrial(recs: RecWithRels[], n = 10) {
+  return [...recs]
+    .filter((r) => r.qtyTrial != null && Math.abs(r.qtyTrial) > 0)
+    .sort((a, b) => Math.abs(b.qtyTrial ?? 0) - Math.abs(a.qtyTrial ?? 0))
+    .slice(0, n)
+    .map((r) => ({
+      itemName: r.item.name, outletCode: r.outlet.code,
+      qtyTrial: Math.abs(r.qtyTrial ?? 0),
+      nominalTrial: Math.abs(r.nominalTrial ?? 0),
+    }));
+}
+
+// ============================================================
+//  Top items by Loss/Surplus (for card drill-down)
+// ============================================================
+export function topItemsByLossSurplus(recs: RecWithRels[], n = 10) {
+  return [...recs]
+    .filter((r) => r.qtyLossSurplus != null && Math.abs(r.qtyLossSurplus) > 0)
+    .sort((a, b) => Math.abs(b.qtyLossSurplus ?? 0) - Math.abs(a.qtyLossSurplus ?? 0))
+    .slice(0, n)
+    .map((r) => ({
+      itemName: r.item.name, outletCode: r.outlet.code,
+      qtyLossSurplus: Math.abs(r.qtyLossSurplus ?? 0),
+      nominalLossSurplus: Math.abs(r.nominalLossSurplus ?? 0),
+      direction: r.direction,
+    }));
 }
 
 // ============================================================

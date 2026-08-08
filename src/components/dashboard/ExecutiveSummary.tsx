@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, ShieldCheck, ShieldAlert, Info } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct, trendColor } from '@/lib/format';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -41,13 +42,18 @@ interface KPI {
   previous?: number | null;
   inverse?: boolean;
   hint?: string;
+  drillDown?: string; // card key for drill-down modal
 }
 
-function KPICard({ label, value, unit, growth, previous, inverse, hint }: KPI) {
+function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDown }: KPI) {
+  const { setCardDrillDown } = useDashboard();
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
   return (
-    <Card className="relative overflow-hidden">
+    <Card
+      className={`relative overflow-hidden transition-all ${drillDown ? 'cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md' : ''}`}
+      onClick={drillDown ? () => setCardDrillDown(drillDown) : undefined}
+    >
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">{label}</p>
@@ -67,12 +73,14 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint }: KPI) {
           </p>
         )}
         {hint && <p className="mt-1 text-[10px] text-muted-foreground/70 truncate">{hint}</p>}
+        {drillDown && <p className="mt-1 text-[10px] text-primary/60 truncate">📊 Click for details</p>}
       </CardContent>
     </Card>
   );
 }
 
 export function ExecutiveSummary({ data }: { data: AnalysisData }) {
+  const { setCardDrillDown } = useDashboard();
   const s = data.executiveSummary;
   return (
     <div className="space-y-3">
@@ -84,34 +92,46 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         </Badge>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} />
-        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse />
-        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} />
-        <KPICard label="QTY Deviasi" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse />
-        <KPICard label="Waste + Susut + Trial" value={(s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0)} unit="" growth={s.qtyWaste.growth} />
-        <KPICard label="Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} />
+        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" />
+        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" />
+        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" />
+        <KPICard label="QTY Deviasi" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse drillDown="qtyDeviasi" />
+        <KPICard label="Waste + Susut + Trial" value={(s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0)} unit="" growth={s.qtyWaste.growth} drillDown="waste" />
+        <KPICard label="Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card><CardContent className="p-3">
-          <p className="text-xs text-muted-foreground">Total LOSS</p>
-          <p className="text-base font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
-          <p className="text-xs text-muted-foreground">Loss/Sales: {fmtPct(s.lossToSales, false)}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-3">
-          <p className="text-xs text-muted-foreground">Total SURPLUS</p>
-          <p className="text-base font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
-          <p className="text-xs text-muted-foreground">Surplus/Sales: {fmtPct(s.surplusToSales, false)}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-3">
-          <p className="text-xs text-muted-foreground">Residual Loss (QTY)</p>
-          <p className="text-base font-semibold text-amber-600">{fmtNum(s.residualLossQty)}</p>
-          <p className="text-xs text-muted-foreground">{fmtPct(s.residualLossPct, false)} of deviation</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-3">
-          <p className="text-xs text-muted-foreground">Deviation/BOM</p>
-          <p className="text-base font-semibold">{fmtPct(s.deviationToBom, false)}</p>
-          <p className="text-xs text-muted-foreground">normalized ratio</p>
-        </CardContent></Card>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('loss')}>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground">Total LOSS</p>
+            <p className="text-base font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
+            <p className="text-xs text-muted-foreground">Loss/Sales: {fmtPct(s.lossToSales, false)}</p>
+            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+          </CardContent>
+        </Card>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('surplus')}>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground">Total SURPLUS</p>
+            <p className="text-base font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
+            <p className="text-xs text-muted-foreground">Surplus/Sales: {fmtPct(s.surplusToSales, false)}</p>
+            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+          </CardContent>
+        </Card>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('lossSurplus')}>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground">Residual Loss (QTY)</p>
+            <p className="text-base font-semibold text-amber-600">{fmtNum(s.residualLossQty)}</p>
+            <p className="text-xs text-muted-foreground">{fmtPct(s.residualLossPct, false)} of deviation</p>
+            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+          </CardContent>
+        </Card>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('qtyDeviasi')}>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground">Deviation/BOM</p>
+            <p className="text-base font-semibold">{fmtPct(s.deviationToBom, false)}</p>
+            <p className="text-xs text-muted-foreground">normalized ratio</p>
+            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

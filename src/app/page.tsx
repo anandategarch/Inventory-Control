@@ -10,6 +10,7 @@ import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist 
 import { NarrativePanel, RecommendationPanel } from '@/components/dashboard/Narrative';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
+import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -211,6 +212,7 @@ export default function DashboardPage() {
       {/* Drill-down drawer */}
       <DrillDownDrawer />
       <SourceDataModal />
+      <CardDrillDown data={analysis.data} />
     </div>
   );
 }

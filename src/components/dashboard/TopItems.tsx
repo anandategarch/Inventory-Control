@@ -4,12 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, priorityColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useState } from 'react';
 
 export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
@@ -183,17 +186,72 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.investigationWorklist || [];
 
+  // Filter state
+  const [filterText, setFilterText] = useState('');
+  const [filterPriority, setFilterPriority] = useState<string>('all');
+
+  // Apply filters
+  const filteredItems = items.filter((w) => {
+    if (filterPriority !== 'all' && w.priority !== filterPriority) return false;
+    if (filterText.trim()) {
+      const q = filterText.toLowerCase();
+      return (
+        w.outletCode?.toLowerCase().includes(q) ||
+        w.outletName?.toLowerCase().includes(q) ||
+        w.itemName?.toLowerCase().includes(q) ||
+        w.area?.toLowerCase().includes(q) ||
+        w.issue?.toLowerCase().includes(q) ||
+        w.recommendedAction?.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <CardTitle className="text-base">Investigation Worklist</CardTitle>
-            <p className="text-xs text-muted-foreground">{items.length} items flagged for investigation</p>
+            <p className="text-xs text-muted-foreground">
+              {filteredItems.length} of {items.length} items{filterText || filterPriority !== 'all' ? ' (filtered)' : ''}
+            </p>
           </div>
-          <Badge variant="outline" className="text-xs">
-            P1: {items.filter((i) => i.priority === 'P1').length} · P2: {items.filter((i) => i.priority === 'P2').length}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs">
+              P1: {items.filter((i) => i.priority === 'P1').length} · P2: {items.filter((i) => i.priority === 'P2').length}
+            </Badge>
+          </div>
+        </div>
+        {/* Filter bar */}
+        <div className="flex items-center gap-2 mt-2">
+          <Input
+            placeholder="🔍 Cari outlet, item, area, issue..."
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            className="h-8 text-xs flex-1"
+          />
+          <Select value={filterPriority} onValueChange={setFilterPriority}>
+            <SelectTrigger className="h-8 text-xs w-[100px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Priority</SelectItem>
+              <SelectItem value="P1" className="text-xs">P1 only</SelectItem>
+              <SelectItem value="P2" className="text-xs">P2 only</SelectItem>
+              <SelectItem value="P3" className="text-xs">P3 only</SelectItem>
+            </SelectContent>
+          </Select>
+          {(filterText || filterPriority !== 'all') && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => { setFilterText(''); setFilterPriority('all'); }}
+            >
+              Clear
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -212,9 +270,11 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-6">No anomalies detected</TableCell></TableRow>
-              ) : items.map((w, i) => (
+              {filteredItems.length === 0 ? (
+                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-6">
+                  {items.length === 0 ? 'No anomalies detected' : 'No items match your filter'}
+                </TableCell></TableRow>
+              ) : filteredItems.map((w, i) => (
                 <TableRow
                   key={`${w.outletCode}-${w.itemName}-${i}`}
                   className="cursor-pointer hover:bg-muted/50"

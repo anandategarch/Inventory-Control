@@ -16,6 +16,8 @@ interface DashboardStore extends FilterState {
   setDrilldown: (d: { outletCode: string | null; itemName: string | null }) => void;
   sourceModalOpen: boolean;
   setSourceModal: (b: boolean) => void;
+  cardDrillDown: string | null;
+  setCardDrillDown: (card: string | null) => void;
 }
 
 export const useDashboard = create<DashboardStore>((set) => ({
@@ -38,4 +40,6 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setDrilldown: (d) => set({ drilldown: d }),
   sourceModalOpen: false,
   setSourceModal: (b) => set({ sourceModalOpen: b }),
+  cardDrillDown: null,
+  setCardDrillDown: (card) => set({ cardDrillDown: card }),
 }));

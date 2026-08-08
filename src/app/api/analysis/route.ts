@@ -9,6 +9,11 @@ import {
   topItemsByNominal,
   topItemsByDevBom,
   topOutlets,
+  topOutletsBySales,
+  topItemsByWaste,
+  topItemsBySusut,
+  topItemsByTrial,
+  topItemsByLossSurplus,
   deviationBreakdown,
   lossVsSurplus,
   buildWorklistFromFlags,
@@ -278,6 +283,13 @@ export async function GET(req: NextRequest) {
     const topDevBom = topItemsByDevBom(currentRecs, 10);
     const topOut = topOutlets(currentRecs, 10);
 
+    // ===== Card drill-down data: top 10 by each metric =====
+    const topOutletsSales = topOutletsBySales(currentRecs, 10);
+    const topWaste = topItemsByWaste(currentRecs, 10);
+    const topSusut = topItemsBySusut(currentRecs, 10);
+    const topTrial = topItemsByTrial(currentRecs, 10);
+    const topLossSurplus = topItemsByLossSurplus(currentRecs, 10);
+
     // Deviation breakdown
     const breakdown = deviationBreakdown(currentRecs);
 
@@ -391,6 +403,11 @@ export async function GET(req: NextRequest) {
       topItemsByNominal: topNominal,
       topItemsByDevBom: topDevBom,
       topOutlets: topOut,
+      topOutletsBySales: topOutletsSales,
+      topItemsByWaste: topWaste,
+      topItemsBySusut: topSusut,
+      topItemsByTrial: topTrial,
+      topItemsByLossSurplus: topLossSurplus,
       deviationBreakdown: breakdown,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,

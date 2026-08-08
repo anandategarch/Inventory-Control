@@ -21,6 +21,11 @@ export interface AnalysisData {
   topItemsByNominal: any[];
   topItemsByDevBom: any[];
   topOutlets: any[];
+  topOutletsBySales: any[];
+  topItemsByWaste: any[];
+  topItemsBySusut: any[];
+  topItemsByTrial: any[];
+  topItemsByLossSurplus: any[];
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   investigationWorklist: any[];
