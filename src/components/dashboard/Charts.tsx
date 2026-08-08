@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ComposedChart, Line, Legend, Cell,
@@ -27,7 +28,15 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Growth Comparison</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Growth Comparison
+          <FormulaInfo
+            formula="Growth = (Current - Previous) / |Previous|"
+            description="Persentase perubahan vs periode pembanding. Bar merah = mismatch (Deviasi/Sales atau Deviasi/BOM tumbuh > 2× lipat dari sales/BOM)."
+            example="Sales: (5.98B - 3.88B) / 3.88B = +54%"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">
           Current vs {data.period.comparisonWeek
             ? `${data.period.comparisonWeek}${data.period.comparisonMonth && data.period.comparisonMonth !== data.period.monthLabel ? ` ${data.period.comparisonMonth}` : ''}`
@@ -97,7 +106,15 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Deviation Breakdown</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Deviation Breakdown
+          <FormulaInfo
+            formula="QTY Deviasi = |Waste| + |Susut| + |Trial| + |Residual|"
+            description="Dekomposisi total deviation. Residual = |QTY Deviasi| - |Waste + Susut + Trial|. Residual tinggi (>50%) = sebagian besar deviation tidak terjelaskan oleh Waste/Susut/Trial."
+            example="Deviasi 60K = Waste 8K + Susut 6K + Trial 4K + Residual 42K (70%)"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">QTY Deviasi composition</p>
       </CardHeader>
       <CardContent>
@@ -141,7 +158,15 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Loss vs Surplus</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Loss vs Surplus
+          <FormulaInfo
+            formula="LOSS: QTY Deviasi > 0 (actual > SOC)  |  SURPLUS: QTY Deviasi < 0 (actual < SOC)"
+            description="Direction split berdasarkan tanda QTY Deviasi. Magnitude = |QTY Deviasi|. LOSS = pemakaian aktual melebihi SOC (Stock Opname Cost). SURPLUS = pemakaian aktual di bawah SOC."
+            example="QTY Deviasi = +50 → LOSS 50  |  QTY Deviasi = -30 → SURPLUS 30"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">Direction split (magnitude)</p>
       </CardHeader>
       <CardContent>
@@ -187,7 +212,15 @@ export function TrendChart({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Weekly Trend</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Weekly Trend
+          <FormulaInfo
+            formula="Dev/BOM % = |QTY Deviasi| / |QTY BOM| × 100%"
+            description="Rasio deviation terhadap BOM per periode (semua outlet). Garis merah = Dev/BOM % (sumbu kiri). Garis kuning = Nominal Deviasi dalam Rupiah (sumbu kanan). Trend naik = deviation makin besar proporsinya terhadap BOM."
+            example="Deviasi 60K / BOM 425K = 14.1%"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">Deviation/BOM % &amp; Nominal Deviasi over weeks</p>
       </CardHeader>
       <CardContent>

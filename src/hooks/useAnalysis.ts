@@ -7,7 +7,15 @@ export interface AnalysisData {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
   filters: { area: string | null; outletCode: string | null; itemName: string | null };
   executiveSummary: any;
-  healthStatus: { normal: number; warning: number; abnormal: number };
+  healthStatus: {
+    normal: number;
+    warning: number;
+    abnormal: number;
+    breakdown?: {
+      byCategory: Record<string, number>;
+      byRule: Record<string, number>;
+    };
+  };
   dqStatus: { ok: number; warnings: number; errors: number; issues: any[] };
   growthComparison: any;
   topItemsByNominal: any[];

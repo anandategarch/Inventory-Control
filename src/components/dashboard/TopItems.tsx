@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, priorityColor } from '@/lib/format';
+import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink } from 'lucide-react';
@@ -16,7 +17,15 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Top 10 by Nominal Deviasi</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Top 10 by Nominal Deviasi
+          <FormulaInfo
+            formula="Rank by |NOMINAL DEVIASI| (descending)"
+            description="Ranking berdasarkan magnitude absolut Nominal Deviasi (financial impact). Loss (merah) & Surplus (hijau) ditampilkan direction. Klik baris untuk drill-down."
+            example="Rp 182M = |NOMINAL DEVIASI| tertinggi"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">Financial impact ranking (absolute)</p>
       </CardHeader>
       <CardContent className="p-0">
@@ -61,7 +70,15 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Top 10 by Deviation/BOM</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Top 10 by Deviation/BOM
+          <FormulaInfo
+            formula="Dev/BOM % = |QTY Deviasi| / |QTY BOM| × 100%"
+            description="Ranking operational abnormality berdasarkan rasio deviation terhadap BOM (normalized). Merah = melebihi tolerance. Berbeda dari Top Nominal karena ini normalized terhadap volume aktivitas."
+            example="Deviasi 50 / BOM 1000 = 5%"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">Operational abnormality ranking</p>
       </CardHeader>
       <CardContent className="p-0">
@@ -110,7 +127,15 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Top Outlets</CardTitle>
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Top Outlets
+          <FormulaInfo
+            formula="Rank by Σ|NOMINAL DEVIASI| per outlet (descending)"
+            description="Outlet dengan total magnitude nominal deviation tertinggi. Dev/BOM = rata-rata |QTY Deviasi|/|QTY BOM| item di outlet tersebut. Area Avg = rata-rata Dev/BOM semua outlet di area yang sama. Merah = Dev/BOM outlet > 1.5× area avg."
+            example="Outlet A: Σ|Nom Dev| = Rp 182M, Dev/BOM 18% vs Area Avg 12%"
+            side="bottom"
+          />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">By absolute nominal deviation</p>
       </CardHeader>
       <CardContent className="p-0">

@@ -210,6 +210,8 @@ export async function GET(req: NextRequest) {
     // ===== OPTIMIZATION: Evaluate rules ONCE per record, reuse for health/worklist/priorities =====
     // Also skip records with zero/null deviation (no point evaluating rules on zero deviation)
     let normal = 0, warning = 0, abnormal = 0;
+    const ruleCategoryCounts = new Map<string, number>();
+    const ruleCodeCounts = new Map<string, number>();
     const topAnomaliesForNarrative: Array<{
       itemName: string; outletCode: string; area: string;
       issue: string; absNominal: number; devBom: number | null; direction: string;
@@ -247,6 +249,10 @@ export async function GET(req: NextRequest) {
         else if (top.severity === 'WARNING') warning++;
         else normal++;
 
+        // Track rule category breakdown for Health & Alert panel
+        ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
+        ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
+
         if (topAnomaliesForNarrative.length < 5 && top.severity !== 'NORMAL') {
           topAnomaliesForNarrative.push({
             itemName: curr.item.name,
@@ -260,6 +266,12 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+
+    // Build health breakdown object
+    const ruleBreakdown = {
+      byCategory: Object.fromEntries(ruleCategoryCounts) as Record<string, number>,
+      byRule: Object.fromEntries(ruleCodeCounts) as Record<string, number>,
+    };
 
     // Top items
     const topNominal = topItemsByNominal(currentRecs, 10);
@@ -368,7 +380,7 @@ export async function GET(req: NextRequest) {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
       filters: { area, outletCode, itemName },
       executiveSummary: execSummary,
-      healthStatus: { normal, warning, abnormal },
+      healthStatus: { normal, warning, abnormal, breakdown: ruleBreakdown },
       dqStatus: {
         ok: dqSummary.filter((d) => d.severity === 'INFO').length,
         warnings: dqSummary.filter((d) => d.severity === 'WARNING').length,

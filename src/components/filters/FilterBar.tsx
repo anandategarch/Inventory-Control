@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useQueryClient } from '@tanstack/react-query';
 import { SettingsDialog } from '@/components/filters/SettingsDialog';
@@ -170,26 +171,32 @@ export function FilterBar() {
               </Select>
             </div>
 
-            <div className="flex flex-col gap-1 min-w-[140px]">
+            <div className="flex flex-col gap-1 min-w-[160px]">
               <label className="text-xs text-muted-foreground">Area</label>
-              <Select value={area || 'all'} onValueChange={(v) => setArea(v === 'all' ? null : v)}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" className="text-xs">All Areas</SelectItem>
-                  {areas.map((a) => <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableComboBox
+                options={areas.map((a) => ({ value: a, label: a }))}
+                value={area}
+                onValueChange={setArea}
+                placeholder="All Areas"
+                searchPlaceholder="Cari area..."
+                emptyText="Area tidak ditemukan."
+                allOptionLabel={`All Areas (${areas.length})`}
+                buttonClassName="w-full"
+              />
             </div>
 
-            <div className="flex flex-col gap-1 min-w-[140px]">
+            <div className="flex flex-col gap-1 min-w-[160px]">
               <label className="text-xs text-muted-foreground">Outlet</label>
-              <Select value={outletCode || 'all'} onValueChange={(v) => setOutlet(v === 'all' ? null : v)} disabled={!area && outlets.length > 50}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" className="text-xs">All Outlets</SelectItem>
-                  {outlets.map((o) => <SelectItem key={o.code} value={o.code} className="text-xs">{o.code} · {o.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableComboBox
+                options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
+                value={outletCode}
+                onValueChange={setOutlet}
+                placeholder="All Outlets"
+                searchPlaceholder="Cari outlet (kode/nama)..."
+                emptyText="Outlet tidak ditemukan."
+                allOptionLabel={`All Outlets (${outlets.length})`}
+                buttonClassName="w-full"
+              />
             </div>
 
             <div className="flex-1" />
