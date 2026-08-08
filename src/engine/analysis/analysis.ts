@@ -26,16 +26,17 @@ export function buildExecutiveSummary(
   weekLabel: string,
   prevWeekLabel: string | null
 ): ExecutiveSummary {
-  // Sales is outlet-level denormalized — dedup by outlet
+  // Sales is outlet-level denormalized — take MAX per outlet (not sum, not first)
   const dedupSales = (recs: RecWithRels[]): number => {
-    const seen = new Set<number>();
-    let total = 0;
+    const byOutlet = new Map<number, number>();
     for (const r of recs) {
-      if (r.nominalSales != null && r.nominalSales > 0 && !seen.has(r.outletId)) {
-        seen.add(r.outletId);
-        total += r.nominalSales;
+      if (r.nominalSales != null && r.nominalSales > 0) {
+        const existing = byOutlet.get(r.outletId) ?? 0;
+        if (r.nominalSales > existing) byOutlet.set(r.outletId, r.nominalSales);
       }
     }
+    let total = 0;
+    for (const v of byOutlet.values()) total += v;
     return total;
   };
 
@@ -184,14 +185,14 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
     const existing = byOutlet.get(k);
     if (existing) {
       existing.absNominal += r.absNominalDeviasi ?? 0;
-      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+      // Sales: take MAX per outlet (not first non-null, not sum)
+      if (r.nominalSales != null && r.nominalSales > existing.sales) {
         existing.sales = r.nominalSales;
       }
       if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
         existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         existing.devBomCount++;
       }
-      // BUG FIX #003: Track loss vs surplus per outlet
       if (r.nominalDeviasi != null && r.nominalDeviasi > 0) existing.lossAmount += r.nominalDeviasi;
       else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) existing.surplusAmount += Math.abs(r.nominalDeviasi);
     } else {
@@ -247,8 +248,8 @@ export function topOutletsBySales(recs: RecWithRels[], n = 10) {
     const k = r.outletId;
     const existing = byOutlet.get(k);
     if (existing) {
-      // Take first non-null sales value (deduplication)
-      if (existing.sales === 0 && r.nominalSales != null && r.nominalSales > 0) {
+      // Sales: take MAX per outlet
+      if (r.nominalSales != null && r.nominalSales > existing.sales) {
         existing.sales = r.nominalSales;
       }
       existing.absNominal += r.absNominalDeviasi ?? 0;
@@ -516,13 +517,13 @@ export function buildTrend(
   recsByWeek: Array<{ weekLabel: string; recs: RecWithRels[] }>
 ) {
   return recsByWeek.map(({ weekLabel, recs }) => {
-    const dedup = new Set<number>();
-    let sales = 0;
+    // Sales: take MAX per outlet (not first non-null, not sum)
+    const salesByOutlet = new Map<number, number>();
     let devBomSum = 0, devBomCount = 0, nominal = 0;
     for (const r of recs) {
-      if (r.nominalSales != null && r.nominalSales > 0 && !dedup.has(r.outletId)) {
-        sales += r.nominalSales;
-        dedup.add(r.outletId);
+      if (r.nominalSales != null && r.nominalSales > 0) {
+        const existing = salesByOutlet.get(r.outletId) ?? 0;
+        if (r.nominalSales > existing) salesByOutlet.set(r.outletId, r.nominalSales);
       }
       if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
         devBomSum += Math.abs(r.pctQtyDeviasiToBom);
@@ -530,6 +531,8 @@ export function buildTrend(
       }
       nominal += r.absNominalDeviasi ?? 0;
     }
+    let sales = 0;
+    for (const v of salesByOutlet.values()) sales += v;
     return {
       weekLabel,
       devBom: devBomCount > 0 ? devBomSum / devBomCount : 0,

@@ -377,9 +377,10 @@ export async function GET(req: NextRequest) {
         };
         trendByPeriod.set(k, period);
       }
-      // Dedup sales: take 1 unique value per outlet
-      if (r.nominalSales != null && r.nominalSales > 0 && !period.salesByOutlet.has(r.outletId)) {
-        period.salesByOutlet.set(r.outletId, r.nominalSales);
+      // Sales: take MAX per outlet (not first non-null, not sum)
+      if (r.nominalSales != null && r.nominalSales > 0) {
+        const existing = period.salesByOutlet.get(r.outletId) ?? 0;
+        if (r.nominalSales > existing) period.salesByOutlet.set(r.outletId, r.nominalSales);
       }
       period.nominal += r.absNominalDeviasi ?? 0;
       // BUG FIX #002: Use ABSOLUTE value of pctQtyDeviasiToBom for averaging

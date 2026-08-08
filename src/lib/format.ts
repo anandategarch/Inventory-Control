@@ -65,6 +65,15 @@ export function directionColor(d: string | null | undefined): string {
   }
 }
 
+// ============================================================
+//  numberColor — global: negative numbers = red
+//  Apply to ANY numeric display (IDR, QTY, percent, etc.)
+// ============================================================
+export function numberColor(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) return '';
+  return v < 0 ? 'text-red-600' : '';
+}
+
 export function priorityColor(p: string): string {
   switch (p) {
     case 'P1': return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-950/60 dark:border-red-800 dark:text-red-400';

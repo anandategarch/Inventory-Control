@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { ExternalLink, X } from 'lucide-react';
 
 export function DrillDownDrawer() {
@@ -82,9 +82,9 @@ export function DrillDownDrawer() {
                           <div className="text-[10px] text-muted-foreground">{r.outlet.code}</div>
                         </TableCell>
                         <TableCell className="text-xs font-medium">{r.item.name}</TableCell>
-                        <TableCell className="text-xs text-right">{fmtNum(r.qty.bom)}</TableCell>
-                        <TableCell className="text-xs text-right">{fmtNum(r.qty.deviasi)}</TableCell>
-                        <TableCell className="text-xs text-right font-semibold">{fmtIDR(r.nominal.deviasi)}</TableCell>
+                        <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>
+                        <TableCell className={`text-xs text-right ${numberColor(r.qty.deviasi)}`}>{fmtNum(r.qty.deviasi)}</TableCell>
+                        <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal.deviasi)}`}>{fmtIDR(r.nominal.deviasi)}</TableCell>
                         <TableCell className="text-xs text-right">{fmtPctAbs(r.derived.pctQtyDeviasiToBom)}</TableCell>
                         <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived.direction)}`}>{r.derived.direction?.[0]}</TableCell>
                       </TableRow>

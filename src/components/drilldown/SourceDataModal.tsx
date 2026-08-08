@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { Database, Download, X } from 'lucide-react';
 import { useMemo } from 'react';
 
@@ -171,14 +171,14 @@ export function SourceDataModal() {
                       <div>{r.period.weekLabel}</div>
                       <div className="text-[10px] text-muted-foreground">{r.period.monthLabel}</div>
                     </TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.bom)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.com)}</TableCell>
-                    <TableCell className="text-xs text-right font-semibold">{fmtNum(r.qty.deviasi)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.waste)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.susut)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.trial)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtNum(r.qty.lossSurplus)}</TableCell>
-                    <TableCell className="text-xs text-right font-semibold">{fmtIDR(r.nominal.deviasi)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.com)}`}>{fmtNum(r.qty.com)}</TableCell>
+                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty.deviasi)}`}>{fmtNum(r.qty.deviasi)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.waste)}`}>{fmtNum(r.qty.waste)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.susut)}`}>{fmtNum(r.qty.susut)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.trial)}`}>{fmtNum(r.qty.trial)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty.lossSurplus)}`}>{fmtNum(r.qty.lossSurplus)}</TableCell>
+                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal.deviasi)}`}>{fmtIDR(r.nominal.deviasi)}</TableCell>
                     <TableCell className="text-xs text-right">{fmtIDR(r.nominal.sales)}</TableCell>
                     <TableCell className="text-xs text-right">{fmtPctAbs(r.derived.pctQtyDeviasiToBom)}</TableCell>
                     <TableCell className="text-xs text-right">
