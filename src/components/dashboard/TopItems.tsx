@@ -156,7 +156,6 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
 
 export function InvestigationWorklist({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setSourceModal = useDashboard((s) => s.setSourceModal);
   const items = data.investigationWorklist || [];
 
   return (
@@ -213,7 +212,8 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
                       size="sm"
                       variant="ghost"
                       className="h-7 w-7 p-0"
-                      onClick={(e) => { e.stopPropagation(); setDrilldown({ outletCode: w.outletCode, itemName: w.itemName }); setSourceModal(true); }}
+                      title="Open drill-down"
+                      onClick={(e) => { e.stopPropagation(); setDrilldown({ outletCode: w.outletCode, itemName: w.itemName }); }}
                     >
                       <ExternalLink className="h-3 w-3" />
                     </Button>

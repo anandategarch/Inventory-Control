@@ -1,6 +1,8 @@
 // ============================================================
 //  /api/drilldown — raw records for traceability
-//  Query: ?outletCode=&itemName=&weekLabel=&monthLabel=
+//  Query: ?outletCode=&itemName=&weekLabel=&monthLabel=&limit=
+//  Also supports multi-period via comma-separated weekLabel/monthLabel
+//  (for cross-month compare drilldown)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -19,8 +21,17 @@ export async function GET(req: NextRequest) {
     const where: any = {};
     if (outletCode) where.outlet = { code: outletCode };
     if (itemName) where.item = { name: itemName };
-    if (weekLabel) where.weekLabel = weekLabel;
-    if (monthLabel) where.monthLabel = monthLabel;
+    // Support comma-separated values for multi-period drilldown
+    if (weekLabel) {
+      const weeks = weekLabel.split(',').map((w) => w.trim()).filter(Boolean);
+      if (weeks.length === 1) where.weekLabel = weeks[0];
+      else if (weeks.length > 1) where.weekLabel = { in: weeks };
+    }
+    if (monthLabel) {
+      const months = monthLabel.split(',').map((m) => m.trim()).filter(Boolean);
+      if (months.length === 1) where.monthLabel = months[0];
+      else if (months.length > 1) where.monthLabel = { in: months };
+    }
 
     const records = await db.inventoryRecord.findMany({
       where,
@@ -37,15 +48,24 @@ export async function GET(req: NextRequest) {
         outlet: { code: r.outlet.code, name: r.outlet.name, area: r.area },
         item: { name: r.item.name, satuan: r.satuan },
         period: { monthLabel: r.monthLabel, weekLabel: r.weekLabel },
-        source: { fileName: r.sourceFile.fileName, rowNumber: undefined },
+        source: { fileName: r.sourceFile.fileName },
         qty: {
-          bom: r.qtyBom, com: r.qtyCom, deviasi: r.qtyDeviasi,
-          waste: r.qtyWaste, susut: r.qtySusut, trial: r.qtyTrial,
-          lossSurplus: r.qtyLossSurplus, wasteSusut: undefined,
+          bom: r.qtyBom,
+          com: r.qtyCom,
+          deviasi: r.qtyDeviasi,
+          waste: r.qtyWaste,
+          susut: r.qtySusut,
+          trial: r.qtyTrial,
+          lossSurplus: r.qtyLossSurplus,
+          wasteSusut: r.qtyWasteSusut,
         },
         nominal: {
-          deviasi: r.nominalDeviasi, waste: r.nominalWaste, susut: r.nominalSusut,
-          trial: r.nominalTrial, lossSurplus: r.nominalLossSurplus, sales: r.nominalSales,
+          deviasi: r.nominalDeviasi,
+          waste: r.nominalWaste,
+          susut: r.nominalSusut,
+          trial: r.nominalTrial,
+          lossSurplus: r.nominalLossSurplus,
+          sales: r.nominalSales,
         },
         derived: {
           direction: r.direction,
@@ -54,10 +74,13 @@ export async function GET(req: NextRequest) {
           absQtyDeviasi: r.absQtyDeviasi,
           absNominalDeviasi: r.absNominalDeviasi,
           pctQtyDeviasiToBom: r.pctQtyDeviasiToBom,
+          pctWasteSusut: r.pctWasteSusut,
           tolerancePct: r.tolerancePct,
+          toleranceRaw: r.toleranceRaw,
           avgPrice: r.avgPrice,
         },
-        bulan: r.bulan, bulan2: r.bulan2,
+        bulan: r.bulan,
+        bulan2: r.bulan2,
       })),
     });
   } catch (e: any) {
