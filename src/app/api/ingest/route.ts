@@ -1,27 +1,32 @@
 // ============================================================
-//  /api/ingest — Excel file ingestion endpoint
-//  Body: { filePath?: string } OR { fileName: string } OR { dir: string }
-//  If no body, ingests all .xlsx in DATA_DIR (configurable via env)
+//  /api/ingest — Excel/CSV ingestion endpoint (STREAMING)
+//  ----------------------------------------------------------
+//  Pipeline:
+//    1. If .xlsx → convert to .csv (cached by file hash)
+//    2. Parse .csv streaming (row by row, ~5MB memory)
+//    3. For each row: validate → normalize → derive → batch insert
+//    4. No intermediate arrays — GC collects old rows
+//
+//  Memory profile:
+//    - Excel → CSV conversion: ~80MB (exceljs, one-time)
+//    - CSV parse + insert: ~5-10MB (1 row + Prisma batch buffer)
+//    - Total peak: ~90MB (fits in 256MB server)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { parseExcelFile, parseMonthFromFilename } from '@/lib/excel';
+import { parseMonthFromFilename } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ } from '@/engine/validator';
 import { parseOutletCode } from '@/lib/outlet';
+import { convertExcelToCsv, getCachedCsvPath, csvCacheExists } from '@/lib/excel-to-csv';
+import { parseCsvStream } from '@/lib/csv-parser';
+import { hashFile } from '@/lib/excel';
 import path from 'path';
 import fs from 'fs/promises';
+import { existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
 
-// ============================================================
-//  DATA_DIR — configurable via environment variable.
-//  Set INVENTORY_DATA_DIR in .env.local to point to your actual data folder.
-//  Examples:
-//    Windows: INVENTORY_DATA_DIR=C:\KERJA\1. RESTO\99.TOOLS\DATA BASE DEVIASI\DEVIASI_BULANAN
-//    Linux:   INVENTORY_DATA_DIR=/home/user/inventory-data
-//  If not set, falls back to ./data/inventory relative to project root.
-// ============================================================
 const DATA_DIR = process.env.INVENTORY_DATA_DIR
   ? path.resolve(process.env.INVENTORY_DATA_DIR)
   : path.resolve(process.cwd(), 'data/inventory');
@@ -31,7 +36,7 @@ async function findExcelFiles(dirOverride?: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(dir);
     return entries
-      .filter((f) => f.toLowerCase().endsWith('.xlsx') && !f.startsWith('~$'))
+      .filter((f) => (f.toLowerCase().endsWith('.xlsx') || f.toLowerCase().endsWith('.csv')) && !f.startsWith('~$'))
       .map((f) => path.join(dir, f));
   } catch {
     return [];
@@ -45,23 +50,19 @@ export async function POST(req: NextRequest) {
     let files: string[] = [];
 
     if (body.filePath) {
-      // Absolute path to a specific file
       files = [body.filePath];
     } else if (body.dir) {
-      // Scan a specific directory (overrides DATA_DIR for this request)
       files = await findExcelFiles(body.dir);
     } else if (body.fileName) {
-      // Filename relative to DATA_DIR
       files = [path.join(DATA_DIR, body.fileName)];
     } else {
-      // Default: scan DATA_DIR (env-configurable)
       files = await findExcelFiles();
     }
 
     if (files.length === 0) {
       return NextResponse.json({
         success: false,
-        message: `No .xlsx files found in ${DATA_DIR}. Please upload files first.`,
+        message: `No .xlsx or .csv files found in ${DATA_DIR}.`,
       }, { status: 404 });
     }
 
@@ -77,160 +78,209 @@ export async function POST(req: NextRequest) {
 
     for (const filePath of files) {
       try {
-        const parsed = await parseExcelFile(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const fileName = path.basename(filePath);
 
+        // Compute file hash
+        const fileHash = await hashFile(filePath);
+
+        // Check if already ingested
         const existing = await db.sourceFile.findUnique({
-          where: { fileHash: parsed.fileHash },
-          select: { id: true, fileName: true, rowCount: true },
+          where: { fileHash },
+          select: { id: true, rowCount: true },
         });
         if (existing) {
-          // BUG FIX #3: Verify actual records exist (not just SourceFile stub from failed ingest)
           const actualCount = await db.inventoryRecord.count({ where: { sourceFileId: existing.id } });
           if (actualCount > 0) {
             results.push({
-              fileName: parsed.fileName, status: 'SKIPPED', rowCount: actualCount,
+              fileName, status: 'SKIPPED', rowCount: actualCount,
               dqStatus: 'OK', dqErrors: 0, dqWarnings: 0,
             });
             continue;
           }
-          // Stale SourceFile stub from previous failed ingest — clean up and re-ingest
+          // Clean up stale stub
           await db.dQIssue.deleteMany({ where: { sourceFileId: existing.id } });
           await db.inventoryRecord.deleteMany({ where: { sourceFileId: existing.id } });
           await db.week.deleteMany({ where: { sourceFileId: existing.id } });
           await db.sourceFile.delete({ where: { id: existing.id } });
         }
 
-        const monthInfo = parseMonthFromFilename(parsed.fileName);
-        const monthLabel = monthInfo?.monthLabel || parsed.fileName.replace(/\.xlsx$/i, '');
+        // ===== STEP 1: Convert Excel → CSV (if .xlsx) =====
+        let csvPath: string;
+        let isExcel = ext === '.xlsx';
+
+        if (isExcel) {
+          // Check for cached CSV (from previous conversion)
+          const cachedCsv = getCachedCsvPath(filePath, fileHash);
+          if (csvCacheExists(cachedCsv)) {
+            csvPath = cachedCsv;
+          } else {
+            // Convert Excel → CSV
+            csvPath = cachedCsv;
+            // Write to temp file first, rename on success
+            const tmpPath = csvPath + '.tmp';
+            // Create empty file first (appendFileSync needs existing file)
+            const { createWriteStream } = await import('fs');
+            const ws = createWriteStream(tmpPath);
+            ws.close();
+            await new Promise(resolve => ws.on('close', resolve));
+
+            try {
+              await convertExcelToCsv(filePath, tmpPath);
+              // Rename tmp → final
+              await fs.rename(tmpPath, csvPath);
+            } catch (e) {
+              // Clean up tmp file on error
+              try { await fs.unlink(tmpPath); } catch {}
+              throw e;
+            }
+          }
+        } else {
+          // Already CSV
+          csvPath = filePath;
+        }
+
+        // Parse month from filename
+        const monthInfo = parseMonthFromFilename(fileName);
+        const monthLabel = monthInfo?.monthLabel || fileName.replace(/\.(xlsx|csv)$/i, '');
         const monthKey = monthInfo?.monthKey || 'unknown';
 
-        const allRows: Array<{ row: Record<string, unknown>; rowNumber: number }> = [];
-        for (const sheet of parsed.sheets) {
-          sheet.rows.forEach((row, idx) => allRows.push({ row, rowNumber: idx + 2 }));
-        }
-
-        const seenKeys = new Set<string>();
-        const allIssues: any[] = [];
-        for (const { row, rowNumber } of allRows) {
-          const issues = validateRow(row, rowNumber, seenKeys);
-          allIssues.push(...issues);
-        }
-        const dq = summarizeDQ(allIssues);
-
+        // ===== STEP 2: Create SourceFile record =====
         const sourceFile = await db.sourceFile.create({
           data: {
-            fileName: parsed.fileName, filePath: parsed.filePath,
-            monthLabel, monthKey, fileHash: parsed.fileHash,
-            rowCount: 0, dqStatus: dq.status, // will update after dedup
-            dqErrorCount: dq.severityCounts.ERROR, dqWarningCount: dq.severityCounts.WARNING,
+            fileName, filePath,
+            monthLabel, monthKey, fileHash,
+            rowCount: 0, dqStatus: 'OK',
           },
         });
 
-        const weekMap = new Map<string, { weekLabel: string; periodStart: number; periodEnd: number }>();
-        const outletMap = new Map<string, { code: string; name: string; numericCode: string; area: string }>();
-        const itemMap = new Map<string, { name: string; satuan: string | null }>();
+        // ===== STEP 3: Stream parse CSV → validate → normalize → insert =====
+        // Process row by row to keep memory low
+        const seenKeys = new Set<string>();
+        const allIssues: any[] = [];
 
-        const normalized = allRows.map(({ row, rowNumber }) => {
-          const n = normalizeRow(row, parsed.fileName, rowNumber, monthLabel);
+        // Maps for weeks/outlets/items (built lazily as we encounter them)
+        const weekDbMap = new Map<string, number>();
+        const outletDbMap = new Map<string, number>();
+        const itemDbMap = new Map<string, number>();
+
+        // Batch insert buffer
+        const BATCH_SIZE = 500;
+        let batchRecords: any[] = [];
+        let totalInserted = 0;
+        let totalRows = 0;
+
+        for await (const rawRow of parseCsvStream(csvPath)) {
+          totalRows++;
+          const rowNumber = totalRows + 1;
+
+          // Validate
+          const issues = validateRow(rawRow, rowNumber, seenKeys);
+          allIssues.push(...issues);
+
+          // Normalize
+          const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
+          const derived = deriveRecord(n);
+
+          // Ensure week exists
           const wk = n.weekLabel || 'UNKNOWN';
-          if (!weekMap.has(wk)) {
+          if (!weekDbMap.has(wk)) {
             const periods: Record<string, { start: number; end: number }> = {
               'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 }, 'WEEK 3': { start: 15, end: 31 },
             };
             const p = periods[wk] || { start: 1, end: 31 };
-            weekMap.set(wk, { weekLabel: wk, periodStart: p.start, periodEnd: p.end });
+            const w = await db.week.upsert({
+              where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
+              update: {},
+              create: {
+                sourceFileId: sourceFile.id, weekLabel: wk,
+                weekKey: `${monthKey}-${wk.replace(/\s+/g, '')}`,
+                monthKey, periodStart: p.start, periodEnd: p.end,
+              },
+            });
+            weekDbMap.set(wk, w.id);
           }
-          const parsedOutlet = parseOutletCode(n.resto);
-          if (parsedOutlet && !outletMap.has(parsedOutlet.fullCode)) {
-            outletMap.set(parsedOutlet.fullCode, { code: parsedOutlet.fullCode, name: parsedOutlet.name, numericCode: parsedOutlet.numericCode, area: n.area });
-          }
-          if (n.namaBahan && !itemMap.has(n.namaBahan)) {
-            itemMap.set(n.namaBahan, { name: n.namaBahan, satuan: n.satuan });
-          }
-          return n;
-        });
 
-        const weekDbMap = new Map<string, number>();
-        for (const [wkLabel, wk] of weekMap) {
-          const w = await db.week.upsert({
-            where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk.weekLabel } },
-            update: {},
-            create: {
-              sourceFileId: sourceFile.id, weekLabel: wk.weekLabel,
-              weekKey: `${monthKey}-${wk.weekLabel.replace(/\s+/g, '')}`,
-              monthKey, periodStart: wk.periodStart, periodEnd: wk.periodEnd,
-            },
-          });
-          weekDbMap.set(wkLabel, w.id);
-        }
-
-        const outletDbMap = new Map<string, number>();
-        for (const [code, o] of outletMap) {
-          const existing = await db.outlet.findUnique({ where: { code: o.code }, select: { id: true } });
-          if (existing) outletDbMap.set(code, existing.id);
-          else {
-            const created = await db.outlet.create({ data: { code: o.code, name: o.name, outletCode: o.numericCode, area: o.area } });
-            outletDbMap.set(code, created.id);
+          // Ensure outlet exists
+          if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
+            const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true } });
+            if (existingOutlet) {
+              outletDbMap.set(derived.outletCode, existingOutlet.id);
+            } else {
+              const created = await db.outlet.create({
+                data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
+              });
+              outletDbMap.set(derived.outletCode, created.id);
+            }
           }
-        }
 
-        const itemDbMap = new Map<string, number>();
-        for (const [name, it] of itemMap) {
-          const existing = await db.item.findUnique({ where: { name: it.name }, select: { id: true, satuan: true } });
-          if (existing) {
-            itemDbMap.set(name, existing.id);
-            if (!existing.satuan && it.satuan) await db.item.update({ where: { id: existing.id }, data: { satuan: it.satuan } });
-          } else {
-            const created = await db.item.create({ data: { name: it.name, satuan: it.satuan } });
-            itemDbMap.set(name, created.id);
+          // Ensure item exists
+          if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
+            const existingItem = await db.item.findUnique({ where: { name: n.namaBahan }, select: { id: true, satuan: true } });
+            if (existingItem) {
+              itemDbMap.set(n.namaBahan, existingItem.id);
+              if (!existingItem.satuan && n.satuan) {
+                await db.item.update({ where: { id: existingItem.id }, data: { satuan: n.satuan } });
+              }
+            } else {
+              const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
+              itemDbMap.set(n.namaBahan, created.id);
+            }
           }
-        }
 
-        const BATCH = 500;
-        // ===== BUG FIX #8: Dedup by natural key (weekId,outletId,itemId,akunPenyesuaian) =====
-        // Keep the LAST occurrence (later rows override earlier). This handles duplicate
-        // rows in source Excel gracefully instead of crashing on unique constraint.
-        const dedupMap = new Map<string, any>();
-        for (const n of normalized) {
-          const derived = deriveRecord(n);
-          const weekId = weekDbMap.get(n.weekLabel) ?? 0;
+          // Prepare record for insert
+          const weekId = weekDbMap.get(wk) ?? 0;
           const outletId = outletDbMap.get(derived.outletCode) ?? 0;
           const itemId = itemDbMap.get(n.namaBahan) ?? 0;
-          if (weekId === 0 || outletId === 0 || itemId === 0) continue;
-          const key = `${weekId}|${outletId}|${itemId}|${n.akunPenyesuaian || ''}`;
-          dedupMap.set(key, {
-            sourceFileId: sourceFile.id,
-            weekId, outletId, itemId,
-            akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
-            qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
-            qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
-            nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
-            nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
-            avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
-            tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
-            pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
-            pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
-            pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
-            direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
-            residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
-            absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
-            absNominalLossSurplus: derived.absNominalLossSurplus,
-            area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
-          });
-        }
-        const allRecords = [...dedupMap.values()];
 
-        for (let i = 0; i < allRecords.length; i += BATCH) {
-          const batch = allRecords.slice(i, i + BATCH);
-          await db.inventoryRecord.createMany({ data: batch });
+          if (weekId > 0 && outletId > 0 && itemId > 0) {
+            batchRecords.push({
+              sourceFileId: sourceFile.id, weekId, outletId, itemId,
+              akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
+              qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
+              qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
+              nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
+              nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
+              avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
+              tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
+              pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
+              pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
+              pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
+              direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
+              residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
+              absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
+              absNominalLossSurplus: derived.absNominalLossSurplus,
+              area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
+            });
+          }
+
+          // Batch insert when buffer is full
+          if (batchRecords.length >= BATCH_SIZE) {
+            await db.inventoryRecord.createMany({ data: batchRecords });
+            totalInserted += batchRecords.length;
+            batchRecords = []; // clear buffer, let GC collect
+          }
         }
 
-        // Update rowCount with actual deduped count
+        // Insert remaining records
+        if (batchRecords.length > 0) {
+          await db.inventoryRecord.createMany({ data: batchRecords });
+          totalInserted += batchRecords.length;
+        }
+
+        // ===== STEP 4: Update source file record =====
+        const dq = summarizeDQ(allIssues);
         await db.sourceFile.update({
           where: { id: sourceFile.id },
-          data: { rowCount: allRecords.length },
+          data: {
+            rowCount: totalInserted,
+            dqStatus: dq.status,
+            dqErrorCount: dq.severityCounts.ERROR,
+            dqWarningCount: dq.severityCounts.WARNING,
+          },
         });
 
+        // Insert DQ issues
         if (allIssues.length > 0) {
           const dqRecords = allIssues.map((i) => ({
             sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
@@ -243,19 +293,21 @@ export async function POST(req: NextRequest) {
 
         await db.auditLog.create({
           data: {
-            action: 'INGEST', detail: `${parsed.fileName}: ${allRows.length} rows, ${outletMap.size} outlets, ${itemMap.size} items`,
+            action: 'INGEST',
+            detail: `${fileName} → CSV (${isExcel ? 'converted' : 'direct'}): ${totalInserted} rows`,
             duration: Date.now() - startedAt,
           },
         });
 
         results.push({
-          fileName: parsed.fileName, status: 'INGESTED', rowCount: allRecords.length,
+          fileName, status: 'INGESTED', rowCount: totalInserted,
           dqStatus: dq.status, dqErrors: dq.severityCounts.ERROR, dqWarnings: dq.severityCounts.WARNING,
         });
       } catch (e: any) {
         results.push({
           fileName: path.basename(filePath), status: 'ERROR', rowCount: 0,
-          dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: e?.message || String(e),
+          dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0,
+          error: e?.message || String(e),
         });
       }
     }

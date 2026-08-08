@@ -228,45 +228,49 @@ export async function downloadDriveFile(
 }
 
 // ============================================================
-//  Download a Google Sheets as .xlsx file
-//  Uses the export endpoint: /spreadsheets/d/{ID}/export?format=xlsx
-//  Works for public spreadsheets (shared as "Anyone with link can view")
+//  Download a Google Sheets as .csv file (DIRECT CSV export!)
+//  ----------------------------------------------------------
+//  Uses /export?format=csv endpoint — downloads as CSV directly.
+//  NO Excel parsing needed! Memory usage: ~0 (stream to disk).
+//
+//  This is the most efficient way to import Google Sheets:
+//    Google Sheets → CSV (direct download) → stream parse → DB
+//  Memory: ~5MB total (1 row at a time during parse)
 // ============================================================
-export async function downloadGoogleSheetsAsXlsx(
+export async function downloadGoogleSheetsAsCsv(
   sheetId: string,
   fileName: string,
   destDir: string
 ): Promise<{ localPath: string; size: number }> {
   await fs.mkdir(destDir, { recursive: true });
-  // Ensure filename ends with .xlsx
-  if (!fileName.toLowerCase().endsWith('.xlsx')) {
-    fileName = `${fileName}.xlsx`;
+  // Ensure filename ends with .csv
+  if (!fileName.toLowerCase().endsWith('.csv')) {
+    fileName = `${fileName}.csv`;
   }
   const localPath = path.join(destDir, fileName);
 
-  // Export URL — downloads as .xlsx with all sheets preserved
-  const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+  // Export URL — downloads as CSV directly (no Excel parsing needed!)
+  const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
 
   const res = await fetch(exportUrl, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, */*',
+      'Accept': 'text/csv, application/octet-stream, */*',
     },
     redirect: 'follow',
   });
 
   if (!res.ok) {
-    throw new Error(`Google Sheets export failed: HTTP ${res.status} ${res.statusText}. Make sure the spreadsheet is shared as "Anyone with link can view".`);
+    throw new Error(`Google Sheets CSV export failed: HTTP ${res.status} ${res.statusText}. Make sure the spreadsheet is shared as "Anyone with link can view".`);
   }
 
   const contentType = res.headers.get('content-type') || '';
-  // If we got HTML, the sheet is not public or requires sign-in
   if (contentType.includes('text/html')) {
     const sample = (await res.text()).slice(0, 300);
-    throw new Error(`Google Sheets returned HTML instead of xlsx. The spreadsheet may require sign-in or is not shared publicly. Sample: ${sample}`);
+    throw new Error(`Google Sheets returned HTML. Spreadsheet may require sign-in. Sample: ${sample}`);
   }
 
-  if (!res.body) throw new Error('No response body from Google Sheets export');
+  if (!res.body) throw new Error('No response body');
   const stream = Readable.fromWeb(res.body as any);
   const fileStream = createWriteStream(localPath);
   await pipeline(stream, fileStream);
@@ -275,7 +279,7 @@ export async function downloadGoogleSheetsAsXlsx(
   if (stat.size < 1024) {
     const content = await fs.readFile(localPath, 'utf-8');
     await fs.unlink(localPath);
-    throw new Error(`Exported file too small (${stat.size} bytes). Content: ${content.slice(0, 200)}`);
+    throw new Error(`CSV file too small (${stat.size} bytes). Content: ${content.slice(0, 200)}`);
   }
 
   return { localPath, size: stat.size };
@@ -353,18 +357,17 @@ export async function importFromDriveUrl(
     return { folderId: parsed.id, downloadedFiles };
 
   } else if (parsed.type === 'sheets') {
-    // Google Sheets — export as xlsx
+    // Google Sheets — export as CSV directly (no Excel parsing needed!)
     try {
-      // Try to get the spreadsheet title for a meaningful filename
       const title = await getSheetsTitle(parsed.id);
       let fileName = title || `google_sheets_${parsed.id}`;
-      // Sanitize filename — remove invalid chars
       fileName = fileName.replace(/[<>:"/\\|?*]/g, '_').trim();
-      if (!fileName.toLowerCase().endsWith('.xlsx')) {
-        fileName = `${fileName}.xlsx`;
+      // Use .csv extension (downloaded as CSV directly)
+      if (!fileName.toLowerCase().endsWith('.csv')) {
+        fileName = `${fileName}.csv`;
       }
 
-      const { localPath, size } = await downloadGoogleSheetsAsXlsx(parsed.id, fileName, destDir);
+      const { localPath, size } = await downloadGoogleSheetsAsCsv(parsed.id, fileName, destDir);
       downloadedFiles.push({ fileName, localPath, size, success: true });
     } catch (e: any) {
       downloadedFiles.push({

@@ -153,22 +153,39 @@ export interface ParsedMonth {
 }
 
 export function parseMonthFromFilename(fileName: string): ParsedMonth | null {
-  const base = fileName.replace(/\.xlsx$/i, '').trim();
-  // Match optional prefix (digits + dot + optional space), then month name, then year (4 or 2 digits)
-  const m = base.match(/^(?:(\d+)\.\s*)?([A-Za-z]+)\s+(\d{2,4})$/);
-  if (!m) return null;
-  const prefix = m[1];
-  const monthLower = m[2].toLowerCase();
-  const found = MONTH_MAP[monthLower];
-  if (!found) return null;
+  // Remove file extension(s) and common suffixes
+  let base = fileName.replace(/\.(xlsx|csv)$/i, '').trim();
+  // Remove " - Google Sheets" / " - Google 試算表" / " - Google Drive" suffixes
+  base = base.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
+  // Remove ".xlsx" that might be embedded in the name (from Google Sheets title)
+  base = base.replace(/\.xlsx$/i, '').trim();
 
-  // Normalize year to 4 digits
-  let year = m[3];
-  if (year.length === 2) year = `20${year}`;
+  // Try exact match first: "13.JANUARI 2026" or "JULI 2026"
+  let m = base.match(/^(?:(\d+)\.\s*)?([A-Za-z]+)\s+(\d{2,4})$/);
+  if (m) {
+    const prefix = m[1];
+    const monthLower = m[2].toLowerCase();
+    const found = MONTH_MAP[monthLower];
+    if (found) {
+      let year = m[3];
+      if (year.length === 2) year = `20${year}`;
+      return { monthLabel: `${found.name} ${year}`, monthKey: `${year}-${found.num}`, prefix: prefix || undefined };
+    }
+  }
 
-  return {
-    monthLabel: `${found.name} ${year}`,
-    monthKey: `${year}-${found.num}`,
-    prefix: prefix || undefined,
-  };
+  // Fallback: search for month pattern anywhere in the string
+  // Handles: "19.JULI 2026.xlsx - Google 試算表" → extracts "JULI 2026"
+  m = base.match(/(?:(\d+)\.\s*)?([A-Za-z]{3,9})\s+(\d{2,4})/);
+  if (m) {
+    const prefix = m[1];
+    const monthLower = m[2].toLowerCase();
+    const found = MONTH_MAP[monthLower];
+    if (found) {
+      let year = m[3];
+      if (year.length === 2) year = `20${year}`;
+      return { monthLabel: `${found.name} ${year}`, monthKey: `${year}-${found.num}`, prefix: prefix || undefined };
+    }
+  }
+
+  return null;
 }
