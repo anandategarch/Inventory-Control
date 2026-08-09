@@ -64,9 +64,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (files.length === 0) {
+      // Check if data already exists in database
+      const existingCount = await db.inventoryRecord.count();
+      if (existingCount > 0) {
+        return NextResponse.json({
+          success: true,
+          results: [],
+          message: `Data already in database (${existingCount.toLocaleString()} records). No local files to import. Use "Import from Drive" to add new data.`,
+          durationMs: Date.now() - startedAt,
+        });
+      }
       return NextResponse.json({
         success: false,
-        message: `No .xlsx or .csv files found in ${DATA_DIR}.`,
+        message: `No .xlsx or .csv files found in ${DATA_DIR}. Use "Import from Drive" to import data from Google Drive.`,
       }, { status: 404 });
     }
 
