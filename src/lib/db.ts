@@ -9,19 +9,27 @@ import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { createClient } from '@libsql/client';
 
 function createPrismaClient(): PrismaClient {
-  const dbUrl = process.env.DATABASE_URL || 'file:./db/custom.db';
+  const dbUrl = process.env.DATABASE_URL || '';
+  const authToken = process.env.DATABASE_AUTH_TOKEN || '';
+
+  if (!dbUrl) {
+    console.error('[db] DATABASE_URL is not set! Falling back to local SQLite.');
+    return new PrismaClient({ log: ['error', 'warn'] });
+  }
 
   // If Turso (libsql://), use adapter
   if (dbUrl.startsWith('libsql://') || dbUrl.startsWith('http://') || dbUrl.startsWith('https://')) {
+    console.log('[db] Using Turso (libsql) adapter');
     const libsql = createClient({
       url: dbUrl,
-      authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+      authToken: authToken || undefined,
     });
     const adapter = new PrismaLibSql(libsql);
     return new PrismaClient({ adapter, log: ['error', 'warn'] });
   }
 
   // Local SQLite (file:...) — standard Prisma
+  console.log('[db] Using local SQLite');
   return new PrismaClient({ log: ['error', 'warn'] });
 }
 
