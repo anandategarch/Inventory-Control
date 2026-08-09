@@ -3,21 +3,19 @@
 
 [phases.setup]
 nixPkgs = ["bun"]
-envs = ["DATABASE_URL=file:./db/custom.db"]
 
 [phases.install]
 cmds = ["bun install"]
 
 [phases.build]
-# Ensure prisma client is generated, then create DB schema, then build Next.js
+# Set DATABASE_URL inline for each command that needs it
 cmds = [
-  "bunx prisma generate",
+  "DATABASE_URL=file:./db/custom.db bunx prisma generate",
   "mkdir -p db",
-  "bunx prisma db push --accept-data-loss",
+  "DATABASE_URL=file:./db/custom.db bunx prisma db push --accept-data-loss",
   "bun run build"
 ]
 
 [start]
-# Run db:push again at startup to ensure DB exists, then start
-# This handles cases where Railway volume is mounted but DB file is missing
-cmd = "mkdir -p db && bunx prisma db push --accept-data-loss && bun run start"
+# Set DATABASE_URL inline at startup too
+cmd = "mkdir -p db && DATABASE_URL=file:./db/custom.db bunx prisma db push --accept-data-loss && DATABASE_URL=file:./db/custom.db bun run start"
