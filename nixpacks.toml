@@ -17,5 +17,5 @@ cmds = [
 ]
 
 [start]
-# Set DATABASE_URL inline at startup too
-cmd = "mkdir -p db && DATABASE_URL=file:./db/custom.db bunx prisma db push --accept-data-loss && DATABASE_URL=file:./db/custom.db bun run start"
+# Simple start — db.ts handles DB creation at runtime
+cmd = "bun run start"

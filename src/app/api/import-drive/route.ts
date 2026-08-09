@@ -230,6 +230,8 @@ async function ingestFile(filePath: string): Promise<{
   }
 }
 
+export const maxDuration = 300; // 5 minutes for Railway
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
@@ -248,7 +250,7 @@ export async function POST(req: NextRequest) {
     if (successful.length === 0) {
       return NextResponse.json({
         success: false,
-        error: 'No files could be downloaded',
+        error: 'No files could be downloaded. Pastikan link share diset "Anyone with link".',
         downloadResults: importResult.downloadedFiles,
       }, { status: 400 });
     }
