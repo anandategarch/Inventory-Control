@@ -1,15 +1,25 @@
 // ============================================================
 //  /api/status — list available months, weeks, outlets, areas
+//  Resilient to missing tables (returns empty state, not 500)
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
+const EMPTY_STATE = {
+  success: true,
+  files: [],
+  months: [],
+  weeksByMonth: {},
+  outlets: [],
+  areas: [],
+  stats: { totalFiles: 0, totalOutlets: 0, totalItems: 0, totalRecords: 0 },
+  warning: 'Database tables not created yet. Visit /api/setup to initialize.',
+};
+
 export async function GET() {
   try {
-    // Ensure database tables exist (auto-migration)
-    
     const files = await db.sourceFile.findMany({
       orderBy: { monthKey: 'asc' },
       select: { fileName: true, monthLabel: true, monthKey: true, rowCount: true, dqStatus: true, importedAt: true },
@@ -30,7 +40,6 @@ export async function GET() {
     const itemsCount = await db.item.count();
     const recordsCount = await db.inventoryRecord.count();
 
-    // Group weeks by month
     const weeksByMonth: Record<string, string[]> = {};
     for (const w of weeks) {
       if (!weeksByMonth[w.monthKey]) weeksByMonth[w.monthKey] = [];
@@ -53,21 +62,12 @@ export async function GET() {
       },
     });
   } catch (e: any) {
-    // If tables don't exist, return empty state (not error 500)
-    // This handles fresh PostgreSQL where db:push hasn't run yet
     const errMsg = e?.message || String(e);
-    if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table')) {
-      return NextResponse.json({
-        success: true,
-        files: [],
-        months: [],
-        weeksByMonth: {},
-        outlets: [],
-        areas: [],
-        stats: { totalFiles: 0, totalOutlets: 0, totalItems: 0, totalRecords: 0 },
-        warning: 'Database tables not created yet. Run db:push or trigger an import.',
-      });
+    // If tables don't exist, return empty state (not error 500)
+    if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table') || errMsg.includes('no such table')) {
+      return NextResponse.json(EMPTY_STATE);
     }
-    return NextResponse.json({ success: false, error: errMsg }, { status: 500 });
+    console.error('[/api/status] Error:', errMsg);
+    return NextResponse.json({ success: false, error: errMsg, hint: 'Try visiting /api/setup to create database tables.' }, { status: 500 });
   }
 }
