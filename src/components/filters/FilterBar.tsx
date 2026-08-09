@@ -68,6 +68,12 @@ export function FilterBar() {
     setIngestMsg(null);
     try {
       const res = await fetch('/api/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      // FIX: Check content-type before parsing — server crash returns HTML
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server returned non-JSON response (HTTP ${res.status}). The server may have crashed or timed out. Try importing fewer files at once.`);
+      }
       const d = await res.json();
       if (d.success) {
         const ingested = d.results.filter((r: any) => r.status === 'INGESTED');
@@ -80,10 +86,10 @@ export function FilterBar() {
         setIngestMsg(`Failed: ${d.message || d.error}`);
       }
     } catch (e: any) {
-      setIngestMsg(`Error: ${e?.message}`);
+      setIngestMsg(`Error: ${e?.message || String(e)}`);
     } finally {
       setIngesting(false);
-      setTimeout(() => setIngestMsg(null), 5000);
+      setTimeout(() => setIngestMsg(null), 8000);
     }
   }
 
@@ -97,6 +103,22 @@ export function FilterBar() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: driveUrl.trim() }),
       });
+      // FIX: Check content-type before parsing — server crash returns HTML
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(
+          `Server error (HTTP ${res.status}).\n\n` +
+          `Kemungkinan penyebab:\n` +
+          `• File terlalu besar — server kehabisan memory (OOM)\n` +
+          `• Server timeout — proses terlalu lama\n` +
+          `• Server crash — coba refresh halaman dan ulangi\n\n` +
+          `Solusi:\n` +
+          `• Import 1 file saja (bukan folder)\n` +
+          `• Gunakan tab "Google Sheets" untuk import langsung sebagai CSV\n` +
+          `• Atau pecah file besar jadi 2-3 file lebih kecil`
+        );
+      }
       const d = await res.json();
       setDriveResult(d);
       if (d.success) {

@@ -41,6 +41,11 @@ export interface AnalysisData {
 
 async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
   const res = await fetch(`/api/analysis?${params.toString()}`);
+  // FIX: Check content-type — server crash returns HTML, not JSON
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ message: 'Request failed' }));
     throw new Error(e.message || `HTTP ${res.status}`);
