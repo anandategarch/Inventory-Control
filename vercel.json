@@ -1,4 +1,6 @@
 {
+  "buildCommand": "bunx prisma generate && bun run next build",
+  "framework": "nextjs",
   "functions": {
     "src/app/api/**": {
       "maxDuration": 60
