@@ -1,17 +1,7 @@
-# Nixpacks configuration for Railway / Render / Fly.io
-# Uses Bun for faster builds
-
-[phases.setup]
-nixPkgs = ["bun"]
-
-[phases.install]
-cmds = ["bun install"]
-
+# Nixpacks / Vercel build config
 [phases.build]
 cmds = [
   "bunx prisma generate",
+  "bunx prisma db push --accept-data-loss",
   "bun run build"
 ]
-
-[start]
-cmd = "bun run start"
