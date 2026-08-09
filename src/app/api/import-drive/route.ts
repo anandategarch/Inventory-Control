@@ -22,9 +22,13 @@ import { createWriteStream } from 'fs';
 
 export const dynamic = 'force-dynamic';
 
+// Vercel: /tmp is the only writable directory in serverless
+// Local: use data/inventory folder
 const DATA_DIR = process.env.INVENTORY_DATA_DIR
   ? path.resolve(process.env.INVENTORY_DATA_DIR)
-  : path.resolve(process.cwd(), 'data/inventory');
+  : process.env.VERCEL
+    ? '/tmp/inventory'
+    : path.resolve(process.cwd(), 'data/inventory');
 
 // ============================================================
 //  Ingest a single file (Excel or CSV) using streaming pipeline
