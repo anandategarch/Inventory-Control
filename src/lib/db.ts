@@ -5,7 +5,7 @@
 //    - Local SQLite (file:...) — for local dev
 // ============================================================
 import { PrismaClient } from '@prisma/client';
-import { PrismaLibSQL } from '@prisma/adapter-libsql';
+import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { createClient } from '@libsql/client';
 
 function createPrismaClient(): PrismaClient {
@@ -17,7 +17,7 @@ function createPrismaClient(): PrismaClient {
       url: dbUrl,
       authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
     });
-    const adapter = new PrismaLibSQL(libsql);
+    const adapter = new PrismaLibSql(libsql);
     return new PrismaClient({ adapter, log: ['error', 'warn'] });
   }
 
