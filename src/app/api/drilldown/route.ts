@@ -5,12 +5,13 @@
 //  (for cross-month compare drilldown)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, ensureMigrated } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    await ensureMigrated();
     const url = new URL(req.url);
     const outletCode = url.searchParams.get('outletCode');
     const itemName = url.searchParams.get('itemName');

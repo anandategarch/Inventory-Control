@@ -13,7 +13,7 @@
 //    - Total peak: ~90MB (fits in 256MB server)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, ensureMigrated } from '@/lib/db';
 import { parseMonthFromFilename } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ } from '@/engine/validator';
@@ -34,6 +34,7 @@ const DATA_DIR = process.env.INVENTORY_DATA_DIR
 async function findExcelFiles(dirOverride?: string): Promise<string[]> {
   const dir = dirOverride || DATA_DIR;
   try {
+    await ensureMigrated();
     const entries = await fs.readdir(dir);
     return entries
       .filter((f) => (f.toLowerCase().endsWith('.xlsx') || f.toLowerCase().endsWith('.csv')) && !f.startsWith('~$'))

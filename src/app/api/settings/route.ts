@@ -5,7 +5,7 @@
 //  DELETE : reset to defaults (?key=specific or all)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, ensureMigrated } from '@/lib/db';
 import {
   SETTING_DEFINITIONS,
   ensureDefaultSettings,
@@ -23,6 +23,7 @@ interface SettingWithMeta extends SettingDefinition {
 
 export async function GET() {
   try {
+    await ensureMigrated();
     await ensureDefaultSettings();
     const dbSettings = await db.setting.findMany({
       select: { key: true, value: true, updatedAt: true, updatedBy: true },

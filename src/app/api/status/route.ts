@@ -2,12 +2,15 @@
 //  /api/status — list available months, weeks, outlets, areas
 // ============================================================
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, ensureMigrated } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    // Ensure database tables exist (auto-migration)
+    await ensureMigrated();
+    
     const files = await db.sourceFile.findMany({
       orderBy: { monthKey: 'asc' },
       select: { fileName: true, monthLabel: true, monthKey: true, rowCount: true, dqStatus: true, importedAt: true },
@@ -51,6 +54,21 @@ export async function GET() {
       },
     });
   } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+    // If tables don't exist, return empty state (not error 500)
+    // This handles fresh PostgreSQL where db:push hasn't run yet
+    const errMsg = e?.message || String(e);
+    if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table')) {
+      return NextResponse.json({
+        success: true,
+        files: [],
+        months: [],
+        weeksByMonth: {},
+        outlets: [],
+        areas: [],
+        stats: { totalFiles: 0, totalOutlets: 0, totalItems: 0, totalRecords: 0 },
+        warning: 'Database tables not created yet. Run db:push or trigger an import.',
+      });
+    }
+    return NextResponse.json({ success: false, error: errMsg }, { status: 500 });
   }
 }

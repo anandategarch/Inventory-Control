@@ -9,7 +9,7 @@
 //  This route delegates to /api/ingest's logic to avoid duplication.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { db, ensureMigrated } from '@/lib/db';
 import { importFromDriveUrl } from '@/lib/drive-import';
 import { hashFile, parseMonthFromFilename } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
@@ -43,6 +43,7 @@ async function ingestFile(filePath: string): Promise<{
   const ext = path.extname(filePath).toLowerCase();
 
   try {
+    await ensureMigrated();
     const fileHash = await hashFile(filePath);
 
     // Check if already ingested
