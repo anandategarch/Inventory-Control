@@ -9,11 +9,15 @@ envs = ["DATABASE_URL=file:./db/custom.db"]
 cmds = ["bun install"]
 
 [phases.build]
+# Ensure prisma client is generated, then create DB schema, then build Next.js
 cmds = [
+  "bunx prisma generate",
   "mkdir -p db",
-  "bun run db:push",
+  "bunx prisma db push --accept-data-loss",
   "bun run build"
 ]
 
 [start]
-cmd = "bun run start"
+# Run db:push again at startup to ensure DB exists, then start
+# This handles cases where Railway volume is mounted but DB file is missing
+cmd = "mkdir -p db && bunx prisma db push --accept-data-loss && bun run start"
