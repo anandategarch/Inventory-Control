@@ -1,7 +1,5 @@
 // ============================================================
-//  /api/setup — Manual database setup endpoint
-//  Call this URL once after deploy to create tables in Turso
-//  Usage: https://your-app.vercel.app/api/setup
+//  /api/setup — Manual database setup endpoint + Debug info
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -11,12 +9,41 @@ export const maxDuration = 60;
 
 export async function GET() {
   const results: string[] = [];
+  
+  // ===== DEBUG: Check what env vars are actually available =====
+  const dbUrl = process.env.DATABASE_URL;
+  const authToken = process.env.DATABASE_AUTH_TOKEN;
+  
+  results.push(`DEBUG: DATABASE_URL is ${dbUrl ? 'SET (' + dbUrl.substring(0, 20) + '...)' : 'NOT SET (undefined)'}`);
+  results.push(`DEBUG: DATABASE_AUTH_TOKEN is ${authToken ? 'SET (' + authToken.substring(0, 20) + '...)' : 'NOT SET (undefined)'}`);
+  results.push(`DEBUG: VERCEL env is ${process.env.VERCEL ? 'YES' : 'NO'}`);
+  results.push(`DEBUG: NODE_ENV is ${process.env.NODE_ENV || 'undefined'}`);
+  results.push('---');
+
+  if (!dbUrl) {
+    results.push('❌ DATABASE_URL is not set in environment variables!');
+    results.push('Please go to Vercel → Settings → Environment Variables');
+    results.push('Add DATABASE_URL and DATABASE_AUTH_TOKEN');
+    results.push('Make sure to check "Production" environment');
+    results.push('Then REDEPLOY the project');
+    
+    return NextResponse.json({
+      success: false,
+      message: 'Environment variables not configured',
+      steps: results,
+    });
+  }
 
   try {
-    // Test connection
     results.push('Testing Turso connection...');
     const testCount = await db.sourceFile.count();
     results.push(`✅ Connection OK. SourceFile count: ${testCount}`);
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Database already setup',
+      steps: results,
+    });
   } catch (e: any) {
     results.push(`❌ Connection/Query failed: ${e?.message || String(e)}`);
     results.push('Attempting to create tables...');
@@ -160,24 +187,28 @@ export async function GET() {
       );`);
       results.push('✅ AggregationCache table created');
 
-      // Indexes
       await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "idx_inv_outlet_week" ON "InventoryRecord"("outletId", "weekId");`);
       await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "idx_inv_item_week" ON "InventoryRecord"("itemId", "weekId");`);
       await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "idx_inv_area_week" ON "InventoryRecord"("area", "weekId");`);
       await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "idx_inv_month_week" ON "InventoryRecord"("monthLabel", "weekLabel");`);
       results.push('✅ Indexes created');
 
-      // Verify
       const count = await db.sourceFile.count();
       results.push(`✅ Setup complete! SourceFile count: ${count}`);
+      
+      return NextResponse.json({
+        success: true,
+        message: 'Setup completed successfully',
+        steps: results,
+      });
     } catch (createErr: any) {
       results.push(`❌ Failed to create tables: ${createErr?.message || String(createErr)}`);
+      
+      return NextResponse.json({
+        success: false,
+        message: 'Setup failed',
+        steps: results,
+      });
     }
   }
-
-  return NextResponse.json({
-    success: true,
-    message: 'Setup completed',
-    steps: results,
-  });
 }
