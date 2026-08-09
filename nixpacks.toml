@@ -1,4 +1,4 @@
-# Nixpacks configuration for Railway
+# Nixpacks configuration for Railway / Render / Fly.io
 # Uses Bun for faster builds
 
 [phases.setup]
@@ -8,14 +8,10 @@ nixPkgs = ["bun"]
 cmds = ["bun install"]
 
 [phases.build]
-# Only generate Prisma Client during build (doesn't need DATABASE_URL)
-# db:push runs at startup instead, where DATABASE_URL IS available
 cmds = [
   "bunx prisma generate",
   "bun run build"
 ]
 
 [start]
-# Run prisma db push at STARTUP (DATABASE_URL is available at runtime)
-# Then start the app
-cmd = "bunx prisma db push --accept-data-loss && bun run start"
+cmd = "bun run start"
