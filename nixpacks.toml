@@ -8,13 +8,14 @@ nixPkgs = ["bun"]
 cmds = ["bun install"]
 
 [phases.build]
-# PostgreSQL DATABASE_URL is auto-set by Railway when you add PostgreSQL service
-# prisma generate + db push will use it automatically
+# Only generate Prisma Client during build (doesn't need DATABASE_URL)
+# db:push runs at startup instead, where DATABASE_URL IS available
 cmds = [
   "bunx prisma generate",
-  "bunx prisma db push --accept-data-loss",
   "bun run build"
 ]
 
 [start]
-cmd = "bun run start"
+# Run prisma db push at STARTUP (DATABASE_URL is available at runtime)
+# Then start the app
+cmd = "bunx prisma db push --accept-data-loss && bun run start"
