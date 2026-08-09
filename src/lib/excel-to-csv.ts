@@ -1,17 +1,14 @@
 // ============================================================
 //  Excel → CSV Converter
 //  ----------------------------------------------------------
-//  Uses child_process to run conversion in isolated memory.
-//  exceljs loads entire workbook into memory (~80MB for 15MB file),
-//  so running in child process prevents main server from OOM.
-//
-//  Also supports Google Sheets → CSV directly (no Excel parsing!)
-//  via /export?format=csv endpoint.
+//  On Vercel/serverless: use in-process conversion (no spawn)
+//  On local/Railway: use child_process for isolated memory
 // ============================================================
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { createHash } from 'crypto';
+import ExcelJS from 'exceljs';
+import { stringify } from 'csv-stringify/sync';
 
 export interface ConvertResult {
   csvPath: string;
@@ -19,17 +16,75 @@ export interface ConvertResult {
   sheetName: string;
 }
 
-// ============================================================
-//  Convert Excel to CSV via child process (isolated memory)
-// ============================================================
-export async function convertExcelToCsv(
-  excelPath: string,
-  csvPath: string
-): Promise<ConvertResult> {
+function cellToValue(cell: ExcelJS.Cell): unknown {
+  let v: unknown = cell.value;
+  if (v && typeof v === 'object') {
+    if ('richText' in v && Array.isArray(v.richText)) {
+      v = v.richText.map((t) => t.text).join('');
+    } else if ('text' in v && typeof v.text === 'string') {
+      v = v.text;
+    } else if ('result' in v && v.result !== undefined) {
+      v = v.result;
+    } else if ('formula' in v) {
+      v = cell.result ?? null;
+    } else {
+      v = JSON.stringify(v);
+    }
+  }
+  return v;
+}
+
+// In-process conversion (for Vercel serverless)
+async function convertInProcess(excelPath: string, csvPath: string): Promise<ConvertResult> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(excelPath);
+
+  const ws = wb.worksheets.find((s) => s.state === 'visible') || wb.worksheets[0];
+  if (!ws) {
+    throw new Error('No worksheets found in Excel file');
+  }
+
+  const headerRow = ws.getRow(1);
+  const headers: string[] = [];
+  for (let c = 1; c <= ws.columnCount; c++) {
+    headers.push(String(cellToValue(headerRow.getCell(c)) ?? '').trim());
+  }
+
+  fs.writeFileSync(csvPath, stringify([headers]));
+
+  const CHUNK_SIZE = 2000;
+  let chunk: string[][] = [];
+  let totalRows = 0;
+
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum === 1) return;
+
+    const values: string[] = [];
+    for (let c = 1; c <= ws.columnCount; c++) {
+      const v = cellToValue(row.getCell(c));
+      values.push(v === null || v === undefined ? '' : String(v));
+    }
+    chunk.push(values);
+    totalRows++;
+
+    if (chunk.length >= CHUNK_SIZE) {
+      fs.appendFileSync(csvPath, stringify(chunk));
+      chunk = [];
+    }
+  });
+
+  if (chunk.length > 0) {
+    fs.appendFileSync(csvPath, stringify(chunk));
+  }
+
+  return { csvPath, rowCount: totalRows, sheetName: ws.name };
+}
+
+// Child process conversion (for local/Railway with more memory)
+async function convertViaChildProcess(excelPath: string, csvPath: string): Promise<ConvertResult> {
   const scriptPath = path.resolve(process.cwd(), 'scripts/convert-excel-to-csv.ts');
 
   return new Promise((resolve, reject) => {
-    // Spawn bun process with increased memory limit
     const child = spawn('bun', ['run', scriptPath, excelPath, csvPath], {
       env: {
         ...process.env,
@@ -51,14 +106,9 @@ export async function convertExcelToCsv(
 
     child.on('close', (code) => {
       if (code === 0) {
-        // Parse row count from stdout
         const match = stdout.match(/Done: (\d+) rows/);
         const rowCount = match ? parseInt(match[1]) : 0;
-        resolve({
-          csvPath,
-          rowCount,
-          sheetName: 'Sheet1',
-        });
+        resolve({ csvPath, rowCount, sheetName: 'Sheet1' });
       } else {
         reject(new Error(`Conversion failed (exit ${code}): ${stderr || stdout}`));
       }
@@ -68,7 +118,6 @@ export async function convertExcelToCsv(
       reject(new Error(`Failed to spawn conversion process: ${err.message}`));
     });
 
-    // Timeout: 5 minutes
     setTimeout(() => {
       child.kill('SIGTERM');
       reject(new Error('Conversion timed out after 5 minutes'));
@@ -76,18 +125,24 @@ export async function convertExcelToCsv(
   });
 }
 
-// ============================================================
-//  Generate CSV path from Excel path (same dir, .csv extension)
-// ============================================================
+// Main entry — auto-detect environment
+export async function convertExcelToCsv(
+  excelPath: string,
+  csvPath: string
+): Promise<ConvertResult> {
+  // Vercel serverless doesn't support child_process
+  if (process.env.VERCEL) {
+    return convertInProcess(excelPath, csvPath);
+  }
+  return convertViaChildProcess(excelPath, csvPath);
+}
+
 export function getCsvPath(excelPath: string): string {
   const dir = path.dirname(excelPath);
   const base = path.basename(excelPath, path.extname(excelPath));
   return path.join(dir, `${base}.csv`);
 }
 
-// ============================================================
-//  Generate cached CSV path (includes file hash for versioning)
-// ============================================================
 export function getCachedCsvPath(excelPath: string, fileHash: string): string {
   const dir = path.dirname(excelPath);
   const base = path.basename(excelPath, path.extname(excelPath));
