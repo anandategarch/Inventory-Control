@@ -1,8 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
-  /* config options here */
+  // No standalone — use regular next start (more reliable on Railway)
   typescript: {
     ignoreBuildErrors: true,
   },

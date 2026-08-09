@@ -3,8 +3,6 @@
 
 [phases.setup]
 nixPkgs = ["bun"]
-# Set DATABASE_URL as a default env var for the entire build process
-# This ensures prisma generate during 'bun install' doesn't fail
 envs = ["DATABASE_URL=file:./db/custom.db"]
 
 [phases.install]
@@ -12,6 +10,7 @@ cmds = ["bun install"]
 
 [phases.build]
 cmds = [
+  "mkdir -p db",
   "bun run db:push",
   "bun run build"
 ]
