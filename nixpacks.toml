@@ -8,7 +8,11 @@ nixPkgs = ["bun"]
 cmds = ["bun install"]
 
 [phases.build]
-cmds = ["bun run db:push"]
+# Set DATABASE_URL fallback in case Railway hasn't set it yet
+cmds = [
+  "export DATABASE_URL=file:./db/custom.db && bun run db:push",
+  "bun run build"
+]
 
 [start]
-cmd = "bun run dev"
+cmd = "bun run start"

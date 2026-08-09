@@ -9,7 +9,8 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  // Fallback to local SQLite if DATABASE_URL not set (for Railway build phase)
+  url      = env("DATABASE_URL", "file:./db/custom.db")
 }
 
 // ------------------------------------------------------------
