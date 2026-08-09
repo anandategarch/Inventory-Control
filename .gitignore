@@ -74,3 +74,7 @@ server.log
 # Any .db files anywhere
 *.db
 *.db-journaltool-results/
+tool-results/
+*.tmp
+data/inventory/*.csv
+data/inventory/*.tmp
