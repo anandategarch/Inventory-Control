@@ -240,18 +240,29 @@ export async function POST(req: NextRequest) {
     const url = body.url;
 
     if (!url || typeof url !== 'string') {
-      return NextResponse.json({ success: false, error: 'Missing "url" field' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'Missing "url" field in request body' }, { status: 400 });
     }
 
     // Step 1: Download files from Google Drive
-    const importResult = await importFromDriveUrl(url, DATA_DIR);
+    let importResult;
+    try {
+      importResult = await importFromDriveUrl(url, DATA_DIR);
+    } catch (downloadErr: any) {
+      return NextResponse.json({
+        success: false,
+        error: `Gagal download dari Google Drive: ${downloadErr?.message || String(downloadErr)}`,
+      }, { status: 500 });
+    }
+
     const successful = importResult.downloadedFiles.filter((f) => f.success);
     const failed = importResult.downloadedFiles.filter((f) => !f.success);
 
     if (successful.length === 0) {
+      // Build detailed error message
+      const failedDetails = failed.map(f => `${f.fileName}: ${f.error || 'unknown error'}`).join('; ');
       return NextResponse.json({
         success: false,
-        error: 'No files could be downloaded. Pastikan link share diset "Anyone with link".',
+        error: `No files could be downloaded. Pastikan link share diset "Anyone with link can view". Detail: ${failedDetails}`,
         downloadResults: importResult.downloadedFiles,
       }, { status: 400 });
     }
