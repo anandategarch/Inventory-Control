@@ -2,14 +2,13 @@
 //  /api/status — list available months, weeks, outlets, areas
 // ============================================================
 import { NextResponse } from 'next/server';
-import { db, ensureMigrated } from '@/lib/db';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     // Ensure database tables exist (auto-migration)
-    await ensureMigrated();
     
     const files = await db.sourceFile.findMany({
       orderBy: { monthKey: 'asc' },

@@ -3,7 +3,7 @@
 //  Query: ?month=&week=&compareWeek=&area=&outlet=&item=
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { db, ensureMigrated } from '@/lib/db';
+import { db } from '@/lib/db';
 import {
   buildExecutiveSummary,
   topItemsByNominal,
@@ -34,7 +34,6 @@ type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   try {
-    await ensureMigrated();
     const url = new URL(req.url);
     const monthLabel = url.searchParams.get('month');
     const currentWeek = url.searchParams.get('week');
