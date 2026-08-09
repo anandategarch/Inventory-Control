@@ -1,0 +1,24 @@
+# ============================================================
+#  Railway Configuration
+#  ----------------------------------------------------------
+#  This file tells Railway how to build and run the app.
+#  Railway auto-detects Next.js, but this ensures correct setup.
+# ============================================================
+
+[build]
+# Railway uses Nixpacks by default — Bun is auto-detected
+builder = "nixpacks"
+
+[deploy]
+# Next.js dev server (for immediate testing)
+# For production, use "bun run build && bun run start"
+startCommand = "bun run dev"
+# If dev doesn't work on Railway, uncomment below:
+# startCommand = "bun run build && bun run start"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Railway will auto-detect port from NEXT_PUBLIC_PORT or default 3000
+# No need to set PORT manually — Next.js binds to $PORT automatically

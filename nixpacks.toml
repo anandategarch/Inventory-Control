@@ -1,0 +1,14 @@
+# Nixpacks configuration for Railway
+# Uses Bun for faster builds
+
+[phases.setup]
+nixPkgs = ["bun"]
+
+[phases.install]
+cmds = ["bun install"]
+
+[phases.build]
+cmds = ["bun run db:push"]
+
+[start]
+cmd = "bun run dev"
