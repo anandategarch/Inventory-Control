@@ -141,3 +141,29 @@ Stage Summary:
 - Vercel will auto-deploy from this push (user needs to set DATABASE_URL env var in Vercel dashboard)
 - Files in repo: ExtraCharts.tsx, InsightsPanel.tsx, page.tsx (5 tabs), schema.prisma (PostgreSQL), db.ts (Supabase detection), upload-data.ts (Prisma-based), backend computations
 - Total commits pushed this session: 5 (including Supabase migration + chart features)
+
+---
+Task ID: 7
+Agent: Main (Z.ai Code)
+Task: Fix Indonesian formatting + add PIC filter (user reported version mismatch)
+
+Work Log:
+- Investigated: discovered ExtraCharts/InsightsPanel/page.tsx edits were lost (sandbox reset wiped uncommitted changes)
+- Root cause of version mismatch: format.ts in git used English (B/M/K), but user's sandbox had Indonesian (M/Jt/Rb) — never committed
+- Rewrote src/lib/format.ts: Indonesian abbreviations (M=Miliar, Jt=Juta, Rb=Ribu) with comma decimal separator via fmtDecimal()
+- Updated src/hooks/useDashboard.ts: added pic/setPic state, activeTab persistence, setPic resets outletCode
+- Updated src/hooks/useAnalysis.ts: added pic parameter to useAnalysis, pics field to StatusData interface, outlets now include pic
+- Updated src/app/api/status/route.ts: LEFT JOIN OutletPIC table, return outlets with pic field, return pics array (20 PICs)
+- Updated src/app/api/analysis/route.ts: added pic parameter, resolve pic → outlet codes via OutletPIC query, filter buildWhere with outlet code IN list
+- Updated src/components/filters/FilterBar.tsx: added PIC SearchableComboBox dropdown, Indonesian labels (Bulan, Minggu, Periode Pembanding, PIC, Area, Outlet, Reset, Pengaturan, Import dari Drive, Refresh Data), stats badge singular (file/outlet/item/record), filter outlets by both area AND pic
+- Updated src/app/page.tsx: Indonesian header (outlet count dynamic, "F&B Network · Rekonsiliasi & Deteksi Anomali"), footer ("Mesin Deterministik + Narasi AI", "Analisis terakhir", "Klik baris mana saja untuk drill-down ke sumber"), EmptyState Indonesian, ErrorState Indonesian, tab values (dashboard/insight/investigasi/area/cost), section titles (Item Prioritas, Daftar Investigasi, Perbandingan Area, Top Outlet, Analisis Cost Accounting), wired pic to useAnalysis, activeTab state
+- Verified status API: 20 PICs returned (ALDI, ARIFIN, BAGAS, BIMO, BONDAN...), sample outlet 1001.TLGTEU has pic=IVANSHA
+- Verified analysis API: success=true, 147KB response, LLM narrative, sales Rp 72.7B
+- Lint: 0 errors, 0 warnings
+- Committed (596cd0e) and pushed to GitHub (synced ✓)
+
+Stage Summary:
+- Indonesian formatting restored: fmtIDR returns "Rp 72,70M" / "Rp 11,60Jt" / "Rp 500,0Rb" with comma decimals
+- PIC filter added: dropdown with 20 PICs, filters outlets + analysis data
+- All UI text Indonesian (header, footer, filter labels, empty/error states, tab labels, section titles)
+- Vercel will auto-deploy from this push — user just needs DATABASE_URL env var set in Vercel dashboard
