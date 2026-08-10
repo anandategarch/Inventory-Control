@@ -119,3 +119,25 @@ Stage Summary:
 - Restructured page.tsx into 5 tabs (Dashboard, Insight, Investigasi, Area, Cost) so all new charts + insights are accessible without an over-long single scroll
 - All text in Indonesian, all charts use FormulaInfo tooltips, all clickable elements wire up to drill-down/scorecard/area filter
 - Lint passes with 0 errors; dev server still running (no need to restart — Turbopack will hot-reload on next request)
+
+---
+Task ID: 6
+Agent: Main (Z.ai Code)
+Task: Push all changes to GitHub for Vercel auto-deploy
+
+Work Log:
+- Discovered ExtraCharts.tsx, InsightsPanel.tsx, and page.tsx edits were lost from sandbox (uncommitted changes wiped by sandbox reset)
+- Delegated to full-stack-developer subagent (Task ID 5) to recreate all lost files + add backend computations for missing API fields
+- Subagent created: ExtraCharts.tsx (9 charts), InsightsPanel.tsx (10 insights), edited page.tsx (5 tabs), added backend computations in analysis.ts + route.ts + useAnalysis.ts + useDashboard.ts
+- Verified lint: 0 errors, 0 warnings
+- Committed: "feat: add 9 new charts, InsightsPanel, backend computations" (commit 7831c66, 8 files changed, 2008 insertions)
+- Pushed to GitHub (used PAT, then removed token from config for security)
+- Verified Local HEAD = Remote HEAD = 7831c66 (synced)
+- Restarted server with Supabase env + 3GB heap (NODE_OPTIONS=--max-old-space-size=3072)
+- Verified: server ALIVE, status API returns MEI 2026 data from Supabase, log shows "[db] Using PostgreSQL (Supabase)"
+
+Stage Summary:
+- All code pushed to GitHub: https://github.com/anandategarch/Inventory-Control (commit 7831c66)
+- Vercel will auto-deploy from this push (user needs to set DATABASE_URL env var in Vercel dashboard)
+- Files in repo: ExtraCharts.tsx, InsightsPanel.tsx, page.tsx (5 tabs), schema.prisma (PostgreSQL), db.ts (Supabase detection), upload-data.ts (Prisma-based), backend computations
+- Total commits pushed this session: 5 (including Supabase migration + chart features)
