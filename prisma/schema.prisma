@@ -1,6 +1,6 @@
 // ============================================================
 //  Inventory Control Intelligence Platform — Prisma Schema
-//  SQLite local-first, single-user
+//  PostgreSQL (Supabase) backend
 // ============================================================
 
 generator client {
@@ -8,7 +8,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -263,4 +263,14 @@ model Setting {
   dataType    String   // number | percent | boolean | text
   updatedAt   DateTime @updatedAt
   updatedBy   String?  // who changed it (for audit)
+}
+
+// ------------------------------------------------------------
+//  Outlet PIC (Person in Charge) — outlet-to-staff mapping
+// ------------------------------------------------------------
+model OutletPIC {
+  id         Int      @id @default(autoincrement())
+  outletCode String   @unique
+  pic        String
+  updatedAt  DateTime @updatedAt
 }

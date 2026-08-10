@@ -24,3 +24,35 @@ Stage Summary:
 - 333 outlets with PIC assignments
 - New upload script (scripts/upload-data.ts) committed for future use
 - Analysis API verified working: 101KB response, 6.6s duration, LLM narrative generated
+
+---
+Task ID: 4
+Agent: Main (Z.ai Code)
+Task: Migrate database from local SQLite to Supabase PostgreSQL
+
+Work Log:
+- User provided Supabase connection string (direct connection format)
+- Direct connection (db.xxx.supabase.co:5432) failed — "Can't reach database server" (IPv6-only in sandbox)
+- Tested 11 Supabase pooler regions to find correct one: ap-south-1 (Mumbai) works
+- Updated prisma/schema.prisma: provider sqlite → postgresql
+- Added OutletPIC model to schema (previously created via raw SQL only)
+- Updated .env with Supabase pooler URL (port 5432 session mode for DDL compatibility)
+- Updated src/lib/db.ts to detect postgresql:// → log "Using PostgreSQL (Supabase)"
+- Ran bun run db:generate + bun run db:push → all 13 tables created in Supabase
+- Rewrote scripts/upload-data.ts to use Prisma client (libsql doesn't support PostgreSQL)
+- Fixed syntax errors: ternary expressions need property keys in object literals; field name toleranceRawVal → toleranceRaw
+- Uploaded 17.MEI 2026.xlsx: 54,207 records, 333 outlets, 109 items, 3 weeks
+- Uploaded PIC.csv: 339 PIC entries
+- Restarted server with NODE_OPTIONS=--max-old-space-size=3072 (3GB heap) to avoid OOM during analysis engine compilation
+- Verified status API: 1 month (MEI 2026), 54K records, 333 outlets, 109 items, 14 areas
+- Verified analysis API: success=true, 101KB response, LLM narrative, 12s duration
+- Lint: 0 errors, 0 warnings
+
+Stage Summary:
+- Database fully migrated to Supabase PostgreSQL (ap-south-1 / Mumbai region)
+- Connection: postgresql://postgres.fmnfutshaqycabuxzizq:***@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+- All 13 tables created via Prisma db:push (schema-driven, no raw SQL)
+- Upload script rewritten to use Prisma client (works with any Prisma-supported DB)
+- App confirmed using Supabase: log shows "[db] Using PostgreSQL (Supabase)"
+- Data persistent in cloud — survives sandbox reboots
+- Supabase free tier: 500MB storage, unlimited reads (far more generous than Turso)

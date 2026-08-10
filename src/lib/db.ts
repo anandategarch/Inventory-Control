@@ -1,5 +1,5 @@
 // ============================================================
-//  DB — Prisma client with Turso (libsql) adapter
+//  DB — Prisma client (supports PostgreSQL / SQLite / Turso)
 //  Lazy initialization to avoid reading env vars before they're ready
 // ============================================================
 import { PrismaClient } from '@prisma/client';
@@ -25,6 +25,11 @@ function createPrismaClient(): PrismaClient {
     });
     const adapter = new PrismaLibSql(libsql);
     return new PrismaClient({ adapter, log: ['error', 'warn'] });
+  }
+
+  if (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) {
+    console.log('[db] Using PostgreSQL (Supabase)');
+    return new PrismaClient({ log: ['error', 'warn'] });
   }
 
   console.log('[db] Using local SQLite');
