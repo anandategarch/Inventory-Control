@@ -1,16 +1,24 @@
 'use client';
 
 import { create } from 'zustand';
-import type { FilterState } from '@/types/inventory';
 
-interface DashboardStore extends FilterState {
+interface DashboardStore {
+  monthLabel: string | null;
+  currentWeek: string | null;
+  comparisonWeek: string | null;
   comparisonMonth: string | null;
+  area: string | null;
+  outletCode: string | null;
+  itemName: string | null;
+  pic: string | null;
+  comparisonMode: 'previous_week' | 'historical_average';
   setMonth: (v: string | null) => void;
   setWeek: (v: string | null) => void;
   setCompareWeek: (v: string | null, m: string | null) => void;
   setArea: (v: string | null) => void;
   setOutlet: (v: string | null) => void;
   setItem: (v: string | null) => void;
+  setPic: (v: string | null) => void;
   reset: () => void;
   drilldown: { outletCode: string | null; itemName: string | null };
   setDrilldown: (d: { outletCode: string | null; itemName: string | null }) => void;
@@ -18,12 +26,12 @@ interface DashboardStore extends FilterState {
   setSourceModal: (b: boolean) => void;
   cardDrillDown: string | null;
   setCardDrillDown: (card: string | null) => void;
-  // Deep dive item (single item focused investigation)
   deepDiveItem: { itemName: string | null; outletCode: string | null };
   setDeepDiveItem: (d: { itemName: string | null; outletCode: string | null }) => void;
-  // Scorecard outlet (focused outlet view from radar/insights)
   scorecardOutlet: string | null;
   setScorecardOutlet: (code: string | null) => void;
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
 }
 
 export const useDashboard = create<DashboardStore>((set) => ({
@@ -34,14 +42,16 @@ export const useDashboard = create<DashboardStore>((set) => ({
   area: null,
   outletCode: null,
   itemName: null,
+  pic: null,
   comparisonMode: 'previous_week',
-  setMonth: (v) => set({ monthLabel: v }),
+  setMonth: (v) => set({ monthLabel: v, currentWeek: null, comparisonWeek: null, comparisonMonth: null }),
   setWeek: (v) => set({ currentWeek: v, comparisonWeek: null, comparisonMonth: null }),
   setCompareWeek: (v, m) => set({ comparisonWeek: v, comparisonMonth: m }),
   setArea: (v) => set({ area: v, outletCode: null }),
   setOutlet: (v) => set({ outletCode: v }),
   setItem: (v) => set({ itemName: v }),
-  reset: () => set({ area: null, outletCode: null, itemName: null }),
+  setPic: (v) => set({ pic: v, outletCode: null }),
+  reset: () => set({ area: null, outletCode: null, itemName: null, pic: null }),
   drilldown: { outletCode: null, itemName: null },
   setDrilldown: (d) => set({ drilldown: d }),
   sourceModalOpen: false,
@@ -52,4 +62,6 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setDeepDiveItem: (d) => set({ deepDiveItem: d }),
   scorecardOutlet: null,
   setScorecardOutlet: (code) => set({ scorecardOutlet: code }),
+  activeTab: 'dashboard',
+  setActiveTab: (tab) => set({ activeTab: tab }),
 }));

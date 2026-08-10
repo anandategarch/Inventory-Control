@@ -36,13 +36,9 @@ function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <Boxes className="h-12 w-12 text-muted-foreground/50 mb-4" />
-      <h3 className="text-lg font-semibold">No Data Ingested Yet</h3>
+      <h3 className="text-lg font-semibold">Tidak Ada Data Tersedia</h3>
       <p className="text-sm text-muted-foreground mt-2 max-w-md">
-        Place your monthly Excel files in <code className="px-1 py-0.5 rounded bg-muted text-xs">data/inventory/</code> folder,
-        then click &quot;Refresh Data&quot; to ingest.
-      </p>
-      <p className="text-xs text-muted-foreground mt-4">
-        Sample file already loaded: <code className="px-1 py-0.5 rounded bg-muted">Juli 2026.xlsx</code>
+        Tidak ada data inventory di database. Hubungi administrator untuk import data.
       </p>
     </div>
   );
@@ -67,7 +63,7 @@ function ErrorState({ message }: { message: string }) {
   return (
     <Card className="border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-900">
       <CardContent className="p-6">
-        <h3 className="text-base font-semibold text-red-700 dark:text-red-400 mb-1">Analysis Error</h3>
+        <h3 className="text-base font-semibold text-red-700 dark:text-red-400 mb-1">Error Analisis</h3>
         <p className="text-sm text-red-600 dark:text-red-400/90">{message}</p>
       </CardContent>
     </Card>
@@ -85,7 +81,7 @@ function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: s
 }
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, setMonth, setWeek } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, activeTab, setActiveTab } = useDashboard();
   const { data: status } = useStatus();
 
   // Auto-select first available month/week on mount
@@ -113,10 +109,12 @@ export default function DashboardPage() {
     area,
     outlet: outletCode,
     item: itemName,
+    pic,
   });
 
   const isLoading = analysis.isLoading || analysis.isFetching;
-  const hasData = status?.stats?.totalRecords && status.stats.totalRecords > 0;
+  const statusLoaded = status !== undefined;
+  const hasData = statusLoaded && Boolean(status?.stats?.totalRecords && status.stats.totalRecords > 0);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -129,19 +127,21 @@ export default function DashboardPage() {
             </div>
             <div>
               <h1 className="text-base font-semibold tracking-tight">Inventory Control Intelligence</h1>
-              <p className="text-xs text-muted-foreground">19-Outlet F&amp;B Network · Reconciliation &amp; Anomaly Detection</p>
+              <p className="text-xs text-muted-foreground">
+                {status?.stats ? `${status.stats.totalOutlets} Outlet · ` : ''}F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {analysis.data && (
               <Badge variant="outline" className="text-[10px] hidden sm:inline-flex">
                 <Activity className="h-3 w-3 mr-1" />
-                {analysis.data.cached ? 'cached' : 'live'} · {analysis.data.durationMs}ms
+                {analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms
               </Badge>
             )}
             {analysis.data?.narrativeSource === 'llm' && (
               <Badge variant="default" className="text-[10px] hidden sm:inline-flex">
-                <Brain className="h-3 w-3 mr-1" /> AI Narrative
+                <Brain className="h-3 w-3 mr-1" /> Narasi AI
               </Badge>
             )}
           </div>
@@ -152,14 +152,16 @@ export default function DashboardPage() {
       <main className="flex-1 px-4 sm:px-6 py-4 space-y-4 max-w-[1600px] w-full mx-auto">
         <FilterBar />
 
-        {!hasData ? (
+        {!statusLoaded ? (
+          <LoadingState />
+        ) : !hasData ? (
           <EmptyState />
         ) : isLoading && !analysis.data ? (
           <LoadingState />
         ) : analysis.error ? (
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
-          <Tabs defaultValue="dashboard" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap">
               <TabsTrigger value="dashboard" className="text-xs">
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
@@ -167,14 +169,14 @@ export default function DashboardPage() {
               <TabsTrigger value="insight" className="text-xs">
                 <Lightbulb className="h-3.5 w-3.5" /> Insight
               </TabsTrigger>
-              <TabsTrigger value="investigation" className="text-xs">
+              <TabsTrigger value="investigasi" className="text-xs">
                 <FileSearch className="h-3.5 w-3.5" /> Investigasi
               </TabsTrigger>
               <TabsTrigger value="area" className="text-xs">
                 <MapPin className="h-3.5 w-3.5" /> Area
               </TabsTrigger>
               <TabsTrigger value="cost" className="text-xs">
-                <Coins className="h-3.5 w-3.5" /> Cost
+                <Coins className="h-3.5 w-3.5" /> Cost Accounting
               </TabsTrigger>
             </TabsList>
 
@@ -214,7 +216,7 @@ export default function DashboardPage() {
               <section>
                 <SectionHeader
                   icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Top Priority Items"
+                  title="Item Prioritas"
                 />
                 <div className="grid lg:grid-cols-3 gap-4">
                   <TopItemsByNominal data={analysis.data} />
@@ -251,12 +253,12 @@ export default function DashboardPage() {
                 <OutletRadarChart data={analysis.data} />
               </section>
 
-              {/* Section: Investigation Worklist */}
+              {/* Section: Daftar Investigasi */}
               <section>
                 <SectionHeader
                   icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
-                  title="Investigation Worklist"
-                  badge={`${analysis.data.investigationWorklist.length} items`}
+                  title="Daftar Investigasi"
+                  badge={`${analysis.data.investigationWorklist.length} item`}
                 />
                 <InvestigationWorklist data={analysis.data} />
               </section>
@@ -293,12 +295,12 @@ export default function DashboardPage() {
             </TabsContent>
 
             {/* ====== INVESTIGATION TAB ====== */}
-            <TabsContent value="investigation" className="space-y-4 mt-2">
+            <TabsContent value="investigasi" className="space-y-4 mt-2">
               <section>
                 <SectionHeader
                   icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
-                  title="Investigation Worklist"
-                  badge={`${analysis.data.investigationWorklist.length} items`}
+                  title="Daftar Investigasi"
+                  badge={`${analysis.data.investigationWorklist.length} item`}
                 />
                 <InvestigationWorklist data={analysis.data} />
               </section>
@@ -319,7 +321,7 @@ export default function DashboardPage() {
               <section>
                 <SectionHeader
                   icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
-                  title="Analisis per Area"
+                  title="Perbandingan Area"
                 />
                 <div className="grid lg:grid-cols-2 gap-4">
                   <AreaContributionBar data={analysis.data} />
@@ -330,7 +332,7 @@ export default function DashboardPage() {
               <section>
                 <SectionHeader
                   icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Top Outlets"
+                  title="Top Outlet"
                 />
                 <TopOutlets data={analysis.data} />
               </section>
@@ -343,7 +345,7 @@ export default function DashboardPage() {
               <section>
                 <SectionHeader
                   icon={<Coins className="h-4 w-4 text-muted-foreground" />}
-                  title="Cost Impact Analysis"
+                  title="Analisis Cost Accounting"
                 />
                 <CumulativeDeviationArea data={analysis.data} />
               </section>
@@ -368,21 +370,21 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <ShieldAlert className="h-3 w-3" />
-              Deterministic Engine + AI Narrative
+              Mesin Deterministik + Narasi AI
             </span>
             {status?.stats && (
               <span className="hidden sm:inline">
-                {status.stats.totalOutlets} outlets · {status.stats.totalItems} items · {status.stats.totalRecords.toLocaleString()} records
+                {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
               </span>
             )}
           </div>
           <div className="flex items-center gap-3">
             {analysis.data && (
               <span>
-                Last analysis: {analysis.data.durationMs}ms · {analysis.data.cached ? 'cached' : 'fresh'}
+                Analisis terakhir: {analysis.data.durationMs}ms · {analysis.data.cached ? 'cache' : 'segar'}
               </span>
             )}
-            <span>Click any row to drill-down to source</span>
+            <span>Klik baris mana saja untuk drill-down ke sumber</span>
           </div>
         </div>
       </footer>

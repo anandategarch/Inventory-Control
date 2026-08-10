@@ -135,6 +135,7 @@ export function useAnalysis(params: {
   area: string | null;
   outlet: string | null;
   item: string | null;
+  pic?: string | null;
 }) {
   const p = new URLSearchParams();
   if (params.month) p.set('month', params.month);
@@ -150,6 +151,7 @@ export function useAnalysis(params: {
   if (params.area) p.set('area', params.area);
   if (params.outlet) p.set('outlet', params.outlet);
   if (params.item) p.set('item', params.item);
+  if (params.pic) p.set('pic', params.pic);
 
   return useQuery({
     queryKey: ['analysis', params],
@@ -165,8 +167,9 @@ export interface StatusData {
   files: any[];
   months: Array<{ label: string; key: string }>;
   weeksByMonth: Record<string, string[]>;
-  outlets: Array<{ code: string; name: string; area: string }>;
+  outlets: Array<{ code: string; name: string; area: string; pic: string | null }>;
   areas: string[];
+  pics: string[];
   stats: { totalFiles: number; totalOutlets: number; totalItems: number; totalRecords: number };
 }
 

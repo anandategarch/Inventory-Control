@@ -1,5 +1,5 @@
 // ============================================================
-//  /api/status — list available months, weeks, outlets, areas
+//  /api/status — list available months, weeks, outlets, areas, pics
 //  Resilient to missing tables (returns empty state, not 500)
 // ============================================================
 import { NextResponse } from 'next/server';
@@ -14,6 +14,7 @@ const EMPTY_STATE = {
   weeksByMonth: {},
   outlets: [],
   areas: [],
+  pics: [],
   stats: { totalFiles: 0, totalOutlets: 0, totalItems: 0, totalRecords: 0 },
   warning: 'Database tables not created yet. Visit /api/setup to initialize.',
 };
@@ -30,12 +31,31 @@ export async function GET() {
       select: { weekLabel: true, monthKey: true, periodStart: true, periodEnd: true },
     });
 
+    // LEFT JOIN OutletPIC so each outlet includes its PIC (if any)
     const outlets = await db.outlet.findMany({
       orderBy: { code: 'asc' },
-      select: { code: true, name: true, area: true },
+      select: {
+        code: true,
+        name: true,
+        area: true,
+      },
     });
 
+    // Fetch PIC assignments (OutletPIC table)
+    let outletPics: Array<{ outletCode: string; pic: string }> = [];
+    try {
+      const picRows = await db.outletPIC.findMany({ select: { outletCode: true, pic: true } });
+      outletPics = picRows.map((r) => ({ outletCode: r.outletCode, pic: r.pic }));
+    } catch {
+      // OutletPIC table may not exist — treat as no PICs
+    }
+    const picMap = new Map(outletPics.map((p) => [p.outletCode, p.pic]));
+
+    // Merge outlets with PIC
+    const outletsWithPic = outlets.map((o) => ({ ...o, pic: picMap.get(o.code) || null }));
+
     const areas = [...new Set(outlets.map((o) => o.area))].sort();
+    const pics = [...new Set(outletPics.map((p) => p.pic).filter(Boolean))].sort();
 
     const itemsCount = await db.item.count();
     const recordsCount = await db.inventoryRecord.count();
@@ -52,8 +72,9 @@ export async function GET() {
       files,
       months: files.map((f) => ({ label: f.monthLabel, key: f.monthKey })),
       weeksByMonth,
-      outlets,
+      outlets: outletsWithPic,
       areas,
+      pics,
       stats: {
         totalFiles: files.length,
         totalOutlets: outlets.length,

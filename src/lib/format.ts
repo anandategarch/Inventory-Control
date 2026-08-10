@@ -1,15 +1,24 @@
 // ============================================================
-//  Formatting helpers
+//  Formatting helpers — Indonesian abbreviations
+//  M  = Miliar (billion, 1.000.000.000)
+//  Jt = Juta   (million, 1.000.000)
+//  Rb = Ribu   (thousand, 1.000)
+//  Decimal separator: comma (,) — Indonesian style
 // ============================================================
+
+// Format number with Indonesian decimal separator
+function fmtDecimal(n: number, digits: number): string {
+  return n.toFixed(digits).replace('.', ',');
+}
 
 export function fmtIDR(v: number | null | undefined, compact = true): string {
   if (v == null || isNaN(v)) return '—';
   if (compact) {
     const abs = Math.abs(v);
     const sign = v < 0 ? '-' : '';
-    if (abs >= 1_000_000_000) return `${sign}Rp ${(abs / 1_000_000_000).toFixed(2)}B`;
-    if (abs >= 1_000_000) return `${sign}Rp ${(abs / 1_000_000).toFixed(2)}M`;
-    if (abs >= 1_000) return `${sign}Rp ${(abs / 1_000).toFixed(1)}K`;
+    if (abs >= 1_000_000_000) return `${sign}Rp ${fmtDecimal(abs / 1_000_000_000, 2)}M`;
+    if (abs >= 1_000_000) return `${sign}Rp ${fmtDecimal(abs / 1_000_000, 2)}Jt`;
+    if (abs >= 1_000) return `${sign}Rp ${fmtDecimal(abs / 1_000, 1)}Rb`;
     return `${sign}Rp ${abs.toFixed(0)}`;
   }
   return `Rp ${v.toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
@@ -20,8 +29,8 @@ export function fmtNum(v: number | null | undefined, unit = '', compact = true):
   if (compact) {
     const abs = Math.abs(v);
     const sign = v < 0 ? '-' : '';
-    if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M${unit}`;
-    if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}K${unit}`;
+    if (abs >= 1_000_000) return `${sign}${fmtDecimal(abs / 1_000_000, 2)}Jt${unit}`;
+    if (abs >= 1_000) return `${sign}${fmtDecimal(abs / 1_000, 1)}Rb${unit}`;
     return `${sign}${abs.toFixed(0)}${unit}`;
   }
   return `${v.toLocaleString('id-ID', { maximumFractionDigits: 0 })}${unit}`;
@@ -31,12 +40,12 @@ export function fmtPct(v: number | null | undefined, withSign = true, digits = 1
   if (v == null || isNaN(v)) return '—';
   const pct = v * 100;
   const sign = withSign && pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(digits)}%`;
+  return `${sign}${pct.toFixed(digits).replace('.', ',')}%`;
 }
 
 export function fmtPctAbs(v: number | null | undefined, digits = 1): string {
   if (v == null || isNaN(v)) return '—';
-  return `${(Math.abs(v) * 100).toFixed(digits)}%`;
+  return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 
 export function trendColor(v: number | null | undefined, inverse = false): string {

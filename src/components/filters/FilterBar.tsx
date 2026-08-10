@@ -19,7 +19,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { SettingsDialog } from '@/components/filters/SettingsDialog';
 
 export function FilterBar() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, setMonth, setWeek, setCompareWeek, setArea, setOutlet, reset } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
   const { data: status, isLoading } = useStatus();
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
@@ -39,7 +39,13 @@ export function FilterBar() {
     const m = status.months.find((mm) => mm.label === monthLabel);
     return m && k === m.key;
   })?.[1] || [] : [];
-  const outlets = (status?.outlets || []).filter((o) => !area || o.area === area);
+  const pics = status?.pics || [];
+  // Filter outlets by area AND pic
+  const outlets = (status?.outlets || []).filter((o) => {
+    if (area && o.area !== area) return false;
+    if (pic && o.pic !== pic) return false;
+    return true;
+  });
   const areas = status?.areas || [];
 
   type Period = { label: string; monthLabel: string; weekLabel: string; sortKey: string };
@@ -62,6 +68,7 @@ export function FilterBar() {
   const compareValue = comparisonWeek
     ? `${comparisonWeek}|||${comparisonMonth || monthLabel}`
     : 'auto';
+  const hasActiveFilter = Boolean(area || outletCode || pic);
 
   async function handleIngest() {
     setIngesting(true);
@@ -144,9 +151,9 @@ export function FilterBar() {
         <CardContent className="p-3">
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1 min-w-[140px]">
-              <label className="text-xs text-muted-foreground">Month</label>
+              <label className="text-xs text-muted-foreground">Bulan</label>
               <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select month" /></SelectTrigger>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih bulan" /></SelectTrigger>
                 <SelectContent>
                   {months.map((m) => <SelectItem key={m.key} value={m.label} className="text-xs">{m.label}</SelectItem>)}
                 </SelectContent>
@@ -154,9 +161,9 @@ export function FilterBar() {
             </div>
 
             <div className="flex flex-col gap-1 min-w-[100px]">
-              <label className="text-xs text-muted-foreground">Current Week</label>
+              <label className="text-xs text-muted-foreground">Minggu</label>
               <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Week" /></SelectTrigger>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Minggu" /></SelectTrigger>
                 <SelectContent>
                   {weeks.map((w) => <SelectItem key={w} value={w} className="text-xs">{w}</SelectItem>)}
                 </SelectContent>
@@ -164,7 +171,7 @@ export function FilterBar() {
             </div>
 
             <div className="flex flex-col gap-1 min-w-[160px]">
-              <label className="text-xs text-muted-foreground">Compare Period</label>
+              <label className="text-xs text-muted-foreground">Periode Pembanding</label>
               <Select
                 value={compareValue}
                 onValueChange={(v) => {
@@ -179,7 +186,7 @@ export function FilterBar() {
               >
                 <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto" className="text-xs">Auto (previous period)</SelectItem>
+                  <SelectItem value="auto" className="text-xs">Otomatis (periode sebelumnya)</SelectItem>
                   {allComparePeriods.map((p) => (
                     <SelectItem
                       key={`${p.weekLabel}|${p.monthLabel}`}
@@ -193,16 +200,30 @@ export function FilterBar() {
               </Select>
             </div>
 
+            <div className="flex flex-col gap-1 min-w-[140px]">
+              <label className="text-xs text-muted-foreground">PIC</label>
+              <SearchableComboBox
+                options={pics.map((p) => ({ value: p, label: p }))}
+                value={pic}
+                onValueChange={setPic}
+                placeholder="Semua PIC"
+                searchPlaceholder="Cari PIC..."
+                emptyText="PIC tidak ditemukan."
+                allOptionLabel={`Semua PIC (${pics.length})`}
+                buttonClassName="w-full"
+              />
+            </div>
+
             <div className="flex flex-col gap-1 min-w-[160px]">
               <label className="text-xs text-muted-foreground">Area</label>
               <SearchableComboBox
                 options={areas.map((a) => ({ value: a, label: a }))}
                 value={area}
                 onValueChange={setArea}
-                placeholder="All Areas"
+                placeholder="Semua Area"
                 searchPlaceholder="Cari area..."
                 emptyText="Area tidak ditemukan."
-                allOptionLabel={`All Areas (${areas.length})`}
+                allOptionLabel={`Semua Area (${areas.length})`}
                 buttonClassName="w-full"
               />
             </div>
@@ -213,17 +234,17 @@ export function FilterBar() {
                 options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
                 value={outletCode}
                 onValueChange={setOutlet}
-                placeholder="All Outlets"
+                placeholder="Semua Outlet"
                 searchPlaceholder="Cari outlet (kode/nama)..."
                 emptyText="Outlet tidak ditemukan."
-                allOptionLabel={`All Outlets (${outlets.length})`}
+                allOptionLabel={`Semua Outlet (${outlets.length})`}
                 buttonClassName="w-full"
               />
             </div>
 
             <div className="flex-1" />
 
-            <Button variant="outline" size="sm" className="h-9" onClick={reset} disabled={!area && !outletCode}>
+            <Button variant="outline" size="sm" className="h-9" onClick={reset} disabled={!hasActiveFilter}>
               <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
             </Button>
             <Button
@@ -233,7 +254,7 @@ export function FilterBar() {
               onClick={() => setSettingsOpen(true)}
             >
               <Settings className="h-3.5 w-3.5 mr-1" />
-              Settings
+              Pengaturan
             </Button>
             <Button
               variant="secondary"
@@ -242,11 +263,11 @@ export function FilterBar() {
               onClick={() => { setDriveDialogOpen(true); setDriveResult(null); }}
             >
               <CloudDownload className="h-3.5 w-3.5 mr-1" />
-              Import from Drive
+              Import dari Drive
             </Button>
             <Button variant="default" size="sm" className="h-9" onClick={handleIngest} disabled={ingesting}>
               <RefreshCw className={`h-3.5 w-3.5 mr-1 ${ingesting ? 'animate-spin' : ''}`} />
-              {ingesting ? 'Ingesting...' : 'Refresh Data'}
+              {ingesting ? 'Memproses...' : 'Refresh Data'}
             </Button>
           </div>
 
@@ -254,7 +275,7 @@ export function FilterBar() {
             {status?.stats && (
               <Badge variant="outline" className="text-[10px]">
                 <Database className="h-3 w-3 mr-1" />
-                {status.stats.totalFiles} files · {status.stats.totalOutlets} outlets · {status.stats.totalItems} items · {status.stats.totalRecords.toLocaleString()} records
+                {status.stats.totalFiles} file · {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
               </Badge>
             )}
             {ingestMsg && (

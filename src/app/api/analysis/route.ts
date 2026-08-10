@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
     const area = url.searchParams.get('area');
     const outletCode = url.searchParams.get('outlet');
     const itemName = url.searchParams.get('item');
+    const pic = url.searchParams.get('pic');
 
     // ===== BUG FIX #1/#2: Parse cross-month compare format "WEEK X|||MonthLabel" =====
     let compareWeek: string | null = null;
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
     // Cache key — include all filter dimensions + thresholds version
     // (thresholds version changes when user updates settings, invalidating cache)
     const thresholdsVersion = await db.setting.count();
-    const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}|tv${thresholdsVersion}`;
+    const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}|${pic}|tv${thresholdsVersion}`;
     const cached = analysisCache.get(cacheKey);
     if (cached) {
       return NextResponse.json({ ...cached as object, cached: true, durationMs: Date.now() - startedAt });
@@ -139,11 +140,24 @@ export async function GET(req: NextRequest) {
     }
 
     // ===== BUG FIX #4: buildWhere accepts monthLabel parameter (for cross-month) =====
+    // If PIC filter is set, resolve to list of outlet codes assigned to that PIC
+    let picOutletCodes: string[] | null = null;
+    if (pic) {
+      try {
+        const picOutlets = await db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } });
+        picOutletCodes = picOutlets.map((p) => p.outletCode);
+      } catch {
+        // OutletPIC table may not exist — ignore PIC filter
+      }
+    }
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
       if (area) w.area = area;
       if (outletCode) w.outlet = { code: outletCode };
       if (itemName) w.item = { name: { contains: itemName } };
+      if (picOutletCodes && picOutletCodes.length > 0) {
+        w.outlet = { ...(w.outlet || {}), code: { in: picOutletCodes } };
+      }
       return w;
     };
 
