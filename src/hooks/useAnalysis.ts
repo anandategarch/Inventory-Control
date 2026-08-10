@@ -2,6 +2,72 @@
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
+export interface AreaAnalysis {
+  area: string;
+  outletCount: number;
+  totalSales: number;
+  totalAbsNominal: number;
+  avgDevBom: number;
+  lossToSales: number | null;
+}
+
+export interface VarianceItem {
+  itemName: string;
+  outletCode: string;
+  area: string;
+  currentAbsNominal: number;
+  previousAbsNominal: number;
+  delta: number;
+  direction: string;
+}
+
+export interface OutletHealthRanking {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  healthScore: number;
+  normal: number;
+  warning: number;
+  abnormal: number;
+  absNominal: number;
+  residualPct: number | null;
+  lossToSales: number | null;
+  devBom: number;
+  sales: number;
+}
+
+export interface ParetoResult {
+  classACount: number;
+  classAPctOfCost: number;
+  totalItems: number;
+  totalAbsNominal: number;
+  items: Array<{ itemName: string; outletCode: string; absNominal: number; cumPct: number }>;
+}
+
+export interface CostImpact {
+  totalCost: number;
+  pctOfSales: number | null;
+  lossNominal: number;
+  surplusNominal: number;
+}
+
+export interface ItemConsistencyResult {
+  systemic: Array<{ itemName: string; outletCode: string; area: string; occurrences: number; avgDevBom: number; absNominal: number }>;
+  episodic: Array<{ itemName: string; outletCode: string; area: string; absNominal: number; devBom: number }>;
+}
+
+export interface NetCostTrendPoint {
+  weekLabel: string;
+  netCostRatio: number;
+  lossNominal: number;
+  surplusNominal: number;
+  sales: number;
+}
+
+export interface HistoricalAnalysisResult {
+  criticalItems: Array<{ itemName: string; outletCode: string; area: string; currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number }>;
+}
+
 export interface AnalysisData {
   success: boolean;
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -17,7 +83,7 @@ export interface AnalysisData {
     };
   };
   dqStatus: { ok: number; warnings: number; errors: number; issues: any[] };
-  growthComparison: any;
+  growthComparison: { salesGrowth: number | null; bomGrowth: number | null; qtyDeviasiGrowth: number | null; nominalDeviasiGrowth: number | null; priceGrowth: number | null; deviationToSalesRatio: number | null; deviationToBomRatio: number | null; historicalAnalysis?: HistoricalAnalysisResult } & Record<string, any>;
   topItemsByNominal: any[];
   topItemsByDevBom: any[];
   topOutlets: any[];
@@ -34,6 +100,14 @@ export interface AnalysisData {
   recommendation: Array<{ why: string; what: string[]; priority: string }>;
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
   priorities: any[];
+  // Extended analytical fields (computed server-side, optional for backward compat)
+  areaAnalysis?: AreaAnalysis[];
+  varianceAnalysis?: { topWorsened: VarianceItem[]; topImproved: VarianceItem[] };
+  outletHealthRanking?: OutletHealthRanking[];
+  pareto?: ParetoResult;
+  costImpact?: CostImpact;
+  itemConsistencyAnalysis?: ItemConsistencyResult;
+  netCostTrend?: NetCostTrendPoint[];
   durationMs: number;
   cached?: boolean;
   message?: string;

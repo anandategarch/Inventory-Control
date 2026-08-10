@@ -642,3 +642,412 @@ export function computePrioritiesFromFlags(
 
   return scores;
 }
+
+// ============================================================
+//  Area Analysis — aggregate metrics per area
+// ============================================================
+export function computeAreaAnalysis(recs: RecWithRels[]) {
+  const byArea = new Map<string, {
+    outletIds: Set<number>;
+    salesByOutlet: Map<number, number>;
+    absNominal: number;
+    devBomSum: number;
+    devBomCount: number;
+    lossNominal: number;
+  }>();
+
+  for (const r of recs) {
+    const a = r.area || 'UNKNOWN';
+    let entry = byArea.get(a);
+    if (!entry) {
+      entry = {
+        outletIds: new Set(),
+        salesByOutlet: new Map(),
+        absNominal: 0,
+        devBomSum: 0,
+        devBomCount: 0,
+        lossNominal: 0,
+      };
+      byArea.set(a, entry);
+    }
+    entry.outletIds.add(r.outletId);
+    if (r.nominalSales != null && r.nominalSales > 0) {
+      const existing = entry.salesByOutlet.get(r.outletId) ?? 0;
+      if (r.nominalSales > existing) entry.salesByOutlet.set(r.outletId, r.nominalSales);
+    }
+    entry.absNominal += r.absNominalDeviasi ?? 0;
+    if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
+      entry.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
+      entry.devBomCount++;
+    }
+    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) {
+      entry.lossNominal += r.nominalDeviasi;
+    }
+  }
+
+  return [...byArea.entries()]
+    .map(([area, v]) => {
+      let totalSales = 0;
+      for (const s of v.salesByOutlet.values()) totalSales += s;
+      return {
+        area,
+        outletCount: v.outletIds.size,
+        totalSales,
+        totalAbsNominal: v.absNominal,
+        avgDevBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
+        lossToSales: totalSales > 0 ? v.lossNominal / totalSales : null,
+      };
+    })
+    .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
+}
+
+// ============================================================
+//  Variance Analysis — items whose deviation changed most
+//  Positive delta = worsened (deviasi naik)
+//  Negative delta = improved (deviasi turun)
+// ============================================================
+export function computeVarianceAnalysis(
+  current: RecWithRels[],
+  prevByOutletItem: Map<string, RecWithRels>
+) {
+  const deltas: Array<{
+    itemName: string;
+    outletCode: string;
+    area: string;
+    currentAbsNominal: number;
+    previousAbsNominal: number;
+    delta: number;
+    direction: string;
+  }> = [];
+
+  for (const curr of current) {
+    if (curr.absNominalDeviasi == null || curr.absNominalDeviasi === 0) continue;
+    const key = `${curr.outletId}|${curr.itemId}`;
+    const prev = prevByOutletItem.get(key);
+    if (!prev || prev.absNominalDeviasi == null || prev.absNominalDeviasi === 0) continue;
+    const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;
+    deltas.push({
+      itemName: curr.item.name,
+      outletCode: curr.outlet.code,
+      area: curr.area,
+      currentAbsNominal: curr.absNominalDeviasi,
+      previousAbsNominal: prev.absNominalDeviasi,
+      delta,
+      direction: curr.direction || 'NEUTRAL',
+    });
+  }
+
+  const topWorsened = [...deltas].sort((a, b) => b.delta - a.delta).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  return { topWorsened, topImproved };
+}
+
+// ============================================================
+//  Outlet Health Ranking — health score per outlet (worst first)
+//  Uses pre-computed flags from recsWithFlags
+// ============================================================
+export function computeOutletHealthRanking(
+  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+  zeroDevByOutlet?: Map<number, number>
+) {
+  const byOutlet = new Map<number, {
+    outlet: Outlet;
+    area: string;
+    normal: number;
+    warning: number;
+    abnormal: number;
+    absNominal: number;
+    devBomSum: number;
+    devBomCount: number;
+    residualSum: number;
+    residualCount: number;
+    lossNominal: number;
+    sales: number;
+  }>();
+
+  const ensure = (r: RecWithRels) => {
+    let e = byOutlet.get(r.outletId);
+    if (!e) {
+      e = {
+        outlet: r.outlet,
+        area: r.area,
+        normal: 0,
+        warning: 0,
+        abnormal: 0,
+        absNominal: 0,
+        devBomSum: 0,
+        devBomCount: 0,
+        residualSum: 0,
+        residualCount: 0,
+        lossNominal: 0,
+        sales: 0,
+      };
+      byOutlet.set(r.outletId, e);
+    }
+    return e;
+  };
+
+  for (const { curr, flags } of recsWithFlags) {
+    const e = ensure(curr);
+    e.absNominal += curr.absNominalDeviasi ?? 0;
+    if (curr.pctQtyDeviasiToBom != null && curr.qtyBom !== 0) {
+      e.devBomSum += Math.abs(curr.pctQtyDeviasiToBom);
+      e.devBomCount++;
+    }
+    if (curr.residualRatio != null) {
+      e.residualSum += Math.abs(curr.residualRatio);
+      e.residualCount++;
+    }
+    if (curr.nominalDeviasi != null && curr.nominalDeviasi > 0) {
+      e.lossNominal += curr.nominalDeviasi;
+    }
+    if (curr.nominalSales != null && curr.nominalSales > e.sales) {
+      e.sales = curr.nominalSales ?? 0;
+    }
+    if (flags.length === 0) {
+      e.normal++;
+    } else {
+      const top = flags[0];
+      if (top.severity === 'ABNORMAL') e.abnormal++;
+      else if (top.severity === 'WARNING') e.warning++;
+      else e.normal++;
+    }
+  }
+
+  // Account for zero-deviation records (counted as normal elsewhere)
+  if (zeroDevByOutlet) {
+    for (const [outletId, cnt] of zeroDevByOutlet) {
+      const e = byOutlet.get(outletId);
+      if (e) e.normal += cnt;
+    }
+  }
+
+  return [...byOutlet.values()]
+    .map((v) => {
+      const total = v.normal + v.warning + v.abnormal;
+      return {
+        outletCode: v.outlet.code,
+        outletName: v.outlet.name,
+        area: v.area,
+        healthScore: total > 0 ? Math.round((v.normal / total) * 100) : 100,
+        normal: v.normal,
+        warning: v.warning,
+        abnormal: v.abnormal,
+        absNominal: v.absNominal,
+        residualPct: v.residualCount > 0 ? v.residualSum / v.residualCount : null,
+        lossToSales: v.sales > 0 ? v.lossNominal / v.sales : null,
+        devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
+        sales: v.sales,
+      };
+    })
+    .sort((a, b) => a.healthScore - b.healthScore || b.abnormal - a.abnormal);
+}
+
+// ============================================================
+//  Pareto — class A items (top contributors to total deviation cost)
+//  classACount = # items accounting for 80% of total |NOMINAL DEVIASI|
+// ============================================================
+export function computePareto(recs: RecWithRels[]) {
+  const items = [...recs]
+    .filter((r) => r.absNominalDeviasi != null && r.absNominalDeviasi > 0)
+    .map((r) => ({
+      itemName: r.item.name,
+      outletCode: r.outlet.code,
+      absNominal: r.absNominalDeviasi ?? 0,
+    }))
+    .sort((a, b) => b.absNominal - a.absNominal);
+
+  const totalAbsNominal = items.reduce((sum, it) => sum + it.absNominal, 0);
+  let cum = 0;
+  let classACount = 0;
+  let classAPctOfCost = 0;
+  const itemsWithCum = items.map((it) => {
+    cum += it.absNominal;
+    const cumPct = totalAbsNominal > 0 ? cum / totalAbsNominal : 0;
+    return { ...it, cumPct };
+  });
+  for (const it of itemsWithCum) {
+    if (it.cumPct <= 0.8) {
+      classACount++;
+      classAPctOfCost = it.cumPct;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    classACount,
+    classAPctOfCost,
+    totalItems: items.length,
+    totalAbsNominal,
+    items: itemsWithCum.slice(0, 20),
+  };
+}
+
+// ============================================================
+//  Cost Impact — total |NOMINAL DEVIASI| as % of sales
+// ============================================================
+export function computeCostImpact(recs: RecWithRels[], salesTotal: number) {
+  let totalCost = 0;
+  let lossNominal = 0;
+  let surplusNominal = 0;
+  for (const r of recs) {
+    totalCost += r.absNominalDeviasi ?? 0;
+    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) lossNominal += r.nominalDeviasi;
+    else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) surplusNominal += Math.abs(r.nominalDeviasi);
+  }
+  return {
+    totalCost,
+    pctOfSales: salesTotal > 0 ? totalCost / salesTotal : null,
+    lossNominal,
+    surplusNominal,
+  };
+}
+
+// ============================================================
+//  Item Consistency — SYSTEMIC vs EPISODIC items
+//  SYSTEMIC = appears with significant deviation in >= 50% of historical periods
+//  EPISODIC  = appears in only 1 historical period (single spike)
+// ============================================================
+export function computeItemConsistencyAnalysis(
+  current: RecWithRels[],
+  historicalByOutletItem: Map<string, number[]>,
+  historicalPeriodCount: number
+) {
+  const threshold = Math.max(2, Math.ceil(historicalPeriodCount * 0.5));
+  const systemic: Array<{
+    itemName: string; outletCode: string; area: string;
+    occurrences: number; avgDevBom: number; absNominal: number;
+  }> = [];
+  const episodic: Array<{
+    itemName: string; outletCode: string; area: string;
+    absNominal: number; devBom: number;
+  }> = [];
+
+  for (const r of current) {
+    if (r.absNominalDeviasi == null || r.absNominalDeviasi === 0) continue;
+    const key = `${r.outletId}|${r.itemId}`;
+    const hist = historicalByOutletItem.get(key) ?? [];
+    if (hist.length === 0) continue;
+    // Count "significant" historical deviations (>= 5%)
+    const sigCount = hist.filter((v) => Math.abs(v) >= 0.05).length;
+    const avgDevBom = hist.reduce((s, v) => s + Math.abs(v), 0) / hist.length;
+    if (sigCount >= threshold) {
+      systemic.push({
+        itemName: r.item.name,
+        outletCode: r.outlet.code,
+        area: r.area,
+        occurrences: sigCount,
+        avgDevBom,
+        absNominal: r.absNominalDeviasi ?? 0,
+      });
+    } else if (sigCount <= 1) {
+      episodic.push({
+        itemName: r.item.name,
+        outletCode: r.outlet.code,
+        area: r.area,
+        absNominal: r.absNominalDeviasi ?? 0,
+        devBom: r.pctQtyDeviasiToBom ?? 0,
+      });
+    }
+  }
+
+  systemic.sort((a, b) => b.absNominal - a.absNominal);
+  episodic.sort((a, b) => b.absNominal - a.absNominal);
+  return {
+    systemic: systemic.slice(0, 10),
+    episodic: episodic.slice(0, 10),
+  };
+}
+
+// ============================================================
+//  Net Cost Trend — net (LOSS - SURPLUS) / SALES per week
+//  Positive = net cost leak; Negative = net surplus recovery
+// ============================================================
+export function computeNetCostTrend(
+  trendRecs: Array<{
+    monthLabel: string; weekLabel: string; nominalSales: number | null;
+    nominalDeviasi: number | null; outletId: number;
+  }>,
+  monthKeyByLabel: Map<string, string>
+) {
+  const byPeriod = new Map<string, {
+    monthLabel: string; weekLabel: string; sortKey: string;
+    salesByOutlet: Map<number, number>;
+    lossNominal: number; surplusNominal: number;
+  }>();
+
+  for (const r of trendRecs) {
+    const k = `${r.monthLabel}|${r.weekLabel}`;
+    const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+    const sortKey = `${mk}|${r.weekLabel}`;
+    let p = byPeriod.get(k);
+    if (!p) {
+      p = {
+        monthLabel: r.monthLabel, weekLabel: r.weekLabel, sortKey,
+        salesByOutlet: new Map(), lossNominal: 0, surplusNominal: 0,
+      };
+      byPeriod.set(k, p);
+    }
+    if (r.nominalSales != null && r.nominalSales > 0) {
+      const existing = p.salesByOutlet.get(r.outletId) ?? 0;
+      if (r.nominalSales > existing) p.salesByOutlet.set(r.outletId, r.nominalSales);
+    }
+    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) p.lossNominal += r.nominalDeviasi;
+    else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) p.surplusNominal += Math.abs(r.nominalDeviasi);
+  }
+
+  return [...byPeriod.values()]
+    .map((p) => {
+      let sales = 0;
+      for (const v of p.salesByOutlet.values()) sales += v;
+      return {
+        weekLabel: `${p.weekLabel} ${p.monthLabel.split(' ')[0].slice(0, 3)}`,
+        sortKey: p.sortKey,
+        netCostRatio: sales > 0 ? (p.lossNominal - p.surplusNominal) / sales : 0,
+        lossNominal: p.lossNominal,
+        surplusNominal: p.surplusNominal,
+        sales,
+      };
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+    .map(({ sortKey, ...rest }) => rest);
+}
+
+// ============================================================
+//  Historical Analysis — items where current devBom deviates
+//  significantly from historical mean (z-score > 2 = critical)
+// ============================================================
+export function computeHistoricalAnalysis(
+  recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
+  historicalByOutletItem: Map<string, number[]>
+) {
+  const criticalItems: Array<{
+    itemName: string; outletCode: string; area: string;
+    currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number;
+  }> = [];
+
+  for (const { curr, flags } of recsWithFlags) {
+    const histRule = flags.find((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING');
+    if (!histRule) continue;
+    const key = `${curr.outletId}|${curr.itemId}`;
+    const hist = historicalByOutletItem.get(key) ?? [];
+    if (hist.length === 0) continue;
+    const mean = hist.reduce((s, v) => s + v, 0) / hist.length;
+    const variance = hist.reduce((s, v) => s + (v - mean) ** 2, 0) / hist.length;
+    const stdDev = Math.sqrt(variance);
+    const zScore = stdDev > 0 ? ((curr.pctQtyDeviasiToBom ?? 0) - mean) / stdDev : 0;
+    criticalItems.push({
+      itemName: curr.item.name,
+      outletCode: curr.outlet.code,
+      area: curr.area,
+      currentDevBom: curr.pctQtyDeviasiToBom ?? 0,
+      historicalAvg: mean,
+      zScore,
+      absNominal: curr.absNominalDeviasi ?? 0,
+    });
+  }
+
+  criticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
+  return { criticalItems: criticalItems.slice(0, 10) };
+}

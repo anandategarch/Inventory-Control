@@ -8,13 +8,29 @@ import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveS
 import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist } from '@/components/dashboard/TopItems';
 import { NarrativePanel, RecommendationPanel } from '@/components/dashboard/Narrative';
+import {
+  HealthDistributionDonut,
+  DeviationCategoryDonut,
+  AreaContributionBar,
+  TopItemsHorizontalBar,
+  VarianceDivergingBar,
+  OutletRadarChart,
+  DirectionDistributionPie,
+  CumulativeDeviationArea,
+  AreaLossSalesComparison,
+} from '@/components/dashboard/ExtraCharts';
+import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
 import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb, TrendingUp } from 'lucide-react';
+import {
+  Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
+  TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
+} from 'lucide-react';
 
 function EmptyState() {
   return (
@@ -55,6 +71,16 @@ function ErrorState({ message }: { message: string }) {
         <p className="text-sm text-red-600 dark:text-red-400/90">{message}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      {icon}
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      {badge && <Badge variant="outline" className="text-xs">{badge}</Badge>}
+    </div>
   );
 }
 
@@ -133,54 +159,206 @@ export default function DashboardPage() {
         ) : analysis.error ? (
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
-          <>
-            {/* Section: Executive Summary */}
-            <section>
-              <ExecutiveSummary data={analysis.data} />
-            </section>
+          <Tabs defaultValue="dashboard" className="w-full">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap">
+              <TabsTrigger value="dashboard" className="text-xs">
+                <BarChart3 className="h-3.5 w-3.5" /> Dashboard
+              </TabsTrigger>
+              <TabsTrigger value="insight" className="text-xs">
+                <Lightbulb className="h-3.5 w-3.5" /> Insight
+              </TabsTrigger>
+              <TabsTrigger value="investigation" className="text-xs">
+                <FileSearch className="h-3.5 w-3.5" /> Investigasi
+              </TabsTrigger>
+              <TabsTrigger value="area" className="text-xs">
+                <MapPin className="h-3.5 w-3.5" /> Area
+              </TabsTrigger>
+              <TabsTrigger value="cost" className="text-xs">
+                <Coins className="h-3.5 w-3.5" /> Cost
+              </TabsTrigger>
+            </TabsList>
 
-            {/* Section: Health + Growth */}
-            <section className="grid lg:grid-cols-3 gap-4">
-              <HealthAlert data={analysis.data} />
-              <GrowthComparison data={analysis.data} />
-              <DeviationBreakdownChart data={analysis.data} />
-            </section>
+            {/* ====== DASHBOARD TAB ====== */}
+            <TabsContent value="dashboard" className="space-y-4 mt-2">
+              {/* Section: Executive Summary */}
+              <section>
+                <ExecutiveSummary data={analysis.data} />
+              </section>
 
-            {/* Section: Top Items */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-lg font-semibold tracking-tight">Top Priority Items</h2>
-              </div>
-              <div className="grid lg:grid-cols-3 gap-4">
+              {/* Section: Insights Panel */}
+              <section>
+                <InsightsPanel data={analysis.data} />
+              </section>
+
+              {/* Section: Distribusi Visual (3 donuts) */}
+              <section>
+                <SectionHeader
+                  icon={<PieChartIcon className="h-4 w-4 text-muted-foreground" />}
+                  title="Distribusi Visual"
+                />
+                <div className="grid md:grid-cols-3 gap-4">
+                  <HealthDistributionDonut data={analysis.data} />
+                  <DirectionDistributionPie data={analysis.data} />
+                  <DeviationCategoryDonut data={analysis.data} />
+                </div>
+              </section>
+
+              {/* Section: Health + Growth */}
+              <section className="grid lg:grid-cols-3 gap-4">
+                <HealthAlert data={analysis.data} />
+                <GrowthComparison data={analysis.data} />
+                <DeviationBreakdownChart data={analysis.data} />
+              </section>
+
+              {/* Section: Top Items */}
+              <section>
+                <SectionHeader
+                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                  title="Top Priority Items"
+                />
+                <div className="grid lg:grid-cols-3 gap-4">
+                  <TopItemsByNominal data={analysis.data} />
+                  <TopItemsByDevBom data={analysis.data} />
+                  <TopOutlets data={analysis.data} />
+                </div>
+              </section>
+
+              {/* Section: Loss/Surplus + Trend */}
+              <section className="grid lg:grid-cols-2 gap-4">
+                <LossVsSurplusChart data={analysis.data} />
+                <TrendChart data={analysis.data} />
+              </section>
+
+              {/* Section: Cumulative Deviation */}
+              <section>
+                <CumulativeDeviationArea data={analysis.data} />
+              </section>
+
+              {/* Section: Ranking Visual */}
+              <section>
+                <SectionHeader
+                  icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
+                  title="Ranking Visual"
+                />
+                <div className="grid lg:grid-cols-2 gap-4">
+                  <TopItemsHorizontalBar data={analysis.data} />
+                  <VarianceDivergingBar data={analysis.data} />
+                </div>
+              </section>
+
+              {/* Section: Outlet Radar */}
+              <section>
+                <OutletRadarChart data={analysis.data} />
+              </section>
+
+              {/* Section: Investigation Worklist */}
+              <section>
+                <SectionHeader
+                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
+                  title="Investigation Worklist"
+                  badge={`${analysis.data.investigationWorklist.length} items`}
+                />
+                <InvestigationWorklist data={analysis.data} />
+              </section>
+
+              {/* Section: Narrative + Recommendation */}
+              <section className="grid lg:grid-cols-2 gap-4">
+                <NarrativePanel data={analysis.data} />
+                <RecommendationPanel data={analysis.data} />
+              </section>
+            </TabsContent>
+
+            {/* ====== INSIGHT TAB ====== */}
+            <TabsContent value="insight" className="space-y-4 mt-2">
+              <InsightsPanel data={analysis.data} />
+
+              <section className="grid md:grid-cols-2 gap-4">
+                <HealthDistributionDonut data={analysis.data} />
+                <DeviationCategoryDonut data={analysis.data} />
+              </section>
+
+              <section className="grid lg:grid-cols-2 gap-4">
+                <TopItemsHorizontalBar data={analysis.data} />
+                <VarianceDivergingBar data={analysis.data} />
+              </section>
+
+              <OutletRadarChart data={analysis.data} />
+
+              <CumulativeDeviationArea data={analysis.data} />
+
+              <section className="grid lg:grid-cols-2 gap-4">
+                <NarrativePanel data={analysis.data} />
+                <RecommendationPanel data={analysis.data} />
+              </section>
+            </TabsContent>
+
+            {/* ====== INVESTIGATION TAB ====== */}
+            <TabsContent value="investigation" className="space-y-4 mt-2">
+              <section>
+                <SectionHeader
+                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
+                  title="Investigation Worklist"
+                  badge={`${analysis.data.investigationWorklist.length} items`}
+                />
+                <InvestigationWorklist data={analysis.data} />
+              </section>
+
+              <section className="grid lg:grid-cols-2 gap-4">
                 <TopItemsByNominal data={analysis.data} />
                 <TopItemsByDevBom data={analysis.data} />
+              </section>
+
+              <section className="grid lg:grid-cols-2 gap-4">
+                <TopItemsHorizontalBar data={analysis.data} />
+                <VarianceDivergingBar data={analysis.data} />
+              </section>
+            </TabsContent>
+
+            {/* ====== AREA TAB ====== */}
+            <TabsContent value="area" className="space-y-4 mt-2">
+              <section>
+                <SectionHeader
+                  icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
+                  title="Analisis per Area"
+                />
+                <div className="grid lg:grid-cols-2 gap-4">
+                  <AreaContributionBar data={analysis.data} />
+                  <AreaLossSalesComparison data={analysis.data} />
+                </div>
+              </section>
+
+              <section>
+                <SectionHeader
+                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                  title="Top Outlets"
+                />
                 <TopOutlets data={analysis.data} />
-              </div>
-            </section>
+              </section>
 
-            {/* Section: Loss/Surplus + Trend */}
-            <section className="grid lg:grid-cols-2 gap-4">
-              <LossVsSurplusChart data={analysis.data} />
-              <TrendChart data={analysis.data} />
-            </section>
+              <OutletRadarChart data={analysis.data} />
+            </TabsContent>
 
-            {/* Section: Investigation Worklist */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <FileSearch className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-lg font-semibold tracking-tight">Investigation Worklist</h2>
-                <Badge variant="outline" className="text-xs">{analysis.data.investigationWorklist.length} items</Badge>
-              </div>
-              <InvestigationWorklist data={analysis.data} />
-            </section>
+            {/* ====== COST TAB ====== */}
+            <TabsContent value="cost" className="space-y-4 mt-2">
+              <section>
+                <SectionHeader
+                  icon={<Coins className="h-4 w-4 text-muted-foreground" />}
+                  title="Cost Impact Analysis"
+                />
+                <CumulativeDeviationArea data={analysis.data} />
+              </section>
 
-            {/* Section: Narrative + Recommendation */}
-            <section className="grid lg:grid-cols-2 gap-4">
-              <NarrativePanel data={analysis.data} />
-              <RecommendationPanel data={analysis.data} />
-            </section>
-          </>
+              <section className="grid lg:grid-cols-2 gap-4">
+                <LossVsSurplusChart data={analysis.data} />
+                <TrendChart data={analysis.data} />
+              </section>
+
+              <section className="grid lg:grid-cols-2 gap-4">
+                <TopItemsHorizontalBar data={analysis.data} />
+                <AreaContributionBar data={analysis.data} />
+              </section>
+            </TabsContent>
+          </Tabs>
         ) : null}
       </main>
 

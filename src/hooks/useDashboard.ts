@@ -18,6 +18,12 @@ interface DashboardStore extends FilterState {
   setSourceModal: (b: boolean) => void;
   cardDrillDown: string | null;
   setCardDrillDown: (card: string | null) => void;
+  // Deep dive item (single item focused investigation)
+  deepDiveItem: { itemName: string | null; outletCode: string | null };
+  setDeepDiveItem: (d: { itemName: string | null; outletCode: string | null }) => void;
+  // Scorecard outlet (focused outlet view from radar/insights)
+  scorecardOutlet: string | null;
+  setScorecardOutlet: (code: string | null) => void;
 }
 
 export const useDashboard = create<DashboardStore>((set) => ({
@@ -42,4 +48,8 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setSourceModal: (b) => set({ sourceModalOpen: b }),
   cardDrillDown: null,
   setCardDrillDown: (card) => set({ cardDrillDown: card }),
+  deepDiveItem: { itemName: null, outletCode: null },
+  setDeepDiveItem: (d) => set({ deepDiveItem: d }),
+  scorecardOutlet: null,
+  setScorecardOutlet: (code) => set({ scorecardOutlet: code }),
 }));

@@ -20,6 +20,14 @@ import {
   buildTrend,
   computePrioritiesFromFlags,
   buildRuleContext,
+  computeAreaAnalysis,
+  computeVarianceAnalysis,
+  computeOutletHealthRanking,
+  computePareto,
+  computeCostImpact,
+  computeItemConsistencyAnalysis,
+  computeNetCostTrend,
+  computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
@@ -229,12 +237,15 @@ export async function GET(req: NextRequest) {
     }
     const recsWithFlags: RecWithFlags[] = [];
     let zeroDevCount = 0;
+    // Track zero-deviation records per outlet (for outlet health ranking)
+    const zeroDevByOutlet = new Map<number, number>();
 
     for (const curr of currentRecs) {
       // Skip records with zero/null deviation — they're "normal" by definition
       if (curr.qtyDeviasi === null || curr.qtyDeviasi === 0 || curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0) {
         normal++;
         zeroDevCount++;
+        zeroDevByOutlet.set(curr.outletId, (zeroDevByOutlet.get(curr.outletId) ?? 0) + 1);
         continue;
       }
 
@@ -348,12 +359,14 @@ export async function GET(req: NextRequest) {
 
     // Fetch records for trend (only needed fields, lightweight)
     // We need per-outlet dedup for sales, and per-record abs for devBom
+    // Also fetch signed nominalDeviasi for net cost trend (LOSS - SURPLUS)
     const trendRecs = await db.inventoryRecord.findMany({
       where: trendWhere,
       select: {
         monthLabel: true, weekLabel: true,
         nominalSales: true, absNominalDeviasi: true,
         pctQtyDeviasiToBom: true, qtyBom: true,
+        nominalDeviasi: true,
         outletId: true,
       },
     });
@@ -424,6 +437,19 @@ export async function GET(req: NextRequest) {
     // Priorities (top 20) — use pre-computed flags
     const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
+    // ===== Extended analytics (Task 5): area, variance, outlet health, pareto, cost, consistency, net cost trend, historical =====
+    const areaAnalysis = computeAreaAnalysis(currentRecs);
+    const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
+    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
+    const pareto = computePareto(currentRecs);
+    const costImpact = computeCostImpact(currentRecs, execSummary.sales.current);
+    const itemConsistencyAnalysis = computeItemConsistencyAnalysis(
+      currentRecs, historicalByOutletItem, historicalPeriods.length
+    );
+    const netCostTrend = computeNetCostTrend(trendRecs, monthKeyByLabel);
+    const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
+    const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
+
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -436,7 +462,7 @@ export async function GET(req: NextRequest) {
         errors: dqSummary.filter((d) => d.severity === 'ERROR').length,
         issues: dqSummary,
       },
-      growthComparison: growthMetrics,
+      growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal,
       topItemsByDevBom: topDevBom,
       topOutlets: topOut,
@@ -453,6 +479,14 @@ export async function GET(req: NextRequest) {
       recommendation: recommendations,
       trend,
       priorities,
+      // Extended analytics (Task 5)
+      areaAnalysis,
+      varianceAnalysis,
+      outletHealthRanking,
+      pareto,
+      costImpact,
+      itemConsistencyAnalysis,
+      netCostTrend,
       durationMs: Date.now() - startedAt,
     };
 
