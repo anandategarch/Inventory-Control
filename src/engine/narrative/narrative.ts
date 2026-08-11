@@ -162,7 +162,8 @@ export async function generateNarrative(input: NarrativeInput): Promise<{ narrat
     const zai = await ZAI.create();
     const completion = await zai.chat.completions.create({
       messages: [
-        { role: 'assistant', content: SYSTEM_PROMPT },
+        // Bug 4 fix: role must be 'system' (not 'assistant') for system prompt
+        { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Berdasarkan data terstruktur berikut, tulis narasi analisis inventory:\n\n${structuredSummary}` },
       ],
       thinking: { type: 'disabled' },

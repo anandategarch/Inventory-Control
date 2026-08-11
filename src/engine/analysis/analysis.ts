@@ -19,6 +19,42 @@ type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 // ============================================================
 //  Executive Summary — current week vs previous week
 // ============================================================
+// ============================================================
+//  Bug 6 fix: dedupSalesMode — use MODE (most frequent value) not MAX
+//  Sales is outlet-level denormalized (same value on every item row).
+//  MAX is vulnerable to typo (1 row with 10M instead of 1M → adopts wrong value).
+//  MODE = most frequent value, robust against single-row typo.
+// ============================================================
+function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
+  // Collect all sales values per outlet
+  const byOutlet = new Map<number, Map<number, number>>(); // outletId → (salesValue → count)
+  for (const r of recs) {
+    if (r.nominalSales != null && r.nominalSales > 0) {
+      let counts = byOutlet.get(r.outletId);
+      if (!counts) {
+        counts = new Map();
+        byOutlet.set(r.outletId, counts);
+      }
+      const rounded = Math.round(r.nominalSales); // round to avoid float precision issues
+      counts.set(rounded, (counts.get(rounded) ?? 0) + 1);
+    }
+  }
+  // Pick MODE (most frequent) per outlet
+  const result = new Map<number, number>();
+  for (const [outletId, counts] of byOutlet) {
+    let bestVal = 0;
+    let bestCount = 0;
+    for (const [val, count] of counts) {
+      if (count > bestCount) {
+        bestVal = val;
+        bestCount = count;
+      }
+    }
+    result.set(outletId, bestVal);
+  }
+  return result;
+}
+
 export function buildExecutiveSummary(
   current: RecWithRels[],
   previous: RecWithRels[],
@@ -26,15 +62,9 @@ export function buildExecutiveSummary(
   weekLabel: string,
   prevWeekLabel: string | null
 ): ExecutiveSummary {
-  // Sales is outlet-level denormalized — take MAX per outlet (not sum, not first)
-  const dedupSales = (recs: RecWithRels[]): number => {
-    const byOutlet = new Map<number, number>();
-    for (const r of recs) {
-      if (r.nominalSales != null && r.nominalSales > 0) {
-        const existing = byOutlet.get(r.outletId) ?? 0;
-        if (r.nominalSales > existing) byOutlet.set(r.outletId, r.nominalSales);
-      }
-    }
+  // Bug 6 fix: use MODE per outlet (not MAX) — robust against typo
+  const sumSales = (recs: RecWithRels[]): number => {
+    const byOutlet = dedupSalesByOutlet(recs);
     let total = 0;
     for (const v of byOutlet.values()) total += v;
     return total;
@@ -50,8 +80,8 @@ export function buildExecutiveSummary(
   };
 
   // Sales uses absolute value? No — sales is positive. Use as-is.
-  const salesCurr = dedupSales(current);
-  const salesPrev = dedupSales(previous);
+  const salesCurr = sumSales(current);
+  const salesPrev = sumSales(previous);
 
   // BOM, COM are negative — use absolute sum for "magnitude"
   const qtyBomCurr = Math.abs(sum(current, 'qtyBom'));
@@ -175,20 +205,18 @@ export function topItemsByDevBom(recs: RecWithRels[], n = 10) {
 }
 
 export function topOutlets(recs: RecWithRels[], n = 10) {
+  // Bug 6 fix: use MODE (most frequent) per outlet, not MAX — robust against typo
+  const salesByOutlet = dedupSalesByOutlet(recs);
   const byOutlet = new Map<number, {
     outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number;
-    area: string; sales: number; // sales deduplicated (1 unique value per outlet)
-    lossAmount: number; surplusAmount: number; // BUG FIX #003: track direction
+    area: string; sales: number;
+    lossAmount: number; surplusAmount: number;
   }>();
   for (const r of recs) {
     const k = r.outletId;
     const existing = byOutlet.get(k);
     if (existing) {
       existing.absNominal += r.absNominalDeviasi ?? 0;
-      // Sales: take MAX per outlet (not first non-null, not sum)
-      if (r.nominalSales != null && r.nominalSales > existing.sales) {
-        existing.sales = r.nominalSales;
-      }
       if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
         existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         existing.devBomCount++;
@@ -201,11 +229,16 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
         devBomSum: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? Math.abs(r.pctQtyDeviasiToBom) : 0,
         devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
         area: r.area,
-        sales: r.nominalSales ?? 0,
+        sales: 0, // will be filled from salesByOutlet (MODE) below
         lossAmount: r.nominalDeviasi != null && r.nominalDeviasi > 0 ? r.nominalDeviasi : 0,
         surplusAmount: r.nominalDeviasi != null && r.nominalDeviasi < 0 ? Math.abs(r.nominalDeviasi) : 0,
       });
     }
+  }
+  // Fill sales from MODE map (Bug 6 fix)
+  for (const [outletId, sales] of salesByOutlet) {
+    const e = byOutlet.get(outletId);
+    if (e) e.sales = sales;
   }
   // area averages
   const areaAvg = new Map<string, number>();
@@ -243,23 +276,26 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
 //  BUG FIX #3: Sales is duplicated per item row — take 1 unique per outlet
 // ============================================================
 export function topOutletsBySales(recs: RecWithRels[], n = 10) {
+  // Bug 6 fix: use MODE (most frequent) per outlet, not MAX
+  const salesByOutlet = dedupSalesByOutlet(recs);
   const byOutlet = new Map<number, { outlet: Outlet; area: string; sales: number; absNominal: number }>();
   for (const r of recs) {
     const k = r.outletId;
     const existing = byOutlet.get(k);
     if (existing) {
-      // Sales: take MAX per outlet
-      if (r.nominalSales != null && r.nominalSales > existing.sales) {
-        existing.sales = r.nominalSales;
-      }
       existing.absNominal += r.absNominalDeviasi ?? 0;
     } else {
       byOutlet.set(k, {
         outlet: r.outlet, area: r.area,
-        sales: r.nominalSales ?? 0,
+        sales: 0, // filled below from MODE
         absNominal: r.absNominalDeviasi ?? 0,
       });
     }
+  }
+  // Fill sales from MODE map
+  for (const [outletId, sales] of salesByOutlet) {
+    const e = byOutlet.get(outletId);
+    if (e) e.sales = sales;
   }
   return [...byOutlet.values()]
     .map((v) => ({
@@ -507,7 +543,12 @@ export function computePriorities(
   const byOps = [...scores].sort((a, b) => b.operationalScore - a.operationalScore);
   byOps.forEach((s, i) => { s.operationalRank = i + 1; });
 
-  return scores;
+  // Bug 1 fix: sort by combined finalScore (lower combined rank = higher priority)
+  const sortedScores = scores
+    .map((s) => ({ ...s, finalScore: (s.financialRank ?? 9999) + (s.operationalRank ?? 9999) }))
+    .sort((a, b) => a.finalScore - b.finalScore);
+
+  return sortedScores;
 }
 
 // ============================================================
@@ -517,14 +558,10 @@ export function buildTrend(
   recsByWeek: Array<{ weekLabel: string; recs: RecWithRels[] }>
 ) {
   return recsByWeek.map(({ weekLabel, recs }) => {
-    // Sales: take MAX per outlet (not first non-null, not sum)
-    const salesByOutlet = new Map<number, number>();
+    // Bug 6 fix: use MODE (most frequent) per outlet, not MAX
+    const salesByOutlet = dedupSalesByOutlet(recs);
     let devBomSum = 0, devBomCount = 0, nominal = 0;
     for (const r of recs) {
-      if (r.nominalSales != null && r.nominalSales > 0) {
-        const existing = salesByOutlet.get(r.outletId) ?? 0;
-        if (r.nominalSales > existing) salesByOutlet.set(r.outletId, r.nominalSales);
-      }
       if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
         devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         devBomCount++;
@@ -640,13 +677,25 @@ export function computePrioritiesFromFlags(
   const byOps = [...scores].sort((a, b) => b.operationalScore - a.operationalScore);
   byOps.forEach((s, i) => { s.operationalRank = i + 1; });
 
-  return scores;
+  // Bug 1 fix: sort by combined finalScore (lower combined rank = higher priority)
+  // finalScore = financialRank + operationalRank — lower = more critical
+  // Without this, .slice(0, 20) in API route returns random 20 (DB order)
+  const sorted = scores
+    .map((s) => ({
+      ...s,
+      finalScore: (s.financialRank ?? 9999) + (s.operationalRank ?? 9999),
+    }))
+    .sort((a, b) => a.finalScore - b.finalScore);
+
+  return sorted;
 }
 
 // ============================================================
 //  Area Analysis — aggregate metrics per area
 // ============================================================
 export function computeAreaAnalysis(recs: RecWithRels[]) {
+  // Bug 6 fix: precompute sales per outlet via MODE (not MAX)
+  const salesByOutletAll = dedupSalesByOutlet(recs);
   const byArea = new Map<string, {
     outletIds: Set<number>;
     salesByOutlet: Map<number, number>;
@@ -671,9 +720,10 @@ export function computeAreaAnalysis(recs: RecWithRels[]) {
       byArea.set(a, entry);
     }
     entry.outletIds.add(r.outletId);
-    if (r.nominalSales != null && r.nominalSales > 0) {
-      const existing = entry.salesByOutlet.get(r.outletId) ?? 0;
-      if (r.nominalSales > existing) entry.salesByOutlet.set(r.outletId, r.nominalSales);
+    // Fill sales from precomputed MODE map
+    const sales = salesByOutletAll.get(r.outletId);
+    if (sales != null && sales > 0) {
+      entry.salesByOutlet.set(r.outletId, sales);
     }
     entry.absNominal += r.absNominalDeviasi ?? 0;
     if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
@@ -1036,9 +1086,10 @@ export function computeNetCostTrend(
   }>,
   monthKeyByLabel: Map<string, string>
 ) {
+  // Bug 6 fix: collect sales counts per outlet per period for MODE
   const byPeriod = new Map<string, {
     monthLabel: string; weekLabel: string; sortKey: string;
-    salesByOutlet: Map<number, number>;
+    salesCounts: Map<number, Map<number, number>>; // outletId → (salesValue → count)
     lossNominal: number; surplusNominal: number;
   }>();
 
@@ -1050,13 +1101,18 @@ export function computeNetCostTrend(
     if (!p) {
       p = {
         monthLabel: r.monthLabel, weekLabel: r.weekLabel, sortKey,
-        salesByOutlet: new Map(), lossNominal: 0, surplusNominal: 0,
+        salesCounts: new Map(), lossNominal: 0, surplusNominal: 0,
       };
       byPeriod.set(k, p);
     }
     if (r.nominalSales != null && r.nominalSales > 0) {
-      const existing = p.salesByOutlet.get(r.outletId) ?? 0;
-      if (r.nominalSales > existing) p.salesByOutlet.set(r.outletId, r.nominalSales);
+      let outletCounts = p.salesCounts.get(r.outletId);
+      if (!outletCounts) {
+        outletCounts = new Map();
+        p.salesCounts.set(r.outletId, outletCounts);
+      }
+      const rounded = Math.round(r.nominalSales);
+      outletCounts.set(rounded, (outletCounts.get(rounded) ?? 0) + 1);
     }
     if (r.nominalDeviasi != null && r.nominalDeviasi > 0) p.lossNominal += r.nominalDeviasi;
     else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) p.surplusNominal += Math.abs(r.nominalDeviasi);
@@ -1064,8 +1120,15 @@ export function computeNetCostTrend(
 
   return [...byPeriod.values()]
     .map((p) => {
+      // Compute sales = sum of MODE per outlet (Bug 6 fix)
       let sales = 0;
-      for (const v of p.salesByOutlet.values()) sales += v;
+      for (const outletCounts of p.salesCounts.values()) {
+        let bestVal = 0, bestCount = 0;
+        for (const [val, count] of outletCounts) {
+          if (count > bestCount) { bestVal = val; bestCount = count; }
+        }
+        sales += bestVal;
+      }
       return {
         weekLabel: `${p.weekLabel} ${p.monthLabel.split(' ')[0].slice(0, 3)}`,
         sortKey: p.sortKey,
@@ -1098,17 +1161,17 @@ export function computeHistoricalAnalysis(
     const key = `${curr.outletId}|${curr.itemId}`;
     const hist = historicalByOutletItem.get(key) ?? [];
     if (hist.length === 0) continue;
-    const mean = hist.reduce((s, v) => s + v, 0) / hist.length;
-    const variance = hist.reduce((s, v) => s + (v - mean) ** 2, 0) / hist.length;
-    const stdDev = Math.sqrt(variance);
-    const zScore = stdDev > 0 ? ((curr.pctQtyDeviasiToBom ?? 0) - mean) / stdDev : 0;
+    // Bug 7 fix: use existing calcStdDev (null-safe, already imported) instead of manual loop
+    const stats = calcStdDev(hist);
+    if (!stats || stats.stdDev <= 0) continue;
+    const zScore = calcZScore(curr.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
     criticalItems.push({
       itemName: curr.item.name,
       outletCode: curr.outlet.code,
       area: curr.area,
       currentDevBom: curr.pctQtyDeviasiToBom ?? 0,
-      historicalAvg: mean,
-      zScore,
+      historicalAvg: stats.mean,
+      zScore: zScore ?? 0,
       absNominal: curr.absNominalDeviasi ?? 0,
     });
   }

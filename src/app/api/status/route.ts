@@ -26,8 +26,10 @@ export async function GET() {
       select: { fileName: true, monthLabel: true, monthKey: true, rowCount: true, dqStatus: true, importedAt: true },
     });
 
+    // Bug 5 fix: sort by monthKey then periodStart (not weekLabel string)
+    // String sort puts "WEEK 10" before "WEEK 2" — wrong chronological order
     const weeks = await db.week.findMany({
-      orderBy: { weekLabel: 'asc' },
+      orderBy: [{ monthKey: 'asc' }, { periodStart: 'asc' }],
       select: { weekLabel: true, monthKey: true, periodStart: true, periodEnd: true },
     });
 
