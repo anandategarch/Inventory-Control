@@ -22,8 +22,7 @@ import {
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
-import { analysisCache } from '@/lib/cache';
-import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
+import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { calcGrowth } from '@/engine/calculations/growth';
 import {
@@ -135,14 +134,8 @@ export async function GET(req: NextRequest) {
       compareWeek = compareWeekRaw;
     }
 
-    // Cache key — include all filter dimensions + thresholds version
-    // (thresholds version changes when user updates settings, invalidating cache)
-    const thresholdsVersion = await getThresholdsVersion(); // Phase 3: cached (1 min TTL)
-    const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}|${pic}|tv${thresholdsVersion}`;
-    const cached = analysisCache.get(cacheKey);
-    if (cached) {
-      return NextResponse.json({ ...cached as object, cached: true, durationMs: Date.now() - startedAt });
-    }
+    // Cache disabled — no need for thresholdsVersion in cache key
+    // Client-side TanStack Query (staleTime 60s) provides sufficient caching
 
     // Determine available months/weeks if not specified
     let month = monthLabel;
@@ -703,7 +696,8 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     };
 
-    analysisCache.set(cacheKey, result);
+    // DISABLED: analysisCache.set — in-memory cache unreliable in serverless
+    // Client-side TanStack Query handles caching (staleTime 60s)
 
     await db.auditLog.create({
       data: {

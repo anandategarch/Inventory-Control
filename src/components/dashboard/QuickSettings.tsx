@@ -118,7 +118,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
           return next;
         });
         queryClient.invalidateQueries({ queryKey: ['settings'] });
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        queryClient.invalidateQueries({ queryKey: ['analysis'], refetchType: 'active' });
       } else {
         toast({
           title: '❌ Gagal menyimpan',
