@@ -517,3 +517,47 @@ Stage Summary:
 - 11 pre-existing TS errors in queries.ts fixed (broken $queryRaw generic syntax)
 - 6 BigInt serialization issues fixed via ::int casts in SQL
 - queryPareto enhanced with classACountFull/classAPctFull via SQL CTE (computes across ALL items, not capped by LIMIT)
+
+---
+Task ID: 15
+Agent: Main + full-stack-developer subagent
+Task: Phase 1-4 egress optimization (SQL aggregate queries)
+
+Work Log:
+- Created src/lib/queries.ts with 14 SQL aggregate query functions:
+  queryTrendAgg, queryExecSummary, queryTopItemsByNominal, queryTopItemsByDevBom,
+  queryTopItemsByCategory, queryTopOutlets, queryTopOutletsBySales,
+  queryDeviationBreakdown, queryLossVsSurplus, queryAreaAnalysis,
+  queryCostImpact, queryPareto, queryItemConsistency, queryHistoricalStats
+- All use Prisma.$queryRaw with parameterized filters (Prisma.sql for safe SQL building)
+- Sales dedup: ROW_NUMBER() for MODE per outlet (business logic preserved)
+- DevBom: AVG(ABS(pctQtyDeviasiToBom)) FILTER (WHERE qtyBom != 0)
+- Direction: CASE WHEN SUM(nominalDeviasi) > 0 THEN 'LOSS' ...
+- Pareto: window function with cumulative + classification (A/B/C)
+- Historical: AVG/STDDEV per outlet+item (replaces 540K raw record fetch)
+
+Phase 1a: allPeriodsRaw → Week table (540K scan → 3 rows)
+Phase 1b: trendRecs → queryTrendAgg (540K → ~18 rows)
+Phase 1c: /api/status server-side cache (5 min TTL)
+Phase 1d: useStatus staleTime 30s → 5min
+
+Phase 2: 14 JS aggregation functions replaced with SQL queries
+Phase 3: thresholdsVersion cached (1 min), analysisCache.clear() on ingest
+Phase 4: Pareto, ItemConsistency, HistoricalAnalysis → SQL
+
+buildRuleContext modified: accepts historicalStats {mean,stdDev,n} instead of number[]
+computeHistoricalAnalysis: uses precomputed stats directly
+
+Egress estimate:
+- BEFORE: ~50-80MB per /api/analysis (540K raw records from Supabase)
+- AFTER: ~4-6MB (currentRecs for rule eval + ~100 aggregated rows)
+- Reduction: ~90%
+
+Business logic preserved (verified by subagent runtime test on production DB):
+- All 30+ response keys present
+- success: true returned
+- Pareto classACount=1657 (8.7% of 19144 items = 70% cost — correct)
+- Sales MODE, DevBom AVG(ABS), Direction, Growth, Health Score, Item Consistency — all preserved
+
+Lint: 0 errors. TypeScript: 0 new errors.
+Committed (3c8928d) and pushed to GitHub (synced).

@@ -4,11 +4,8 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   reactStrictMode: false,
-  // Bug #11 fix: Security headers
+  // Phase 1-4: Security headers
   async headers() {
     return [
       {
