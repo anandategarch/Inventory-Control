@@ -2,9 +2,6 @@
 
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,14 +10,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import {
   fmtIDR, fmtNum, fmtPct, fmtPctAbs, directionColor, priorityColor,
 } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useStatus } from '@/hooks/useAnalysis';
 import type { AnalysisData, OutletHealthRanking } from '@/hooks/useAnalysis';
 import {
-  X, Activity, TrendingDown, TrendingUp, ShieldAlert, Package,
-  Trash2, AlertTriangle, Beaker, Boxes, FileSearch, Lightbulb, Target,
+  Activity, TrendingDown, TrendingUp, ShieldAlert, Package,
+  AlertTriangle, Beaker, Boxes, FileSearch, Target, Trash2, Lightbulb,
   Scale, History, ChevronDown, ChevronRight, Zap, Bug,
 } from 'lucide-react';
 import {
@@ -1127,11 +1126,18 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
     focusOutlet, setFocusOutlet, setScorecardOutlet,
     monthLabel, currentWeek, setDeepDiveItem,
   } = useDashboard();
-  const open = Boolean(focusOutlet);
+  const { data: status } = useStatus();
   const [tab, setTab] = useState('overview');
 
   // Find ranking entry for this outlet (for rank info)
   const ranking = data?.outletHealthRanking || [];
+
+  // Outlet list from status
+  const outlets = (status?.outlets || []).map((o) => ({
+    value: o.code,
+    label: `${o.code} · ${o.name}`,
+    description: o.area,
+  }));
 
   const focusQuery = useQuery({
     queryKey: ['outlet-focus', focusOutlet, monthLabel, currentWeek],
@@ -1155,61 +1161,81 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
     staleTime: 60_000,
   });
 
-  const handleClose = () => {
-    setFocusOutlet(null);
-  };
-
   const outletName = ranking.find((r) => r.outletCode === focusOutlet)?.outletName || focusOutlet || 'Outlet';
 
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent
-        className="max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden p-0"
-        showCloseButton={false}
-      >
-        {/* Header (shrink-0) */}
-        <DialogHeader className="shrink-0 border-b px-5 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <DialogTitle className="text-base flex items-center gap-2">
-                <Target className="h-4 w-4 text-primary" />
-                <span className="whitespace-normal">{outletName}</span>
-                {focusQuery.data && (
-                  <Badge variant="outline" className="text-xs">
-                    {focusQuery.data.outlet.code} · {focusQuery.data.outlet.area}
-                  </Badge>
-                )}
-              </DialogTitle>
-              <DialogDescription className="text-xs mt-0.5">
-                Focus Mode · {monthLabel} / {currentWeek}
-                {focusQuery.data && (
-                  <span className="ml-2 text-muted-foreground">
-                    · {focusQuery.data.durationMs}ms{focusQuery.data.cached ? ' (cache)' : ''}
-                  </span>
-                )}
-              </DialogDescription>
+  // No outlet selected — show selector prompt
+  if (!focusOutlet) {
+    return (
+      <Card>
+        <CardContent className="p-8">
+          <div className="flex flex-col items-center justify-center text-center space-y-4">
+            <Target className="h-12 w-12 text-muted-foreground/40" />
+            <div>
+              <h3 className="text-lg font-semibold">Pilih Outlet untuk Focus Mode</h3>
+              <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                Pilih outlet untuk analisis anomali mendalam — timeline, item anomaly, waste, menu/BOM, data quality, dan auto-generated worklist.
+              </p>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {focusQuery.data && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => {
-                    setFocusOutlet(null);
-                    setScorecardOutlet(focusOutlet);
-                  }}
-                >
-                  <Activity className="h-3.5 w-3.5 mr-1" />
-                  Scorecard
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleClose}>
-                <X className="h-4 w-4" />
-              </Button>
+            <div className="w-full max-w-md">
+              <SearchableComboBox
+                options={outlets}
+                value={focusOutlet}
+                onValueChange={setFocusOutlet}
+                placeholder="Cari outlet (kode/nama)..."
+                searchPlaceholder="Ketik kode atau nama outlet..."
+                emptyText="Outlet tidak ditemukan."
+                allOptionLabel={`Semua Outlet (${outlets.length})`}
+                buttonClassName="w-full"
+              />
             </div>
           </div>
-        </DialogHeader>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Outlet Selector Bar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="min-w-[280px] flex-1 max-w-md">
+          <SearchableComboBox
+            options={outlets}
+            value={focusOutlet}
+            onValueChange={setFocusOutlet}
+            placeholder="Cari outlet..."
+            searchPlaceholder="Ketik kode atau nama outlet..."
+            emptyText="Outlet tidak ditemukan."
+            allOptionLabel={`Semua Outlet (${outlets.length})`}
+            buttonClassName="w-full"
+          />
+        </div>
+        {focusQuery.data && (
+          <Badge variant="outline" className="text-xs">
+            {focusQuery.data.outlet.code} · {focusQuery.data.outlet.area}
+          </Badge>
+        )}
+        {focusQuery.data && (
+          <Badge variant="outline" className="text-xs">
+            {focusQuery.data.durationMs}ms{focusQuery.data.cached ? ' (cache)' : ''}
+          </Badge>
+        )}
+        <div className="flex-1" />
+        {focusQuery.data && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => {
+              setFocusOutlet(null);
+              setScorecardOutlet(focusOutlet);
+            }}
+          >
+            <Activity className="h-3.5 w-3.5 mr-1" />
+            Scorecard
+          </Button>
+        )}
+      </div>
 
         {/* Body (flex-1, scroll) */}
         <div className="flex-1 overflow-hidden flex flex-col">
@@ -1299,8 +1325,7 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
               </div>
             </Tabs>
           )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }

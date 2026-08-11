@@ -43,7 +43,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
   TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
-  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2,
+  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -211,6 +211,9 @@ export default function DashboardPage() {
               </TabsTrigger>
               <TabsTrigger value="cost" className="text-xs">
                 <Coins className="h-3.5 w-3.5" /> Cost Accounting
+              </TabsTrigger>
+              <TabsTrigger value="focus" className="text-xs">
+                <Target className="h-3.5 w-3.5" /> Focus Mode
               </TabsTrigger>
             </TabsList>
 
@@ -496,6 +499,11 @@ export default function DashboardPage() {
                 <AreaContributionBar data={analysis.data} />
               </section>
             </TabsContent>
+
+            {/* ====== FOCUS MODE TAB ====== */}
+            <TabsContent value="focus" className="space-y-4 mt-2">
+              <OutletFocusMode data={analysis.data} />
+            </TabsContent>
           </Tabs>
         ) : null}
       </main>
@@ -530,7 +538,6 @@ export default function DashboardPage() {
       <SourceDataModal />
       <CardDrillDown data={analysis.data} />
       <OutletScorecard data={analysis.data} />
-      <OutletFocusMode data={analysis.data} />
       <ItemDeepDive data={analysis.data} />
     </div>
   );
