@@ -33,6 +33,7 @@ import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
 import { analysisCache } from '@/lib/cache';
 import { getRuntimeThresholds } from '@/lib/settings';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,16 @@ type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   try {
+    // Bug #10 fix: Rate limiting
+    const ip = getClientIP(req);
+    const rl = rateLimit(`analysis:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Coba lagi dalam beberapa detik.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+      );
+    }
+
     const url = new URL(req.url);
     const monthLabel = url.searchParams.get('month');
     const currentWeek = url.searchParams.get('week');
