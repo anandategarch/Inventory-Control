@@ -1162,3 +1162,41 @@ Files modified:
 - src/components/dashboard/CostAccounting.tsx (OutletEfficiencyMatrix + CostPerThousandCard → setFocusOutlet)
 - src/components/dashboard/ExtraCharts.tsx (AreaContributionBar → setFocusOutlet when outletCode filtered)
 - src/app/page.tsx (added <OutletFocusMode /> near <OutletScorecard />)
+
+---
+Task ID: 27
+Agent: Main (Z.ai Code)
+Task: Fix OutletFocusMode dialog UI — too small, text truncated
+
+File Changed:
+- src/components/dashboard/OutletFocusMode.tsx (CSS-only changes, no logic touched)
+
+Work Log:
+- Dialog container: max-w-[1200px] → max-w-[95vw] (almost full screen width); removed gap-0 (kept p-0); header padding px-4 → px-5; tab content padding p-4 → p-5
+- Font sizes bumped to minimum 12px for general text:
+  - ALL text-[10px] → text-xs (12px)
+  - ALL text-[11px] → text-xs (12px)
+  - ALL text-[9px] → text-[10px] (badges only, minimum 10px) — applied in correct order so newly-created text-[10px] from 9px stays at 10px, not re-converted to text-xs
+- Table cell widths widened to max-w-[300px] for all instances of max-w-[200px], max-w-[220px], max-w-[240px], max-w-[260px], max-w-[280px]
+- Investigasi tab: removed max-w entirely from item-name spans (Item Baru, Item Hilang, Arah Berbalik, Worklist) to let them use full width
+- ALL truncate classes → whitespace-normal (allow wrap, no hard clip); title={} attributes preserved everywhere
+- ScrollArea heights taller: h-[55vh] → h-[62vh]; h-[60vh] → h-[65vh]; max-h-32 → max-h-48
+- Overview tab: 4-metric grid gap-2 → gap-3; timeline detail ScrollArea h-48 → h-56
+- Anomali Item tab: added min-w-full to main Table; issue badges gap-0.5 → gap-1
+- Tab labels (TabsTrigger) text-[11px] → text-xs; tab count badges text-[9px] → text-[10px]
+- Kept all business logic, data fetching, sorting, filtering, tab switching, and status tracker intact
+- Kept all title={...} hover tooltip attributes
+
+Verification:
+- bun run lint → 0 errors
+- Dev server running clean (Ready in 1099ms, no compile errors)
+- No remaining instances of text-[9px], text-[11px], truncate, max-w-[200px]/[220px]/[240px]/[260px]/[280px], h-[55vh], h-[60vh], max-h-32, max-w-[1200px] in file
+- All remaining text-[10px] instances verified as originally text-[9px] badges (correctly at 10px minimum)
+
+Stage Summary:
+- OutletFocusMode dialog now uses 95vw width (was 1200px capped) — much more room for content
+- All readable text is at least 12px (text-xs); badges minimum 10px
+- Table cells can wrap (whitespace-normal) and have wider max-w-[300px] — no more hard truncation
+- ScrollAreas taller (62vh/65vh) — more rows visible without scroll
+- Dialog header and tab content have more padding (px-5/p-5) — breathing room
+- User complaint "terlalu kecil sehingga banyak teks terpotong" addressed

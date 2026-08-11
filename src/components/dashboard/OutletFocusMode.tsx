@@ -203,11 +203,11 @@ function MetricCard({
   return (
     <div className="rounded-md border p-3">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
         {icon}
       </div>
       <p className={`text-base font-bold ${color || ''}`}>{value}</p>
-      {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
+      {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -230,24 +230,24 @@ function Tab1Overview({ data, ranking }: { data: OutletFocusData; ranking: Outle
       <div className={`rounded-lg border p-4 ${healthScoreBg(o.healthScore)}`}>
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Skor Kondisi Outlet</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Skor Kondisi Outlet</p>
             <p className={`text-4xl font-bold ${healthScoreColor(o.healthScore)}`}>{o.healthScore}</p>
-            <p className="text-[10px] text-muted-foreground">dari 100</p>
+            <p className="text-xs text-muted-foreground">dari 100</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Ranking</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ranking</p>
             <p className="text-2xl font-bold">#{rank > 0 ? rank : '—'}</p>
-            <p className="text-[10px] text-muted-foreground">dari {o.totalOutlets} outlet</p>
+            <p className="text-xs text-muted-foreground">dari {o.totalOutlets} outlet</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">PIC</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">PIC</p>
             <p className="text-base font-bold">{o.pic || '—'}</p>
-            <p className="text-[10px] text-muted-foreground">{o.area}</p>
+            <p className="text-xs text-muted-foreground">{o.area}</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Total Item</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total Item</p>
             <p className="text-2xl font-bold">{o.normal + o.warning + o.abnormal}</p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               <span className="text-emerald-600">{o.normal} normal</span>
               {' · '}
               <span className="text-amber-600">{o.warning} warning</span>
@@ -259,7 +259,7 @@ function Tab1Overview({ data, ranking }: { data: OutletFocusData; ranking: Outle
       </div>
 
       {/* 4-metric grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard
           label="Dev / BOM"
           value={fmtPctAbs(o.devBom)}
@@ -297,30 +297,30 @@ function Tab1Overview({ data, ranking }: { data: OutletFocusData; ranking: Outle
         <CardContent className="grid sm:grid-cols-2 gap-3">
           <div className="rounded-md border p-3">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Penjualan</p>
-              <Badge variant="outline" className={`text-[10px] ${o.growthSales != null && o.growthSales > 0 ? 'text-emerald-700' : o.growthSales != null && o.growthSales < 0 ? 'text-red-700' : ''}`}>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">Penjualan</p>
+              <Badge variant="outline" className={`text-xs ${o.growthSales != null && o.growthSales > 0 ? 'text-emerald-700' : o.growthSales != null && o.growthSales < 0 ? 'text-red-700' : ''}`}>
                 {o.growthSales != null ? `${o.growthSales > 0 ? '+' : ''}${(o.growthSales * 100).toFixed(1).replace('.', ',')}%` : '—'}
               </Badge>
             </div>
             <p className="text-lg font-bold">{fmtIDR(o.sales)}</p>
-            <p className="text-[10px] text-muted-foreground">vs prev: {fmtIDR(o.salesPrev)}</p>
+            <p className="text-xs text-muted-foreground">vs prev: {fmtIDR(o.salesPrev)}</p>
           </div>
           <div className="rounded-md border p-3">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">|Nominal Deviasi|</p>
-              <Badge variant="outline" className={`text-[10px] ${o.growthNominal != null && o.growthNominal > 0 ? 'text-red-700' : o.growthNominal != null && o.growthNominal < 0 ? 'text-emerald-700' : ''}`}>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">|Nominal Deviasi|</p>
+              <Badge variant="outline" className={`text-xs ${o.growthNominal != null && o.growthNominal > 0 ? 'text-red-700' : o.growthNominal != null && o.growthNominal < 0 ? 'text-emerald-700' : ''}`}>
                 {o.growthNominal != null ? `${o.growthNominal > 0 ? '+' : ''}${(o.growthNominal * 100).toFixed(1).replace('.', ',')}%` : '—'}
               </Badge>
             </div>
             <p className="text-lg font-bold">{fmtIDR(o.absNominal)}</p>
-            <p className="text-[10px] text-muted-foreground">vs prev: {fmtIDR(o.nominalDeviasiPrev)}</p>
+            <p className="text-xs text-muted-foreground">vs prev: {fmtIDR(o.nominalDeviasiPrev)}</p>
           </div>
           <div className="rounded-md border p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total LOSS</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Total LOSS</p>
             <p className="text-base font-bold text-red-600">{fmtIDR(o.totalLoss)}</p>
           </div>
           <div className="rounded-md border p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total SURPLUS</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Total SURPLUS</p>
             <p className="text-base font-bold text-emerald-600">{fmtIDR(o.totalSurplus)}</p>
           </div>
         </CardContent>
@@ -377,26 +377,26 @@ function Tab1Overview({ data, ranking }: { data: OutletFocusData; ranking: Outle
           <CardTitle className="text-sm">Detail Timeline</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-48">
+          <ScrollArea className="h-56">
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="text-[11px] h-7 px-2">Periode</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">Penjualan</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">|Deviasi|</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">Dev/BOM</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-center">Status</TableHead>
+                  <TableHead className="text-xs h-7 px-2">Periode</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Penjualan</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">|Deviasi|</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Dev/BOM</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-center">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.timeline.map((t, i) => (
                   <TableRow key={i}>
-                    <TableCell className="text-[11px] px-2 py-1">{t.weekLabel} {t.monthLabel}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtIDR(t.sales)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtIDR(t.nominal)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtPctAbs(t.devBom)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-center">
-                      <Badge variant="outline" className={`text-[9px] ${t.status === 'ABNORMAL' ? 'text-red-700 bg-red-50 border-red-200' : t.status === 'WARNING' ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200'}`}>
+                    <TableCell className="text-xs px-2 py-1">{t.weekLabel} {t.monthLabel}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtIDR(t.sales)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtIDR(t.nominal)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtPctAbs(t.devBom)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-center">
+                      <Badge variant="outline" className={`text-[10px] ${t.status === 'ABNORMAL' ? 'text-red-700 bg-red-50 border-red-200' : t.status === 'WARNING' ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200'}`}>
                         {t.status}
                       </Badge>
                     </TableCell>
@@ -441,7 +441,7 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
               key={f}
               size="sm"
               variant={filterSeverity === f ? 'default' : 'outline'}
-              className="h-7 text-[11px] px-2"
+              className="h-7 text-xs px-2"
               onClick={() => setFilterSeverity(f)}
             >
               {f === 'withIssues' ? 'Berissue' : f === 'all' ? 'Semua' : f === 'abnormal' ? 'Abnormal' : 'Warning'}
@@ -449,13 +449,13 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
           ))}
         </div>
         <div className="flex items-center gap-1 ml-auto">
-          <span className="text-[11px] text-muted-foreground">Urutkan:</span>
+          <span className="text-xs text-muted-foreground">Urutkan:</span>
           {(['nominal', 'devBom', 'zScore'] as const).map((s) => (
             <Button
               key={s}
               size="sm"
               variant={sortBy === s ? 'default' : 'outline'}
-              className="h-7 text-[11px] px-2"
+              className="h-7 text-xs px-2"
               onClick={() => setSortBy(s)}
             >
               {s === 'nominal' ? '|Nominal|' : s === 'devBom' ? 'Dev/BOM' : 'Z-Score'}
@@ -466,19 +466,19 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
 
       {/* Table */}
       <div className="rounded-md border">
-        <ScrollArea className="h-[60vh]">
-          <Table>
+        <ScrollArea className="h-[65vh]">
+          <Table className="min-w-full">
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[11px] h-7 px-2">Item</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-center">Dir</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">QTY Dev</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Nominal</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Dev/BOM</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Tol</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Z-Score</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">vs Area</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">Issues</TableHead>
+                <TableHead className="text-xs h-7 px-2">Item</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-center">Dir</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">QTY Dev</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">Nominal</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">Dev/BOM</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">Tol</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">Z-Score</TableHead>
+                <TableHead className="text-xs h-7 px-2 text-right">vs Area</TableHead>
+                <TableHead className="text-xs h-7 px-2">Issues</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -494,34 +494,34 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
                     setDeepDiveItem({ itemName: a.itemName, outletCode: data.outlet.code });
                   }}
                 >
-                  <TableCell className="text-[11px] px-2 py-1">
-                    <div className="font-medium leading-tight whitespace-normal max-w-[200px]" title={a.itemName}>{a.itemName}</div>
-                    {a.satuan && <div className="text-[9px] text-muted-foreground">{a.satuan}</div>}
+                  <TableCell className="text-xs px-2 py-1">
+                    <div className="font-medium leading-tight whitespace-normal max-w-[300px]" title={a.itemName}>{a.itemName}</div>
+                    {a.satuan && <div className="text-[10px] text-muted-foreground">{a.satuan}</div>}
                   </TableCell>
-                  <TableCell className={`text-[11px] px-2 py-1 text-center font-semibold ${directionColor(a.direction)}`}>{a.direction?.[0]}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(a.qtyDeviasi)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(a.nominalDeviasi)}</TableCell>
-                  <TableCell className={`text-[11px] px-2 py-1 text-right font-semibold ${a.devBom != null && Math.abs(a.devBom) > 0.1 ? 'text-red-600' : a.devBom != null && Math.abs(a.devBom) > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  <TableCell className={`text-xs px-2 py-1 text-center font-semibold ${directionColor(a.direction)}`}>{a.direction?.[0]}</TableCell>
+                  <TableCell className="text-xs px-2 py-1 text-right">{fmtNum(a.qtyDeviasi)}</TableCell>
+                  <TableCell className="text-xs px-2 py-1 text-right font-semibold">{fmtIDR(a.nominalDeviasi)}</TableCell>
+                  <TableCell className={`text-xs px-2 py-1 text-right font-semibold ${a.devBom != null && Math.abs(a.devBom) > 0.1 ? 'text-red-600' : a.devBom != null && Math.abs(a.devBom) > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {fmtPctAbs(a.devBom)}
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{a.tolerance != null ? fmtPctAbs(a.tolerance) : '—'}</TableCell>
-                  <TableCell className={`text-[11px] px-2 py-1 text-right ${a.zScore != null && a.zScore > 2 ? 'text-red-600 font-bold' : a.zScore != null && a.zScore > 1 ? 'text-amber-600' : ''}`}>
+                  <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground">{a.tolerance != null ? fmtPctAbs(a.tolerance) : '—'}</TableCell>
+                  <TableCell className={`text-xs px-2 py-1 text-right ${a.zScore != null && a.zScore > 2 ? 'text-red-600 font-bold' : a.zScore != null && a.zScore > 1 ? 'text-amber-600' : ''}`}>
                     {a.zScore != null ? a.zScore.toFixed(2) : '—'}
                   </TableCell>
-                  <TableCell className={`text-[11px] px-2 py-1 text-right ${a.vsAreaAvg != null && a.vsAreaAvg > 0 ? 'text-red-600' : a.vsAreaAvg != null && a.vsAreaAvg < 0 ? 'text-emerald-600' : ''}`}>
+                  <TableCell className={`text-xs px-2 py-1 text-right ${a.vsAreaAvg != null && a.vsAreaAvg > 0 ? 'text-red-600' : a.vsAreaAvg != null && a.vsAreaAvg < 0 ? 'text-emerald-600' : ''}`}>
                     {a.vsAreaAvg != null ? `${a.vsAreaAvg > 0 ? '+' : ''}${(a.vsAreaAvg * 100).toFixed(1).replace('.', ',')}%` : '—'}
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1">
-                    <div className="flex flex-wrap gap-0.5 max-w-[220px]">
+                  <TableCell className="text-xs px-2 py-1">
+                    <div className="flex flex-wrap gap-1 max-w-[300px]">
                       {a.issues.length === 0 ? (
-                        <span className="text-[9px] text-muted-foreground">—</span>
+                        <span className="text-[10px] text-muted-foreground">—</span>
                       ) : a.issues.slice(0, 3).map((code) => (
-                        <Badge key={code} variant="outline" className={`text-[9px] px-1 py-0 ${issueBadgeClass(code)}`}>
+                        <Badge key={code} variant="outline" className={`text-[10px] px-1 py-0 ${issueBadgeClass(code)}`}>
                           {ISSUE_LABELS[code] || code}
                         </Badge>
                       ))}
                       {a.issues.length > 3 && (
-                        <Badge variant="outline" className="text-[9px] px-1 py-0">+{a.issues.length - 3}</Badge>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">+{a.issues.length - 3}</Badge>
                       )}
                     </div>
                   </TableCell>
@@ -540,24 +540,24 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
             Benchmark Area & Jaringan
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-3 text-[11px]">
+        <CardContent className="grid sm:grid-cols-2 gap-3 text-xs">
           <div className="rounded-md border p-2.5">
-            <p className="text-[10px] text-muted-foreground uppercase">vs Area ({data.outlet.area})</p>
+            <p className="text-xs text-muted-foreground uppercase">vs Area ({data.outlet.area})</p>
             <p className={`text-base font-bold ${data.benchmarks.aboveArea ? 'text-red-600' : 'text-emerald-600'}`}>
-              {fmtPctAbs(data.outlet.devBom)} <span className="text-[10px] font-normal text-muted-foreground">vs {fmtPctAbs(data.benchmarks.areaAvgDevBom)}</span>
+              {fmtPctAbs(data.outlet.devBom)} <span className="text-xs font-normal text-muted-foreground">vs {fmtPctAbs(data.benchmarks.areaAvgDevBom)}</span>
             </p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {data.benchmarks.aboveArea
                 ? `${(data.outlet.devBom / Math.max(data.benchmarks.areaAvgDevBom, 0.0001)).toFixed(1)}× lebih buruk dari rata-rata area`
                 : `Lebih baik dari rata-rata area`}
             </p>
           </div>
           <div className="rounded-md border p-2.5">
-            <p className="text-[10px] text-muted-foreground uppercase">vs Jaringan</p>
+            <p className="text-xs text-muted-foreground uppercase">vs Jaringan</p>
             <p className={`text-base font-bold ${data.benchmarks.aboveNetwork ? 'text-red-600' : 'text-emerald-600'}`}>
-              {fmtPctAbs(data.outlet.devBom)} <span className="text-[10px] font-normal text-muted-foreground">vs {fmtPctAbs(data.benchmarks.networkAvgDevBom)}</span>
+              {fmtPctAbs(data.outlet.devBom)} <span className="text-xs font-normal text-muted-foreground">vs {fmtPctAbs(data.benchmarks.networkAvgDevBom)}</span>
             </p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {data.benchmarks.aboveNetwork
                 ? `${(data.outlet.devBom / Math.max(data.benchmarks.networkAvgDevBom, 0.0001)).toFixed(1)}× lebih buruk dari rata-rata jaringan`
                 : `Lebih baik dari rata-rata jaringan`}
@@ -584,24 +584,24 @@ function Tab3Waste({ data }: { data: OutletFocusData }) {
       {/* 4-card grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-md border p-3 bg-amber-50/50 dark:bg-amber-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">WASTE</p>
+          <p className="text-xs text-muted-foreground uppercase">WASTE</p>
           <p className="text-base font-bold text-amber-600">{fmtIDR(w.wasteNominal)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtPctAbs(w.wastePctOfBom)} dari BOM</p>
+          <p className="text-xs text-muted-foreground">{fmtPctAbs(w.wastePctOfBom)} dari BOM</p>
         </div>
         <div className="rounded-md border p-3 bg-purple-50/50 dark:bg-purple-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">SUSUT</p>
+          <p className="text-xs text-muted-foreground uppercase">SUSUT</p>
           <p className="text-base font-bold text-purple-600">{fmtIDR(w.susutNominal)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtPctAbs(w.susutPctOfBom)} dari BOM</p>
+          <p className="text-xs text-muted-foreground">{fmtPctAbs(w.susutPctOfBom)} dari BOM</p>
         </div>
         <div className="rounded-md border p-3 bg-cyan-50/50 dark:bg-cyan-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">TRIAL</p>
+          <p className="text-xs text-muted-foreground uppercase">TRIAL</p>
           <p className="text-base font-bold text-cyan-600">{fmtIDR(w.trialNominal)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtPctAbs(w.trialPctOfBom)} dari BOM</p>
+          <p className="text-xs text-muted-foreground">{fmtPctAbs(w.trialPctOfBom)} dari BOM</p>
         </div>
         <div className={`rounded-md border p-3 ${w.residualPct > 0.5 ? 'bg-red-50/50 dark:bg-red-950/10' : ''}`}>
-          <p className="text-[10px] text-muted-foreground uppercase">RESIDUAL</p>
+          <p className="text-xs text-muted-foreground uppercase">RESIDUAL</p>
           <p className={`text-base font-bold ${w.residualPct > 0.5 ? 'text-red-600' : 'text-foreground'}`}>{fmtIDR(w.residualNominal)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtPctAbs(w.residualPct)} tidak terjelaskan</p>
+          <p className="text-xs text-muted-foreground">{fmtPctAbs(w.residualPct)} tidak terjelaskan</p>
         </div>
       </div>
 
@@ -657,10 +657,10 @@ function Tab3Waste({ data }: { data: OutletFocusData }) {
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="text-[11px] h-7 px-2">Item</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">W+S+T</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">|Deviasi|</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">Over %</TableHead>
+                  <TableHead className="text-xs h-7 px-2">Item</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">W+S+T</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">|Deviasi|</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Over %</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -668,10 +668,10 @@ function Tab3Waste({ data }: { data: OutletFocusData }) {
                   <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-4">Tidak ada item over-explained</TableCell></TableRow>
                 ) : w.overExplainedItems.map((it, i) => (
                   <TableRow key={i} className="bg-red-50/30 dark:bg-red-950/5">
-                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[260px]" title={it.itemName}>{it.itemName}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(it.explained)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(it.deviasi)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right font-bold text-red-600">+{(it.overPct * 100).toFixed(1).replace('.', ',')}%</TableCell>
+                    <TableCell className="text-xs px-2 py-1 font-medium whitespace-normal max-w-[300px]" title={it.itemName}>{it.itemName}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtNum(it.explained)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtNum(it.deviasi)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right font-bold text-red-600">+{(it.overPct * 100).toFixed(1).replace('.', ',')}%</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -694,10 +694,10 @@ function Tab3Waste({ data }: { data: OutletFocusData }) {
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="text-[11px] h-7 px-2">Item</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">Residual Qty</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2 text-right">Residual %</TableHead>
-                  <TableHead className="text-[11px] h-7 px-2">Severity</TableHead>
+                  <TableHead className="text-xs h-7 px-2">Item</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Residual Qty</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Residual %</TableHead>
+                  <TableHead className="text-xs h-7 px-2">Severity</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -705,11 +705,11 @@ function Tab3Waste({ data }: { data: OutletFocusData }) {
                   <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-4">Tidak ada item residual tinggi</TableCell></TableRow>
                 ) : w.highResidualItems.map((it, i) => (
                   <TableRow key={i} className="bg-amber-50/30 dark:bg-amber-950/5">
-                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[260px]" title={it.itemName}>{it.itemName}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(it.residualQty)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right font-bold text-amber-600">{fmtPctAbs(it.residualPct)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1">
-                      <Badge variant="outline" className={`text-[9px] ${(it.residualPct ?? 0) > 0.8 ? 'text-red-700 bg-red-50 border-red-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`}>
+                    <TableCell className="text-xs px-2 py-1 font-medium whitespace-normal max-w-[300px]" title={it.itemName}>{it.itemName}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtNum(it.residualQty)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right font-bold text-amber-600">{fmtPctAbs(it.residualPct)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1">
+                      <Badge variant="outline" className={`text-[10px] ${(it.residualPct ?? 0) > 0.8 ? 'text-red-700 bg-red-50 border-red-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`}>
                         {(it.residualPct ?? 0) > 0.8 ? 'KRITIS' : 'WARNING'}
                       </Badge>
                     </TableCell>
@@ -749,7 +749,7 @@ function Tab4Menu({ data }: { data: OutletFocusData }) {
           </p>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[60vh]">
+          <ScrollArea className="h-[65vh]">
             <div className="divide-y">
               {data.menuAnalysis.map((g) => {
                 const isOpen = expanded.has(g.prefix);
@@ -762,15 +762,15 @@ function Tab4Menu({ data }: { data: OutletFocusData }) {
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                        <span className="text-xs font-semibold truncate">{g.prefix}</span>
-                        <Badge variant="outline" className="text-[9px] px-1 py-0">{g.itemCount} item</Badge>
+                        <span className="text-xs font-semibold whitespace-normal">{g.prefix}</span>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">{g.itemCount} item</Badge>
                         {g.outliers.length > 0 && (
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 text-red-700 bg-red-50 border-red-200">
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 text-red-700 bg-red-50 border-red-200">
                             {g.outliers.length} outlier
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
                         <span>Σ {fmtIDR(g.totalDeviation)}</span>
                         <span>Avg {fmtPctAbs(g.avgDeviation)}</span>
                       </div>
@@ -779,18 +779,18 @@ function Tab4Menu({ data }: { data: OutletFocusData }) {
                       <div className="mt-2 space-y-1.5 pl-5">
                         {g.outliers.length > 0 && (
                           <div className="rounded-md border border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900 p-2">
-                            <p className="text-[10px] font-semibold text-red-700 dark:text-red-400 mb-1 flex items-center gap-1">
+                            <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-1 flex items-center gap-1">
                               <Zap className="h-3 w-3" /> OUTLIER
                             </p>
                             {g.outliers.map((o, i) => (
-                              <div key={i} className="flex items-center justify-between text-[11px] py-0.5">
-                                <span className="font-medium whitespace-normal max-w-[280px]" title={o.itemName}>{o.itemName}</span>
+                              <div key={i} className="flex items-center justify-between text-xs py-0.5">
+                                <span className="font-medium whitespace-normal max-w-[300px]" title={o.itemName}>{o.itemName}</span>
                                 <span className="text-red-700 dark:text-red-400 font-semibold">
                                   {fmtPctAbs(o.devBom)} ({fmtIDR(o.nominalDeviasi)})
                                 </span>
                               </div>
                             ))}
-                            <p className="text-[10px] text-muted-foreground mt-1">
+                            <p className="text-xs text-muted-foreground mt-1">
                               Item ini naik signifikan vs item lain di menu sama yang stabil → investigasi per item.
                             </p>
                           </div>
@@ -798,19 +798,19 @@ function Tab4Menu({ data }: { data: OutletFocusData }) {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead className="text-[10px] h-6 px-2">Item</TableHead>
-                              <TableHead className="text-[10px] h-6 px-2 text-right">Nominal</TableHead>
-                              <TableHead className="text-[10px] h-6 px-2 text-right">Dev/BOM</TableHead>
-                              <TableHead className="text-[10px] h-6 px-2 text-center">Dir</TableHead>
+                              <TableHead className="text-xs h-6 px-2">Item</TableHead>
+                              <TableHead className="text-xs h-6 px-2 text-right">Nominal</TableHead>
+                              <TableHead className="text-xs h-6 px-2 text-right">Dev/BOM</TableHead>
+                              <TableHead className="text-xs h-6 px-2 text-center">Dir</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {g.items.map((it, i) => (
                               <TableRow key={i} className={g.outliers.some((o) => o.itemName === it.itemName) ? 'bg-red-50/30 dark:bg-red-950/10' : ''}>
-                                <TableCell className="text-[10px] px-2 py-0.5 font-medium whitespace-normal max-w-[240px]" title={it.itemName}>{it.itemName}</TableCell>
-                                <TableCell className="text-[10px] px-2 py-0.5 text-right">{fmtIDR(it.nominalDeviasi)}</TableCell>
-                                <TableCell className="text-[10px] px-2 py-0.5 text-right">{fmtPctAbs(it.devBom)}</TableCell>
-                                <TableCell className={`text-[10px] px-2 py-0.5 text-center font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
+                                <TableCell className="text-xs px-2 py-0.5 font-medium whitespace-normal max-w-[300px]" title={it.itemName}>{it.itemName}</TableCell>
+                                <TableCell className="text-xs px-2 py-0.5 text-right">{fmtIDR(it.nominalDeviasi)}</TableCell>
+                                <TableCell className="text-xs px-2 py-0.5 text-right">{fmtPctAbs(it.devBom)}</TableCell>
+                                <TableCell className={`text-xs px-2 py-0.5 text-center font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -855,15 +855,15 @@ function Tab5DQ({ data }: { data: OutletFocusData }) {
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-md border p-3 bg-red-50/50 dark:bg-red-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">ERROR</p>
+          <p className="text-xs text-muted-foreground uppercase">ERROR</p>
           <p className="text-xl font-bold text-red-600">{counts.error}</p>
         </div>
         <div className="rounded-md border p-3 bg-amber-50/50 dark:bg-amber-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">WARNING</p>
+          <p className="text-xs text-muted-foreground uppercase">WARNING</p>
           <p className="text-xl font-bold text-amber-600">{counts.warning}</p>
         </div>
         <div className="rounded-md border p-3 bg-sky-50/50 dark:bg-sky-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">INFO</p>
+          <p className="text-xs text-muted-foreground uppercase">INFO</p>
           <p className="text-xl font-bold text-sky-600">{counts.info}</p>
         </div>
       </div>
@@ -877,7 +877,7 @@ function Tab5DQ({ data }: { data: OutletFocusData }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[55vh]">
+          <ScrollArea className="h-[62vh]">
             <div className="divide-y">
               {Array.from(byCode.entries()).length === 0 ? (
                 <div className="py-8 text-center text-xs text-muted-foreground">Tidak ada DQ issue untuk outlet ini</div>
@@ -887,25 +887,25 @@ function Tab5DQ({ data }: { data: OutletFocusData }) {
                   <div key={code} className={`rounded-md border m-2 p-2.5 ${issues[0].severity === 'ERROR' ? 'border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900' : issues[0].severity === 'WARNING' ? 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900' : 'border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900'}`}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Badge variant="outline" className={`text-[9px] shrink-0 ${issues[0].severity === 'ERROR' ? 'text-red-700 border-red-300' : issues[0].severity === 'WARNING' ? 'text-amber-700 border-amber-300' : 'text-sky-700 border-sky-300'}`}>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${issues[0].severity === 'ERROR' ? 'text-red-700 border-red-300' : issues[0].severity === 'WARNING' ? 'text-amber-700 border-amber-300' : 'text-sky-700 border-sky-300'}`}>
                           {issues[0].severity}
                         </Badge>
-                        <span className="text-[11px] font-medium truncate">{fix.title}</span>
-                        <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{code}</Badge>
-                        <span className="text-[10px] text-muted-foreground shrink-0">×{issues.length}</span>
+                        <span className="text-xs font-medium whitespace-normal">{fix.title}</span>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">{code}</Badge>
+                        <span className="text-xs text-muted-foreground shrink-0">×{issues.length}</span>
                       </div>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-1">{issues[0].message}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{issues[0].message}</p>
                     <div className="mt-1.5 flex items-start gap-1.5">
-                      <span className="text-[10px] font-semibold text-foreground shrink-0">Tindakan:</span>
-                      <span className="text-[10px] text-muted-foreground">{fix.action}</span>
+                      <span className="text-xs font-semibold text-foreground shrink-0">Tindakan:</span>
+                      <span className="text-xs text-muted-foreground">{fix.action}</span>
                     </div>
                     {issues.length > 1 && (
                       <details className="mt-1.5">
-                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">Lihat semua {issues.length} instance</summary>
-                        <div className="mt-1 space-y-0.5 max-h-32 overflow-y-auto">
+                        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">Lihat semua {issues.length} instance</summary>
+                        <div className="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
                           {issues.slice(0, 30).map((i, idx) => (
-                            <div key={idx} className="text-[10px] text-muted-foreground">• {i.message}</div>
+                            <div key={idx} className="text-xs text-muted-foreground">• {i.message}</div>
                           ))}
                         </div>
                       </details>
@@ -949,15 +949,15 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
       {/* Summary */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-md border p-3 bg-red-50/50 dark:bg-red-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">P1 Kritis</p>
+          <p className="text-xs text-muted-foreground uppercase">P1 Kritis</p>
           <p className="text-xl font-bold text-red-600">{grouped.P1.length}</p>
         </div>
         <div className="rounded-md border p-3 bg-amber-50/50 dark:bg-amber-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">P2 Penting</p>
+          <p className="text-xs text-muted-foreground uppercase">P2 Penting</p>
           <p className="text-xl font-bold text-amber-600">{grouped.P2.length}</p>
         </div>
         <div className="rounded-md border p-3 bg-sky-50/50 dark:bg-sky-950/10">
-          <p className="text-[10px] text-muted-foreground uppercase">P3 Investigasi</p>
+          <p className="text-xs text-muted-foreground uppercase">P3 Investigasi</p>
           <p className="text-xl font-bold text-sky-600">{grouped.P3.length}</p>
         </div>
       </div>
@@ -974,12 +974,12 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
           <CardContent className="p-0">
             <ScrollArea className="h-32">
               {data.newItems.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground text-center py-4">Tidak ada</p>
+                <p className="text-xs text-muted-foreground text-center py-4">Tidak ada</p>
               ) : (
                 <div className="space-y-0.5 p-2">
                   {data.newItems.slice(0, 20).map((it, i) => (
-                    <div key={i} className="text-[10px] flex items-center justify-between">
-                      <span className="truncate max-w-[200px]" title={it.itemName}>{it.itemName}</span>
+                    <div key={i} className="text-xs flex items-center justify-between">
+                      <span className="whitespace-normal" title={it.itemName}>{it.itemName}</span>
                       <span className="text-muted-foreground">{fmtIDR(it.nominalDeviasi)}</span>
                     </div>
                   ))}
@@ -998,12 +998,12 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
           <CardContent className="p-0">
             <ScrollArea className="h-32">
               {data.disappearedItems.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground text-center py-4">Tidak ada</p>
+                <p className="text-xs text-muted-foreground text-center py-4">Tidak ada</p>
               ) : (
                 <div className="space-y-0.5 p-2">
                   {data.disappearedItems.slice(0, 20).map((it, i) => (
-                    <div key={i} className="text-[10px] flex items-center justify-between">
-                      <span className="truncate max-w-[200px]" title={it.itemName}>{it.itemName}</span>
+                    <div key={i} className="text-xs flex items-center justify-between">
+                      <span className="whitespace-normal" title={it.itemName}>{it.itemName}</span>
                       <span className="text-muted-foreground">{fmtIDR(it.previousNominal)}</span>
                     </div>
                   ))}
@@ -1022,12 +1022,12 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
           <CardContent className="p-0">
             <ScrollArea className="h-32">
               {data.directionReversals.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground text-center py-4">Tidak ada</p>
+                <p className="text-xs text-muted-foreground text-center py-4">Tidak ada</p>
               ) : (
                 <div className="space-y-0.5 p-2">
                   {data.directionReversals.slice(0, 20).map((it, i) => (
-                    <div key={i} className="text-[10px] flex items-center justify-between gap-2">
-                      <span className="truncate max-w-[160px]" title={it.itemName}>{it.itemName}</span>
+                    <div key={i} className="text-xs flex items-center justify-between gap-2">
+                      <span className="whitespace-normal" title={it.itemName}>{it.itemName}</span>
                       <span className="text-muted-foreground whitespace-nowrap">{it.change}</span>
                     </div>
                   ))}
@@ -1047,7 +1047,7 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[55vh]">
+          <ScrollArea className="h-[62vh]">
             <div className="space-y-2 p-2">
               {data.worklist.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-8">Tidak ada item dalam worklist</p>
@@ -1062,10 +1062,10 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
                 >
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <div className="flex items-center gap-2 min-w-0">
-                      <Badge variant="outline" className={`text-[9px] px-1.5 py-0 shrink-0 ${priorityColor(w.priority)}`}>
+                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${priorityColor(w.priority)}`}>
                         {w.priority}
                       </Badge>
-                      <span className="text-[11px] font-medium truncate max-w-[260px]" title={w.itemName}>{w.itemName}</span>
+                      <span className="text-xs font-medium whitespace-normal" title={w.itemName}>{w.itemName}</span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {(['OPEN', 'INVESTIGATING', 'RESOLVED'] as const).map((s) => (
@@ -1073,7 +1073,7 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
                           key={s}
                           size="sm"
                           variant="ghost"
-                          className={`h-6 text-[9px] px-1.5 ${(status[w.itemName] || 'OPEN') === s ? `border ${statusBadge(w.itemName)}` : 'text-muted-foreground'}`}
+                          className={`h-6 text-[10px] px-1.5 ${(status[w.itemName] || 'OPEN') === s ? `border ${statusBadge(w.itemName)}` : 'text-muted-foreground'}`}
                           onClick={() => setItemStatus(w.itemName, s)}
                         >
                           {s === 'OPEN' ? 'OPEN' : s === 'INVESTIGATING' ? 'INV' : 'DONE'}
@@ -1081,7 +1081,7 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
                       ))}
                     </div>
                   </div>
-                  <div className="grid sm:grid-cols-2 gap-1.5 text-[10px]">
+                  <div className="grid sm:grid-cols-2 gap-1.5 text-xs">
                     <div>
                       <span className="font-semibold text-foreground">Issue: </span>
                       <span className="text-muted-foreground">{w.issue}</span>
@@ -1164,18 +1164,18 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent
-        className="max-w-[1200px] max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0"
+        className="max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden p-0"
         showCloseButton={false}
       >
         {/* Header (shrink-0) */}
-        <DialogHeader className="shrink-0 border-b px-4 py-3">
+        <DialogHeader className="shrink-0 border-b px-5 py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <DialogTitle className="text-base flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
-                <span className="truncate">{outletName}</span>
+                <span className="whitespace-normal">{outletName}</span>
                 {focusQuery.data && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-xs">
                     {focusQuery.data.outlet.code} · {focusQuery.data.outlet.area}
                   </Badge>
                 )}
@@ -1194,7 +1194,7 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 text-[11px]"
+                  className="h-8 text-xs"
                   onClick={() => {
                     setFocusOutlet(null);
                     setScorecardOutlet(focusOutlet);
@@ -1228,7 +1228,7 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
                 <CardContent className="p-4">
                   <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-1">Gagal Memuat Focus Mode</h3>
                   <p className="text-xs text-red-600 dark:text-red-400/90">{focusQuery.error.message}</p>
-                  <Button variant="outline" size="sm" className="mt-3 h-7 text-[11px]" onClick={() => focusQuery.refetch()}>
+                  <Button variant="outline" size="sm" className="mt-3 h-7 text-xs" onClick={() => focusQuery.refetch()}>
                     Coba lagi
                   </Button>
                 </CardContent>
@@ -1248,36 +1248,36 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
             <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden gap-0">
               <div className="border-b px-2 py-1.5 shrink-0 overflow-x-auto">
                 <TabsList className="h-auto">
-                  <TabsTrigger value="overview" className="text-[11px] px-2.5">
+                  <TabsTrigger value="overview" className="text-xs px-2.5">
                     <Activity className="h-3 w-3 mr-1" /> Overview
                   </TabsTrigger>
-                  <TabsTrigger value="anomali" className="text-[11px] px-2.5">
+                  <TabsTrigger value="anomali" className="text-xs px-2.5">
                     <ShieldAlert className="h-3 w-3 mr-1" /> Anomali Item
                     {focusQuery.data.itemAnomalies.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.itemAnomalies.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.itemAnomalies.length}</Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="waste" className="text-[11px] px-2.5">
+                  <TabsTrigger value="waste" className="text-xs px-2.5">
                     <Beaker className="h-3 w-3 mr-1" /> Waste & Residual
                   </TabsTrigger>
-                  <TabsTrigger value="menu" className="text-[11px] px-2.5">
+                  <TabsTrigger value="menu" className="text-xs px-2.5">
                     <Boxes className="h-3 w-3 mr-1" /> Menu & BOM
                   </TabsTrigger>
-                  <TabsTrigger value="dq" className="text-[11px] px-2.5">
+                  <TabsTrigger value="dq" className="text-xs px-2.5">
                     <Bug className="h-3 w-3 mr-1" /> Data Quality
                     {focusQuery.data.dqIssues.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.dqIssues.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.dqIssues.length}</Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="investigasi" className="text-[11px] px-2.5">
+                  <TabsTrigger value="investigasi" className="text-xs px-2.5">
                     <FileSearch className="h-3 w-3 mr-1" /> Investigasi
                     {focusQuery.data.worklist.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.worklist.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px] ml-1 px-1 py-0 h-3.5">{focusQuery.data.worklist.length}</Badge>
                     )}
                   </TabsTrigger>
                 </TabsList>
               </div>
-              <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex-1 overflow-y-auto p-5">
                 <TabsContent value="overview" className="mt-0">
                   <Tab1Overview data={focusQuery.data} ranking={ranking} />
                 </TabsContent>
