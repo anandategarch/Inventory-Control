@@ -72,7 +72,7 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
         )}
-        {hint && <p className="mt-1 text-[11px] text-muted-foreground/70 truncate" title={hint}>{hint}</p>}
+        {hint && <p className="mt-1 text-[11px] text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
         {drillDown && <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>}
       </CardContent>
     </Card>

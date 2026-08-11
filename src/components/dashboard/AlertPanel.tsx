@@ -88,7 +88,7 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>
-                        <span className="text-sm font-medium truncate">{w.outletName || w.outletCode}</span>
+                        <span className="text-sm font-medium truncate max-w-[180px] whitespace-normal" title={w.outletName || w.outletCode}>{w.outletName || w.outletCode}</span>
                         <span className="text-[11px] text-muted-foreground">({w.outletCode})</span>
                         <span className="text-[11px] text-muted-foreground">· {w.area}</span>
                       </div>
@@ -101,7 +101,7 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                   </div>
 
                   {w.itemName && (
-                    <p className="text-xs font-medium mb-1 truncate">{w.itemName}</p>
+                    <p className="text-xs font-medium mb-1 truncate max-w-[180px] whitespace-normal" title={w.itemName}>{w.itemName}</p>
                   )}
 
                   {w.issue && (
@@ -129,7 +129,7 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                       % DEV TO BOM: <span className="font-semibold text-foreground">{w.deviationToBom != null ? fmtPctAbs(w.deviationToBom) : '—'}</span>
                     </span>
                     {w.ruleCodes && w.ruleCodes.length > 0 && (
-                      <span className="truncate ml-2">Rules: {w.ruleCodes.join(', ')}</span>
+                      <span className="truncate ml-2 max-w-[200px] whitespace-normal" title={w.ruleCodes.join(', ')}>Rules: {w.ruleCodes.join(', ')}</span>
                     )}
                   </div>
                 </button>

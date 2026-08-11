@@ -202,7 +202,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
                     <TableCell className="px-2 py-1">
                       <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${classBadge(cls)}`}>{cls}</Badge>
                     </TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 font-medium truncate max-w-[140px]">{it.itemName}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{it.cumPct.toFixed(1)}%</TableCell>
@@ -397,7 +397,7 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
                   onClick={() => setScorecardOutlet(o.outletCode)}
                 >
                   <TableCell className="text-[11px] px-2 py-1">
-                    <div className="font-medium truncate max-w-[140px]">{o.outletName}</div>
+                    <div className="font-medium whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
                   <TableCell className={`text-[11px] px-2 py-1 text-right font-bold ${costPerThousandColor(o.costPerThousand)}`}>

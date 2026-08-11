@@ -86,7 +86,7 @@ export function VarianceAnalysis({ data }: { data: AnalysisData }) {
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => onClick(it)}
                   >
-                    <TableCell className="text-[11px] px-2 py-1 font-medium truncate max-w-[140px]">{it.itemName}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
                     <TableCell className={`text-[11px] px-2 py-1 text-right font-semibold ${colorCls}`}>{fmtIDR(it.delta)}</TableCell>
                     <TableCell className={`text-[11px] px-2 py-1 text-right ${colorCls}`}>{fmtPct(pct / 100, true, 0)}</TableCell>
@@ -182,7 +182,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                 >
                   <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                   <TableCell className="px-2 py-1">
-                    <div className="text-[11px] font-medium leading-tight truncate max-w-[140px]" title={o.outletName}>{o.outletName}</div>
+                    <div className="text-[11px] font-medium leading-tight whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
                   <TableCell className="px-2 py-1">
@@ -312,7 +312,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => onClick(row)}
                 >
-                  <TableCell className="text-[11px] px-2 py-1 font-medium truncate max-w-[160px]">{row.itemName}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
                   <TableCell className="px-2 py-1">
                     <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${consistencyBadge(row.type)}`}>{row.type}</Badge>
                   </TableCell>

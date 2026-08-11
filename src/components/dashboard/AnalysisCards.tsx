@@ -80,7 +80,7 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
                   }}
                 >
                   <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 font-medium truncate max-w-[140px]">{it.itemName}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1 text-right text-red-600 font-semibold">{fmtPctAbs(it.currentDevBom)}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{fmtPctAbs(it.historicalAvg)}</TableCell>
                   <TableCell className={`text-[11px] px-2 py-1 text-right ${zScoreColor(it.zScore)}`}>{it.zScore.toFixed(2)}</TableCell>

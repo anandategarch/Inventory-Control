@@ -53,7 +53,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
                   onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
                 >
                   <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                  <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                  <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-right font-semibold text-xs">{fmtIDR(it.absNominal)}</TableCell>
                   <TableCell className={`text-center text-xs font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
@@ -108,7 +108,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
                     onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                    <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                     <TableCell className={`text-right font-semibold text-xs ${breach ? 'text-red-600' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
@@ -166,7 +166,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
                     onClick={() => { setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); }}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
+                    <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
                     <TableCell className="text-right font-semibold text-xs">{fmtIDR(o.absNominal)}</TableCell>
                     <TableCell className={`text-right text-xs font-semibold ${aboveArea ? 'text-red-600' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
@@ -284,14 +284,14 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
                     <Badge variant="outline" className={`text-[11px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>
                   </TableCell>
                   <TableCell className="text-xs">
-                    <div className="font-medium max-w-[140px] whitespace-normal" title={w.outletName}>{w.outletName}</div>
+                    <div className="font-medium max-w-[180px] whitespace-normal" title={w.outletName}>{w.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{w.outletCode} · {w.area}</div>
                   </TableCell>
-                  <TableCell className="text-xs font-medium max-w-[140px] whitespace-normal" title={w.itemName}>{w.itemName}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[200px]" title={w.issue}>{w.issue}</TableCell>
+                  <TableCell className="text-xs font-medium max-w-[180px] whitespace-normal" title={w.itemName}>{w.itemName}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[200px] whitespace-normal" title={w.issue}>{w.issue}</TableCell>
                   <TableCell className="text-right text-xs font-semibold">{fmtIDR(w.absNominalDeviasi)}</TableCell>
                   <TableCell className={`text-right text-xs ${directionColor(w.direction)}`}>{w.deviationToBom != null ? fmtPctAbs(w.deviationToBom) : '—'}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[200px]" title={w.recommendedAction}>{w.recommendedAction}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[200px] whitespace-normal" title={w.recommendedAction}>{w.recommendedAction}</TableCell>
                   <TableCell>
                     <Button
                       size="sm"

@@ -159,7 +159,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                           setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
                         }}
                       >
-                        <TableCell className="text-[11px] px-2 py-1 font-medium truncate max-w-[180px]">{it.itemName}</TableCell>
+                        <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[220px]" title={it.itemName}>{it.itemName}</TableCell>
                         <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
                         <TableCell className={`text-[11px] px-2 py-1 text-center font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                       </TableRow>
@@ -175,7 +175,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                   <div className="space-y-1">
                     {histItems.map((it: any, i: number) => (
                       <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-2 py-1">
-                        <span className="font-medium truncate max-w-[200px]">{it.itemName}</span>
+                        <span className="font-medium whitespace-normal max-w-[240px]" title={it.itemName}>{it.itemName}</span>
                         <span className="text-muted-foreground">Current {fmtPctAbs(it.currentDevBom)} vs Hist {fmtPctAbs(it.historicalAvg)}</span>
                         <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${it.zScore > 3 ? 'text-red-700 bg-red-50 border-red-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`}>
                           Z: {it.zScore.toFixed(2)}
@@ -197,7 +197,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                           <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${w.priority === 'P1' ? 'text-red-700 bg-red-50 border-red-200' : w.priority === 'P2' ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-sky-700 bg-sky-50 border-sky-200'}`}>
                             {w.priority}
                           </Badge>
-                          <span className="text-[11px] font-medium truncate">{w.itemName}</span>
+                          <span className="text-[11px] font-medium truncate max-w-[180px] whitespace-normal" title={w.itemName}>{w.itemName}</span>
                         </div>
                         <p className="text-[11px] text-amber-900 dark:text-amber-300 leading-tight">{w.recommendedAction}</p>
                       </div>
