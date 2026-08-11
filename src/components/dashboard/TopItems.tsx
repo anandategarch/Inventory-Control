@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, priorityColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink } from 'lucide-react';
@@ -27,6 +28,11 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
             description="Ranking berdasarkan magnitude absolut Nominal Deviasi (financial impact). Loss (merah) & Surplus (hijau) ditampilkan direction. Klik baris untuk drill-down."
             example="Rp 182M = |NOMINAL DEVIASI| tertinggi"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'TOP_N_ITEMS', label: 'Jumlah Top Item', dataType: 'number', min: 5, max: 50, step: 5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">Financial impact ranking (absolute)</p>
@@ -80,6 +86,11 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
             description="Ranking operational abnormality berdasarkan rasio deviation terhadap BOM (normalized). Merah = melebihi tolerance. Berbeda dari Top Nominal karena ini normalized terhadap volume aktivitas."
             example="Deviasi 50 / BOM 1000 = 5%"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'TOP_N_ITEMS', label: 'Jumlah Top Item', dataType: 'number', min: 5, max: 50, step: 5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">Operational abnormality ranking</p>
@@ -137,6 +148,11 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
             description="Outlet dengan total magnitude nominal deviation tertinggi. Dev/BOM = rata-rata |QTY Deviasi|/|QTY BOM| item di outlet tersebut. Area Avg = rata-rata Dev/BOM semua outlet di area yang sama. Merah = Dev/BOM outlet > 1.5× area avg."
             example="Outlet A: Σ|Nom Dev| = Rp 182M, Dev/BOM 18% vs Area Avg 12%"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'TOP_N_OUTLETS', label: 'Jumlah Top Outlet', dataType: 'number', min: 5, max: 50, step: 5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">By absolute nominal deviation</p>
@@ -221,6 +237,12 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
             <Badge variant="outline" className="text-xs">
               P1: {items.filter((i) => i.priority === 'P1').length} · P2: {items.filter((i) => i.priority === 'P2').length}
             </Badge>
+            <QuickSettings
+              settings={[
+                { key: 'HIGH_LOSS_NOMINAL_THRESHOLD', label: 'Ambang Loss Nominal', dataType: 'number', min: 1000000, max: 100000000, step: 1000000 },
+                { key: 'FALLBACK_TOLERANCE_PCT', label: 'Toleransi Fallback', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+              ]}
+            />
           </div>
         </div>
         {/* Filter bar */}

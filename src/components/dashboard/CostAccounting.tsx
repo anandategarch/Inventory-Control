@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -252,6 +253,12 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
             description={'UNTUK APA: Memetakan posisi setiap outlet dalam matriks PENJUALAN vs efisiensi.\nCARA BACA: Bintang = belajar best practice. Masalah = prioritaskan intervensi. Perhatian = PENJUALAN besar tapi boros.\nCONTOH: Outlet PENJUALAN Rp 800Jt & LOSS/PENJUALAN 3% = Bintang.\nACTION: Pairing outlet Masalah dengan Bintang se-area untuk knowledge transfer.'}
             example="Outlet A: Sales 800Jt, LOSS/PENJUALAN 3% → STAR (emerald)"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'BENCHMARK_AREA_FACTOR', label: 'Faktor Benchmark Area', dataType: 'number', min: 1, max: 5, step: 0.5 },
+              { key: 'BENCHMARK_NETWORK_FACTOR', label: 'Faktor Benchmark Network', dataType: 'number', min: 1, max: 5, step: 0.5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">

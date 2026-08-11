@@ -7,6 +7,7 @@ import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCirc
 import { fmtIDR, fmtNum, fmtPct, trendColor } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
@@ -180,20 +181,28 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
             <Activity className="h-4 w-4 text-muted-foreground" />
             Health &amp; Alert
           </span>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-xs font-normal text-muted-foreground cursor-help flex items-center gap-1">
-                  {total.toLocaleString()} records
-                  <Info className="h-3 w-3" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs">
-                <p className="text-xs">Total record yang dianalisis untuk periode {data.period.weekLabel} {data.period.monthLabel}.</p>
-                <p className="text-xs mt-1">Normal + Warning + Abnormal = Total records.</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div className="flex items-center gap-2">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs font-normal text-muted-foreground cursor-help flex items-center gap-1">
+                    {total.toLocaleString()} records
+                    <Info className="h-3 w-3" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="text-xs">Total record yang dianalisis untuk periode {data.period.weekLabel} {data.period.monthLabel}.</p>
+                  <p className="text-xs mt-1">Normal + Warning + Abnormal = Total records.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <QuickSettings
+              settings={[
+                { key: 'STD_DEVIASI_BOM_PCT', label: 'Toleransi Deviasi BOM', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+                { key: 'FALLBACK_TOLERANCE_PCT', label: 'Toleransi Fallback', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+              ]}
+            />
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

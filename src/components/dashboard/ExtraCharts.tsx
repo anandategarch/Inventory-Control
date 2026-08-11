@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -306,6 +307,11 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
             description={'UNTUK APA: Visualisasi bar horizontal 10 item dengan deviasi nominal terbesar.\nCARA BACA: Bar merah = LOSS (aktual > standar). Bar hijau = SURPLUS. Panjang bar = magnitude.\nCONTOH: AYAM (LOSS Rp 8Jt) > MINYAK (LOSS Rp 5Jt).\nACTION: Fokus investigasi pada top 3 — dampak biaya terbesar.'}
             example="Item A: |NOMINAL DEVIASI| = Rp 182M (LOSS)"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'TOP_N_ITEMS', label: 'Jumlah Top Item', dataType: 'number', min: 5, max: 50, step: 5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">Klik bar untuk drill-down</p>

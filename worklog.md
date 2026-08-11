@@ -1303,3 +1303,55 @@ Stage Summary:
 - Changes debounced 500ms → POST /api/settings → invalidate ['analysis'] query → chart auto-refreshes
 - Lint clean (0 errors, 0 warnings)
 - Dev server log: clean compile, no errors
+
+---
+Task ID: 30
+Agent: Main (Z.ai Code)
+Task: Add QuickSettings to ALL remaining chart/table headers
+
+Work Log:
+- Read worklog.md (Tasks 1-29), QuickSettings.tsx API (QuickSettingItem: key/label/dataType/min/max/step), and target chart components
+- Verified SETTING_DEFINITIONS keys to be added (TOP_N_ITEMS, TOP_N_OUTLETS, HIGH_LOSS_NOMINAL_THRESHOLD, FALLBACK_TOLERANCE_PCT, STD_DEVIASI_BOM_PCT, BENCHMARK_AREA_FACTOR, BENCHMARK_NETWORK_FACTOR)
+- Verified the 4 charts that ALREADY have QuickSettings were NOT touched: OutletHealthRanking, GrowthComparison, DeviationBreakdownChart, HistoricalAnalysisCard
+- Added QuickSettings to 9 remaining charts across 5 files:
+
+1. TopItems.tsx (added import + 4 charts):
+   - TopItemsByNominal — TOP_N_ITEMS (number, 5-50, step 5)
+   - TopItemsByDevBom — TOP_N_ITEMS (number, 5-50, step 5)
+   - TopOutlets — TOP_N_OUTLETS (number, 5-50, step 5)
+   - InvestigationWorklist — HIGH_LOSS_NOMINAL_THRESHOLD (number, 1M-100M, step 1M) + FALLBACK_TOLERANCE_PCT (percent, 0-1, step 0.05)
+     * InvestigationWorklist has unusual CardHeader (badge row + filter bar) — placed QuickSettings in the right-side flex container next to P1/P2 badge
+
+2. CostAccounting.tsx (added import + 1 chart):
+   - OutletEfficiencyMatrix — BENCHMARK_AREA_FACTOR (number, 1-5, step 0.5) + BENCHMARK_NETWORK_FACTOR (number, 1-5, step 0.5)
+
+3. AdvancedAnalysis.tsx (QuickSettings already imported from Task 29; added to 1 chart):
+   - AreaComparison — BENCHMARK_AREA_FACTOR (number, 1-5, step 0.5)
+
+4. AlertPanel.tsx (added import + 1 chart):
+   - AlertPanel — HIGH_LOSS_NOMINAL_THRESHOLD (number, 1M-100M, step 1M) + STD_DEVIASI_BOM_PCT (percent, 0-1, step 0.05)
+     * Placed inside CardTitle after FormulaInfo
+
+5. ExecutiveSummary.tsx (added import + 1 chart):
+   - HealthAlert — STD_DEVIASI_BOM_PCT (percent, 0-1, step 0.05) + FALLBACK_TOLERANCE_PCT (percent, 0-1, step 0.05)
+     * HealthAlert CardTitle uses justify-between layout — wrapped the existing TooltipProvider records info + new QuickSettings in a single right-side div to keep clean alignment
+
+6. ExtraCharts.tsx (added import + 1 chart):
+   - TopItemsHorizontalBar — TOP_N_ITEMS (number, 5-50, step 5)
+
+Rules followed:
+- All QuickSettings placed inside CardTitle (after FormulaInfo when present)
+- All labels in Indonesian
+- No business logic changed — only added imports + JSX
+- No existing QuickSettings touched (verified AdvancedAnalysis.tsx OutletHealthRanking's existing 5-weight QuickSettings is intact)
+- Skipped LossVsSurplusChart, TrendChart, CostImpactDecomposition, ParetoAnalysis, CostPerThousandCard, NetCostTrendChart, VarianceAnalysis, ItemConsistencyAnalysis, DeviationCategoryDonut, AreaContributionBar, VarianceDivergingBar, OutletRadarChart, DirectionDistributionPie, CumulativeDeviationArea, AreaLossSalesComparison per task spec (no settings directly affect them)
+
+Verification:
+- Ran `bun run lint` — 0 errors, 0 warnings (clean)
+
+Stage Summary:
+- 9 charts now have inline QuickSettings gear icon in their headers (in addition to 4 from Task 29 = 13 total)
+- Users can now adjust per-chart relevant settings (TOP_N, BENCHMARK_FACTOR, thresholds, tolerances) without opening the global Settings dialog
+- All saves go through existing POST /api/settings endpoint → invalidate ['settings'] + ['analysis'] → charts auto-refresh
+- Files modified: TopItems.tsx (+37 lines), CostAccounting.tsx (+10 lines), AdvancedAnalysis.tsx (+6 lines), AlertPanel.tsx (+9 lines), ExecutiveSummary.tsx (+12 lines), ExtraCharts.tsx (+7 lines)
+- Lint clean (0 errors, 0 warnings)

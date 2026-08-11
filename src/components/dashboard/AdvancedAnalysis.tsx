@@ -364,6 +364,11 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
             example="JAKBAR: LOSS 8M / Sales 80M = 10% (kritis)"
             side="bottom"
           />
+          <QuickSettings
+            settings={[
+              { key: 'BENCHMARK_AREA_FACTOR', label: 'Faktor Benchmark Area', dataType: 'number', min: 1, max: 5, step: 0.5 },
+            ]}
+          />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           {areas.length} area · diurutkan dari NOMINAL DEVIASI terbesar

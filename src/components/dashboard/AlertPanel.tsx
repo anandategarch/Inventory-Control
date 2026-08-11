@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPctAbs, directionColor, priorityColor } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -47,6 +48,12 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                 description={'UNTUK APA: Sistem peringatan otomatis berdasarkan aturan deteksi anomali.\nCARA BACA: P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap alert ada issue, evidence, recommended action.\nCONTOH: P1 alert: Outlet A item B, |NOMINAL| Rp 50M, deviasi > 2x area avg.\nACTION: Fokus P1 dulu → investigasi fisik + cek evidence + lakukan recommended action.'}
                 example="Outlet A · LOSS Rp 200M · Dev/BOM 25% → P1 (kritis)"
                 side="bottom"
+              />
+              <QuickSettings
+                settings={[
+                  { key: 'HIGH_LOSS_NOMINAL_THRESHOLD', label: 'Ambang Loss Nominal', dataType: 'number', min: 1000000, max: 100000000, step: 1000000 },
+                  { key: 'STD_DEVIASI_BOM_PCT', label: 'Toleransi Deviasi BOM', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+                ]}
               />
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">

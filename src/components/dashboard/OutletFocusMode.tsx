@@ -489,8 +489,7 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
                   key={i}
                   className={`cursor-pointer hover:bg-muted/50 ${a.isCritical ? 'bg-red-50/40 dark:bg-red-950/10' : a.isAbnormal ? 'bg-red-50/20 dark:bg-red-950/5' : ''}`}
                   onClick={() => {
-                    // Close focus mode, switch to dashboard tab, then open deep dive
-                    setFocusOutlet(null);
+                    // Bug fix: jangan tutup Focus Mode, buka ItemDeepDive di atas
                     setDeepDiveItem({ itemName: a.itemName, outletCode: data.outlet.code });
                   }}
                 >
