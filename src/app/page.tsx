@@ -95,7 +95,7 @@ function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: s
 }
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, activeTab, setActiveTab } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab } = useDashboard();
   const { data: status } = useStatus();
 
   // Auto-select first available month/week on mount
