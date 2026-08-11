@@ -146,8 +146,9 @@ export async function GET(req: NextRequest) {
       try {
         const picOutlets = await db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } });
         picOutletCodes = picOutlets.map((p) => p.outletCode);
-      } catch {
-        // OutletPIC table may not exist — ignore PIC filter
+      } catch (e) {
+        // Bug 6 fix: log error instead of silent swallow
+        console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
       }
     }
     const buildWhere = (wk: string, mLabel: string) => {

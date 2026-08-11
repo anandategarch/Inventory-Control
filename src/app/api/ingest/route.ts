@@ -35,6 +35,44 @@ const DATA_DIR = process.env.INVENTORY_DATA_DIR
     ? '/tmp/inventory'
     : path.resolve(process.cwd(), 'data/inventory');
 
+// ============================================================
+//  Bug 1 fix: Path Traversal protection
+//  Validate that resolved path is within DATA_DIR (no ../escape)
+// ============================================================
+function safePath(inputPath: string): string | null {
+  const resolved = path.resolve(inputPath);
+  const dataDirResolved = path.resolve(DATA_DIR);
+  // Allow paths inside DATA_DIR OR /tmp (Vercel) OR absolute paths that don't traverse
+  if (resolved.startsWith(dataDirResolved + path.sep) || resolved === dataDirResolved) {
+    return resolved;
+  }
+  // On Vercel, allow /tmp
+  if (process.env.VERCEL && resolved.startsWith('/tmp/')) {
+    return resolved;
+  }
+  // Block path traversal attempts (../, ~/etc, etc.)
+  if (inputPath.includes('..') || inputPath.startsWith('~') || path.isAbsolute(inputPath) && !resolved.startsWith(dataDirResolved)) {
+    console.error('[ingest] Path traversal blocked:', inputPath);
+    return null;
+  }
+  // Relative path — join with DATA_DIR
+  return path.join(dataDirResolved, inputPath);
+}
+
+// ============================================================
+//  Bug 3 fix: Race condition — simple in-process lock for ingestion
+//  Prevents concurrent ingestion of same file (double-click, retry)
+// ============================================================
+const ingestionLocks = new Set<string>();
+function acquireIngestionLock(key: string): boolean {
+  if (ingestionLocks.has(key)) return false;
+  ingestionLocks.add(key);
+  return true;
+}
+function releaseIngestionLock(key: string): void {
+  ingestionLocks.delete(key);
+}
+
 async function findExcelFiles(dirOverride?: string): Promise<string[]> {
   const dir = dirOverride || DATA_DIR;
   try {
@@ -78,12 +116,25 @@ async function processIngestion(body: any) {
   const startedAt = Date.now();
   let files: string[] = [];
 
+  // Bug 1 fix: Path Traversal — validate all paths via safePath
   if (body.filePath) {
-    files = [body.filePath];
+    const safe = safePath(body.filePath);
+    if (!safe) {
+      return [{ fileName: body.filePath, status: 'ERROR' as const, rowCount: 0, dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: 'Path traversal blocked' }];
+    }
+    files = [safe];
   } else if (body.dir) {
-    files = await findExcelFiles(body.dir);
+    const safe = safePath(body.dir);
+    if (!safe) {
+      return [{ fileName: body.dir, status: 'ERROR' as const, rowCount: 0, dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: 'Path traversal blocked' }];
+    }
+    files = await findExcelFiles(safe);
   } else if (body.fileName) {
-    files = [path.join(DATA_DIR, body.fileName)];
+    const safe = safePath(body.fileName);
+    if (!safe) {
+      return [{ fileName: body.fileName, status: 'ERROR' as const, rowCount: 0, dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: 'Path traversal blocked' }];
+    }
+    files = [safe];
   } else {
     files = await findExcelFiles();
   }
@@ -111,6 +162,16 @@ async function processIngestion(body: any) {
   }> = [];
 
   for (const filePath of files) {
+    // Bug 3 fix: acquire lock per file — prevent concurrent ingestion
+    const lockKey = filePath;
+    if (!acquireIngestionLock(lockKey)) {
+      results.push({
+        fileName: path.basename(filePath), status: 'SKIPPED', rowCount: 0,
+        dqStatus: 'OK', dqErrors: 0, dqWarnings: 0,
+        error: 'Ingestion already in progress for this file',
+      });
+      continue;
+    }
     try {
       const ext = path.extname(filePath).toLowerCase();
       const fileName = path.basename(filePath);
@@ -359,6 +420,9 @@ async function processIngestion(body: any) {
         dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0,
         error: e?.message || String(e),
       });
+    } finally {
+      // Bug 3 fix: always release lock
+      releaseIngestionLock(lockKey);
     }
   }
 

@@ -114,6 +114,20 @@ export default function DashboardPage() {
     }
   }, [status, monthLabel, currentWeek, setWeek]);
 
+  // Bug 8 fix: validate currentWeek belongs to monthLabel — reset if invalid
+  useEffect(() => {
+    if (monthLabel && currentWeek && status?.weeksByMonth) {
+      const m = status.months.find((mm) => mm.label === monthLabel);
+      if (m) {
+        const weeks = status.weeksByMonth[m.key] || [];
+        if (!weeks.includes(currentWeek)) {
+          // currentWeek doesn't belong to this month — reset to last available week
+          setWeek(weeks.length > 0 ? weeks[weeks.length - 1] : null);
+        }
+      }
+    }
+  }, [status, monthLabel, currentWeek, setWeek]);
+
   const analysis = useAnalysis({
     month: monthLabel,
     week: currentWeek,

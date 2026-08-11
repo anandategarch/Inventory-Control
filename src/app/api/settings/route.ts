@@ -13,6 +13,7 @@ import {
   invalidateSettingsCache,
   type SettingDefinition,
 } from '@/lib/settings';
+import { analysisCache } from '@/lib/cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -139,6 +140,9 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
+    analysisCache.clear();
+
     return NextResponse.json({
       success: true,
       updated: updates.length,
@@ -200,6 +204,9 @@ export async function DELETE(req: NextRequest) {
     }
 
     invalidateSettingsCache();
+
+    // Bug 4 fix: clear analysis cache on settings reset
+    analysisCache.clear();
 
     await db.auditLog.create({
       data: {

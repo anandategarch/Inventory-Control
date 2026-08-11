@@ -246,6 +246,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing "url" field in request body' }, { status: 400 });
     }
 
+    // Bug 2 fix: SSRF protection — only allow Google Drive / Google Sheets URLs
+    const ALLOWED_DOMAINS = [
+      'drive.google.com',
+      'docs.google.com',
+      'drive.usercontent.google.com',
+    ];
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      return NextResponse.json({ success: false, error: 'URL tidak valid' }, { status: 400 });
+    }
+    const isAllowed = ALLOWED_DOMAINS.some(d => parsedUrl.hostname === d || parsedUrl.hostname.endsWith('.' + d));
+    if (!isAllowed) {
+      console.error('[import-drive] SSRF blocked:', parsedUrl.hostname);
+      return NextResponse.json({
+        success: false,
+        error: `URL harus dari Google Drive atau Google Sheets. Domain "${parsedUrl.hostname}" tidak diizinkan.`,
+      }, { status: 403 });
+    }
+
     // Step 1: Download files from Google Drive
     let importResult;
     try {

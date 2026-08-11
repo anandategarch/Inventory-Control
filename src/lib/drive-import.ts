@@ -104,7 +104,8 @@ export async function listDriveFolderFiles(folderId: string): Promise<DriveFile[
 
   // Find all entry blocks — each starts with <div class="flip-entry" id="entry-... and ends before the next one
   const entryBlocks: Array<{ fileId: string; block: string }> = [];
-  const entryStartRegex = /<div class="flip-entry"[^>]*id="entry-([^"]+)"[^>]*>/g;
+  // Bug 5 fix: limit [^>]* to {0,500} to prevent ReDoS catastrophic backtracking
+  const entryStartRegex = /<div class="flip-entry"[^>]{0,500}id="entry-([^"]{1,100})"[^>]{0,500}>/g;
   const starts: Array<{ fileId: string; index: number }> = [];
   let m: RegExpExecArray | null;
   while ((m = entryStartRegex.exec(html)) !== null) {
@@ -118,11 +119,13 @@ export async function listDriveFolderFiles(folderId: string): Promise<DriveFile[
     const block = html.slice(start, end);
 
     // Verify the file ID appears in a file/d/ link (confirms it's a real file, not a folder/sub-element)
-    const fileLinkMatch = block.match(/href="https:\/\/drive\.google\.com\/file\/d\/([^"\/]+)\/view/);
+    // Bug 5 fix: limit [^"\/]+ to {1,200}
+    const fileLinkMatch = block.match(/href="https:\/\/drive\.google\.com\/file\/d\/([^"\/]{1,200})\/view/);
     const realFileId = fileLinkMatch ? fileLinkMatch[1] : starts[i].fileId;
 
     // Extract filename from flip-entry-title
-    const titleMatch = block.match(/class="flip-entry-title">([^<]+)</);
+    // Bug 5 fix: limit [^<]+ to {1,300}
+    const titleMatch = block.match(/class="flip-entry-title">([^<]{1,300})</);
     if (titleMatch) {
       const name = titleMatch[1].trim();
       if (name.toLowerCase().endsWith('.xlsx') && !name.startsWith('~$')) {
@@ -156,7 +159,9 @@ export async function downloadDriveFile(
   destDir: string
 ): Promise<{ localPath: string; size: number }> {
   await fs.mkdir(destDir, { recursive: true });
-  const localPath = path.join(destDir, fileName);
+  // Bug: sanitize fileName — Google Drive title could contain path traversal chars
+  const safeFileName = path.basename(fileName).replace(/[^\w.\- ]/g, '_');
+  const localPath = path.join(destDir, safeFileName);
 
   // Strategy 1: Try the direct usercontent URL (most reliable for public files)
   // Google Drive redirects uc?export=download → drive.usercontent.google.com/download?id=
@@ -178,7 +183,8 @@ export async function downloadDriveFile(
     const html = await res.text();
 
     // Try to extract confirm token from form action
-    const confirmMatch = html.match(/action="([^"]*confirm=([^"&]+)[^"]*)"/);
+    // Bug 5 fix: limit [^"]* to {0,500} to prevent ReDoS
+    const confirmMatch = html.match(/action="([^"]{0,500}confirm=([^"&]{1,100})[^"]{0,500})"/);
     if (confirmMatch) {
       const confirmUrl = confirmMatch[1].replace(/&amp;/g, '&');
       res = await fetch(confirmUrl, {
@@ -305,8 +311,9 @@ async function getSheetsTitle(sheetId: string): Promise<string | null> {
     // Fallback: og:title meta tag
     const ogMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
     if (ogMatch) return ogMatch[1];
-  } catch {
-    // ignore — fall back to default name
+  } catch (e) {
+    // Bug 6 fix: log error instead of silent swallow
+    console.error('[drive-import] getSheetsTitle failed:', e instanceof Error ? e.message : String(e));
   }
   return null;
 }
