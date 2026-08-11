@@ -372,3 +372,29 @@ Stage Summary:
 - Week dropdown chronologically sorted
 - Sales aggregation robust against Excel typo (MODE not MAX)
 - Historical z-score uses shared calcStdDev (no redundant computation)
+
+---
+Task ID: 13
+Agent: Main (Z.ai Code)
+Task: Fix 8 bugs gelombang ketiga (security + reliability) + 1 additional + bug hunt
+
+Work Log:
+- Bug 1 (Critical, Path Traversal): ingest/route.ts body.filePath/fileName/dir langsung dipakai. Fix: safePath() validate resolved path within DATA_DIR, block ../, ~, absolute outside.
+- Bug 2 (Critical, SSRF): import-drive/route.ts body.url fetch tanpa domain check. Fix: ALLOWED_DOMAINS whitelist (drive.google.com, docs.google.com, drive.usercontent.google.com).
+- Bug 3 (High, Race condition): no locking di ingestion. Fix: ingestionLocks Set + acquireIngestionLock/releaseIngestionLock per file, finally block.
+- Bug 4 (High, Cache leak): LRUCache no TTL, no invalidation on settings change. Fix: TTL 5min + analysisCache.clear() on settings POST/DELETE.
+- Bug 5 (Medium, ReDoS): [^>]* and [^"]* catastrophic backtracking. Fix: limit to {0,500}, {1,200}, {1,300}.
+- Bug 6 (Medium, Silent failure): catch blocks tanpa log. Fix: console.error in getSheetsTitle + OutletPIC query catch.
+- Bug 7 (Medium, Integer overflow): SKIP — JS double precision handles up to 2^53 (~9e15), Rp 100T = 1e14 still safe.
+- Bug 8 (Low, Frontend state): setMonth reset currentWeek but UI stale. Fix: useEffect validates currentWeek belongs to monthLabel.
+- Additional (Path traversal in downloadDriveFile): fileName from Google Drive could contain ../. Fix: path.basename() + sanitize non-word chars.
+- Bug hunt: checked eval/Function (none), process.env client exposure (none), SQL injection (Prisma parameterized), XSS (shadcn chart.tsx safe), unhandled promises (none).
+- Lint: 0 errors. TypeScript: 0 new errors.
+- Committed (68cfa5d) and pushed to GitHub (synced).
+
+Stage Summary:
+- 2 critical security bugs fixed (Path Traversal + SSRF)
+- 2 high reliability bugs fixed (Race condition + Cache leak)
+- 4 medium/low quality bugs fixed (ReDoS + Silent failure + State validation)
+- 1 additional path traversal in downloadDriveFile
+- Bug hunt found no other critical issues (no eval, no SQL injection, no XSS, no env exposure)
