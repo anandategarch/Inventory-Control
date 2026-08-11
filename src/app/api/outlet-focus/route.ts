@@ -180,6 +180,8 @@ export async function GET(req: NextRequest) {
     const outletCode = url.searchParams.get('outletCode');
     const month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
+    const compareWeekParam = url.searchParams.get('compareWeek');
+    const compareMonthParam = url.searchParams.get('compareMonth');
 
     if (!outletCode) {
       return NextResponse.json({ success: false, error: 'outletCode is required' }, { status: 400 });
@@ -189,7 +191,7 @@ export async function GET(req: NextRequest) {
     }
 
     const thresholdsVersion = await getThresholdsVersion();
-    const cacheKey = `outlet-focus|${outletCode}|${month}|${week}|tv${thresholdsVersion}`;
+    const cacheKey = `outlet-focus|${outletCode}|${month}|${week}|${compareWeekParam || ''}|${compareMonthParam || ''}|tv${thresholdsVersion}`;
     const cached = analysisCache.get(cacheKey);
     if (cached) {
       return NextResponse.json({ ...(cached as object), cached: true, durationMs: Date.now() - startedAt });
@@ -238,7 +240,10 @@ export async function GET(req: NextRequest) {
 
     const currentPeriodIdx = allPeriods.findIndex((p) => p.monthLabel === month && p.weekLabel === week);
     const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
-    const prevPeriod = currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
+    // Use explicit compareWeek from filter if provided, else auto-chronological
+    const prevPeriod = compareWeekParam && compareMonthParam
+      ? { monthLabel: compareMonthParam, weekLabel: compareWeekParam }
+      : currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
 
     // ============================================================
     //  Step 3: Fetch current period records for this outlet

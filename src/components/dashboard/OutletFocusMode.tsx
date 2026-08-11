@@ -1190,7 +1190,7 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
 export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
   const {
     focusOutlet, setFocusOutlet, setScorecardOutlet,
-    monthLabel, currentWeek, setDeepDiveItem,
+    monthLabel, currentWeek, comparisonWeek, comparisonMonth, setDeepDiveItem,
   } = useDashboard();
   const { data: status } = useStatus();
   const [tab, setTab] = useState('overview');
@@ -1206,12 +1206,14 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
   }));
 
   const focusQuery = useQuery({
-    queryKey: ['outlet-focus', focusOutlet, monthLabel, currentWeek],
+    queryKey: ['outlet-focus', focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set('outletCode', focusOutlet!);
       params.set('month', monthLabel!);
       params.set('week', currentWeek!);
+      if (comparisonWeek) params.set('compareWeek', comparisonWeek);
+      if (comparisonMonth) params.set('compareMonth', comparisonMonth);
       const res = await fetch(`/api/outlet-focus?${params.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {

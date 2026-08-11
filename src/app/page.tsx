@@ -115,6 +115,26 @@ export default function DashboardPage() {
     }
   }, [status, monthLabel, currentWeek, setWeek]);
 
+  // Auto-set default periode pembanding = same week, previous month (chronological)
+  useEffect(() => {
+    if (monthLabel && currentWeek && !comparisonWeek && status?.weeksByMonth && status?.months) {
+      // Build chronological period list
+      const allPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }> = [];
+      for (const m of status.months) {
+        const ws = status.weeksByMonth[m.key] || [];
+        for (const w of ws) {
+          allPeriods.push({ monthLabel: m.label, weekLabel: w, sortKey: `${m.key}|${w}` });
+        }
+      }
+      allPeriods.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+      const currentIdx = allPeriods.findIndex((p) => p.monthLabel === monthLabel && p.weekLabel === currentWeek);
+      if (currentIdx > 0) {
+        const prev = allPeriods[currentIdx - 1];
+        setCompareWeek(prev.weekLabel, prev.monthLabel);
+      }
+    }
+  }, [status, monthLabel, currentWeek, comparisonWeek, setCompareWeek]);
+
   // Bug 8 fix: validate currentWeek belongs to monthLabel — reset if invalid
   useEffect(() => {
     if (monthLabel && currentWeek && status?.weeksByMonth) {
