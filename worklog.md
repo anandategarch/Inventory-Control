@@ -1460,3 +1460,79 @@ Files modified:
 - .env (DATABASE_URL set to Supabase pooler URL)
 
 Note: .env is gitignored. To persist the DB connection across sessions, the DATABASE_URL env var must be set in the shell or in a non-gitignored config. The shell env var DATABASE_URL=file:...custom.db still overrides .env — this was worked around by passing DATABASE_URL explicitly in the server start command.
+
+---
+Task ID: 33
+Agent: Main (Z.ai Code)
+Task: Fix QuickSettings tidak berubah jika ada settingan baru
+
+Work Log:
+- User reported: "quick setting tetap tidak mau berubah jika ada settingan baru"
+- Read worklog.md — previous fixes (commits a783ad9, 24722f1) addressed cache invalidation but problem persisted
+- Audited the full settings flow: QuickSettings → POST /api/settings → invalidateQueries → refetch /api/analysis → getRuntimeThresholds → business logic
+- Found ROOT CAUSE: Settings were loaded from DB but NEVER actually used in business logic:
+  1. TOP_N_ITEMS / TOP_N_OUTLETS — hardcoded `10` in 8 SQL query calls in analysis/route.ts
+  2. Rule thresholds (STD_DEVIASI_BOM_PCT, RESIDUAL_LOSS_WARN_PCT, RESIDUAL_LOSS_HIGH_PCT, HIGH_LOSS_NOMINAL_THRESHOLD, HISTORICAL_ZSCORE_WARN, HISTORICAL_ZSCORE_HIGH, SALES_DEVIATION_FACTOR, BOM_DEVIATION_FACTOR) — hardcoded as literal numbers in rules.yaml
+  3. The `thresholds` object WAS loaded via getRuntimeThresholds() and passed to buildRuleContext(), but buildRuleContext only used BENCHMARK_AREA_FACTOR and BENCHMARK_NETWORK_FACTOR from it — the rest were ignored
+  4. The rule evaluator (evalOp) only supported literal operands, not field references
+
+- Implemented fix in 5 files:
+
+  1. **src/engine/rules/evaluator.ts** — evalOp now resolves string operands as ctx field references
+     - Added `ctx` parameter to evalOp function signature
+     - If operand is a string that exists in ctx, resolve it from ctx (e.g., `stdDeviasiBomPct` → 0.05)
+     - Updated evalCondition to pass ctx to evalOp
+     - Added 12 threshold fields to RuleContext interface (stdDeviasiBomPct, stdSusutPct, etc.)
+
+  2. **src/engine/analysis/analysis.ts** — buildRuleContext injects 12 threshold fields into context
+     - stdDeviasiBomPct, stdSusutPct, stdWastePct, stdTrialPct
+     - fallbackTolerancePct, residualLossWarnPct, residualLossHighPct
+     - highLossNominalThreshold, historicalZscoreWarn, historicalZscoreHigh
+     - salesDeviationFactor, bomDeviationFactor
+     - These are now available as field references in rules.yaml conditions
+
+  3. **src/config/thresholds.ts** — Added 5 missing properties to CFG_THRESHOLDS
+     - STD_SUSUT_PCT: 0.10, STD_WASTE_PCT: 0.05, STD_TRIAL_PCT: 0.03
+     - STD_DEVIASI_BOM_PCT: 0.05, HIGH_LOSS_NOMINAL_THRESHOLD: 1_000_000
+     - Needed for type compatibility (buildRuleContext accepts RuntimeThresholds | typeof CFG_THRESHOLDS)
+
+  4. **src/config/rules.yaml** — 8 hardcoded values → field references
+     - SALES_DEVIATION_MISMATCH: mul [salesGrowth, 2] → [salesGrowth, salesDeviationFactor]
+     - BOM_DEVIATION_MISMATCH: mul [bomGrowth, 2] → [bomGrowth, bomDeviationFactor]
+     - TOLERANCE_NOT_SET_HIGH_DEV: gt 0.10 → gt stdDeviasiBomPct
+     - RESIDUAL_LOSS_HIGH: gt 0.70 → gt residualLossHighPct
+     - RESIDUAL_LOSS_WARN: gt 0.50, lte 0.70 → gt residualLossWarnPct, lte residualLossHighPct
+     - HIGH_LOSS_NOMINAL: gt 1000000 → gt highLossNominalThreshold
+     - HISTORICAL_ABNORMAL: gt 2.0 → gt historicalZscoreHigh
+     - HISTORICAL_WARNING: gt 1.5, lte 2.0 → gt historicalZscoreWarn, lte historicalZscoreHigh
+     - Also updated header comment to document new available threshold fields
+
+  5. **src/app/api/analysis/route.ts** — TOP_N_ITEMS & TOP_N_OUTLETS passed to SQL queries
+     - Added `const topNItems = thresholds.TOP_N_ITEMS || 10;`
+     - Added `const topNOutlets = thresholds.TOP_N_OUTLETS || 10;`
+     - 6 queryTopItems* calls: hardcoded 10 → topNItems
+     - 2 queryTopOutlets* calls: hardcoded 10 → topNOutlets
+
+  6. **src/components/dashboard/QuickSettings.tsx** — Also invalidate outlet-focus queries
+     - Added `queryClient.invalidateQueries({ queryKey: ['outlet-focus'], refetchType: 'active' })`
+     - Thresholds affect outlet-focus anomaly detection too
+
+- Runtime verification with real Supabase data (Mei 2026, WEEK 4):
+  * TOP_N_ITEMS: 15 → 25 items (setting changed 10 → 25) ✅
+  * TOP_N_OUTLETS: 10 → 20 outlets (setting changed 10 → 20) ✅
+  * HISTORICAL_ZSCORE_HIGH: 1662 → 2926 flags (threshold 2.0 → 1.0 = more sensitive) ✅
+  * Health counts changed: 9314 → 10488 abnormal (lower threshold = more anomalies) ✅
+  * 8 QuickSettings gear icons rendered on Dashboard tab ✅
+  * Lint: 0 errors, tsc: 0 errors ✅
+
+Stage Summary:
+- Committed (0de1a6b): 6 files changed, core fix in evaluator.ts + analysis.ts + rules.yaml
+- QuickSettings now ACTUALLY changes the analysis output when user adjusts settings
+- All 10 configurable thresholds now work end-to-end:
+  * TOP_N_ITEMS, TOP_N_OUTLETS → SQL query limits
+  * STD_DEVIASI_BOM_PCT, RESIDUAL_LOSS_WARN_PCT, RESIDUAL_LOSS_HIGH_PCT → rule conditions
+  * HIGH_LOSS_NOMINAL_THRESHOLD → rule condition + worklist filtering
+  * HISTORICAL_ZSCORE_WARN, HISTORICAL_ZSCORE_HIGH → rule conditions
+  * SALES_DEVIATION_FACTOR, BOM_DEVIATION_FACTOR → rule arithmetic expressions
+  * (Previously working: WEIGHT_*, BENCHMARK_AREA_FACTOR, BENCHMARK_NETWORK_FACTOR, FALLBACK_TOLERANCE_PCT)
+- The fix is backward-compatible: if a field reference doesn't exist in ctx, evalOp falls back to literal comparison
