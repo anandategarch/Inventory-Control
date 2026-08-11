@@ -614,3 +614,24 @@ Stage Summary:
 - Light mode: white bg, black text, gray border, soft shadow → high contrast, eye-friendly
 - Dark mode: dark gray bg, white text, border → still readable
 - FormulaInfo structured descriptions (UNTUK APA/CARA BACA/CONTOH/ACTION) now display with bold labels and proper line breaks
+
+---
+Task ID: 17
+Agent: Main (Z.ai Code)
+Task: Revert tooltip to dark bg (bg-primary) + color-coded labels for readability
+
+Work Log:
+- User prefer tooltip dengan dark background (bg-primary) seperti commit sebelumnya (8d11b4d initial, ff8d263 formula tooltips)
+- Reverted tooltip.tsx: bg-popover → bg-primary (dark bg sesuai preferensi)
+- Pertahankan readability improvements: max-w-sm, rounded-lg, px-3.5 py-2.5, leading-relaxed, shadow-lg, sideOffset=4
+- Arrow: bg-primary fill-primary (match dark bg)
+- FormulaInfo.tsx: color-coded labels untuk readability di dark bg
+  - UNTUK APA: → text-emerald-300 (hijau)
+  - CARA BACA: → text-sky-300 (biru)
+  - CONTOH: → text-amber-300 (kuning)
+  - ACTION: → text-rose-300 (merah)
+  - Formula box: bg-white/10 (translucent) + border-white/10
+  - Body text: text-primary-foreground/85
+  - max-w-md, leading-relaxed, space-y-1
+- Lint: 0 errors
+- Committed (45be4b8) and pushed to GitHub (synced)
