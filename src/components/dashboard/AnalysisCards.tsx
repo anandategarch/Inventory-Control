@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -49,6 +50,13 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
             description={'UNTUK APA: Mengidentifikasi outlet/item yang menyimpang dari pola historical (z-score > threshold).\nCARA BACA: Z-Score > 3 = ekstrem (merah). > 2 = signifikan (kuning). Menunjukkan anomali vs perilaku normal outlet.\nCONTOH: Outlet A current dev 49% vs historical avg 10% (z-score 3.5) → ekstrem.\nACTION: Investigasi perubahan operasional di outlet dengan z-score > 3.'}
             example="Current 18% vs Historical 8% ± 3% → Z = (18-8)/3 = 3.33 (outlier)"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'HISTORICAL_ZSCORE_WARN', label: 'Z-Score Peringatan', dataType: 'number', min: 0, max: 5, step: 0.5 },
+              { key: 'HISTORICAL_ZSCORE_HIGH', label: 'Z-Score Kritis', dataType: 'number', min: 0, max: 5, step: 0.5 },
+              { key: 'HISTORICAL_MIN_WEEKS', label: 'Min. Minggu Historical', dataType: 'number', min: 1, max: 20, step: 1 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">{items.length} item dengan anomali historical</p>

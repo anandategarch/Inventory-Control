@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ComposedChart, Line, Legend, Cell,
@@ -35,6 +36,12 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
             description="Persentase perubahan vs periode pembanding. Bar merah = mismatch (Deviasi/Sales atau Deviasi/BOM tumbuh > 2× lipat dari sales/BOM)."
             example="Sales: (5.98B - 3.88B) / 3.88B = +54%"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'SALES_DEVIATION_FACTOR', label: 'Faktor Sales vs Deviasi', dataType: 'number', min: 1, max: 10, step: 0.5 },
+              { key: 'BOM_DEVIATION_FACTOR', label: 'Faktor BOM vs Deviasi', dataType: 'number', min: 1, max: 10, step: 0.5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
@@ -113,6 +120,12 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
             description="Dekomposisi total deviation. Residual = |QTY Deviasi| - |Waste + Susut + Trial|. Residual tinggi (>50%) = sebagian besar deviation tidak terjelaskan oleh Waste/Susut/Trial."
             example="Deviasi 60K = Waste 8K + Susut 6K + Trial 4K + Residual 42K (70%)"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'RESIDUAL_LOSS_WARN_PCT', label: 'Ambang Peringatan Residual', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+              { key: 'RESIDUAL_LOSS_HIGH_PCT', label: 'Ambang Kritis Residual', dataType: 'percent', min: 0, max: 1, step: 0.05 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">QTY Deviasi composition</p>

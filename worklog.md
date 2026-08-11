@@ -1253,3 +1253,53 @@ Stage Summary:
 - No business logic or data fetching changed
 - Lint passes with 0 errors
 - ExtraCharts.tsx is now 845 lines (was 835) due to added sort + tooltip fields
+
+---
+Task ID: 29
+Agent: Main (Z.ai Code)
+Task: Implement inline Quick Settings (Popover) per chart header
+
+Work Log:
+- Read context: worklog.md, src/lib/settings.ts (SETTING_DEFINITIONS), src/app/api/settings/route.ts (POST bulk update), src/hooks/useDashboard.ts (zustand store), src/components/filters/SettingsDialog.tsx (reference mutation pattern)
+- Read target chart components: AdvancedAnalysis.tsx (OutletHealthRanking), Charts.tsx (GrowthComparison, DeviationBreakdownChart), AnalysisCards.tsx (HistoricalAnalysisCard), TopItems.tsx (InvestigationWorklist)
+- Verified shadcn/ui components exist: popover.tsx (Popover, PopoverContent, PopoverTrigger), slider.tsx (Slider), input.tsx, label.tsx, button.tsx — no need to create
+- Verified @radix-ui/react-popover and @radix-ui/react-slider in package.json
+- Created src/components/dashboard/QuickSettings.tsx — reusable Popover component:
+  * Trigger: Settings2 icon (lucide, h-3.5 w-3.5, text-muted-foreground) with subtle amber dot when there are pending changes
+  * PopoverContent: w-[280px], p-3, align=end by default
+  * Each setting renders: Label (text-[11px]) + value display + Slider + numeric Input + Reset button (RotateCcw)
+  * Loads current values from /api/settings (useQuery, enabled when popover opens)
+  * Local edits stored in `localEdits: Record<string, string>` (only dirty keys)
+  * `effectiveValues` derived via useMemo from server values + local edits (no setState-in-effect — passes react-hooks/set-state-in-effect lint rule)
+  * Debounced autosave: 500ms after last change via useEffect + setTimeout, posts to /api/settings with { values, updatedBy: 'user-quick' }
+  * On save success: invalidate ['settings'] + ['analysis'] queries (charts auto-update via TanStack Query)
+  * Per-key Reset button restores default value (from API's defaultValue field)
+  * Race-condition safe: if user re-edits a key while a save is in-flight, the onSuccess only clears the key if the current local value matches what was just saved (preserves newer edits)
+  * On popover close: flushes any pending debounce immediately so user doesn't lose edits
+  * Toast notifications for success/error (Indonesian text)
+  * All UI text in Indonesian ("Pengaturan Cepat", "Perubahan disimpan otomatis...", etc.)
+  * Percent values display as "50%" but stored as 0.5 (matching SETTING_DEFINITIONS convention)
+  * Helper text under percent sliders: "Nilai 0–1 (mis. 0.5 = 50%)"
+- Added QuickSettings to OutletHealthRanking (AdvancedAnalysis.tsx) with 5 PRIORITY weight settings:
+  * WEIGHT_DEV_BOM, WEIGHT_GROWTH, WEIGHT_RESIDUAL, WEIGHT_TOLERANCE, WEIGHT_HISTORY (all number, 0-100, step 5)
+- Added QuickSettings to GrowthComparison (Charts.tsx) with 2 GROWTH factor settings:
+  * SALES_DEVIATION_FACTOR, BOM_DEVIATION_FACTOR (number, 1-10, step 0.5)
+- Added QuickSettings to DeviationBreakdownChart (Charts.tsx) with 2 GROWTH percent settings:
+  * RESIDUAL_LOSS_WARN_PCT, RESIDUAL_LOSS_HIGH_PCT (percent, 0-1, step 0.05)
+- Added QuickSettings to HistoricalAnalysisCard (AnalysisCards.tsx) with 3 BENCHMARK settings:
+  * HISTORICAL_ZSCORE_WARN, HISTORICAL_ZSCORE_HIGH (number, 0-5, step 0.5)
+  * HISTORICAL_MIN_WEEKS (number, 1-20, step 1)
+- Skipped ParetoAnalysis (CostAccounting.tsx) — thresholds hardcoded in SQL, would need backend change to parameterize
+- Skipped InvestigationWorklist (TopItems.tsx) — HIGH_LOSS_NOMINAL_THRESHOLD and TOP_N_ITEMS not in scope per task instructions (note: TOP_N_ITEMS exists in SETTING_DEFINITIONS but task explicitly says skip)
+- Global SettingsDialog (src/components/filters/SettingsDialog.tsx) preserved — both options available to users
+- All QuickSettings saves go through same POST /api/settings endpoint as global dialog (single source of truth)
+- Verified lint: `bun run lint` returns 0 errors, 0 warnings
+
+Stage Summary:
+- New file: src/components/dashboard/QuickSettings.tsx (285 lines)
+- Modified files: AdvancedAnalysis.tsx (+15 lines), Charts.tsx (+13 lines), AnalysisCards.tsx (+8 lines)
+- Charts now have inline gear icon (Settings2) in their CardTitle next to FormulaInfo
+- Clicking gear opens Popover with relevant settings for that chart
+- Changes debounced 500ms → POST /api/settings → invalidate ['analysis'] query → chart auto-refreshes
+- Lint clean (0 errors, 0 warnings)
+- Dev server log: clean compile, no errors

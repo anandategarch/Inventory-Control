@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs, directionColor } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -152,6 +153,15 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
             description={'UNTUK APA: Memberikan skor kondisi outlet 0-100 (100 = sempurna, 0 = kritis) berdasarkan komposit 4 metric.\nCARA BACA: Skor = 30% Dev/BOM + 25% Residual + 25% Loss/Sales + 20% Abnormal Count. Diurutkan dari terburuk.\nCONTOH: Dev/BOM 49% → skor 2, Residual 96% → skor 4, Loss/Sales 7% → skor 65, Abnormal 50 → skor 0. Weighted: 18.\nACTION: Outlet skor < 30 = kritis, butuh intervensi segera.'}
             example="Outlet A: devBom 18% + residual 60% + loss/sales 8% + 12 masalah → skor 35 (kritis)"
             side="bottom"
+          />
+          <QuickSettings
+            settings={[
+              { key: 'WEIGHT_DEV_BOM', label: 'Bobot Dev/BOM', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'WEIGHT_GROWTH', label: 'Bobot Pertumbuhan', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'WEIGHT_RESIDUAL', label: 'Bobot Residual', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'WEIGHT_TOLERANCE', label: 'Bobot Toleransi', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'WEIGHT_HISTORY', label: 'Bobot Historical', dataType: 'number', min: 0, max: 100, step: 5 },
+            ]}
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
