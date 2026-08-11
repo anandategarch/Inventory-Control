@@ -221,36 +221,47 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
 
-  const ca = data.itemConsistencyAnalysis || { systemic: [], episodic: [] };
-  // Combine systemic + episodic, map to unified row shape
+  // Use unified items list from backend (outlet-count-based classification)
+  // Fallback to mapping from systemic/episodic for backward compat
+  const ca = data.itemConsistencyAnalysis || { systemic: [], episodic: [], items: [] };
   const rows: Array<{
     itemName: string;
-    outletCode: string;
-    area: string;
     outletCount: number;
+    lossOutlets: number;
+    surplusOutlets: number;
     absNominal: number;
     avgDevBom: number;
     type: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED';
-  }> = [
-    ...(ca.systemic || []).map((s) => ({
-      itemName: s.itemName,
-      outletCode: s.outletCode,
-      area: s.area,
-      outletCount: s.occurrences,
-      absNominal: s.absNominal,
-      avgDevBom: s.avgDevBom,
-      type: (s.occurrences >= 5 ? 'SYSTEMIC' : 'WIDESPREAD') as 'SYSTEMIC' | 'WIDESPREAD',
-    })),
-    ...(ca.episodic || []).map((s) => ({
-      itemName: s.itemName,
-      outletCode: s.outletCode,
-      area: s.area,
-      outletCount: 1,
-      absNominal: s.absNominal,
-      avgDevBom: s.devBom,
-      type: 'ISOLATED' as 'ISOLATED',
-    })),
-  ].sort((a, b) => b.absNominal - a.absNominal);
+  }> = (ca.items && ca.items.length > 0)
+    ? ca.items.map((i) => ({
+        itemName: i.itemName,
+        outletCount: i.outletCount,
+        lossOutlets: i.lossOutlets,
+        surplusOutlets: i.surplusOutlets,
+        absNominal: i.totalAbsNominal,
+        avgDevBom: i.avgDevBom,
+        type: i.consistency,
+      }))
+    : [
+        ...(ca.systemic || []).map((s) => ({
+          itemName: s.itemName,
+          outletCount: s.occurrences,
+          lossOutlets: 0,
+          surplusOutlets: 0,
+          absNominal: s.absNominal,
+          avgDevBom: s.avgDevBom,
+          type: (s.occurrences >= 10 ? 'SYSTEMIC' : 'WIDESPREAD') as 'SYSTEMIC' | 'WIDESPREAD',
+        })),
+        ...(ca.episodic || []).map((s) => ({
+          itemName: s.itemName,
+          outletCount: 1,
+          lossOutlets: 0,
+          surplusOutlets: 0,
+          absNominal: s.absNominal,
+          avgDevBom: s.devBom,
+          type: 'ISOLATED' as 'ISOLATED',
+        })),
+      ].sort((a, b) => b.absNominal - a.absNominal);
 
   const systemicCount = rows.filter((r) => r.type === 'SYSTEMIC').length;
   const widespreadCount = rows.filter((r) => r.type === 'WIDESPREAD').length;
@@ -269,8 +280,8 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
           Analisis Pola Item
           <FormulaInfo
             formula="Outlets = COUNT(DISTINCT outlet) per item dengan deviasi"
-            description="SYSTEMIC = muncul di ≥5 outlet (masalah sistemik lintas outlet). WIDESPREAD = 2-4 outlet. ISOLATED = 1 outlet (episodik). Klik baris untuk drill-down semua outlet dengan item ini."
-            example="Item A di 8 outlet → SYSTEMIC (cross-outlet pattern)"
+            description={'UNTUK APA: Mengidentifikasi item yang menyimpang di multiple outlet (pola sistemik).\nCARA BACA: SYSTEMIC (≥10 outlet) = masalah produk/QTY BOM. WIDESPREAD (5-9) = pola regional. ISOLATED (2-4) = anomali lokal.\nCONTOH: UDANG KEJU FROZEN deviasi di 15 outlet = SYSTEMIC → cek QTY BOM atau harga beli.\nACTION: SYSTEMIC → revisi master data QTY BOM. WIDESPREAD → evaluasi pelatihan area. ISOLATED → investigasi outlet spesifik.'}
+            example="UDANG KEJU FROZEN deviasi di 15 outlet = SYSTEMIC"
             side="bottom"
           />
         </CardTitle>
@@ -286,13 +297,15 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                 <TableHead className="text-[10px] h-7 px-2">NAMA BAHAN</TableHead>
                 <TableHead className="text-[10px] h-7 px-2">Type</TableHead>
                 <TableHead className="text-[10px] h-7 px-2 text-right">Outlets</TableHead>
+                <TableHead className="text-[10px] h-7 px-2 text-right">LOSS</TableHead>
+                <TableHead className="text-[10px] h-7 px-2 text-right">SURPLUS</TableHead>
                 <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
                 <TableHead className="text-[10px] h-7 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
               ) : rows.map((row, i) => (
                 <TableRow
                   key={`${row.itemName}-${i}`}
@@ -304,6 +317,8 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                     <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${consistencyBadge(row.type)}`}>{row.type}</Badge>
                   </TableCell>
                   <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{row.outletCount}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1 text-right text-red-600">{row.lossOutlets}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1 text-right text-emerald-600">{row.surplusOutlets}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(row.absNominal)}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1 text-right">{fmtPctAbs(row.avgDevBom)}</TableCell>
                 </TableRow>

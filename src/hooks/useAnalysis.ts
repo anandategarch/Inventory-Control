@@ -54,6 +54,16 @@ export interface CostImpact {
 export interface ItemConsistencyResult {
   systemic: Array<{ itemName: string; outletCode: string; area: string; occurrences: number; avgDevBom: number; absNominal: number }>;
   episodic: Array<{ itemName: string; outletCode: string; area: string; absNominal: number; devBom: number }>;
+  items?: Array<{
+    itemName: string;
+    satuan: string;
+    outletCount: number;
+    lossOutlets: number;
+    surplusOutlets: number;
+    totalAbsNominal: number;
+    avgDevBom: number;
+    consistency: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED';
+  }>;
 }
 
 export interface NetCostTrendPoint {

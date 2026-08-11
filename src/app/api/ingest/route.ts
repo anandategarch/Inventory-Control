@@ -235,7 +235,8 @@ async function processIngestion(body: any) {
         const wk = n.weekLabel || 'UNKNOWN';
         if (!weekDbMap.has(wk)) {
           const periods: Record<string, { start: number; end: number }> = {
-            'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 }, 'WEEK 3': { start: 15, end: 31 },
+            'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 },
+            'WEEK 3': { start: 15, end: 31 }, 'WEEK 4': { start: 15, end: 31 },
           };
           const p = periods[wk] || { start: 1, end: 31 };
           const w = await db.week.upsert({

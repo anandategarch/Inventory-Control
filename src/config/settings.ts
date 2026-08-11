@@ -32,10 +32,13 @@ export const CFG_RECON_SETTINGS = {
   TREAT_ZERO_AS: 'ADA' as const, // 0 dianggap ADA input (configurable)
 
   // Week period definition (user confirmed ranges)
+  // WEEK 1 = day 1-7, WEEK 2 = day 8-14, WEEK 3/4 = day 15-30/31
+  // Note: data may use WEEK 3 or WEEK 4 for the third period — support both
   WEEK_PERIODS: {
     'WEEK 1': { start: 1, end: 7 },
     'WEEK 2': { start: 8, end: 14 },
     'WEEK 3': { start: 15, end: 31 },
+    'WEEK 4': { start: 15, end: 31 },
   } as Record<string, { start: number; end: number }>,
 
   // Outlet code patterns

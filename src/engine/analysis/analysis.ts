@@ -825,18 +825,42 @@ export function computeOutletHealthRanking(
   return [...byOutlet.values()]
     .map((v) => {
       const total = v.normal + v.warning + v.abnormal;
+      const residualPct = v.residualCount > 0 ? v.residualSum / v.residualCount : null;
+      const lossToSales = v.sales > 0 ? v.lossNominal / v.sales : null;
+      const devBom = v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0;
+
+      // ============================================================
+      //  Health Score — composite weighted (Section 33 of master context)
+      //  Skor = 30% % DEV TO BOM + 25% RESIDUAL + 25% LOSS/PENJUALAN + 20% Jumlah Masalah
+      //  Each metric normalized to 0-100 (100 = healthy, 0 = critical)
+      // ============================================================
+      const clamp = (n: number) => Math.max(0, Math.min(100, n));
+      // Dev/BOM: <5% → 100, >50% → 0 (linear)
+      const devBomScore = clamp(100 - (devBom / 0.50) * 100);
+      // Residual: <20% → 100, >80% → 0 (linear)
+      const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
+      // Loss/Sales: <2% → 100, >15% → 0 (linear)
+      const lossToSalesScore = lossToSales != null ? clamp(100 - ((lossToSales - 0.02) / 0.13) * 100) : 50;
+      // Abnormal count: 0% abnormal → 100, >50% abnormal → 0 (linear)
+      const abnormalRate = total > 0 ? v.abnormal / total : 0;
+      const abnormalScore = clamp(100 - (abnormalRate / 0.50) * 100);
+
+      const healthScore = Math.round(
+        devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20
+      );
+
       return {
         outletCode: v.outlet.code,
         outletName: v.outlet.name,
         area: v.area,
-        healthScore: total > 0 ? Math.round((v.normal / total) * 100) : 100,
+        healthScore,
         normal: v.normal,
         warning: v.warning,
         abnormal: v.abnormal,
         absNominal: v.absNominal,
-        residualPct: v.residualCount > 0 ? v.residualSum / v.residualCount : null,
-        lossToSales: v.sales > 0 ? v.lossNominal / v.sales : null,
-        devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
+        residualPct,
+        lossToSales,
+        devBom,
         sales: v.sales,
       };
     })
@@ -905,59 +929,100 @@ export function computeCostImpact(recs: RecWithRels[], salesTotal: number) {
 }
 
 // ============================================================
-//  Item Consistency — SYSTEMIC vs EPISODIC items
-//  SYSTEMIC = appears with significant deviation in >= 50% of historical periods
-//  EPISODIC  = appears in only 1 historical period (single spike)
+//  Item Consistency — pola item antar outlet (Section 22, 38 master context)
+//  SYSTEMIC: ≥10 outlet menyimpang untuk item yang sama
+//  WIDESPREAD: 5-9 outlet
+//  ISOLATED: 2-4 outlet
+//  Direction consistency juga dianalisis (10 LOSS > 5 LOSS + 5 SURPLUS)
 // ============================================================
 export function computeItemConsistencyAnalysis(
   current: RecWithRels[],
-  historicalByOutletItem: Map<string, number[]>,
-  historicalPeriodCount: number
+  _historicalByOutletItem?: Map<string, number[]>,
+  _historicalPeriodCount?: number
 ) {
-  const threshold = Math.max(2, Math.ceil(historicalPeriodCount * 0.5));
-  const systemic: Array<{
-    itemName: string; outletCode: string; area: string;
-    occurrences: number; avgDevBom: number; absNominal: number;
-  }> = [];
-  const episodic: Array<{
-    itemName: string; outletCode: string; area: string;
-    absNominal: number; devBom: number;
-  }> = [];
+  // Group by itemName — count distinct outlets with significant deviation
+  const byItem = new Map<string, {
+    itemName: string;
+    satuan: string;
+    outlets: Set<string>;
+    lossOutlets: Set<string>;
+    surplusOutlets: Set<string>;
+    totalAbsNominal: number;
+    devBomSum: number;
+    devBomCount: number;
+  }>();
 
   for (const r of current) {
     if (r.absNominalDeviasi == null || r.absNominalDeviasi === 0) continue;
-    const key = `${r.outletId}|${r.itemId}`;
-    const hist = historicalByOutletItem.get(key) ?? [];
-    if (hist.length === 0) continue;
-    // Count "significant" historical deviations (>= 5%)
-    const sigCount = hist.filter((v) => Math.abs(v) >= 0.05).length;
-    const avgDevBom = hist.reduce((s, v) => s + Math.abs(v), 0) / hist.length;
-    if (sigCount >= threshold) {
-      systemic.push({
-        itemName: r.item.name,
-        outletCode: r.outlet.code,
-        area: r.area,
-        occurrences: sigCount,
-        avgDevBom,
-        absNominal: r.absNominalDeviasi ?? 0,
-      });
-    } else if (sigCount <= 1) {
-      episodic.push({
-        itemName: r.item.name,
-        outletCode: r.outlet.code,
-        area: r.area,
-        absNominal: r.absNominalDeviasi ?? 0,
-        devBom: r.pctQtyDeviasiToBom ?? 0,
-      });
+    const name = r.item.name;
+    let e = byItem.get(name);
+    if (!e) {
+      e = {
+        itemName: name,
+        satuan: r.satuan ?? '',
+        outlets: new Set(),
+        lossOutlets: new Set(),
+        surplusOutlets: new Set(),
+        totalAbsNominal: 0,
+        devBomSum: 0,
+        devBomCount: 0,
+      };
+      byItem.set(name, e);
+    }
+    e.outlets.add(r.outlet.code);
+    if (r.direction === 'LOSS') e.lossOutlets.add(r.outlet.code);
+    else if (r.direction === 'SURPLUS') e.surplusOutlets.add(r.outlet.code);
+    e.totalAbsNominal += r.absNominalDeviasi;
+    if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
+      e.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
+      e.devBomCount++;
     }
   }
 
-  systemic.sort((a, b) => b.absNominal - a.absNominal);
-  episodic.sort((a, b) => b.absNominal - a.absNominal);
-  return {
-    systemic: systemic.slice(0, 10),
-    episodic: episodic.slice(0, 10),
-  };
+  // Classify by outlet count (master context Section 22, 38)
+  const items = [...byItem.values()]
+    .map((v) => {
+      const outletCount = v.outlets.size;
+      const lossOutlets = v.lossOutlets.size;
+      const surplusOutlets = v.surplusOutlets.size;
+      let consistency: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED';
+      if (outletCount >= 10) consistency = 'SYSTEMIC';
+      else if (outletCount >= 5) consistency = 'WIDESPREAD';
+      else if (outletCount >= 2) consistency = 'ISOLATED';
+      else consistency = 'ISOLATED'; // 1 outlet = isolated (single occurrence)
+      return {
+        itemName: v.itemName,
+        satuan: v.satuan,
+        outletCount,
+        lossOutlets,
+        surplusOutlets,
+        totalAbsNominal: v.totalAbsNominal,
+        avgDevBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
+        consistency,
+      };
+    })
+    .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
+
+  // Return unified list — backward compat: map to systemic/episodic shape
+  // but with proper outlet-count-based classification
+  const systemic = items.filter((i) => i.consistency === 'SYSTEMIC').map((i) => ({
+    itemName: i.itemName,
+    outletCode: '', // aggregated across outlets
+    area: '',
+    occurrences: i.outletCount,
+    avgDevBom: i.avgDevBom,
+    absNominal: i.totalAbsNominal,
+  }));
+  const episodic = items.filter((i) => i.consistency !== 'SYSTEMIC').map((i) => ({
+    itemName: i.itemName,
+    outletCode: '',
+    area: '',
+    absNominal: i.totalAbsNominal,
+    devBom: i.avgDevBom,
+  }));
+
+  // Also return unified items list with full classification
+  return { systemic, episodic, items };
 }
 
 // ============================================================

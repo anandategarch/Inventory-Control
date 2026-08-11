@@ -35,11 +35,12 @@ export const CFG_THRESHOLDS = {
   // Tolerance — when "BELUM ADA TOLERANSI", use fallback
   FALLBACK_TOLERANCE_PCT: 0.05,     // 5% analytical flag
 
-  // Week period ranges (user confirmed: WEEK 1=1-7, WEEK 2=8-14, WEEK 3=15-30/31)
+  // Week period ranges (user confirmed: WEEK 1=1-7, WEEK 2=8-14, WEEK 3/4=15-30/31)
   WEEK_RANGES: {
     'WEEK 1': { start: 1, end: 7 },
     'WEEK 2': { start: 8, end: 14 },
     'WEEK 3': { start: 15, end: 31 }, // 30 or 31
+    'WEEK 4': { start: 15, end: 31 }, // same as WEEK 3 (data may use either)
   } as Record<string, { start: number; end: number }>,
 
   // Sales deviation ratio (deviation growth / sales growth)

@@ -65,7 +65,7 @@ function toNum(v: unknown): number | null {
 function weekPeriod(weekLabel: string): { start: number; end: number } {
   if (weekLabel.includes('1')) return { start: 1, end: 7 };
   if (weekLabel.includes('2')) return { start: 8, end: 14 };
-  if (weekLabel.includes('3')) return { start: 15, end: 31 };
+  if (weekLabel.includes('3') || weekLabel.includes('4')) return { start: 15, end: 31 };
   return { start: 1, end: 31 };
 }
 
