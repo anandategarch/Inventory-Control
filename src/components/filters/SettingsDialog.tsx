@@ -124,8 +124,8 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onSuccess: (data) => {
       if (data.success) {
         toast({
-          title: '✅ Settings saved',
-          description: data.updated > 0 ? `${data.updated} setting(s) updated` : 'No changes to save',
+          title: '✅ Pengaturan tersimpan',
+          description: data.updated > 0 ? `${data.updated} pengaturan diperbarui` : 'Tidak ada perubahan',
         });
         setHasEdits(false);
         setEditValues({});
@@ -134,15 +134,15 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
       } else {
         toast({
-          title: '❌ Save failed',
-          description: data.error || 'Unknown error',
+          title: '❌ Gagal menyimpan',
+          description: data.error || 'Error tidak diketahui',
           variant: 'destructive',
         });
       }
     },
     onError: (e: any) => {
       toast({
-        title: '❌ Save failed',
+        title: '❌ Gagal menyimpan',
         description: e?.message || 'Network error',
         variant: 'destructive',
       });
@@ -157,8 +157,8 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     },
     onSuccess: (data, key) => {
       toast({
-        title: '↺ Reset to default',
-        description: key ? `Reset ${key}` : 'All settings reset to defaults',
+        title: '↺ Reset ke default',
+        description: key ? `Reset ${key}` : 'Semua pengaturan direset ke default',
       });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
@@ -179,7 +179,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   }
 
   function handleResetAll() {
-    if (confirm('Reset ALL settings to defaults? This cannot be undone.')) {
+    if (confirm('Reset SEMUA pengaturan ke default? Ini tidak dapat dibatalkan.')) {
       resetMutation.mutate();
       setHasEdits(false);
       setEditValues({});
@@ -227,7 +227,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               disabled={resetMutation.isPending}
             >
               <RotateCcw className="h-3 w-3 mr-1" />
-              Reset All
+              Reset Semua
             </Button>
           </DialogTitle>
           <DialogDescription>
@@ -238,7 +238,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-sm text-muted-foreground">Loading settings...</span>
+            <span className="ml-2 text-sm text-muted-foreground">Memuat pengaturan...</span>
           </div>
         ) : data?.success ? (
           <>
@@ -300,12 +300,12 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                                 <div className="text-[11px] text-muted-foreground shrink-0 min-w-[80px] text-right">
                                   {isChanged ? (
                                     <span className="text-amber-600">
-                                      was: {formatValueDisplay(s.value, s.dataType)}
+                                      sebelumnya: {formatValueDisplay(s.value, s.dataType)}
                                     </span>
                                   ) : isDefault ? (
                                     <span className="text-muted-foreground/60">default</span>
                                   ) : (
-                                    <span className="text-emerald-600">custom</span>
+                                    <span className="text-emerald-600">kustom</span>
                                   )}
                                 </div>
                                 {!isDefault && (
@@ -314,7 +314,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                                     size="sm"
                                     className="h-8 px-2 text-xs shrink-0"
                                     onClick={() => handleResetOne(s.key, s.defaultValue)}
-                                    title="Reset to default"
+                                    title="Reset ke default"
                                   >
                                     <RotateCcw className="h-3 w-3" />
                                   </Button>
@@ -347,13 +347,13 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => onOpenChange(false)}>
-                    Close
+                    Tutup
                   </Button>
                   <Button onClick={handleSave} disabled={!dirty || saveMutation.isPending}>
                     {saveMutation.isPending ? (
-                      <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Saving...</>
+                      <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Menyimpan...</>
                     ) : (
-                      <><Save className="h-3.5 w-3.5 mr-1" /> Save Changes</>
+                      <><Save className="h-3.5 w-3.5 mr-1" /> Simpan Perubahan</>
                     )}
                   </Button>
                 </div>
@@ -362,7 +362,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </>
         ) : (
           <div className="py-8 text-center text-sm text-red-600">
-            Failed to load settings: {data?.error || 'Unknown error'}
+            Gagal memuat pengaturan: {data?.error || 'Error tidak diketahui'}
           </div>
         )}
       </DialogContent>
