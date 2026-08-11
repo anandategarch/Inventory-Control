@@ -398,3 +398,30 @@ Stage Summary:
 - 4 medium/low quality bugs fixed (ReDoS + Silent failure + State validation)
 - 1 additional path traversal in downloadDriveFile
 - Bug hunt found no other critical issues (no eval, no SQL injection, no XSS, no env exposure)
+
+---
+Task ID: 14
+Agent: Main (Z.ai Code)
+Task: Fix 12 priority items (auth, validation, rate limiting, security headers, dedup)
+
+Work Log:
+- #1 Auth middleware: created src/middleware.ts — protect /api/setup, /api/ingest, /api/import-drive, /api/settings (destructive methods). Token-based via ADMIN_TOKEN env. Dashboard/GET public.
+- #2 Protect /api/setup: covered by middleware (always protected)
+- #3 Zod validation: created src/lib/validation.ts with schemas (ingest, import-drive, settings, analysis, drilldown). Applied to ingest + import-drive routes.
+- #4 Skip error rows: already fixed (Task ID 9, Bug 1)
+- #5 Transaction/skipDuplicates: already fixed (Task ID 9, Bug 1)
+- #6 Dedup code: extracted processIngestion to src/lib/ingestion.ts (shared). ingest/route.ts 440→70 lines, import-drive ingestFile 200→15 lines.
+- #7 priorities sorting: already fixed (Task ID 12, Bug 1)
+- #8 number formatting: already fixed (Task ID 12, Bug 2)
+- #9 LLM role: already fixed (Task ID 12, Bug 4)
+- #10 Rate limiting: created src/lib/rate-limit.ts (in-memory sliding window). Applied to analysis (60/min), ingest (5/min), import-drive (3/min). 429 + Retry-After.
+- #11 Security headers: added to next.config.ts (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, HSTS)
+- #12 Audit logging: verified exists (ingest, import-drive, settings POST/DELETE, analysis)
+- Lint: 0 errors. TypeScript: 0 new errors (pre-existing next.config eslint property error).
+- Committed (c34a76f) and pushed to GitHub (synced).
+
+Stage Summary:
+- 3 critical security items fixed: auth middleware, /api/setup protection, Zod validation
+- 1 reliability item fixed: code deduplication (440→70 lines ingest route)
+- 2 production items fixed: rate limiting, security headers
+- 6 items already fixed in previous commits (#4,#5,#7,#8,#9,#12)
