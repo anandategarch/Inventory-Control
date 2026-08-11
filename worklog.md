@@ -823,3 +823,23 @@ Stage Summary:
 - Long items like "UDANG KEJU FROZEN PREMIUM 500G PACK" now wrap within wider cells instead of being clipped
 - Modal/dialog title truncation preserved (single-line UX)
 - Lint clean, no business logic changed
+
+---
+Task ID: 19 (verification)
+Agent: Main (Z.ai Code)
+Task: Verify all remaining text truncation fixes
+
+Work Log:
+- Fixed 16 table cells across 7 files:
+  - TopItems.tsx: 5 cells widened (140→180px) + 2 missing whitespace-normal on issue/recommendedAction
+  - AdvancedAnalysis.tsx: 3 cells truncate→whitespace-normal, 140/160→180/200px
+  - CostAccounting.tsx: 2 cells truncate→whitespace-normal, 140→180px
+  - AnalysisCards.tsx: 1 cell truncate→whitespace-normal, 140→180px
+  - AlertPanel.tsx: 3 cells (outletName, itemName, ruleCodes) + max-w + whitespace-normal + title
+  - OutletScorecard.tsx: 3 cells widened to 220/240px + whitespace-normal + title
+  - ExecutiveSummary.tsx: hint truncate→line-clamp-1
+- Pattern: truncate → whitespace-normal (wrap not clip), max-w-[140px] → max-w-[180px+] (wider for laptop)
+- All title={...} attributes preserved (hover tooltip fallback)
+- Modal/dialog headers untouched (single-line titles OK)
+- Lint: 0 errors
+- Committed (9949b2b) and pushed to GitHub (synced)
