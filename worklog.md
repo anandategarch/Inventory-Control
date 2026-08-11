@@ -261,3 +261,62 @@ Stage Summary:
 - Over-explained variance now flagged as WARNING (fraud detection)
 - File hashing O(1) memory (safe for large Excel files on serverless)
 - Vercel will auto-deploy from this push
+
+---
+Task ID: 10
+Agent: Main (Z.ai Code)
+Task: Align all calculations & analysis with master context document
+
+Work Log:
+- Read full master context (1491 lines, 50 sections) from upload/Pasted Content_1786407918385.txt
+- Audited codebase against master context — found 3 mismatches:
+
+Mismatch 1: Health Score (Section 33) — CRITICAL
+- Master context: Skor = 30% Dev/BOM + 25% Residual + 25% Loss/Sales + 20% Abnormal Count
+- Was: healthScore = (normal/total)*100 — just normal percentage, NOT weighted composite
+- Fix: computeOutletHealthRanking now implements weighted composite:
+  - devBomScore: <5% → 100, >50% → 0 (linear)
+  - residualScore: <20% → 100, >80% → 0 (linear)
+  - lossToSalesScore: <2% → 100, >15% → 0 (linear)
+  - abnormalScore: 0% → 100, >50% → 0 (linear)
+  - healthScore = round(devBom*0.30 + residual*0.25 + lossToSales*0.25 + abnormal*0.20)
+
+Mismatch 2: Item Consistency (Section 22, 38) — CRITICAL
+- Master context: SYSTEMIC ≥10 outlet, WIDESPREAD 5-9, ISOLATED 2-4 (by OUTLET COUNT)
+- Was: SYSTEMIC = >= 50% of historical periods (completely wrong — used historical period count, not outlet count)
+- Fix: computeItemConsistencyAnalysis rewritten:
+  - Group by itemName, count distinct outlets with deviation
+  - Track lossOutlets vs surplusOutlets (direction consistency)
+  - Classify: ≥10 → SYSTEMIC, 5-9 → WIDESPREAD, 2-4 → ISOLATED
+  - Return unified items list with consistency field
+  - AdvancedAnalysis.tsx: use items list, add LOSS/SURPLUS columns
+  - useAnalysis.ts: add items field to ItemConsistencyResult type
+
+Mismatch 3: WEEK 4 support
+- Data MEI 2026 uses "WEEK 4" (not WEEK 3) for third period
+- Config only defined WEEK 1/2/3 — WEEK 4 got default {start:1, end:31}
+- Fix: add WEEK 4 = {start:15, end:31} to all configs:
+  - config/settings.ts WEEK_PERIODS
+  - config/thresholds.ts WEEK_RANGES
+  - ingest/route.ts periods map
+  - upload-data.ts weekPeriod function
+
+Verified correct (no fix needed):
+- Direction: LOSS (qtyDeviasi>0), SURPLUS (qtyDeviasi<0), NEUTRAL — matches Section 9, 35
+- Growth: (current-previous)/ABS(previous) with edge cases — matches Section 31
+- Sales: MAX per outlet then SUM — matches Section 30
+- Deviation/BOM: SUM(ABS(dev))/SUM(ABS(bom)) — matches Section 32
+- Residual: sign-aware math — matches Section 11, 34
+- Settings keys: all present (STD_SUSUT_PCT, SALES_DEVIATION_FACTOR, etc.) — matches Section 42
+- Filter: Month/Week/Compare/PIC/Area/Outlet — matches Section 29
+- Auto compare: chronological previous — matches Section 29
+
+- Lint: 0 errors
+- Committed (2100374) and pushed to GitHub (synced ✓)
+
+Stage Summary:
+- All calculations now aligned with master context document
+- Health Score uses proper 30/25/25/20 weighted composite (not simple normal percentage)
+- Item Consistency uses outlet count classification (SYSTEMIC ≥10, WIDESPREAD 5-9, ISOLATED 2-4) — not historical periods
+- WEEK 4 properly defined in all configs
+- Vercel will auto-deploy from this push
