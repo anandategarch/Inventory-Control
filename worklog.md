@@ -734,3 +734,24 @@ Stage Summary:
 - Language consistency: all user-facing English strings in scope translated to Indonesian (technical terms like "Dev/BOM", "LOSS/SURPLUS", "|NOMINAL|" kept as business code)
 - Refetch UX: subtle "Memperbarui..." badge with spinning Loader2 icon appears in header when analysis is re-fetching with existing data (no full-page reload flash)
 - Mobile responsiveness: footer "Klik baris mana saja..." hidden on mobile (sm+ only), header subtitle truncates gracefully instead of wrapping awkwardly
+
+---
+Task ID: 18 (verification)
+Agent: Main (Z.ai Code)
+Task: Verify UI truncation & mobile readability fixes
+
+Work Log:
+- All 12 issues validated as real and fixed by subagent
+- A.1 KPICard: line-clamp-2 + title attribute (was truncate)
+- A.2 HealthAlert: w-32 sm:w-44 + title fallback (was w-44 fixed)
+- A.3 TopItems: title={value} + whitespace-normal + Indonesia (was clipped)
+- A.4 ExtraCharts: slice(0,24) + YAxis width 140 (was slice(0,18))
+- A.5 AreaLossSales: angle=-35, height=80 (was -25, 60)
+- A.6 Footer: hidden sm:inline (was always visible)
+- B.1 text-[10px] → text-[11px] (100+ occurrences, WCAG minimum)
+- B.2 ID/EN consistency: 20+ English strings → Indonesia
+- B.3 Emoji removed from placeholder
+- B.9 Loading indicator: 'Memperbarui...' badge with spinner on refetch
+- B.12 Badge mobile: verified hidden sm:inline-flex
+- Lint: 0 errors
+- Committed (0a87ea6) and pushed to GitHub (synced)
