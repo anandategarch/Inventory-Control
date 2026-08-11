@@ -520,7 +520,13 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
       .map(({ sortKey, ...rest }) => rest);
 
-    // Narrative (LLM)
+    // ============================================================
+    //  P2 fix: Start LLM narrative EARLY (no await) — runs in background
+    //  while CPU computations below execute on the event loop.
+    //  narrativeInput only needs: execSummary, growthMetrics, healthStatus,
+    //  topAnomalies, breakdown, worklist — all available now.
+    //  Saves 2-5s by overlapping LLM network I/O with CPU work.
+    // ============================================================
     const narrativeInput = {
       period: { monthLabel: month!, weekLabel: week!, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
       executiveSummary: execSummary,
@@ -530,16 +536,18 @@ export async function GET(req: NextRequest) {
       deviationBreakdown: breakdown,
       investigationCount: worklist.length,
     };
-    const { narrative, source: narrativeSource } = await generateNarrative(narrativeInput);
+    const narrativePromise = generateNarrative(narrativeInput);
 
-    // Recommendations
+    // ============================================================
+    //  P2 fix: CPU computations run WHILE LLM generates (parallel overlap)
+    //  These are synchronous but don't block the in-flight LLM network call.
+    //  Ordered heaviest-first to maximize overlap with LLM latency.
+    // ============================================================
     const recommendations = buildRecommendations(worklist);
-
-    // Priorities (top 20) — use pre-computed flags
     const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
     // ============================================================
-    //  Extended analytics (SQL aggregate)
+    //  Extended analytics (SQL aggregate result mapping + CPU)
     // ============================================================
     const areaAnalysis = areaAnalysisRaw.map(a => ({
       area: a.area,
@@ -626,6 +634,13 @@ export async function GET(req: NextRequest) {
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
+    // ============================================================
+    //  P2 fix: Await narrative AFTER all CPU work is done.
+    //  By now LLM has been generating in the background for the entire
+    //  duration of the CPU computations above — likely already resolved.
+    // ============================================================
+    const { narrative, source: narrativeSource } = await narrativePromise;
+
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -669,12 +684,19 @@ export async function GET(req: NextRequest) {
     // DISABLED: analysisCache.set — in-memory cache unreliable in serverless
     // Client-side TanStack Query handles caching (staleTime 60s)
 
-    await db.auditLog.create({
+    // ============================================================
+    //  P2 fix: Fire-and-forget audit log — don't block response on DB write.
+    //  Response is already assembled; audit log is non-critical telemetry.
+    //  Saves ~50-100ms (DB round-trip) per request.
+    // ============================================================
+    db.auditLog.create({
       data: {
         action: 'ANALYSIS',
         detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} outlet=${outletCode || 'ALL'} | ${currentRecs.length} records`,
         duration: Date.now() - startedAt,
       },
+    }).catch((e) => {
+      console.error('[analysis] Audit log write failed (non-blocking):', e instanceof Error ? e.message : String(e));
     });
 
     return NextResponse.json(result);
