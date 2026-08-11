@@ -843,3 +843,22 @@ Work Log:
 - Modal/dialog headers untouched (single-line titles OK)
 - Lint: 0 errors
 - Committed (9949b2b) and pushed to GitHub (synced)
+
+---
+Task ID: 20
+Agent: Main (Z.ai Code)
+Task: Fix drill-down modal layout bugs (overflow, double close, stacking)
+
+Work Log:
+- Bug 1 (Critical): Modal terlalu ke bawah keluar layar laptop
+  - Root cause: Radix ScrollArea dengan flex-1 tidak constrain height di max-h-[85vh] flex container
+  - Fix: Replace ScrollArea → div.overflow-y-auto di 4 modal components
+  - Tambah overflow-hidden di DialogContent, shrink-0 di DialogHeader
+  - max-h-[85vh] → max-h-[80vh] (more margin)
+- Bug 2: Double close button — showCloseButton={false} di 4 modals
+- Bug 3: Modal stacking — close current modal before opening next (avoid triple overlay)
+  - OutletScorecard: close scorecard → open deep dive only
+  - ItemDeepDive: close deep dive → open drilldown drawer only
+- Bug 4: English text → Indonesia (10+ strings across drill-down components)
+- Lint: 0 errors
+- Committed (cb72947) and pushed to GitHub (synced)
