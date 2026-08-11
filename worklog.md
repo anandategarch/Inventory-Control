@@ -584,3 +584,33 @@ Verification (SQL queries tested directly on production DB):
 - Top items: UDANG KEJU FROZEN (matches previous)
 - Trend: 3 periods with correct sales/nominal/devBom
 - All business logic preserved
+
+---
+Task ID: 16
+Agent: Main (Z.ai Code)
+Task: Fix tooltip readability (black bg → popover style)
+
+Work Log:
+- Root cause: shadcn TooltipContent default pakai bg-primary (hitam pekat di light mode) + text-primary-foreground (putih). FormulaInfo berisi 4-5 baris teks panjang sangat sulit dibaca.
+- Updated src/components/ui/tooltip.tsx TooltipContent:
+  - bg-primary → bg-popover (white in light, dark gray in dark mode)
+  - text-primary-foreground → text-popover-foreground (high contrast)
+  - Tambah border border-border + shadow-lg (depth & separation from content)
+  - w-fit → max-w-sm (wider for long text)
+  - rounded-md → rounded-lg, px-3 py-1.5 → px-3.5 py-2.5 (more breathing room)
+  - text-xs → text-xs leading-relaxed (comfortable line height)
+  - sideOffset 0 → 4 (gap from trigger)
+  - Arrow color: bg-popover fill-popover (match new background)
+- Updated src/components/dashboard/FormulaInfo.tsx:
+  - max-w-sm → max-w-md (28rem for structured 4-line descriptions)
+  - Structured layout: header + formula box (bg-muted + border) + description with \n line breaks
+  - Bold untuk UNTUK APA/CARA BACA/CONTOH/ACTION labels
+  - p-0 on TooltipContent, inner div p-3 (cleaner padding control)
+- Lint: 0 errors
+- Committed (dcffb0f) and pushed to GitHub (synced)
+
+Stage Summary:
+- All tooltips now use popover style (light bg + border + shadow) — consistent across app
+- Light mode: white bg, black text, gray border, soft shadow → high contrast, eye-friendly
+- Dark mode: dark gray bg, white text, border → still readable
+- FormulaInfo structured descriptions (UNTUK APA/CARA BACA/CONTOH/ACTION) now display with bold labels and proper line breaks
