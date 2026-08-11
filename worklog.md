@@ -862,3 +862,28 @@ Work Log:
 - Bug 4: English text → Indonesia (10+ strings across drill-down components)
 - Lint: 0 errors
 - Committed (cb72947) and pushed to GitHub (synced)
+
+---
+Task ID: 21
+Agent: Main (Z.ai Code)
+Task: Settings dialog & labels → bahasa Indonesia yang lebih mudah dipahami
+
+Work Log:
+- SettingsDialog.tsx: 15+ English UI strings → Indonesia
+  - Toast: 'Settings saved' → 'Pengaturan tersimpan', 'Save failed' → 'Gagal menyimpan'
+  - Buttons: 'Save Changes' → 'Simpan Perubahan', 'Close' → 'Tutup', 'Reset All' → 'Reset Semua'
+  - Labels: 'Loading settings...' → 'Memuat pengaturan...', 'Saving...' → 'Menyimpan...'
+  - States: 'was:' → 'sebelumnya:', 'custom' → 'kustom', 'default' → 'default'
+  - Errors: 'Failed to load settings' → 'Gagal memuat pengaturan', 'Unknown error' → 'Error tidak diketahui'
+  - Confirm: 'Reset ALL settings to defaults? This cannot be undone.' → 'Reset SEMUA pengaturan ke default? Ini tidak dapat dibatalkan.'
+
+- lib/settings.ts: 19 setting labels & descriptions diperjelas
+  - 'Standar Susut Maksimal' → 'Batas Maksimal Susut' (lebih jelas)
+  - 'Residual Loss Warning (%)' → 'Ambang Peringatan Residual (%)' (lebih mudah dipahami)
+  - 'Z-Score Historical Warning' → 'Z-Score Historical - Peringatan'
+  - 'Bobot Dev/BOM (Operational Score)' → 'Bobot Dev/BOM' (hapus jargon)
+  - Deskripsi ditambah contoh: 'mis. 0.10 = 10%', 'mis. 2.0 = deviasi naik 2x lebih cepat dari sales'
+  - 'Tolerance Fallback' → 'Toleransi Default (jika belum diset di data)'
+
+- Lint: 0 errors
+- Committed (9e832f8) and pushed to GitHub (synced)
