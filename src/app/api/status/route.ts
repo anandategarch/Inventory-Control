@@ -5,12 +5,12 @@
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { LRUCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 
 export const dynamic = 'force-dynamic';
 
-// Phase 1c: cache status response for 5 minutes
-const statusCache = new LRUCache<string, unknown>(1, 5 * 60 * 1000);
+// Phase 1c: cache status response for 5 minutes (shared instance from lib/cache)
+// so that other routes (/api/data, /api/pic) can clear it after mutations.
 
 const EMPTY_STATE = {
   success: true,

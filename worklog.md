@@ -907,3 +907,150 @@ Work Log:
   - English labels → Indonesia (Narasi Otomatis, Narasi AI, Fallback berbasis aturan)
 - Lint: 0 errors. TypeScript: 0 errors.
 - Committed (ee06047) and pushed to GitHub (synced)
+
+---
+Task ID: 23
+Agent: Main (Z.ai Code)
+Task: Create 3 features — Delete Data API+UI, PIC CRUD API+UI, Import PIC from UI
+
+Work Log:
+
+A. Shared cache infrastructure refactor:
+- src/lib/cache.ts: Added `export const statusCache = new LRUCache<string, unknown>(1, 5*60*1000);`
+  - Previously statusCache was a private const inside /api/status/route.ts — could not be cleared by other routes after mutations
+  - Now exported so /api/data (DELETE) and /api/pic (POST/DELETE/import) can clear it after mutations
+- src/app/api/status/route.ts: Removed private `const statusCache = new LRUCache(...)` declaration, now imports `statusCache` from `@/lib/cache`
+  - Removed unused `LRUCache` import (lint cleanup)
+
+B. Feature 1 — Delete Data API:
+- src/app/api/data/route.ts (NEW):
+  - GET /api/data → list all SourceFiles with row counts + DQ status + importedAt, grouped by monthLabel (returns `files` array + `months` summary array)
+  - DELETE /api/data?month=MEI 2026 → cascade delete all SourceFiles for monthLabel (DQIssue → InventoryRecord → Week → SourceFile)
+  - DELETE /api/data?fileId=123 → cascade delete single SourceFile by ID
+  - DELETE /api/data?all=true&confirm=true → nuclear option (require confirm param)
+    - Without confirm → 400 with helpful error message
+    - Capture counts BEFORE delete (so response can return deleted counts)
+    - Order: DQIssue → InventoryRecord → Week → SourceFile (respects FK onDelete: Cascade)
+  - Zod validation: `deleteQuerySchema = z.object({ month, fileId, all, confirm }).strict()`
+    - all and confirm accept 'true' | '1' | 'yes' (URL params are strings)
+    - fileId uses z.coerce.number().int() to parse string → number
+  - Audit log entry: `db.auditLog.create({ data: { action: 'DATA_DELETE', detail: '...' } })`
+    - Detail includes specific info: file name, month, count of records/weeks deleted
+  - Cache invalidation: `analysisCache.clear()` + `statusCache.clear()`
+  - Response: `{ success: true, deleted: { sourceFiles: N, records: N, weeks: N } }`
+
+C. Feature 2 — PIC CRUD API:
+- src/app/api/pic/route.ts (NEW):
+  - GET /api/pic → list all OutletPIC assignments (outletCode, pic, updatedAt), ordered by outletCode ASC
+  - POST /api/pic → body `{ outletCode, pic }` → upsert OutletPIC
+    - Zod schema: `picPostSchema = z.object({ outletCode: min(1).max(50), pic: min(1).max(100) }).strict()`
+    - Uses `db.outletPIC.upsert({ where: { outletCode }, update: { pic }, create: { outletCode, pic } })`
+    - Audit: PIC_UPDATE
+  - DELETE /api/pic?outletCode=1030.BDGSET → delete PIC assignment
+    - Validates outletCode is non-empty and ≤50 chars
+    - Uses `deleteMany` (idempotent — no error if not exists)
+    - Audit: PIC_DELETE
+  - Both POST and DELETE clear `analysisCache` + `statusCache` (PIC affects status response & analysis filters)
+  - `export const dynamic = 'force-dynamic'` to disable caching
+
+- src/app/api/pic/import/route.ts (NEW):
+  - POST /api/pic/import → body `{ csvContent: "RESTO;PIC\n..." }` → parse & bulk upsert
+  - Zod schema: `importSchema = z.object({ csvContent: z.string().min(1) }).strict()`
+  - Parser logic:
+    - Strip BOM (`\uFEFF`)
+    - Split on `\r?\n`, trim each line, drop empty lines
+    - Detect delimiter: `;` if line includes `;`, else `,`
+    - Strip surrounding quotes from each cell
+    - Skip header rows where outletCode is "RESTO" (case-insensitive) or pic is "PIC"
+    - Skip rows with empty outletCode or empty pic
+    - Validate length: outletCode ≤ 50, pic ≤ 100
+  - Bulk upsert via loop (each row → `db.outletPIC.upsert`) — captures per-row errors
+  - Returns: `{ success: true, imported: N, errors: [...].slice(0,10), errorCount: N }`
+  - Audit: PIC_IMPORT with count summary
+
+D. Middleware update:
+- src/middleware.ts:
+  - PROTECTED_PATHS: added `/api/data` and `/api/pic`
+  - matcher: added `/api/data/:path*` and `/api/pic/:path*`
+  - Note: GET on /api/data and /api/pic is public (read-only); POST/DELETE require ADMIN_TOKEN
+  - Updated header comment to reflect new protected endpoints
+
+E. Feature 1 UI — DataManagementDialog:
+- src/components/filters/DataManagementDialog.tsx (NEW):
+  - Dialog (max-w-[760px], max-h-[85vh], flex flex-col layout for proper scroll)
+  - Uses TanStack Query:
+    - `useQuery(['data-mgmt'], fetchDataList)` — fetches from /api/data, enabled only when open
+    - `useMutation` for 3 operations: deleteFile, deleteMonth, deleteAll
+  - State management:
+    - `selectedMonth` for month-delete Select picker
+    - `prevOpen` pattern to reset transient state when dialog closes (same pattern as SettingsDialog)
+  - Layout:
+    - Header: title + description
+    - 2-column grid for quick actions:
+      - Left: "Hapus per Bulan" (amber accent) — Select + Button
+      - Right: "Reset Semua Data" (red accent) — Button + AlertDialog confirm
+    - File list table (sticky header, scrollable body) with columns:
+      - File (truncated, with title tooltip), Bulan, Baris (tabular-nums), DQ (color-coded badge), Import date, Aksi (Hapus)
+  - AlertDialog for "Reset Semua Data" — explicit confirm with destructive button styling
+  - All confirm() prompts in Indonesian
+  - Toast notifications on success/error using `useToast`
+  - Invalidate ['data-mgmt'], ['status'], ['analysis'] after mutations
+  - All UI text in Indonesian
+
+F. Feature 2+3 UI — PicManagementDialog:
+- src/components/filters/PicManagementDialog.tsx (NEW):
+  - Dialog (max-w-[820px], max-h-[85vh], flex flex-col)
+  - Uses TanStack Query:
+    - `useQuery(['status'], fetchStatus)` — reuses /api/status to get outlets list (already includes pic field)
+    - `useMutation` for 3 operations: savePic (POST), deletePic (DELETE), importCsv (POST /api/pic/import)
+  - State:
+    - `search` for filter (matches code, name, area, pic — case-insensitive)
+    - `editingCode` + `editValue` for inline edit
+    - `importOpen` + `csvContent` for collapsible import panel
+    - `prevOpen` pattern to reset state on close
+  - Stats badges: total outlet, ada PIC, belum ada PIC
+  - Import panel (collapsible):
+    - Textarea for paste CSV content
+    - Placeholder shows example format `RESTO;PIC\n1030.BDGSET;Budi Santoso\n...`
+    - Note about delimiter support (; and ,) and header skip
+    - Bersihkan + Import Sekarang buttons
+  - Outlet table:
+    - Columns: Kode (mono), Nama Outlet (truncated), Area, PIC (inline-editable), Aksi (Hapus PIC)
+    - PIC cell: click → input field with Save (Check icon) + Cancel (X icon) buttons
+    - Enter key saves, Escape cancels
+    - Empty PIC shown as "— belum diset —" italic gray
+    - Pencil icon appears on hover (visual affordance for click-to-edit)
+  - After mutation: invalidate ['status'] + ['analysis'] (PIC affects both)
+  - All UI text in Indonesian
+
+G. FilterBar integration:
+- src/components/filters/FilterBar.tsx:
+  - Added imports: `Users` icon (lucide-react), `DataManagementDialog`, `PicManagementDialog`
+  - Added 2 state hooks: `dataMgmtOpen`, `picMgmtOpen`
+  - Added 2 new buttons between "Pengaturan" and "Import dari Drive":
+    - `<Button variant="outline" size="sm" className="h-9" onClick={() => setDataMgmtOpen(true)}>` — Database icon + "Kelola Data"
+    - `<Button variant="outline" size="sm" className="h-9" onClick={() => setPicMgmtOpen(true)}>` — Users icon + "Kelola PIC"
+  - Added both dialogs at bottom alongside SettingsDialog
+
+Verification:
+- `bun run lint`: 0 errors, 0 warnings (exit 0)
+- `npx tsc --noEmit --skipLibCheck`: 0 errors (exit 0)
+- Dev server starts cleanly (no compile errors in dev.log)
+- All UI text in Indonesian (toast messages, dialog titles, button labels, table headers, placeholders, error messages)
+- All API inputs validated with Zod (strict mode)
+- All mutations create audit log entries (DATA_DELETE, PIC_UPDATE, PIC_DELETE, PIC_IMPORT)
+- analysisCache + statusCache cleared after every mutation
+- shadcn/ui components used throughout (Dialog, AlertDialog, Button, Select, Table, Badge, Input, Label, Textarea)
+- TanStack Query for all data fetching/mutations
+- Toast notifications on every success/error
+- Responsive: dialogs use max-w + max-h + flex layout, tables scroll horizontally on mobile
+- Mobile-safe: min-w-0 on parent flex containers, truncate + title attributes on long content
+
+Stage Summary:
+- 3 new API endpoints: /api/data (GET+DELETE), /api/pic (GET+POST+DELETE), /api/pic/import (POST)
+- 2 new UI dialogs: DataManagementDialog (file/month/all delete with confirm), PicManagementDialog (inline edit + search + CSV import)
+- FilterBar gains 2 new buttons (Kelola Data + Kelola PIC) between Pengaturan and Import dari Drive
+- Shared statusCache now exported from lib/cache.ts so multiple routes can clear it
+- Middleware protects /api/data and /api/pic POST/DELETE (GET remains public)
+- All Indonesian text, all Zod validated, all mutations audited + cache cleared
+- Lint + TypeScript clean

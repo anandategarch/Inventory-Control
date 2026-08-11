@@ -1,10 +1,11 @@
 // ============================================================
-//  Middleware — protect destructive endpoints (/api/setup, /api/ingest, /api/import-drive)
+//  Middleware — protect destructive endpoints
 //  Bug #1 fix: Auth middleware
 //
 //  Auth model: simple token-based via ADMIN_TOKEN env var
 //  - Dashboard & GET endpoints (read-only): PUBLIC (no auth)
-//  - /api/setup, POST /api/ingest, POST /api/import-drive, POST/DELETE /api/settings: requires ADMIN_TOKEN
+//  - /api/setup, POST /api/ingest, POST /api/import-drive, POST/DELETE /api/settings,
+//    DELETE /api/data, POST/DELETE /api/pic: requires ADMIN_TOKEN
 //
 //  Client sends: Authorization: Bearer <ADMIN_TOKEN>
 //  Or: ?admin_token=<ADMIN_TOKEN> (for browser-accessible /api/setup)
@@ -18,6 +19,8 @@ const PROTECTED_PATHS = [
   '/api/ingest',
   '/api/import-drive',
   '/api/settings',
+  '/api/data',
+  '/api/pic',
 ];
 
 const PROTECTED_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
@@ -30,7 +33,7 @@ export function middleware(req: NextRequest) {
   const isProtectedPath = PROTECTED_PATHS.some(p => pathname.startsWith(p));
   if (!isProtectedPath) return NextResponse.next();
 
-  // GET on /api/settings (read settings) is public; other GETs on protected paths need auth
+  // GET on /api/settings, /api/data, /api/pic (read-only listings) is public;
   // /api/setup is always protected (destructive DDL)
   const isProtectedMethod = pathname === '/api/setup' || PROTECTED_METHODS.includes(method);
   if (!isProtectedMethod) return NextResponse.next();
@@ -64,5 +67,12 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/api/setup/:path*', '/api/ingest/:path*', '/api/import-drive/:path*', '/api/settings/:path*'],
+  matcher: [
+    '/api/setup/:path*',
+    '/api/ingest/:path*',
+    '/api/import-drive/:path*',
+    '/api/settings/:path*',
+    '/api/data/:path*',
+    '/api/pic/:path*',
+  ],
 };

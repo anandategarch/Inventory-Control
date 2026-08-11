@@ -61,3 +61,8 @@ export class LRUCache<K, V> {
 }
 
 export const analysisCache = new LRUCache<string, unknown>(200, 5 * 60 * 1000);
+
+// Shared status cache — used by /api/status to avoid re-querying DB on every request.
+// Exported so other routes (/api/data, /api/pic) can clear it after mutations
+// that affect the status response (e.g., deleting SourceFiles, updating PIC assignments).
+export const statusCache = new LRUCache<string, unknown>(1, 5 * 60 * 1000);

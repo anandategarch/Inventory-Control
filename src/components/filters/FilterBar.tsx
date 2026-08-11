@@ -3,7 +3,7 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet } from 'lucide-react';
+import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,8 @@ import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useQueryClient } from '@tanstack/react-query';
 import { SettingsDialog } from '@/components/filters/SettingsDialog';
+import { DataManagementDialog } from '@/components/filters/DataManagementDialog';
+import { PicManagementDialog } from '@/components/filters/PicManagementDialog';
 
 export function FilterBar() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
@@ -33,6 +35,10 @@ export function FilterBar() {
 
   // Settings dialog state
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Data management & PIC management dialog state
+  const [dataMgmtOpen, setDataMgmtOpen] = useState(false);
+  const [picMgmtOpen, setPicMgmtOpen] = useState(false);
 
   const months = status?.months || [];
   const weeks = (monthLabel && status?.weeksByMonth) ? Object.entries(status.weeksByMonth).find(([k]) => {
@@ -257,6 +263,24 @@ export function FilterBar() {
               Pengaturan
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setDataMgmtOpen(true)}
+            >
+              <Database className="h-3.5 w-3.5 mr-1" />
+              Kelola Data
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setPicMgmtOpen(true)}
+            >
+              <Users className="h-3.5 w-3.5 mr-1" />
+              Kelola PIC
+            </Button>
+            <Button
               variant="secondary"
               size="sm"
               className="h-9"
@@ -465,6 +489,12 @@ export function FilterBar() {
 
       {/* Settings Dialog */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {/* Data Management Dialog */}
+      <DataManagementDialog open={dataMgmtOpen} onOpenChange={setDataMgmtOpen} />
+
+      {/* PIC Management Dialog */}
+      <PicManagementDialog open={picMgmtOpen} onOpenChange={setPicMgmtOpen} />
     </>
   );
 }
