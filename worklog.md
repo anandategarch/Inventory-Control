@@ -887,3 +887,23 @@ Work Log:
 
 - Lint: 0 errors
 - Committed (9e832f8) and pushed to GitHub (synced)
+
+---
+Task ID: 22
+Agent: Main (Z.ai Code)
+Task: Fix 5 architecture issues (gelombang 4 audit)
+
+Work Log:
+- Temuan #1 (Critical): Multi-DB contradiction — db.ts rewritten to PostgreSQL only
+  - Removed Turso/SQLite/libsql adapter logic (PrismaLibSql, createClient imports)
+  - Added validation: DATABASE_URL must start with postgresql:// or postgres://
+  - Reject SQLite/Turso URLs with clear error message
+- Temuan #2 (Critical): ignoreBuildErrors: true → false, reactStrictMode: false → true
+- Temuan #3 (High): Outlet & Item relations — added onDelete: Restrict (prevent orphan records)
+- Temuan #4 (High): next-auth removed from package.json (unused, custom middleware auth already exists)
+- Temuan #5 (Medium): AuditLog — FALSE POSITIVE (already used in 4 locations, not fixed)
+- Temuan #6 (Medium): Narrative.tsx — replaced <pre> with <ReactMarkdown> + prose classes
+  - LLM markdown (**bold, bullets, headers) now renders properly
+  - English labels → Indonesia (Narasi Otomatis, Narasi AI, Fallback berbasis aturan)
+- Lint: 0 errors. TypeScript: 0 errors.
+- Committed (ee06047) and pushed to GitHub (synced)
