@@ -2,7 +2,13 @@
   "buildCommand": "bunx prisma generate && bun run next build",
   "framework": "nextjs",
   "functions": {
-    "src/app/api/**": {
+    "src/app/api/ingest": {
+      "maxDuration": 300
+    },
+    "src/app/api/import-drive": {
+      "maxDuration": 300
+    },
+    "src/app/api/outlet-focus": {
       "maxDuration": 60
     }
   }

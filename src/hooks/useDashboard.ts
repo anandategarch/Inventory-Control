@@ -65,7 +65,10 @@ export const useDashboard = create<DashboardStore>((set) => ({
   scorecardOutlet: null,
   setScorecardOutlet: (code) => set({ scorecardOutlet: code }),
   focusOutlet: null,
-  setFocusOutlet: (code) => set({ focusOutlet: code, activeTab: code ? 'focus' : undefined }),
+  setFocusOutlet: (code) => set((state) => code
+    ? { focusOutlet: code, activeTab: 'focus' }
+    : { focusOutlet: null }
+  ),
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
 }));

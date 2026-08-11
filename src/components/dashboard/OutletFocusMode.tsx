@@ -488,7 +488,7 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
                   key={i}
                   className={`cursor-pointer hover:bg-muted/50 ${a.isCritical ? 'bg-red-50/40 dark:bg-red-950/10' : a.isAbnormal ? 'bg-red-50/20 dark:bg-red-950/5' : ''}`}
                   onClick={() => {
-                    // Close focus mode first, then open deep dive
+                    // Close focus mode, switch to dashboard tab, then open deep dive
                     setFocusOutlet(null);
                     setDeepDiveItem({ itemName: a.itemName, outletCode: data.outlet.code });
                   }}
@@ -748,7 +748,7 @@ function Tab4Menu({ data }: { data: OutletFocusData }) {
           </p>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[65vh]">
+          <ScrollArea className="h-[50vh]">
             <div className="divide-y">
               {data.menuAnalysis.map((g) => {
                 const isOpen = expanded.has(g.prefix);
@@ -876,7 +876,7 @@ function Tab5DQ({ data }: { data: OutletFocusData }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[62vh]">
+          <ScrollArea className="h-[48vh]">
             <div className="divide-y">
               {Array.from(byCode.entries()).length === 0 ? (
                 <div className="py-8 text-center text-xs text-muted-foreground">Tidak ada DQ issue untuk outlet ini</div>
@@ -1046,7 +1046,7 @@ function Tab6Investigasi({ data }: { data: OutletFocusData }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ScrollArea className="h-[62vh]">
+          <ScrollArea className="h-[48vh]">
             <div className="space-y-2 p-2">
               {data.worklist.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-8">Tidak ada item dalam worklist</p>
@@ -1237,8 +1237,8 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
         )}
       </div>
 
-        {/* Body (flex-1, scroll) */}
-        <div className="flex-1 overflow-hidden flex flex-col">
+        {/* Body — no overflow-hidden (tab mode, page already scrolls) */}
+        <div className="space-y-4">
           {focusQuery.isLoading ? (
             <div className="flex-1 p-4 space-y-3">
               <Skeleton className="h-24" />
