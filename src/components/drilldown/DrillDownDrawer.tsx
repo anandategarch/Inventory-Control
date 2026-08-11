@@ -31,7 +31,7 @@ export function DrillDownDrawer() {
         <SheetHeader className="p-4 border-b">
           <div className="flex items-center justify-between">
             <div>
-              <SheetTitle className="text-base">Drill-down: Source Records</SheetTitle>
+              <SheetTitle className="text-base">Drill-down: Data Sumber</SheetTitle>
               <SheetDescription className="text-xs">
                 {drilldown.outletCode && `Outlet: ${drilldown.outletCode}`}
                 {drilldown.outletCode && drilldown.itemName && ' · '}
@@ -47,18 +47,18 @@ export function DrillDownDrawer() {
 
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-4">
-            {drill.isLoading && <p className="text-sm text-muted-foreground">Loading source records...</p>}
+            {drill.isLoading && <p className="text-sm text-muted-foreground">Memuat data sumber...</p>}
             {drill.error && <p className="text-sm text-red-600">Error: {drill.error.message}</p>}
             {drill.data && (
               <>
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">{drill.data.count} records</Badge>
+                  <Badge variant="outline" className="text-xs">{drill.data.count} record</Badge>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => setSourceModal(true)}
                   >
-                    <ExternalLink className="h-3 w-3 mr-1" /> View Full Source
+                    <ExternalLink className="h-3 w-3 mr-1" /> Lihat Sumber Lengkap
                   </Button>
                 </div>
 
@@ -94,7 +94,7 @@ export function DrillDownDrawer() {
 
                 {drill.data.records.length > 0 && (
                   <div className="rounded-lg border p-3 space-y-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase">Derived Metrics (top record)</p>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase">Metrik Turunan (record teratas)</p>
                     {(() => {
                       const r = drill.data.records[0];
                       return (

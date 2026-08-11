@@ -3,7 +3,6 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -56,8 +55,8 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-[800px] max-h-[85vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col overflow-hidden" showCloseButton={false}>
+        <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <DialogTitle className="text-base flex items-center gap-2">
@@ -80,7 +79,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
         {!itemName ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Item tidak ditemukan</div>
         ) : (
-          <ScrollArea className="flex-1 pr-2">
+          <div className="flex-1 overflow-y-auto pr-1">
             <div className="space-y-4">
               {/* Direction distribution */}
               <div className="grid grid-cols-3 gap-2">
@@ -170,8 +169,9 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
                         onClick={() => {
+                          // Close deep dive first, then open drilldown drawer (avoid double overlay)
+                          onClose();
                           setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
-                          setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
                         }}
                       >
                         <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
@@ -188,7 +188,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               {deepDiveItem?.outletCode && drilldownQuery.data && drilldownQuery.data.records?.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold mb-1.5">Detail Record (Outlet: {deepDiveItem.outletCode})</p>
-                  <ScrollArea className="h-40 rounded-md border">
+                  <div className="h-40 overflow-y-auto rounded-md border">
                     <Table>
                       <TableHeader className="sticky top-0 bg-background z-10">
                         <TableRow>
@@ -207,7 +207,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                         ))}
                       </TableBody>
                     </Table>
-                  </ScrollArea>
+                  </div>
                 </div>
               )}
 
@@ -229,7 +229,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </DialogContent>
     </Dialog>

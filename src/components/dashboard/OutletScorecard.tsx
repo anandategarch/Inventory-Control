@@ -3,7 +3,6 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -55,8 +54,8 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) setScorecardOutlet(null); }}>
-      <DialogContent className="sm:max-w-[800px] max-h-[85vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col overflow-hidden" showCloseButton={false}>
+        <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <DialogTitle className="text-base flex items-center gap-2">
@@ -67,7 +66,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                 {outlet ? `${outlet.outletCode} · ${outlet.area}` : 'Outlet tidak ditemukan'}
               </DialogDescription>
             </div>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setScorecardOutlet(null)}>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => setScorecardOutlet(null)}>
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -76,7 +75,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
         {!outlet ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Outlet tidak ditemukan</div>
         ) : (
-          <ScrollArea className="flex-1 pr-2">
+          <div className="flex-1 overflow-y-auto pr-1">
             <div className="space-y-4">
               {/* Health Score + Rank */}
               <div className={`rounded-lg border p-4 ${healthScoreBg(outlet.healthScore)}`}>
@@ -155,7 +154,8 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
                         onClick={() => {
-                          setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
+                          // Close scorecard first, then open deep dive (avoid triple overlay)
+                          setScorecardOutlet(null);
                           setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
                         }}
                       >
@@ -206,7 +206,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </DialogContent>
     </Dialog>

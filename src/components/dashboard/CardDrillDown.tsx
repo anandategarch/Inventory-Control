@@ -3,7 +3,6 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -152,8 +151,8 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) setCardDrillDown(null); }}>
-      <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col overflow-hidden" showCloseButton={false}>
+        <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <DialogTitle className="text-base">{config?.title || 'Drill-down'}</DialogTitle>
@@ -165,7 +164,7 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 border rounded-md">
+        <div className="flex-1 overflow-y-auto border rounded-md">
           {rows.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Tidak ada data</div>
           ) : (
@@ -199,11 +198,11 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
               </TableBody>
             </Table>
           )}
-        </ScrollArea>
+        </div>
 
         {rows.length > 0 && (
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-            <span>Showing top {rows.length} items</span>
+            <span>Menampilkan {rows.length} item teratas</span>
             <Badge variant="outline" className="text-[11px]">
               {data?.period.weekLabel} {data?.period.monthLabel}
             </Badge>

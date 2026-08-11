@@ -3,7 +3,6 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -76,13 +75,13 @@ export function SourceDataModal() {
 
   return (
     <Dialog open={sourceModalOpen} onOpenChange={setSourceModal}>
-      <DialogContent className="sm:max-w-[1100px] max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[1100px] max-h-[85vh] flex flex-col overflow-hidden" showCloseButton={false}>
+        <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Database className="h-4 w-4" />
-                Full Source Data
+                Data Sumber Lengkap
               </DialogTitle>
               <DialogDescription className="text-xs mt-1">
                 {drilldown.outletCode && `Outlet: ${drilldown.outletCode}`}
@@ -116,10 +115,10 @@ export function SourceDataModal() {
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 border rounded-md">
+        <div className="flex-1 overflow-y-auto border rounded-md">
           {drill.isLoading && (
             <div className="flex items-center justify-center py-12">
-              <p className="text-sm text-muted-foreground">Loading source records...</p>
+              <p className="text-sm text-muted-foreground">Memuat data sumber...</p>
             </div>
           )}
           {drill.error && (
@@ -129,7 +128,7 @@ export function SourceDataModal() {
           )}
           {drill.data && records.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No source records found for this filter.
+              Tidak ada data sumber untuk filter ini.
             </div>
           )}
           {drill.data && records.length > 0 && (
@@ -194,16 +193,16 @@ export function SourceDataModal() {
               </TableBody>
             </Table>
           )}
-        </ScrollArea>
+        </div>
 
         {drill.data && records.length > 0 && (
-          <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
-              Showing {records.length} record{records.length !== 1 ? 's' : ''}
-              {records.length === 50 && ' (capped at 50 — use Export CSV for full data)'}
+              Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
+              {records.length === 50 && ' (maks 50 — gunakan Export CSV untuk data lengkap)'}
             </span>
             <Badge variant="outline" className="text-[11px]">
-              Traceable to source Excel
+              Dapat ditelusuri ke Excel sumber
             </Badge>
           </div>
         )}
