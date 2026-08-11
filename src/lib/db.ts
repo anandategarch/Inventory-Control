@@ -1,39 +1,35 @@
 // ============================================================
-//  DB — Prisma client (supports PostgreSQL / SQLite / Turso)
-//  Lazy initialization to avoid reading env vars before they're ready
+//  DB — Prisma client (PostgreSQL / Supabase only)
+//  Temuan #1 fix: removed Turso/SQLite/libsql adapter logic
+//  schema.prisma is locked to postgresql provider — runtime must match.
+//  If DATABASE_URL is not set or is file://, we error out (no silent fallback).
 // ============================================================
 import { PrismaClient } from '@prisma/client';
-import { PrismaLibSql } from '@prisma/adapter-libsql';
-import { createClient } from '@libsql/client';
 
 let _db: PrismaClient | null = null;
 
 function createPrismaClient(): PrismaClient {
   const dbUrl = process.env.DATABASE_URL || '';
-  const authToken = process.env.DATABASE_AUTH_TOKEN || '';
 
   if (!dbUrl) {
-    console.error('[db] DATABASE_URL is not set! Falling back to local SQLite.');
-    return new PrismaClient({ log: ['error', 'warn'] });
+    console.error('[db] DATABASE_URL is not set!');
+    throw new Error('DATABASE_URL is required (PostgreSQL/Supabase)');
   }
 
-  if (dbUrl.startsWith('libsql://') || dbUrl.startsWith('http://') || dbUrl.startsWith('https://')) {
-    console.log('[db] Using Turso (libsql) adapter');
-    const libsql = createClient({
-      url: dbUrl,
-      authToken: authToken || undefined,
-    });
-    const adapter = new PrismaLibSql(libsql);
-    return new PrismaClient({ adapter, log: ['error', 'warn'] });
-  }
-
+  // Accept only PostgreSQL URLs — schema.prisma is locked to postgresql provider
   if (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) {
     console.log('[db] Using PostgreSQL (Supabase)');
     return new PrismaClient({ log: ['error', 'warn'] });
   }
 
-  console.log('[db] Using local SQLite');
-  return new PrismaClient({ log: ['error', 'warn'] });
+  // Reject SQLite/Turso URLs — Prisma client is compiled for PostgreSQL
+  if (dbUrl.startsWith('libsql://') || dbUrl.startsWith('file:') || dbUrl.startsWith('http')) {
+    console.error('[db] SQLite/Turso URLs are no longer supported. Schema is locked to PostgreSQL.');
+    throw new Error('DATABASE_URL must be PostgreSQL (postgresql:// or postgres://). SQLite/Turso not supported.');
+  }
+
+  console.error('[db] DATABASE_URL must start with postgresql:// or postgres://');
+  throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
 }
 
 // Lazy getter — creates client on first use, not on module load

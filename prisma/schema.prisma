@@ -85,9 +85,9 @@ model InventoryRecord {
   weekId              Int
   week                Week     @relation(fields: [weekId], references: [id], onDelete: Cascade)
   outletId            Int
-  outlet              Outlet   @relation(fields: [outletId], references: [id])
+  outlet              Outlet   @relation(fields: [outletId], references: [id], onDelete: Restrict)
   itemId              Int
-  item                Item     @relation(fields: [itemId], references: [id])
+  item                Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
 
   // Raw columns from Excel (sign convention: BOM/COM/WASTE/SUSUT/TRIAL = negative)
   akunPenyesuaian     String?  // "COM DEVIASI - RESTO"
