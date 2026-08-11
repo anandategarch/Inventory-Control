@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
           susut: r.qtySusut,
           trial: r.qtyTrial,
           lossSurplus: r.qtyLossSurplus,
-          wasteSusut: r.qtyWasteSusut,
+          wasteSusut: r.pctWasteSusut,
         },
         nominal: {
           deviasi: r.nominalDeviasi,

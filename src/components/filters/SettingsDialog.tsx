@@ -29,6 +29,7 @@ interface SettingsData {
   settings: SettingItem[];
   byCategory: Record<string, SettingItem[]>;
   categories: string[];
+  error?: string;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -180,7 +181,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
   function handleResetAll() {
     if (confirm('Reset SEMUA pengaturan ke default? Ini tidak dapat dibatalkan.')) {
-      resetMutation.mutate();
+      resetMutation.mutate(undefined);
       setHasEdits(false);
       setEditValues({});
     }
