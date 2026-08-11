@@ -167,7 +167,7 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
 
         <ScrollArea className="flex-1 border rounded-md">
           {rows.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">No data available</div>
+            <div className="p-8 text-center text-sm text-muted-foreground">Tidak ada data</div>
           ) : (
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10">
@@ -204,7 +204,7 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
         {rows.length > 0 && (
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
             <span>Showing top {rows.length} items</span>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-[11px]">
               {data?.period.weekLabel} {data?.period.monthLabel}
             </Badge>
           </div>

@@ -82,14 +82,14 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
               <div className={`rounded-lg border p-4 ${healthScoreBg(outlet.healthScore)}`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Health Score</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Skor Kondisi</p>
                     <p className={`text-4xl font-bold ${healthScoreColor(outlet.healthScore)}`}>{outlet.healthScore}</p>
-                    <p className="text-[10px] text-muted-foreground">dari 100</p>
+                    <p className="text-[11px] text-muted-foreground">dari 100</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Ranking</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Ranking</p>
                     <p className="text-2xl font-bold">#{rank}</p>
-                    <p className="text-[10px] text-muted-foreground">dari {ranking.length} outlet</p>
+                    <p className="text-[11px] text-muted-foreground">dari {ranking.length} outlet</p>
                   </div>
                 </div>
               </div>
@@ -97,25 +97,25 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
               {/* 4-metric grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">% DEV TO BOM</p>
+                  <p className="text-[11px] text-muted-foreground">% DEV TO BOM</p>
                   <p className={`text-base font-bold ${outlet.devBom > 0.1 ? 'text-red-600' : outlet.devBom > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {fmtPctAbs(outlet.devBom)}
                   </p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">RESIDUAL %</p>
+                  <p className="text-[11px] text-muted-foreground">RESIDUAL %</p>
                   <p className={`text-base font-bold ${outlet.residualPct != null && outlet.residualPct > 0.5 ? 'text-red-600' : 'text-foreground'}`}>
                     {fmtPctAbs(outlet.residualPct)}
                   </p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">LOSS/PENJUALAN</p>
+                  <p className="text-[11px] text-muted-foreground">LOSS/PENJUALAN</p>
                   <p className={`text-base font-bold ${outlet.lossToSales != null && outlet.lossToSales > 0.10 ? 'text-red-600' : outlet.lossToSales != null && outlet.lossToSales > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {fmtPctAbs(outlet.lossToSales)}
                   </p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">Jumlah Masalah</p>
+                  <p className="text-[11px] text-muted-foreground">Jumlah Masalah</p>
                   <p className="text-base font-bold text-red-600">{outlet.abnormal}</p>
                   <p className="text-[9px] text-muted-foreground">{outlet.normal} normal · {outlet.warning} warning</p>
                 </div>
@@ -124,11 +124,11 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
               {/* Sales + AbsNominal summary */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3 w-3" /> PENJUALAN</p>
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3 w-3" /> PENJUALAN</p>
                   <p className="text-base font-bold">{fmtIDR(outlet.sales)}</p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1"><TrendingDown className="h-3 w-3" /> |NOMINAL DEVIASI|</p>
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1"><TrendingDown className="h-3 w-3" /> |NOMINAL DEVIASI|</p>
                   <p className="text-base font-bold">{fmtIDR(outlet.absNominal)}</p>
                 </div>
               </div>
@@ -142,9 +142,9 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[10px] h-7 px-2">Item</TableHead>
-                      <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL|</TableHead>
-                      <TableHead className="text-[10px] h-7 px-2 text-center">Dir</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2">Item</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL|</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2 text-center">Dir</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -171,7 +171,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
               {/* Historical z-score */}
               {histItems.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold mb-1.5">Historical Z-Score Anomaly</p>
+                  <p className="text-xs font-semibold mb-1.5">Anomali Historical Z-Score</p>
                   <div className="space-y-1">
                     {histItems.map((it: any, i: number) => (
                       <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-2 py-1">
@@ -189,7 +189,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
               {/* Recommended actions */}
               {actions.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold mb-1.5">Recommended Actions</p>
+                  <p className="text-xs font-semibold mb-1.5">Rekomendasi Tindakan</p>
                   <div className="space-y-1">
                     {actions.map((w: any, i: number) => (
                       <div key={i} className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5">
@@ -199,7 +199,7 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                           </Badge>
                           <span className="text-[11px] font-medium truncate">{w.itemName}</span>
                         </div>
-                        <p className="text-[10px] text-amber-900 dark:text-amber-300 leading-tight">{w.recommendedAction}</p>
+                        <p className="text-[11px] text-amber-900 dark:text-amber-300 leading-tight">{w.recommendedAction}</p>
                       </div>
                     ))}
                   </div>

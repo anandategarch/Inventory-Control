@@ -45,7 +45,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => (
                 <TableRow
                   key={`${it.itemName}-${it.outletCode}`}
@@ -53,8 +53,8 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
                   onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
                 >
                   <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                  <TableCell className="font-medium text-xs">{it.itemName}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{it.outletCode}</TableCell>
+                  <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-right font-semibold text-xs">{fmtIDR(it.absNominal)}</TableCell>
                   <TableCell className={`text-center text-xs font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                 </TableRow>
@@ -98,7 +98,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => {
                 const breach = it.tolerance != null && Math.abs(it.devBom) > Math.abs(it.tolerance);
                 return (
@@ -108,8 +108,8 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
                     onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs">{it.itemName}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{it.outletCode}</TableCell>
+                    <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                     <TableCell className={`text-right font-semibold text-xs ${breach ? 'text-red-600' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
                   </TableRow>
@@ -156,7 +156,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground text-xs py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
               ) : items.map((o, i) => {
                 const aboveArea = o.areaAvg > 0 && o.devBom > o.areaAvg * 1.5;
                 return (
@@ -166,8 +166,8 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
                     onClick={() => { setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); }}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs">{o.outletName}<div className="text-[10px] text-muted-foreground">{o.outletCode}</div></TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{o.area}</TableCell>
+                    <TableCell className="font-medium text-xs max-w-[140px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
+                    <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
                     <TableCell className="text-right font-semibold text-xs">{fmtIDR(o.absNominal)}</TableCell>
                     <TableCell className={`text-right text-xs font-semibold ${aboveArea ? 'text-red-600' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{fmtPctAbs(o.areaAvg)}</TableCell>
@@ -214,7 +214,7 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
           <div>
             <CardTitle className="text-base">Investigation Worklist</CardTitle>
             <p className="text-xs text-muted-foreground">
-              {filteredItems.length} of {items.length} items{filterText || filterPriority !== 'all' ? ' (filtered)' : ''}
+              {filteredItems.length} dari {items.length} item{filterText || filterPriority !== 'all' ? ' (terfilter)' : ''}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -226,20 +226,20 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
         {/* Filter bar */}
         <div className="flex items-center gap-2 mt-2">
           <Input
-            placeholder="🔍 Cari outlet, item, area, issue..."
+            placeholder="Cari outlet, item, area, issue..."
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             className="h-8 text-xs flex-1"
           />
           <Select value={filterPriority} onValueChange={setFilterPriority}>
-            <SelectTrigger className="h-8 text-xs w-[100px]">
+            <SelectTrigger className="h-8 text-xs w-[110px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="text-xs">All Priority</SelectItem>
-              <SelectItem value="P1" className="text-xs">P1 only</SelectItem>
-              <SelectItem value="P2" className="text-xs">P2 only</SelectItem>
-              <SelectItem value="P3" className="text-xs">P3 only</SelectItem>
+              <SelectItem value="all" className="text-xs">Semua Prioritas</SelectItem>
+              <SelectItem value="P1" className="text-xs">P1 saja</SelectItem>
+              <SelectItem value="P2" className="text-xs">P2 saja</SelectItem>
+              <SelectItem value="P3" className="text-xs">P3 saja</SelectItem>
             </SelectContent>
           </Select>
           {(filterText || filterPriority !== 'all') && (
@@ -249,7 +249,7 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
               className="h-8 text-xs"
               onClick={() => { setFilterText(''); setFilterPriority('all'); }}
             >
-              Clear
+              Bersihkan
             </Button>
           )}
         </div>
@@ -265,14 +265,14 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
                 <TableHead className="min-w-[200px]">Issue</TableHead>
                 <TableHead className="text-right">Nominal</TableHead>
                 <TableHead className="text-right">Dev/BOM</TableHead>
-                <TableHead className="min-w-[200px]">Recommended Action</TableHead>
+                <TableHead className="min-w-[200px]">Rekomendasi Tindakan</TableHead>
                 <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredItems.length === 0 ? (
                 <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-6">
-                  {items.length === 0 ? 'No anomalies detected' : 'No items match your filter'}
+                  {items.length === 0 ? 'Tidak ada anomali terdeteksi' : 'Tidak ada item sesuai filter'}
                 </TableCell></TableRow>
               ) : filteredItems.map((w, i) => (
                 <TableRow
@@ -281,17 +281,17 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
                   onClick={() => setDrilldown({ outletCode: w.outletCode, itemName: w.itemName })}
                 >
                   <TableCell>
-                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>
+                    <Badge variant="outline" className={`text-[11px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>
                   </TableCell>
                   <TableCell className="text-xs">
-                    <div className="font-medium">{w.outletName}</div>
-                    <div className="text-[10px] text-muted-foreground">{w.outletCode} · {w.area}</div>
+                    <div className="font-medium max-w-[140px] whitespace-normal" title={w.outletName}>{w.outletName}</div>
+                    <div className="text-[11px] text-muted-foreground">{w.outletCode} · {w.area}</div>
                   </TableCell>
-                  <TableCell className="text-xs font-medium">{w.itemName}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{w.issue}</TableCell>
+                  <TableCell className="text-xs font-medium max-w-[140px] whitespace-normal" title={w.itemName}>{w.itemName}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[200px]" title={w.issue}>{w.issue}</TableCell>
                   <TableCell className="text-right text-xs font-semibold">{fmtIDR(w.absNominalDeviasi)}</TableCell>
                   <TableCell className={`text-right text-xs ${directionColor(w.direction)}`}>{w.deviationToBom != null ? fmtPctAbs(w.deviationToBom) : '—'}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{w.recommendedAction}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[200px]" title={w.recommendedAction}>{w.recommendedAction}</TableCell>
                   <TableCell>
                     <Button
                       size="sm"

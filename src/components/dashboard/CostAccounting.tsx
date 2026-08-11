@@ -53,7 +53,7 @@ export function CostImpactDecomposition({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <>
             <div className="h-56">
@@ -140,7 +140,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         </CardContent>
       </Card>
     );
@@ -169,9 +169,9 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
           />
         </CardTitle>
         <div className="flex items-center gap-1.5 flex-wrap mt-1">
-          <Badge variant="outline" className={`text-[10px] ${classBadge('A')}`}>A: {pareto.classACount} ({pareto.classAPctOfCost.toFixed(1)}%)</Badge>
-          <Badge variant="outline" className={`text-[10px] ${classBadge('B')}`}>B: {classBCount}</Badge>
-          <Badge variant="outline" className={`text-[10px] ${classBadge('C')}`}>C: {classCCount}</Badge>
+          <Badge variant="outline" className={`text-[11px] ${classBadge('A')}`}>A: {pareto.classACount} ({pareto.classAPctOfCost.toFixed(1)}%)</Badge>
+          <Badge variant="outline" className={`text-[11px] ${classBadge('B')}`}>B: {classBCount}</Badge>
+          <Badge variant="outline" className={`text-[11px] ${classBadge('C')}`}>C: {classCCount}</Badge>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -179,17 +179,17 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2 w-8">#</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">Kelas</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">RESTO</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Biaya</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Cum %</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 w-8">#</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Kelas</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">RESTO</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Biaya</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Cum %</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => {
                 const cls = classifyByCumPct(it.cumPct);
                 return (
@@ -260,7 +260,7 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <>
             <div className="h-72">
@@ -317,7 +317,7 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
                 </ScatterChart>
               </ResponsiveContainer>
             </div>
-            <div className="mt-2 grid grid-cols-4 gap-1.5 text-[10px]">
+            <div className="mt-2 grid grid-cols-4 gap-1.5 text-[11px]">
               <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#10b981' }} /><span className="text-muted-foreground">STAR</span></div>
               <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#64748b' }} /><span className="text-muted-foreground">STABLE</span></div>
               <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#f59e0b' }} /><span className="text-muted-foreground">ATTENTION</span></div>
@@ -382,14 +382,14 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2">Outlet</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Biaya/Rb</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">PENJUALAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Biaya/Rb</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">PENJUALAN</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {byOutlet.length === 0 ? (
-                <TableRow><TableCell colSpan={3} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={3} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
               ) : byOutlet.map((o) => (
                 <TableRow
                   key={o.outletCode}
@@ -398,7 +398,7 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
                 >
                   <TableCell className="text-[11px] px-2 py-1">
                     <div className="font-medium truncate max-w-[140px]">{o.outletName}</div>
-                    <div className="text-[10px] text-muted-foreground">{o.outletCode} · {o.area}</div>
+                    <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
                   <TableCell className={`text-[11px] px-2 py-1 text-right font-bold ${costPerThousandColor(o.costPerThousand)}`}>
                     Rp {o.costPerThousand.toFixed(2)}

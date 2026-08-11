@@ -258,7 +258,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                       <div>
                         <h3 className="text-sm font-semibold flex items-center gap-2">
                           {CATEGORY_LABELS[cat] || cat}
-                          <Badge variant="outline" className="text-[10px]">{items.length}</Badge>
+                          <Badge variant="outline" className="text-[11px]">{items.length}</Badge>
                         </h3>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
                           {CATEGORY_DESCRIPTIONS[cat] || ''}
@@ -279,7 +279,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                                   <Label htmlFor={s.key} className="text-xs font-medium">
                                     {s.label}
                                   </Label>
-                                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  <p className="text-[11px] text-muted-foreground mt-0.5">
                                     {s.description}
                                   </p>
                                 </div>
@@ -297,7 +297,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                                   className="h-8 text-xs flex-1"
                                   placeholder={s.defaultValue}
                                 />
-                                <div className="text-[10px] text-muted-foreground shrink-0 min-w-[80px] text-right">
+                                <div className="text-[11px] text-muted-foreground shrink-0 min-w-[80px] text-right">
                                   {isChanged ? (
                                     <span className="text-amber-600">
                                       was: {formatValueDisplay(s.value, s.dataType)}

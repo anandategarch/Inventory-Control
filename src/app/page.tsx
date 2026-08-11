@@ -42,7 +42,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
   TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
-  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator,
+  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -152,22 +152,28 @@ export default function DashboardPage() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Boxes className="h-5 w-5" />
             </div>
-            <div>
-              <h1 className="text-base font-semibold tracking-tight">Inventory Control Intelligence</h1>
-              <p className="text-xs text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight truncate">Inventory Control Intelligence</h1>
+              <p className="text-xs text-muted-foreground truncate">
                 {status?.stats ? `${status.stats.totalOutlets} Outlet · ` : ''}F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {analysis.isFetching && analysis.data && (
+              <Badge variant="outline" className="text-[11px]">
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                Memperbarui...
+              </Badge>
+            )}
             {analysis.data && (
-              <Badge variant="outline" className="text-[10px] hidden sm:inline-flex">
+              <Badge variant="outline" className="text-[11px] hidden sm:inline-flex">
                 <Activity className="h-3 w-3 mr-1" />
                 {analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms
               </Badge>
             )}
             {analysis.data?.narrativeSource === 'llm' && (
-              <Badge variant="default" className="text-[10px] hidden sm:inline-flex">
+              <Badge variant="default" className="text-[11px] hidden sm:inline-flex">
                 <Brain className="h-3 w-3 mr-1" /> Narasi AI
               </Badge>
             )}
@@ -513,7 +519,7 @@ export default function DashboardPage() {
                 Analisis terakhir: {analysis.data.durationMs}ms · {analysis.data.cached ? 'cache' : 'segar'}
               </span>
             )}
-            <span>Klik baris mana saja untuk drill-down ke sumber</span>
+            <span className="hidden sm:inline">Klik baris mana saja untuk drill-down ke sumber</span>
           </div>
         </div>
       </footer>

@@ -55,25 +55,25 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
       onClick={drillDown ? () => setCardDrillDown(drillDown) : undefined}
     >
       <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">{label}</p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide line-clamp-2 leading-tight" title={label}>{label}</p>
           {growthStr && (
-            <span className={`inline-flex items-center gap-0.5 text-xs font-semibold ${trendColor(growth, inverse)}`}>
+            <span className={`inline-flex items-center gap-0.5 text-xs font-semibold shrink-0 ${trendColor(growth, inverse)}`}>
               <Icon className="h-3 w-3" />
               {growthStr}
             </span>
           )}
         </div>
-        <p className="mt-1.5 text-xl font-bold tracking-tight">
+        <p className="mt-1.5 text-lg font-bold tracking-tight">
           {unit === 'IDR' ? fmtIDR(value) : fmtNum(value, unit || '')}
         </p>
         {previous != null && (
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
         )}
-        {hint && <p className="mt-1 text-[10px] text-muted-foreground/70 truncate">{hint}</p>}
-        {drillDown && <p className="mt-1 text-[10px] text-primary/60 truncate">📊 Click for details</p>}
+        {hint && <p className="mt-1 text-[11px] text-muted-foreground/70 truncate" title={hint}>{hint}</p>}
+        {drillDown && <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>}
       </CardContent>
     </Card>
   );
@@ -105,7 +105,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-xs text-muted-foreground">Total LOSS</p>
             <p className="text-base font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
             <p className="text-xs text-muted-foreground">Loss/Sales: {fmtPct(s.lossToSales, false)}</p>
-            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
         <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('surplus')}>
@@ -113,7 +113,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-xs text-muted-foreground">Total SURPLUS</p>
             <p className="text-base font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
             <p className="text-xs text-muted-foreground">Surplus/Sales: {fmtPct(s.surplusToSales, false)}</p>
-            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
         <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('lossSurplus')}>
@@ -121,7 +121,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-xs text-muted-foreground">Residual Loss (QTY)</p>
             <p className="text-base font-semibold text-amber-600">{fmtNum(s.residualLossQty)}</p>
             <p className="text-xs text-muted-foreground">{fmtPct(s.residualLossPct, false)} of deviation</p>
-            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
         <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('qtyDeviasi')}>
@@ -129,7 +129,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-xs text-muted-foreground">Deviation/BOM</p>
             <p className="text-base font-semibold">{fmtPct(s.deviationToBom, false)}</p>
             <p className="text-xs text-muted-foreground">normalized ratio</p>
-            <p className="mt-1 text-[10px] text-primary/60">📊 Click for details</p>
+            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
       </div>
@@ -203,7 +203,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
             <span className={verdictColor}>{verdictIcon}</span>
             <div>
               <p className={`text-sm font-bold ${verdictColor}`}>{verdict}</p>
-              <p className="text-[10px] text-muted-foreground">Inventory Health Score: {healthScore}/100</p>
+              <p className="text-[11px] text-muted-foreground">Skor Kondisi Inventory: {healthScore}/100</p>
             </div>
           </div>
           <div className="text-right">
@@ -221,21 +221,21 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
               <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
               <div className="min-w-0">
                 <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400 leading-none">{normal.toLocaleString()}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Normal</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Normal</p>
               </div>
             </div>
             <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 p-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <div className="min-w-0">
                 <p className="text-lg font-bold text-amber-700 dark:text-amber-400 leading-none">{warning.toLocaleString()}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Warning</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Warning</p>
               </div>
             </div>
             <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/40 dark:border-red-900 p-2">
               <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
               <div className="min-w-0">
                 <p className="text-lg font-bold text-red-700 dark:text-red-400 leading-none">{abnormal.toLocaleString()}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Abnormal</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Abnormal</p>
               </div>
             </div>
           </div>
@@ -251,7 +251,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         {/* Top Issue Categories */}
         {categoryList.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Top Issue Categories</p>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Kategori Masalah Utama</p>
             <div className="space-y-1">
               {categoryList.slice(0, 4).map(({ cat, count }) => {
                 const pct = total > 0 ? (count / total) * 100 : 0;
@@ -260,11 +260,11 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="text-[11px] text-foreground/80 w-44 truncate cursor-help">{CATEGORY_LABELS[cat] || cat}</span>
+                          <span className="text-[11px] text-foreground/80 w-32 sm:w-44 truncate cursor-help" title={CATEGORY_LABELS[cat] || cat}>{CATEGORY_LABELS[cat] || cat}</span>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-xs">
                           <p className="text-xs font-medium">{CATEGORY_LABELS[cat] || cat}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{CATEGORY_DESCRIPTIONS[cat] || ''}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{CATEGORY_DESCRIPTIONS[cat] || ''}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -282,14 +282,14 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         {/* Quick Financial Impact Summary */}
         <div className="grid grid-cols-2 gap-2 pt-1 border-t">
           <div>
-            <p className="text-[10px] text-muted-foreground">Total LOSS</p>
+            <p className="text-[11px] text-muted-foreground">Total LOSS</p>
             <p className="text-sm font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-[10px] text-muted-foreground">{fmtPct(s.lossToSales, false)} of Sales</p>
+            <p className="text-[11px] text-muted-foreground">{fmtPct(s.lossToSales, false)} of Sales</p>
           </div>
           <div>
-            <p className="text-[10px] text-muted-foreground">Total SURPLUS</p>
+            <p className="text-[11px] text-muted-foreground">Total SURPLUS</p>
             <p className="text-sm font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-[10px] text-muted-foreground">{fmtPct(s.surplusToSales, false)} of Sales</p>
+            <p className="text-[11px] text-muted-foreground">{fmtPct(s.surplusToSales, false)} of Sales</p>
           </div>
         </div>
 

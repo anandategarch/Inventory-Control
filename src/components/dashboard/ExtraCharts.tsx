@@ -55,7 +55,7 @@ export function HealthDistributionDonut({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {total === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="relative h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -90,7 +90,7 @@ export function HealthDistributionDonut({ data }: { data: AnalysisData }) {
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
               <p className="text-2xl font-bold">{healthScore}</p>
-              <p className="text-[10px] text-muted-foreground">Skor Kondisi</p>
+              <p className="text-[11px] text-muted-foreground">Skor Kondisi</p>
             </div>
           </div>
         )}
@@ -139,7 +139,7 @@ export function DeviationCategoryDonut({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -228,7 +228,7 @@ export function AreaContributionBar({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -271,7 +271,7 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
   const items = (data.topItemsByNominal || []).slice(0, 10);
   const chartData = items.map((it: any) => ({
-    label: `${it.itemName?.slice(0, 18)}${it.itemName?.length > 18 ? '…' : ''}`,
+    label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
     itemName: it.itemName,
     outletCode: it.outletCode,
     absNominalJuta: (it.absNominal || 0) / 1_000_000,
@@ -302,14 +302,14 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
-                <YAxis type="category" dataKey="label" width={120} fontSize={10} />
+                <YAxis type="category" dataKey="label" width={140} fontSize={10} />
                 <Tooltip
                   content={({ active, payload }: { active?: boolean; payload?: TipPayload }) =>
                     active && payload && payload[0]
@@ -349,7 +349,7 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
 
   const chartData = [
     ...improved.map((it: any) => ({
-      label: `${it.itemName?.slice(0, 16)}${it.itemName?.length > 16 ? '…' : ''}`,
+      label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
       itemName: it.itemName,
       outletCode: it.outletCode,
       deltaJuta: -((it.delta || 0) / 1_000_000),
@@ -359,7 +359,7 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
       color: '#10b981',
     })),
     ...worsened.map((it: any) => ({
-      label: `${it.itemName?.slice(0, 16)}${it.itemName?.length > 16 ? '…' : ''}`,
+      label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
       itemName: it.itemName,
       outletCode: it.outletCode,
       deltaJuta: (it.delta || 0) / 1_000_000,
@@ -414,7 +414,7 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
               <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
-                <YAxis type="category" dataKey="label" width={120} fontSize={10} />
+                <YAxis type="category" dataKey="label" width={140} fontSize={10} />
                 <ReferenceLine x={0} stroke="#94a3b8" />
                 <Tooltip
                   content={({ active, payload }: { active?: boolean; payload?: TipPayload }) =>
@@ -463,7 +463,7 @@ export function OutletRadarChart({ data }: { data: AnalysisData }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         </CardContent>
       </Card>
     );
@@ -607,7 +607,7 @@ export function DirectionDistributionPie({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {total === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
@@ -691,7 +691,7 @@ export function CumulativeDeviationArea({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No trend data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data tren</p>
         ) : (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -784,7 +784,7 @@ export function AreaLossSalesComparison({ data }: { data: AnalysisData }) {
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No data</p>
+          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
         ) : (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -793,10 +793,10 @@ export function AreaLossSalesComparison({ data }: { data: AnalysisData }) {
                 <XAxis
                   dataKey="area"
                   fontSize={10}
-                  angle={-25}
+                  angle={-35}
                   textAnchor="end"
                   interval={0}
-                  height={60}
+                  height={80}
                 />
                 <YAxis tickFormatter={(v) => `${v.toFixed(0)}%`} fontSize={11} />
                 <Tooltip

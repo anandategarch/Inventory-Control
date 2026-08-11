@@ -61,16 +61,16 @@ export function VarianceAnalysis({ data }: { data: AnalysisData }) {
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <p className={`text-xs font-semibold ${colorCls}`}>{title}</p>
-          <Badge variant="outline" className={`text-[10px] ${colorCls}`}>{items.length} item</Badge>
+          <Badge variant="outline" className={`text-[11px] ${colorCls}`}>{items.length} item</Badge>
         </div>
         <ScrollArea className="h-48 rounded-md border">
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">RESTO</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Perubahan</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">%</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">RESTO</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Perubahan</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">%</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -163,17 +163,17 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] w-8 h-7 px-2">#</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">Outlet</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">Skor</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Masalah</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[11px] w-8 h-7 px-2">#</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Skor</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Masalah</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {ranking.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
               ) : ranking.map((o, i) => (
                 <TableRow
                   key={o.outletCode}
@@ -182,8 +182,8 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                 >
                   <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                   <TableCell className="px-2 py-1">
-                    <div className="text-[11px] font-medium leading-tight truncate max-w-[140px]">{o.outletName}</div>
-                    <div className="text-[10px] text-muted-foreground">{o.outletCode} · {o.area}</div>
+                    <div className="text-[11px] font-medium leading-tight truncate max-w-[140px]" title={o.outletName}>{o.outletName}</div>
+                    <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
                   <TableCell className="px-2 py-1">
                     <div className="flex items-center gap-1.5 min-w-[80px]">
@@ -294,18 +294,18 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">Type</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">LOSS</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">SURPLUS</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Type</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Outlets</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">LOSS</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">SURPLUS</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
               ) : rows.map((row, i) => (
                 <TableRow
                   key={`${row.itemName}-${i}`}
@@ -364,17 +364,17 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2">Area</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">PENJUALAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">LOSS/PENJUALAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Area</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Outlets</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">PENJUALAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">LOSS/PENJUALAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {areas.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">No data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
               ) : areas.map((a, i) => {
                 const marker = i === 0 ? '🔴' : i === areas.length - 1 ? '🟢' : '';
                 return (

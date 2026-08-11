@@ -68,7 +68,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                 {deepDiveItem?.outletCode
                   ? `Outlet: ${deepDiveItem.outletCode}`
                   : 'Analisis lintas outlet'}
-                {' · '}Direction: LOSS {lossCount} · SURPLUS {surplusCount}
+                {' · '}Arah: LOSS {lossCount} · SURPLUS {surplusCount}
               </DialogDescription>
             </div>
             <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onClose}>
@@ -85,15 +85,15 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               {/* Direction distribution */}
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">Total Occurrences</p>
+                  <p className="text-[11px] text-muted-foreground">Total Kemunculan</p>
                   <p className="text-base font-bold">{allOccurrences.length}</p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">Total |NOMINAL|</p>
+                  <p className="text-[11px] text-muted-foreground">Total |NOMINAL|</p>
                   <p className="text-base font-bold">{fmtIDR(totalAbsNominal)}</p>
                 </div>
                 <div className="rounded-md border p-2.5">
-                  <p className="text-[10px] text-muted-foreground">LOSS vs SURPLUS</p>
+                  <p className="text-[11px] text-muted-foreground">LOSS vs SURPLUS</p>
                   <p className="text-xs font-bold">
                     <span className="text-red-600">{lossCount}L</span>
                     {' / '}
@@ -156,10 +156,10 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[10px] h-7 px-2">#</TableHead>
-                      <TableHead className="text-[10px] h-7 px-2">Outlet</TableHead>
-                      <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL|</TableHead>
-                      <TableHead className="text-[10px] h-7 px-2 text-center">Dir</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2">#</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL|</TableHead>
+                      <TableHead className="text-[11px] h-7 px-2 text-center">Dir</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -187,14 +187,14 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               {/* Variance per outlet (from drilldown records if available) */}
               {deepDiveItem?.outletCode && drilldownQuery.data && drilldownQuery.data.records?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold mb-1.5">Detail Records (Outlet: {deepDiveItem.outletCode})</p>
+                  <p className="text-xs font-semibold mb-1.5">Detail Record (Outlet: {deepDiveItem.outletCode})</p>
                   <ScrollArea className="h-40 rounded-md border">
                     <Table>
                       <TableHeader className="sticky top-0 bg-background z-10">
                         <TableRow>
-                          <TableHead className="text-[10px] h-7 px-2">Minggu</TableHead>
-                          <TableHead className="text-[10px] h-7 px-2 text-right">QTY Deviasi</TableHead>
-                          <TableHead className="text-[10px] h-7 px-2 text-right">NOMINAL</TableHead>
+                          <TableHead className="text-[11px] h-7 px-2">Minggu</TableHead>
+                          <TableHead className="text-[11px] h-7 px-2 text-right">QTY Deviasi</TableHead>
+                          <TableHead className="text-[11px] h-7 px-2 text-right">NOMINAL</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>

@@ -160,16 +160,16 @@ export function SourceDataModal() {
                   <TableRow key={r.id}>
                     <TableCell className="text-xs">
                       <div className="font-medium">{r.outlet.name}</div>
-                      <div className="text-[10px] text-muted-foreground">{r.outlet.code}</div>
-                      <div className="text-[10px] text-muted-foreground">{r.outlet.area}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.outlet.code}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.outlet.area}</div>
                     </TableCell>
                     <TableCell className="text-xs font-medium">
                       {r.item.name}
-                      {r.item.satuan && <div className="text-[10px] text-muted-foreground">{r.item.satuan}</div>}
+                      {r.item.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
                     </TableCell>
                     <TableCell className="text-xs">
                       <div>{r.period.weekLabel}</div>
-                      <div className="text-[10px] text-muted-foreground">{r.period.monthLabel}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.period.monthLabel}</div>
                     </TableCell>
                     <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>
                     <TableCell className={`text-xs text-right ${numberColor(r.qty.com)}`}>{fmtNum(r.qty.com)}</TableCell>
@@ -202,7 +202,7 @@ export function SourceDataModal() {
               Showing {records.length} record{records.length !== 1 ? 's' : ''}
               {records.length === 50 && ' (capped at 50 — use Export CSV for full data)'}
             </span>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-[11px]">
               Traceable to source Excel
             </Badge>
           </div>

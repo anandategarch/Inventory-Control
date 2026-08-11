@@ -635,3 +635,102 @@ Work Log:
   - max-w-md, leading-relaxed, space-y-1
 - Lint: 0 errors
 - Committed (45be4b8) and pushed to GitHub (synced)
+
+---
+Task ID: 18
+Agent: Main (Z.ai Code)
+Task: Fix UI truncation, mobile readability, and language consistency issues
+
+Work Log:
+A.3 — TopItems table truncate (CRITICAL):
+- src/components/dashboard/TopItems.tsx:
+  - Added `title={...}` attribute to all truncated cells (itemName, outletCode, outletName+code, area, issue, recommendedAction) — native hover tooltip
+  - Added `max-w-[140px] whitespace-normal` to itemName / outletName / issue / recommendedAction cells — allow wrap, prevent hard clip
+  - "No data" → "Tidak ada data" (3 instances)
+  - "(filtered)" → "(terfilter)"
+  - "X of Y items" → "X dari Y item"
+  - "No anomalies detected" → "Tidak ada anomali terdeteksi"
+  - "No items match your filter" → "Tidak ada item sesuai filter"
+  - "Recommended Action" → "Rekomendasi Tindakan"
+  - "All Priority" → "Semua Prioritas", "P1/P2/P3 only" → "P1/P2/P3 saja"
+  - "Clear" → "Bersihkan"
+
+A.4 — ExtraCharts slice 18→24:
+- src/components/dashboard/ExtraCharts.tsx:
+  - Line 274: `it.itemName?.slice(0, 18)` → `slice(0, 24)` + length check `> 24`
+  - Line 352: `it.itemName?.slice(0, 16)` → `slice(0, 24)` + length check `> 24`
+  - Line 362: `it.itemName?.slice(0, 16)` → `slice(0, 24)` + length check `> 24`
+  - YAxis width: `120` → `140` (to accommodate longer labels) for TopItemsHorizontalBar & VarianceDivergingBar
+  - Tooltip already shows `payload[0].payload.itemName` (full name) — verified working
+
+A.5 — AreaLossSalesComparison height/angle:
+- src/components/dashboard/ExtraCharts.tsx:
+  - `angle={-25}` → `angle={-35}` (steeper angle for area labels)
+  - `height={60}` → `height={80}` (more vertical room for angled labels)
+
+A.6 — Mobile subtitle/footer:
+- src/app/page.tsx:
+  - Header subtitle `<p>` got `truncate` class (prevent bad wrap on mobile)
+  - Header h1 got `truncate` + parent `<div>` got `min-w-0` (enable flex truncation)
+  - Footer "Klik baris mana saja untuk drill-down ke sumber" got `hidden sm:inline` (hidden on mobile)
+
+B.1 — text-[10px] → text-[11px] (minimum readability):
+- src/components/dashboard/TopItems.tsx (3 occurrences): outletCode · area, priority badge
+- src/components/dashboard/ExtraCharts.tsx (1): Skor Kondisi label
+- src/components/dashboard/CostAccounting.tsx (13): ABC badges, Pareto/CostPerThousand table heads, outletCode · area
+- src/components/dashboard/AdvancedAnalysis.tsx (22): all table heads, outletCode · area, badge counts
+- src/components/dashboard/AnalysisCards.tsx (8): historical table heads, effect desc, accordion count, Outliers/Items labels
+- src/components/dashboard/ItemDeepDive.tsx (9): 3 metric labels, 7 table heads
+- src/components/dashboard/OutletScorecard.tsx (16): all metric labels, table heads, recommended action text
+- src/components/dashboard/AlertPanel.tsx (7): priority badges, outletCode · area, evidence, recommended action, footer metrics
+- src/components/dashboard/ExecutiveSummary.tsx (6): Normal/Warning/Abnormal labels, Total LOSS/SURPLUS labels, of Sales
+- src/components/dashboard/CardDrillDown.tsx (1): period badge
+- src/components/filters/FilterBar.tsx (5): stats badge, ingestMsg badge, 3 dialog hint paragraphs
+- src/components/filters/SearchableComboBox.tsx (1): option description
+- src/components/filters/SettingsDialog.tsx (3): count badge, description, status text
+- src/components/drilldown/DrillDownDrawer.tsx (1): outlet code
+- src/components/drilldown/SourceDataModal.tsx (5): outlet code/area, item satuan, month, traceable badge
+- NOT changed: src/components/ui/* (shadcn — per task instructions)
+
+B.2 — Campur bahasa ID/EN → konsisten Indonesia:
+- TopItems.tsx: see A.3 above
+- CardDrillDown.tsx: "No data available" → "Tidak ada data"
+- AlertPanel.tsx: "Evidence:" → "Bukti:", "Recommended Action" → "Rekomendasi Tindakan"
+- ExtraCharts.tsx: 7× "No data" → "Tidak ada data", "No trend data" → "Tidak ada data tren"
+- CostAccounting.tsx: 5× "No data" → "Tidak ada data"
+- AdvancedAnalysis.tsx: 3× "No data" → "Tidak ada data", added `title` attr on outletName
+- AnalysisCards.tsx: "Current %DEV/BOM" → "Dev/BOM Kini", "Historical Avg" → "Rata-rata Hist.", "Outliers" → "Pencilan", "Items (N)" → "Item (N)", "Volume/Price/Operational Effect" → "Efek Volume/Harga/Operasional"
+- OutletScorecard.tsx: "Health Score" → "Skor Kondisi", "Historical Z-Score Anomaly" → "Anomali Historical Z-Score", "Recommended Actions" → "Rekomendasi Tindakan"
+- ItemDeepDive.tsx: "Total Occurrences" → "Total Kemunculan", "Direction:" → "Arah:", "Detail Records" → "Detail Record"
+
+B.3 — Emoji di placeholder:
+- src/components/dashboard/TopItems.tsx line 229: removed 🔍 from `placeholder="🔍 Cari outlet, item, area, issue..."` → `"Cari outlet, item, area, issue..."`
+- Kept 📊 emoji in ExecutiveSummary "📊 Detail" text (per task instructions)
+
+B.9 — Loading indicator saat refetch:
+- src/app/page.tsx:
+  - Added `Loader2` to lucide-react imports
+  - Added new badge BEFORE cache badge: `{analysis.isFetching && analysis.data && <Badge variant="outline" className="text-[11px]"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Memperbarui...</Badge>}`
+  - Visible on mobile + desktop (no `hidden` class) — provides refetch feedback across all viewports
+  - Loader2 uses `animate-spin` for rotation
+
+B.12 — Badge ms/cache → hide di mobile:
+- Verified src/app/page.tsx:
+  - "cache/langsung · {durationMs}ms" badge has `hidden sm:inline-flex` ✓
+  - "Narasi AI" badge has `hidden sm:inline-flex` ✓
+  - Both correctly hidden on mobile (visible on sm+ screens)
+  - Also bumped both from `text-[10px]` → `text-[11px]` for consistency
+
+Verification:
+- bun run lint: 0 errors, 0 warnings (exit 0)
+- npx tsc --noEmit --skipLibCheck: 0 errors in edited files (pre-existing errors in examples/, scripts/, skills/, drilldown/route.ts, SettingsDialog.tsx, db.ts are unrelated and untouched)
+- All 5 issue categories (A.3, A.4, A.5, A.6, B.1, B.2, B.3, B.9, B.12) addressed
+- Business logic preserved: no chart rendering logic changed, no data transformations modified
+- Tooltip full-name display verified working in ExtraCharts (uses `payload[0].payload.itemName`)
+
+Stage Summary:
+- Truncation issues resolved: long item names like "UDANG KEJU FROZEN PREMIUM 500G PACK" now wrap within `max-w-[140px]` cells + show native browser tooltip via `title` attribute on hover
+- Mobile readability improved: minimum font size now text-[11px] across all dashboard/filters/drilldown components (was text-[10px], below WCAG minimum)
+- Language consistency: all user-facing English strings in scope translated to Indonesian (technical terms like "Dev/BOM", "LOSS/SURPLUS", "|NOMINAL|" kept as business code)
+- Refetch UX: subtle "Memperbarui..." badge with spinning Loader2 icon appears in header when analysis is re-fetching with existing data (no full-page reload flash)
+- Mobile responsiveness: footer "Klik baris mana saja..." hidden on mobile (sm+ only), header subtitle truncates gracefully instead of wrapping awkwardly

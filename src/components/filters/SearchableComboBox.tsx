@@ -127,7 +127,7 @@ export function SearchableComboBox({
                     <div className="flex flex-col min-w-0 flex-1">
                       <span className="truncate">{option.label}</span>
                       {option.description && (
-                        <span className="text-[10px] text-muted-foreground truncate">{option.description}</span>
+                        <span className="text-[11px] text-muted-foreground truncate">{option.description}</span>
                       )}
                     </div>
                   </CommandItem>

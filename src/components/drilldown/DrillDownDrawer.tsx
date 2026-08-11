@@ -79,7 +79,7 @@ export function DrillDownDrawer() {
                       <TableRow key={r.id}>
                         <TableCell className="text-xs">
                           <div className="font-medium">{r.outlet.name}</div>
-                          <div className="text-[10px] text-muted-foreground">{r.outlet.code}</div>
+                          <div className="text-[11px] text-muted-foreground">{r.outlet.code}</div>
                         </TableCell>
                         <TableCell className="text-xs font-medium">{r.item.name}</TableCell>
                         <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>

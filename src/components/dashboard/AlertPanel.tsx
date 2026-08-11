@@ -54,9 +54,9 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
             </p>
           </div>
           <div className="flex items-center gap-1.5">
-            <Badge variant="outline" className={`text-[10px] ${priorityColor('P1')}`}>P1: {p1Count}</Badge>
-            <Badge variant="outline" className={`text-[10px] ${priorityColor('P2')}`}>P2: {p2Count}</Badge>
-            <Badge variant="outline" className={`text-[10px] ${priorityColor('P3')}`}>P3: {p3Count}</Badge>
+            <Badge variant="outline" className={`text-[11px] ${priorityColor('P1')}`}>P1: {p1Count}</Badge>
+            <Badge variant="outline" className={`text-[11px] ${priorityColor('P2')}`}>P2: {p2Count}</Badge>
+            <Badge variant="outline" className={`text-[11px] ${priorityColor('P3')}`}>P3: {p3Count}</Badge>
           </div>
         </div>
 
@@ -89,8 +89,8 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>
                         <span className="text-sm font-medium truncate">{w.outletName || w.outletCode}</span>
-                        <span className="text-[10px] text-muted-foreground">({w.outletCode})</span>
-                        <span className="text-[10px] text-muted-foreground">· {w.area}</span>
+                        <span className="text-[11px] text-muted-foreground">({w.outletCode})</span>
+                        <span className="text-[11px] text-muted-foreground">· {w.area}</span>
                       </div>
                     </div>
                     {w.direction && (
@@ -109,19 +109,19 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
                   )}
 
                   {w.evidence && (
-                    <p className="text-[10px] text-muted-foreground italic mb-2 leading-tight">
-                      <span className="font-semibold not-italic">Evidence:</span> {w.evidence}
+                    <p className="text-[11px] text-muted-foreground italic mb-2 leading-tight">
+                      <span className="font-semibold not-italic">Bukti:</span> {w.evidence}
                     </p>
                   )}
 
                   {w.recommendedAction && (
                     <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-2 py-1.5 mb-2">
-                      <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 mb-0.5">Recommended Action</p>
+                      <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 mb-0.5">Rekomendasi Tindakan</p>
                       <p className="text-[11px] text-amber-900 dark:text-amber-300 leading-tight">{w.recommendedAction}</p>
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                     <span>
                       |NOMINAL|: <span className="font-semibold text-foreground">{fmtIDR(w.absNominalDeviasi)}</span>
                     </span>

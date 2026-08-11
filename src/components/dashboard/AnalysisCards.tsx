@@ -58,12 +58,12 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="text-[10px] h-7 px-2">Outlet</TableHead>
-                <TableHead className="text-[10px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Current %DEV/BOM</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Historical Avg</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">Z-Score</TableHead>
-                <TableHead className="text-[10px] h-7 px-2 text-right">|NOMINAL|</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
+                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Dev/BOM Kini</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Rata-rata Hist.</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">Z-Score</TableHead>
+                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL|</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -107,9 +107,9 @@ export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
   const allNull = volumeEffect == null && priceEffect == null && operationalEffect == null;
 
   const effects = [
-    { name: 'Volume Effect', value: volumeEffect, color: '#06b6d4', desc: 'Perubahan deviation akibat perubahan volume aktivitas (BOM)' },
-    { name: 'Price Effect', value: priceEffect, color: '#f59e0b', desc: 'Perubahan deviation akibat perubahan harga' },
-    { name: 'Operational Effect', value: operationalEffect, color: '#dc2626', desc: 'Perubahan deviation akibat inefisiensi operasional (Dev/BOM ratio)' },
+    { name: 'Efek Volume', value: volumeEffect, color: '#06b6d4', desc: 'Perubahan deviation akibat perubahan volume aktivitas (BOM)' },
+    { name: 'Efek Harga', value: priceEffect, color: '#f59e0b', desc: 'Perubahan deviation akibat perubahan harga' },
+    { name: 'Efek Operasional', value: operationalEffect, color: '#dc2626', desc: 'Perubahan deviation akibat inefisiensi operasional (Dev/BOM ratio)' },
   ];
 
   const maxAbs = Math.max(...effects.map((e) => Math.abs(e.value ?? 0)), 1);
@@ -148,7 +148,7 @@ export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
                   <div className="h-2 rounded-full bg-muted overflow-hidden">
                     <div className="h-full rounded-full" style={{ width: `${barWidth}%`, background: barColor }} />
                   </div>
-                  <p className="text-[10px] text-muted-foreground leading-tight">{e.desc}</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">{e.desc}</p>
                 </div>
               );
             })}
@@ -265,7 +265,7 @@ export function MenuAnalysisCard({ data }: { data: AnalysisData }) {
                   <AccordionTrigger className="text-xs hover:no-underline py-2">
                     <div className="flex items-center justify-between w-full pr-3">
                       <span className="font-medium">{m.prefix}</span>
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                         <span>{m.itemCount} item</span>
                         <Badge variant="outline" className="text-[9px] px-1.5 py-0">{m.outliers?.length || 0} outlier</Badge>
                         <span className="font-semibold text-amber-600">{fmtIDR(m.totalDeviation)}</span>
@@ -277,7 +277,7 @@ export function MenuAnalysisCard({ data }: { data: AnalysisData }) {
                     <div className="space-y-2 py-1">
                       {(m.outliers || []).length > 0 && (
                         <div>
-                          <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1">Outliers</p>
+                          <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wide mb-1">Pencilan</p>
                           <div className="space-y-0.5">
                             {(m.outliers || []).slice(0, 5).map((o: any, i: number) => (
                               <button
@@ -302,7 +302,7 @@ export function MenuAnalysisCard({ data }: { data: AnalysisData }) {
                       )}
                       {(m.items || []).length > 0 && (
                         <div>
-                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Items ({m.items.length})</p>
+                          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Item ({m.items.length})</p>
                           <div className="space-y-0.5">
                             {(m.items || []).slice(0, 8).map((it: any, i: number) => (
                               <div key={i} className="text-[11px] px-1.5 py-0.5">

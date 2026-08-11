@@ -273,13 +273,13 @@ export function FilterBar() {
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
             {status?.stats && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-[11px]">
                 <Database className="h-3 w-3 mr-1" />
                 {status.stats.totalFiles} file · {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
               </Badge>
             )}
             {ingestMsg && (
-              <Badge variant="secondary" className="text-[10px]">
+              <Badge variant="secondary" className="text-[11px]">
                 <AlertTriangle className="h-3 w-3 mr-1" />
                 {ingestMsg}
               </Badge>
@@ -329,7 +329,7 @@ export function FilterBar() {
                       disabled={driveImporting}
                       className="text-xs"
                     />
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground">
                       💡 Klik kanan folder di Google Drive → Share → Copy link. Semua file .xlsx di folder akan otomatis didownload.
                     </p>
                   </TabsContent>
@@ -344,7 +344,7 @@ export function FilterBar() {
                       disabled={driveImporting}
                       className="text-xs"
                     />
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground">
                       💡 Klik kanan file di Google Drive → Share → Copy link. Hanya file ini yang akan diproses.
                       <br />
                       Cocok untuk import file bulan terbaru, atau re-import file yang sebelumnya gagal.
@@ -361,7 +361,7 @@ export function FilterBar() {
                       disabled={driveImporting}
                       className="text-xs"
                     />
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground">
                       💡 Buka spreadsheet di Google Sheets → klik <strong>Share</strong> (kanan atas) → set &quot;Anyone with link&quot; → copy link.
                       <br />
                       Spreadsheet akan otomatis di-export ke format .xlsx (semua sheet dipertahankan).
