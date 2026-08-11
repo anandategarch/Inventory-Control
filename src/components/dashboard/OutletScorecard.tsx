@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
-import { X, Activity, Heart, TrendingDown, TrendingUp } from 'lucide-react';
+import { X, Activity, Heart, TrendingDown, TrendingUp, Target } from 'lucide-react';
 
 // ============================================================
 //  OutletScorecard
@@ -30,7 +30,7 @@ function healthScoreBg(score: number): string {
 }
 
 export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
-  const { scorecardOutlet, setScorecardOutlet, setDrilldown, setDeepDiveItem } = useDashboard();
+  const { scorecardOutlet, setScorecardOutlet, setDrilldown, setDeepDiveItem, setFocusOutlet } = useDashboard();
   const open = Boolean(scorecardOutlet);
 
   const ranking = data?.outletHealthRanking || [];
@@ -66,9 +66,25 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                 {outlet ? `${outlet.outletCode} · ${outlet.area}` : 'Outlet tidak ditemukan'}
               </DialogDescription>
             </div>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => setScorecardOutlet(null)}>
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                variant="default"
+                size="sm"
+                className="h-8 text-[11px]"
+                onClick={() => {
+                  if (scorecardOutlet) {
+                    setScorecardOutlet(null);
+                    setFocusOutlet(scorecardOutlet);
+                  }
+                }}
+              >
+                <Target className="h-3.5 w-3.5 mr-1" />
+                Focus Mode
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => setScorecardOutlet(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 

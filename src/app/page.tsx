@@ -28,6 +28,7 @@ import {
 } from '@/components/dashboard/AnalysisCards';
 import { AlertPanel } from '@/components/dashboard/AlertPanel';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
+import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import {
   CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
@@ -529,6 +530,7 @@ export default function DashboardPage() {
       <SourceDataModal />
       <CardDrillDown data={analysis.data} />
       <OutletScorecard data={analysis.data} />
+      <OutletFocusMode data={analysis.data} />
       <ItemDeepDive data={analysis.data} />
     </div>
   );

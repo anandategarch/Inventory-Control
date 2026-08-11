@@ -230,7 +230,7 @@ function quadrantOf(salesJt: number, lossPct: number): { label: string; color: s
 }
 
 export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
-  const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
+  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const ranking = data.outletHealthRanking || [];
 
   const chartData = ranking.map((o) => ({
@@ -307,7 +307,7 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
                   <Scatter
                     data={chartData}
                     cursor="pointer"
-                    onClick={(d: any) => d?.outletCode && setScorecardOutlet(d.outletCode)}
+                    onClick={(d: any) => d?.outletCode && setFocusOutlet(d.outletCode)}
                   >
                     {chartData.map((d, i) => {
                       const q = quadrantOf(d.sales, d.lossToSales);
@@ -341,7 +341,7 @@ function costPerThousandColor(v: number): string {
 }
 
 export function CostPerThousandCard({ data }: { data: AnalysisData }) {
-  const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
+  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const ranking = data.outletHealthRanking || [];
   const cost = data.costImpact;
   const sales = data.executiveSummary?.sales?.current ?? 0;
@@ -394,7 +394,7 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={o.outletCode}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setScorecardOutlet(o.outletCode)}
+                  onClick={() => setFocusOutlet(o.outletCode)}
                 >
                   <TableCell className="text-[11px] px-2 py-1">
                     <div className="font-medium whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>

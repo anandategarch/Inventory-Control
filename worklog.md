@@ -1079,3 +1079,86 @@ Work Log:
 - Integration: FilterBar 2 tombol baru, middleware protected, statusCache shared
 - Lint: 0 errors. TypeScript: 0 errors.
 - Committed (0f13211) and pushed to GitHub (synced)
+
+---
+Task ID: 26
+Agent: Main (Z.ai Code)
+Task: Build Outlet Focus Mode (deep anomaly analysis per outlet)
+
+Work Log:
+- Read master context + analysis API + queries.ts + schema.prisma + format.ts + transform.ts + validator.ts + growth.ts to understand existing patterns
+- Created new API: `src/app/api/outlet-focus/route.ts` (~1043 lines)
+  - Query params: `?outletCode=&month=&week=`
+  - Resolves outlet + PIC
+  - Resolves previous period chronologically (cross-month via Week + SourceFile tables)
+  - Queries current period records (raw SQL with Prisma.sql) for outlet
+  - Queries previous period records (for new/disappeared/reversal/variance)
+  - Queries historical stats per itemId (AVG/STDDEV of pctQtyDeviasiToBom across historical periods)
+  - Queries area + network benchmarks (parallel Promise.all)
+  - Builds timeline (~9 rows) from trendAgg filtered by outlet
+  - Builds per-item anomalies with issue detection:
+    - TOLERANCE_BREACH: |devBom| > tolerance (effective = tolerancePct ?? FALLBACK_TOLERANCE_PCT)
+    - RESIDUAL_HIGH: residualRatio > 0.5
+    - HISTORICAL_ABNORMAL: zScore > 2
+    - OVER_EXPLAINED: |W+S+T| > |Deviasi|
+    - HIGH_NOMINAL: |absNominal| > 10M
+    - ABOVE_AREA / ABOVE_NETWORK: devBom > 1.5× area/network avg
+    - NEW_ITEM: no prev record
+    - DIRECTION_REVERSAL: prev direction != current direction
+  - Computes outlet health score (same formula as analysis.ts: 30% devBom + 25% residual + 25% lossToSales + 20% abnormal)
+  - Builds wasteAnalysis (W/S/T/Residual + over-explained + high-residual items)
+  - Builds menuAnalysis (group by first word of itemName, outlier detection: devBom > avg + 2*stdDev)
+  - Builds DQ issues (from DQIssue table + computed fallback: MISSING_BOM, TOLERANCE_NOT_SET, BOM_POSITIVE, OVER_EXPLAINED)
+  - Builds worklist with P1/P2/P3 priority:
+    - P1: |nominal| > 10M AND (tolerance breach OR over-explained) AND z>2 (or just breach+overexp at 10M)
+    - P2: tolerance breach AND |nominal| > 1M, or over-explained at 1M+
+    - P3: direction reversal, new item, or general
+  - Returns comprehensive JSON: outlet, timeline, itemAnomalies, wasteAnalysis, menuAnalysis, dqIssues, benchmarks, newItems, disappearedItems, directionReversals, worklist
+  - Cached with analysisCache (5 min TTL) keyed by outlet+period+thresholdsVersion
+  - Rate limited (60 req/min per IP)
+- Added `focusOutlet` + `setFocusOutlet` to useDashboard store
+- Created `src/components/dashboard/OutletFocusMode.tsx` (~1307 lines):
+  - Full-screen Dialog (max-w-[1200px], max-h-[90vh], flex flex-col, overflow-hidden)
+  - Custom header (shrink-0) with outlet name/code/area + "Scorecard" button (jumps back to scorecard) + close X
+  - 6 tabs (with badge counts):
+    1. **Overview**: Health score + rank + PIC, 4-metric grid (Dev/BOM, Residual%, Loss/Sales, Abnormal count), Sales + Deviasi summary (current vs prev + growth), Timeline ComposedChart (Bar sales + Bar nominal + Line devBom), Timeline table
+    2. **Anomali Item**: Sortable table (by |nominal|, devBom, or z-score) with severity filter (withIssues/all/abnormal/warning), columns: Item, Direction, QTY Dev, Nominal, Dev/BOM, Tolerance, Z-Score, vs Area, Issues badges. Click row → close Focus Mode + open ItemDeepDive. Benchmark comparison cards (vs area + network with multiplier)
+    3. **Waste & Residual**: 4-card grid (WASTE/SUSUT/TRIAL/RESIDUAL with % of BOM), Deviation breakdown PieChart, Over-explained items table (W+S+T > Deviasi), High residual items table (>50%)
+    4. **Menu & BOM**: Group by prefix (first word), collapsible. Each group shows count, Σ deviation, avg devBom, outliers (highlighted in red — devBom > avg+2σ). "Item X naik 200% sementara item lain di menu sama stabil → outlier"
+    5. **Data Quality**: 3 summary cards (ERROR/WARNING/INFO counts), DQ issues grouped by code with DQ_FIXES map for action recommendations. Expandable details for multiple instances
+    6. **Investigasi**: 3 summary cards (P1/P2/P3 counts), 3 mini-cards (New items / Disappeared / Direction reversals), Worklist with priority badge + OPEN/INVESTIGATING/RESOLVED status tracker (local state), each entry shows issue/evidence/metric/benchmark/possible cause/recommended action
+  - When clicking item in Tab 2 → close Focus Mode first, then open ItemDeepDive (avoid stacking)
+- Updated `OutletScorecard.tsx`:
+  - Added "Focus Mode" button (with Target icon) that closes scorecard + opens Focus Mode
+- Updated entry points to use `setFocusOutlet` instead of `setScorecardOutlet`:
+  - `OutletHealthRanking` (AdvancedAnalysis.tsx): row click → setFocusOutlet
+  - `OutletEfficiencyMatrix` (CostAccounting.tsx): bubble click → setFocusOutlet
+  - `CostPerThousandCard` (CostAccounting.tsx): row click → setFocusOutlet (bonus)
+  - `AreaContributionBar` (ExtraCharts.tsx): bar click → if outletCode filter set, open Focus Mode; otherwise setArea (preserves existing area-filter behavior)
+- Updated `src/app/page.tsx`: Added `<OutletFocusMode data={analysis.data} />` near OutletScorecard
+- Verified lint passes (0 errors) and `npx tsc --noEmit --skipLibCheck` passes (0 errors)
+- Manually tested API with curl: HTTP 200 with comprehensive JSON for outlet 1030.BDGSET in Mei 2026 / WEEK 1
+  - 9 timeline periods returned
+  - 55 item anomalies (sorted by |nominal| desc)
+  - Health score 23 (critical, matches existing dashboard)
+  - wasteAnalysis, menuAnalysis, dqIssues, benchmarks, newItems, worklist all populated
+
+Stage Summary:
+- Outlet Focus Mode fully functional: clicking any outlet row/bubble (Ranking, EfficiencyMatrix, CostPerThousand, AreaContributionBar with outlet filter) opens a comprehensive investigation modal
+- 6 tabs cover all 10 sections of the master context: Overview, Anomali Item, Waste & Residual, Menu & BOM, Data Quality, Investigasi (worklist with status tracker)
+- All UI text in Indonesian, color coding consistent (red=abnormal, amber=warning, emerald=normal, sky=info)
+- API cached (5 min) + rate limited; uses raw SQL via Prisma.$queryRaw for efficient single-outlet queries
+- OutletScorecard still accessible via "Scorecard" button inside Focus Mode header
+- ItemDeepDive opens (with Focus Mode closing first) when clicking item row in Tab 2 — no modal stacking
+
+Files created:
+- src/app/api/outlet-focus/route.ts
+- src/components/dashboard/OutletFocusMode.tsx
+
+Files modified:
+- src/hooks/useDashboard.ts (added focusOutlet state)
+- src/components/dashboard/OutletScorecard.tsx (added Focus Mode button)
+- src/components/dashboard/AdvancedAnalysis.tsx (OutletHealthRanking → setFocusOutlet)
+- src/components/dashboard/CostAccounting.tsx (OutletEfficiencyMatrix + CostPerThousandCard → setFocusOutlet)
+- src/components/dashboard/ExtraCharts.tsx (AreaContributionBar → setFocusOutlet when outletCode filtered)
+- src/app/page.tsx (added <OutletFocusMode /> near <OutletScorecard />)

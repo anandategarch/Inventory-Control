@@ -30,6 +30,8 @@ interface DashboardStore {
   setDeepDiveItem: (d: { itemName: string | null; outletCode: string | null }) => void;
   scorecardOutlet: string | null;
   setScorecardOutlet: (code: string | null) => void;
+  focusOutlet: string | null;
+  setFocusOutlet: (code: string | null) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
 }
@@ -62,6 +64,8 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setDeepDiveItem: (d) => set({ deepDiveItem: d }),
   scorecardOutlet: null,
   setScorecardOutlet: (code) => set({ scorecardOutlet: code }),
+  focusOutlet: null,
+  setFocusOutlet: (code) => set({ focusOutlet: code }),
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
 }));

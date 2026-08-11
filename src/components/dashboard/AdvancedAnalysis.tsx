@@ -136,7 +136,7 @@ export function VarianceAnalysis({ data }: { data: AnalysisData }) {
 //  Ranking kondisi outlet dengan skor gabungan
 // ============================================================
 export function OutletHealthRanking({ data }: { data: AnalysisData }) {
-  const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
+  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const ranking = (data.outletHealthRanking || []).slice().sort((a, b) => a.healthScore - b.healthScore);
   const worstCount = ranking.filter((o) => o.healthScore < 50).length;
   const criticalCount = ranking.filter((o) => o.healthScore < 30).length;
@@ -178,7 +178,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={o.outletCode}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setScorecardOutlet(o.outletCode)}
+                  onClick={() => setFocusOutlet(o.outletCode)}
                 >
                   <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                   <TableCell className="px-2 py-1">

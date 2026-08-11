@@ -198,6 +198,8 @@ export function DeviationCategoryDonut({ data }: { data: AnalysisData }) {
 // ============================================================
 export function AreaContributionBar({ data }: { data: AnalysisData }) {
   const setArea = useDashboard((s) => s.setArea);
+  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
+  const outletCode = useDashboard((s) => s.outletCode);
   const areas = data.areaAnalysis || [];
   const totalAbsNominal = areas.reduce((s, a) => s + a.totalAbsNominal, 0) || 1;
 
@@ -250,7 +252,15 @@ export function AreaContributionBar({ data }: { data: AnalysisData }) {
                       : null
                   }
                 />
-                <Bar dataKey="absNominalJuta" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(d: any) => d?.area && setArea(d.area)}>
+                <Bar dataKey="absNominalJuta" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(d: any) => {
+                  if (!d?.area) return;
+                  if (outletCode) {
+                    // Filtered to single outlet → open Focus Mode
+                    setFocusOutlet(outletCode);
+                  } else {
+                    setArea(d.area);
+                  }
+                }}>
                   {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
                 </Bar>
               </BarChart>
