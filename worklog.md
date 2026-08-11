@@ -561,3 +561,26 @@ Business logic preserved (verified by subagent runtime test on production DB):
 
 Lint: 0 errors. TypeScript: 0 new errors.
 Committed (3c8928d) and pushed to GitHub (synced).
+
+---
+Task ID: 15 (Phase 5 decision)
+Agent: Main (Z.ai Code)
+Task: Phase 5 evaluation — summary table decision
+
+Analysis:
+- Phase 1-4 achieved ~90% egress reduction (~50-80MB → ~4-6MB per request)
+- Remaining egress: currentRecs (~35K records for WEEK 4) needed for rule evaluation
+- Rule engine (evaluateRules) requires per-record fields: direction, residualRatio, pctQtyDeviasiToBom, nominalDeviasi, etc.
+- Cannot aggregate rule evaluation in SQL — each record evaluated individually with complex AST conditions
+- Phase 5 (summary table) would require:
+  1. Pre-aggregating per-record rule context fields (not possible — rules are dynamic)
+  2. Or moving rule engine to SQL (very high risk, 200+ lines of AST evaluation)
+- Risk to business logic: HIGH (rule evaluation, worklist, priorities, health ranking all depend on per-record flags)
+
+Decision: SKIP Phase 5 — 90% reduction sufficient, business logic risk too high
+
+Verification (SQL queries tested directly on production DB):
+- ExecSummary: sales=72,686,748,032 (matches previous JS result)
+- Top items: UDANG KEJU FROZEN (matches previous)
+- Trend: 3 periods with correct sales/nominal/devBom
+- All business logic preserved
