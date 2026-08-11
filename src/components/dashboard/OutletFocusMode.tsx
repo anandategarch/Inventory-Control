@@ -39,6 +39,7 @@ interface ItemAnomaly {
   direction: string | null;
   devBom: number | null;
   tolerance: number | null;
+  toleranceRaw: string | null;
   residualQty: number | null;
   residualRatio: number | null;
   zScore: number | null;
@@ -503,7 +504,9 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
                   <TableCell className={`text-xs px-2 py-1 text-right font-semibold ${a.devBom != null && Math.abs(a.devBom) > 0.1 ? 'text-red-600' : a.devBom != null && Math.abs(a.devBom) > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
                     {fmtPctAbs(a.devBom)}
                   </TableCell>
-                  <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground">{a.tolerance != null ? fmtPctAbs(a.tolerance) : '—'}</TableCell>
+                  <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground" title={a.toleranceRaw || ''}>
+                    {a.tolerance != null ? fmtPctAbs(a.tolerance) : a.toleranceRaw ? <span className="text-amber-600 text-[10px]">{a.toleranceRaw}</span> : '—'}
+                  </TableCell>
                   <TableCell className={`text-xs px-2 py-1 text-right ${a.zScore != null && a.zScore > 2 ? 'text-red-600 font-bold' : a.zScore != null && a.zScore > 1 ? 'text-amber-600' : ''}`}>
                     {a.zScore != null ? a.zScore.toFixed(2) : '—'}
                   </TableCell>
@@ -530,6 +533,69 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
           </Table>
         </ScrollArea>
       </div>
+
+      {/* Detail Record — semua item dengan tolerance */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-1.5">
+            <Package className="h-4 w-4 text-muted-foreground" />
+            Detail Record — Semua Item ({data.itemAnomalies.length})
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">Tampilkan semua item dengan tolerance, Dev/BOM, dan status</p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <ScrollArea className="h-[50vh]">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background z-10">
+                <TableRow>
+                  <TableHead className="text-xs h-7 px-2">Item</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-center">Dir</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">QTY BOM</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">QTY Dev</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Nominal</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Dev/BOM</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Tol (Pct)</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Tol (Raw)</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-right">Residual</TableHead>
+                  <TableHead className="text-xs h-7 px-2 text-center">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.itemAnomalies.length === 0 ? (
+                  <TableRow><TableCell colSpan={10} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
+                ) : data.itemAnomalies.map((a, i) => (
+                  <TableRow key={i} className={a.isCritical ? 'bg-red-50/40 dark:bg-red-950/10' : a.isAbnormal ? 'bg-red-50/20 dark:bg-red-950/5' : ''}>
+                    <TableCell className="text-xs px-2 py-1 font-medium whitespace-normal max-w-[300px]" title={a.itemName}>{a.itemName}</TableCell>
+                    <TableCell className={`text-xs px-2 py-1 text-center font-semibold ${directionColor(a.direction)}`}>{a.direction?.[0]}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground">{fmtNum(a.qtyBom)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right">{fmtNum(a.qtyDeviasi)}</TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right font-semibold">{fmtIDR(a.nominalDeviasi)}</TableCell>
+                    <TableCell className={`text-xs px-2 py-1 text-right font-semibold ${a.devBom != null && Math.abs(a.devBom) > 0.1 ? 'text-red-600' : a.devBom != null && Math.abs(a.devBom) > 0.05 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {fmtPctAbs(a.devBom)}
+                    </TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground">
+                      {a.tolerance != null ? fmtPctAbs(a.tolerance) : '—'}
+                    </TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-right text-muted-foreground" title={a.toleranceRaw || ''}>
+                      {a.toleranceRaw ? (
+                        a.toleranceRaw.toUpperCase().includes('BELUM') ? <span className="text-amber-600 text-[10px]">BELUM</span> : <span className="text-[10px]">{a.toleranceRaw}</span>
+                      ) : '—'}
+                    </TableCell>
+                    <TableCell className={`text-xs px-2 py-1 text-right ${a.residualRatio != null && a.residualRatio > 0.5 ? 'text-red-600 font-semibold' : ''}`}>
+                      {a.residualRatio != null ? fmtPctAbs(a.residualRatio) : '—'}
+                    </TableCell>
+                    <TableCell className="text-xs px-2 py-1 text-center">
+                      {a.isCritical ? <Badge variant="destructive" className="text-[10px] px-1">Kritis</Badge>
+                        : a.isAbnormal ? <Badge className="text-[10px] px-1 bg-red-100 text-red-700 border-red-300">Abnormal</Badge>
+                        : <Badge variant="secondary" className="text-[10px] px-1">Normal</Badge>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        </CardContent>
+      </Card>
 
       {/* Benchmark comparison summary */}
       <Card>
