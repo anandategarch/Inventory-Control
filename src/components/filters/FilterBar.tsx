@@ -351,6 +351,7 @@ export function FilterBar() {
                       value={driveUrl}
                       onChange={(e) => setDriveUrl(e.target.value)}
                       disabled={driveImporting}
+                      maxLength={2000}
                       className="text-xs"
                     />
                     <p className="text-[11px] text-muted-foreground">
@@ -366,6 +367,7 @@ export function FilterBar() {
                       value={driveUrl}
                       onChange={(e) => setDriveUrl(e.target.value)}
                       disabled={driveImporting}
+                      maxLength={2000}
                       className="text-xs"
                     />
                     <p className="text-[11px] text-muted-foreground">
@@ -383,6 +385,7 @@ export function FilterBar() {
                       value={driveUrl}
                       onChange={(e) => setDriveUrl(e.target.value)}
                       disabled={driveImporting}
+                      maxLength={2000}
                       className="text-xs"
                     />
                     <p className="text-[11px] text-muted-foreground">

@@ -50,6 +50,9 @@ async function convertInProcess(excelPath: string, csvPath: string): Promise<Con
     headers.push(String(cellToValue(headerRow.getCell(c)) ?? '').trim());
   }
 
+  // Bug 4 fix: use writeFileSync for header (small data, <1KB)
+  // appendFileSync below is also sync but chunked at 2000 rows
+  // Full async refactor would require changing all fs.* calls to fs/promises
   fs.writeFileSync(csvPath, stringify([headers]));
 
   const CHUNK_SIZE = 2000;

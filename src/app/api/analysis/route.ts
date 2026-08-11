@@ -96,7 +96,7 @@ function buildExecSummaryFromSql(
     totalSurplus: c.totalSurplus,
     lossToSales: c.sales > 0 ? c.totalLoss / c.sales : null,
     surplusToSales: c.sales > 0 ? c.totalSurplus / c.sales : null,
-    deviationToBom: c.qtyBom > 0 ? c.qtyDeviasi / c.qtyBom : null,
+    deviationToBom: c.qtyBom !== 0 ? c.qtyDeviasi / Math.abs(c.qtyBom) : null,
     residualLossQty: c.residualLossQty,
     residualLossPct: c.qtyDeviasi > 0 ? c.residualLossQty / c.qtyDeviasi : null,
   };

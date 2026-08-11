@@ -48,13 +48,5 @@ export async function* parseCsvStream(csvPath: string): AsyncGenerator<CsvRow> {
   }
 }
 
-// ============================================================
-//  Count rows in CSV (for progress reporting)
-// ============================================================
-export async function countCsvRows(csvPath: string): Promise<number> {
-  let count = 0;
-  for await (const _ of parseCsvStream(csvPath)) {
-    count++;
-  }
-  return count;
-}
+// Bug 5 fix: countCsvRows removed — was dead code, never called anywhere.
+// If needed in future, use line count instead of full CSV parse.

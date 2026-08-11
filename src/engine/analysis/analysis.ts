@@ -35,7 +35,8 @@ function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
         counts = new Map();
         byOutlet.set(r.outletId, counts);
       }
-      const rounded = Math.round(r.nominalSales); // round to avoid float precision issues
+      // Bug 11 fix: round to 2 decimal places (preserve rupiah precision, avoid float comparison issues)
+      const rounded = Math.round(r.nominalSales * 100) / 100;
       counts.set(rounded, (counts.get(rounded) ?? 0) + 1);
     }
   }
@@ -1117,7 +1118,7 @@ export function computeNetCostTrend(
         outletCounts = new Map();
         p.salesCounts.set(r.outletId, outletCounts);
       }
-      const rounded = Math.round(r.nominalSales);
+      const rounded = Math.round(r.nominalSales * 100) / 100; // Bug 11 fix: 2 decimal places
       outletCounts.set(rounded, (outletCounts.get(rounded) ?? 0) + 1);
     }
     if (r.nominalDeviasi != null && r.nominalDeviasi > 0) p.lossNominal += r.nominalDeviasi;
