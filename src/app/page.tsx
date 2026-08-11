@@ -20,6 +20,18 @@ import {
   AreaLossSalesComparison,
 } from '@/components/dashboard/ExtraCharts';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
+import {
+  VarianceAnalysis, OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
+} from '@/components/dashboard/AdvancedAnalysis';
+import {
+  HistoricalAnalysisCard, TrendDecompositionCard, MultiPeriodComparisonCard, MenuAnalysisCard,
+} from '@/components/dashboard/AnalysisCards';
+import { AlertPanel } from '@/components/dashboard/AlertPanel';
+import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
+import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
+import {
+  CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
+} from '@/components/dashboard/CostAccounting';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
 import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
@@ -30,6 +42,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
   TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
+  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -212,6 +225,24 @@ export default function DashboardPage() {
                 <DeviationBreakdownChart data={analysis.data} />
               </section>
 
+              {/* Section: Trend Decomposition */}
+              <section>
+                <SectionHeader
+                  icon={<GitBranch className="h-4 w-4 text-muted-foreground" />}
+                  title="Dekomposisi Trend"
+                />
+                <TrendDecompositionCard data={analysis.data} />
+              </section>
+
+              {/* Section: Multi-Period Comparison */}
+              <section>
+                <SectionHeader
+                  icon={<Calendar className="h-4 w-4 text-muted-foreground" />}
+                  title="Perbandingan Multi-Periode"
+                />
+                <MultiPeriodComparisonCard data={analysis.data} />
+              </section>
+
               {/* Section: Top Items */}
               <section>
                 <SectionHeader
@@ -296,6 +327,26 @@ export default function DashboardPage() {
 
             {/* ====== INVESTIGATION TAB ====== */}
             <TabsContent value="investigasi" className="space-y-4 mt-2">
+              {/* Alert Panel */}
+              <section>
+                <SectionHeader
+                  icon={<ShieldAlert className="h-4 w-4 text-muted-foreground" />}
+                  title="Sistem Peringatan"
+                  badge={`${analysis.data.investigationWorklist.length} alert`}
+                />
+                <AlertPanel data={analysis.data} />
+              </section>
+
+              {/* Historical Z-Score */}
+              <section>
+                <SectionHeader
+                  icon={<History className="h-4 w-4 text-muted-foreground" />}
+                  title="Anomali Historical"
+                />
+                <HistoricalAnalysisCard data={analysis.data} />
+              </section>
+
+              {/* Investigation Worklist */}
               <section>
                 <SectionHeader
                   icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
@@ -305,28 +356,75 @@ export default function DashboardPage() {
                 <InvestigationWorklist data={analysis.data} />
               </section>
 
+              {/* Variance + Outlet Health Ranking */}
               <section className="grid lg:grid-cols-2 gap-4">
-                <TopItemsByNominal data={analysis.data} />
-                <TopItemsByDevBom data={analysis.data} />
+                <VarianceAnalysis data={analysis.data} />
+                <OutletHealthRanking data={analysis.data} />
+              </section>
+
+              {/* Info card about Outlet Scorecard */}
+              <section>
+                <Card className="border-primary/30 bg-primary/5">
+                  <CardContent className="p-3">
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <FileSearch className="h-3.5 w-3.5 text-primary" />
+                      <span>Klik baris outlet pada tabel <span className="font-medium text-foreground">Ranking Kondisi Outlet</span> di atas untuk membuka <span className="font-medium text-foreground">Outlet Scorecard</span> lengkap (health score, ranking, 4-metric grid, top item, recommended actions).</span>
+                    </p>
+                  </CardContent>
+                </Card>
               </section>
 
               <section className="grid lg:grid-cols-2 gap-4">
-                <TopItemsHorizontalBar data={analysis.data} />
-                <VarianceDivergingBar data={analysis.data} />
+                <TopItemsByNominal data={analysis.data} />
+                <TopItemsByDevBom data={analysis.data} />
               </section>
             </TabsContent>
 
             {/* ====== AREA TAB ====== */}
             <TabsContent value="area" className="space-y-4 mt-2">
+              {/* Area Comparison */}
               <section>
                 <SectionHeader
                   icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
                   title="Perbandingan Area"
                 />
+                <AreaComparison data={analysis.data} />
+              </section>
+
+              {/* Area Contribution + Loss/Sales */}
+              <section>
+                <SectionHeader
+                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                  title="Kontribusi Area"
+                />
                 <div className="grid lg:grid-cols-2 gap-4">
                   <AreaContributionBar data={analysis.data} />
                   <AreaLossSalesComparison data={analysis.data} />
                 </div>
+              </section>
+
+              {/* Outlet Health Ranking + Efficiency Matrix */}
+              <section className="grid lg:grid-cols-2 gap-4">
+                <OutletHealthRanking data={analysis.data} />
+                <OutletEfficiencyMatrix data={analysis.data} />
+              </section>
+
+              {/* Cost Per Thousand */}
+              <section>
+                <SectionHeader
+                  icon={<Calculator className="h-4 w-4 text-muted-foreground" />}
+                  title="Biaya per Rp 1.000 Penjualan per Outlet"
+                />
+                <CostPerThousandCard data={analysis.data} />
+              </section>
+
+              {/* Item Consistency Analysis */}
+              <section>
+                <SectionHeader
+                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                  title="Pola Item (Systemic / Widespread / Isolated)"
+                />
+                <ItemConsistencyAnalysis data={analysis.data} />
               </section>
 
               <section>
@@ -347,6 +445,23 @@ export default function DashboardPage() {
                   icon={<Coins className="h-4 w-4 text-muted-foreground" />}
                   title="Analisis Cost Accounting"
                 />
+                <div className="grid lg:grid-cols-2 gap-4">
+                  <CostImpactDecomposition data={analysis.data} />
+                  <ParetoAnalysis data={analysis.data} />
+                </div>
+              </section>
+
+              {/* Net Cost Trend */}
+              <section>
+                <SectionHeader
+                  icon={<Activity className="h-4 w-4 text-muted-foreground" />}
+                  title="Tren Biaya Bersih"
+                />
+                <NetCostTrendChart data={analysis.data} />
+              </section>
+
+              {/* Cumulative Deviation */}
+              <section>
                 <CumulativeDeviationArea data={analysis.data} />
               </section>
 
@@ -393,6 +508,8 @@ export default function DashboardPage() {
       <DrillDownDrawer />
       <SourceDataModal />
       <CardDrillDown data={analysis.data} />
+      <OutletScorecard data={analysis.data} />
+      <ItemDeepDive data={analysis.data} />
     </div>
   );
 }
