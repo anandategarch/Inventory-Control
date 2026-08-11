@@ -16,11 +16,11 @@ interface FormulaInfoProps {
  * Info icon with tooltip showing calculation formula.
  * Use in chart card headers to explain how the metric is computed.
  *
- * Readability improvements:
- * - Uses bg-popover (light bg in light mode, dark bg in dark mode) for high contrast
- * - max-w-md (28rem) for longer structured descriptions
- * - Structured layout: header + formula box + description + example
- * - Description supports \n line breaks for UNTUK APA/CARA BACA/CONTOH/ACTION format
+ * Readability on dark background (bg-primary):
+ * - Formula box: bg-white/10 (translucent overlay) for separation
+ * - Structured labels: colored badges (UNTUK APA=emerald, CARA BACA=sky, CONTOH=amber, ACTION=rose)
+ * - Description text: text-primary-foreground/90 (slightly dimmed white)
+ * - leading-relaxed for comfortable line height
  */
 export function FormulaInfo({ formula, description, side = 'top' }: FormulaInfoProps) {
   return (
@@ -37,19 +37,31 @@ export function FormulaInfo({ formula, description, side = 'top' }: FormulaInfoP
         </TooltipTrigger>
         <TooltipContent side={side} className="max-w-md p-0">
           <div className="space-y-2 p-3">
-            <p className="text-xs font-semibold text-foreground">Rumus Perhitungan</p>
-            <p className="text-[11px] font-mono bg-muted text-foreground px-2 py-1.5 rounded border border-border/50">{formula}</p>
+            <p className="text-xs font-semibold">Rumus Perhitungan</p>
+            <p className="text-[11px] font-mono bg-white/10 px-2 py-1.5 rounded border border-white/10">{formula}</p>
             {description && (
-              <div className="text-[11px] text-muted-foreground leading-relaxed space-y-1">
-                {description.split('\n').map((line, i) => (
-                  <p key={i} className={line.trim() === '' ? 'h-1' : ''}>
-                    {line.includes('UNTUK APA:') || line.includes('CARA BACA:') || line.includes('CONTOH:') || line.includes('ACTION:') ? (
-                      <span className="text-foreground font-medium">{line}</span>
-                    ) : (
-                      line
-                    )}
-                  </p>
-                ))}
+              <div className="text-[11px] leading-relaxed space-y-1">
+                {description.split('\n').map((line, i) => {
+                  if (line.trim() === '') return <div key={i} className="h-1" />;
+                  // Color-code structured labels for readability on dark bg
+                  const isUntukApa = line.startsWith('UNTUK APA:');
+                  const isCaraBaca = line.startsWith('CARA BACA:');
+                  const isContoh = line.startsWith('CONTOH:');
+                  const isAction = line.startsWith('ACTION:');
+                  const labelColor = isUntukApa ? 'text-emerald-300'
+                    : isCaraBaca ? 'text-sky-300'
+                    : isContoh ? 'text-amber-300'
+                    : isAction ? 'text-rose-300'
+                    : '';
+                  if (labelColor) {
+                    return (
+                      <p key={i}>
+                        <span className={`font-semibold ${labelColor}`}>{line}</span>
+                      </p>
+                    );
+                  }
+                  return <p key={i} className="text-primary-foreground/85">{line}</p>;
+                })}
               </div>
             )}
           </div>
