@@ -46,7 +46,7 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
           Analisis Historical (Z-Score)
           <FormulaInfo
             formula="Z-Score = (Current − Historical Avg) / Std Dev"
-            description="Mengidentifikasi item yang deviation-nya abnormal vs pola historical-nya. Z-Score > 3 (merah) = outlier signifikan, > 2 (kuning) = warning. Klik baris untuk buka scorecard outlet."
+            description={'UNTUK APA: Mengidentifikasi outlet/item yang menyimpang dari pola historical (z-score > threshold).\nCARA BACA: Z-Score > 3 = ekstrem (merah). > 2 = signifikan (kuning). Menunjukkan anomali vs perilaku normal outlet.\nCONTOH: Outlet A current dev 49% vs historical avg 10% (z-score 3.5) → ekstrem.\nACTION: Investigasi perubahan operasional di outlet dengan z-score > 3.'}
             example="Current 18% vs Historical 8% ± 3% → Z = (18-8)/3 = 3.33 (outlier)"
             side="bottom"
           />
@@ -122,7 +122,7 @@ export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
           Dekomposisi Trend (3-Efek)
           <FormulaInfo
             formula="ΔNOMINAL = Volume Effect + Price Effect + Operational Effect"
-            description="Membedakan total perubahan deviation menjadi: Volume (perubahan volume aktivitas BOM), Price (perubahan harga), dan Operational (perubahan Dev/BOM ratio). Hijau = mengurangi deviation, merah = menambah deviation."
+            description={'UNTUK APA: Mendekomposisi kenaikan NOMINAL DEVIASI ke dalam 3 efek: Volume, Price, Operational.\nCARA BACA: Volume Effect = dampak kenaikan qty. Price Effect = dampak kenaikan harga. Operational Effect = dampak perubahan usage vs SOC.\nCONTOH: Sales +54%, BOM +42%, Deviasi +442% → Volume +42%, Price +X%, Operational +sisanya.\nACTION: Operational Effect dominan → investigasi proses/portioning. Price Effect dominan → cek harga beli.'}
             example="Δ +20M = Volume +15M + Price +5M + Operational +0M"
             side="bottom"
           />
@@ -174,7 +174,7 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
           Perbandingan Multi-Periode
           <FormulaInfo
             formula="Trend per periode: Sales vs BOM vs Deviasi + Growth %"
-            description="Membandingkan perkembangan Sales, BOM, dan Deviasi antar periode (minggu/bulan). Garis = growth % deviasi vs periode sebelumnya."
+            description={'UNTUK APA: Membandingkan metric kunci (Sales, BOM, Deviasi) across multiple period untuk lihat pola trend.\nCARA BACA: Bar = nilai absolut per period. Line = growth %. Trend naik di Deviasi sementara Sales flat = memburuk.\nCONTOH: W1 Dev 10M, W2 Dev 15M, W3 Dev 25M → trend naik meski Sales stabil.\nACTION: Trend deviasi naik konsisten → evaluasi perubahan proses bertahap.'}
             example="W1 → W2 → W3: Deviasi 30M → 25M → 40M (growth +60% di W3)"
             side="bottom"
           />
@@ -247,7 +247,7 @@ export function MenuAnalysisCard({ data }: { data: AnalysisData }) {
           Analisis Menu/BOM
           <FormulaInfo
             formula="Group by item prefix → detect shared deviation patterns"
-            description="Pengelompokan item berdasarkan prefix nama (e.g., 'AYAM', 'BERAS'). Mendeteksi apakah ada pola deviation yang sama pada group menu tertentu. Outliers = item dengan deviation di luar rata-rata group."
+            description={'UNTUK APA: Menganalisis hubungan bahan pembentuk menu — apakah semua komponen bergerak bersama?\nCARA BACA: Group by item prefix (mis. MIE-> mie, ayam, pangsit). Jika 1 bahan naik jauh lebih tinggi dari bahan lain = outlier.\nCONTOH: Menu MIE: mie +5%, ayam +200%, pangsit +3% → ayam = outlier (investigasi).\nACTION: Outlier item → cek quality issue, waste, atau SOC issue.'}
             example="Prefix 'AYAM' (5 item, 3 outlier) → pola deviation pada menu ayam"
             side="bottom"
           />

@@ -320,3 +320,29 @@ Stage Summary:
 - Item Consistency uses outlet count classification (SYSTEMIC ≥10, WIDESPREAD 5-9, ISOLATED 2-4) — not historical periods
 - WEEK 4 properly defined in all configs
 - Vercel will auto-deploy from this push
+
+---
+Task ID: 11
+Agent: Main (Z.ai Code)
+Task: Fix all FormulaInfo tooltip descriptions to use structured format
+
+Work Log:
+- Read worklog.md (Tasks 3-10) to understand prior context: 6 dashboard components recreated by subagent (Task ID 8) after sandbox reset; tooltip descriptions used short unstructured format instead of original UNTUK APA / CARA BACA / CONTOH / ACTION structured format
+- Read all 5 affected files to locate FormulaInfo description props:
+  * ExtraCharts.tsx — 9 FormulaInfo components (HealthDistributionDonut, DeviationCategoryDonut, AreaContributionBar, TopItemsHorizontalBar, VarianceDivergingBar, OutletRadarChart, DirectionDistributionPie, CumulativeDeviationArea, AreaLossSalesComparison)
+  * CostAccounting.tsx — 5 FormulaInfo components (CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart)
+  * AdvancedAnalysis.tsx — 4 FormulaInfo components (VarianceAnalysis, OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison) — ItemConsistencyAnalysis already used structured format, skipped per task spec
+  * AnalysisCards.tsx — 4 FormulaInfo components (HistoricalAnalysisCard, TrendDecompositionCard, MultiPeriodComparisonCard, MenuAnalysisCard)
+  * AlertPanel.tsx — 1 FormulaInfo component
+- Replaced each `description="..."` with `description={'UNTUK APA: ...\nCARA BACA: ...\nCONTOH: ...\nACTION: ...'}` using JSX expression syntax with single-quoted JS string and literal \n newline escapes
+- Total edits: 22 FormulaInfo descriptions updated across 5 files
+- Kept `formula` and `example` props unchanged per task rules
+- Replaced HTML entities (&gt;, &lt;) in original descriptions with direct `>` `<` characters (now safe inside JS string literal expressions)
+- Verified lint: `bun run lint` exit code 0, 0 errors, 0 warnings
+
+Stage Summary:
+- All 22 FormulaInfo tooltip descriptions across 5 dashboard component files now use the structured UNTUK APA / CARA BACA / CONTOH / ACTION format
+- Tooltips will render as 4-line structured guidance for users: purpose, how to read, example, recommended action
+- Consistent with ItemConsistencyAnalysis pattern (the one component subagent had already done correctly)
+- No functional or schema changes — only description string content/format changed
+- Lint passes cleanly; ready for preview/deploy

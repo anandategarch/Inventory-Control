@@ -42,7 +42,7 @@ export function CostImpactDecomposition({ data }: { data: AnalysisData }) {
           Dampak Biaya per Kategori
           <FormulaInfo
             formula="Total = WASTE + SUSUT + TRIAL + RESIDUAL"
-            description="Komposisi magnitude deviation (QTY) per kategori. Residual > 50% (merah) menandakan mayoritas deviation tidak terjelaskan. Klik bar untuk detail."
+            description={'UNTUK APA: Mendekomposisi total dampak biaya deviasi ke dalam kategori penyebab.\nCARA BACA: Setiap kategori ditampilkan sebagai % dari total dan % dari PENJUALAN. RESIDUAL dominan = banyak deviasi tidak terjelaskan.\nCONTOH: WASTE Rp 2M (20%), SUSUT Rp 1M (10%), RESIDUAL Rp 7M (70%).\nACTION: WASTE tinggi → evaluasi proses produksi. RESIDUAL tinggi → audit pencatatan komponen.'}
             example="Waste 8K + Susut 6K + Trial 4K + Residual 42K = 60K total"
             side="bottom"
           />
@@ -163,7 +163,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
           Analisis Pareto (ABC)
           <FormulaInfo
             formula="Class A: cumulative ≤ 70% | Class B: 70-90% | Class C: > 90%"
-            description="Pareto/ABC classification. Class A (sedikit item, dampak besar) → fokus investigasi. Class C (banyak item, dampak kecil) → monitor saja. Klik baris untuk drill-down."
+            description={'UNTUK APA: Mengidentifikasi vital few items yang menyumbang sebagian besar dampak biaya (prinsip 80/20).\nCARA BACA: Class A = 70% pertama cumulative biaya. Class B = 70-90%. Class C = > 90%.\nCONTOH: 15 item Class A (20% items) = 70% total biaya.\nACTION: Fokus investigasi pada Class A dulu → dampak terbesar dengan effort terkecil.'}
             example="20 item Class A menghasilkan 70% total |NOMINAL DEVIASI|"
             side="bottom"
           />
@@ -249,7 +249,7 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
           Matriks Efisiensi Outlet
           <FormulaInfo
             formula="X = PENJUALAN (Jt) | Y = LOSS/PENJUALAN (%)"
-            description="Scatter plot setiap outlet. X = Sales (Juta), Y = LOSS/PENJUALAN (%), Ukuran bubble = |NOMINAL DEVIASI|. 4 kuadran: STAR (sales besar, loss rendah), STABLE (sales kecil, loss rendah), ATTENTION (sales besar, loss tinggi), PROBLEM (sales kecil, loss tinggi). Klik bubble untuk buka scorecard."
+            description={'UNTUK APA: Memetakan posisi setiap outlet dalam matriks PENJUALAN vs efisiensi.\nCARA BACA: Bintang = belajar best practice. Masalah = prioritaskan intervensi. Perhatian = PENJUALAN besar tapi boros.\nCONTOH: Outlet PENJUALAN Rp 800Jt & LOSS/PENJUALAN 3% = Bintang.\nACTION: Pairing outlet Masalah dengan Bintang se-area untuk knowledge transfer.'}
             example="Outlet A: Sales 800Jt, LOSS/PENJUALAN 3% → STAR (emerald)"
             side="bottom"
           />
@@ -368,7 +368,7 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
           Biaya per Rp 1.000 Penjualan
           <FormulaInfo
             formula="Biaya per Rp 1000 = |NOMINAL DEVIASI| / PENJUALAN × 1000"
-            description="Berapa rupiah deviation per Rp 1.000 penjualan. Metrik ini memungkinkan perbandingan antar outlet dengan skala sales berbeda. > Rp 100 (merah, kritis), > Rp 50 (kuning, warning). Klik baris untuk buka scorecard."
+            description={'UNTUK APA: Metrik sederhana untuk benchmark antar outlet — setiap Rp 1.000 PENJUALAN, berapa rupiah yang bocor?\nCARA BACA: Angka tinggi = boros. > Rp 100 = kritis. < Rp 50 = sehat.\nCONTOH: PENJUALAN Rp 100Jt, DEVIASI Rp 5Jt → Rp 50 per Rp 1.000 (5%).\nACTION: Outlet > Rp 100 → audit operasional segera.'}
             example="Deviasi 5M / Sales 100M × 1000 = Rp 50 per Rp 1.000 (warning)"
             side="bottom"
           />
@@ -436,7 +436,7 @@ export function NetCostTrendChart({ data }: { data: AnalysisData }) {
           Tren Biaya Bersih
           <FormulaInfo
             formula="Biaya Bersih = Total LOSS − Total SURPLUS"
-            description="Bar merah = LOSS (Rp Juta, sumbu kiri), bar hijau = SURPLUS (Rp Juta, sumbu kiri). Garis kuning = net cost ratio % (sumbu kanan). ReferenceLine y=0 = titik impas. Net cost ratio > 0 = loss dominan."
+            description={'UNTUK APA: Melacak NET cost impact dari waktu ke waktu (LOSS dikurangi SURPLUS).\nCARA BACA: Positif = net loss (uang bocor). Negatif = net surplus (over-portioning atau under-recording). Trend menurun = membaik.\nCONTOH: LOSS Rp 10Jt - SURPLUS Rp 9Jt = Net Rp 1Jt (loss).\nACTION: Trend naik = evaluasi perubahan proses. Net negatif konsisten = cek under-portioning.'}
             example="W1: LOSS 80M − SURPLUS 20M = Net 60M (LOSS dominan)"
             side="bottom"
           />

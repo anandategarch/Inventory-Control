@@ -46,7 +46,7 @@ export function HealthDistributionDonut({ data }: { data: AnalysisData }) {
           Distribusi Kondisi Record
           <FormulaInfo
             formula="Skor Kondisi = Normal / Total × 100"
-            description="Proporsi record yang sehat terhadap total record. Normal = tidak ter-trigger rule. Peringatan = warning severity. Masalah = abnormal severity."
+            description={'UNTUK APA: Visualisasi proporsi record Normal/Peringatan/Masalah.\nCARA BACA: Irisan merah (Masalah) besar = banyak record bermasalah. Hijau dominan = kondisi sehat.\nCONTOH: 60% Normal, 25% Peringatan, 15% Masalah → skor 60.\nACTION: Masalah > 20% → intervensi sistemik.'}
             example="4638 Normal / 10000 Total = 46.4%"
             side="bottom"
           />
@@ -130,7 +130,7 @@ export function DeviationCategoryDonut({ data }: { data: AnalysisData }) {
           Komposisi DEVIASI (Donut)
           <FormulaInfo
             formula="QTY Deviasi = |Waste| + |Susut| + |Trial| + |Residual|"
-            description="Komposisi magnitude deviation. Residual = sisa setelah Waste/Susut/Trial. Residual &gt; 50% (merah) menandakan mayoritas deviation tidak terjelaskan."
+            description={'UNTUK APA: Versi donut dari Rincian DEVIASI — memperlihatkan proporsi tiap kategori.\nCARA BACA: Irisan RESIDUAL dominan (> 50%) = mayoritas deviasi tidak terjelaskan WASTE/SUSUT/TRIAL.\nCONTOH: RESIDUAL 70% → banyak deviasi tak terklasifikasi.\nACTION: RESIDUAL dominan → audit pencatatan komponen.'}
             example="Waste 8K + Susut 6K + Trial 4K + Residual 42K = 60K total"
             side="bottom"
           />
@@ -219,7 +219,7 @@ export function AreaContributionBar({ data }: { data: AnalysisData }) {
           Kontribusi Area terhadap DEVIASI
           <FormulaInfo
             formula="|NOMINAL DEVIASI| per Area / Σ semua Area"
-            description="Kontribusi tiap area terhadap total magnitude deviation (Rp Juta). Warna merah = LOSS/PENJUALAN &gt; 10%, kuning &gt; 5%, hijau lainnya. Klik bar untuk filter area."
+            description={'UNTUK APA: Memperlihatkan area mana yang menyumbang terbesar terhadap total deviasi jaringan.\nCARA BACA: Bar lebih panjang = kontribusi deviasi lebih besar. Warna merah = LOSS/PENJUALAN > 10%.\nCONTOH: JAWA BARAT 25% dari total deviasi network.\nACTION: Fokus intervensi pada 3 area kontribusi terbesar.'}
             example="JAKBAR 80M / 200M total = 40% kontribusi"
             side="bottom"
           />
@@ -293,7 +293,7 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
           Top 10 Item by |NOMINAL DEVIASI|
           <FormulaInfo
             formula="Rank by |NOMINAL DEVIASI| (Rp Juta) descending"
-            description="Item dengan financial impact tertinggi. Merah = LOSS (pemakaian aktual &gt; SOC), hijau = SURPLUS (pemakaian aktual &lt; SOC). Klik bar untuk drill-down."
+            description={'UNTUK APA: Visualisasi bar horizontal 10 item dengan deviasi nominal terbesar.\nCARA BACA: Bar merah = LOSS (aktual > standar). Bar hijau = SURPLUS. Panjang bar = magnitude.\nCONTOH: AYAM (LOSS Rp 8Jt) > MINYAK (LOSS Rp 5Jt).\nACTION: Fokus investigasi pada top 3 — dampak biaya terbesar.'}
             example="Item A: |NOMINAL DEVIASI| = Rp 182M (LOSS)"
             side="bottom"
           />
@@ -386,7 +386,7 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
               Diverging: Memburuk vs Membaik
               <FormulaInfo
                 formula="Δ = |NOMINAL DEVIASI| current − |NOMINAL DEVIASI| previous"
-                description="Item dengan perubahan deviation terbesar vs periode pembanding. Hijau (kiri) = membaik (deviasi turun), merah (kanan) = memburuk (deviasi naik). Klik bar untuk drill-down."
+                description={'UNTUK APA: Visualisasi diverging — item membaik di kiri (hijau), item memburuk di kanan (merah).\nCARA BACA: Bar hijau memanjang ke kiri = deviasi turun (membaik). Bar merah memanjang ke kanan = deviasi naik (memburuk).\nCONTOH: ITEM A +Rp 20Jt (memburuk) vs ITEM B -Rp 15Jt (membaik).\nACTION: Investigasi item memburuk (kanan) — penyebab kenaikan deviasi.'}
                 example="Current 80M − Previous 50M = +30M (Memburuk)"
                 side="bottom"
               />
@@ -511,7 +511,7 @@ export function OutletRadarChart({ data }: { data: AnalysisData }) {
           Radar: Top 3 Outlet Terburuk
           <FormulaInfo
             formula="Tiap metric dinormalisasi 0-100 (100 = terburuk di antara top 3)"
-            description="Outlet dengan healthScore terendah. 5 metrics: % DEV TO BOM, RESIDUAL %, LOSS/PENJUALAN, Jumlah Masalah, |NOMINAL DEVIASI|. Klik nama outlet di legend untuk fokus scorecard."
+            description={'UNTUK APA: Membandingkan profil multi-dimensi 3 outlet terburuk dalam satu radar.\nCARA BACA: Pola radar luas = outlet bermasalah di banyak dimensi. Bentuk mirip antar outlet = akar masalah serupa.\nCONTOH: Outlet A besar di LOSS/PENJUALAN, Outlet B besar di Jumlah Masalah → prioritas berbeda.\nACTION: Bentuk radar mirip → intervensi sistemik. Berbeda → intervensi spesifik per outlet.'}
             example="Outlet A: devBom 18% / max 20% = 90 (skala 100)"
             side="bottom"
           />
@@ -598,7 +598,7 @@ export function DirectionDistributionPie({ data }: { data: AnalysisData }) {
           Distribusi Arah (QTY)
           <FormulaInfo
             formula="LOSS: QTY Deviasi > 0  |  SURPLUS: QTY Deviasi < 0"
-            description="Komposisi jumlah record berdasarkan arah deviation. LOSS = pemakaian aktual melebihi SOC, SURPLUS = pemakaian aktual di bawah SOC."
+            description={'UNTUK APA: Proporsi jumlah record LOSS vs SURPLUS (bukan magnitude).\nCARA BACA: Irisan merah dominan = mayoritas item loss (aktual > standar). Bisa juga LOSS mayoritas tapi SURPLUS magnitude besar.\nCONTOH: 70% LOSS, 30% SURPLUS → dominasi pemakaian berlebih.\nACTION: Jika SURPLUS > 40% → cek under-portioning atau kesalahan pencatatan standar.'}
             example="LOSS 5500 / SURPLUS 3200 = 63% LOSS"
             side="bottom"
           />
@@ -682,7 +682,7 @@ export function CumulativeDeviationArea({ data }: { data: AnalysisData }) {
           Deviasi Kumulatif
           <FormulaInfo
             formula="Kumulatif(t) = Σ |NOMINAL DEVIASI|(0..t)  |  % DEV TO BOM = avg |pctDevToBom| × 100"
-            description="Akumulasi magnitude deviation sepanjang minggu (Area, sumbu kiri Rp Juta). Garis kuning = rasio Dev/BOM % (sumbu kanan). Trend naik = akumulasi deviation bertambah."
+            description={'UNTUK APA: Melihat akumulasi deviasi dari waktu ke waktu — seberapa cepat bocor menumpuk.\nCARA BACA: Area biru = deviasi kumulatif (Jt). Garis kuning = % DEV TO BOM mingguan. Kemiringan curam = deviasi bertambah cepat.\nCONTOH: Akhir bulan kumulatif Rp 500Jt → rata-rata Rp 125Jt/minggu.\nACTION: Kemiringan naik tajam → evaluasi periode tersebut.'}
             example="W1 30M + W2 25M + W3 40M = 95M kumulatif di W3"
             side="bottom"
           />
@@ -775,7 +775,7 @@ export function AreaLossSalesComparison({ data }: { data: AnalysisData }) {
           LOSS/PENJUALAN per Area
           <FormulaInfo
             formula="LOSS/PENJUALAN = Σ Nominal LOSS area / Σ Sales area × 100%"
-            description="Rasio kerugian terhadap penjualan per area. Merah &gt; 10% (kritis), kuning &gt; 5% (warning), hijau lainnya. Klik bar untuk filter area."
+            description={'UNTUK APA: Bar chart membandingkan rasio LOSS/PENJUALAN antar area dengan threshold 5% & 10%.\nCARA BACA: Bar merah = > 10% (kritis). Bar kuning = 5-10% (peringatan). Bar hijau = < 5% (sehat).\nCONTOH: JAWA BARAT 12% (merah), JAKARTA 4% (hijau).\nACTION: Area > 10% → audit operasional segera.'}
             example="LOSS 8M / Sales 100M = 8% (warning)"
             side="bottom"
           />

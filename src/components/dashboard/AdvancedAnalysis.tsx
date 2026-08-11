@@ -108,7 +108,7 @@ export function VarianceAnalysis({ data }: { data: AnalysisData }) {
           Analisis Perubahan
           <FormulaInfo
             formula="Perubahan = NOMINAL DEVIASI Kini − NOMINAL DEVIASI Sebelumnya"
-            description="Mengidentifikasi item dengan perubahan deviation terbesar vs periode pembanding. Memburuk = deviation naik (merah), Membaik = deviation turun (hijau). Klik baris untuk drill-down."
+            description={'UNTUK APA: Mengidentifikasi item dengan perubahan NOMINAL DEVIASI terbesar antar periode.\nCARA BACA: Memburuk (merah) = deviasi naik. Membaik (hijau) = deviasi turun. Hanya perubahan > Rp 1M ditampilkan.\nCONTOH: Kini Rp 50M - Sebelumnya Rp 30M = +Rp 20M (Memburuk).\nACTION: Investigasi penyebab perubahan drastis → cek perubahan resep, harga, atau volume.'}
             example="Kini 80M − Sebelumnya 50M = +30M (Memburuk)"
             side="bottom"
           />
@@ -149,7 +149,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
           Ranking Kondisi Outlet
           <FormulaInfo
             formula="Skor = 30% % DEV TO BOM + 25% RESIDUAL + 25% LOSS/PENJUALAN + 20% Jumlah Masalah"
-            description="Composite score (0-100, semakin tinggi = semakin sehat). Setiap komponen dinormalisasi dan dibobot. Outlet dengan skor terendah = paling bermasalah. Klik baris untuk buka scorecard."
+            description={'UNTUK APA: Memberikan skor kondisi outlet 0-100 (100 = sempurna, 0 = kritis) berdasarkan komposit 4 metric.\nCARA BACA: Skor = 30% Dev/BOM + 25% Residual + 25% Loss/Sales + 20% Abnormal Count. Diurutkan dari terburuk.\nCONTOH: Dev/BOM 49% → skor 2, Residual 96% → skor 4, Loss/Sales 7% → skor 65, Abnormal 50 → skor 0. Weighted: 18.\nACTION: Outlet skor < 30 = kritis, butuh intervensi segera.'}
             example="Outlet A: devBom 18% + residual 60% + loss/sales 8% + 12 masalah → skor 35 (kritis)"
             side="bottom"
           />
@@ -350,7 +350,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
           Perbandingan Area
           <FormulaInfo
             formula="LOSS/PENJUALAN = Total LOSS / Total PENJUALAN per area"
-            description="Tabel komparatif antar area berdasarkan kontribusi |NOMINAL DEVIASI|. LOSS/PENJUALAN > 10% (merah, kritis), > 5% (kuning, warning). 🔴 = area terburuk, 🟢 = area terbaik. Klik baris untuk filter area."
+            description={'UNTUK APA: Membandingkan performa deviasi antar area untuk intervensi tertarget.\nCARA BACA: Area dengan LOSS/PENJUALAN tinggi = paling boros. Klik baris untuk filter dashboard by area.\nCONTOH: JAWA BARAT 1: LOSS Rp 2M / PENJUALAN Rp 20M = 10% (buruk).\nACTION: Area terburuk → evaluasi proses area & bandingkan dengan area terbaik.'}
             example="JAKBAR: LOSS 8M / Sales 80M = 10% (kritis)"
             side="bottom"
           />

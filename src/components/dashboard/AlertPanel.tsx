@@ -44,7 +44,7 @@ export function AlertPanel({ data }: { data: AnalysisData }) {
               Sistem Peringatan
               <FormulaInfo
                 formula="Priority = rule severity × magnitude deviation × outlet impact"
-                description="P1 = kritis (butuh investigasi segera), P2 = warning, P3 = info. Setiap alert mencantumkan issue, evidence, dan recommended action. Klik alert untuk drill-down."
+                description={'UNTUK APA: Sistem peringatan otomatis berdasarkan aturan deteksi anomali.\nCARA BACA: P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap alert ada issue, evidence, recommended action.\nCONTOH: P1 alert: Outlet A item B, |NOMINAL| Rp 50M, deviasi > 2x area avg.\nACTION: Fokus P1 dulu → investigasi fisik + cek evidence + lakukan recommended action.'}
                 example="Outlet A · LOSS Rp 200M · Dev/BOM 25% → P1 (kritis)"
                 side="bottom"
               />
