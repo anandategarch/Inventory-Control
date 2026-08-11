@@ -31,7 +31,7 @@ export function HealthDistributionDonut({ data }: { data: AnalysisData }) {
   const { normal, warning, abnormal } = data.healthStatus;
   const total = normal + warning + abnormal;
   const chartData = [
-    { name: 'Normal', value: normal, color: '#10b981' },
+    { name: 'Normal', value: normal, color: '#059669' },
     { name: 'Peringatan', value: warning, color: '#f59e0b' },
     { name: 'Masalah', value: abnormal, color: '#dc2626' },
   ].filter((d) => d.value > 0);
@@ -79,7 +79,7 @@ export function HealthDistributionDonut({ data }: { data: AnalysisData }) {
                         <div className="rounded-md border bg-background p-2 shadow-md text-xs">
                           <p className="font-medium">{payload[0].payload.name}</p>
                           <p className="text-muted-foreground">
-                            {payload[0].payload.value.toLocaleString()} record ({((payload[0].payload.value / total) * 100).toFixed(1)}%)
+                            {payload[0].payload.value.toLocaleString()} record ({total > 0 ? ((payload[0].payload.value / (total || 1)) * 100).toFixed(1) : '0'}%)
                           </p>
                         </div>
                       )
@@ -167,7 +167,7 @@ export function DeviationCategoryDonut({ data }: { data: AnalysisData }) {
                         <div className="rounded-md border bg-background p-2 shadow-md text-xs">
                           <p className="font-medium">{payload[0].payload.name}</p>
                           <p className="text-muted-foreground">
-                            {payload[0].payload.value.toLocaleString()} ({((payload[0].payload.value / total) * 100).toFixed(1)}%)
+                            {payload[0].payload.value.toLocaleString()} ({((payload[0].payload.value / (total || 1)) * 100).toFixed(1)}%)
                           </p>
                         </div>
                       )
@@ -210,7 +210,7 @@ export function AreaContributionBar({ data }: { data: AnalysisData }) {
     lossToSales: a.lossToSales,
     color: a.lossToSales != null && a.lossToSales > 0.10 ? '#dc2626'
       : a.lossToSales != null && a.lossToSales > 0.05 ? '#f59e0b'
-      : '#10b981',
+      : '#059669',
   }));
 
   return (
@@ -281,12 +281,12 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
   const items = (data.topItemsByNominal || []).slice(0, 10);
   const chartData = items.map((it: any) => ({
-    label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
+    label: `${it.itemName?.slice(0, 28)}${it.itemName?.length > 28 ? '…' : ''}`,
     itemName: it.itemName,
     outletCode: it.outletCode,
     absNominalJuta: (it.absNominal || 0) / 1_000_000,
     direction: it.direction,
-    color: it.direction === 'LOSS' ? '#dc2626' : it.direction === 'SURPLUS' ? '#10b981' : '#94a3b8',
+    color: it.direction === 'LOSS' ? '#dc2626' : it.direction === 'SURPLUS' ? '#059669' : '#94a3b8',
   }));
 
   const onClick = (d: any) => {
@@ -357,19 +357,23 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
   const worsened = (variance.topWorsened || []).slice(0, 5);
   const improved = (variance.topImproved || []).slice(0, 5);
 
+  // Bug 3 fix: sort by magnitude — most improved (most negative delta) first,
+  // most worsened (most positive delta) first
+  const sortedImproved = [...improved].sort((a, b) => (a.delta || 0) - (b.delta || 0));
+  const sortedWorsened = [...worsened].sort((a, b) => (b.delta || 0) - (a.delta || 0));
   const chartData = [
-    ...improved.map((it: any) => ({
-      label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
+    ...sortedImproved.map((it: any) => ({
+      label: `${it.itemName?.slice(0, 28)}${it.itemName?.length > 28 ? '…' : ''}`,
       itemName: it.itemName,
       outletCode: it.outletCode,
       deltaJuta: -((it.delta || 0) / 1_000_000),
       deltaRaw: it.delta,
       direction: it.direction,
       kind: 'improved',
-      color: '#10b981',
+      color: '#059669',
     })),
-    ...worsened.map((it: any) => ({
-      label: `${it.itemName?.slice(0, 24)}${it.itemName?.length > 24 ? '…' : ''}`,
+    ...sortedWorsened.map((it: any) => ({
+      label: `${it.itemName?.slice(0, 28)}${it.itemName?.length > 28 ? '…' : ''}`,
       itemName: it.itemName,
       outletCode: it.outletCode,
       deltaJuta: (it.delta || 0) / 1_000_000,
@@ -597,7 +601,7 @@ export function DirectionDistributionPie({ data }: { data: AnalysisData }) {
   const total = l.loss + l.surplus;
   const chartData = [
     { name: 'LOSS', value: l.loss, color: '#dc2626' },
-    { name: 'SURPLUS', value: l.surplus, color: '#10b981' },
+    { name: 'SURPLUS', value: l.surplus, color: '#059669' },
   ].filter((d) => d.value > 0);
 
   return (
@@ -643,7 +647,7 @@ export function DirectionDistributionPie({ data }: { data: AnalysisData }) {
                         <div className="rounded-md border bg-background p-2 shadow-md text-xs">
                           <p className="font-medium">{payload[0].payload.name}</p>
                           <p className="text-muted-foreground">
-                            {payload[0].payload.value.toLocaleString()} ({((payload[0].payload.value / total) * 100).toFixed(1)}%)
+                            {payload[0].payload.value.toLocaleString()} ({((payload[0].payload.value / (total || 1)) * 100).toFixed(1)}%)
                           </p>
                         </div>
                       )
@@ -714,7 +718,13 @@ export function CumulativeDeviationArea({ data }: { data: AnalysisData }) {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="weekLabel" fontSize={11} />
-                <YAxis yAxisId="left" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
+                <YAxis yAxisId="left" tickFormatter={(v) => {
+                  const abs = Math.abs(v);
+                  if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1).replace('.', ',')}M`;
+                  if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(0).replace('.', ',')}Jt`;
+                  if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
+                  return v.toFixed(0);
+                }} fontSize={11} />
                 <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(0)}%`} fontSize={11} />
                 <Tooltip
                   content={({ active, payload, label }: { active?: boolean; payload?: TipPayload; label?: string }) =>
@@ -772,9 +782,11 @@ export function AreaLossSalesComparison({ data }: { data: AnalysisData }) {
   const chartData = areas.map((a) => ({
     area: a.area,
     lossToSalesPct: (a.lossToSales || 0) * 100,
+    devBomPct: (a.avgDevBom || 0) * 100,
+    salesJuta: (a.totalSales || 0) / 1_000_000,
     color: a.lossToSales != null && a.lossToSales > 0.10 ? '#dc2626'
       : a.lossToSales != null && a.lossToSales > 0.05 ? '#f59e0b'
-      : '#10b981',
+      : '#059669',
   }));
 
   return (
@@ -816,6 +828,8 @@ export function AreaLossSalesComparison({ data }: { data: AnalysisData }) {
                         <div className="rounded-md border bg-background p-2 shadow-md text-xs space-y-0.5">
                           <p className="font-medium">{payload[0].payload.area}</p>
                           <p className="text-muted-foreground">LOSS/PENJUALAN: {payload[0].payload.lossToSalesPct.toFixed(2)}%</p>
+                          <p className="text-muted-foreground">Dev/BOM: {payload[0].payload.devBomPct.toFixed(2)}%</p>
+                          <p className="text-muted-foreground">Sales: {fmtIDR(payload[0].payload.salesJuta * 1_000_000)}</p>
                         </div>
                       )
                       : null

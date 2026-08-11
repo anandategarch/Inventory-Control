@@ -1200,3 +1200,56 @@ Stage Summary:
 - ScrollAreas taller (62vh/65vh) — more rows visible without scroll
 - Dialog header and tab content have more padding (px-5/p-5) — breathing room
 - User complaint "terlalu kecil sehingga banyak teks terpotong" addressed
+
+---
+Task ID: 28
+Agent: Main (Z.ai Code)
+Task: Fix 6 chart bugs in ExtraCharts.tsx (non-mobile only)
+
+Work Log:
+- Read worklog.md and ExtraCharts.tsx (835 lines, 9 chart components) to understand context
+- Reviewed AnalysisData types (AreaAnalysis, VarianceItem) in useAnalysis.ts to know which fields are available for tooltip enrichment
+- Applied all 6 bug fixes via single MultiEdit operation (atomic):
+
+Bug 3 (Diverging bar sort order):
+- Added sortedImproved (sort by delta ascending = most negative/most improved first)
+- Added sortedWorsened (sort by delta descending = most positive/most worsened first)
+- Replaced improved/worsened with sortedImproved/sortedWorsened in chartData map calls
+
+Bug 7 (Y-axis format inconsistent):
+- Replaced CumulativeDeviationArea left YAxis formatter `${v.toFixed(0)}M` with standardized Indonesian format pattern (M/Jt/Rb with comma decimal separator)
+- Only applied to YAxis that format currency/large numbers (line 721-727); percentage YAxis on lines 728 & 823 left untouched since standardized pattern doesn't support % suffix
+
+Bug 8 (Tooltip incomplete):
+- TopItemsHorizontalBar: already complete (itemName, outletCode, |NOMINAL|, direction) — no change
+- AreaContributionBar: already complete (area, |NOMINAL|, contribution %, LOSS/PENJUALAN %) — no change
+- AreaLossSalesComparison: was missing Dev/BOM % and sales — added devBomPct (from avgDevom) and salesJuta (from totalSales) to chartData; added Dev/BOM and Sales rows to tooltip content
+
+Bug 9 (Color palette accessibility):
+- Replaced ALL 6 instances of #10b981 (emerald-500) with #059669 (emerald-600) for better contrast
+- Locations: HealthDistributionDonut (Normal), AreaContributionBar (good color), TopItemsHorizontalBar (SURPLUS), VarianceDivergingBar (improved), DirectionDistributionPie (SURPLUS), AreaLossSalesComparison (good color)
+
+Bug 10 (Legend not synced with data):
+- DirectionDistributionPie: already had .filter((d) => d.value > 0) — verified in place (line 605)
+- DeviationCategoryDonut: already had .filter((d) => d.value > 0) — verified in place (line 123)
+- Color of SURPLUS slice updated to #059669 via Bug 9 fix
+
+Bug 13 (Item name truncation):
+- Replaced ALL 3 instances of slice(0, 24) with slice(0, 28)
+- Replaced ALL 3 instances of length > 24 with length > 28
+- Locations: TopItemsHorizontalBar (line 284), VarianceDivergingBar improved (line 366), VarianceDivergingBar worsened (line 376)
+
+Verification:
+- Ran `bun run lint` — 0 errors, 0 warnings
+- Verified no remaining instances of `#10b981`, `slice(0, 24)`, or `length > 24`
+- Verified all filter((d) => d.value > 0) calls are present
+- Verified sortedImproved/sortedWorsened are defined and used
+- Verified devBomPct/salesJuta fields exist in chartData and are referenced in tooltip
+- Verified YAxis on line 721-727 has the new standardized format pattern
+
+Stage Summary:
+- All 6 chart bugs fixed in src/components/dashboard/ExtraCharts.tsx only
+- No mobile-specific code touched
+- No business logic or data fetching changed
+- Lint passes with 0 errors
+- ExtraCharts.tsx is now 845 lines (was 835) due to added sort + tooltip fields
