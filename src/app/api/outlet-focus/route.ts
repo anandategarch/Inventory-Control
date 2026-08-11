@@ -197,92 +197,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ...(cached as object), cached: true, durationMs: Date.now() - startedAt });
     }
 
-    const thresholds = await getRuntimeThresholds();
-
     // ============================================================
-    //  Step 1: Resolve outlet
+    //  P1 fix: Phase 1 — metadata + independent data fetches (8 parallel)
+    //  All queries use only input params (outletCode, month, week) or are
+    //  fully independent. Previously these were 8 serial awaits → now 1 Promise.all.
+    //  Queries: thresholds, outlet, pic, weeks, sourceFiles, currentRecs,
+    //           trendRows (timeline), networkBench.
     // ============================================================
-    const outlet = await db.outlet.findFirst({
-      where: { code: outletCode },
-      select: { id: true, code: true, name: true, area: true },
-    });
-    if (!outlet) {
-      return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
-    }
-
-    // PIC
-    let pic: string | null = null;
-    try {
-      const picRow = await db.outletPIC.findUnique({ where: { outletCode: outlet.code } });
-      pic = picRow?.pic ?? null;
-    } catch {
-      // table may not exist
-    }
-
-    // ============================================================
-    //  Step 2: Resolve previous period (chronologically)
-    // ============================================================
-    const weeksRaw = await db.week.findMany({
-      select: { weekLabel: true, monthKey: true },
-      distinct: ['monthKey', 'weekLabel'],
-    });
-    const fileMonthKeys = await db.sourceFile.findMany({
-      select: { monthLabel: true, monthKey: true },
-    });
-    const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
-    const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
-    const allPeriods = weeksRaw
-      .map((w) => {
-        const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
-        return { monthLabel: ml, weekLabel: w.weekLabel, monthKey: w.monthKey, sortKey: `${w.monthKey}|${w.weekLabel}` };
-      })
-      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-
-    const currentPeriodIdx = allPeriods.findIndex((p) => p.monthLabel === month && p.weekLabel === week);
-    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
-    // Use explicit compareWeek from filter if provided, else auto-chronological
-    const prevPeriod = compareWeekParam && compareMonthParam
-      ? { monthLabel: compareMonthParam, weekLabel: compareWeekParam }
-      : currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
-
-    // ============================================================
-    //  Step 3: Fetch current period records for this outlet
-    // ============================================================
-    const currentRecs = await db.$queryRaw<OutletFocusRow[]>`
-      SELECT ir.id, ir."itemId", i.name as "itemName", i.satuan,
-        ir."qtyBom", ir."qtyCom", ir."qtyDeviasi", ir."qtyWaste", ir."qtySusut",
-        ir."qtyTrial", ir."qtyLossSurplus",
-        ir."nominalDeviasi", ir."nominalWaste", ir."nominalSusut", ir."nominalTrial",
-        ir."nominalLossSurplus", ir."nominalSales", ir."avgPrice",
-        ir."tolerancePct", ir."toleranceRaw",
-        ir."pctQtyDeviasiToBom", ir.direction,
-        ir."residualQty", ir."residualNominal", ir."residualRatio",
-        ir."absQtyDeviasi", ir."absNominalDeviasi",
-        ir."absQtyLossSurplus", ir."absNominalLossSurplus",
-        ir.area, ir.bulan, ir."monthLabel", ir."weekLabel",
-        ir."akunPenyesuaian", NULL::int as "rowNumber",
-        o.code as "outletCode", o.name as "outletName"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE o.code = ${outletCode}
-        AND ir."monthLabel" = ${month}
-        AND ir."weekLabel" = ${week}
-    `;
-
-    if (currentRecs.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: `No records found for outlet ${outletCode} in ${month} / ${week}`,
-      }, { status: 404 });
-    }
-
-    // ============================================================
-    //  Step 4: Fetch previous period records (for variance / new / disappeared / reversal)
-    // ============================================================
-    let prevRecs: OutletFocusRow[] = [];
-    if (prevPeriod) {
-      prevRecs = await db.$queryRaw<OutletFocusRow[]>`
+    const [
+      thresholds, outlet, picRow, weeksRaw, fileMonthKeys,
+      currentRecs, trendRows, networkBenchRows,
+    ] = await Promise.all([
+      getRuntimeThresholds(),
+      db.outlet.findFirst({
+        where: { code: outletCode },
+        select: { id: true, code: true, name: true, area: true },
+      }),
+      db.outletPIC.findUnique({ where: { outletCode } }).catch(() => null),
+      db.week.findMany({
+        select: { weekLabel: true, monthKey: true },
+        distinct: ['monthKey', 'weekLabel'],
+      }),
+      db.sourceFile.findMany({
+        select: { monthLabel: true, monthKey: true },
+      }),
+      db.$queryRaw<OutletFocusRow[]>`
         SELECT ir.id, ir."itemId", i.name as "itemName", i.satuan,
           ir."qtyBom", ir."qtyCom", ir."qtyDeviasi", ir."qtyWaste", ir."qtySusut",
           ir."qtyTrial", ir."qtyLossSurplus",
@@ -300,53 +239,63 @@ export async function GET(req: NextRequest) {
         JOIN "Item" i ON ir."itemId" = i.id
         JOIN "Outlet" o ON ir."outletId" = o.id
         WHERE o.code = ${outletCode}
-          AND ir."monthLabel" = ${prevPeriod.monthLabel}
-          AND ir."weekLabel" = ${prevPeriod.weekLabel}
-      `;
-    }
-
-    // ============================================================
-    //  Step 5: Historical stats (per itemId, mean + stddev of pctQtyDeviasiToBom)
-    // ============================================================
-    const historicalStats = new Map<number, { mean: number; stdDev: number; n: number }>();
-    if (historicalPeriods.length > 0) {
-      const periodPairs = historicalPeriods.map((p) => `${p.monthLabel}|${p.weekLabel}`);
-      const histRows = await db.$queryRaw<
-        Array<{ itemId: number; mean: number; stdDev: number; n: number }>
-      >`
-        SELECT ir."itemId",
-          AVG(ir."pctQtyDeviasiToBom") as mean,
-          COALESCE(STDDEV(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
-          COUNT(*)::int as n
-        FROM "InventoryRecord" ir
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.code = ${outletCode}
-          AND (ir."monthLabel" || '|' || ir."weekLabel") IN (${Prisma.join(periodPairs)})
-          AND ir."pctQtyDeviasiToBom" IS NOT NULL
-          AND ir."qtyBom" != 0
-        GROUP BY ir."itemId"
-      `;
-      for (const r of histRows) {
-        historicalStats.set(r.itemId, { mean: toNum(r.mean) ?? 0, stdDev: toNum(r.stdDev) ?? 0, n: r.n });
-      }
-    }
-
-    // ============================================================
-    //  Step 6: Area + network benchmarks for this period
-    // ============================================================
-    const area = outlet.area;
-    const [areaBenchRows, networkBenchRows] = await Promise.all([
-      db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
-        SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
-          CASE WHEN SUM(CASE WHEN ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0 THEN ir."nominalSales" ELSE NULL END) > 0
-            THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
-              / NULLIF(SUM(DISTINCT CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END), 0)
-            ELSE NULL END as "lossToSales"
-        FROM "InventoryRecord" ir
-        WHERE ir.area = ${area}
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
+      `,
+      db.$queryRaw<
+        Array<{
+          monthLabel: string;
+          weekLabel: string;
+          sales: number;
+          nominal: number;
+          devBom: number;
+          lossNominal: number;
+          surplusNominal: number;
+          abnormalCount: number;
+          topIssue: string | null;
+        }>
+      >`
+        WITH sales_counts AS (
+          SELECT ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales", COUNT(*) as cnt
+          FROM "InventoryRecord" ir
+          JOIN "Outlet" o ON ir."outletId" = o.id
+          WHERE o.code = ${outletCode}
+            AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+          GROUP BY ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
+        ),
+        ranked_sales AS (
+          SELECT "monthLabel", "weekLabel", "outletId", "nominalSales",
+            ROW_NUMBER() OVER (PARTITION BY "monthLabel", "weekLabel", "outletId" ORDER BY cnt DESC, "nominalSales" DESC) as rn
+          FROM sales_counts
+        ),
+        sales_per_period AS (
+          SELECT "monthLabel", "weekLabel", SUM("nominalSales") as sales
+          FROM ranked_sales WHERE rn = 1
+          GROUP BY "monthLabel", "weekLabel"
+        ),
+        period_aggs AS (
+          SELECT ir."monthLabel", ir."weekLabel",
+            COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
+            COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
+            COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "lossNominal",
+            COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "surplusNominal",
+            COUNT(*) FILTER (WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+              AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05))::int as "abnormalCount",
+            MODE() WITHIN GROUP (ORDER BY CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
+              AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05)
+              THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
+          FROM "InventoryRecord" ir
+          JOIN "Outlet" o ON ir."outletId" = o.id
+          WHERE o.code = ${outletCode}
+          GROUP BY ir."monthLabel", ir."weekLabel"
+        )
+        SELECT pa."monthLabel", pa."weekLabel",
+          COALESCE(sp.sales, 0) as sales,
+          pa.nominal, pa."devBom", pa."lossNominal", pa."surplusNominal",
+          pa."abnormalCount", pa."topIssue"
+        FROM period_aggs pa
+        LEFT JOIN sales_per_period sp ON pa."monthLabel" = sp."monthLabel" AND pa."weekLabel" = sp."weekLabel"
+        ORDER BY pa."monthLabel", pa."weekLabel"
       `,
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         SELECT
@@ -361,70 +310,107 @@ export async function GET(req: NextRequest) {
       `,
     ]);
 
+    if (!outlet) {
+      return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
+    }
+    if (currentRecs.length === 0) {
+      return NextResponse.json({
+        success: false,
+        message: `No records found for outlet ${outletCode} in ${month} / ${week}`,
+      }, { status: 404 });
+    }
+
+    const pic = picRow?.pic ?? null;
+    const area = outlet.area;
+
+    // Build period maps (CPU only)
+    const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
+    const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
+    const allPeriods = weeksRaw
+      .map((w) => {
+        const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
+        return { monthLabel: ml, weekLabel: w.weekLabel, monthKey: w.monthKey, sortKey: `${w.monthKey}|${w.weekLabel}` };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    const currentPeriodIdx = allPeriods.findIndex((p) => p.monthLabel === month && p.weekLabel === week);
+    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
+    // Use explicit compareWeek from filter if provided, else auto-chronological
+    const prevPeriod = compareWeekParam && compareMonthParam
+      ? { monthLabel: compareMonthParam, weekLabel: compareWeekParam }
+      : currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
+
+    // ============================================================
+    //  P1 fix: Phase 2 — dependent queries (3 parallel)
+    //  prevRecs (needs prevPeriod), historicalStats (needs historicalPeriods),
+    //  areaBench (needs outlet.area) — all depend on Phase 1 results.
+    // ============================================================
+    const periodPairs = historicalPeriods.map((p) => `${p.monthLabel}|${p.weekLabel}`);
+    const [prevRecs, histRows, areaBenchRows] = await Promise.all([
+      prevPeriod
+        ? db.$queryRaw<OutletFocusRow[]>`
+            SELECT ir.id, ir."itemId", i.name as "itemName", i.satuan,
+              ir."qtyBom", ir."qtyCom", ir."qtyDeviasi", ir."qtyWaste", ir."qtySusut",
+              ir."qtyTrial", ir."qtyLossSurplus",
+              ir."nominalDeviasi", ir."nominalWaste", ir."nominalSusut", ir."nominalTrial",
+              ir."nominalLossSurplus", ir."nominalSales", ir."avgPrice",
+              ir."tolerancePct", ir."toleranceRaw",
+              ir."pctQtyDeviasiToBom", ir.direction,
+              ir."residualQty", ir."residualNominal", ir."residualRatio",
+              ir."absQtyDeviasi", ir."absNominalDeviasi",
+              ir."absQtyLossSurplus", ir."absNominalLossSurplus",
+              ir.area, ir.bulan, ir."monthLabel", ir."weekLabel",
+              ir."akunPenyesuaian", NULL::int as "rowNumber",
+              o.code as "outletCode", o.name as "outletName"
+            FROM "InventoryRecord" ir
+            JOIN "Item" i ON ir."itemId" = i.id
+            JOIN "Outlet" o ON ir."outletId" = o.id
+            WHERE o.code = ${outletCode}
+              AND ir."monthLabel" = ${prevPeriod.monthLabel}
+              AND ir."weekLabel" = ${prevPeriod.weekLabel}
+          `
+        : Promise.resolve([] as OutletFocusRow[]),
+      historicalPeriods.length > 0
+        ? db.$queryRaw<Array<{ itemId: number; mean: number; stdDev: number; n: number }>>`
+            SELECT ir."itemId",
+              AVG(ir."pctQtyDeviasiToBom") as mean,
+              COALESCE(STDDEV(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
+              COUNT(*)::int as n
+            FROM "InventoryRecord" ir
+            JOIN "Outlet" o ON ir."outletId" = o.id
+            WHERE o.code = ${outletCode}
+              AND (ir."monthLabel" || '|' || ir."weekLabel") IN (${Prisma.join(periodPairs)})
+              AND ir."pctQtyDeviasiToBom" IS NOT NULL
+              AND ir."qtyBom" != 0
+            GROUP BY ir."itemId"
+          `
+        : Promise.resolve([] as Array<{ itemId: number; mean: number; stdDev: number; n: number }>),
+      db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
+        SELECT
+          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CASE WHEN SUM(CASE WHEN ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0 THEN ir."nominalSales" ELSE NULL END) > 0
+            THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
+              / NULLIF(SUM(DISTINCT CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END), 0)
+            ELSE NULL END as "lossToSales"
+        FROM "InventoryRecord" ir
+        WHERE ir.area = ${area}
+          AND ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+      `,
+    ]);
+
+    // Build historicalStats map from parallel histRows result
+    const historicalStats = new Map<number, { mean: number; stdDev: number; n: number }>();
+    for (const r of histRows) {
+      historicalStats.set(r.itemId, { mean: toNum(r.mean) ?? 0, stdDev: toNum(r.stdDev) ?? 0, n: r.n });
+    }
+
     const areaAvgDevBom = toNum(areaBenchRows[0]?.avgDevBom) ?? 0;
     const networkAvgDevBom = toNum(networkBenchRows[0]?.avgDevBom) ?? 0;
     const areaAvgLossToSales = toNum(areaBenchRows[0]?.lossToSales);
     const networkAvgLossToSales = toNum(networkBenchRows[0]?.lossToSales);
 
-    // ============================================================
-    //  Step 7: Timeline (trendAgg filtered by outlet) — ~6 rows
-    // ============================================================
-    const trendRows = await db.$queryRaw<
-      Array<{
-        monthLabel: string;
-        weekLabel: string;
-        sales: number;
-        nominal: number;
-        devBom: number;
-        lossNominal: number;
-        surplusNominal: number;
-        abnormalCount: number;
-        topIssue: string | null;
-      }>
-    >`
-      WITH sales_counts AS (
-        SELECT ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales", COUNT(*) as cnt
-        FROM "InventoryRecord" ir
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.code = ${outletCode}
-          AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-        GROUP BY ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
-      ),
-      ranked_sales AS (
-        SELECT "monthLabel", "weekLabel", "outletId", "nominalSales",
-          ROW_NUMBER() OVER (PARTITION BY "monthLabel", "weekLabel", "outletId" ORDER BY cnt DESC, "nominalSales" DESC) as rn
-        FROM sales_counts
-      ),
-      sales_per_period AS (
-        SELECT "monthLabel", "weekLabel", SUM("nominalSales") as sales
-        FROM ranked_sales WHERE rn = 1
-        GROUP BY "monthLabel", "weekLabel"
-      ),
-      period_aggs AS (
-        SELECT ir."monthLabel", ir."weekLabel",
-          COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
-          COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "lossNominal",
-          COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "surplusNominal",
-          COUNT(*) FILTER (WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-            AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05))::int as "abnormalCount",
-          MODE() WITHIN GROUP (ORDER BY CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
-            AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05)
-            THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
-        FROM "InventoryRecord" ir
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.code = ${outletCode}
-        GROUP BY ir."monthLabel", ir."weekLabel"
-      )
-      SELECT pa."monthLabel", pa."weekLabel",
-        COALESCE(sp.sales, 0) as sales,
-        pa.nominal, pa."devBom", pa."lossNominal", pa."surplusNominal",
-        pa."abnormalCount", pa."topIssue"
-      FROM period_aggs pa
-      LEFT JOIN sales_per_period sp ON pa."monthLabel" = sp."monthLabel" AND pa."weekLabel" = sp."weekLabel"
-      ORDER BY pa."monthLabel", pa."weekLabel"
-    `;
-
+    // Timeline (from parallel trendRows result in Phase 1)
     const timeline = trendRows.map((r) => {
       const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
       return {

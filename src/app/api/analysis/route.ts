@@ -155,14 +155,27 @@ export async function GET(req: NextRequest) {
       week = week || latest.weekLabel;
     }
 
-    // ===== Phase 1a fix: Query Week table (3 rows) instead of scanning 540K InventoryRecord =====
-    const weeksRaw = await db.week.findMany({
-      select: { weekLabel: true, monthKey: true },
-      distinct: ['monthKey', 'weekLabel'],
-    });
-    const fileMonthKeys = await db.sourceFile.findMany({
-      select: { monthLabel: true, monthKey: true },
-    });
+    // ===== P1 fix: Pre-SQL metadata queries — ALL PARALLEL =====
+    // weeks + sourceFiles + picOutlets (if pic) + thresholds — all independent
+    const [weeksRaw, fileMonthKeys, picOutletCodesRaw, thresholds] = await Promise.all([
+      db.week.findMany({
+        select: { weekLabel: true, monthKey: true },
+        distinct: ['monthKey', 'weekLabel'],
+      }),
+      db.sourceFile.findMany({
+        select: { monthLabel: true, monthKey: true },
+      }),
+      pic
+        ? db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } })
+            .then((r) => r.map((p) => p.outletCode))
+            .catch((e) => {
+              console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
+              return null;
+            })
+        : Promise.resolve(null),
+      getRuntimeThresholds(),
+    ]);
+    const picOutletCodes = picOutletCodesRaw;
     const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
     const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
     const allPeriods = weeksRaw
@@ -204,15 +217,7 @@ export async function GET(req: NextRequest) {
     }
 
     // ===== BUG FIX #4: buildWhere accepts monthLabel parameter (for cross-month) =====
-    let picOutletCodes: string[] | null = null;
-    if (pic) {
-      try {
-        const picOutlets = await db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } });
-        picOutletCodes = picOutlets.map((p) => p.outletCode);
-      } catch (e) {
-        console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
-      }
-    }
+    // picOutletCodes already resolved in parallel block above
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
       if (area) w.area = area;
@@ -228,23 +233,30 @@ export async function GET(req: NextRequest) {
     const filterOpts = { area, outletCode, itemName, picOutletCodes };
 
     // ============================================================
-    //  RAW RECORD FETCH — kept for rule evaluation only
-    //  (buildRuleContext, evaluateRules, worklist, priorities,
-    //   outletHealthRanking, historicalAnalysis, varianceAnalysis)
+    //  P1 fix: RAW RECORD FETCH + HISTORICAL STATS — ALL PARALLEL
+    //  currentRecs + prevRecs + historicalByOutletItem are independent.
     //  Select only fields needed by rule engine + UI drilldown.
     // ============================================================
-    const currentRecs = await db.inventoryRecord.findMany({
-      where: buildWhere(week!, month!),
-      include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
-    }) as RecWithRels[];
+    const currentPeriodIdx = allPeriods.findIndex(
+      (p) => p.monthLabel === month && p.weekLabel === week
+    );
+    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
 
-    let prevRecs: RecWithRels[] = [];
-    if (prevWeek && prevMonth) {
-      prevRecs = await db.inventoryRecord.findMany({
-        where: buildWhere(prevWeek, prevMonth),
+    const [currentRecs, prevRecs, historicalByOutletItem] = await Promise.all([
+      db.inventoryRecord.findMany({
+        where: buildWhere(week!, month!),
         include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
-      }) as RecWithRels[];
-    }
+      }) as Promise<RecWithRels[]>,
+      prevWeek && prevMonth
+        ? db.inventoryRecord.findMany({
+            where: buildWhere(prevWeek, prevMonth),
+            include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
+          }) as Promise<RecWithRels[]>
+        : Promise.resolve([] as RecWithRels[]),
+      historicalPeriods.length > 0
+        ? queryHistoricalStats(historicalPeriods, filterOpts)
+        : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
+    ]);
 
     if (currentRecs.length === 0) {
       return NextResponse.json({
@@ -259,21 +271,7 @@ export async function GET(req: NextRequest) {
       prevByOutletItem.set(`${r.outletId}|${r.itemId}`, r);
     }
 
-    // ============================================================
-    //  HISTORICAL STATS — Phase 4: SQL aggregate (was 540K raw records)
-    //  queryHistoricalStats returns Map<outletId|itemId, {mean, stdDev, n}>
-    //  Used by buildRuleContext for z-score calculation
-    // ============================================================
-    const currentPeriodIdx = allPeriods.findIndex(
-      (p) => p.monthLabel === month && p.weekLabel === week
-    );
-    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
-    const historicalByOutletItem = historicalPeriods.length > 0
-      ? await queryHistoricalStats(historicalPeriods, filterOpts)
-      : new Map<string, { mean: number; stdDev: number; n: number }>();
-
-    // ===== Load runtime thresholds from DB (user-configurable via Settings) =====
-    const thresholds = await getRuntimeThresholds();
+    // thresholds already loaded in parallel block above
 
     // ============================================================
     //  RULE EVALUATION LOOP (per-record, single pass)
