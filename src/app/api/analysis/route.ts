@@ -452,6 +452,25 @@ export async function GET(req: NextRequest) {
       deviationToSalesRatio: execSummary.sales.current > 0
         ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
       deviationToBomRatio: execSummary.deviationToBom,
+      // ===== Trend Decomposition (3-effect) =====
+      // Volume Effect = perubahan nominal deviasi akibat perubahan volume (BOM)
+      //   = prevNominalDeviasi × bomGrowth
+      // Price Effect = perubahan nominal deviasi akibat perubahan harga
+      //   = prevNominalDeviasi × priceGrowth
+      // Operational Effect = sisanya
+      //   = nominalDeviasiGrowth - volumeEffect - priceEffect
+      volumeEffect: (execSummary.nominalDeviasi.previous != null && execSummary.nominalDeviasi.previous !== 0
+        && execSummary.qtyBom.growth != null)
+        ? execSummary.qtyBom.growth : null,
+      priceEffect: (currAvgPrice != null && prevAvgPrice != null && prevAvgPrice !== 0)
+        ? (currAvgPrice - prevAvgPrice) / Math.abs(prevAvgPrice) : null,
+      operationalEffect: (execSummary.nominalDeviasi.growth != null
+        && execSummary.qtyBom.growth != null && priceGrowth != null)
+        ? execSummary.nominalDeviasi.growth - execSummary.qtyBom.growth - priceGrowth
+        : null,
+      // ===== Multi-Period Comparison =====
+      // Built from trendAggRows (computed below, injected into growthComparison after)
+      multiPeriodComparison: [] as Array<Record<string, unknown>>,
     };
 
     // ===== BUG FIX #6: Stable DQ groupBy (no ambiguous orderBy) =====
@@ -491,6 +510,33 @@ export async function GET(req: NextRequest) {
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
       .map(({ sortKey, ...rest }) => rest);
+
+    // ===== Multi-Period Comparison — built from trendAggRows =====
+    const multiPeriodComparison = trendAggRows
+      .map((r) => {
+        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+        return {
+          period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+          sortKey: `${mk}|${r.weekLabel}`,
+          sales: r.sales,
+          bom: r.devBom > 0 ? r.sales / r.devBom : 0, // approx BOM from devBom ratio
+          deviation: r.nominal,
+          absDeviation: r.nominal,
+          devBomRatio: r.devBom,
+          growthPct: null as number | null,
+        };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map((row, i, arr) => {
+        // Calculate growth vs previous period
+        if (i > 0 && arr[i - 1].deviation > 0) {
+          row.growthPct = (row.deviation - arr[i - 1].deviation) / Math.abs(arr[i - 1].deviation);
+        }
+        const { sortKey, ...rest } = row;
+        return rest;
+      });
+    // Inject into growthMetrics
+    (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
 
     // Net Cost Trend — built from same queryTrendAgg result (no extra query)
     const netCostTrend = trendAggRows
