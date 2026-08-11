@@ -235,3 +235,29 @@ Stage Summary:
 - page.tsx now includes: AlertPanel, HistoricalAnalysisCard, TrendDecompositionCard, MultiPeriodComparisonCard, MenuAnalysisCard, VarianceAnalysis, OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison, OutletEfficiencyMatrix, CostPerThousandCard, CostImpactDecomposition, ParetoAnalysis, NetCostTrendChart, OutletScorecard modal, ItemDeepDive modal
 - All features from previous version restored: outlet scorecard (click outlet rows), item deep dive (click item rows), Pareto ABC, efficiency matrix scatter, cost per 1000, net cost trend, historical z-score, trend decomposition, multi-period comparison, menu analysis, alert system with P1/P2/P3
 - Vercel will auto-deploy from this push
+
+---
+Task ID: 9
+Agent: Main (Z.ai Code)
+Task: Fix 7 bugs from deep audit (ingestion crash, false positive DQ, double-counting, setup crash, over-explained, memory spike, GET mocking)
+
+Work Log:
+- Bug 1 (Critical): ingest/route.ts — added `continue` after validateRow if issues contain ERROR severity (was still inserted → P2002 unique constraint crash on duplicates); added skipDuplicates: true to createMany as defense-in-depth; track skippedErrors count for audit log
+- Bug 2 (Major): transform.ts — exported toNum function (was private); validator.ts — removed primitive toNum (Number(String(v).replace(/,/g, '.')) fails on "12.345,67" → NaN → false-positive INVALID_NUMBER), now imports robust toNum from transform.ts; transform.ts parseTolerance also now uses toNum (was primitive replace)
+- Bug 3 (Major): ingest/route.ts — added dedup by monthLabel: before sourceFile.create(), find existing SourceFile with same monthLabel and delete (cascade deletes records). Prevents double-counting when user uploads revised file with different name/hash
+- Bug 4 (Major): setup/route.ts — removed raw DDL with `INTEGER PRIMARY KEY AUTOINCREMENT` (SQLite-only syntax, crashes PostgreSQL with "syntax error at or near AUTOINCREMENT"). Replaced with connectivity check + guidance to use `prisma db push` (database-agnostic)
+- Bug 5 (Logic): validator.ts — added OVER_EXPLAINED warning when |WASTE+SUSUT+TRIAL| > |DEVIASI| (fraud/salah input indicator). Computes overPct and includes in message
+- Bug 6 (Optimization): excel.ts hashFile — replaced fs.readFile() (loads entire file to RAM → OOM risk on Vercel) with createReadStream + pipeline to crypto.createHash (O(1) memory constant)
+- Bug 7 (Minor): ingest/route.ts — extracted processIngestion(body) function. GET and POST now call processIngestion directly. Was: GET mocked NextRequest `{ json: async () => ({}) } as NextRequest` (fragile, would crash if POST reads headers/url/method)
+- Lint: 0 errors, 0 warnings
+- TypeScript: 0 errors in edited files
+- Committed (06275de) and pushed to GitHub (synced ✓)
+
+Stage Summary:
+- All 7 bugs from audit validated as real and fixed
+- Ingestion now atomic-safe: ERROR rows skipped, skipDuplicates on createMany, period dedup prevents orphans
+- DQ validator no longer false-positives on Indonesian number format ("12.345,67" correctly parsed)
+- Setup route no longer crashes on PostgreSQL (cross-database compatible)
+- Over-explained variance now flagged as WARNING (fraud detection)
+- File hashing O(1) memory (safe for large Excel files on serverless)
+- Vercel will auto-deploy from this push
