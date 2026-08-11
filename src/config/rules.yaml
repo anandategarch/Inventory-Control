@@ -17,6 +17,13 @@
 #    residualQty, residualRatio, tolerancePct, pctQtyDeviasiToBom
 #    direction (LOSS | SURPLUS | NEUTRAL)
 #
+#  Runtime threshold fields (from Settings DB — can be used as operands):
+#    stdDeviasiBomPct, stdSusutPct, stdWastePct, stdTrialPct
+#    fallbackTolerancePct, residualLossWarnPct, residualLossHighPct
+#    highLossNominalThreshold, historicalZscoreWarn, historicalZscoreHigh
+#    salesDeviationFactor, bomDeviationFactor
+#    (e.g. { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } })
+#
 #  severity: NORMAL | WARNING | ABNORMAL
 #  priority: higher = more important (used for tie-break)
 # ============================================================
@@ -31,7 +38,7 @@ rules:
     condition:
       all:
         - salesGrowth: { gt: 0 }
-        - nominalDeviasiGrowth: { gt: { mul: [salesGrowth, 2] } }
+        - nominalDeviasiGrowth: { gt: { mul: [salesGrowth, salesDeviationFactor] } }
     narrative_template: >
       Deviasi meningkat {{nominalDeviasiGrowth}} jauh melebihi pertumbuhan Sales {{salesGrowth}}.
 
@@ -56,7 +63,7 @@ rules:
     condition:
       all:
         - bomGrowth: { gt: 0 }
-        - qtyDeviasiGrowth: { gt: { mul: [bomGrowth, 2] } }
+        - qtyDeviasiGrowth: { gt: { mul: [bomGrowth, bomDeviationFactor] } }
     narrative_template: >
       QTY BOM meningkat {{bomGrowth}}, namun QTY deviation meningkat {{qtyDeviasiGrowth}}.
 
@@ -105,7 +112,7 @@ rules:
     condition:
       all:
         - tolerancePct: { is_null: true }
-        - pctQtyDeviasiToBom: { gt: 0.10 }
+        - pctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
     narrative_template: >
       Deviation/BOM {{pctQtyDeviasiToBom}} tinggi namun tolerance belum diset (analytical flag).
 
@@ -118,7 +125,7 @@ rules:
     condition:
       all:
         - direction: { eq: "LOSS" }
-        - residualRatio: { gt: 0.70 }
+        - residualRatio: { gt: residualLossHighPct }
     narrative_template: >
       Residual Loss {{residualRatio}} ({{residualQty}}) tinggi setelah dikurangi Waste/Susut/Trial.
 
@@ -130,8 +137,8 @@ rules:
     condition:
       all:
         - direction: { eq: "LOSS" }
-        - residualRatio: { gt: 0.50 }
-        - residualRatio: { lte: 0.70 }
+        - residualRatio: { gt: residualLossWarnPct }
+        - residualRatio: { lte: residualLossHighPct }
     narrative_template: >
       Residual Loss {{residualRatio}} moderat.
 
@@ -144,7 +151,7 @@ rules:
     condition:
       all:
         - direction: { eq: "LOSS" }
-        - absNominalDeviasi: { gt: 1000000 }
+        - absNominalDeviasi: { gt: highLossNominalThreshold }
     narrative_template: >
       Nominal loss {{absNominalDeviasi}} tinggi.
 
@@ -176,7 +183,7 @@ rules:
     severity: ABNORMAL
     priority: 78
     condition:
-      zScore: { gt: 2.0 }
+      zScore: { gt: historicalZscoreHigh }
     narrative_template: >
       Deviation/BOM {{zScore}} std-dev di atas historical average.
 
@@ -187,7 +194,7 @@ rules:
     priority: 58
     condition:
       all:
-        - zScore: { gt: 1.5 }
-        - zScore: { lte: 2.0 }
+        - zScore: { gt: historicalZscoreWarn }
+        - zScore: { lte: historicalZscoreHigh }
     narrative_template: >
       Deviation/BOM {{zScore}} std-dev di atas historical average.

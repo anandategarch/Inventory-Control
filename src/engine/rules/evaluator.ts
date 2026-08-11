@@ -42,12 +42,21 @@ export function getRuleByCode(code: string): Rule | undefined {
 }
 
 // Evaluate a comparison op against a value
-function evalOp(value: unknown, opDef: unknown): boolean {
+// P2 fix: operand can be a field reference (string that exists in ctx).
+// This allows rules.yaml to use dynamic thresholds from settings, e.g.:
+//   pctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
+// where "stdDeviasiBomPct" is resolved from ctx (injected from runtime thresholds).
+function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): boolean {
   if (typeof opDef !== 'object' || opDef === null) {
     return value === opDef;
   }
   const opObj = opDef as Record<string, unknown>;
-  for (const [op, operand] of Object.entries(opObj)) {
+  for (const [op, operandRaw] of Object.entries(opObj)) {
+    // Resolve operand: if it's a string that exists in ctx, use the ctx value
+    let operand = operandRaw;
+    if (typeof operandRaw === 'string' && ctx && operandRaw in ctx) {
+      operand = ctx[operandRaw];
+    }
     switch (op) {
       case 'gt': if (!(typeof value === 'number' && typeof operand === 'number' && value > operand)) return false; break;
       case 'gte': if (!(typeof value === 'number' && typeof operand === 'number' && value >= operand)) return false; break;
@@ -142,7 +151,7 @@ function evalCondition(cond: unknown, ctx: Record<string, unknown>): boolean {
   for (const [field, opDef] of Object.entries(c)) {
     if (field === 'all' || field === 'any' || field === 'not') continue;
     const value = ctx[field];
-    if (!evalOp(value, opDef)) return false;
+    if (!evalOp(value, opDef, ctx)) return false;
   }
   return result;
 }
@@ -219,6 +228,20 @@ export interface RuleContext extends Record<string, unknown> {
   direction?: string | null;
   absNominalDeviasi?: number | null;
   absQtyDeviasi?: number | null;
+  // ===== P2 fix: runtime thresholds injected from settings (DB) =====
+  // These allow rules.yaml to use dynamic field references instead of hardcoded values.
+  stdDeviasiBomPct?: number;
+  stdSusutPct?: number;
+  stdWastePct?: number;
+  stdTrialPct?: number;
+  fallbackTolerancePct?: number;
+  residualLossWarnPct?: number;
+  residualLossHighPct?: number;
+  highLossNominalThreshold?: number;
+  historicalZscoreWarn?: number;
+  historicalZscoreHigh?: number;
+  salesDeviationFactor?: number;
+  bomDeviationFactor?: number;
 }
 
 export function evaluateRules(ctx: RuleContext): AnomalyFlagResult[] {

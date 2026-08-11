@@ -179,6 +179,21 @@ export function buildRuleContext(
     tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
     direction: curr.direction,
     absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,
+    // ===== P2 fix: inject runtime thresholds into context so rules.yaml =====
+    // ===== can reference them as field names instead of hardcoded values.  =====
+    // e.g. { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } }
+    stdDeviasiBomPct: t.STD_DEVIASI_BOM_PCT,
+    stdSusutPct: t.STD_SUSUT_PCT,
+    stdWastePct: t.STD_WASTE_PCT,
+    stdTrialPct: t.STD_TRIAL_PCT,
+    fallbackTolerancePct: t.FALLBACK_TOLERANCE_PCT,
+    residualLossWarnPct: t.RESIDUAL_LOSS_WARN_PCT,
+    residualLossHighPct: t.RESIDUAL_LOSS_HIGH_PCT,
+    highLossNominalThreshold: t.HIGH_LOSS_NOMINAL_THRESHOLD,
+    historicalZscoreWarn: t.HISTORICAL_ZSCORE_WARN,
+    historicalZscoreHigh: t.HISTORICAL_ZSCORE_HIGH,
+    salesDeviationFactor: t.SALES_DEVIATION_FACTOR,
+    bomDeviationFactor: t.BOM_DEVIATION_FACTOR,
   };
 }
 

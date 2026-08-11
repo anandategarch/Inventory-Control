@@ -35,6 +35,13 @@ export const CFG_THRESHOLDS = {
   // Tolerance — when "BELUM ADA TOLERANSI", use fallback
   FALLBACK_TOLERANCE_PCT: 0.05,     // 5% analytical flag
 
+  // Standard tolerance thresholds (mirrors RuntimeThresholds for type compatibility)
+  STD_SUSUT_PCT: 0.10,              // 10% max susut
+  STD_WASTE_PCT: 0.05,              // 5% max waste
+  STD_TRIAL_PCT: 0.03,              // 3% max trial
+  STD_DEVIASI_BOM_PCT: 0.05,        // 5% max deviation/BOM
+  HIGH_LOSS_NOMINAL_THRESHOLD: 1_000_000,  // Rp 1M loss threshold
+
   // Week period ranges (user confirmed: WEEK 1=1-7, WEEK 2=8-14, WEEK 3/4=15-30/31)
   WEEK_RANGES: {
     'WEEK 1': { start: 1, end: 7 },

@@ -354,6 +354,9 @@ export async function GET(req: NextRequest) {
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
     // Group 2: All top items + breakdown + area + outlets + trend + pareto + cost + consistency — ALL independent
+    // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
+    const topNItems = thresholds.TOP_N_ITEMS || 10;
+    const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
     const [
       topNominal, topDevBom,
       topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows,
@@ -365,15 +368,15 @@ export async function GET(req: NextRequest) {
       consistencyItems,
       dqIssuesRaw,
     ] = await Promise.all([
-      queryTopItemsByNominal(week!, month!, filterOpts, 10),
-      queryTopItemsByDevBom(week!, month!, filterOpts, 10),
-      queryTopItemsByCategory(week!, month!, filterOpts, 'waste', 10),
-      queryTopItemsByCategory(week!, month!, filterOpts, 'susut', 10),
-      queryTopItemsByCategory(week!, month!, filterOpts, 'trial', 10),
-      queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', 10),
+      queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
+      queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'waste', topNItems),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'susut', topNItems),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'trial', topNItems),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', topNItems),
       queryAreaAnalysis(week!, month!, filterOpts),
-      queryTopOutlets(week!, month!, filterOpts, 10),
-      queryTopOutletsBySales(week!, month!, filterOpts, 10),
+      queryTopOutlets(week!, month!, filterOpts, topNOutlets),
+      queryTopOutletsBySales(week!, month!, filterOpts, topNOutlets),
       queryDeviationBreakdown(week!, month!, filterOpts),
       queryLossVsSurplus(week!, month!, filterOpts),
       queryTrendAgg(filterOpts),

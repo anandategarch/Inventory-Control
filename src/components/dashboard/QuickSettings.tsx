@@ -118,7 +118,10 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
           return next;
         });
         queryClient.invalidateQueries({ queryKey: ['settings'] });
+        // Force refetch analysis (removes stale data even within staleTime window)
         queryClient.invalidateQueries({ queryKey: ['analysis'], refetchType: 'active' });
+        // Also invalidate outlet-focus (thresholds affect anomaly detection there too)
+        queryClient.invalidateQueries({ queryKey: ['outlet-focus'], refetchType: 'active' });
       } else {
         toast({
           title: '❌ Gagal menyimpan',
