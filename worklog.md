@@ -346,3 +346,29 @@ Stage Summary:
 - Consistent with ItemConsistencyAnalysis pattern (the one component subagent had already done correctly)
 - No functional or schema changes — only description string content/format changed
 - Lint passes cleanly; ready for preview/deploy
+
+---
+Task ID: 12
+Agent: Main (Z.ai Code)
+Task: Fix 7 deep-dive bugs (gelombang kedua audit)
+
+Work Log:
+- Bug 1 (Critical): computePrioritiesFromFlags & computePriorities — added finalScore sort (financialRank + operationalRank ascending). Was returning DB-order array → .slice(0,20) showed random 20 records, not top priorities.
+- Bug 2 (Critical): evaluator.ts renderTemplate — replaced naive Math.abs(v)>=1 ? % : decimal with formatEvidenceValue() context-aware formatter. PERCENT_KEYS set for ratio fields, IDR format for nominal/sales, integer for qty. Was: 5000000 → "500000000%", 0.5 → "0.5000".
+- Bug 3 (Logic): evaluator.ts evalCondition — removed early return for 'all'/'any'/'not'. Now collects result from logic operators AND field comparisons together. Skip logic keys in field comparison loop.
+- Bug 4 (Integration): narrative.ts — LLM role 'assistant' → 'system' for SYSTEM_PROMPT. Was: model confused, may refuse/repeat prompt.
+- Bug 5 (Sorting): status/route.ts — orderBy weekLabel asc → orderBy [monthKey, periodStart]. Was: "WEEK 10" before "WEEK 2" (string sort).
+- Bug 6 (Business): analysis.ts — replaced MAX with MODE (most frequent value) for sales dedup across 6 functions. New helper dedupSalesByOutlet(). Was: 1 typo row 10M (should 1M) → adopts 10M. Now: MODE robust against single-row typo.
+- Bug 7 (Performance): computeHistoricalAnalysis — replaced manual mean/variance/stdDev loop with existing calcStdDev + calcZScore (null-safe, already imported).
+- Lint: 0 errors. TypeScript: 0 errors in edited files.
+- Committed (53f52e0) and pushed to GitHub (synced ✓)
+
+Stage Summary:
+- All 7 deep-dive bugs validated as real and fixed
+- Priority ranking now meaningful (combined financial+operational rank)
+- LLM narrative receives properly formatted evidence (IDR for currency, % for ratios)
+- Rule evaluator handles mixed logic+field conditions correctly
+- LLM system prompt uses correct role
+- Week dropdown chronologically sorted
+- Sales aggregation robust against Excel typo (MODE not MAX)
+- Historical z-score uses shared calcStdDev (no redundant computation)
