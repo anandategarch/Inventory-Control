@@ -1054,3 +1054,28 @@ Stage Summary:
 - Middleware protects /api/data and /api/pic POST/DELETE (GET remains public)
 - All Indonesian text, all Zod validated, all mutations audited + cache cleared
 - Lint + TypeScript clean
+
+---
+Task ID: 23
+Agent: full-stack-developer subagent + Main
+Task: Create 3 features — Delete Data, PIC CRUD, Import PIC
+
+Work Log:
+- Feature 1: Hapus Data
+  - API /api/data (DELETE): hapus per month, per fileId, atau all+confirm
+  - UI DataManagementDialog: list SourceFiles, delete per file/month, reset total
+  - Cascade: DQIssue → InventoryRecord → Week → SourceFile
+  - Audit log + cache clear
+  
+- Feature 2: PIC CRUD
+  - API /api/pic (GET/POST/DELETE): list, upsert, hapus
+  - UI PicManagementDialog: inline edit, search, hapus
+  - Audit log + cache clear
+
+- Feature 3: Import PIC dari UI
+  - API /api/pic/import (POST): bulk CSV import (semicolon/comma, BOM)
+  - UI: textarea paste CSV → import
+
+- Integration: FilterBar 2 tombol baru, middleware protected, statusCache shared
+- Lint: 0 errors. TypeScript: 0 errors.
+- Committed (0f13211) and pushed to GitHub (synced)
