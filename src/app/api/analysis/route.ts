@@ -1,44 +1,106 @@
 // ============================================================
 //  /api/analysis — main dashboard data endpoint
 //  Query: ?month=&week=&compareWeek=&area=&outlet=&item=
+//
+//  Phase 1-4 egress optimization (Task 15):
+//  - Raw record fetching kept ONLY for rule evaluation (currentRecs + prevRecs)
+//  - All aggregation pushed to SQL via /lib/queries.ts (PostgreSQL)
+//  - Historical stats computed via SQL GROUP BY (avoids 540K row fetch)
+//  - Trend, exec summary, top items/outlets, pareto, etc. all SQL-aggregated
+//  - Rule evaluation loop, worklist, priorities, health ranking, historical
+//    analysis, variance analysis still use raw records (per-record logic)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
-  buildExecutiveSummary,
-  topItemsByNominal,
-  topItemsByDevBom,
-  topOutlets,
-  topOutletsBySales,
-  topItemsByWaste,
-  topItemsBySusut,
-  topItemsByTrial,
-  topItemsByLossSurplus,
-  deviationBreakdown,
-  lossVsSurplus,
   buildWorklistFromFlags,
-  buildTrend,
   computePrioritiesFromFlags,
   buildRuleContext,
-  computeAreaAnalysis,
   computeVarianceAnalysis,
   computeOutletHealthRanking,
-  computePareto,
-  computeCostImpact,
-  computeItemConsistencyAnalysis,
-  computeNetCostTrend,
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
 import { analysisCache } from '@/lib/cache';
-import { getRuntimeThresholds } from '@/lib/settings';
+import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { calcGrowth } from '@/engine/calculations/growth';
+import {
+  queryTrendAgg,
+  queryExecSummary,
+  queryTopItemsByNominal,
+  queryTopItemsByDevBom,
+  queryTopItemsByCategory,
+  queryTopOutlets,
+  queryTopOutletsBySales,
+  queryDeviationBreakdown,
+  queryLossVsSurplus,
+  queryAreaAnalysis,
+  queryCostImpact,
+  queryPareto,
+  queryItemConsistency,
+  queryHistoricalStats,
+} from '@/lib/queries';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
+import type { ExecutiveSummary } from '@/types/inventory';
 
 export const dynamic = 'force-dynamic';
 
 type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
+
+// ============================================================
+//  Build ExecutiveSummary from SQL aggregate rows
+//  (replaces JS buildExecutiveSummary that looped 35K records)
+// ============================================================
+function buildExecSummaryFromSql(
+  curr: {
+    sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
+    qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
+    totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
+  } | null,
+  prev: {
+    sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
+    qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
+    totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
+  } | null,
+  monthLabel: string,
+  weekLabel: string,
+  prevWeekLabel: string | null,
+): ExecutiveSummary {
+  const c = curr ?? {
+    sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0,
+    qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0,
+    residualLossQty: 0, residualLossNominal: 0,
+  };
+  const salesPrev = prev?.sales ?? null;
+  const nominalDeviasiPrev = prev?.nominalDeviasi ?? null;
+  const qtyBomPrev = prev?.qtyBom ?? null;
+  const qtyDeviasiPrev = prev?.qtyDeviasi ?? null;
+  const qtyWastePrev = prev?.qtyWaste ?? null;
+  const qtySusutPrev = prev?.qtySusut ?? null;
+  const qtyTrialPrev = prev?.qtyTrial ?? null;
+  const qtyLossSurplusPrev = prev?.qtyLossSurplus ?? null;
+
+  return {
+    period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
+    sales: { current: c.sales, previous: salesPrev, growth: calcGrowth(c.sales, salesPrev) },
+    nominalDeviasi: { current: c.nominalDeviasi, previous: nominalDeviasiPrev, growth: calcGrowth(c.nominalDeviasi, nominalDeviasiPrev) },
+    qtyBom: { current: c.qtyBom, previous: qtyBomPrev, growth: calcGrowth(c.qtyBom, qtyBomPrev) },
+    qtyDeviasi: { current: c.qtyDeviasi, previous: qtyDeviasiPrev, growth: calcGrowth(c.qtyDeviasi, qtyDeviasiPrev) },
+    qtyWaste: { current: c.qtyWaste, previous: qtyWastePrev, growth: calcGrowth(c.qtyWaste, qtyWastePrev) },
+    qtySusut: { current: c.qtySusut, previous: qtySusutPrev, growth: calcGrowth(c.qtySusut, qtySusutPrev) },
+    qtyTrial: { current: c.qtyTrial, previous: qtyTrialPrev, growth: calcGrowth(c.qtyTrial, qtyTrialPrev) },
+    qtyLossSurplus: { current: c.qtyLossSurplus, previous: qtyLossSurplusPrev, growth: calcGrowth(c.qtyLossSurplus, qtyLossSurplusPrev) },
+    totalLoss: c.totalLoss,
+    totalSurplus: c.totalSurplus,
+    lossToSales: c.sales > 0 ? c.totalLoss / c.sales : null,
+    surplusToSales: c.sales > 0 ? c.totalSurplus / c.sales : null,
+    deviationToBom: c.qtyBom > 0 ? c.qtyDeviasi / c.qtyBom : null,
+    residualLossQty: c.residualLossQty,
+    residualLossPct: c.qtyDeviasi > 0 ? c.residualLossQty / c.qtyDeviasi : null,
+  };
+}
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -75,7 +137,7 @@ export async function GET(req: NextRequest) {
 
     // Cache key — include all filter dimensions + thresholds version
     // (thresholds version changes when user updates settings, invalidating cache)
-    const thresholdsVersion = await db.setting.count();
+    const thresholdsVersion = await getThresholdsVersion(); // Phase 3: cached (1 min TTL)
     const cacheKey = `analysis|${monthLabel}|${currentWeek}|${compareWeek}|${compareMonthExplicit}|${area}|${outletCode}|${itemName}|${pic}|tv${thresholdsVersion}`;
     const cached = analysisCache.get(cacheKey);
     if (cached) {
@@ -100,25 +162,26 @@ export async function GET(req: NextRequest) {
       week = week || latest.weekLabel;
     }
 
-    // ===== BUG FIX #2: build chronological global week list (cross-month) =====
-    // Get ALL (monthLabel, weekLabel) combinations in DB, sorted chronologically
-    // by monthKey then weekLabel.
-    const allPeriodsRaw = await db.inventoryRecord.findMany({
-      select: { monthLabel: true, weekLabel: true },
-      distinct: ['monthLabel', 'weekLabel'],
+    // ===== Phase 1a fix: Query Week table (3 rows) instead of scanning 540K InventoryRecord =====
+    const weeksRaw = await db.week.findMany({
+      select: { weekLabel: true, monthKey: true },
+      distinct: ['monthKey', 'weekLabel'],
     });
-    // Join with SourceFile to get monthKey for sorting
     const fileMonthKeys = await db.sourceFile.findMany({
       select: { monthLabel: true, monthKey: true },
     });
     const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
-    const allPeriods = allPeriodsRaw
-      .map((p) => ({
-        monthLabel: p.monthLabel,
-        weekLabel: p.weekLabel,
-        monthKey: monthKeyByLabel.get(p.monthLabel) || '0000-00',
-        sortKey: `${monthKeyByLabel.get(p.monthLabel) || '0000-00'}|${p.weekLabel}`,
-      }))
+    const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
+    const allPeriods = weeksRaw
+      .map((w) => {
+        const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
+        return {
+          monthLabel: ml,
+          weekLabel: w.weekLabel,
+          monthKey: w.monthKey,
+          sortKey: `${w.monthKey}|${w.weekLabel}`,
+        };
+      })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
     // ===== BUG FIX #2: Auto-previous = chronologically previous period (cross-month) =====
@@ -134,12 +197,9 @@ export async function GET(req: NextRequest) {
         prevMonth = prev.monthLabel;
       }
     } else {
-      // User explicitly chose a compareWeek
       if (compareMonthExplicit) {
-        // Cross-month compare via "WEEK|||Month" format
         prevMonth = compareMonthExplicit;
       } else {
-        // Same-week-label could exist in multiple months — prefer current month, else first match
         const match = allPeriods.find((p) => p.weekLabel === prevWeek && p.monthLabel === month);
         if (match) {
           prevMonth = month;
@@ -151,14 +211,12 @@ export async function GET(req: NextRequest) {
     }
 
     // ===== BUG FIX #4: buildWhere accepts monthLabel parameter (for cross-month) =====
-    // If PIC filter is set, resolve to list of outlet codes assigned to that PIC
     let picOutletCodes: string[] | null = null;
     if (pic) {
       try {
         const picOutlets = await db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } });
         picOutletCodes = picOutlets.map((p) => p.outletCode);
       } catch (e) {
-        // Bug 6 fix: log error instead of silent swallow
         console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
       }
     }
@@ -173,8 +231,15 @@ export async function GET(req: NextRequest) {
       return w;
     };
 
-    // ===== OPTIMIZATION: Only select fields we actually need (not full include) =====
-    // This dramatically reduces memory usage for large datasets (50k+ rows per week)
+    // Shared filter options for SQL aggregate queries
+    const filterOpts = { area, outletCode, itemName, picOutletCodes };
+
+    // ============================================================
+    //  RAW RECORD FETCH — kept for rule evaluation only
+    //  (buildRuleContext, evaluateRules, worklist, priorities,
+    //   outletHealthRanking, historicalAnalysis, varianceAnalysis)
+    //  Select only fields needed by rule engine + UI drilldown.
+    // ============================================================
     const currentRecs = await db.inventoryRecord.findMany({
       where: buildWhere(week!, month!),
       include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
@@ -195,59 +260,33 @@ export async function GET(req: NextRequest) {
       }, { status: 404 });
     }
 
-    // Build previous-by-outlet-item map
+    // Build previous-by-outlet-item map (for rule context + variance analysis)
     const prevByOutletItem = new Map<string, RecWithRels>();
     for (const r of prevRecs) {
       prevByOutletItem.set(`${r.outletId}|${r.itemId}`, r);
     }
 
-    // ===== BUG FIX #7: Historical = all periods chronologically BEFORE current (cross-month) =====
-    const historicalByOutletItem = new Map<string, number[]>();
+    // ============================================================
+    //  HISTORICAL STATS — Phase 4: SQL aggregate (was 540K raw records)
+    //  queryHistoricalStats returns Map<outletId|itemId, {mean, stdDev, n}>
+    //  Used by buildRuleContext for z-score calculation
+    // ============================================================
     const currentPeriodIdx = allPeriods.findIndex(
       (p) => p.monthLabel === month && p.weekLabel === week
     );
     const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
-
-    if (historicalPeriods.length > 0) {
-      // Build OR conditions for each (month, week) pair
-      const orConds = historicalPeriods.map((p) => ({
-        monthLabel: p.monthLabel,
-        weekLabel: p.weekLabel,
-      }));
-      const baseWhere: any = { OR: orConds };
-      if (area) baseWhere.area = area;
-      if (outletCode) baseWhere.outlet = { code: outletCode };
-      if (itemName) baseWhere.item = { name: { contains: itemName } };
-
-      const histRecs = await db.inventoryRecord.findMany({
-        where: baseWhere,
-        select: { outletId: true, itemId: true, pctQtyDeviasiToBom: true, qtyBom: true, monthLabel: true, weekLabel: true },
-      });
-      // Sort by chronological order to keep history meaningful
-      const periodOrder = new Map(historicalPeriods.map((p, i) => [`${p.monthLabel}|${p.weekLabel}`, i]));
-      const grouped = new Map<string, Array<{ val: number; ord: number }>>();
-      for (const r of histRecs) {
-        if (r.pctQtyDeviasiToBom == null || r.qtyBom === 0) continue;
-        const k = `${r.outletId}|${r.itemId}`;
-        const ord = periodOrder.get(`${r.monthLabel}|${r.weekLabel}`) ?? 0;
-        const arr = grouped.get(k) ?? [];
-        arr.push({ val: r.pctQtyDeviasiToBom, ord });
-        grouped.set(k, arr);
-      }
-      for (const [k, arr] of grouped) {
-        arr.sort((a, b) => a.ord - b.ord);
-        historicalByOutletItem.set(k, arr.map((x) => x.val));
-      }
-    }
-
-    // Compute analysis
-    const execSummary = buildExecutiveSummary(currentRecs, prevRecs, month!, week!, prevWeek);
+    const historicalByOutletItem = historicalPeriods.length > 0
+      ? await queryHistoricalStats(historicalPeriods, filterOpts)
+      : new Map<string, { mean: number; stdDev: number; n: number }>();
 
     // ===== Load runtime thresholds from DB (user-configurable via Settings) =====
     const thresholds = await getRuntimeThresholds();
 
-    // ===== OPTIMIZATION: Evaluate rules ONCE per record, reuse for health/worklist/priorities =====
-    // Also skip records with zero/null deviation (no point evaluating rules on zero deviation)
+    // ============================================================
+    //  RULE EVALUATION LOOP (per-record, single pass)
+    //  Still needs raw records — flags drive worklist, priorities,
+    //  health ranking, historical analysis. Cannot be SQL-aggregated.
+    // ============================================================
     let normal = 0, warning = 0, abnormal = 0;
     const ruleCategoryCounts = new Map<string, number>();
     const ruleCodeCounts = new Map<string, number>();
@@ -256,18 +295,15 @@ export async function GET(req: NextRequest) {
       issue: string; absNominal: number; devBom: number | null; direction: string;
     }> = [];
 
-    // Pre-compute rule evaluation results for ALL records (single pass)
     interface RecWithFlags {
       curr: RecWithRels;
       flags: ReturnType<typeof evaluateRules>;
     }
     const recsWithFlags: RecWithFlags[] = [];
     let zeroDevCount = 0;
-    // Track zero-deviation records per outlet (for outlet health ranking)
     const zeroDevByOutlet = new Map<number, number>();
 
     for (const curr of currentRecs) {
-      // Skip records with zero/null deviation — they're "normal" by definition
       if (curr.qtyDeviasi === null || curr.qtyDeviasi === 0 || curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0) {
         normal++;
         zeroDevCount++;
@@ -277,8 +313,9 @@ export async function GET(req: NextRequest) {
 
       const key = `${curr.outletId}|${curr.itemId}`;
       const prev = prevByOutletItem.get(key) ?? null;
-      const historical = historicalByOutletItem.get(key) ?? [];
-      const ctx = buildRuleContext(curr, prev, historical, thresholds);
+      // Phase 4: historicalByOutletItem now contains precomputed stats (mean + stdDev)
+      const historicalStats = historicalByOutletItem.get(key) ?? null;
+      const ctx = buildRuleContext(curr, prev, historicalStats, thresholds);
       const flags = evaluateRules(ctx);
 
       recsWithFlags.push({ curr, flags });
@@ -291,7 +328,6 @@ export async function GET(req: NextRequest) {
         else if (top.severity === 'WARNING') warning++;
         else normal++;
 
-        // Track rule category breakdown for Health & Alert panel
         ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
         ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
 
@@ -309,29 +345,92 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Build health breakdown object
     const ruleBreakdown = {
       byCategory: Object.fromEntries(ruleCategoryCounts) as Record<string, number>,
       byRule: Object.fromEntries(ruleCodeCounts) as Record<string, number>,
     };
 
-    // Top items
-    const topNominal = topItemsByNominal(currentRecs, 10);
-    const topDevBom = topItemsByDevBom(currentRecs, 10);
-    const topOut = topOutlets(currentRecs, 10);
+    // ============================================================
+    //  SQL AGGREGATE QUERIES (Phase 1b/2/4)
+    //  Each query replaces a JS loop over 35K+ records.
+    //  All run in PostgreSQL — only minimal rows returned.
+    // ============================================================
 
-    // ===== Card drill-down data: top 10 by each metric =====
-    const topOutletsSales = topOutletsBySales(currentRecs, 10);
-    const topWaste = topItemsByWaste(currentRecs, 10);
-    const topSusut = topItemsBySusut(currentRecs, 10);
-    const topTrial = topItemsByTrial(currentRecs, 10);
-    const topLossSurplus = topItemsByLossSurplus(currentRecs, 10);
+    // Executive Summary — 1 row each for current + previous period
+    const currSummary = await queryExecSummary(week!, month!, filterOpts);
+    const prevSummary = prevWeek && prevMonth
+      ? await queryExecSummary(prevWeek, prevMonth, filterOpts)
+      : null;
+    const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
-    // Deviation breakdown
-    const breakdown = deviationBreakdown(currentRecs);
+    // Top items by various metrics (N rows each)
+    const topNominal = await queryTopItemsByNominal(week!, month!, filterOpts, 10);
+    const topDevBom = await queryTopItemsByDevBom(week!, month!, filterOpts, 10);
+    const topWasteRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'waste', 10);
+    const topWaste = topWasteRows.map(r => ({
+      itemName: r.itemName,
+      outletCode: r.outletCode,
+      qtyWaste: r.qty,
+      nominalWaste: r.nominal,
+    }));
+    const topSusutRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'susut', 10);
+    const topSusut = topSusutRows.map(r => ({
+      itemName: r.itemName,
+      outletCode: r.outletCode,
+      qtySusut: r.qty,
+      nominalSusut: r.nominal,
+    }));
+    const topTrialRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'trial', 10);
+    const topTrial = topTrialRows.map(r => ({
+      itemName: r.itemName,
+      outletCode: r.outletCode,
+      qtyTrial: r.qty,
+      nominalTrial: r.nominal,
+    }));
+    const topLossSurplusRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', 10);
+    const topLossSurplus = topLossSurplusRows.map(r => ({
+      itemName: r.itemName,
+      outletCode: r.outletCode,
+      qtyLossSurplus: r.qty,
+      nominalLossSurplus: r.nominal,
+      direction: r.direction,
+    }));
 
-    // Loss vs Surplus
-    const lvs = lossVsSurplus(currentRecs);
+    // Top outlets (GROUP BY outlet) — needs areaAvg from areaAnalysis
+    const areaAnalysisRaw = await queryAreaAnalysis(week!, month!, filterOpts);
+    const areaAvgMap = new Map<string, number>(
+      areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0])
+    );
+    const topOutletsRaw = await queryTopOutlets(week!, month!, filterOpts, 10);
+    const topOut = topOutletsRaw.map(o => ({
+      outletCode: o.outletCode,
+      outletName: o.outletName,
+      area: o.area,
+      absNominal: o.absNominal,
+      devBom: o.devBom,
+      areaAvg: areaAvgMap.get(o.area) ?? 0,
+      sales: o.sales,
+      lossAmount: o.lossAmount,
+      surplusAmount: o.surplusAmount,
+      direction: o.direction,
+    }));
+
+    // Top outlets by sales — compute devToSalesRatio in JS (sales already dedup'd in SQL)
+    const topOutletsSalesRaw = await queryTopOutletsBySales(week!, month!, filterOpts, 10);
+    const topOutletsSales = topOutletsSalesRaw.map(o => ({
+      outletCode: o.outletCode,
+      outletName: o.outletName,
+      area: o.area,
+      sales: o.sales,
+      absNominal: o.absNominal,
+      devToSalesRatio: o.sales > 0 ? o.absNominal / o.sales : null,
+    }));
+
+    // Deviation Breakdown (single row)
+    const breakdown = await queryDeviationBreakdown(week!, month!, filterOpts);
+
+    // Loss vs Surplus (single row)
+    const lvs = await queryLossVsSurplus(week!, month!, filterOpts);
 
     // Investigation worklist — use pre-computed flags (no re-evaluation)
     const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
@@ -374,72 +473,36 @@ export async function GET(req: NextRequest) {
       })
       .slice(0, 20);
 
-    // Trend — use lightweight aggregation query
-    // BUG FIX #001: Sales must be deduplicated per outlet (not summed across item rows)
-    // BUG FIX #002: DevBom must use sum of ABSOLUTE pctQtyDeviasiToBom, not abs(sum)
-    //   because LOSS (+) and SURPLUS (-) cancel out when summed, making devBom look smaller
-    const trendWhere: any = {};
-    if (area) trendWhere.area = area;
-    if (outletCode) trendWhere.outlet = { code: outletCode };
-    if (itemName) trendWhere.item = { name: { contains: itemName } };
-
-    // Fetch records for trend (only needed fields, lightweight)
-    // We need per-outlet dedup for sales, and per-record abs for devBom
-    // Also fetch signed nominalDeviasi for net cost trend (LOSS - SURPLUS)
-    const trendRecs = await db.inventoryRecord.findMany({
-      where: trendWhere,
-      select: {
-        monthLabel: true, weekLabel: true,
-        nominalSales: true, absNominalDeviasi: true,
-        pctQtyDeviasiToBom: true, qtyBom: true,
-        nominalDeviasi: true,
-        outletId: true,
-      },
-    });
-
-    // Group by (monthLabel, weekLabel) and compute metrics
-    const trendByPeriod = new Map<string, {
-      monthLabel: string; weekLabel: string; sortKey: string;
-      salesByOutlet: Map<number, number>; // dedup sales per outlet
-      nominal: number; devBomSum: number; devBomCount: number;
-    }>();
-
-    for (const r of trendRecs) {
-      const k = `${r.monthLabel}|${r.weekLabel}`;
-      const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-      const sortKey = `${mk}|${r.weekLabel}`;
-      let period = trendByPeriod.get(k);
-      if (!period) {
-        period = {
-          monthLabel: r.monthLabel, weekLabel: r.weekLabel, sortKey,
-          salesByOutlet: new Map(), nominal: 0, devBomSum: 0, devBomCount: 0,
-        };
-        trendByPeriod.set(k, period);
-      }
-      // Sales: take MAX per outlet (not first non-null, not sum)
-      if (r.nominalSales != null && r.nominalSales > 0) {
-        const existing = period.salesByOutlet.get(r.outletId) ?? 0;
-        if (r.nominalSales > existing) period.salesByOutlet.set(r.outletId, r.nominalSales);
-      }
-      period.nominal += r.absNominalDeviasi ?? 0;
-      // BUG FIX #002: Use ABSOLUTE value of pctQtyDeviasiToBom for averaging
-      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
-        period.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
-        period.devBomCount++;
-      }
-    }
-
-    const trend = [...trendByPeriod.values()]
-      .map((p) => {
-        // Sum deduplicated sales
-        let sales = 0;
-        for (const v of p.salesByOutlet.values()) sales += v;
+    // ============================================================
+    //  Trend — SQL aggregate (~18 rows), then JS sort by monthKey
+    //  Replaces 540K-row raw fetch + JS groupBy
+    // ============================================================
+    const trendAggRows = await queryTrendAgg(filterOpts);
+    const trend = trendAggRows
+      .map((r) => {
+        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
         return {
-          weekLabel: `${p.weekLabel} ${p.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: p.sortKey,
-          devBom: p.devBomCount > 0 ? p.devBomSum / p.devBomCount : 0,
-          sales,
-          nominal: p.nominal,
+          weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+          sortKey: `${mk}|${r.weekLabel}`,
+          devBom: r.devBom,
+          sales: r.sales,
+          nominal: r.nominal,
+        };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(({ sortKey, ...rest }) => rest);
+
+    // Net Cost Trend — built from same queryTrendAgg result (no extra query)
+    const netCostTrend = trendAggRows
+      .map((r) => {
+        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+        return {
+          weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+          sortKey: `${mk}|${r.weekLabel}`,
+          netCostRatio: r.sales > 0 ? (r.lossNominal - r.surplusNominal) / r.sales : 0,
+          lossNominal: r.lossNominal,
+          surplusNominal: r.surplusNominal,
+          sales: r.sales,
         };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
@@ -463,16 +526,94 @@ export async function GET(req: NextRequest) {
     // Priorities (top 20) — use pre-computed flags
     const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
-    // ===== Extended analytics (Task 5): area, variance, outlet health, pareto, cost, consistency, net cost trend, historical =====
-    const areaAnalysis = computeAreaAnalysis(currentRecs);
+    // ============================================================
+    //  Extended analytics (SQL aggregate)
+    // ============================================================
+    const areaAnalysis = areaAnalysisRaw.map(a => ({
+      area: a.area,
+      outletCount: a.outletCount,
+      totalSales: a.totalSales,
+      totalAbsNominal: a.totalAbsNominal,
+      avgDevBom: a.avgDevBom,
+      lossToSales: a.lossToSales,
+    }));
+
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
-    const pareto = computePareto(currentRecs);
-    const costImpact = computeCostImpact(currentRecs, execSummary.sales.current);
-    const itemConsistencyAnalysis = computeItemConsistencyAnalysis(
-      currentRecs, historicalByOutletItem, historicalPeriods.length
-    );
-    const netCostTrend = computeNetCostTrend(trendRecs, monthKeyByLabel);
+
+    // Pareto — SQL window function (Phase 4)
+    const paretoSql = await queryPareto(week!, month!, filterOpts, 50);
+    // Remap items to JS shape (cumPct decimal 0-1, drop rank/cumulative)
+    const paretoItems = paretoSql.items.map(it => ({
+      itemName: it.itemName,
+      outletCode: it.outletCode,
+      absNominal: it.absNominal,
+      cumPct: it.cumulativePct / 100, // SQL returns 0-100, JS expects 0-1
+    }));
+    // Use full class A stats from SQL (computed across ALL items, not capped by LIMIT)
+    const pareto = {
+      classACount: paretoSql.classACountFull,
+      classAPctOfCost: paretoSql.classAPctFull,
+      totalItems: paretoSql.totalItems,
+      totalAbsNominal: paretoSql.totalAbsNominal,
+      items: paretoItems.slice(0, 20),
+    };
+
+    // Cost Impact — SQL aggregate + JS-style lossNominal/surplusNominal from lvs
+    const costImpactSql = await queryCostImpact(week!, month!, execSummary.sales.current, filterOpts);
+    const costImpact = {
+      totalCost: costImpactSql.totalCost,
+      pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null,
+      lossNominal: lvs.lossNominal,
+      surplusNominal: lvs.surplusNominal,
+      // Detailed breakdown (additional fields, not used by current frontend but available)
+      wasteCost: costImpactSql.wasteCost,
+      susutCost: costImpactSql.susutCost,
+      trialCost: costImpactSql.trialCost,
+      residualCost: costImpactSql.residualCost,
+      wasteToSales: costImpactSql.wasteToSales,
+      susutToSales: costImpactSql.susutToSales,
+      trialToSales: costImpactSql.trialToSales,
+      residualToSales: costImpactSql.residualToSales,
+    };
+
+    // Item Consistency — SQL GROUP BY itemName with outlet count
+    const consistencyItems = await queryItemConsistency(week!, month!, filterOpts);
+    const systemic = consistencyItems
+      .filter(i => i.consistency === 'SYSTEMIC')
+      .map(i => ({
+        itemName: i.itemName,
+        outletCode: '',
+        area: '',
+        occurrences: i.outletCount,
+        avgDevBom: i.avgDevBom,
+        absNominal: i.totalAbsNominal,
+      }));
+    const episodic = consistencyItems
+      .filter(i => i.consistency !== 'SYSTEMIC')
+      .map(i => ({
+        itemName: i.itemName,
+        outletCode: '',
+        area: '',
+        absNominal: i.totalAbsNominal,
+        devBom: i.avgDevBom,
+      }));
+    const itemConsistencyAnalysis = {
+      systemic,
+      episodic,
+      items: consistencyItems.map(i => ({
+        itemName: i.itemName,
+        satuan: '', // not used by frontend table; would need separate fetch
+        outletCount: i.outletCount,
+        lossOutlets: i.lossOutlets,
+        surplusOutlets: i.surplusOutlets,
+        totalAbsNominal: i.totalAbsNominal,
+        avgDevBom: i.avgDevBom,
+        consistency: i.consistency,
+      })),
+    };
+
+    // Historical Analysis — uses recsWithFlags + historicalByOutletItem map
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 

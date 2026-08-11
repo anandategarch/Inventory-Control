@@ -190,7 +190,7 @@ export function useStatus() {
       const res = await fetch('/api/status');
       return res.json() as Promise<StatusData>;
     },
-    staleTime: 30_000,
+    staleTime: 5 * 60 * 1000, // Phase 1d: 5 min (was 30s) — data rarely changes
   });
 }
 

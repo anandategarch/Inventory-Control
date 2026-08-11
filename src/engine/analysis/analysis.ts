@@ -12,7 +12,7 @@ import type {
 import { CFG_THRESHOLDS } from '@/config/thresholds';
 import type { RuntimeThresholds } from '@/lib/settings';
 import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
-import { calcGrowth, calcGrowthAbs, calcZScore, calcStdDev, safeRatio, calcAvgPrice } from '@/engine/calculations/growth';
+import { calcGrowth, calcGrowthAbs, calcZScore, safeRatio, calcAvgPrice } from '@/engine/calculations/growth';
 
 type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 
@@ -135,11 +135,15 @@ export function buildExecutiveSummary(
 // ============================================================
 //  Per-record rule evaluation + context building
 //  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
+//
+//  Phase 4 optimization: `historicalStats` is now precomputed by SQL
+//  (queryHistoricalStats) instead of passing the raw array of values.
+//  This avoids loading 540K historical records into JS memory.
 // ============================================================
 export function buildRuleContext(
   curr: RecWithRels,
   prev: RecWithRels | null,
-  historical: number[], // historical dev/bom ratios
+  historicalStats: { mean: number; stdDev: number; n: number } | null,
   t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
 ): RuleContext {
   const bomGrowth = calcGrowthAbs(curr.qtyBom, prev?.qtyBom ?? null);
@@ -150,8 +154,10 @@ export function buildRuleContext(
   const prevPrice = calcAvgPrice(prev?.nominalDeviasi ?? null, prev?.qtyDeviasi ?? null);
   const priceGrowth = calcGrowth(currPrice, prevPrice);
 
-  const stats = calcStdDev(historical);
-  const zScore = stats && stats.stdDev > 0 ? calcZScore(curr.pctQtyDeviasiToBom, stats.mean, stats.stdDev) : null;
+  // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
+  const zScore = historicalStats && historicalStats.stdDev > 0
+    ? calcZScore(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
+    : null;
 
   // benchmark flag from zScore (uses runtime thresholds)
   let benchmarkFlag: string | null = null;
@@ -407,15 +413,15 @@ export function lossVsSurplus(recs: RecWithRels[]) {
 export function buildWorklist(
   recs: RecWithRels[],
   prevByOutletItem: Map<string, RecWithRels>,
-  historicalByOutletItem: Map<string, number[]>
+  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>
 ): InvestigationItem[] {
   const items: InvestigationItem[] = [];
 
   for (const curr of recs) {
     const key = `${curr.outletId}|${curr.itemId}`;
     const prev = prevByOutletItem.get(key) ?? null;
-    const historical = historicalByOutletItem.get(key) ?? [];
-    const ctx = buildRuleContext(curr, prev, historical);
+    const historicalStats = historicalByOutletItem.get(key) ?? null;
+    const ctx = buildRuleContext(curr, prev, historicalStats);
     const flags = evaluateRules(ctx);
 
     if (flags.length === 0) continue;
@@ -487,15 +493,15 @@ export function recommendAction(ruleCodes: string[]): string {
 export function computePriorities(
   recs: RecWithRels[],
   prevByOutletItem: Map<string, RecWithRels>,
-  historicalByOutletItem: Map<string, number[]>
+  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>
 ): PriorityScore[] {
   const scores: PriorityScore[] = [];
 
   for (const curr of recs) {
     const key = `${curr.outletId}|${curr.itemId}`;
     const prev = prevByOutletItem.get(key) ?? null;
-    const historical = historicalByOutletItem.get(key) ?? [];
-    const ctx = buildRuleContext(curr, prev, historical);
+    const historicalStats = historicalByOutletItem.get(key) ?? null;
+    const ctx = buildRuleContext(curr, prev, historicalStats);
     const flags = evaluateRules(ctx);
 
     if (flags.length === 0) continue;
@@ -987,7 +993,7 @@ export function computeCostImpact(recs: RecWithRels[], salesTotal: number) {
 // ============================================================
 export function computeItemConsistencyAnalysis(
   current: RecWithRels[],
-  _historicalByOutletItem?: Map<string, number[]>,
+  _historicalByOutletItem?: Map<string, { mean: number; stdDev: number; n: number }>,
   _historicalPeriodCount?: number
 ) {
   // Group by itemName — count distinct outlets with significant deviation
@@ -1145,10 +1151,13 @@ export function computeNetCostTrend(
 // ============================================================
 //  Historical Analysis — items where current devBom deviates
 //  significantly from historical mean (z-score > 2 = critical)
+//
+//  Phase 4 optimization: historicalByOutletItem now contains precomputed
+//  stats (mean + stdDev + n) from SQL aggregate query, not raw arrays.
 // ============================================================
 export function computeHistoricalAnalysis(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
-  historicalByOutletItem: Map<string, number[]>
+  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>
 ) {
   const criticalItems: Array<{
     itemName: string; outletCode: string; area: string;
@@ -1159,11 +1168,9 @@ export function computeHistoricalAnalysis(
     const histRule = flags.find((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING');
     if (!histRule) continue;
     const key = `${curr.outletId}|${curr.itemId}`;
-    const hist = historicalByOutletItem.get(key) ?? [];
-    if (hist.length === 0) continue;
-    // Bug 7 fix: use existing calcStdDev (null-safe, already imported) instead of manual loop
-    const stats = calcStdDev(hist);
+    const stats = historicalByOutletItem.get(key);
     if (!stats || stats.stdDev <= 0) continue;
+    // Phase 4: stats already computed by SQL (no need for calcStdDev on raw array)
     const zScore = calcZScore(curr.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
     criticalItems.push({
       itemName: curr.item.name,

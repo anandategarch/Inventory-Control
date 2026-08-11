@@ -1,11 +1,16 @@
 // ============================================================
 //  /api/status — list available months, weeks, outlets, areas, pics
+//  Phase 1c: server-side cache (5 min TTL) to reduce DB queries
 //  Resilient to missing tables (returns empty state, not 500)
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { LRUCache } from '@/lib/cache';
 
 export const dynamic = 'force-dynamic';
+
+// Phase 1c: cache status response for 5 minutes
+const statusCache = new LRUCache<string, unknown>(1, 5 * 60 * 1000);
 
 const EMPTY_STATE = {
   success: true,
@@ -21,6 +26,12 @@ const EMPTY_STATE = {
 
 export async function GET() {
   try {
+    // Phase 1c: check cache first
+    const cached = statusCache.get('status');
+    if (cached) {
+      return NextResponse.json({ ...(cached as object), cached: true });
+    }
+
     const files = await db.sourceFile.findMany({
       orderBy: { monthKey: 'asc' },
       select: { fileName: true, monthLabel: true, monthKey: true, rowCount: true, dqStatus: true, importedAt: true },
@@ -69,7 +80,7 @@ export async function GET() {
     }
     for (const k of Object.keys(weeksByMonth)) weeksByMonth[k].sort();
 
-    return NextResponse.json({
+    const result = {
       success: true,
       files,
       months: files.map((f) => ({ label: f.monthLabel, key: f.monthKey })),
@@ -83,7 +94,12 @@ export async function GET() {
         totalItems: itemsCount,
         totalRecords: recordsCount,
       },
-    });
+    };
+
+    // Phase 1c: cache the result for 5 minutes
+    statusCache.set('status', result);
+
+    return NextResponse.json(result);
   } catch (e: any) {
     const errMsg = e?.message || String(e);
     // If tables don't exist, return empty state (not error 500)

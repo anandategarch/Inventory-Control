@@ -282,6 +282,23 @@ export async function getSettingBool(key: string): Promise<boolean> {
 // Invalidate cache (call after update)
 export function invalidateSettingsCache(): void {
   _settingsCache = null;
+  _thresholdsVersionCache = null; // Phase 3: invalidate version cache too
+}
+
+// ============================================================
+//  Phase 3: Cache thresholdsVersion (avoid db.setting.count() per request)
+// ============================================================
+let _thresholdsVersionCache: number | null = null;
+let _thresholdsVersionAt = 0;
+const VERSION_CACHE_TTL_MS = 60_000; // 1 minute
+
+export async function getThresholdsVersion(): Promise<number> {
+  if (_thresholdsVersionCache !== null && (Date.now() - _thresholdsVersionAt) < VERSION_CACHE_TTL_MS) {
+    return _thresholdsVersionCache;
+  }
+  _thresholdsVersionCache = await db.setting.count();
+  _thresholdsVersionAt = Date.now();
+  return _thresholdsVersionCache;
 }
 
 // ============================================================

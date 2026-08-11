@@ -5,6 +5,7 @@
 //  Both routes now call this shared function instead of duplicating ~250 lines.
 // ============================================================
 import { db } from '@/lib/db';
+import { analysisCache } from '@/lib/cache';
 import { parseMonthFromFilename } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ } from '@/engine/validator';
@@ -364,6 +365,9 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
           duration: Date.now() - startedAt,
         },
       });
+
+      // Phase 3: invalidate analysis cache when new data is ingested
+      analysisCache.clear();
 
       results.push({
         fileName, status: 'INGESTED', rowCount: totalInserted,
