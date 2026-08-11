@@ -344,86 +344,68 @@ export async function GET(req: NextRequest) {
     };
 
     // ============================================================
-    //  SQL AGGREGATE QUERIES (Phase 1b/2/4)
-    //  Each query replaces a JS loop over 35K+ records.
-    //  All run in PostgreSQL — only minimal rows returned.
+    //  SQL AGGREGATE QUERIES (Phase 1b/2/4) — PARALLEL (P0 fix)
+    //  All independent queries run via Promise.all for ~50% speedup
     // ============================================================
 
-    // Executive Summary — 1 row each for current + previous period
-    const currSummary = await queryExecSummary(week!, month!, filterOpts);
-    const prevSummary = prevWeek && prevMonth
-      ? await queryExecSummary(prevWeek, prevMonth, filterOpts)
-      : null;
+    // Group 1: Exec summary (curr + prev) — independent, parallel
+    const [currSummary, prevSummary] = await Promise.all([
+      queryExecSummary(week!, month!, filterOpts),
+      prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+    ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
-    // Top items by various metrics (N rows each)
-    const topNominal = await queryTopItemsByNominal(week!, month!, filterOpts, 10);
-    const topDevBom = await queryTopItemsByDevBom(week!, month!, filterOpts, 10);
-    const topWasteRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'waste', 10);
-    const topWaste = topWasteRows.map(r => ({
-      itemName: r.itemName,
-      outletCode: r.outletCode,
-      qtyWaste: r.qty,
-      nominalWaste: r.nominal,
-    }));
-    const topSusutRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'susut', 10);
-    const topSusut = topSusutRows.map(r => ({
-      itemName: r.itemName,
-      outletCode: r.outletCode,
-      qtySusut: r.qty,
-      nominalSusut: r.nominal,
-    }));
-    const topTrialRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'trial', 10);
-    const topTrial = topTrialRows.map(r => ({
-      itemName: r.itemName,
-      outletCode: r.outletCode,
-      qtyTrial: r.qty,
-      nominalTrial: r.nominal,
-    }));
-    const topLossSurplusRows = await queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', 10);
-    const topLossSurplus = topLossSurplusRows.map(r => ({
-      itemName: r.itemName,
-      outletCode: r.outletCode,
-      qtyLossSurplus: r.qty,
-      nominalLossSurplus: r.nominal,
-      direction: r.direction,
-    }));
+    // Group 2: All top items + breakdown + area + outlets + trend + pareto + cost + consistency — ALL independent
+    const [
+      topNominal, topDevBom,
+      topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows,
+      areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw,
+      breakdown, lvs,
+      trendAggRows,
+      paretoSql,
+      costImpactSql,
+      consistencyItems,
+      dqIssuesRaw,
+    ] = await Promise.all([
+      queryTopItemsByNominal(week!, month!, filterOpts, 10),
+      queryTopItemsByDevBom(week!, month!, filterOpts, 10),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'waste', 10),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'susut', 10),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'trial', 10),
+      queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', 10),
+      queryAreaAnalysis(week!, month!, filterOpts),
+      queryTopOutlets(week!, month!, filterOpts, 10),
+      queryTopOutletsBySales(week!, month!, filterOpts, 10),
+      queryDeviationBreakdown(week!, month!, filterOpts),
+      queryLossVsSurplus(week!, month!, filterOpts),
+      queryTrendAgg(filterOpts),
+      queryPareto(week!, month!, filterOpts, 50),
+      queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
+      queryItemConsistency(week!, month!, filterOpts),
+      db.dQIssue.groupBy({
+        by: ['code', 'severity', 'message'],
+        where: { sourceFile: { monthLabel: month! } },
+        _count: { _all: true },
+      }),
+    ]);
 
-    // Top outlets (GROUP BY outlet) — needs areaAvg from areaAnalysis
-    const areaAnalysisRaw = await queryAreaAnalysis(week!, month!, filterOpts);
-    const areaAvgMap = new Map<string, number>(
-      areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0])
-    );
-    const topOutletsRaw = await queryTopOutlets(week!, month!, filterOpts, 10);
+    // Map results (same as before, just from parallel results)
+    const topWaste = topWasteRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyWaste: r.qty, nominalWaste: r.nominal }));
+    const topSusut = topSusutRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtySusut: r.qty, nominalSusut: r.nominal }));
+    const topTrial = topTrialRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyTrial: r.qty, nominalTrial: r.nominal }));
+    const topLossSurplus = topLossSurplusRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction }));
+
+    const areaAvgMap = new Map<string, number>(areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0]));
     const topOut = topOutletsRaw.map(o => ({
-      outletCode: o.outletCode,
-      outletName: o.outletName,
-      area: o.area,
-      absNominal: o.absNominal,
-      devBom: o.devBom,
-      areaAvg: areaAvgMap.get(o.area) ?? 0,
-      sales: o.sales,
-      lossAmount: o.lossAmount,
-      surplusAmount: o.surplusAmount,
-      direction: o.direction,
+      outletCode: o.outletCode, outletName: o.outletName, area: o.area,
+      absNominal: o.absNominal, devBom: o.devBom, areaAvg: areaAvgMap.get(o.area) ?? 0,
+      sales: o.sales, lossAmount: o.lossAmount, surplusAmount: o.surplusAmount, direction: o.direction,
     }));
-
-    // Top outlets by sales — compute devToSalesRatio in JS (sales already dedup'd in SQL)
-    const topOutletsSalesRaw = await queryTopOutletsBySales(week!, month!, filterOpts, 10);
     const topOutletsSales = topOutletsSalesRaw.map(o => ({
-      outletCode: o.outletCode,
-      outletName: o.outletName,
-      area: o.area,
-      sales: o.sales,
-      absNominal: o.absNominal,
+      outletCode: o.outletCode, outletName: o.outletName, area: o.area,
+      sales: o.sales, absNominal: o.absNominal,
       devToSalesRatio: o.sales > 0 ? o.absNominal / o.sales : null,
     }));
-
-    // Deviation Breakdown (single row)
-    const breakdown = await queryDeviationBreakdown(week!, month!, filterOpts);
-
-    // Loss vs Surplus (single row)
-    const lvs = await queryLossVsSurplus(week!, month!, filterOpts);
 
     // Investigation worklist — use pre-computed flags (no re-evaluation)
     const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
@@ -466,12 +448,7 @@ export async function GET(req: NextRequest) {
       multiPeriodComparison: [] as Array<Record<string, unknown>>,
     };
 
-    // ===== BUG FIX #6: Stable DQ groupBy (no ambiguous orderBy) =====
-    const dqIssuesRaw = await db.dQIssue.groupBy({
-      by: ['code', 'severity', 'message'],
-      where: { sourceFile: { monthLabel: month! } },
-      _count: { _all: true },
-    });
+    // DQ Summary (from parallel query result above)
     const dqSummary = dqIssuesRaw
       .map((d) => ({
         code: d.code,
@@ -486,10 +463,8 @@ export async function GET(req: NextRequest) {
       .slice(0, 20);
 
     // ============================================================
-    //  Trend — SQL aggregate (~18 rows), then JS sort by monthKey
-    //  Replaces 540K-row raw fetch + JS groupBy
+    //  Trend — from parallel queryTrendAgg result above
     // ============================================================
-    const trendAggRows = await queryTrendAgg(filterOpts);
     const trend = trendAggRows
       .map((r) => {
         const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
@@ -580,8 +555,7 @@ export async function GET(req: NextRequest) {
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
 
-    // Pareto — SQL window function (Phase 4)
-    const paretoSql = await queryPareto(week!, month!, filterOpts, 50);
+    // Pareto — from parallel query result above
     // Remap items to JS shape (cumPct decimal 0-1, drop rank/cumulative)
     const paretoItems = paretoSql.items.map(it => ({
       itemName: it.itemName,
@@ -598,8 +572,7 @@ export async function GET(req: NextRequest) {
       items: paretoItems.slice(0, 20),
     };
 
-    // Cost Impact — SQL aggregate + JS-style lossNominal/surplusNominal from lvs
-    const costImpactSql = await queryCostImpact(week!, month!, execSummary.sales.current, filterOpts);
+    // Cost Impact — from parallel query result above
     const costImpact = {
       totalCost: costImpactSql.totalCost,
       pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null,
@@ -616,8 +589,7 @@ export async function GET(req: NextRequest) {
       residualToSales: costImpactSql.residualToSales,
     };
 
-    // Item Consistency — SQL GROUP BY itemName with outlet count
-    const consistencyItems = await queryItemConsistency(week!, month!, filterOpts);
+    // Item Consistency — from parallel query result above
     const systemic = consistencyItems
       .filter(i => i.consistency === 'SYSTEMIC')
       .map(i => ({
