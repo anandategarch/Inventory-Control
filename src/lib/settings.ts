@@ -287,10 +287,11 @@ export function invalidateSettingsCache(): void {
 
 // ============================================================
 //  Phase 3: Cache thresholdsVersion (avoid db.setting.count() per request)
+//  Bug fix: invalidate immediately when settings change (was 1 min TTL)
 // ============================================================
 let _thresholdsVersionCache: number | null = null;
 let _thresholdsVersionAt = 0;
-const VERSION_CACHE_TTL_MS = 60_000; // 1 minute
+const VERSION_CACHE_TTL_MS = 5_000; // 5 seconds (was 1 minute — too long for QuickSettings)
 
 export async function getThresholdsVersion(): Promise<number> {
   if (_thresholdsVersionCache !== null && (Date.now() - _thresholdsVersionAt) < VERSION_CACHE_TTL_MS) {
