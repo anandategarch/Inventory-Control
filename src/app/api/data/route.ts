@@ -26,9 +26,40 @@ const deleteQuerySchema = z
 
 // ------------------------------------------------------------
 //  GET /api/data — list all SourceFiles grouped by month
+//  ?fileId=N — include DQ issues detail for that file
 // ------------------------------------------------------------
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+    const fileIdParam = url.searchParams.get('fileId');
+
+    // If fileId specified, return DQ issues for that file
+    if (fileIdParam) {
+      const fileId = parseInt(fileIdParam);
+      if (isNaN(fileId)) {
+        return NextResponse.json({ success: false, error: 'fileId tidak valid' }, { status: 400 });
+      }
+      const dqIssues = await db.dQIssue.findMany({
+        where: { sourceFileId: fileId },
+        select: { severity: true, code: true, message: true, rowNumber: true, rawValue: true },
+        orderBy: [{ severity: 'asc' }, { rowNumber: 'asc' }],
+        take: 200,
+      });
+      // Group by code for summary
+      const byCode: Record<string, { severity: string; code: string; message: string; count: number }> = {};
+      for (const d of dqIssues) {
+        if (!byCode[d.code]) {
+          byCode[d.code] = { severity: d.severity, code: d.code, message: d.message, count: 0 };
+        }
+        byCode[d.code].count++;
+      }
+      return NextResponse.json({
+        success: true,
+        issues: dqIssues,
+        summary: Object.values(byCode).sort((a, b) => b.count - a.count),
+      });
+    }
+
     const files = await db.sourceFile.findMany({
       orderBy: [{ monthKey: 'desc' }, { importedAt: 'desc' }],
       select: {

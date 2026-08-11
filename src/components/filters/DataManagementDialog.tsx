@@ -19,9 +19,23 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb } from 'lucide-react';
+import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb, ChevronDown, ChevronRight, Bug } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
+
+// DQ issue code explanations + recommended actions
+const DQ_FIXES: Record<string, { title: string; action: string }> = {
+  MISSING_OUTLET: { title: 'RESTO kosong', action: 'Cek baris tersebut di Excel, pastikan kolom RESTO terisi dengan kode outlet (mis. 1030.BDGSET).' },
+  MISSING_ITEM: { title: 'NAMA BAHAN kosong', action: 'Cek baris tersebut di Excel, pastikan kolom NAMA BAHAN terisi.' },
+  MISSING_WEEK: { title: 'STATUS BULAN kosong', action: 'Cek kolom STATUS BULAN di Excel, pastikan terisi (WEEK 1, WEEK 2, dll).' },
+  INVALID_NUMBER: { title: 'Angka tidak valid', action: 'Cek format angka di kolom tersebut. Pastikan tidak ada teks atau karakter aneh.' },
+  MISSING_BOM: { title: 'QTY BOM kosong/0', action: 'Cek master data BOM untuk item tersebut. Item tanpa BOM tidak bisa dihitung Dev/BOM-nya.' },
+  TOLERANCE_NOT_SET: { title: 'Toleransi belum diset', action: 'Set toleransi di master data atau lewat Pengaturan untuk item ini.' },
+  DUPLICATE: { title: 'Baris duplikat', action: 'Cek apakah ada baris dengan kombinasi Outlet+Item+Week+Akun yang sama. Hapus duplikat di Excel.' },
+  BOM_POSITIVE: { title: 'QTY BOM positif', action: 'Konvensi: QTY BOM harus negatif (konsumsi). Cek tanda di Excel.' },
+  ZERO_DEVIATION: { title: 'QTY DEVIASI = 0', action: 'Tidak ada deviasi (normal). Hanya info, tidak perlu tindakan.' },
+  OVER_EXPLAINED: { title: 'WASTE+SUSUT+TRIAL > DEVIASI', action: 'Cek pencatatan — kemungkinan double-counting waste/susut/trial atau salah input SPV.' },
+};
 
 // ------------------------------------------------------------
 //  Types
@@ -84,6 +98,8 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
 
   // Delete-by-month picker state
   const [selectedMonth, setSelectedMonth] = useState<string>('');
+  // DQ detail expansion state
+  const [expandedFileId, setExpandedFileId] = useState<number | null>(null);
 
   // Reset month picker state when dialog closes
   const [prevOpen, setPrevOpen] = useState(open);
@@ -93,6 +109,16 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
       setSelectedMonth('');
     }
   }
+
+  // Fetch DQ issues when a file is expanded
+  const { data: dqData, isLoading: dqLoading } = useQuery({
+    queryKey: ['dq-issues', expandedFileId],
+    queryFn: async () => {
+      const res = await fetch(`/api/data?fileId=${expandedFileId}`);
+      return res.json();
+    },
+    enabled: expandedFileId !== null,
+  });
 
   // ---------- Mutations ----------
   const deleteFileMutation = useMutation({
@@ -330,45 +356,111 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                     </TableHeader>
                     <TableBody>
                       {files.map((f) => (
-                        <TableRow key={f.id}>
-                          <TableCell className="text-[11px] py-2 max-w-[220px]">
-                            <div className="truncate" title={f.fileName}>{f.fileName}</div>
-                          </TableCell>
-                          <TableCell className="text-[11px] py-2 whitespace-nowrap">{f.monthLabel}</TableCell>
-                          <TableCell className="text-[11px] py-2 text-right tabular-nums">
-                            {f.rowCount.toLocaleString()}
-                          </TableCell>
-                          <TableCell className="text-[11px] py-2">
-                            <Badge
-                              variant="outline"
-                              className={
-                                f.dqStatus === 'OK'
-                                  ? 'text-[10px] text-emerald-700 border-emerald-300 dark:text-emerald-300 dark:border-emerald-800'
-                                  : f.dqStatus === 'WARNING'
-                                    ? 'text-[10px] text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-800'
-                                    : 'text-[10px] text-red-700 border-red-300 dark:text-red-300 dark:border-red-800'
-                              }
-                            >
-                              {f.dqStatus}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[11px] py-2 whitespace-nowrap text-muted-foreground">
-                            {new Date(f.importedAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' })}
-                          </TableCell>
-                          <TableCell className="text-[11px] py-2 text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
-                              disabled={deleteFileMutation.isPending}
-                              onClick={() => handleDeleteFile(f.id, f.fileName)}
-                              title={`Hapus ${f.fileName}`}
-                            >
-                              <Trash2 className="h-3 w-3 mr-1" />
-                              Hapus
-                            </Button>
-                          </TableCell>
-                        </TableRow>
+                        <>
+                          <TableRow key={f.id}>
+                            <TableCell className="text-[11px] py-2 max-w-[220px]">
+                              <div className="truncate" title={f.fileName}>{f.fileName}</div>
+                            </TableCell>
+                            <TableCell className="text-[11px] py-2 whitespace-nowrap">{f.monthLabel}</TableCell>
+                            <TableCell className="text-[11px] py-2 text-right tabular-nums">
+                              {f.rowCount.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-[11px] py-2">
+                              <button
+                                onClick={() => setExpandedFileId(expandedFileId === f.id ? null : f.id)}
+                                className="inline-flex items-center gap-1 hover:underline"
+                                title="Klik untuk lihat detail DQ"
+                              >
+                                {expandedFileId === f.id ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    f.dqStatus === 'OK'
+                                      ? 'text-[10px] text-emerald-700 border-emerald-300 dark:text-emerald-300 dark:border-emerald-800'
+                                      : f.dqStatus === 'WARNING'
+                                        ? 'text-[10px] text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-800'
+                                        : 'text-[10px] text-red-700 border-red-300 dark:text-red-300 dark:border-red-800'
+                                  }
+                                >
+                                  {f.dqStatus}
+                                  {(f.dqErrorCount > 0 || f.dqWarningCount > 0) && (
+                                    <span className="ml-1">({f.dqErrorCount}E/{f.dqWarningCount}W)</span>
+                                  )}
+                                </Badge>
+                              </button>
+                            </TableCell>
+                            <TableCell className="text-[11px] py-2 whitespace-nowrap text-muted-foreground">
+                              {new Date(f.importedAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' })}
+                            </TableCell>
+                            <TableCell className="text-[11px] py-2 text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
+                                disabled={deleteFileMutation.isPending}
+                                onClick={() => handleDeleteFile(f.id, f.fileName)}
+                                title={`Hapus ${f.fileName}`}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Hapus
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                          {/* DQ Detail Expandable Row */}
+                          {expandedFileId === f.id && (
+                            <TableRow key={`${f.id}-dq`}>
+                              <TableCell colSpan={6} className="py-3 px-4 bg-muted/30">
+                                {dqLoading ? (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    Memuat DQ issues...
+                                  </div>
+                                ) : dqData?.success ? (
+                                  <div className="space-y-2">
+                                    <p className="text-[11px] font-semibold flex items-center gap-1.5">
+                                      <Bug className="h-3 w-3" />
+                                      Detail Data Quality — {f.fileName}
+                                    </p>
+                                    {dqData.summary.length === 0 ? (
+                                      <p className="text-[11px] text-emerald-600">✅ Tidak ada DQ issues. Data bersih.</p>
+                                    ) : (
+                                      <div className="space-y-1.5">
+                                        {dqData.summary.map((s: any, i: number) => {
+                                          const fix = DQ_FIXES[s.code] || { title: s.code, action: 'Tidak ada saran tersedia.' };
+                                          return (
+                                            <div key={i} className={`rounded-md border p-2 ${s.severity === 'ERROR' ? 'border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-900' : s.severity === 'WARNING' ? 'border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900' : 'border-sky-200 bg-sky-50 dark:bg-sky-950/20 dark:border-sky-900'}`}>
+                                              <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                  <Badge variant="outline" className={`text-[9px] shrink-0 ${s.severity === 'ERROR' ? 'text-red-700 border-red-300' : s.severity === 'WARNING' ? 'text-amber-700 border-amber-300' : 'text-sky-700 border-sky-300'}`}>
+                                                    {s.severity}
+                                                  </Badge>
+                                                  <span className="text-[11px] font-medium truncate">{fix.title}</span>
+                                                  <span className="text-[10px] text-muted-foreground shrink-0">×{s.count}</span>
+                                                </div>
+                                              </div>
+                                              <p className="text-[11px] text-muted-foreground mt-1">{s.message}</p>
+                                              <div className="mt-1.5 flex items-start gap-1.5">
+                                                <span className="text-[10px] font-semibold text-foreground shrink-0">🔧 Tindakan:</span>
+                                                <span className="text-[10px] text-muted-foreground">{fix.action}</span>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                        <div className="pt-1.5 border-t mt-1.5">
+                                          <p className="text-[10px] text-muted-foreground">
+                                            💡 Setelah memperbaiki Excel, hapus file ini lalu import ulang untuk update data.
+                                          </p>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-red-600">Gagal memuat DQ issues: {dqData?.error || 'Error tidak diketahui'}</p>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </>
                       ))}
                     </TableBody>
                   </Table>
