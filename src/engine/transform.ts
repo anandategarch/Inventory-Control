@@ -6,7 +6,12 @@ import type { NormalizedRecord, DerivedRecord, Direction } from '@/types/invento
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { parseOutletCode } from '@/lib/outlet';
 
-function toNum(v: unknown): number | null {
+// ============================================================
+//  toNum — robust number parser (Indonesian / accounting / percent formats)
+//  Handles: "12.345,67", "(310)", "Rp 269", "5%", "-1.234,56"
+//  Exported so validator.ts can reuse (avoid false-positive INVALID_NUMBER)
+// ============================================================
+export function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return isNaN(v) ? null : v;
 
@@ -97,8 +102,9 @@ function parseTolerance(raw: unknown): { value: number | null; rawStr: string | 
   if (s.toUpperCase().includes(CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase())) {
     return { value: null, rawStr: s };
   }
-  const n = Number(s.replace(/,/g, '.'));
-  return { value: isNaN(n) ? null : n, rawStr: s };
+  // Use robust toNum (handles "5%", "5,5", "5.5", etc.)
+  const n = toNum(s);
+  return { value: n, rawStr: s };
 }
 
 export function normalizeRow(

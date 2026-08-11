@@ -5,6 +5,7 @@
 import type { DQIssueSummary } from '@/types/inventory';
 import type { DQIssue } from '@prisma/client';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
+import { toNum } from '@/engine/transform';
 
 export interface DQResult {
   issues: DQIssueRow[];
@@ -21,13 +22,6 @@ export interface DQIssueRow {
   outletCode?: string;
   itemName?: string;
   weekLabel?: string;
-}
-
-function toNum(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null;
-  if (typeof v === 'number') return isNaN(v) ? null : v;
-  const n = Number(String(v).replace(/,/g, '.'));
-  return isNaN(n) ? null : n;
 }
 
 export function validateRow(
@@ -128,6 +122,27 @@ export function validateRow(
       message: `Row ${rowNumber}: QTY DEVIASI = 0 (NEUTRAL)`,
       rowNumber, outletCode: resto, itemName: namaBahan,
     });
+  }
+
+  // WARNING: OVER_EXPLAINED — WASTE+SUSUT+TRIAL > |DEVIASI| (fraud indicator)
+  // If the explained components exceed the total deviation, this is suspicious:
+  // either fraud, wrong SPV input, or double-counting of waste.
+  const qtyWaste = toNum(row.qtyWaste);
+  const qtySusut = toNum(row.qtySusut);
+  const qtyTrial = toNum(row.qtyTrial);
+  if (qtyDeviasi !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
+    const explainedAbs = Math.abs(qtyWaste + qtySusut + qtyTrial);
+    const deviasiAbs = Math.abs(qtyDeviasi);
+    if (deviasiAbs > 0 && explainedAbs > deviasiAbs) {
+      const overPct = ((explainedAbs - deviasiAbs) / deviasiAbs) * 100;
+      issues.push({
+        severity: 'WARNING',
+        code: 'OVER_EXPLAINED',
+        message: `Row ${rowNumber}: WASTE+SUSUT+TRIAL (${explainedAbs.toFixed(0)}) > |DEVIASI| (${deviasiAbs.toFixed(0)}) — over-explained by ${overPct.toFixed(1)}%. Indikasi salah input atau fraud.`,
+        rawValue: `explained=${explainedAbs}, deviasi=${deviasiAbs}`,
+        rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+      });
+    }
   }
 
   return issues;

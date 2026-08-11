@@ -53,10 +53,20 @@ export interface ParsedWorkbook {
   sheets: ParsedSheet[];
 }
 
+// ============================================================
+//  hashFile — streaming SHA-256 (Bug 6 fix: O(1) memory)
+//  Previous version used fs.readFile() which loads entire file into RAM.
+//  For large Excel files (>50MB), this causes memory spikes & OOM on
+//  serverless (Vercel). Now uses createReadStream + pipe to hash.
+// ============================================================
 export async function hashFile(filePath: string): Promise<string> {
-  const fs = await import('fs/promises');
-  const buf = await fs.readFile(filePath);
-  return createHash('sha256').update(buf).digest('hex');
+  const { createReadStream } = await import('fs');
+  const { pipeline } = await import('stream/promises');
+  const hash = createHash('sha256');
+  const stream = createReadStream(filePath);
+  stream.pipe(hash);
+  await pipeline(stream, hash);
+  return hash.digest('hex');
 }
 
 export function normalizeHeader(raw: string): string {
