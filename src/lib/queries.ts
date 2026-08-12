@@ -91,8 +91,8 @@ export async function queryTrendAgg(filters: {
       SELECT ir."monthLabel", ir."weekLabel",
         COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
         COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
-        COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "lossNominal",
-        COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "surplusNominal"
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
       FROM "InventoryRecord" ir
       WHERE 1=1
         ${f}
@@ -168,8 +168,8 @@ export async function queryExecSummary(
         COALESCE(SUM(ABS(ir."qtySusut")), 0) as "qtySusut",
         COALESCE(SUM(ABS(ir."qtyTrial")), 0) as "qtyTrial",
         COALESCE(SUM(ir."absQtyLossSurplus"), 0) as "qtyLossSurplus",
-        COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "totalLoss",
-        COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "totalSurplus",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalLoss",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalSurplus",
         COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END), 0) as "residualLossQty",
         COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal",
         COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ir."absQtyDeviasi" ELSE 0 END), 0) as "qtyDeviasiLoss"
@@ -357,8 +357,8 @@ export async function queryTopOutlets(
       SELECT ir."outletId",
         SUM(ir."absNominalDeviasi") as "absNominal",
         AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "devBom",
-        SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END) as "lossAmount",
-        SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END) as "surplusAmount"
+        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossAmount",
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "surplusAmount"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -480,8 +480,8 @@ export async function queryLossVsSurplus(
     SELECT
       COUNT(*) FILTER (WHERE ir."nominalDeviasi" > 0)::int as loss,
       COUNT(*) FILTER (WHERE ir."nominalDeviasi" < 0)::int as surplus,
-      COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "lossNominal",
-      COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "surplusNominal"
+      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
+      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
@@ -541,7 +541,7 @@ export async function queryAreaAnalysis(
         COUNT(DISTINCT ir."outletId")::int as "outletCount",
         SUM(ir."absNominalDeviasi") as "totalAbsNominal",
         AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "avgDevBom",
-        SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END) as "lossNominal"
+        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossNominal"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}

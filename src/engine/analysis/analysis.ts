@@ -103,12 +103,12 @@ export function buildExecutiveSummary(
   const nomDevCurr = sum(current, 'absNominalDeviasi');
   const nomDevPrev = sum(previous, 'absNominalDeviasi');
 
-  // Loss / Surplus split
+  // Loss / Surplus split — Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
   let totalLoss = 0, totalSurplus = 0;
   for (const r of current) {
-    if (r.nominalDeviasi == null) continue;
-    if (r.nominalDeviasi > 0) totalLoss += r.nominalDeviasi;
-    else if (r.nominalDeviasi < 0) totalSurplus += Math.abs(r.nominalDeviasi);
+    if (r.nominalLossSurplus == null) continue;
+    if (r.nominalLossSurplus > 0) totalLoss += r.nominalLossSurplus;
+    else if (r.nominalLossSurplus < 0) totalSurplus += Math.abs(r.nominalLossSurplus);
   }
 
   // Residual
@@ -262,8 +262,9 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
         existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
         existing.devBomCount++;
       }
-      if (r.nominalDeviasi != null && r.nominalDeviasi > 0) existing.lossAmount += r.nominalDeviasi;
-      else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) existing.surplusAmount += Math.abs(r.nominalDeviasi);
+      // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
+      if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) existing.lossAmount += r.nominalLossSurplus;
+      else if (r.nominalLossSurplus != null && r.nominalLossSurplus < 0) existing.surplusAmount += Math.abs(r.nominalLossSurplus);
     } else {
       byOutlet.set(k, {
         outlet: r.outlet, absNominal: r.absNominalDeviasi ?? 0,
@@ -271,8 +272,8 @@ export function topOutlets(recs: RecWithRels[], n = 10) {
         devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
         area: r.area,
         sales: 0, // will be filled from salesByOutlet (MODE) below
-        lossAmount: r.nominalDeviasi != null && r.nominalDeviasi > 0 ? r.nominalDeviasi : 0,
-        surplusAmount: r.nominalDeviasi != null && r.nominalDeviasi < 0 ? Math.abs(r.nominalDeviasi) : 0,
+        lossAmount: r.nominalLossSurplus != null && r.nominalLossSurplus > 0 ? r.nominalLossSurplus : 0,
+        surplusAmount: r.nominalLossSurplus != null && r.nominalLossSurplus < 0 ? Math.abs(r.nominalLossSurplus) : 0,
       });
     }
   }
@@ -771,8 +772,9 @@ export function computeAreaAnalysis(recs: RecWithRels[]) {
       entry.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
       entry.devBomCount++;
     }
-    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) {
-      entry.lossNominal += r.nominalDeviasi;
+    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
+    if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) {
+      entry.lossNominal += r.nominalLossSurplus;
     }
   }
 
@@ -902,8 +904,9 @@ export function computeOutletHealthRanking(
       e.residualSum += Math.abs(curr.residualRatio);
       e.residualCount++;
     }
-    if (curr.nominalDeviasi != null && curr.nominalDeviasi > 0) {
-      e.lossNominal += curr.nominalDeviasi;
+    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
+    if (curr.nominalLossSurplus != null && curr.nominalLossSurplus > 0) {
+      e.lossNominal += curr.nominalLossSurplus;
     }
     // Sales filled from MODE map below (not MAX per row)
     if (flags.length === 0) {
@@ -1028,8 +1031,9 @@ export function computeCostImpact(recs: RecWithRels[], salesTotal: number) {
   let surplusNominal = 0;
   for (const r of recs) {
     totalCost += r.absNominalDeviasi ?? 0;
-    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) lossNominal += r.nominalDeviasi;
-    else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) surplusNominal += Math.abs(r.nominalDeviasi);
+    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
+    if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) lossNominal += r.nominalLossSurplus;
+    else if (r.nominalLossSurplus != null && r.nominalLossSurplus < 0) surplusNominal += Math.abs(r.nominalLossSurplus);
   }
   return {
     totalCost,
@@ -1175,6 +1179,9 @@ export function computeNetCostTrend(
       const rounded = Math.round(r.nominalSales * 100) / 100; // Bug 11 fix: 2 decimal places
       outletCounts.set(rounded, (outletCounts.get(rounded) ?? 0) + 1);
     }
+    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
+    // Note: this function is dead code (trend computed via SQL queryTrendAgg).
+    // Input type doesn't have nominalLossSurplus, so keeping nominalDeviasi here.
     if (r.nominalDeviasi != null && r.nominalDeviasi > 0) p.lossNominal += r.nominalDeviasi;
     else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) p.surplusNominal += Math.abs(r.nominalDeviasi);
   }
