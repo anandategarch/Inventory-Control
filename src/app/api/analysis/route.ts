@@ -191,7 +191,7 @@ export async function GET(req: NextRequest) {
           monthLabel: ml,
           weekLabel: w.weekLabel,
           monthKey: w.monthKey,
-          sortKey: `${w.monthKey}|${w.weekLabel}`,
+          sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
         };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
@@ -518,7 +518,7 @@ export async function GET(req: NextRequest) {
         const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
         return {
           weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${r.weekLabel}`,
+          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
           devBom: r.devBom,
           sales: r.sales,
           nominal: r.nominal,
@@ -533,7 +533,7 @@ export async function GET(req: NextRequest) {
         const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
         return {
           period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${r.weekLabel}`,
+          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
           sales: r.sales,
           bom: null, // BUG 2.7 fix: was `r.sales / r.devBom` which is dimensionally wrong
           deviation: r.nominal,
@@ -560,7 +560,7 @@ export async function GET(req: NextRequest) {
         const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
         return {
           weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${r.weekLabel}`,
+          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
           netCostRatio: r.sales > 0 ? (r.lossNominal - r.surplusNominal) / r.sales : 0,
           lossNominal: r.lossNominal,
           surplusNominal: r.surplusNominal,

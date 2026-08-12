@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -1205,6 +1205,14 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
   const setItemStatus = (itemName: string, s: 'OPEN' | 'INVESTIGATING' | 'RESOLVED') => {
     setWorklistStatus((prev) => ({ ...prev, [itemName]: s }));
   };
+
+  // Bug 5.3 fix: clear worklist status when outlet changes — prevents contamination
+  // of investigation status from previous outlet (status was keyed by itemName only)
+  const [prevFocusOutlet, setPrevFocusOutlet] = useState(focusOutlet);
+  if (focusOutlet !== prevFocusOutlet) {
+    setPrevFocusOutlet(focusOutlet);
+    setWorklistStatus({});
+  }
 
   // Find ranking entry for this outlet (for rank info)
   const ranking = data?.outletHealthRanking || [];

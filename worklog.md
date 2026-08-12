@@ -2145,3 +2145,342 @@ Stage Summary:
 - No TanStack Query queryKey collisions found: ['settings'], ['analysis', params], ['outlet-focus', ...], ['status'], ['data-mgmt'], ['dq-issues', fileId], ['drilldown', params] are all distinct. `staleTime` values are reasonable (10s for settings, 60s for analysis/outlet-focus, 5min for status).
 - No memory leaks found: no setInterval/setTimeout in inspected components except FilterBar's `setTimeout(() => setIngestMsg(null), 8000)` which is a minor cleanup gap (not cleaned up on unmount, but React 18 no-ops setState on unmounted components).
 - Recommended fix order: 3.1 (high, 3-line fix) → 3.2 (high, lift state to parent) → 3.3 (medium, 1-line onOpenChange fix) → 3.5 (medium, use p.name) → 3.4 (medium, compute combined growth) → 3.6 (medium, read setting client-side) → 3.7 (low, add total>0 guard)
+
+---
+Task ID: BUG-5
+Agent: general-purpose (round 5 bug hunter)
+Task: Deep bug hunt round 5
+
+Work Log:
+- Read worklog.md (lines 1-50 and last 100) to understand prior bug-hunt scope and what's already fixed
+- Inspected src/components/dashboard/OutletFocusMode.tsx (1410 lines — Focus Mode UI with 6 sub-tabs)
+- Inspected src/components/dashboard/AlertPanel.tsx (151 lines)
+- Inspected src/components/dashboard/TopItems.tsx (336 lines)
+- Inspected src/components/dashboard/InsightsPanel.tsx (368 lines)
+- Inspected src/components/dashboard/CostAccounting.tsx (494 lines)
+- Inspected src/components/dashboard/AdvancedAnalysis.tsx (418 lines)
+- Inspected src/components/dashboard/ExtraCharts.tsx (855 lines)
+- Inspected src/hooks/useDashboard.ts (74 lines — Zustand store)
+- Inspected src/app/page.tsx (565 lines — main dashboard page with auto-select useEffects)
+- Inspected src/app/api/drilldown/route.ts (89 lines)
+- Inspected src/lib/drive-import.ts (425 lines)
+- Inspected src/lib/csv-parser.ts (52 lines)
+- Inspected src/lib/excel-to-csv.ts (162 lines)
+- Inspected src/lib/cache.ts (68 lines — LRU cache)
+- Inspected src/lib/rate-limit.ts (83 lines — in-memory rate limiter)
+- Cross-referenced src/app/api/status/route.ts (BUG 1.8 fix) against page.tsx & analysis/route.ts to confirm the WEEK 10 vs WEEK 2 sort bug exists in those files too
+- Verified Recharts 2.15.4 Bar/Scatter onClick handler shape by reading node_modules source: confirmed `adaptEventsOfChild` passes the entry (with user-data fields spread directly), so existing `d.area` / `d.outletCode` access patterns DO work (NOT a bug)
+- Verified InsightsPanel `deviationBreakdown` and `lossVsSurplus` direct access is safe (always returned by API — checked analysis/route.ts:715-716 and queries.ts:440-463)
+- Verified historicalAnalysis criticalItems always has numeric zScore (analysis.ts:1242-1249 coerces null to 0)
+
+Bugs Found:
+
+## BUG 5.1: page.tsx auto-comparison-week sorts with localeCompare — "WEEK 10" placed before "WEEK 2"
+- File: src/app/page.tsx:129
+- Category: Logic error / Wrong default value (regression of BUG 1.8 in a different file)
+- Code:
+  ```ts
+  // lines 122-133
+  const allPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }> = [];
+  for (const m of status.months) {
+    const ws = status.weeksByMonth[m.key] || [];
+    for (const w of ws) {
+      allPeriods.push({ monthLabel: m.label, weekLabel: w, sortKey: `${m.key}|${w}` });
+    }
+  }
+  allPeriods.sort((a, b) => a.sortKey.localeCompare(b.sortKey));   // ← BUG
+  const currentIdx = allPeriods.findIndex((p) => p.monthLabel === monthLabel && p.weekLabel === currentWeek);
+  if (currentIdx > 0) {
+    const prev = allPeriods[currentIdx - 1];
+    setCompareWeek(prev.weekLabel, prev.monthLabel);
+  }
+  ```
+- Why: `localeCompare` does lexicographic string comparison on the combined `sortKey` (`"${m.key}|${w}`, e.g. `"2026-05|WEEK 10"`). For week labels `"WEEK 1"`, `"WEEK 2"`, `"WEEK 10"`, the lexicographic order is `"WEEK 1" < "WEEK 10" < "WEEK 2"` (because after the common prefix `"WEEK "`, the next char `"1"` < `"2"`, so `"WEEK 10"` sorts before `"WEEK 2"`). The status route (BUG 1.8 fix at status/route.ts:81-88) now sorts weeks numerically, so `weeksByMonth[m.key]` arrives in correct order. But this client-side useEffect re-sorts with `localeCompare`, destroying the correct order. Concrete scenario: a month with WEEK 1, WEEK 2, WEEK 10. User selects currentWeek = "WEEK 2". `currentIdx` finds index 2 (after WEEK 1, WEEK 10 in the wrongly-sorted array). `prev = allPeriods[1]` = WEEK 10 (wrong — should be WEEK 1). `setCompareWeek("WEEK 10", ...)` is called. The dashboard then compares WEEK 2 against WEEK 10 (a future week), producing negative growth numbers and nonsensical variance analysis. Current production data (MEI 2026 with only WEEK 1/2/4) doesn't trigger this, but any future month with 10+ weeks will.
+- Fix: Replace the localeCompare sort with a numeric-aware sort, mirroring the BUG 1.8 fix pattern:
+  ```ts
+  const weekNum = (s: string) => parseInt(s.replace(/\D/g, ''), 10) || 0;
+  allPeriods.sort((a, b) => {
+    const mk = a.monthKey.localeCompare(b.monthKey);  // monthKey is YYYY-MM so lexicographic = chronological
+    if (mk !== 0) return mk;
+    return weekNum(a.weekLabel) - weekNum(b.weekLabel);
+  });
+  ```
+  (Add `monthKey` to the `allPeriods` array element shape.)
+
+## BUG 5.2: analysis/route.ts allPeriods sort uses same localeCompare — server-side auto-previous-period wrong for 10+ weeks
+- File: src/app/api/analysis/route.ts:197
+- Category: Logic error / Wrong default value (same root cause as BUG 5.1, server-side)
+- Code:
+  ```ts
+  // lines 187-197
+  const allPeriods = weeksRaw
+    .map((w) => {
+      const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
+      return {
+        monthLabel: ml,
+        weekLabel: w.weekLabel,
+        monthKey: w.monthKey,
+        sortKey: `${w.monthKey}|${w.weekLabel}`,
+      };
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));   // ← BUG
+
+  // ... later (lines 202-210), used to compute auto-prev:
+  let prevWeek = compareWeek;
+  let prevMonth: string | null = null;
+  if (!prevWeek) {
+    const currentPeriodIdx = allPeriods.findIndex(
+      (p) => p.monthLabel === month && p.weekLabel === week
+    );
+    if (currentPeriodIdx > 0) {
+      const prev = allPeriods[currentPeriodIdx - 1];
+      prevWeek = prev.weekLabel;
+      prevMonth = prev.monthLabel;
+    }
+  }
+  ```
+- Why: Same localeCompare bug as BUG 5.1, but on the server. When the client doesn't send `compareWeek` (e.g., user has the "Otomatis" option, or the very first load before the page.tsx auto-set useEffect runs), the analysis route computes `prevWeek`/`prevMonth` from this wrongly-sorted `allPeriods`. The auto-previous-period for WEEK 2 becomes WEEK 10 (instead of WEEK 1) when a month has 10+ weeks. The growth comparison, variance analysis, and historical z-scores are all computed against the wrong comparison period — silently producing wrong results. Note the server already has `monthKey` available (line 193) but doesn't use it for sorting beyond string concat. The `findIndex` on line 215 (`allPeriods.find((p) => p.weekLabel === prevWeek && p.monthLabel === month)`) also depends on the buggy sort order.
+- Fix: Same as BUG 5.1 — extract the numeric week part and sort numerically:
+  ```ts
+  const weekNum = (s: string) => parseInt(s.replace(/\D/g, ''), 10) || 0;
+  .sort((a, b) => {
+    const mk = a.monthKey.localeCompare(b.monthKey);
+    if (mk !== 0) return mk;
+    return weekNum(a.weekLabel) - weekNum(b.weekLabel);
+  });
+  ```
+
+## BUG 5.3: OutletFocusMode worklist status (OPEN/INVESTIGATING/RESOLVED) persists across outlet switches — wrong status shown for new outlet
+- File: src/components/dashboard/OutletFocusMode.tsx:1204-1207 (state declaration), 1402 (consumer)
+- Category: React state bug / Stale state across context switch
+- Code:
+  ```ts
+  // Line 1204-1207 — state lives in main OutletFocusMode component (lifted per BUG 3.2 fix)
+  const [worklistStatus, setWorklistStatus] = useState<Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>>({});
+  const setItemStatus = (itemName: string, s: 'OPEN' | 'INVESTIGATING' | 'RESOLVED') => {
+    setWorklistStatus((prev) => ({ ...prev, [itemName]: s }));   // ← keyed by itemName only
+  };
+
+  // Line 1219-1241 — useQuery refetches when focusOutlet changes (component re-renders, doesn't re-mount)
+  const focusQuery = useQuery({
+    queryKey: ['outlet-focus', focusOutlet, monthLabel, currentWeek, ...],
+    ...
+  });
+
+  // Line 1402 — Tab6Investigasi reads status by itemName
+  <Tab6Investigasi data={focusQuery.data} status={worklistStatus} setItemStatus={setItemStatus} />
+
+  // Tab6Investigasi.tsx:1006-1014 — looks up status by itemName only
+  const statusBadge = (itemName: string) => {
+    const s = status[itemName] || 'OPEN';
+    ...
+  };
+  ```
+- Why: BUG 3.2 lifted the worklist-status state from Tab6Investigasi to OutletFocusMode so it survives tab switches within the same outlet. But the state is keyed by `itemName` only — NOT by `outletCode + itemName`. When the user switches to a different outlet (via the SearchableComboBox onValueChange → setFocusOutlet, line 1284), the OutletFocusMode component re-renders but does NOT re-mount, so `worklistStatus` state persists. If outlet A and outlet B both have "UDANG KEJU FROZEN" in their worklists, and the user marked it RESOLVED for outlet A, then switches to outlet B and opens the Investigasi tab, "UDANG KEJU FROZEN" appears as RESOLVED (carried over from outlet A) even though it's a different outlet's item that hasn't been investigated. The user gets a false sense of progress and may skip investigating outlet B's item. Concrete scenario: 50+ outlets share common high-volume items (rice, oil, chicken). User investigates outlet A, marks 10 items RESOLVED. Switches to outlet B and sees the same 10 items pre-marked RESOLVED — they think outlet B is also done, but it isn't.
+- Fix: Add a useEffect that clears worklistStatus when focusOutlet changes:
+  ```ts
+  useEffect(() => {
+    setWorklistStatus({});
+  }, [focusOutlet]);
+  ```
+  Or key the status by `${focusOutlet}|${itemName}` for cross-outlet memory (more complex but preserves per-outlet state if the user returns to outlet A).
+
+## BUG 5.4: excel-to-csv.ts convertViaChildProcess setTimeout never cleared — 5-minute timer + child process reference leak
+- File: src/lib/excel-to-csv.ts:124-127
+- Category: Memory leak / Resource cleanup
+- Code:
+  ```ts
+  return new Promise((resolve, reject) => {
+    const child = spawn('bun', ['run', scriptPath, excelPath, csvPath], {...});
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({...});
+      } else {
+        reject(...);
+      }
+    });
+
+    child.on('error', (err) => {
+      reject(...);
+    });
+
+    setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Conversion timed out after 5 minutes'));
+    }, 300000);   // ← never cleared
+  });
+  ```
+- Why: When the child process completes (either via `close` event at line 110 or `error` event at line 120), the promise resolves/rejects, but the 5-minute `setTimeout` timer (line 124-127) is NEVER cleared. The timer's closure holds a strong reference to the `child` object (which holds stdio streams, large stdout/stderr string buffers accumulated from the conversion). Under sustained load (many Excel uploads in succession), each conversion leaves a 5-minute-living timer + child reference in memory. With 10 uploads/minute, that's 50 leaked child references at any given time. After the 5-minute timer finally fires, it calls `child.kill('SIGTERM')` on an already-dead process (a no-op in Node, but still wasteful) and calls `reject()` on an already-settled promise (also a no-op). The leak is bounded (each timer auto-clears after 5 min) but causes 5 min of unnecessary memory retention per conversion. Also: the `error` event handler at line 120-122 doesn't clear the timer either, so even an immediate spawn failure leaves a 5-min timer.
+- Fix: Capture the timer id and clear it in both `close` and `error` handlers:
+  ```ts
+  const timer = setTimeout(() => {
+    child.kill('SIGTERM');
+    reject(new Error('Conversion timed out after 5 minutes'));
+  }, 300000);
+
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (code === 0) { resolve({...}); } else { reject(...); }
+  });
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    reject(...);
+  });
+  ```
+
+## BUG 5.5: excel-to-csv.ts cellToValue stringifies Date objects with JSON.stringify — date cells become `"2024-01-01T00:00:00.000Z"` (with literal quotes)
+- File: src/lib/excel-to-csv.ts:19-35 (cellToValue function), specifically line 31
+- Category: Data display bug / Excel parsing edge case (Date cells corrupted)
+- Code:
+  ```ts
+  function cellToValue(cell: ExcelJS.Cell): unknown {
+    let v: unknown = cell.value;
+    if (v && typeof v === 'object') {
+      if ('richText' in v && Array.isArray(v.richText)) {
+        v = v.richText.map((t) => t.text).join('');
+      } else if ('text' in v && typeof v.text === 'string') {
+        v = v.text;
+      } else if ('result' in v && v.result !== undefined) {
+        v = v.result;
+      } else if ('formula' in v) {
+        v = cell.result ?? null;
+      } else {
+        v = JSON.stringify(v);   // ← BUG for Date objects
+      }
+    }
+    return v;
+  }
+  // Then in convertInProcess (line 66-68):
+  //   const v = cellToValue(row.getCell(c));
+  //   values.push(v === null || v === undefined ? '' : String(v));
+  ```
+- Why: ExcelJS returns a `Date` object for cells formatted as dates. `typeof new Date() === 'object'`, and Date instances do NOT have `richText`, `text`, `result`, or `formula` properties — so the function falls through to the `else` branch and runs `JSON.stringify(date)`. `JSON.stringify(new Date('2024-01-01'))` returns the JS string `'"2024-01-01T00:00:00.000Z"'` (24 chars INCLUDING the literal double-quote characters at start and end — JSON.stringify wraps strings in quotes). Then `String(v)` returns the same string with quotes. The CSV cell value is then `"2024-01-01T00:00:00.000Z"` (with literal quotes). `csv-stringify` doubles the inner quotes for escaping → `"""2024-01-01T00:00:00.000Z"""` in the CSV file. The downstream `csv-parse` unescapes back to `"2024-01-01T00:00:00.000Z"` (with literal quotes). When the ingestion pipeline later tries to parse this as a date, the quotes cause `Invalid Date` / `NaN`. The downstream transform.ts `toNum` would also fail to parse it as a number. Additionally, formula-driven date cells hit a DIFFERENT wrong branch: `'result' in v` is true (the formula's result is a Date), so `v = v.result` returns the Date object directly, then `String(date)` produces `"Mon Jan 01 2024 00:00:00 GMT+0000 (Coordinated Universal Time)"` — also unparseable as a date. Concrete scenario: user uploads an Excel file with a "Tanggal Transaksi" or "Periode Date" column formatted as Excel dates. After conversion, all date values become either `"2024-01-01T00:00:00.000Z"` (with quotes, for plain dates) or `"Mon Jan 01 2024 ..."` (for formula dates). Both formats fail downstream parsing.
+- Fix: Add an explicit Date branch before the JSON.stringify fallback:
+  ```ts
+  } else if (v instanceof Date) {
+    v = v.toISOString().slice(0, 10);  // "2024-01-01" — clean ISO date
+  } else {
+    v = JSON.stringify(v);
+  }
+  ```
+  Also: in the `'result' in v` branch, if `v.result instanceof Date`, convert it too:
+  ```ts
+  } else if ('result' in v && v.result !== undefined) {
+    v = v.result instanceof Date ? v.result.toISOString().slice(0, 10) : v.result;
+  }
+  ```
+
+## BUG 5.6: drive-import.ts set-cookie header read via Headers.get('set-cookie') — returns joined-by-comma string that breaks multi-cookie confirm-token flow
+- File: src/lib/drive-import.ts:193
+- Category: Data display bug / HTTP header parsing (Google Drive large-file download)
+- Code:
+  ```ts
+  // lines 187-196 — Strategy 2: parse confirm token, refetch with cookie
+  const confirmMatch = html.match(/action="([^"]{0,500}confirm=([^"&]{1,100})[^"]{0,500})"/);
+  if (confirmMatch) {
+    const confirmUrl = confirmMatch[1].replace(/&amp;/g, '&');
+    res = await fetch(confirmUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 ...',
+        'Cookie': res.headers.get('set-cookie') || '',   // ← BUG
+      },
+      redirect: 'follow',
+    });
+  }
+  ```
+- Why: Google Drive's virus-scan confirm page returns MULTIPLE Set-Cookie headers (typically `download_warning_<id>=<token>; ...` AND `NID=<...>; ...`). The Fetch API (undici in Node.js) does NOT preserve multiple Set-Cookie headers as a single header — `Headers.get('set-cookie')` returns them joined by `, ` (comma+space). But individual cookie values can LEGALLY contain commas (e.g., `Expires=Wed, 09 Jun 2021 10:18:14 GMT`). So joining by `, ` produces an ambiguous string that, when sent back as `Cookie:`, can include the `Expires=...` fragment as a separate cookie or corrupt the cookie value boundary. The Drive server then can't match the `download_warning` cookie and may return the virus-scan HTML page again instead of the file. The user sees "Got HTML page instead of file. File may require sign-in or is not shared publicly." even though the file IS public. This affects large Drive files (>100MB) that trigger the virus-scan warning. Note: undici added `Headers.getSetCookie()` in v0.19+ (returns an array), but the code uses the legacy `Headers.get('set-cookie')` which is broken for multi-cookie responses.
+- Fix: Use `getSetCookie()` if available, else manually split respecting the cookie boundary:
+  ```ts
+  const setCookie: string[] = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(/,(?=\s*[A-Za-z0-9_-]+=)/);
+  const cookieStr = setCookie.map((c) => c.split(';')[0]).join('; ');
+  // then:
+  'Cookie': cookieStr,
+  ```
+
+## BUG 5.7: excel-to-csv.ts convertInProcess doesn't validate the header row is non-empty — empty/blank-header Excel files produce unusable CSV with no columns
+- File: src/lib/excel-to-csv.ts:42-56
+- Category: Excel parsing edge case / Silent data corruption
+- Code:
+  ```ts
+  const ws = wb.worksheets.find((s) => s.state === 'visible') || wb.worksheets[0];
+  if (!ws) {
+    throw new Error('No worksheets found in Excel file');
+  }
+
+  const headerRow = ws.getRow(1);
+  const headers: string[] = [];
+  for (let c = 1; c <= ws.columnCount; c++) {
+    headers.push(String(cellToValue(headerRow.getCell(c)) ?? '').trim());
+  }
+
+  fs.writeFileSync(csvPath, stringify([headers]));   // writes headers even if all empty
+  ```
+- Why: The `if (!ws) throw` check only guards against the sheet being undefined. It does NOT guard against: (a) `ws.columnCount === 0` (completely empty sheet — `headers` array stays empty, `stringify([[]])` writes an empty line, downstream `csv-parse` then has no column names and every row's data is dropped), or (b) all header cells being empty/blank (e.g., the user uploaded an Excel file where the real headers are on row 2 because row 1 is a title row — `headers` becomes `['', '', '', ...]`, `stringify([['', '', ...]])` writes a CSV with empty column names, downstream `csv-parse` accepts it but the `HEADER_ALIASES` lookup in csv-parser.ts:34 fails to match any header, so all values are stored under empty-string keys and silently dropped by the ingestion pipeline's required-field validation). Concrete scenario: user uploads a "report" Excel file that starts with a title row ("Laporan Inventory Bulanan") in row 1 and has real headers (OUTLET, NAMA BAHAN, ...) in row 2. The converter treats row 1 as headers (all empty after the title cell), writes a CSV with empty column names, and the ingestion produces 0 valid records with no error message — the user is confused why "0 record" is shown despite uploading a non-empty file.
+- Fix: Validate the header row has at least one non-empty cell before writing the CSV:
+  ```ts
+  if (headers.every((h) => !h)) {
+    throw new Error('Header row (row 1) is empty. Ensure the Excel file has column names in the first row.');
+  }
+  if (headers.length === 0) {
+    throw new Error('Worksheet has no columns. The sheet may be empty.');
+  }
+  ```
+
+## BUG 5.8: cache.ts LRU eviction runs AFTER size exceeds max — brief overshoot by 1 entry, and has() doesn't refresh recency (stale LRU order)
+- File: src/lib/cache.ts:35-42 (set), 44-52 (has)
+- Category: Cache logic bug / LRU invariant violation
+- Code:
+  ```ts
+  set(key: K, value: V): void {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+    if (this.map.size > this.max) {                                  // ← only evicts when size > max
+      const oldest = this.map.keys().next().value;
+      if (oldest !== undefined) this.map.delete(oldest);
+    }
+  }
+
+  has(key: K): boolean {
+    const entry = this.map.get(key);
+    if (entry === undefined) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.map.delete(key);
+      return false;
+    }
+    return true;            // ← does NOT refresh recency (no delete + re-set)
+  }
+  ```
+- Why: Two related issues. (1) **Off-by-one overshoot**: `set` adds the entry first, THEN checks `size > max` and evicts the oldest. Between the `set` and the eviction (a single tick, but in a re-entrancy scenario where `set` is called from a hot loop with `max=100`, the size briefly hits 101 before being trimmed back to 100). This is benign for `max=100/200` but if `max=1` (single-entry cache like `statusCache`), the new entry replaces the old, but the check `size > 1` evicts the JUST-ADDED entry if `keys().next().value` returns the new key (because Map preserves insertion order, and the new key was just inserted, so it IS the oldest). Wait — actually `keys().next().value` returns the FIRST inserted key, which is the OLDEST. After `if (this.map.has(key)) this.map.delete(key)`, the existing key is removed, so the new `set` adds it as the newest. So `keys().next().value` returns the oldest REMAINING key, not the just-added one. So eviction is correct. IGNORE issue (1) — not a bug. (2) **`has()` doesn't refresh recency**: `has(key)` returns true/false but does NOT delete-and-re-set the entry to refresh its recency position in the Map. So if a caller does `cache.has('hot-key')` frequently but never `cache.get('hot-key')`, the hot key appears "cold" to the LRU eviction order and may be evicted before colder keys. This violates the LRU contract: a key that's been checked (via `has`) but not read (via `get`) is treated as if never accessed. Concrete scenario: `statusCache.has('status')` is called by a route to check freshness, but the route then re-queries the DB and calls `set` — bypassing `get`. The `has` check doesn't refresh recency, so on the next `set` of a different key, the `status` entry is evicted as "oldest" even though it was just checked.
+- Fix: Make `has()` refresh recency the same way `get()` does:
+  ```ts
+  has(key: K): boolean {
+    const entry = this.map.get(key);
+    if (entry === undefined) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.map.delete(key);
+      return false;
+    }
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return true;
+  }
+  ```
+
+Stage Summary:
+- Total bugs: 8 (Critical: 0, High: 2, Medium: 4, Low: 2)
+- BUG 5.1 (High) and BUG 5.2 (High) are the same root cause as BUG 1.8 (lexicographic week sort) but in two NEW files (page.tsx and analysis/route.ts) that weren't covered by the original fix. Currently latent (production data has only 3-4 weeks per month), but will trigger the moment any month has 10+ weeks — auto-comparison-week becomes wrong, silently corrupting growth/variance/historical analysis.
+- BUG 5.3 (High) is a state-management bug: the BUG 3.2 fix (lift worklistStatus to parent) solved tab-switch loss but introduced cross-outlet contamination when switching outlets within Focus Mode. Same item name in two outlets → status from outlet A bleeds into outlet B.
+- BUG 5.4 (Medium) is a classic timer-not-cleared memory leak — each Excel conversion via child process leaks a 5-min timer + child reference. Bounded but real.
+- BUG 5.5 (Medium) is a real data-corruption bug for Excel files containing date-formatted cells — dates become JSON-stringified with literal quotes, breaking downstream date parsing. The inventory data may not currently use date cells, but any future "Tanggal" / "Timestamp" column will be silently corrupted.
+- BUG 5.6 (Medium) breaks Google Drive large-file downloads (>100MB) when the confirm-token flow returns multiple Set-Cookie headers — the legacy `Headers.get('set-cookie')` joins them with `, ` which corrupts cookie boundaries.
+- BUG 5.7 (Low) silently produces 0-record ingestions when an Excel file has a title row or empty header row, with no error message — confusing UX.
+- BUG 5.8 (Low) is an LRU-invariant violation: `has()` doesn't refresh recency, so frequently-checked-but-not-read keys can be evicted prematurely. Minor impact since `statusCache` (max=1) and `analysisCache` (max=200) are both large enough that eviction order rarely matters.
+- No React hooks infinite-loop bugs found in inspected files.
+- No XSS / dangerouslySetInnerHTML issues found (no dangerouslySetInnerHTML usage in inspected components).
+- No SQL injection issues found (all SQL uses parameterized queries via Prisma or tagged-template `$queryRaw` with explicit parameter passing).
+- No new missing-rate-limit issues found (all heavy API routes already covered by BUG 1.7/1.13 fixes).
+- Verified Recharts 2.15.4 Bar/Scatter onClick handlers in ExtraCharts.tsx and CostAccounting.tsx are NOT broken — confirmed via node_modules source that `adaptEventsOfChild` passes the entry object with user-data fields spread directly (Bar.js:438-444, Scatter.js:401), so `d.area` / `d.outletCode` access works correctly.
+- Recommended fix order: 5.3 (high, 3-line useEffect) → 5.1 (high, 5-line sort) → 5.2 (high, 5-line sort) → 5.5 (medium, add Date branch) → 5.4 (medium, clearTimeout) → 5.6 (medium, getSetCookie) → 5.7 (low, validate headers) → 5.8 (low, refresh recency in has)

@@ -121,10 +121,14 @@ async function convertViaChildProcess(excelPath: string, csvPath: string): Promi
       reject(new Error(`Failed to spawn conversion process: ${err.message}`));
     });
 
-    setTimeout(() => {
+    // Bug 5.4 fix: store timer so it can be cleared on success/error
+    const timer = setTimeout(() => {
       child.kill('SIGTERM');
       reject(new Error('Conversion timed out after 5 minutes'));
     }, 300000);
+
+    // Clear timer when child exits (success or error) to prevent leak
+    child.on('exit', () => clearTimeout(timer));
   });
 }
 

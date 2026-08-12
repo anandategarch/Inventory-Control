@@ -123,7 +123,7 @@ export default function DashboardPage() {
       for (const m of status.months) {
         const ws = status.weeksByMonth[m.key] || [];
         for (const w of ws) {
-          allPeriods.push({ monthLabel: m.label, weekLabel: w, sortKey: `${m.key}|${w}` });
+          allPeriods.push({ monthLabel: m.label, weekLabel: w, sortKey: `${m.key}|${String(parseInt(w.replace(/\D/g, '')) || 0).padStart(2, '0')}` });
         }
       }
       allPeriods.sort((a, b) => a.sortKey.localeCompare(b.sortKey));

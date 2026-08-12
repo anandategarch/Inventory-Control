@@ -48,6 +48,9 @@ export class LRUCache<K, V> {
       this.map.delete(key);
       return false;
     }
+    // Bug 5.8 fix: refresh recency to maintain LRU invariant
+    this.map.delete(key);
+    this.map.set(key, entry);
     return true;
   }
 
