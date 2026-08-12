@@ -27,12 +27,24 @@ export const HEADER_ALIASES: Record<string, string> = {
   'nominal loss/surplus': 'nominalLossSurplus',
   'qty waste + susut': 'qtyWasteSusut',
   '% waste + susut': 'pctWasteSusut',
+  'waste + susut': 'pctWasteSusut', // without %
   '%toleransi': 'toleranceRaw',
+  // Bug 2 fix: add aliases WITHOUT % for deviasi columns (Excel headers vary)
   '% qty deviasi to bom': 'pctQtyDeviasiToBom',
+  'qty deviasi to bom': 'pctQtyDeviasiToBom',
+  '% deviasi to bom': 'pctQtyDeviasiToBom',
+  'deviasi to bom': 'pctQtyDeviasiToBom',
   'qty waste to bom': 'pctQtyWasteToBom',
+  '% waste to bom': 'pctQtyWasteToBom',
   'qty susut to bom': 'pctQtySusutToBom',
+  '% susut to bom': 'pctQtySusutToBom',
   'qty trial to bom': 'pctQtyTrialToBom',
-  'qty loss/ surplus to bom': 'pctQtyLossToBom',
+  '% trial to bom': 'pctQtyTrialToBom',
+  // Bug 6 fix: remove space after slash — key was 'qty loss/ surplus to bom' (with space)
+  // which prevented matching when Excel header had no space around slash.
+  'qty loss/surplus to bom': 'pctQtyLossToBom',
+  '% loss/surplus to bom': 'pctQtyLossToBom',
+  'qty loss/surplus': 'qtyLossSurplus',
   'area': 'area',
   'bulan': 'bulan',
   'penjualan': 'nominalSales',
@@ -72,7 +84,15 @@ export async function hashFile(filePath: string): Promise<string> {
 
 export function normalizeHeader(raw: string): string {
   const cleaned = raw.toLowerCase().replace(/\s+/g, ' ').trim();
-  return HEADER_ALIASES[cleaned] || HEADER_ALIASES[cleaned.replace(/\s*\/\s*/g, '/')] || cleaned;
+  // Bug 2/6 fix: try multiple normalization strategies to be robust against
+  // Excel header variations (with/without %, spaces around slashes, etc.)
+  return (
+    HEADER_ALIASES[cleaned] ||                                    // exact match
+    HEADER_ALIASES[cleaned.replace(/\s*\/\s*/g, '/')] ||          // normalize spaces around /
+    HEADER_ALIASES[cleaned.replace(/%/g, '').trim()] ||           // strip % symbols
+    HEADER_ALIASES[cleaned.replace(/%/g, '').replace(/\s*\/\s*/g, '/').trim()] || // both
+    cleaned
+  );
 }
 
 function cellToValue(cell: ExcelJS.Cell): unknown {
@@ -140,6 +160,7 @@ export async function parseExcelFile(filePath: string): Promise<ParsedWorkbook> 
 //    "191.JULI 26.xlsx"         → monthLabel="Juli 2026",    monthKey="2026-07", prefix="191" (2-digit year)
 // ============================================================
 const MONTH_MAP: Record<string, { name: string; num: string }> = {
+  // Full Indonesian month names
   januari: { name: 'Januari', num: '01' },
   februari: { name: 'Februari', num: '02' },
   pebruari: { name: 'Februari', num: '02' }, // common typo variant
@@ -155,6 +176,20 @@ const MONTH_MAP: Record<string, { name: string; num: string }> = {
   nopember: { name: 'November', num: '11' },
   november: { name: 'November', num: '11' },
   desember: { name: 'Desember', num: '12' },
+  // Bug 3 fix: abbreviations (3-letter) for fallback regex
+  jan: { name: 'Januari', num: '01' },
+  feb: { name: 'Februari', num: '02' },
+  mar: { name: 'Maret', num: '03' },
+  apr: { name: 'April', num: '04' },
+  may: { name: 'Mei', num: '05' },
+  jun: { name: 'Juni', num: '06' },
+  jul: { name: 'Juli', num: '07' },
+  agu: { name: 'Agustus', num: '08' },
+  agt: { name: 'Agustus', num: '08' },
+  sep: { name: 'September', num: '09' },
+  okt: { name: 'Oktober', num: '10' },
+  nov: { name: 'November', num: '11' },
+  des: { name: 'Desember', num: '12' },
 };
 
 export interface ParsedMonth {

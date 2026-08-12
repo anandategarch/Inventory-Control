@@ -73,12 +73,43 @@ function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): 
       case 'gte': if (!(typeof value === 'number' && typeof operand === 'number' && value >= operand)) return false; break;
       case 'lt': if (!(typeof value === 'number' && typeof operand === 'number' && value < operand)) return false; break;
       case 'lte': if (!(typeof value === 'number' && typeof operand === 'number' && value <= operand)) return false; break;
-      case 'eq': if (value !== operand) return false; break;
-      case 'neq': if (value === operand) return false; break;
-      case 'is_null': if (operand === true && value !== null && value !== undefined) return false;
-                      if (operand === false && (value === null || value === undefined)) return false; break;
-      case 'not_null': if (operand === true && (value === null || value === undefined)) return false;
-                       if (operand === false && value !== null && value !== undefined) return false; break;
+      case 'eq':
+        // Bug fix: case-insensitive comparison for strings (direction: "LOSS" vs "Loss")
+        if (typeof value === 'string' && typeof operand === 'string') {
+          if (value.toLowerCase() !== operand.toLowerCase()) return false;
+        } else if (value !== operand) {
+          return false;
+        }
+        break;
+      case 'neq':
+        if (typeof value === 'string' && typeof operand === 'string') {
+          if (value.toLowerCase() === operand.toLowerCase()) return false;
+        } else if (value === operand) {
+          return false;
+        }
+        break;
+      case 'is_null':
+        // Bug fix: fail safe if operand is not boolean (e.g., null, undefined, string)
+        // Previously: if operand was null, neither if-branch matched → function returned true (fail-open)
+        if (operand === true) {
+          if (value !== null && value !== undefined) return false;
+        } else if (operand === false) {
+          if (value === null || value === undefined) return false;
+        } else {
+          // Invalid operand — fail safe (rule does NOT trigger)
+          return false;
+        }
+        break;
+      case 'not_null':
+        if (operand === true) {
+          if (value === null || value === undefined) return false;
+        } else if (operand === false) {
+          if (value !== null && value !== undefined) return false;
+        } else {
+          // Invalid operand — fail safe
+          return false;
+        }
+        break;
       case 'between': {
         if (typeof value !== 'number' || !Array.isArray(operand)) return false;
         const arr = operand as unknown[];
@@ -149,6 +180,10 @@ function resolveExpr(expr: unknown, ctx: Record<string, unknown>): unknown {
 
 function evalCondition(cond: unknown, ctx: Record<string, unknown>): boolean {
   if (typeof cond !== 'object' || cond === null) return Boolean(cond);
+  // Bug fix: arrays are not valid condition objects — fail safe (return false)
+  // Previously arrays fell through to Object.entries() which iterated indices,
+  // causing fail-open behavior when used with `not: [...]`.
+  if (Array.isArray(cond)) return false;
   const c = cond as Record<string, unknown>;
 
   // Bug 3 fix: evaluate logic operators AND field comparisons together (no early return)
@@ -162,7 +197,16 @@ function evalCondition(cond: unknown, ctx: Record<string, unknown>): boolean {
     result = result && c.any.some((sub) => evalCondition(sub, ctx));
   }
   if ('not' in c) {
-    result = result && !evalCondition(c.not, ctx);
+    // Bug fix: `not` must receive a valid condition object, not an array.
+    // If `not` is an array or non-object, fail safe (treat as false → !false = true
+    // would be fail-open, so we invert: treat invalid `not` as true → !true = false).
+    const notCond = c.not;
+    if (typeof notCond === 'object' && notCond !== null && !Array.isArray(notCond)) {
+      result = result && !evalCondition(notCond, ctx);
+    } else {
+      // Invalid `not` operand — fail safe (rule does NOT trigger)
+      result = false;
+    }
   }
 
   // Field comparison: { fieldName: { op: value } } or { fieldName: value }
