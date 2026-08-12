@@ -210,64 +210,16 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       const seenKeys = new Set<string>();
       const allIssues: any[] = [];
       const weekDbMap = new Map<string, number>();
-      const newOutlets: any[] = [];
-      const newItems: any[] = [];
 
-      const BATCH_SIZE = 5000; // Increased from 500 → 2000 → 5000 for fewer round-trips
+      const BATCH_SIZE = 2000;
       let batchRecords: any[] = [];
       let totalInserted = 0;
       let totalRows = 0;
       let skippedErrors = 0;
 
-      // First pass: collect unique outlets & items, create them in batch
-      const uniqueOutletCodes = new Set<string>();
-      const uniqueItemNames = new Set<string>();
-      for (const rawRow of allRows) {
-        const n = normalizeRow(rawRow, fileName, 0, monthLabel);
-        const derived = deriveRecord(n);
-        if (derived.outletCode) uniqueOutletCodes.add(derived.outletCode);
-        if (n.namaBahan) uniqueItemNames.add(n.namaBahan);
-      }
-
-      // Batch create missing outlets
-      const newOutletCodes = [...uniqueOutletCodes].filter(c => !outletDbMap.has(c));
-      if (newOutletCodes.length > 0) {
-        // Need to create one by one to get IDs back (Prisma createMany doesn't return created records)
-        for (const code of newOutletCodes) {
-          // Find a sample row for this outlet to get name/area
-          const sampleRow = allRows.find(r => {
-            const n = normalizeRow(r, fileName, 0, monthLabel);
-            const d = deriveRecord(n);
-            return d.outletCode === code;
-          });
-          if (sampleRow) {
-            const n = normalizeRow(sampleRow, fileName, 0, monthLabel);
-            const d = deriveRecord(n);
-            const created = await db.outlet.create({
-              data: { code: d.outletCode, name: d.outletName, outletCode: d.outletNumericCode, area: n.area },
-            });
-            outletDbMap.set(code, created.id);
-          }
-        }
-      }
-
-      // Batch create missing items
-      const newItemNames = [...uniqueItemNames].filter(n => !itemDbMap.has(n));
-      if (newItemNames.length > 0) {
-        for (const name of newItemNames) {
-          const sampleRow = allRows.find(r => {
-            const n = normalizeRow(r, fileName, 0, monthLabel);
-            return n.namaBahan === name;
-          });
-          if (sampleRow) {
-            const n = normalizeRow(sampleRow, fileName, 0, monthLabel);
-            const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
-            itemDbMap.set(name, { id: created.id, satuan: n.satuan });
-          }
-        }
-      }
-
-      // Second pass: validate + normalize + insert
+      // SINGLE PASS: validate + normalize + create outlets/items lazily + insert
+      // Pre-loaded outletDbMap and itemDbMap from SELECT above.
+      // New outlets/items created on first encounter, then cached.
       for (const rawRow of allRows) {
         totalRows++;
         const rowNumber = totalRows + 1;
@@ -286,7 +238,7 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
         const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
         const derived = deriveRecord(n);
 
-        // Ensure week exists
+        // Ensure week exists (only 3-4 unique weeks per file)
         const wk = n.weekLabel || 'UNKNOWN';
         if (!weekDbMap.has(wk)) {
           const periods: Record<string, { start: number; end: number }> = {
@@ -306,7 +258,21 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
           weekDbMap.set(wk, w.id);
         }
 
-        // Get IDs from cache (no DB query per row)
+        // Outlet: check cache, create if missing (lazy — only on first encounter)
+        if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
+          const created = await db.outlet.create({
+            data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
+          });
+          outletDbMap.set(derived.outletCode, created.id);
+        }
+
+        // Item: check cache, create if missing (lazy)
+        if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
+          const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
+          itemDbMap.set(n.namaBahan, { id: created.id, satuan: n.satuan });
+        }
+
+        // Get IDs from cache (O(1) Map lookup, no DB query)
         const weekId = weekDbMap.get(wk) ?? 0;
         const outletId = outletDbMap.get(derived.outletCode) ?? 0;
         const itemEntry = itemDbMap.get(n.namaBahan);
