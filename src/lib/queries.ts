@@ -355,7 +355,7 @@ export async function queryTopOutlets(
     ),
     outlet_aggs AS (
       SELECT ir."outletId",
-        SUM(ir."absNominalDeviasi") as "absNominal",
+        SUM(ir."absNominalLossSurplus") as "absNominal",
         AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "devBom",
         SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossAmount",
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "surplusAmount"
@@ -414,7 +414,7 @@ export async function queryTopOutletsBySales(
       SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
     ),
     outlet_nominal AS (
-      SELECT ir."outletId", SUM(ir."absNominalDeviasi") as "absNominal"
+      SELECT ir."outletId", SUM(ir."absNominalLossSurplus") as "absNominal"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -539,7 +539,7 @@ export async function queryAreaAnalysis(
     area_aggs AS (
       SELECT ir.area,
         COUNT(DISTINCT ir."outletId")::int as "outletCount",
-        SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+        SUM(ir."absNominalLossSurplus") as "totalAbsNominal",
         AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "avgDevBom",
         SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossNominal"
       FROM "InventoryRecord" ir
@@ -646,12 +646,12 @@ export async function queryPareto(
   }[]>`
     WITH item_totals AS (
       SELECT i.name as "itemName", o.code as "outletCode",
-        SUM(ir."absNominalDeviasi") as "absNominal"
+        SUM(ir."absNominalLossSurplus") as "absNominal"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
         ${f}
       GROUP BY i.name, o.code
     ),
@@ -752,12 +752,12 @@ export async function queryItemConsistency(
         COUNT(DISTINCT ir."outletId")::int as "outletCount",
         COUNT(DISTINCT CASE WHEN ir.direction = 'LOSS' THEN ir."outletId" END)::int as "lossOutlets",
         COUNT(DISTINCT CASE WHEN ir.direction = 'SURPLUS' THEN ir."outletId" END)::int as "surplusOutlets",
-        SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+        SUM(ir."absNominalLossSurplus") as "totalAbsNominal",
         AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "avgDevBom"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
         ${f}
       GROUP BY i.name
     )

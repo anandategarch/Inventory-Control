@@ -498,6 +498,12 @@ export function recommendAction(ruleCodes: string[]): string {
   if (set.has('RESIDUAL_LOSS_HIGH') || set.has('RESIDUAL_LOSS_WARN')) {
     actions.push('Validasi Actual Usage vs SOC + sampling fisik + cek pencatatan Waste/Susut/Trial');
   }
+  if (set.has('OVER_EXPLAINED')) {
+    actions.push('Indikasi fraud/salah input: Waste+Susut+Trial melampaui Deviasi — audit pencatatan SPV + cek double-counting');
+  }
+  if (set.has('DIRECTION_FLIP')) {
+    actions.push('Arah deviasi berbalik antar periode — cek perubahan operasional, stock opname timing, atau error input');
+  }
   if (set.has('BOM_DEVIATION_MISMATCH') || set.has('BOM_DOWN_DEV_UP')) {
     actions.push('Rekonsiliasi BOM aktual vs sistem + periksa receiving/transfer/UOM conversion');
   }
@@ -513,7 +519,7 @@ export function recommendAction(ruleCodes: string[]): string {
   if (set.has('BENCHMARK_ABOVE_AREA') || set.has('BENCHMARK_ABOVE_NETWORK')) {
     actions.push('Benchmarking vs outlet serupa + cek prosedur operasional');
   }
-  if (set.has('HISTORICAL_ABNORMAL') || set.has('HISTORICAL_WARNING')) {
+  if (set.has('HISTORICAL_ABNORMAL') || set.has('HISTORICAL_ABNORMAL_SURPLUS') || set.has('HISTORICAL_WARNING')) {
     actions.push('Investigasi pola abnormal vs historical behavior (outlier detection)');
   }
   if (set.has('HIGH_LOSS_NOMINAL')) {
