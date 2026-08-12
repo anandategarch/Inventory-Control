@@ -5,7 +5,7 @@
     "src/app/api/ingest": {
       "maxDuration": 300
     },
-    "src/app/api/import-drive": {
+    "src/app/api/ingest-upload": {
       "maxDuration": 300
     },
     "src/app/api/outlet-focus": {
