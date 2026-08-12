@@ -176,6 +176,13 @@ export function buildRuleContext(
   const absDevQty = Math.abs(curr.qtyDeviasi ?? 0);
   const isOverExplained = absDevQty > 0 && explainedQty > absDevQty;
 
+  // Bug 3 fix: expose prevDirection for flip-flop detection
+  // Master context #30/#58: direction flip = LOSS↔SURPLUS between periods
+  const prevDirection = prev?.direction ?? null;
+  const isDirectionFlip = prevDirection != null && curr.direction != null &&
+    prevDirection !== 'NEUTRAL' && curr.direction !== 'NEUTRAL' &&
+    prevDirection !== curr.direction;
+
   return {
     salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth,
     deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
@@ -187,6 +194,8 @@ export function buildRuleContext(
     residualQty: curr.residualQty, residualRatio: curr.residualRatio,
     tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
     direction: curr.direction,
+    prevDirection,
+    isDirectionFlip,
     absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,
     isOverExplained,
     // ===== P2 fix: inject runtime thresholds into context so rules.yaml =====

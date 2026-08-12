@@ -96,9 +96,10 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" />
         <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" />
         <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" />
-        <KPICard label="QTY Deviasi" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse drillDown="qtyDeviasi" />
-        <KPICard label="Waste + Susut + Trial" value={(s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0)} unit="" growth={s.qtyWaste.growth} drillDown="waste" />
-        <KPICard label="Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
+        {/* Bug 5 fix: Three-layer deviation labels — Gross / Explained / Net */}
+        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" />
+        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" growth={s.qtyWaste.growth} hint="Layer 2: Waste + Susut + Trial" drillDown="waste" />
+        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('loss')}>

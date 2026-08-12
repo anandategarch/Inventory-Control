@@ -34,6 +34,7 @@ export function validateRow(
   const namaBahan = String(row.namaBahan ?? '').trim();
   const weekLabel = String(row.weekLabel ?? '').trim();
   const akun = String(row.akunPenyesuaian ?? '').trim();
+  const area = String(row.area ?? '').trim();
 
   // ERROR: missing required fields
   if (!resto) {
@@ -44,6 +45,43 @@ export function validateRow(
   }
   if (!weekLabel) {
     issues.push({ severity: 'WARNING', code: 'MISSING_WEEK', message: `Row ${rowNumber}: STATUS BULAN (week) kosong`, rowNumber });
+  }
+
+  // Bug 8 fix: DQ checks for mapping issues (master context #45)
+  // OUTLET_NOT_MAPPED: outlet code doesn't match expected format (XXXX.NNNN or B.XXXX.NNNN)
+  if (resto) {
+    // Valid outlet code formats: "1030.BDGSET" or "B.1001.MLGPAR"
+    const outletCodePattern = /^(B\.)?\d{3,5}\.[A-Z]{4,8}$/i;
+    if (!outletCodePattern.test(resto)) {
+      issues.push({
+        severity: 'WARNING',
+        code: 'OUTLET_NOT_MAPPED',
+        message: `Row ${rowNumber}: RESTO "${resto}" tidak sesuai format outlet code (XXXX.NAMA). Periksa mapping outlet.`,
+        rawValue: resto,
+        rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+      });
+    }
+  }
+
+  // AREA_NOT_MAPPED: area field empty or suspicious
+  if (!area) {
+    issues.push({
+      severity: 'WARNING',
+      code: 'AREA_NOT_MAPPED',
+      message: `Row ${rowNumber}: AREA kosong untuk ${namaBahan} @ ${resto}`,
+      rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+    });
+  }
+
+  // PERIOD_NOT_MAPPED: weekLabel not in expected format (WEEK 1/2/3/4)
+  if (weekLabel && !/^WEEK\s*[1-4]$/i.test(weekLabel)) {
+    issues.push({
+      severity: 'WARNING',
+      code: 'PERIOD_NOT_MAPPED',
+      message: `Row ${rowNumber}: STATUS BULAN "${weekLabel}" tidak sesuai format (WEEK 1/2/3/4)`,
+      rawValue: weekLabel,
+      rowNumber, outletCode: resto, itemName: namaBahan,
+    });
   }
 
   // ERROR: invalid number on critical numeric columns

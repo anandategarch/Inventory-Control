@@ -289,9 +289,10 @@ export interface RuleContext extends Record<string, unknown> {
   tolerancePct?: number | null;
   pctQtyDeviasiToBom?: number | null;
   direction?: string | null;
+  prevDirection?: string | null;
+  isDirectionFlip?: boolean;
   absNominalDeviasi?: number | null;
   absQtyDeviasi?: number | null;
-  // ===== P2 fix: runtime thresholds injected from settings (DB) =====
   // These allow rules.yaml to use dynamic field references instead of hardcoded values.
   stdDeviasiBomPct?: number;
   stdSusutPct?: number;

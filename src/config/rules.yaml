@@ -187,6 +187,17 @@ rules:
     narrative_template: >
       Deviation/BOM outlet jauh di atas rata-rata network.
 
+  # ===== DIRECTION FLIP (Bug 3 fix — master context #30/#58) =====
+  - code: DIRECTION_FLIP
+    name: "Direction flip LOSS ↔ SURPLUS antar periode"
+    category: HISTORICAL
+    severity: WARNING
+    priority: 60
+    condition:
+      isDirectionFlip: { eq: true }
+    narrative_template: >
+      Arah deviasi berbalik dari {{prevDirection}} → {{direction}} antar periode — indikasi perubahan pola operasional atau error input. Perlu investigasi.
+
   # ===== HISTORICAL =====
   - code: HISTORICAL_ABNORMAL
     name: "Deviation abnormal vs historical behavior (LOSS direction)"

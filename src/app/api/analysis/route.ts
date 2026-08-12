@@ -430,6 +430,16 @@ export async function GET(req: NextRequest) {
     const topTrial = topTrialRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyTrial: r.qty, nominalTrial: r.nominal }));
     const topLossSurplus = topLossSurplusRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction }));
 
+    // Bug 5 fix: enrich deviationBreakdown with three-layer metrics
+    // Master context #11: Gross / Explained (W+S+T) / Net (residual)
+    const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);
+    const breakdownEnriched = {
+      ...breakdown,
+      explained: explainedTotal, // Layer 2: Waste + Susut + Trial
+      explainedPct: breakdown.total > 0 ? explainedTotal / breakdown.total : null, // % of gross explained
+      netPct: breakdown.total > 0 ? (breakdown.residual ?? 0) / breakdown.total : null, // % of gross that is net
+    };
+
     const areaAvgMap = new Map<string, number>(areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0]));
     const topOut = topOutletsRaw.map(o => ({
       outletCode: o.outletCode, outletName: o.outletName, area: o.area,
@@ -573,7 +583,7 @@ export async function GET(req: NextRequest) {
       growthMetrics,
       healthStatus: { normal, warning, abnormal },
       topAnomalies: topAnomaliesForNarrative,
-      deviationBreakdown: breakdown,
+      deviationBreakdown: breakdownEnriched,
       investigationCount: worklist.length,
     };
     const narrativePromise = generateNarrative(narrativeInput);
@@ -702,7 +712,7 @@ export async function GET(req: NextRequest) {
       topItemsBySusut: topSusut,
       topItemsByTrial: topTrial,
       topItemsByLossSurplus: topLossSurplus,
-      deviationBreakdown: breakdown,
+      deviationBreakdown: breakdownEnriched,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,
       narrative,
