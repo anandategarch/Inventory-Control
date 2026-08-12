@@ -210,8 +210,32 @@ export async function GET(req: NextRequest) {
         if (match) {
           prevMonth = month;
         } else {
-          const anyMatch = allPeriods.find((p) => p.weekLabel === prevWeek);
-          prevMonth = anyMatch?.monthLabel || month;
+          // Bug fix: find the most recent period with this weekLabel that is BEFORE
+          // the current period (not the oldest overall). Previously used find() on
+          // ascending array → returned oldest match (e.g., Mei W1 instead of Juni W1
+          // when current is Juli).
+          const currentIdx = allPeriods.findIndex(
+            (p) => p.monthLabel === month && p.weekLabel === week
+          );
+          // Search backwards from current period for the given weekLabel
+          let foundMonth: string | null = null;
+          const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
+          for (let i = startIdx; i >= 0; i--) {
+            if (allPeriods[i].weekLabel === prevWeek) {
+              foundMonth = allPeriods[i].monthLabel;
+              break;
+            }
+          }
+          // Fallback: if not found before current, search forward (rare edge case)
+          if (!foundMonth) {
+            for (let i = (currentIdx >= 0 ? currentIdx + 1 : 0); i < allPeriods.length; i++) {
+              if (allPeriods[i].weekLabel === prevWeek) {
+                foundMonth = allPeriods[i].monthLabel;
+                break;
+              }
+            }
+          }
+          prevMonth = foundMonth || month;
         }
       }
     }
@@ -295,7 +319,11 @@ export async function GET(req: NextRequest) {
     const zeroDevByOutlet = new Map<number, number>();
 
     for (const curr of currentRecs) {
-      if (curr.qtyDeviasi === null || curr.qtyDeviasi === 0 || curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0) {
+      // Bug fix: use && (AND) instead of || (OR) so items with price-only variance
+      // (qtyDeviasi=0 but absNominalDeviasi>0) are NOT skipped as "normal".
+      // Previously: if ANY field was 0/null, item was skipped → price anomalies missed.
+      // Now: only skip if BOTH qty AND nominal are 0/null (truly no deviation).
+      if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
         normal++;
         zeroDevCount++;
         zeroDevByOutlet.set(curr.outletId, (zeroDevByOutlet.get(curr.outletId) ?? 0) + 1);
@@ -412,10 +440,13 @@ export async function GET(req: NextRequest) {
     const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
 
     // ===== BUG FIX #5: Compute aggregate priceGrowth from total nominal/qty =====
-    const currAvgPrice = execSummary.nominalDeviasi.current > 0 && execSummary.qtyDeviasi.current > 0
+    // Bug fix: previously checked `nominalDeviasi.current > 0` which caused null priceGrowth
+    // when outlet has aggregate loss (negative nominal). Now only guard against qty=0 (division).
+    const currAvgPrice = execSummary.qtyDeviasi.current != null && Math.abs(execSummary.qtyDeviasi.current) > 0
       ? execSummary.nominalDeviasi.current / execSummary.qtyDeviasi.current : null;
-    const prevAvgPrice = execSummary.nominalDeviasi.previous != null && execSummary.qtyDeviasi.previous != null && execSummary.qtyDeviasi.previous > 0
-      ? execSummary.nominalDeviasi.previous / execSummary.qtyDeviasi.previous : null;
+    const prevQtyDev = execSummary.qtyDeviasi.previous;
+    const prevAvgPrice = prevQtyDev != null && Math.abs(prevQtyDev) > 0
+      ? (execSummary.nominalDeviasi.previous ?? 0) / prevQtyDev : null;
     const priceGrowth = currAvgPrice != null && prevAvgPrice != null && prevAvgPrice !== 0
       ? (currAvgPrice - prevAvgPrice) / Math.abs(prevAvgPrice) : null;
 

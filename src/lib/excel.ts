@@ -64,7 +64,8 @@ export async function hashFile(filePath: string): Promise<string> {
   const { pipeline } = await import('stream/promises');
   const hash = createHash('sha256');
   const stream = createReadStream(filePath);
-  stream.pipe(hash);
+  // Bug fix: removed stream.pipe(hash) — double piping causes "already piped" errors
+  // in Node.js serverless (Vercel). pipeline() handles piping automatically.
   await pipeline(stream, hash);
   return hash.digest('hex');
 }
