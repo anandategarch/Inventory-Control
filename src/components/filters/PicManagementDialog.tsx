@@ -71,6 +71,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
 
   // Search + inline edit state
   const [search, setSearch] = useState('');
+  const [filterNoPic, setFilterNoPic] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -84,6 +85,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     setPrevOpen(open);
     if (!open) {
       setSearch('');
+      setFilterNoPic(false);
       setEditingCode(null);
       setEditValue('');
       setImportOpen(false);
@@ -93,18 +95,26 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
 
   const outlets: OutletRow[] = status?.outlets ?? [];
 
-  // Filter by search (code, name, area, pic)
+  // Filter by search (code, name, area, pic) + "no PIC only" filter
   const filtered = useMemo(() => {
+    let result = outlets;
+    // Filter: only show outlets without PIC
+    if (filterNoPic) {
+      result = result.filter((o) => !o.pic);
+    }
+    // Search filter
     const q = search.trim().toLowerCase();
-    if (!q) return outlets;
-    return outlets.filter(
-      (o) =>
-        o.code.toLowerCase().includes(q) ||
-        o.name.toLowerCase().includes(q) ||
-        o.area.toLowerCase().includes(q) ||
-        (o.pic ?? '').toLowerCase().includes(q)
-    );
-  }, [outlets, search]);
+    if (q) {
+      result = result.filter(
+        (o) =>
+          o.code.toLowerCase().includes(q) ||
+          o.name.toLowerCase().includes(q) ||
+          o.area.toLowerCase().includes(q) ||
+          (o.pic ?? '').toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [outlets, search, filterNoPic]);
 
   const stats = useMemo(() => {
     const total = outlets.length;
@@ -257,6 +267,16 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
               <Badge variant="outline" className="text-[11px] text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-800">
                 {stats.without} belum ada PIC
               </Badge>
+              {stats.without > 0 && (
+                <Button
+                  variant={filterNoPic ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  onClick={() => setFilterNoPic((v) => !v)}
+                >
+                  {filterNoPic ? '✓ Tampilkan semua' : 'Lihat yang belum ada PIC'}
+                </Button>
+              )}
               <div className="flex-1" />
               <Button
                 variant="secondary"
