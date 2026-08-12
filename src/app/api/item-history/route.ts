@@ -115,7 +115,10 @@ export async function GET(req: NextRequest) {
     //  Benchmark: area + network avg devBom for THIS ITEM per period
     // ============================================================
     const currentPeriod = timeline.find(t => t.isCurrent) || timeline[timeline.length - 1];
-    const currentDevBom = currentPeriod?.devBom;
+    if (!currentPeriod) {
+      return NextResponse.json({ success: false, error: 'No current period found in timeline' }, { status: 404 });
+    }
+    const currentDevBom = currentPeriod.devBom;
 
     // Area benchmark for this item (current period)
     const areaBench = await db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`

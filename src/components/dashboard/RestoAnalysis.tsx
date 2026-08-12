@@ -257,9 +257,9 @@ export function RestoAnalysis() {
             <Row label="Warning" value={profile.investigation.warning.toString()} />
             <Row label="Abnormal" value={profile.investigation.abnormal.toString()} />
             <div className="flex gap-1 mt-2">
-              <Badge variant="outline" className="text-[10px] text-red-600 border-red-300">P1: {currentRanking.filter(r => r.priority === 'P1').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">P2: {currentRanking.filter(r => r.priority === 'P2').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-300">P3: {currentRanking.filter(r => r.priority === 'P3').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-red-600 border-red-300">P1: {(data.allItems || []).filter((r: any) => r.priority === 'P1').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">P2: {(data.allItems || []).filter((r: any) => r.priority === 'P2').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-300">P3: {(data.allItems || []).filter((r: any) => r.priority === 'P3').length}</Badge>
             </div>
           </CardContent>
         </Card>

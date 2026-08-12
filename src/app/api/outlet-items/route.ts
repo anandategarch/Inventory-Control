@@ -104,8 +104,8 @@ export async function GET(req: NextRequest) {
           AND ir."weekLabel" = ${week}
       `,
       // Previous period records
-      prevWeek ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null }>>`
-        SELECT ir."itemId", ir."qtyDeviasi", ir."nominalDeviasi", ir."qtyBom", ir."pctQtyDeviasiToBom"
+      prevWeek ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
+        SELECT ir."itemId", ir."qtyDeviasi", ir."nominalDeviasi", ir."qtyBom", ir."pctQtyDeviasiToBom", ir."nominalSales"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
         WHERE o.code = ${outletCode}
@@ -195,6 +195,8 @@ export async function GET(req: NextRequest) {
 
     // Previous period aggregates
     let prevQtyBom = 0, prevQtyDeviasi = 0, prevNominalDeviasi = 0;
+    // Bug fix: compute prev sales via MODE for salesGrowth
+    const prevSalesCounts = new Map<number, number>();
     const prevByItemId = new Map<number, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
     for (const r of prevRecs) {
       const qd = toNum(r.qtyDeviasi) ?? 0;
@@ -205,6 +207,16 @@ export async function GET(req: NextRequest) {
       prevQtyDeviasi += Math.abs(qd);
       prevNominalDeviasi += Math.abs(nd);
       prevByItemId.set(r.itemId, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
+      // Bug fix: collect prev sales via MODE
+      const ps = toNum((r as any).nominalSales);
+      if (ps != null && ps > 0) {
+        const rounded = Math.round(ps * 100) / 100;
+        prevSalesCounts.set(rounded, (prevSalesCounts.get(rounded) ?? 0) + 1);
+      }
+    }
+    let prevBestSales = 0, prevBestCount = 0;
+    for (const [val, count] of prevSalesCounts) {
+      if (count > prevBestCount || (count === prevBestCount && val > prevBestSales)) { prevBestSales = val; prevBestCount = count; }
     }
 
     const calcGrowth = (curr: number, prev: number): number | null => {
@@ -216,7 +228,7 @@ export async function GET(req: NextRequest) {
       // 1. Performance
       performance: {
         sales: bestSales,
-        salesGrowth: calcGrowth(bestSales, 0), // no prev sales in this query
+        salesGrowth: prevBestSales > 0 ? calcGrowth(bestSales, prevBestSales) : null,
         qtyBom: totalQtyBom,
         qtyBomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
         qtyDeviasi: totalQtyDeviasi,
