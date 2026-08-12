@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, ChevronRight, Grid3x3 } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, ChevronRight, Grid3x3, Utensils } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useState, useMemo } from 'react';
 
@@ -97,7 +97,7 @@ function directionColor(d: string): string {
 export function RestoAnalysis() {
   const { focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard();
   const [rankingTab, setRankingTab] = useState('financial');
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['outlet-items', focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
@@ -265,6 +265,9 @@ export function RestoAnalysis() {
         </Card>
       </div>
 
+      {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
+      <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+
       {/* Resto × Bahan Matrix — Phase 4 */}
       <RestoBahanMatrix outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
 
@@ -310,7 +313,7 @@ export function RestoAnalysis() {
                   </TableHeader>
                   <TableBody>
                     {currentRanking.map((r) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} onClick={() => setSelectedItem(r.itemName)}>
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} onClick={() => setSelectedItem({ outletCode: focusOutlet!, itemName: r.itemName })}>
                         <TableCell className="text-[11px] py-1.5 font-mono">{r.rank}</TableCell>
                         <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(r.qtyBom)}</TableCell>
@@ -345,10 +348,10 @@ export function RestoAnalysis() {
       </Card>
 
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}
-      {selectedItem && focusOutlet && (
+      {selectedItem && (
         <ItemDetailModal
-          outletCode={focusOutlet}
-          itemName={selectedItem}
+          outletCode={selectedItem.outletCode}
+          itemName={selectedItem.itemName}
           month={monthLabel || ''}
           week={currentWeek || ''}
           onClose={() => setSelectedItem(null)}
@@ -513,12 +516,167 @@ function SummaryCard({ label, value, sub, color }: { label: string; value: strin
 }
 
 // ============================================================
+//  MenuAnalysis — Phase 3: Group by menu prefix + outlier detection
+//  Groups items by first word of itemName (menu name)
+//  Detects items where Dev growth >> BOM growth (outlier within menu)
+// ============================================================
+function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem }: {
+  outletCode: string; monthLabel: string; currentWeek: string;
+  onSelectItem: (item: { outletCode: string; itemName: string }) => void;
+}) {
+  const { data: outletData } = useQuery({
+    queryKey: ['outlet-items', outletCode, monthLabel, currentWeek],
+    queryFn: async () => {
+      const p = new URLSearchParams({ outletCode, month: monthLabel, week: currentWeek });
+      const res = await fetch(`/api/outlet-items?${p.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
+
+  const menuGroups = useMemo<Array<{
+    menuName: string; itemCount: number; avgDevBom: number;
+    stdDev: number; threshold: number; outlierCount: number;
+    items: Array<any>;
+  }>>(() => {
+    if (!outletData?.rankings?.financial) return [];
+    // Collect all unique items from all 3 rankings
+    const allItems = new Map<string, any>();
+    for (const ranking of Object.values(outletData.rankings)) {
+      for (const item of ranking as any[]) {
+        if (!allItems.has(item.itemName)) {
+          allItems.set(item.itemName, item);
+        }
+      }
+    }
+
+    // Group by first word (menu name)
+    const groups = new Map<string, any[]>();
+    for (const item of allItems.values()) {
+      const menuName = (item.itemName || 'LAINNYA').split(/\s+/)[0].toUpperCase();
+      if (!groups.has(menuName)) groups.set(menuName, []);
+      groups.get(menuName)!.push(item);
+    }
+
+    // For each group, compute avg Dev/BOM and flag outliers
+    const result: Array<{
+      menuName: string; itemCount: number; avgDevBom: number;
+      stdDev: number; threshold: number; outlierCount: number;
+      items: Array<any>;
+    }> = [];
+    for (const [menuName, items] of groups) {
+      if (items.length < 2) continue; // Skip single-item groups
+
+      const devBomValues = items
+        .map(i => Math.abs(i.devBom ?? 0))
+        .filter(v => v > 0);
+      if (devBomValues.length === 0) continue;
+
+      const avgDevBom = devBomValues.reduce((a, b) => a + b, 0) / devBomValues.length;
+      const stdDev = devBomValues.length > 1
+        ? Math.sqrt(devBomValues.reduce((a, b) => a + (b - avgDevBom) ** 2, 0) / (devBomValues.length - 1))
+        : 0;
+      const threshold = avgDevBom + 2 * stdDev; // outlier = > avg + 2σ
+
+      const itemsWithFlag = items.map(item => ({
+        ...item,
+        isOutlier: Math.abs(item.devBom ?? 0) > threshold && Math.abs(item.devBom ?? 0) > avgDevBom * 1.5,
+        outlierMultiple: avgDevBom > 0 ? Math.abs(item.devBom ?? 0) / avgDevBom : null,
+      }));
+
+      const outlierCount = itemsWithFlag.filter(i => i.isOutlier).length;
+
+      result.push({
+        menuName,
+        itemCount: items.length,
+        avgDevBom,
+        stdDev,
+        threshold,
+        outlierCount,
+        items: itemsWithFlag.sort((a, b) => Math.abs(b.devBom ?? 0) - Math.abs(a.devBom ?? 0)),
+      });
+    }
+
+    return result.sort((a, b) => b.outlierCount - a.outlierCount || b.avgDevBom - a.avgDevBom);
+  }, [outletData]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Utensils className="h-4 w-4" />
+          Menu Analysis — Outlier Detection
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Group by menu (kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama
+        </p>
+      </CardHeader>
+      <CardContent>
+        {menuGroups.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data menu.</p>
+        ) : (
+          <div className="space-y-3 max-h-[500px] overflow-y-auto">
+            {menuGroups.map(group => (
+              <div key={group.menuName} className="rounded-lg border p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">{group.menuName}</span>
+                    <Badge variant="outline" className="text-[10px]">{group.itemCount} bahan</Badge>
+                    {group.outlierCount > 0 && (
+                      <Badge variant="outline" className="text-[10px] text-red-600 border-red-300">
+                        🔴 {group.outlierCount} outlier
+                      </Badge>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Avg Dev/BOM: {fmtPct(group.avgDevBom)} · Threshold: {fmtPct(group.threshold)}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item: any) => (
+                    <div
+                      key={item.itemName}
+                      className={`flex items-center justify-between text-xs py-1 px-2 rounded cursor-pointer hover:bg-muted/50 ${item.isOutlier ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+                      onClick={() => onSelectItem({ outletCode, itemName: item.itemName })}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {item.isOutlier && <span className="text-red-600 font-bold text-[10px]">⚠</span>}
+                        <span className="truncate max-w-[160px]" title={item.itemName}>{item.itemName}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="font-mono text-muted-foreground">BOM: {fmtNum(item.qtyBom)}</span>
+                        <span className={`font-mono font-semibold ${item.isOutlier ? 'text-red-600' : ''}`}>
+                          Dev/BOM: {fmtPct(item.devBom)}
+                        </span>
+                        {item.outlierMultiple != null && item.outlierMultiple > 1 && (
+                          <span className={`text-[10px] ${item.isOutlier ? 'text-red-600 font-bold' : 'text-muted-foreground'}`}>
+                            {item.outlierMultiple.toFixed(1)}× avg
+                          </span>
+                        )}
+                        <span className={`text-[10px] ${directionColor(item.direction)}`}>{item.direction === 'LOSS' ? 'L' : 'S'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] text-muted-foreground mt-2">
+          ⚠ Outlier = Dev/BOM &gt; (avg + 2σ) DAN &gt; 1.5× avg menu · Klik bahan untuk lihat Investigation Card
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
 //  RestoBahanMatrix — Phase 4: Cross-tabulation Outlet × Bahan
 //  Shows top worst outlet+item combos across ALL outlets
 // ============================================================
 function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }: {
   outletCode: string; monthLabel: string; currentWeek: string;
-  onSelectItem: (itemName: string) => void;
+  onSelectItem: (item: { outletCode: string; itemName: string }) => void;
 }) {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -624,7 +782,7 @@ function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }:
                     <TableRow
                       key={i}
                       className={`${priorityBg(r.priority)} ${isCurrentOutlet ? 'ring-1 ring-primary/40' : ''} cursor-pointer hover:ring-1 hover:ring-primary/30`}
-                      onClick={() => onSelectItem(r.itemName)}
+                      onClick={() => onSelectItem({ outletCode: r.outletCode, itemName: r.itemName })}
                     >
                       <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
                         <span className="font-medium">{r.outletCode}</span>
