@@ -305,6 +305,8 @@ export interface RuleContext extends Record<string, unknown> {
   historicalZscoreHigh?: number;
   salesDeviationFactor?: number;
   bomDeviationFactor?: number;
+  // Bug 8 fix: fraud red flag — Waste+Susut+Trial exceeds total deviation
+  isOverExplained?: boolean;
 }
 
 export function evaluateRules(ctx: RuleContext): AnomalyFlagResult[] {

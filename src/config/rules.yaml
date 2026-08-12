@@ -116,6 +116,17 @@ rules:
     narrative_template: >
       Deviation/BOM {{pctQtyDeviasiToBom}} tinggi namun tolerance belum diset (analytical flag).
 
+  # ===== OVER_EXPLAINED (Bug 8 fix — fraud red flag) =====
+  - code: OVER_EXPLAINED
+    name: "Waste+Susut+Trial exceeds total deviation (fraud indicator)"
+    category: RESIDUAL
+    severity: ABNORMAL
+    priority: 76
+    condition:
+      isOverExplained: { eq: true }
+    narrative_template: >
+      Waste+Susut+Trial ({{qtyWaste}}+{{qtySusut}}+{{qtyTrial}}) melampaui total deviasi ({{qtyDeviasi}}) — indikasi salah input SPV, double-counting, atau fraud.
+
   # ===== RESIDUAL =====
   - code: RESIDUAL_LOSS_HIGH
     name: "High residual loss after Waste/Susut/Trial"
@@ -178,7 +189,7 @@ rules:
 
   # ===== HISTORICAL =====
   - code: HISTORICAL_ABNORMAL
-    name: "Deviation abnormal vs historical behavior"
+    name: "Deviation abnormal vs historical behavior (LOSS direction)"
     category: HISTORICAL
     severity: ABNORMAL
     priority: 78
@@ -186,6 +197,16 @@ rules:
       zScore: { gt: historicalZscoreHigh }
     narrative_template: >
       Deviation/BOM {{zScore}} std-dev di atas historical average.
+
+  - code: HISTORICAL_ABNORMAL_SURPLUS
+    name: "Deviation abnormal vs historical behavior (SURPLUS direction)"
+    category: HISTORICAL
+    severity: ABNORMAL
+    priority: 77
+    condition:
+      zScore: { lt: { mul: [-1, historicalZscoreHigh] } }
+    narrative_template: >
+      Deviation/BOM {{zScore}} std-dev di BAWAH historical average (SURPLUS abnormal).
 
   - code: HISTORICAL_WARNING
     name: "Deviation above historical average"

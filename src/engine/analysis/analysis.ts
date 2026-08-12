@@ -46,7 +46,10 @@ function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
     let bestVal = 0;
     let bestCount = 0;
     for (const [val, count] of counts) {
-      if (count > bestCount) {
+      // Bug 6 fix: on tie (same count), pick the HIGHER value to match
+      // SQL's ORDER BY cnt DESC, nominalSales DESC. Previously non-deterministic
+      // (first-inserted won), causing inconsistency between JS and SQL paths.
+      if (count > bestCount || (count === bestCount && val > bestVal)) {
         bestVal = val;
         bestCount = count;
       }
@@ -167,6 +170,12 @@ export function buildRuleContext(
     else if (zScore > t.BENCHMARK_AREA_FACTOR) benchmarkFlag = 'ABOVE_AREA_AVG';
   }
 
+  // Bug 8 fix: compute isOverExplained on-the-fly (explained > absDev)
+  // This is a fraud red flag: Waste+Susut+Trial exceeds total deviation.
+  const explainedQty = Math.abs((curr.qtyWaste ?? 0) + (curr.qtySusut ?? 0) + (curr.qtyTrial ?? 0));
+  const absDevQty = Math.abs(curr.qtyDeviasi ?? 0);
+  const isOverExplained = absDevQty > 0 && explainedQty > absDevQty;
+
   return {
     salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth,
     deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
@@ -179,6 +188,7 @@ export function buildRuleContext(
     tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
     direction: curr.direction,
     absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,
+    isOverExplained,
     // ===== P2 fix: inject runtime thresholds into context so rules.yaml =====
     // ===== can reference them as field names instead of hardcoded values.  =====
     // e.g. { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } }

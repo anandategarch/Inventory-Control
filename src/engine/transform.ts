@@ -76,6 +76,35 @@ export function toNum(v: unknown): number | null {
     } else {
       s = s.replace(/,/g, '');
     }
+  } else if (s.includes('.')) {
+    // Bug 1 fix: handle dot-only format (Indonesian thousands with multiple dots)
+    // The comment described this case but the code was missing!
+    // Strategy:
+    //   - Multiple dots → all are thousands separators: "1.234.567" → "1234567"
+    //   - Single dot with exactly 3 digits after AND value > 9999 → thousands: "1.234" → "1234"
+    //     (but "12.345" where 12 is the integer part → also thousands → "12345")
+    //   - Single dot with 1-2 digits after → decimal: "1.5" → "1.5"
+    //   - Single dot with 3 digits after but integer part ≤ 3 digits → ambiguous, treat as decimal
+    const dots = s.split('.');
+    if (dots.length > 2) {
+      // Multiple dots = Indonesian thousands: "1.234.567" → "1234567"
+      s = s.replace(/\./g, '');
+    } else if (dots.length === 2) {
+      const afterDot = dots[1];
+      const beforeDot = dots[0];
+      if (afterDot.length === 3 && /^\d+$/.test(afterDot) && /^\d+$/.test(beforeDot)) {
+        // Single dot with 3 digits after — could be thousands or decimal
+        // Heuristic: if the integer part is 1-2 digits, treat as thousands
+        // "1.234" → 1234 (thousands), "12.345" → 12345 (thousands)
+        // "123.456" → 123.456 (decimal, since 123 > 99)
+        // This matches Indonesian format where "1.234" = one thousand two hundred thirty-four
+        if (beforeDot.length <= 2) {
+          s = s.replace(/\./g, '');
+        }
+        // else: leave as decimal (e.g., "123.456" stays as 123.456)
+      }
+      // else: leave as decimal (e.g., "1.5", "1.50")
+    }
   }
 
   // 6. Parse the cleaned number
@@ -166,9 +195,10 @@ export function computeResidual(rec: NormalizedRecord): {
   residualQty: number | null;
   residualNominal: number | null;
   residualRatio: number | null;
+  isOverExplained: boolean;
 } {
   if (rec.qtyDeviasi === null) {
-    return { residualQty: null, residualNominal: null, residualRatio: null };
+    return { residualQty: null, residualNominal: null, residualRatio: null, isOverExplained: false };
   }
   // waste+susut+trial are negative (or zero). Their sum is negative (or zero).
   // In convention where deviation is positive = LOSS:
@@ -198,12 +228,16 @@ export function computeResidual(rec: NormalizedRecord): {
 
   const residualRatio = absDev > 0 ? absResidual / absDev : null;
 
-  return { residualQty, residualNominal, residualRatio };
+  // Bug 8 fix: flag over-explanation (explained > absDev) as red flag for
+  // fraud detection. Previously, clamping absResidual to 0 hid this signal.
+  const isOverExplained = explained > absDev && absDev > 0;
+
+  return { residualQty, residualNominal, residualRatio, isOverExplained };
 }
 
 export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
   const direction = classifyDirection(rec.qtyDeviasi);
-  const { residualQty, residualNominal, residualRatio } = computeResidual(rec);
+  const { residualQty, residualNominal, residualRatio, isOverExplained } = computeResidual(rec);
   const parsed = parseOutletCode(rec.resto);
 
   // week period
@@ -215,6 +249,7 @@ export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
     residualQty,
     residualNominal,
     residualRatio,
+    isOverExplained,
     absQtyDeviasi: rec.qtyDeviasi !== null ? Math.abs(rec.qtyDeviasi) : null,
     absNominalDeviasi: rec.nominalDeviasi !== null ? Math.abs(rec.nominalDeviasi) : null,
     absQtyLossSurplus: rec.qtyLossSurplus !== null ? Math.abs(rec.qtyLossSurplus) : null,
