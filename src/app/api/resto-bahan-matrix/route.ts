@@ -60,8 +60,7 @@ export async function GET(req: NextRequest) {
         ir.direction,
         ir."qtyWaste", ir."qtySusut", ir."qtyTrial",
         ir."residualRatio",
-        ir."tolerancePct",
-        ir."isOverExplained"
+        ir."tolerancePct"
       FROM "InventoryRecord" ir
       JOIN "Outlet" o ON ir."outletId" = o.id
       JOIN "Item" i ON ir."itemId" = i.id
@@ -147,7 +146,11 @@ export async function GET(req: NextRequest) {
       const isHighNominal = absNominal > 1_000_000;
       const isHighDevBom = devBom != null && Math.abs(devBom) > 0.10;
       const isHighResidual = residualRatio != null && residualRatio > 0.50;
-      const isOverExplained = r.isOverExplained ?? false;
+      const isOverExplained = (() => {
+        const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
+        const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
+        return absDev > 0 && explained > absDev;
+      })();
       const priority: 'P1' | 'P2' | 'P3' =
         (isHighNominal && (isHighDevBom || isHighResidual || isOverExplained)) ? 'P1' :
         (isHighDevBom || isHighResidual || isOverExplained) ? 'P2' : 'P3';

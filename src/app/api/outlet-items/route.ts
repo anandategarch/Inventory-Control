@@ -85,7 +85,6 @@ export async function GET(req: NextRequest) {
         residualQty: number | null; residualNominal: number | null; residualRatio: number | null;
         absQtyDeviasi: number | null; absNominalDeviasi: number | null;
         absQtyLossSurplus: number | null; absNominalLossSurplus: number | null;
-        isOverExplained: boolean | null;
       }>>`
         SELECT ir."itemId", i.name as "itemName", i.satuan,
           ir."qtyBom", ir."qtyCom", ir."qtyDeviasi",
@@ -96,8 +95,7 @@ export async function GET(req: NextRequest) {
           ir."pctQtyDeviasiToBom", ir.direction,
           ir."residualQty", ir."residualNominal", ir."residualRatio",
           ir."absQtyDeviasi", ir."absNominalDeviasi",
-          ir."absQtyLossSurplus", ir."absNominalLossSurplus",
-          ir."isOverExplained"
+          ir."absQtyLossSurplus", ir."absNominalLossSurplus"
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
         JOIN "Outlet" o ON ir."outletId" = o.id
@@ -355,7 +353,11 @@ export async function GET(req: NextRequest) {
         direction: r.direction || 'NEUTRAL',
         residualQty: toNum(r.residualQty),
         residualRatio: residualRatio,
-        isOverExplained: r.isOverExplained ?? false,
+        isOverExplained: (() => {
+          const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
+          const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
+          return absDev > 0 && explained > absDev;
+        })(),
         // Historical
         prevQtyDeviasi: prev?.qtyDeviasi ?? null,
         prevPctDevBom: prevPctDevBom,
