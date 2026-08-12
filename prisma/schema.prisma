@@ -274,3 +274,20 @@ model OutletPIC {
   pic        String
   updatedAt  DateTime @updatedAt
 }
+
+// ------------------------------------------------------------
+//  File Chunk — temporary storage for chunked uploads
+//  Vercel serverless /tmp doesn't persist between invocations,
+//  so chunks are stored in DB and reassembled on last chunk.
+//  Auto-cleaned after processing (DELETE WHERE fileHash).
+// ------------------------------------------------------------
+model FileChunk {
+  id         Int      @id @default(autoincrement())
+  fileHash   String
+  chunkIndex Int
+  data       Bytes
+  createdAt  DateTime @default(now())
+
+  @@unique([fileHash, chunkIndex])
+  @@index([fileHash])
+}

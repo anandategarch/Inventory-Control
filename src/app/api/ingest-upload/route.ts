@@ -1,17 +1,16 @@
 // ============================================================
-//  /api/ingest-upload — Chunked upload ONLY (no processing)
-//  Saves chunks to /tmp. Last chunk returns file metadata.
-//  Processing happens in separate /api/ingest-process endpoint.
-//  This prevents 504 timeout: each request is fast (<5s).
+//  /api/ingest-upload — Chunked upload, chunks stored in DB
+//  Vercel /tmp doesn't persist between invocations, so we
+//  store each chunk in FileChunk table. Last chunk returns
+//  metadata so frontend can call /api/ingest-process.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import path from 'path';
-import fs from 'fs/promises';
-import { existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // Short — just saving chunks
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +18,7 @@ export async function POST(req: NextRequest) {
     const rl = rateLimit(`ingest-upload:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
     if (!rl.allowed) {
       return NextResponse.json(
-        { success: false, error: 'Rate limit exceeded. Tunggu beberapa menit.' },
+        { success: false, error: 'Rate limit exceeded.' },
         { status: 429 }
       );
     }
@@ -58,15 +57,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const tmpDir = '/tmp/ingest-upload';
-    if (!existsSync(tmpDir)) {
-      await fs.mkdir(tmpDir, { recursive: true });
-    }
-
-    // Append chunk to temp file
-    const partPath = path.join(tmpDir, `${fileHash}.part`);
+    // Store chunk in DB (persistent across function invocations)
     const chunkBuffer = Buffer.from(await chunk.arrayBuffer());
-    await fs.appendFile(partPath, chunkBuffer);
+    await db.fileChunk.upsert({
+      where: {
+        fileHash_chunkIndex: { fileHash, chunkIndex },
+      },
+      update: {
+        data: chunkBuffer,
+      },
+      create: {
+        fileHash,
+        chunkIndex,
+        data: chunkBuffer,
+      },
+    });
 
     // If not last chunk, return progress
     if (chunkIndex < totalChunks - 1) {
@@ -78,28 +83,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Last chunk — rename to final, return metadata for processing
-    const finalPath = path.join(tmpDir, `${fileHash}${ext}`);
-    await fs.rename(partPath, finalPath);
-
-    // Verify size
-    const actualSize = (await fs.stat(finalPath)).size;
-    if (actualSize !== fileSize) {
-      await fs.unlink(finalPath).catch(() => {});
-      return NextResponse.json(
-        { success: false, error: `File size mismatch: expected ${fileSize}, got ${actualSize}.` },
-        { status: 400 }
-      );
-    }
-
-    // Return metadata — frontend will call /api/ingest-process next
+    // Last chunk — return metadata for processing
     return NextResponse.json({
       success: true,
       uploaded: true,
       fileHash,
       fileName,
       fileSize,
-      filePath: finalPath,
+      ext,
       message: 'Upload selesai. Siap untuk processing.',
     });
   } catch (e: any) {

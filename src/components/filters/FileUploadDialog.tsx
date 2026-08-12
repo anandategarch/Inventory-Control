@@ -181,9 +181,9 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         throw new Error('Upload selesai tapi tidak ada konfirmasi dari server.');
       }
 
-      const filePath = uploadResult.filePath;
       const fileSize = uploadResult.fileSize;
       const fileName = uploadResult.fileName;
+      const ext = uploadResult.ext || '.' + fileName.split('.').pop()?.toLowerCase();
 
       // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====
       setProgress(55);
@@ -197,7 +197,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           fileName,
           fileHash,
           fileSize,
-          filePath,
+          ext,
         }),
       });
 
@@ -227,7 +227,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         await fetch('/api/ingest-process', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filePath }),
+          body: JSON.stringify({ fileHash }),
         });
         queryClient.invalidateQueries({ queryKey: ['status'] });
         toast({ title: 'ℹ️ Tidak ada import', description: 'Semua week sudah ada di DB.' });
@@ -257,7 +257,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
               fileName,
               fileHash,
               fileSize,
-              filePath,
+              ext,
               weekLabel,
             }),
           });
@@ -296,7 +296,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       await fetch('/api/ingest-process', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath }),
+        body: JSON.stringify({ fileHash }),
       }).catch(() => {});
 
       const totalDuration = Date.now() - 0; // approximate

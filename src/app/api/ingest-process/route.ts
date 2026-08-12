@@ -1,9 +1,9 @@
 // ============================================================
 //  /api/ingest-process — Process uploaded Excel file
-//  Two modes:
+//  Reassembles file from DB chunks, then:
 //  1. mode='detect' → parse Excel, detect weeks, return list
 //  2. mode='import' → import ONE specific week (partial commit)
-//  Each request < 60s → no 504 timeout
+//  3. DELETE → cleanup chunks + temp file
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -17,7 +17,34 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120; // 2 min per week import
+export const maxDuration = 120;
+
+// Reassemble file from DB chunks
+async function reassembleFile(fileHash: string, ext: string): Promise<string> {
+  const chunks = await db.fileChunk.findMany({
+    where: { fileHash },
+    orderBy: { chunkIndex: 'asc' },
+    select: { chunkIndex: true, data: true },
+  });
+
+  if (chunks.length === 0) {
+    throw new Error('No chunks found in DB. Upload ulang file.');
+  }
+
+  // Concatenate chunks
+  const buffers = chunks.map(c => c.data);
+  const combined = Buffer.concat(buffers);
+
+  // Write to /tmp (this is a SINGLE invocation, so /tmp works here)
+  const tmpDir = '/tmp/ingest-process';
+  if (!existsSync(tmpDir)) {
+    await fs.mkdir(tmpDir, { recursive: true });
+  }
+  const filePath = path.join(tmpDir, `${fileHash}${ext}`);
+  await fs.writeFile(filePath, combined);
+
+  return filePath;
+}
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -32,11 +59,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { mode, fileName, fileHash, fileSize, filePath } = body;
+    const { mode, fileName, fileHash, fileSize, ext } = body;
 
-    if (!mode || !fileName || !fileHash || !filePath) {
+    if (!mode || !fileName || !fileHash) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields: mode, fileName, fileHash, filePath' },
+        { success: false, error: 'Missing required fields: mode, fileName, fileHash' },
         { status: 400 }
       );
     }
@@ -50,30 +77,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check file exists
-    if (!existsSync(filePath)) {
-      return NextResponse.json(
-        { success: false, error: 'File temp tidak ditemukan. Upload ulang.' },
-        { status: 404 }
-      );
-    }
+    const fileExt = ext || path.extname(fileName).toLowerCase();
 
     // ============================================================
-    // MODE 1: DETECT — parse Excel, return weeks list
+    // MODE 1: DETECT — reassemble, parse Excel, return weeks list
     // ============================================================
     if (mode === 'detect') {
+      // Reassemble from DB chunks
+      const filePath = await reassembleFile(fileHash, fileExt);
+
+      // Verify size
+      const actualSize = (await fs.stat(filePath)).size;
+      const expectedSize = parseInt(String(fileSize || 0));
+      if (expectedSize > 0 && actualSize !== expectedSize) {
+        await fs.unlink(filePath).catch(() => {});
+        // Clean up chunks
+        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `File size mismatch: expected ${expectedSize}, got ${actualSize}. Chunks mungkin corrupt. Upload ulang.` },
+          { status: 400 }
+        );
+      }
+
+      // Parse Excel
       const parsed = await parseExcelFile(filePath);
       const weeksInFileSet = new Set<string>();
+      const rowCountPerWeek: Record<string, number> = {};
       for (const sheet of parsed.sheets) {
         for (const row of sheet.rows) {
           const wk = String(row.weekLabel ?? '').trim().toUpperCase();
-          if (wk) weeksInFileSet.add(wk);
+          if (wk) {
+            weeksInFileSet.add(wk);
+            rowCountPerWeek[wk] = (rowCountPerWeek[wk] || 0) + 1;
+          }
         }
       }
       const weeksInFile = [...weeksInFileSet].sort();
 
       if (weeksInFile.length === 0) {
         await fs.unlink(filePath).catch(() => {});
+        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
         return NextResponse.json(
           { success: false, error: 'Tidak ada week label (WEEK 1/2/3/4) di file.' },
           { status: 400 }
@@ -96,14 +139,8 @@ export async function POST(req: NextRequest) {
       const existingWeeks = [...existingWeeksSet].sort();
       const weeksToImport = weeksInFile.filter(w => !existingWeeksSet.has(w));
 
-      // Count rows per week
-      const rowCountPerWeek: Record<string, number> = {};
-      for (const sheet of parsed.sheets) {
-        for (const row of sheet.rows) {
-          const wk = String(row.weekLabel ?? '').trim().toUpperCase();
-          if (wk) rowCountPerWeek[wk] = (rowCountPerWeek[wk] || 0) + 1;
-        }
-      }
+      // Don't delete temp file yet — import mode will need it
+      // Don't delete chunks yet — import mode may need to reassemble if on different instance
 
       return NextResponse.json({
         success: true,
@@ -121,7 +158,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ============================================================
-    // MODE 2: IMPORT — import ONE specific week
+    // MODE 2: IMPORT — reassemble, import ONE specific week
     // ============================================================
     if (mode === 'import') {
       const weekLabel = body.weekLabel as string;
@@ -132,7 +169,10 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Parse Excel (cached — ExcelJS may cache in module scope)
+      // Reassemble from DB chunks (may be different instance than detect)
+      const filePath = await reassembleFile(fileHash, fileExt);
+
+      // Parse Excel
       const parsed = await parseExcelFile(filePath);
 
       // Collect rows for this week
@@ -143,6 +183,9 @@ export async function POST(req: NextRequest) {
           if (wk === weekLabel) weekRows.push(row);
         }
       }
+
+      // Clean up temp file (parsed data is in memory now)
+      await fs.unlink(filePath).catch(() => {});
 
       if (weekRows.length === 0) {
         return NextResponse.json({
@@ -160,7 +203,7 @@ export async function POST(req: NextRequest) {
       const sourceFile = await db.sourceFile.create({
         data: {
           fileName: `${fileName} [${weekLabel}]`,
-          filePath,
+          filePath: '',
           monthLabel: monthInfo.monthLabel,
           monthKey: monthInfo.monthKey,
           fileHash: `${fileHash}-${weekLabel}`,
@@ -329,13 +372,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Cleanup endpoint — delete temp file after all weeks processed
+// Cleanup — delete chunks from DB after all weeks processed
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { filePath } = body;
-    if (filePath && existsSync(filePath)) {
-      await fs.unlink(filePath);
+    const { fileHash } = body;
+    if (fileHash) {
+      await db.fileChunk.deleteMany({ where: { fileHash } });
     }
     return NextResponse.json({ success: true });
   } catch (e: any) {
