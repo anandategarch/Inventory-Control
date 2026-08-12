@@ -214,7 +214,7 @@ export async function queryTopItemsByNominal(
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
-      SUM(ir."absNominalDeviasi") as "absNominal",
+      SUM(ir."absNominalLossSurplus") as "absNominal",
       CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
@@ -222,7 +222,7 @@ export async function queryTopItemsByNominal(
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
       ${f}
     GROUP BY i.name, o.code
     ORDER BY "absNominal" DESC

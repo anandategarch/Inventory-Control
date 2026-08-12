@@ -221,8 +221,8 @@ export function buildRuleContext(
 // ============================================================
 export function topItemsByNominal(recs: RecWithRels[], n = 10) {
   return [...recs]
-    .filter((r) => r.absNominalDeviasi != null && r.absNominalDeviasi > 0)
-    .sort((a, b) => (b.absNominalDeviasi ?? 0) - (a.absNominalDeviasi ?? 0))
+    .filter((r) => r.absNominalLossSurplus != null && r.absNominalLossSurplus > 0)
+    .sort((a, b) => (b.absNominalLossSurplus ?? 0) - (a.absNominalLossSurplus ?? 0))
     .slice(0, n)
     .map((r) => ({
       itemName: r.item.name,
@@ -476,7 +476,7 @@ export function buildWorklist(
       evidence: top.narrative || JSON.stringify(top.evidence).slice(0, 200),
       recommendedAction: recommendAction(flags.map((f) => f.ruleCode)),
       ruleCodes: flags.map((f) => f.ruleCode),
-      absNominalDeviasi: curr.absNominalDeviasi ?? 0,
+      absNominalDeviasi: curr.absNominalLossSurplus ?? 0, // NET per master context #36
       deviationToBom: curr.pctQtyDeviasiToBom,
       direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
     });
@@ -556,7 +556,7 @@ export function computePriorities(
       : Math.abs(ctx.pctQtyDeviasiToBom ?? 0) * 0.5; // fallback
     const histScore = Math.abs(ctx.zScore ?? 0);
 
-    const financialScore = (curr.absNominalDeviasi ?? 0) / 1_000_000; // per million
+    const financialScore = (curr.absNominalLossSurplus ?? 0) / 1_000_000; // per million — NET per master context #36
     const operationalScore =
       devBomScore * t.WEIGHT_DEV_BOM +
       Math.min(growthScore, 5) * t.WEIGHT_GROWTH +
@@ -650,7 +650,7 @@ export function buildWorklistFromFlags(
       evidence: top.narrative || JSON.stringify(top.evidence).slice(0, 200),
       recommendedAction: recommendAction(flags.map((f) => f.ruleCode)),
       ruleCodes: flags.map((f) => f.ruleCode),
-      absNominalDeviasi: curr.absNominalDeviasi ?? 0,
+      absNominalDeviasi: curr.absNominalLossSurplus ?? 0, // NET per master context #36
       deviationToBom: curr.pctQtyDeviasiToBom,
       direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
     });
@@ -691,7 +691,7 @@ export function computePrioritiesFromFlags(
     );
     const histScore = Math.abs(evidence.zScore ?? 0);
 
-    const financialScore = (curr.absNominalDeviasi ?? 0) / 1_000_000;
+    const financialScore = (curr.absNominalLossSurplus ?? 0) / 1_000_000; // NET per master context #36
     const operationalScore =
       devBomScore * t.WEIGHT_DEV_BOM +
       Math.min(growthScore, 5) * t.WEIGHT_GROWTH +
