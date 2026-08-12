@@ -1,11 +1,9 @@
 // ============================================================
-//  /api/ingest-upload — Upload Excel file from computer
-//  - Accepts multipart/form-data (file up to 50MB)
-//  - Parses filename to detect month (Wajib format: "17.MEI 2026.xlsx")
-//  - Parses Excel, detects weeks in file
-//  - Checks DB: which weeks already exist for this month?
-//  - Imports ONLY missing weeks (partial commit per week)
-//  - Returns detailed results per week
+//  /api/ingest-upload — Chunked upload Excel file from computer
+//  - Vercel body size limit: 4.5MB per request
+//  - Solution: split file into 4MB chunks, upload sequentially
+//  - Backend reassembles chunks, then processes file
+//  - Last chunk triggers: parse Excel → detect weeks → import missing
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -17,7 +15,6 @@ import { validateRow, summarizeDQ } from '@/engine/validator';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
-import { createHash } from 'crypto';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -44,6 +41,7 @@ interface UploadResult {
   totalInserted: number;
   totalSkipped: number;
   durationMs: number;
+  message?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -54,23 +52,32 @@ export async function POST(req: NextRequest) {
     const rl = rateLimit(`ingest-upload:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
     if (!rl.allowed) {
       return NextResponse.json(
-        { success: false, error: 'Rate limit exceeded. Tunggu beberapa menit sebelum upload lagi.' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+        { success: false, error: 'Rate limit exceeded. Tunggu beberapa menit.' },
+        { status: 429 }
       );
     }
 
     // Parse multipart form data
     const formData = await req.formData();
-    const file = formData.get('file') as File | null;
-    if (!file) {
+    const chunk = formData.get('chunk') as File | null;
+    const chunkIndexStr = formData.get('chunkIndex') as string | null;
+    const totalChunksStr = formData.get('totalChunks') as string | null;
+    const fileName = formData.get('fileName') as string | null;
+    const fileHash = formData.get('fileHash') as string | null;
+    const fileSizeStr = formData.get('fileSize') as string | null;
+
+    if (!chunk || chunkIndexStr === null || totalChunksStr === null || !fileName || !fileHash) {
       return NextResponse.json(
-        { success: false, error: 'File tidak ditemukan. Pilih file Excel (.xlsx) terlebih dahulu.' },
+        { success: false, error: 'Missing required fields (chunk, chunkIndex, totalChunks, fileName, fileHash).' },
         { status: 400 }
       );
     }
 
-    // Validate file type
-    const fileName = file.name;
+    const chunkIndex = parseInt(chunkIndexStr);
+    const totalChunks = parseInt(totalChunksStr);
+    const fileSize = parseInt(fileSizeStr || '0');
+
+    // Validate file type from fileName
     const ext = path.extname(fileName).toLowerCase();
     if (ext !== '.xlsx' && ext !== '.csv') {
       return NextResponse.json(
@@ -79,18 +86,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate file size (50MB max)
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
+    // Validate total file size (50MB max)
+    if (fileSize > 50 * 1024 * 1024) {
       return NextResponse.json(
-        { success: false, error: `File terlalu besar: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maksimal 50MB.` },
+        { success: false, error: `File terlalu besar: ${(fileSize / 1024 / 1024).toFixed(1)}MB. Maksimal 50MB.` },
         { status: 400 }
       );
     }
 
-    // Validate filename format (Wajib: "17.MEI 2026.xlsx" or "MEI 2026.xlsx")
+    // Ensure tmp dir exists
+    const tmpDir = '/tmp/ingest-upload';
+    if (!existsSync(tmpDir)) {
+      await fs.mkdir(tmpDir, { recursive: true });
+    }
+
+    // Append chunk to temp file
+    const partPath = path.join(tmpDir, `${fileHash}.part`);
+    const chunkBuffer = Buffer.from(await chunk.arrayBuffer());
+    await fs.appendFile(partPath, chunkBuffer);
+
+    // If not last chunk, return progress
+    if (chunkIndex < totalChunks - 1) {
+      return NextResponse.json({
+        success: true,
+        received: chunkIndex,
+        totalChunks,
+        progress: ((chunkIndex + 1) / totalChunks) * 100,
+      });
+    }
+
+    // ============================================================
+    // LAST CHUNK — reassemble and process
+    // ============================================================
+
+    // Validate filename format (Wajib: "17.MEI 2026.xlsx")
     const monthInfo = parseMonthFromFilename(fileName);
     if (!monthInfo) {
+      await fs.unlink(partPath).catch(() => {});
       return NextResponse.json(
         {
           success: false,
@@ -100,18 +132,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Save to /tmp
-    const tmpDir = '/tmp/ingest-upload';
-    if (!existsSync(tmpDir)) {
-      await fs.mkdir(tmpDir, { recursive: true });
+    // Rename .part to final extension
+    const finalPath = path.join(tmpDir, `${fileHash}${ext}`);
+    await fs.rename(partPath, finalPath);
+
+    // Verify file size
+    const actualSize = (await fs.stat(finalPath)).size;
+    if (actualSize !== fileSize) {
+      await fs.unlink(finalPath).catch(() => {});
+      return NextResponse.json(
+        { success: false, error: `File size mismatch: expected ${fileSize}, got ${actualSize}. Upload corrupt.` },
+        { status: 400 }
+      );
     }
-    const fileHash = createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex');
-    const tmpPath = path.join(tmpDir, `${fileHash}${ext}`);
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(tmpPath, fileBuffer);
 
     // Parse Excel to detect weeks
-    const parsed = await parseExcelFile(tmpPath);
+    const parsed = await parseExcelFile(finalPath);
     const weeksInFileSet = new Set<string>();
     for (const sheet of parsed.sheets) {
       for (const row of sheet.rows) {
@@ -122,6 +158,7 @@ export async function POST(req: NextRequest) {
     const weeksInFile = [...weeksInFileSet].sort();
 
     if (weeksInFile.length === 0) {
+      await fs.unlink(finalPath).catch(() => {});
       return NextResponse.json(
         { success: false, error: 'Tidak ada week label (WEEK 1/2/3/4) ditemukan di file.' },
         { status: 400 }
@@ -147,25 +184,22 @@ export async function POST(req: NextRequest) {
     const weeksToImport = weeksInFile.filter(w => !existingWeeksSet.has(w));
 
     if (weeksToImport.length === 0) {
-      // All weeks already exist
-      await fs.unlink(tmpPath).catch(() => {});
-      return NextResponse.json({
-        success: true,
-        result: {
-          fileName,
-          monthLabel: monthInfo.monthLabel,
-          monthKey: monthInfo.monthKey,
-          fileSize: file.size,
-          fileHash,
-          weeksInFile,
-          existingWeeks,
-          importedWeeks: [],
-          totalInserted: 0,
-          totalSkipped: weeksInFile.length,
-          durationMs: Date.now() - startedAt,
-          message: `Semua week (${weeksInFile.join(', ')}) sudah ada di database untuk ${monthInfo.monthLabel}. Tidak ada yang diimport.`,
-        } as UploadResult,
-      });
+      await fs.unlink(finalPath).catch(() => {});
+      const result: UploadResult = {
+        fileName,
+        monthLabel: monthInfo.monthLabel,
+        monthKey: monthInfo.monthKey,
+        fileSize,
+        fileHash,
+        weeksInFile,
+        existingWeeks,
+        importedWeeks: [],
+        totalInserted: 0,
+        totalSkipped: weeksInFile.length,
+        durationMs: Date.now() - startedAt,
+        message: `Semua week (${weeksInFile.join(', ')}) sudah ada di database untuk ${monthInfo.monthLabel}. Tidak ada yang diimport.`,
+      };
+      return NextResponse.json({ success: true, result });
     }
 
     // Import each missing week (partial commit per week)
@@ -197,7 +231,7 @@ export async function POST(req: NextRequest) {
         const sourceFile = await db.sourceFile.create({
           data: {
             fileName: `${fileName} [${weekLabel}]`,
-            filePath: tmpPath,
+            filePath: finalPath,
             monthLabel: monthInfo.monthLabel,
             monthKey: monthInfo.monthKey,
             fileHash: `${fileHash}-${weekLabel}`,
@@ -229,23 +263,17 @@ export async function POST(req: NextRequest) {
         const BATCH_SIZE = 500;
         let batchRecords: any[] = [];
         let inserted = 0;
-        let skippedErrors = 0;
 
         for (let i = 0; i < weekRows.length; i++) {
           const rawRow = weekRows[i];
           const rowNumber = i + 1;
 
-          // Validate
           const issues = validateRow(rawRow, rowNumber, seenKeys);
           allIssues.push(...issues);
 
           const hasError = issues.some((iss) => iss.severity === 'ERROR');
-          if (hasError) {
-            skippedErrors++;
-            continue;
-          }
+          if (hasError) continue;
 
-          // Normalize
           const n = normalizeRow(rawRow, fileName, rowNumber, monthInfo.monthLabel);
           const derived = deriveRecord(n);
 
@@ -276,7 +304,6 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Prepare record
           const weekId = weekDbMap.get(weekLabel) ?? 0;
           const outletId = outletDbMap.get(derived.outletCode) ?? 0;
           const itemId = itemDbMap.get(n.namaBahan) ?? 0;
@@ -309,7 +336,6 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Insert remaining
         if (batchRecords.length > 0) {
           await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
           inserted += batchRecords.length;
@@ -350,7 +376,6 @@ export async function POST(req: NextRequest) {
           dqErrors: 1, dqWarnings: 0, durationMs: Date.now() - weekStart,
           error: e?.message || String(e),
         });
-        // Partial commit: continue to next week even if this one failed
       }
     }
 
@@ -358,22 +383,19 @@ export async function POST(req: NextRequest) {
     await db.auditLog.create({
       data: {
         action: 'INGEST_UPLOAD',
-        detail: `${fileName} (${(file.size / 1024 / 1024).toFixed(1)}MB) → ${monthInfo.monthLabel}: imported ${weeksToImport.join(', ')} | ${totalInserted} rows`,
+        detail: `${fileName} (${(fileSize / 1024 / 1024).toFixed(1)}MB) → ${monthInfo.monthLabel}: imported ${weeksToImport.join(', ')} | ${totalInserted} rows`,
         duration: Date.now() - startedAt,
       },
     });
 
-    // Invalidate analysis cache
     analysisCache.clear();
-
-    // Cleanup temp file
-    await fs.unlink(tmpPath).catch(() => {});
+    await fs.unlink(finalPath).catch(() => {});
 
     const result: UploadResult = {
       fileName,
       monthLabel: monthInfo.monthLabel,
       monthKey: monthInfo.monthKey,
-      fileSize: file.size,
+      fileSize,
       fileHash,
       weeksInFile,
       existingWeeks,

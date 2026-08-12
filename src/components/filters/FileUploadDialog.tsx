@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
@@ -121,29 +121,73 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setResult(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      // Compute file hash for chunk identification
+      const fileBuffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
+      const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      setProgress(10);
-      setStatusLog(prev => [...prev, '⏳ Server menerima file, parsing Excel...']);
+      // Chunked upload: split file into 4MB chunks (Vercel body limit 4.5MB)
+      const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-      const res = await fetch('/api/ingest-upload', {
-        method: 'POST',
-        body: formData,
-      });
+      setStatusLog(prev => [...prev, `📦 File dipecah jadi ${totalChunks} chunk (${(CHUNK_SIZE / 1024 / 1024)}MB per chunk)`]);
 
-      setProgress(50);
-      setStatusLog(prev => [...prev, '⏳ Parsing Excel selesai, mendeteksi week...']);
+      let finalData: any = null;
 
-      const data = await res.json();
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunkBlob = file.slice(start, end);
 
-      setProgress(90);
+        const formData = new FormData();
+        formData.append('chunk', chunkBlob);
+        formData.append('chunkIndex', String(i));
+        formData.append('totalChunks', String(totalChunks));
+        formData.append('fileName', file.name);
+        formData.append('fileHash', fileHash);
+        formData.append('fileSize', String(file.size));
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `HTTP ${res.status}`);
+        const chunkProgress = ((i + 1) / totalChunks) * 80; // 0-80% for upload
+        setProgress(chunkProgress);
+
+        if (i > 0) {
+          setStatusLog(prev => [...prev, `📦 Upload chunk ${i + 1}/${totalChunks}...`]);
+        }
+
+        const res = await fetch('/api/ingest-upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        // Fix: check content-type before parsing JSON (413 returns HTML)
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const text = await res.text();
+          if (res.status === 413) {
+            throw new Error('File terlalu besar untuk upload. Maksimal 4MB per chunk. Hubungi admin.');
+          }
+          throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
+        }
+
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        // Last chunk returns full result
+        if (i === totalChunks - 1) {
+          finalData = data;
+          setProgress(90);
+          setStatusLog(prev => [...prev, '⏳ Parsing Excel, mendeteksi week...']);
+        }
       }
 
-      const r: UploadResult = data.result;
+      if (!finalData || !finalData.result) {
+        throw new Error('Upload selesai tapi tidak ada result dari server.');
+      }
+
+      const r: UploadResult = finalData.result;
       setResult(r);
       setProgress(100);
 
@@ -199,6 +243,9 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             <Upload className="h-5 w-5" />
             Import File Excel
           </DialogTitle>
+          <DialogDescription>
+            Upload file Excel dari komputer. Sistem otomatis deteksi week yang belum ada.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
