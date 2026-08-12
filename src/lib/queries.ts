@@ -215,8 +215,8 @@ export async function queryTopItemsByNominal(
   const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ir."absNominalDeviasi") as "absNominal",
-      CASE WHEN SUM(ir."nominalDeviasi") > 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalDeviasi") < 0 THEN 'SURPLUS'
+      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -293,8 +293,8 @@ export async function queryTopItemsByCategory(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ABS(${qtyRef})) as qty,
       SUM(ABS(${nomRef})) as nominal,
-      CASE WHEN SUM(ir."nominalDeviasi") > 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalDeviasi") < 0 THEN 'SURPLUS'
+      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
