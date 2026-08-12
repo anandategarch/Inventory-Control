@@ -113,6 +113,22 @@ export function FilterBar() {
     setDriveResult(null);
     setProgressLog([]);
 
+    // Simulated progress steps (non-streaming, estimated)
+    const steps = [
+      '⏳ Downloading from Google Drive...',
+      '⏳ Parsing Excel...',
+      '⏳ Validating data...',
+      '⏳ Inserting records to database...',
+    ];
+    let stepIdx = 0;
+    setProgressLog([steps[0]]);
+    const stepInterval = setInterval(() => {
+      stepIdx++;
+      if (stepIdx < steps.length) {
+        setProgressLog(prev => [...prev, steps[stepIdx]]);
+      }
+    }, 5000); // Show next step every 5s
+
     try {
       const res = await fetch('/api/import-drive', {
         method: 'POST',
@@ -120,66 +136,23 @@ export function FilterBar() {
         body: JSON.stringify({ url: driveUrl.trim() }),
       });
 
-      // SSE stream — read chunks
       const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('text/event-stream')) {
-        // Fallback: not SSE (error or old server)
+      if (!contentType.includes('application/json')) {
         const text = await res.text();
-        let errMsg = `Server error (HTTP ${res.status})`;
-        try {
-          const d = JSON.parse(text);
-          errMsg = d.error || errMsg;
-        } catch {
-          errMsg = text.slice(0, 300);
-        }
-        throw new Error(errMsg);
+        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 300)}`);
       }
 
-      // Read SSE stream
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('Stream tidak tersedia');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finalResult: any = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.message) {
-                setProgressLog(prev => [...prev, data.message]);
-              }
-
-              if (data.phase === 'complete' || data.success === true || data.success === false) {
-                finalResult = data;
-              }
-            } catch {
-              // ignore parse errors for partial chunks
-            }
-          }
-        }
-      }
-
-      if (finalResult) {
-        setDriveResult(finalResult);
-        if (finalResult.success) {
-          queryClient.invalidateQueries({ queryKey: ['status'] });
-          queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        }
-      } else {
-        setDriveResult({ success: false, error: 'Stream ended without result' });
+      const d = await res.json();
+      clearInterval(stepInterval);
+      setProgressLog([]);
+      setDriveResult(d);
+      if (d.success) {
+        queryClient.invalidateQueries({ queryKey: ['status'] });
+        queryClient.invalidateQueries({ queryKey: ['analysis'] });
       }
     } catch (e: any) {
+      clearInterval(stepInterval);
+      setProgressLog([]);
       setDriveResult({ success: false, error: e?.message || String(e) });
     } finally {
       setDriveImporting(false);
