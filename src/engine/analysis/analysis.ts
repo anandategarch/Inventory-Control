@@ -822,6 +822,12 @@ export function computeOutletHealthRanking(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
   zeroDevByOutlet?: Map<number, number>
 ) {
+  // BUG 2.2 fix: precompute sales per outlet via MODE (not MAX).
+  // Previously used MAX which is vulnerable to single-row typos (1 row with 10M
+  // instead of 1M → adopts wrong value, overstating health score).
+  // Now consistent with dedupSalesByOutlet used elsewhere (Bug 6 fix).
+  const salesByOutletMode = dedupSalesByOutlet(recsWithFlags.map((r) => r.curr));
+
   const byOutlet = new Map<number, {
     outlet: Outlet;
     area: string;
@@ -873,9 +879,7 @@ export function computeOutletHealthRanking(
     if (curr.nominalDeviasi != null && curr.nominalDeviasi > 0) {
       e.lossNominal += curr.nominalDeviasi;
     }
-    if (curr.nominalSales != null && curr.nominalSales > e.sales) {
-      e.sales = curr.nominalSales ?? 0;
-    }
+    // Sales filled from MODE map below (not MAX per row)
     if (flags.length === 0) {
       e.normal++;
     } else {
@@ -884,6 +888,11 @@ export function computeOutletHealthRanking(
       else if (top.severity === 'WARNING') e.warning++;
       else e.normal++;
     }
+  }
+
+  // Fill sales from MODE map (BUG 2.2 fix — was MAX before)
+  for (const [outletId, e] of byOutlet) {
+    e.sales = salesByOutletMode.get(outletId) ?? 0;
   }
 
   // Account for zero-deviation records (counted as normal elsewhere)

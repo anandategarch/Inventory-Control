@@ -46,16 +46,27 @@ export function getRuleByCode(code: string): Rule | undefined {
 // This allows rules.yaml to use dynamic thresholds from settings, e.g.:
 //   pctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
 // where "stdDeviasiBomPct" is resolved from ctx (injected from runtime thresholds).
+//
+// BUG 2.1 fix: operand can ALSO be an arithmetic expression ({mul/add/sub/div/abs}).
+// Previously evalOp only resolved string operands, so rules like:
+//   nominalDeviasiGrowth: { gt: { mul: [salesGrowth, salesDeviationFactor] } }
+// NEVER fired because operand stayed as the object {mul: [...]}.
+// Now we call resolveExpr for object operands too.
 function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): boolean {
   if (typeof opDef !== 'object' || opDef === null) {
     return value === opDef;
   }
   const opObj = opDef as Record<string, unknown>;
   for (const [op, operandRaw] of Object.entries(opObj)) {
-    // Resolve operand: if it's a string that exists in ctx, use the ctx value
+    // Resolve operand: string field reference OR arithmetic expression object
     let operand = operandRaw;
-    if (typeof operandRaw === 'string' && ctx && operandRaw in ctx) {
-      operand = ctx[operandRaw];
+    if (ctx) {
+      if (typeof operandRaw === 'string' && operandRaw in ctx) {
+        operand = ctx[operandRaw];
+      } else if (typeof operandRaw === 'object' && operandRaw !== null) {
+        // Arithmetic expression: { mul: [...] }, { add: [...] }, etc.
+        operand = resolveExpr(operandRaw, ctx);
+      }
     }
     switch (op) {
       case 'gt': if (!(typeof value === 'number' && typeof operand === 'number' && value > operand)) return false; break;
@@ -70,13 +81,21 @@ function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): 
                        if (operand === false && value !== null && value !== undefined) return false; break;
       case 'between': {
         if (typeof value !== 'number' || !Array.isArray(operand)) return false;
-        const [lo, hi] = operand as number[];
+        const arr = operand as unknown[];
+        // BUG 2.5 fix: resolve field references inside array elements
+        const lo = typeof arr[0] === 'string' && ctx && arr[0] in ctx ? ctx[arr[0] as string] : arr[0];
+        const hi = typeof arr[1] === 'string' && ctx && arr[1] in ctx ? ctx[arr[1] as string] : arr[1];
+        if (typeof lo !== 'number' || typeof hi !== 'number') return false;
         if (!(value >= lo && value <= hi)) return false;
         break;
       }
       case 'in': {
         if (!Array.isArray(operand)) return false;
-        if (!operand.includes(value)) return false;
+        // Resolve field references inside array elements
+        const resolved = ctx
+          ? operand.map((v) => typeof v === 'string' && v in ctx ? ctx[v] : v)
+          : operand;
+        if (!resolved.includes(value)) return false;
         break;
       }
       default:

@@ -585,25 +585,29 @@ export async function queryCostImpact(
       COALESCE(SUM(ABS(ir."nominalSusut")), 0) as "susutCost",
       COALESCE(SUM(ABS(ir."nominalTrial")), 0) as "trialCost",
       COALESCE(SUM(ABS(ir."residualNominal")), 0) as "residualCost",
-      COALESCE(SUM(ABS(ir."nominalWaste")) + SUM(ABS(ir."nominalSusut")) + SUM(ABS(ir."nominalTrial")) + SUM(ABS(ir."residualNominal")), 0) as "totalCost"
+      COALESCE(SUM(ABS(ir."nominalWaste")), 0)
+        + COALESCE(SUM(ABS(ir."nominalSusut")), 0)
+        + COALESCE(SUM(ABS(ir."nominalTrial")), 0)
+        + COALESCE(SUM(ABS(ir."residualNominal")), 0) as "totalCost"
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
   `;
   const r = rows[0] || { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0 };
-  const total = r.totalCost || 1;
-  const sales = salesTotal || 1;
+  // BUG 2.3 fix: if totalCost is 0, percentages should be 0 (not wasteCost/1 = 10000%).
+  // Previously `total = totalCost || 1` produced 10000% values when columns were NULL.
+  const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;
   return {
     ...r,
-    wastePct: r.wasteCost / total,
-    susutPct: r.susutCost / total,
-    trialPct: r.trialCost / total,
-    residualPct: r.residualCost / total,
-    wasteToSales: r.wasteCost / sales,
-    susutToSales: r.susutCost / sales,
-    trialToSales: r.trialCost / sales,
-    residualToSales: r.residualCost / sales,
-    totalCostToSales: r.totalCost / sales,
+    wastePct: safeDiv(r.wasteCost, r.totalCost),
+    susutPct: safeDiv(r.susutCost, r.totalCost),
+    trialPct: safeDiv(r.trialCost, r.totalCost),
+    residualPct: safeDiv(r.residualCost, r.totalCost),
+    wasteToSales: safeDiv(r.wasteCost, salesTotal),
+    susutToSales: safeDiv(r.susutCost, salesTotal),
+    trialToSales: safeDiv(r.trialCost, salesTotal),
+    residualToSales: safeDiv(r.residualCost, salesTotal),
+    totalCostToSales: safeDiv(r.totalCost, salesTotal),
   };
 }
 
@@ -791,7 +795,7 @@ export async function queryHistoricalStats(
   }[]>`
     SELECT ir."outletId", ir."itemId",
       AVG(ir."pctQtyDeviasiToBom") as mean,
-      COALESCE(STDDEV(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
+      COALESCE(STDDEV_POP(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
       COUNT(*)::int as n
     FROM "InventoryRecord" ir
     WHERE (ir."monthLabel" || '|' || ir."weekLabel") IN (${Prisma.join(periodPairs)})

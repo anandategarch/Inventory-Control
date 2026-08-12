@@ -251,9 +251,10 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
 
           {/* Stacked progress bar */}
           <div className="flex h-2 rounded-full overflow-hidden bg-muted">
-            <div className="bg-emerald-500" style={{ width: `${(normal / total) * 100}%` }} />
-            <div className="bg-amber-500" style={{ width: `${(warning / total) * 100}%` }} />
-            <div className="bg-red-500" style={{ width: `${(abnormal / total) * 100}%` }} />
+            {/* BUG 3.7 fix: guard against total=0 (division by zero → NaN%) */}
+            <div className="bg-emerald-500" style={{ width: `${total > 0 ? (normal / total) * 100 : 0}%` }} />
+            <div className="bg-amber-500" style={{ width: `${total > 0 ? (warning / total) * 100 : 0}%` }} />
+            <div className="bg-red-500" style={{ width: `${total > 0 ? (abnormal / total) * 100 : 0}%` }} />
           </div>
         </div>
 

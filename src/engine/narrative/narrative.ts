@@ -46,9 +46,14 @@ function fmtPct(v: number | null, withSign = true): string {
 
 function fmtNum(v: number | null, unit = ''): string {
   if (v == null) return 'N/A';
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M${unit}`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K${unit}`;
-  return `${v.toFixed(0)}${unit}`;
+  // BUG 2.6 fix: align with format.ts conventions (M=miliar/billion, Jt=juta/million, Rb=ribu/thousand)
+  // Previously used M=million, causing 1000x discrepancy between LLM narrative and dashboard.
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}M${unit}`;
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}Jt${unit}`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}Rb${unit}`;
+  return `${sign}${v.toFixed(0)}${unit}`;
 }
 
 export function buildStructuredSummary(input: NarrativeInput): string {

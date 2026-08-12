@@ -298,11 +298,17 @@ export async function GET(req: NextRequest) {
         ORDER BY pa."monthLabel", pa."weekLabel"
       `,
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
+        WITH sales_per_outlet AS (
+          SELECT DISTINCT "outletId", "nominalSales"
+          FROM "InventoryRecord"
+          WHERE "monthLabel" = ${month} AND "weekLabel" = ${week}
+            AND "nominalSales" > 0
+        )
         SELECT
           COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
-          CASE WHEN SUM(CASE WHEN ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0 THEN ir."nominalSales" ELSE NULL END) > 0
+          CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
             THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
-              / NULLIF(SUM(DISTINCT CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END), 0)
+              / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
             ELSE NULL END as "lossToSales"
         FROM "InventoryRecord" ir
         WHERE ir."monthLabel" = ${month}
@@ -374,7 +380,7 @@ export async function GET(req: NextRequest) {
         ? db.$queryRaw<Array<{ itemId: number; mean: number; stdDev: number; n: number }>>`
             SELECT ir."itemId",
               AVG(ir."pctQtyDeviasiToBom") as mean,
-              COALESCE(STDDEV(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
+              COALESCE(STDDEV_POP(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
               COUNT(*)::int as n
             FROM "InventoryRecord" ir
             JOIN "Outlet" o ON ir."outletId" = o.id
@@ -386,11 +392,17 @@ export async function GET(req: NextRequest) {
           `
         : Promise.resolve([] as Array<{ itemId: number; mean: number; stdDev: number; n: number }>),
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
+        WITH sales_per_outlet AS (
+          SELECT DISTINCT "outletId", "nominalSales"
+          FROM "InventoryRecord"
+          WHERE area = ${area} AND "monthLabel" = ${month} AND "weekLabel" = ${week}
+            AND "nominalSales" > 0
+        )
         SELECT
           COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
-          CASE WHEN SUM(CASE WHEN ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0 THEN ir."nominalSales" ELSE NULL END) > 0
+          CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
             THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
-              / NULLIF(SUM(DISTINCT CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END), 0)
+              / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
             ELSE NULL END as "lossToSales"
         FROM "InventoryRecord" ir
         WHERE ir.area = ${area}
@@ -1028,7 +1040,7 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     console.error('[outlet-focus] error:', e);
     return NextResponse.json(
-      { success: false, error: e?.message || String(e), stack: e?.stack },
+      { success: false, error: e?.message || String(e) },
       { status: 500 },
     );
   }

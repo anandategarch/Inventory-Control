@@ -1536,3 +1536,612 @@ Stage Summary:
   * SALES_DEVIATION_FACTOR, BOM_DEVIATION_FACTOR → rule arithmetic expressions
   * (Previously working: WEIGHT_*, BENCHMARK_AREA_FACTOR, BENCHMARK_NETWORK_FACTOR, FALLBACK_TOLERANCE_PCT)
 - The fix is backward-compatible: if a field reference doesn't exist in ctx, evalOp falls back to literal comparison
+
+---
+Task ID: BUG-1
+Agent: general-purpose (API bug hunter)
+Task: Deep bug hunt in API routes
+
+Work Log:
+- Read worklog.md (first 50 + last 100 lines) for project context (Next.js + Prisma + Supabase PostgreSQL, inventory deviasi analysis dashboard, 54K+ records, settings-driven thresholds, QuickSettings cache invalidation history)
+- Inspected 9 API route files: analysis, outlet-focus, settings, ingest, data, pic, pic/import, drilldown, status
+- Cross-referenced lib/settings.ts, lib/cache.ts, lib/rate-limit.ts, engine/calculations/growth.ts, engine/rules/evaluator.ts, prisma/schema.prisma to confirm bug impact
+- Verified each finding against actual code paths (no false positives from misreading)
+
+Bugs Found:
+
+## BUG 1.1: Unauthenticated data wipe — DELETE /api/data has no auth or rate limit
+- File: src/app/api/data/route.ts:101-214 (DELETE handler)
+- Category: Security (missing auth on destructive endpoint)
+- Code: `export async function DELETE(req: NextRequest) { try { const url = new URL(req.url); const params = Object.fromEntries(url.searchParams.entries()); ... if (data.all) { if (!data.confirm) {...} await db.dQIssue.deleteMany(); await db.inventoryRecord.deleteMany(); await db.week.deleteMany(); await db.sourceFile.deleteMany(); }`
+- Why: No authentication check, no rate limiter. Anyone with the URL can send `DELETE /api/data?all=true&confirm=true` and wipe ALL production data (54K records, 3 months). The `confirm=true` query param is not a security measure — it's client-side friction. Same for `?month=MEI%202026` and `?fileId=N`. This is the single most critical finding.
+- Fix: Add auth middleware (e.g., check session cookie or API key header) at the top of DELETE. Also add rate limiting (`RATE_LIMITS.setup`). Return 401/403 if not authenticated.
+
+## BUG 1.2: Multi-table cascade delete without transaction — partial state on failure
+- File: src/app/api/data/route.ts:136-139, 158-163, 180-185
+- Category: Concurrency / Data corruption (no transaction around dependent deletes)
+- Code: `await db.dQIssue.deleteMany(); await db.inventoryRecord.deleteMany(); await db.week.deleteMany(); await db.sourceFile.deleteMany();`  (4 separate awaits, no `db.$transaction`)
+- Why: If `db.inventoryRecord.deleteMany()` fails (connection blip, timeout, FK violation from a row not captured by the count), DQIssues are already gone but InventoryRecords remain. The reported `deleted: { sourceFiles: N, records: N, weeks: N }` counts were captured BEFORE the deletes, so the response lies about what was actually deleted. Subsequent reads see orphaned/missing data. Same pattern in month-delete (158-163) and fileId-delete (180-185) branches.
+- Fix: Wrap each cascade in `await db.$transaction([ db.dQIssue.deleteMany({...}), db.inventoryRecord.deleteMany({...}), db.week.deleteMany({...}), db.sourceFile.deleteMany({...}) ])`.
+
+## BUG 1.3: Settings POST — partial update + stale cache on mid-loop failure
+- File: src/app/api/settings/route.ts:116-144
+- Category: Cache invalidation bug / Error handling gap
+- Code: `for (const { key, value } of updates) { ... await db.setting.upsert({...}); } invalidateSettingsCache(); ... analysisCache.clear();`
+- Why: Sequential upserts, no transaction. If the 5th of 10 upserts throws (DB error, connection drop), the first 4 settings are persisted in DB but: (1) `invalidateSettingsCache()` at line 133 is never reached → `_settingsCache` stays stale for up to 30s (CACHE_TTL_MS in lib/settings.ts:213); (2) `analysisCache.clear()` at line 144 is never reached → dashboard serves cached analysis based on old settings for up to 5 min; (3) the catch at line 151 returns generic `error: e.message` without telling the user which keys succeeded. User sees "failed" but 4 settings silently changed.
+- Fix: Wrap loop in `db.$transaction` (rollback on failure), or move `invalidateSettingsCache()` + `analysisCache.clear()` into a `finally` block. Better: use `db.setting.upsert` with `Promise.all` inside a transaction.
+
+## BUG 1.4: Percent validation is a no-op — silent 100x data corruption
+- File: src/app/api/settings/route.ts:91-104
+- Category: Logic error / Data corruption (empty if-body)
+- Code:
+  ```js
+  if (def.dataType === 'percent' && (n < 0 || n > 1)) {
+    // percent can be 0-1 OR 0-100, accept both but warn
+    // We'll accept 0-100 too and normalize later if needed
+  }
+  ```
+- Why: The validation block has an EMPTY body — just a comment. User entering "50" (meaning 50%) for STD_DEVIASI_BOM_PCT passes validation, is stored as `"50"`, then `getRuntimeThresholds()` in lib/settings.ts:338 does `Number("50")` = 50.0. The rule engine then compares `pctQtyDeviasiToBom > 50` — meaning a deviation up to 5000% of BOM is "normal". ALL anomaly detection based on percent thresholds silently breaks. Affects: STD_SUSUT_PCT, STD_WASTE_PCT, STD_TRIAL_PCT, STD_DEVIASI_BOM_PCT, FALLBACK_TOLERANCE_PCT, RESIDUAL_LOSS_WARN_PCT, RESIDUAL_LOSS_HIGH_PCT. The "normalize later if needed" comment is a lie — no normalization happens anywhere.
+- Fix: Either reject `n > 1` for percent type, or auto-normalize: `if (n > 1) value = String(n / 100);` before storing. Also fix the `!key.includes('TOLERANCE')` carve-out at line 101 which wrongly allows negative values for FALLBACK_TOLERANCE_PCT.
+
+## BUG 1.5: SUM(DISTINCT nominalSales) inflates lossToSales benchmark 5-10x
+- File: src/app/api/outlet-focus/route.ts:305 (network benchmark) and 393 (area benchmark)
+- Category: Logic error (wrong SQL aggregation)
+- Code: `NULLIF(SUM(DISTINCT CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END), 0)`
+- Why: This computes lossToSales = totalLoss / SUM(DISTINCT nominalSales) across ALL outlets in the network/area. If 10 outlets each have sales=1M (a common case — same sales figure recorded across multiple outlets in a week), `SUM(DISTINCT)` returns 1M instead of the correct 10M. Result: lossToSales benchmark is inflated 10x. The outlet being analyzed then appears "below benchmark" when it's actually average, suppressing ABOVE_AREA / ABOVE_NETWORK anomaly flags. The `SUM(DISTINCT ...)` pattern is only correct for a SINGLE outlet (where sales repeats across records) — wrong for multi-outlet aggregates.
+- Fix: Use `SUM(CASE WHEN ir."nominalSales" > 0 THEN ir."nominalSales" ELSE 0 END)` (no DISTINCT). For per-outlet sales deduplication, the correct pattern is `MAX(nominalSales)` or a subquery with `DISTINCT outletId, nominalSales`.
+
+## BUG 1.6: Stack traces leaked in production error responses
+- File: src/app/api/analysis/route.ts:708 and src/app/api/outlet-focus/route.ts:1031
+- Category: Security (info leakage in error responses)
+- Code: `return NextResponse.json({ success: false, error: e?.message || String(e), stack: e?.stack }, { status: 500 });`
+- Why: In production, this exposes the full JS stack trace (file paths, internal function names, sometimes DB connection strings or query fragments embedded in error messages) to any caller. An attacker can map the codebase, identify dependencies, and craft targeted attacks. The other routes (data, settings, pic, ingest, drilldown, status) correctly omit `stack` — only these two leak it.
+- Fix: Remove `stack: e?.stack` from the JSON response. Log it server-side with `console.error` (already done on line 707 / 1029) but never send to client. If debugging is needed in dev, gate on `process.env.NODE_ENV === 'development'`.
+
+## BUG 1.7: GET /api/ingest has no rate limiting — unauthenticated DoS
+- File: src/app/api/ingest/route.ts:44-53
+- Category: Security / DoS (missing rate limit on heavy endpoint)
+- Code: `export async function GET() { const startedAt = Date.now(); try { const results = await processIngestion({}); ... } }`  — no `rateLimit()` call, unlike the POST handler at line 17
+- Why: `processIngestion({})` with empty body triggers Excel re-parse / DB writes (it's the same heavy code path as POST). The POST handler is rate-limited to 5 req/min, but GET is completely unprotected. An attacker can hammer `GET /api/ingest` and trigger 100s of concurrent ingestions, exhausting DB connections and CPU. Also no auth — anyone can trigger ingestion of arbitrary default data.
+- Fix: Add the same rate-limit check as POST (lines 15-23). Better: remove the GET handler entirely (it appears to be a dev convenience — "Bug 7 fix" comment suggests it was a workaround), or gate it behind `process.env.NODE_ENV !== 'production'`.
+
+## BUG 1.8: weeksByMonth JS sort re-introduces "WEEK 10 before WEEK 2" bug
+- File: src/app/api/status/route.ts:81
+- Category: Logic error (regression of previously fixed bug)
+- Code: `for (const k of Object.keys(weeksByMonth)) weeksByMonth[k].sort();`
+- Why: The DB query at line 42-45 correctly uses `orderBy: [{ monthKey: 'asc' }, { periodStart: 'asc' }]` — the comment at line 40-41 explicitly says "String sort puts WEEK 10 before WEEK 2 — wrong chronological order". But then line 76-80 rebuilds `weeksByMonth` by pushing weekLabels into arrays, and line 81 re-sorts them with default `.sort()` (lexicographic). This DESTROYS the chronological order from the DB. UI dropdown shows "WEEK 1, WEEK 10, WEEK 2, WEEK 3, WEEK 4" instead of "WEEK 1, WEEK 2, WEEK 3, WEEK 4, WEEK 10". The fix that the comment claims is undone 40 lines later.
+- Fix: Either preserve insertion order (the `weeks` array is already sorted correctly — don't re-sort), or sort with a numeric extractor: `weeksByMonth[k].sort((a, b) => parseInt(a.replace(/\D/g, '')) - parseInt(b.replace(/\D/g, '')))`.
+
+## BUG 1.9: pic/import sequential upserts without transaction — partial state on timeout
+- File: src/app/api/pic/import/route.ts:45-73
+- Category: Concurrency / Error handling (no transaction, partial commit)
+- Code: `for (const line of lines) { ... try { await db.outletPIC.upsert({...}); imported++; } catch (e: any) { errors.push(...); } }`
+- Why: 339 sequential upserts (one per CSV line). If the request times out at line 200 (Next.js default 10s for serverless, or proxy timeout), the first 200 are committed but `imported=200` is never returned — client sees a timeout error and retries, causing duplicate work. The per-iteration `try/catch` swallows DB errors silently — if 5 specific rows fail (e.g., constraint violation), they're counted in `errors` but the loop continues, leaving the DB in a partially-imported state with no rollback. Also: `analysisCache.clear()` at line 76 runs even if 0 rows imported (wasteful) but NOT if the loop throws before reaching it (stale cache).
+- Fix: Use `db.$transaction` with `createMany` for bulk insert (skipDuplicates: true), or batch the upserts. At minimum, move `analysisCache.clear()` into a `finally` block.
+
+## BUG 1.10: CSV parser breaks on quoted fields containing delimiter
+- File: src/app/api/pic/import/route.ts:46-48
+- Category: Data corruption (naive CSV parsing)
+- Code: `const parts = line.includes(';') ? line.split(';') : line.split(','); const outletCode = parts[0]?.trim().replace(/"/g, ''); const pic = parts[1]?.trim().replace(/"/g, '');`
+- Why: Standard CSV allows quoted fields to contain the delimiter, e.g., `1030.BDGSET;"Budi, S.Kom"`. The naive `split(',')` produces `["1030.BDGSET;", "\"Budi", " S.Kom\""]` — 3 parts instead of 2. `parts[1]` becomes `"Budi` (with leading quote), `parts[2]` (`S.Kom"`) is silently dropped. The stored PIC name is corrupted to `"Budi` instead of `Budi, S.Kom`. The `.replace(/"/g, '')` only strips quotes AFTER the wrong split. Same issue if a PIC name contains a semicolon and the file is comma-delimited (or vice versa).
+- Fix: Use a proper CSV parser (e.g., `papaparse`, already commonly available) or implement RFC 4180 quoting: split respecting `"..."` boundaries, then strip surrounding quotes only.
+
+## BUG 1.11: drilldown limit=NaN passed to Prisma — cryptic 500 instead of 400
+- File: src/app/api/drilldown/route.ts:19
+- Category: Error handling gap / Edge case (NaN propagation)
+- Code: `const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 500);`
+- Why: If client sends `?limit=abc` (or `?limit=1.5` — parseInt returns 1 for that, but `?limit=0x10` returns 0), `parseInt('abc')` returns `NaN`. `Math.min(NaN, 500)` = `NaN`. This `NaN` is passed to Prisma as `take: NaN`. Prisma's behavior with NaN `take` is undefined — it either errors at the client validation layer (cryptic "Invalid `prisma.inventoryRecord.findMany()` invocation" message) or sends `LIMIT NULL` to Postgres (returns all rows, unbounded). The catch at line 86 returns 500 with the raw Prisma error message, leaking internal query structure. Should be a clean 400.
+- Fix: `const parsed = parseInt(url.searchParams.get('limit') || '50', 10); if (isNaN(parsed) || parsed < 1) return NextResponse.json({ success: false, error: 'limit must be a positive integer' }, { status: 400 }); const limit = Math.min(parsed, 500);`
+
+## BUG 1.12: Silent error swallow in outlet-focus DQ issue query
+- File: src/app/api/outlet-focus/route.ts:810-812
+- Category: Error handling gap (silent catch)
+- Code: `} catch { // DQIssue table may not exist; fallback computed issues }`
+- Why: The `catch {}` block has NO logging. If the DQIssue query fails for any reason (table missing, schema drift, connection error, permission denied), the dashboard silently shows the computed DQ fallback with zero signal to ops. The original intent (per the comment) was to handle "table may not exist" during initial setup — but the catch fires for ALL errors, including a corrupted DQIssue table or a real DB outage. Ops has no way to distinguish "no DQ issues" from "DQ query broken".
+- Fix: `} catch (e) { console.warn('[outlet-focus] DQIssue query failed, using computed fallback:', e instanceof Error ? e.message : String(e)); }` — preserve the fallback behavior but log the failure.
+
+## BUG 1.13: settings POST/DELETE have no rate limiting
+- File: src/app/api/settings/route.ts:63 (POST), 160 (DELETE)
+- Category: Security / DoS (missing rate limit)
+- Code: POST and DELETE handlers have no `rateLimit()` call, despite `RATE_LIMITS.settings` being defined in lib/rate-limit.ts:80 (`10 req/min`)
+- Why: An authenticated (or unauthenticated, since there's no auth either) attacker can spam POST /api/settings with 1000s of requests, each triggering `ensureDefaultSettings()` + multiple `upsert` calls + `analysisCache.clear()` + `auditLog.create()`. The cache clear forces every subsequent analysis request to recompute (5-12s each), amplifying the DoS. Combined with BUG 1.1 (no auth), this is a write-amplification attack vector.
+- Fix: Add `const rl = rateLimit(\`settings:${ip}\`, RATE_LIMITS.settings.maxRequests, RATE_LIMITS.settings.windowMs);` at the top of POST and DELETE, same pattern as analysis/route.ts:128-135.
+
+Stage Summary:
+- Total bugs found: 13
+- Critical: 1 (BUG 1.1 — unauthenticated data wipe)
+- High: 4 (BUG 1.2 transactions, 1.3 cache invalidation, 1.4 percent corruption, 1.5 SUM(DISTINCT) benchmark)
+- Medium: 6 (BUG 1.6 stack leak, 1.7 GET ingest DoS, 1.8 weeks sort regression, 1.9 pic/import transaction, 1.10 CSV parsing, 1.11 NaN limit)
+- Low: 2 (BUG 1.12 silent catch, 1.13 settings rate limit)
+- Recommended fix order: 1.1 → 1.6 → 1.7 → 1.13 (security cluster), then 1.4 → 1.3 → 1.5 (correctness cluster), then 1.2 → 1.9 → 1.10 (transaction/parsing cluster), then 1.8 → 1.11 → 1.12 (UX cluster)
+- Files inspected: 9 API routes + 4 lib files (settings, cache, rate-limit, growth) + 1 engine file (evaluator) + prisma/schema.prisma
+
+---
+Task ID: BUG-2
+Agent: general-purpose (engine bug hunter)
+Task: Deep bug hunt in engine layer
+
+Work Log:
+- Inspected src/engine/analysis/analysis.ts (1205 lines — main analysis engine)
+- Inspected src/engine/rules/evaluator.ts (276 lines — rule engine with field reference support)
+- Inspected src/engine/calculations/growth.ts (70 lines — growth/z-score calculations)
+- Inspected src/engine/narrative/narrative.ts (252 lines — LLM narrative generation)
+- Inspected src/lib/queries.ts (810 lines — SQL aggregate queries)
+- Inspected src/engine/transform.ts (226 lines — row normalization + derived fields) [listed as lib/transform.ts in task, actual path src/engine/transform.ts]
+- Inspected src/lib/validation.ts (73 lines — zod schemas for API endpoints)
+- Inspected src/lib/format.ts (93 lines — IDR/percent formatting helpers)
+- Inspected src/lib/cache.ts (68 lines — LRU cache with TTL)
+- Inspected src/lib/rate-limit.ts (83 lines — in-memory rate limiter)
+- Inspected src/config/rules.yaml (201 lines — rule definitions)
+- Inspected src/app/api/analysis/route.ts (710 lines — analysis API route, parallelized P0+P1+P2)
+- Cross-referenced rule definitions in rules.yaml against evaluator.ts field-reference resolution logic
+- Traced arithmetic expression resolution path (resolveExpr) to confirm it's never called from evalOp
+- Verified health-score computation pipeline (computeOutletHealthRanking) for MODE vs MAX consistency
+- Verified historical stats SQL (STDDEV) against JS calcStdDev (population variance)
+
+Bugs Found:
+
+## BUG 2.1: evalOp never resolves arithmetic expressions ({mul/add/sub/div/abs}) in operand — 3 critical rules NEVER fire
+- File: src/engine/rules/evaluator.ts:49-88 (evalOp function)
+- Category: Rule engine bug / Logic error (field reference resolution gap)
+- Code:
+  ```ts
+  function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): boolean {
+    ...
+    for (const [op, operandRaw] of Object.entries(opObj)) {
+      let operand = operandRaw;
+      if (typeof operandRaw === 'string' && ctx && operandRaw in ctx) {  // ← only resolves STRING operands
+        operand = ctx[operandRaw];
+      }
+      switch (op) {
+        case 'gt': if (!(typeof value === 'number' && typeof operand === 'number' && value > operand)) return false; break;
+        ...
+      }
+    }
+  }
+  ```
+- Why: The recently-added field-reference resolution (P2 fix) only handles STRING operands — it checks `typeof operandRaw === 'string'`. When the operand is an OBJECT (arithmetic expression like `{ mul: [tolerancePct, 2] }`), the resolver is skipped, and `operand` stays as the raw object. The comparison `typeof operand === 'number'` then fails (object ≠ number), so evalOp returns false. The `resolveExpr` function (defined at line 91) handles mul/add/sub/div/abs correctly but is NEVER called from evalOp. This silently breaks THREE rules in rules.yaml that use arithmetic operands:
+  1. **SALES_DEVIATION_MISMATCH** (priority 90, ABNORMAL): `nominalDeviasiGrowth: { gt: { mul: [salesGrowth, salesDeviationFactor] } }` — never matches.
+  2. **BOM_DEVIATION_MISMATCH** (priority 88, ABNORMAL): `qtyDeviasiGrowth: { gt: { mul: [bomGrowth, bomDeviationFactor] } }` — never matches.
+  3. **TOLERANCE_BREACH_HIGH** (priority 80, ABNORMAL): `pctQtyDeviasiToBom: { gt: { mul: [tolerancePct, 2] } }` — never matches.
+  These are high-priority ABNORMAL rules (priorities 90, 88, 80). Without them, the dashboard misses the most important anomaly patterns: deviation growing faster than sales/BOM, and tolerance breaches >2x. The worklist, health ranking, and recommendations all under-report anomalies. Downstream: `recommendAction()` in analysis.ts:481-484 has `if (set.has('BOM_DEVIATION_MISMATCH'))` and `if (set.has('SALES_DEVIATION_MISMATCH'))` branches that are now dead code, and `buildRecommendations()` in narrative.ts:206-207 has `hasBomMismatch`/`hasSalesMismatch` checks that are always false. Concrete scenario: outlet with tolerancePct=0.05 (5%) and pctQtyDeviasiToBom=0.15 (15%, well over 2x tolerance) — should trigger TOLERANCE_BREACH_HIGH (ABNORMAL, P1) but instead only triggers the weaker TOLERANCE_BREACH (WARNING, P2) because the high-severity rule's `mul` operand returns false.
+- Fix: In evalOp, after the string-resolution check, add an object-resolution branch that calls resolveExpr:
+  ```ts
+  let operand = operandRaw;
+  if (typeof operandRaw === 'string' && ctx && operandRaw in ctx) {
+    operand = ctx[operandRaw];
+  } else if (typeof operandRaw === 'object' && operandRaw !== null && ctx) {
+    operand = resolveExpr(operandRaw, ctx);
+  }
+  ```
+  This makes `{ gt: { mul: [...] } }` resolve to `{ gt: <computed number> }` before the comparison.
+
+## BUG 2.2: computeOutletHealthRanking uses MAX (not MODE) for outlet sales — inflates health scores for outlets with sales typos
+- File: src/engine/analysis/analysis.ts:876-878
+- Category: Math error / Logic error (inconsistent sales dedup method)
+- Code:
+  ```ts
+  if (curr.nominalSales != null && curr.nominalSales > e.sales) {
+    e.sales = curr.nominalSales ?? 0;
+  }
+  ```
+- Why: Sales is outlet-level denormalized (same value repeated on every item row). The rest of the codebase uses `dedupSalesByOutlet()` (MODE = most frequent value per outlet) to handle this — see analysis.ts:28-57 (with explicit "Bug 6 fix: use MODE not MAX" comment), and the same MODE pattern in topOutlets (line 230), topOutletsBySales (line 301), buildTrend (line 583), computeAreaAnalysis (line 720), computeNetCostTrend (line 1146). But `computeOutletHealthRanking` uses raw MAX: it takes the highest nominalSales value seen across all records for that outlet. If 100 records have sales=1,000,000 and 1 record has a typo sales=10,000,000 (10x), `e.sales` becomes 10,000,000. Then `lossToSales = lossNominal / e.sales` is understated by 10x, `lossToSalesScore` is overstated (closer to 100 = healthy), and the composite `healthScore` is overstated. The outlet appears healthy and escapes investigation despite having a real loss problem. The Bug 6 fix comment explicitly warns that "MAX is vulnerable to typo (1 row with 10M instead of 1M → adopts wrong value)" — yet computeOutletHealthRanking still uses MAX. This is the ONLY function in the file that doesn't use MODE, making it an inconsistent regression of the documented Bug 6 fix. Affects: the entire `outletHealthRanking` array returned by /api/analysis, which drives the health-score ranking on the dashboard. Outlets with data-entry typos are systematically ranked as healthier than they are.
+- Fix: Precompute sales per outlet via `dedupSalesByOutlet(recsWithFlags.map(r => r.curr))` at the top of the function, then look up `salesByOutlet.get(curr.outletId)` instead of the MAX loop. Alternatively, pass the already-computed `salesByOutletAll` map (computed in computeAreaAnalysis) as a parameter.
+
+## BUG 2.3: queryCostImpact totalCost collapses to 0 when ANY SUM(column) is NULL — percentages computed against total=1, producing 10000% values
+- File: src/lib/queries.ts:588
+- Category: SQL bug / Math error (NULL propagation in aggregate addition)
+- Code:
+  ```sql
+  COALESCE(SUM(ABS(ir."nominalWaste")) + SUM(ABS(ir."nominalSusut")) + SUM(ABS(ir."nominalTrial")) + SUM(ABS(ir."residualNominal")), 0) as "totalCost"
+  ```
+- Why: PostgreSQL `SUM` over a column where ALL values are NULL returns NULL (not 0). The `+` operator propagates NULL: `100 + NULL + 50 + 25 = NULL`. The outer `COALESCE(..., 0)` then converts the whole expression to 0. But the individual fields (`wasteCost`, `susutCost`, etc.) each have their OWN `COALESCE(SUM(...), 0)` wrapper (lines 584-587), so they're 0, not NULL. Result: `wasteCost=100, susutCost=0, trialCost=50, residualCost=25, totalCost=0`. Then in queries.ts:594-606, `const total = r.totalCost || 1` → `0 || 1 = 1` (the `|| 1` fallback triggers because 0 is falsy). The percentages are then computed as `wasteCost / total = 100 / 1 = 100` (i.e., 10000%!), `trialPct = 50 / 1 = 50` (5000%), etc. The `totalCostToSales = 0 / sales = 0` (0%). The frontend displays "Waste: 10000% of total cost" and "Total cost: 0% of sales" — internally inconsistent and wildly wrong. This triggers whenever a filtered subset (e.g., a specific outlet via `?outlet=`) has ALL NULL values in any one of the four nominal columns. Common scenario: an outlet that doesn't track waste (all nominalWaste = NULL) but has susut/trial/residual costs. The bug also affects `pctOfSales` in the route (analysis/route.ts:587: `costImpactSql.totalCost / execSummary.sales.current` → `0 / sales = 0`), understating the total cost impact to 0%.
+- Fix: Wrap each SUM individually in COALESCE inside the totalCost expression:
+  ```sql
+  COALESCE(SUM(ABS(ir."nominalWaste")), 0) +
+  COALESCE(SUM(ABS(ir."nominalSusut")), 0) +
+  COALESCE(SUM(ABS(ir."nominalTrial")), 0) +
+  COALESCE(SUM(ABS(ir."residualNominal")), 0) as "totalCost"
+  ```
+  Or simpler: compute totalCost in JS from the already-COALESCEd individual fields: `totalCost = r.wasteCost + r.susutCost + r.trialCost + r.residualCost`.
+
+## BUG 2.4: queryHistoricalStats uses PostgreSQL STDDEV (sample, n-1) while JS calcStdDev uses population (n) — z-scores understated, historical anomalies missed
+- File: src/lib/queries.ts:794 vs src/engine/calculations/growth.ts:37
+- Category: Math error / SQL bug (inconsistent stddev formula)
+- Code:
+  ```sql
+  -- queries.ts:794
+  COALESCE(STDDEV(ir."pctQtyDeviasiToBom"), 0) as "stdDev"
+  ```
+  ```ts
+  // growth.ts:37 (original JS implementation, now superseded by SQL)
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;  // ← population (n)
+  ```
+- Why: PostgreSQL's `STDDEV()` aggregate computes the SAMPLE standard deviation (denominator = n-1). The original JS `calcStdDev` computes POPULATION standard deviation (denominator = n). For the same data, sample stddev is always >= population stddev (because n-1 < n). The z-score formula `z = (value - mean) / stdDev` is therefore SMALLER when using sample stddev. For small n (the historical stats typically have 4-12 periods), the difference is significant: at n=4, sample stddev = sqrt(4/3) × population ≈ 1.155×, so z-scores are ~13% smaller; at n=5, ~11% smaller; at n=10, ~5% smaller. The rule thresholds in rules.yaml (HISTORICAL_ZSCORE_WARN=2.0, HISTORICAL_ZSCORE_HIGH=3.0, from settings) were presumably calibrated against the original JS population stddev. With the SQL sample stddev, an item with true z=2.2 (should trigger HISTORICAL_WARNING) now computes as z≈1.9 (below threshold, no flag). Items with z=3.3 (should trigger HISTORICAL_ABNORMAL) compute as z≈2.9 (below 3.0, downgraded to WARNING or missed entirely). This causes systematic UNDER-detection of historical anomalies, especially for outlet+item pairs with few historical periods. Additionally, the JS `computeHistoricalStats` (growth.ts:65) has a guard `if (values.length < 4) return null` — but the SQL query has NO minimum-n guard, so it returns stats for n=1 (STDDEV=NULL→0, zScore=null, safe) and n=2,3 (sample stddev on 2-3 points is statistically meaningless but still used). This means the SQL provides z-scores for outlet+item pairs that the JS implementation would have rejected as too few data points.
+- Fix: Use `STDDEV_POP(ir."pctQtyDeviasiToBom")` (population stddev) in the SQL query to match the original JS formula. Also add a HAVING clause `HAVING COUNT(*) >= 4` to match the JS minimum-sample guard:
+  ```sql
+  COALESCE(STDDEV_POP(ir."pctQtyDeviasiToBom"), 0) as "stdDev"
+  ...
+  GROUP BY ir."outletId", ir."itemId"
+  HAVING COUNT(*) >= 4
+  ```
+
+## BUG 2.5: evalOp `between` and `in` operators don't resolve field references inside arrays — latent bug breaks future rules
+- File: src/engine/rules/evaluator.ts:71-81
+- Category: Rule engine bug (field reference resolution gap in array operands)
+- Code:
+  ```ts
+  case 'between': {
+    if (typeof value !== 'number' || !Array.isArray(operand)) return false;
+    const [lo, hi] = operand as number[];   // ← elements not resolved
+    if (!(value >= lo && value <= hi)) return false;
+    break;
+  }
+  case 'in': {
+    if (!Array.isArray(operand)) return false;
+    if (!operand.includes(value)) return false;   // ← elements not resolved
+    break;
+  }
+  ```
+- Why: The operand resolution at lines 56-59 only runs when `typeof operandRaw === 'string'`. For `between` and `in`, the operand is an ARRAY (typeof 'object'), so the string-resolution branch is skipped. The array elements (which could be field-reference strings like `[lowThreshold, highThreshold]`) are never resolved to their ctx values. If a future rule uses `{ pctQtyDeviasiToBom: { between: [stdDeviasiBomPct, highLossPct] } }`, the `[lo, hi]` destructuring gets the raw strings "stdDeviasiBomPct" and "highLossPct". Then `value >= "stdDeviasiBomPct"` coerces the string to NaN, `value >= NaN` is false, and the rule never matches. Same for `in`: `["LOSS", "SURPLUS"].includes(value)` works for literal strings, but `[direction, benchmarkFlag].includes(value)` would compare value against the literal strings "direction" and "benchmarkFlag" (never matching). Currently no rule in rules.yaml uses `between` or `in` with field references, so this is a LATENT bug — but the task context says rules.yaml was "recently modified to support field references" and the evaluator was supposed to "correctly resolve these in ALL cases (nested in mul/add/sub, in all/any arrays, etc.)". The `between`/`in` gap is an unfinished edge case that will silently break the next rule someone adds.
+- Fix: Resolve each array element before comparison:
+  ```ts
+  case 'between': {
+    if (typeof value !== 'number' || !Array.isArray(operand)) return false;
+    const resolved = (operand as unknown[]).map(v =>
+      typeof v === 'string' && ctx && v in ctx ? ctx[v] : v
+    );
+    const [lo, hi] = resolved as number[];
+    if (typeof lo !== 'number' || typeof hi !== 'number' || !(value >= lo && value <= hi)) return false;
+    break;
+  }
+  case 'in': {
+    if (!Array.isArray(operand)) return false;
+    const resolved = (operand as unknown[]).map(v =>
+      typeof v === 'string' && ctx && v in ctx ? ctx[v] : v
+    );
+    if (!resolved.includes(value)) return false;
+    break;
+  }
+  ```
+
+## BUG 2.6: narrative.ts fmtNum uses "M" for million while format.ts uses "M" for billion — LLM receives 1000x-wrong magnitudes for large values
+- File: src/engine/narrative/narrative.ts:47-52 vs src/lib/format.ts:19-21
+- Category: Number formatting / Logic error (unit collision across formatters)
+- Code:
+  ```ts
+  // narrative.ts:49 — "M" = million (1,000,000)
+  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M${unit}`;
+  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K${unit}`;
+  ```
+  ```ts
+  // format.ts:19-20 — "M" = billion (1,000,000,000), "Jt" = million
+  if (abs >= 1_000_000_000) return `${sign}Rp ${fmtDecimal(abs / 1_000_000_000, 2)}M`;
+  if (abs >= 1_000_000) return `${sign}Rp ${fmtDecimal(abs / 1_000_000, 2)}Jt`;
+  ```
+- Why: narrative.ts's `fmtNum` is used to build the structured summary sent to the LLM (buildStructuredSummary, lines 66-75). format.ts's `fmtIDR` is used by the frontend. For a value of 5,000,000,000 IDR (5 billion, a realistic total-sales figure for 333 outlets): narrative.ts produces `"5000.00M IDR"` (because 5B >= 1M, so it divides by 1M and appends "M"). format.ts produces `"Rp 5,00M"` (5 billion in Indonesian M = miliar). The LLM sees "5000.00M IDR" and, in an Indonesian business context where "M" conventionally means miliar (billion), may interpret this as 5000 billion = 5 trillion IDR — a 1000x overstatement. The LLM narrative then produces statements like "Sales mencapai 5000M IDR" which the user reads as 5 trillion, while the actual value is 5 billion. Even without the cross-formatter confusion, narrative.ts lacks a billion-tier branch entirely, so any value >= 1 billion is rendered as "XXXX.XXM IDR" (thousands of millions), which is numerically correct but pragmatically misleading. The fmtNum function also uses English "K" for thousand while format.ts uses Indonesian "Rb" — another inconsistency that could confuse cross-referencing. Affects: every LLM-generated narrative for datasets with total sales/nominal >= 1 billion IDR (which is the typical scale for this F&B chain with 333 outlets).
+- Fix: Align narrative.ts fmtNum with format.ts's tier system, or use the shared format.ts helpers directly:
+  ```ts
+  function fmtNum(v: number | null, unit = ''): string {
+    if (v == null) return 'N/A';
+    const abs = Math.abs(v);
+    const sign = v < 0 ? '-' : '';
+    if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2).replace('.', ',')}M${unit}`;  // M = miliar (billion)
+    if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2).replace('.', ',')}Jt${unit}`;           // Jt = juta (million)
+    if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1).replace('.', ',')}Rb${unit}`;                   // Rb = ribu (thousand)
+    return `${sign}${abs.toFixed(0)}${unit}`;
+  }
+  ```
+
+## BUG 2.7: multiPeriodComparison computes `bom = sales / devBom` — nonsensical formula produces 20M "BOM" from 1M sales
+- File: src/app/api/analysis/route.ts:491
+- Category: Math error / Logic error (wrong formula, unit mismatch)
+- Code:
+  ```ts
+  const multiPeriodComparison = trendAggRows
+    .map((r) => {
+      ...
+      return {
+        ...
+        bom: r.devBom > 0 ? r.sales / r.devBom : 0, // approx BOM from devBom ratio
+        ...
+      };
+    })
+  ```
+- Why: `r.devBom` is `AVG(ABS(pctQtyDeviasiToBom))` from queryTrendAgg (queries.ts:93) — a RATIO (deviation divided by BOM, typically 0.01-0.20). `r.sales` is in IDR (e.g., 1,000,000). The formula `sales / devBom` divides an IDR amount by a unitless ratio, producing a number with units IDR (not a quantity). For sales=1,000,000 IDR and devBom=0.05 (5% deviation): `bom = 1000000 / 0.05 = 20,000,000`. This is labeled "bom" and sent to the frontend as a BOM metric, but BOM (Bill of Materials) is a quantity (kg, liters, pieces), not 20 million IDR. The comment "approx BOM from devBom ratio" suggests the intent was to estimate BOM quantity from the deviation ratio, but the formula is dimensionally wrong: `sales / (deviation/BOM)` = `sales × BOM / deviation`, which has units IDR×qty/qty = IDR, not qty. To recover BOM quantity from devBom ratio, you'd need `deviationQty / devBomRatio` (not sales). Even then, deviationQty isn't available in trendAggRows (which only has sales, nominal, devBom, lossNominal, surplusNominal). The `bom` field is displayed in the multi-period comparison table on the dashboard, showing users nonsensical values like "BOM: 20,000,000" for a week with 1M sales. For large sales (6.66 billion IDR network total) and small devBom (0.03), this produces `bom = 222,000,000,000` (222 billion) — clearly not a real BOM quantity.
+- Fix: Either remove the `bom` field from multiPeriodComparison (since the data isn't available to compute it correctly), or add `SUM(ABS(qtyBom))` to queryTrendAgg and use the actual BOM quantity:
+  ```sql
+  -- In queryTrendAgg's period_aggs CTE:
+  COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
+  ```
+  ```ts
+  // In route:
+  bom: r.qtyBom,
+  ```
+
+## BUG 2.8: toNum doesn't handle Indonesian dot-as-thousands-separator when only dot is present — "1.234" parsed as 1.234 instead of 1234
+- File: src/engine/transform.ts:56-79
+- Category: Data transformation / Number parsing (missing format branch)
+- Code:
+  ```ts
+  if (s.includes(',') && s.includes('.')) {
+    // Both present — determine which is decimal (last one)
+    ...
+  } else if (s.includes(',')) {
+    // Comma only — handle thousands vs decimal
+    ...
+  }
+  // ← NO else-if for dot-only — falls through to Number(s) which treats dot as decimal
+  const n = Number(s);
+  ```
+- Why: The comment block at lines 44-55 documents the intended behavior for dot-only strings: "If only dot: 3 digits after AND number > 9999 → thousands: '1.234' → '1234'; Otherwise → decimal: '1.5' → '1.5'". But there is NO code implementing this branch. The `if/else if` chain only handles (a) both comma+dot and (b) comma-only. Dot-only strings fall through to `Number(s)`, which always treats the dot as a decimal point. In Indonesian number formatting, the dot is the thousands separator: "1.234" means 1234 (one thousand two hundred thirty-four), "12.345" means 12345, "1.234.567" means 1234567. The parser returns 1.234, 12.345, and NaN respectively — a 1000x understatement or complete data loss. Whether this triggers in production depends on the Excel-to-CSV conversion: `excel-to-csv.ts:68` does `String(v)` on cell values, so numeric Excel cells produce plain numbers ("1234", no separators) and are parsed correctly. But TEXT-formatted Excel cells containing Indonesian-formatted strings ("1.234") would be passed through as-is and misparsed. The comment's logic ("number > 9999") is also flawed: it checks the parsed decimal value (1.234 < 9999, so treated as decimal) rather than recognizing the 3-digits-after-dot pattern as a thousands separator. For "12.345" (Indonesian 12345), Number("12.345") = 12.345 < 9999, so even if the branch existed, it would be treated as decimal. The only robust fix is to check for the pattern `\d{1,3}(\.\d{3})+` (groups of 3 digits after dots) as a thousands indicator.
+- Fix: Add a dot-only branch that detects the thousands-separator pattern:
+  ```ts
+  } else if (s.includes('.')) {
+    // Dot only — detect Indonesian thousands separator: "1.234" or "1.234.567"
+    // Pattern: groups of exactly 3 digits separated by dots
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+      s = s.replace(/\./g, '');
+    }
+    // Otherwise leave as-is (decimal: "1.5", "12.34")
+  }
+  ```
+
+Stage Summary:
+- Total bugs: 8 (Critical: 1, High: 2, Medium: 5)
+- BUG 2.1 is the highest-impact finding: 3 ABNORMAL-severity rules (SALES_DEVIATION_MISMATCH, BOM_DEVIATION_MISMATCH, TOLERANCE_BREACH_HIGH) silently never fire due to the evalOp arithmetic-resolution gap. This single bug accounts for missing anomaly detection on the most important patterns (deviation growing faster than sales/BOM, and >2x tolerance breaches). Fix is a 3-line change in evaluator.ts.
+- BUG 2.2 and BUG 2.3 both produce systematically wrong numbers on the dashboard: health scores are overstated for outlets with sales typos (MAX vs MODE), and cost-impact percentages become 10000% when any nominal column is all-NULL. Both are easy fixes.
+- BUG 2.4 (sample vs population stddev) causes under-detection of historical anomalies, especially for outlet+item pairs with few historical periods (4-10). The fix is a one-word SQL change (STDDEV → STDDEV_POP) plus a HAVING clause.
+- BUG 2.5, 2.6, 2.7, 2.8 are medium-severity: latent rule-engine gap, LLM-facing unit confusion, nonsensical BOM formula, and Indonesian number-parsing gap.
+- No race conditions found in the parallelized analysis route (P0+P1+P2): all parallel SQL queries are independent, results are destructured into local variables, the LLM narrative promise is fired early and awaited late with no shared mutable state, and the audit-log write is fire-and-forget with a .catch() handler.
+- No cache bugs found: LRUCache correctly handles TTL expiry on get/has, eviction on set, and the analysis route no longer populates the cache (client-side TanStack Query handles caching). The rate-limit cleanup runs every 60s on the next call; the in-process Map is bounded by unique IP+endpoint keys.
+- Recommended fix order: 2.1 (critical, 3-line fix) → 2.3 (high, SQL fix) → 2.2 (high, MODE fix) → 2.4 (medium, stddev fix) → 2.7 (medium, remove bogus BOM field) → 2.6 (medium, unit alignment) → 2.5 (medium, future-proofing) → 2.8 (medium, data-dependent)
+
+---
+Task ID: BUG-3
+Agent: general-purpose (frontend bug hunter)
+Task: Deep bug hunt in frontend components
+
+Work Log:
+- Read worklog.md (first 50 + last 100 lines) for context on prior bug-hunt rounds (BUG-1, BUG-2 series focused on engine/API/transform layers)
+- Inspected 17 frontend files: QuickSettings.tsx, OutletFocusMode.tsx (1398 lines), OutletScorecard.tsx, AlertPanel.tsx, Charts.tsx, AdvancedAnalysis.tsx, CostAccounting.tsx, ExtraCharts.tsx (854 lines), TopItems.tsx, AnalysisCards.tsx, ExecutiveSummary.tsx, FilterBar.tsx, SettingsDialog.tsx, DataManagementDialog.tsx, PicManagementDialog.tsx, useDashboard.ts, useAnalysis.ts, page.tsx
+- Cross-referenced QuickSettings usage across 7 dashboard components to verify percent/number slider config (min=0,max=1,step=0.05 for percent; raw integers for number)
+- Verified Radix Tabs default behavior (no forceMount in shadcn wrapper) — confirms inactive TabsContent unmounts and loses local state
+- Verified settings.ts definitions for SALES_DEVIATION_FACTOR (default 2.0), RESIDUAL_LOSS_WARN_PCT (default 0.50) — confirmed QuickSettings keys exist and are meant to control thresholds
+- Verified analysis.ts computeVarianceAnalysis skips items with null/0 previousAbsNominal — so the `!== 0` check in VarianceAnalysis is safe (server guarantees non-null)
+- Checked recharts v2.15.4 Scatter/Bar onClick payload shape — confirmed data-point-direct pattern used consistently
+
+Bugs Found:
+
+## BUG 3.1: QuickSettings numeric Input strips decimal point during typing — user cannot enter values like "0.05"
+- File: src/components/dashboard/QuickSettings.tsx:269-283
+- Category: Form bug / Controlled input value mismatch
+- Code:
+  ```tsx
+  const valStr = effectiveValues[s.key] ?? defaults[s.key] ?? '0';
+  const valNum = Number(valStr);
+  const isNum = !isNaN(valNum);
+  // ...
+  <Input
+    type="number"
+    inputMode="decimal"
+    value={isNum ? valNum : ''}   // ← Number, not string
+    onChange={(e) => {
+      const v = e.target.value;
+      if (v === '' || v === '-') return;
+      handleChange(s.key, v);      // stores raw string
+    }}
+  />
+  ```
+- Why: The Input's `value` is `valNum` (a Number parsed from the stored string), not the raw string. When the user types a decimal like "0.05" for a percent setting (stored as 0-1), the keystroke sequence is broken: (1) User types "0" → onChange("0") → stored "0" → valNum=0 → value=0 → DOM shows "0". (2) User types "." → onChange("0.") → stored "0." → `Number("0.")` = 0 → value=0 → DOM shows "0" (the "." is LOST). (3) User types "5" → onChange("05") → stored "05" → valNum=5 → value=5 → DOM shows "5". The user ended up with "5" instead of "0.05". This makes the Input field unusable for entering decimal percent values (0.05, 0.10, 0.15, etc.) — the user MUST use the slider. The sibling SettingsDialog.tsx:292-300 uses `type="text"` with `value={currentVal}` (raw string) and works correctly. Affects: every QuickSettings popover (AlertPanel, Charts, TopItems, ExecutiveSummary, AdvancedAnalysis, CostAccounting, ExtraCharts) — 7 components with percent settings.
+- Fix: Use the raw string value and `type="text"` (matching SettingsDialog's pattern):
+  ```tsx
+  <Input
+    type="text"
+    inputMode="decimal"
+    value={valStr === '0' && s.dataType === 'percent' ? '' : valStr}
+    onChange={(e) => {
+      const v = e.target.value;
+      if (v === '' || v === '-' || v === '.') { handleChange(s.key, v); return; }
+      const n = Number(v);
+      if (!isNaN(n)) handleChange(s.key, v);
+    }}
+  />
+  ```
+
+## BUG 3.2: OutletFocusMode "Investigasi" tab loses worklist status (OPEN/INVESTIGATING/RESOLVED) on tab switch
+- File: src/components/dashboard/OutletFocusMode.tsx:988-993, 1341-1393
+- Category: React state management / Component unmount loses local state
+- Code:
+  ```tsx
+  // Tab6Investigasi (line 988)
+  function Tab6Investigasi({ data }: { data: OutletFocusData }) {
+    const [status, setStatus] = useState<Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>>({});
+    // ...
+  }
+
+  // OutletFocusMode main (line 1341)
+  <Tabs value={tab} onValueChange={setTab} className="...">
+    <TabsContent value="overview"><Tab1Overview ... /></TabsContent>
+    <TabsContent value="anomali"><Tab2AnomaliItem ... /></TabsContent>
+    {/* ... */}
+    <TabsContent value="investigasi"><Tab6Investigasi data={focusQuery.data} /></TabsContent>
+  </Tabs>
+  ```
+- Why: Radix UI Tabs (via shadcn `Tabs` wrapper at src/components/ui/tabs.tsx — confirmed no `forceMount` prop) unmounts inactive `TabsContent` by default. When the user switches from "Investigasi" to "Overview" and back, `Tab6Investigasi` unmounts and remounts — its `useState` for `status` resets to `{}`. All worklist items the user marked as "INVESTIGATING" or "RESOLVED" revert to "OPEN". The same applies to Tab2's `sortBy`/`filterSeverity` and Tab4's `expanded` set, but those are minor UX annoyances; Tab6's status tracking is the PRIMARY feature of that tab, so losing it is a functional regression. User scenario: user opens Focus Mode → Investigasi tab → marks 5 P1 items as "RESOLVED" → switches to "Anomali Item" tab to cross-reference → switches back to Investigasi → all 5 items show "OPEN" again, work lost.
+- Fix: Lift the `status` state up to the parent `OutletFocusMode` component (which stays mounted while the focus tab is active), or persist to localStorage/Zustand. Quick fix — move state to parent:
+  ```tsx
+  // In OutletFocusMode main component:
+  const [worklistStatus, setWorklistStatus] = useState<Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>>({});
+  // ...
+  <TabsContent value="investigasi">
+    <Tab6Investigasi data={focusQuery.data} status={worklistStatus} setStatus={setWorklistStatus} />
+  </TabsContent>
+  ```
+  Alternative: add `forceMount` to all TabsContent (but all 6 tabs render at once, hurting performance).
+
+## BUG 3.3: FilterBar Google Drive import dialog doesn't clear driveUrl/driveResult when closed via X button or click-outside
+- File: src/components/filters/FilterBar.tsx:316, 148-152
+- Category: UI/UX bug / Dialog state not reset on close
+- Code:
+  ```tsx
+  // Line 316 — Dialog onOpenChange only calls setDriveDialogOpen, NOT handleCloseDialog
+  <Dialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen}>
+    <DialogContent>
+      {/* ... */}
+      {/* "Cancel" button (line 400) calls handleCloseDialog — correct */}
+      <Button variant="outline" onClick={handleCloseDialog}>Cancel</Button>
+      {/* "Close" button (line 479) calls handleCloseDialog — correct */}
+      <Button variant="outline" onClick={handleCloseDialog}>Close</Button>
+    </DialogContent>
+  </Dialog>
+
+  // Line 148 — handleCloseDialog clears all state
+  function handleCloseDialog() {
+    setDriveDialogOpen(false);
+    setDriveUrl('');
+    setDriveResult(null);
+  }
+  ```
+- Why: The Dialog's `onOpenChange` is wired directly to `setDriveDialogOpen` (a bare state setter), not to `handleCloseDialog`. When the user closes the dialog via the X button (rendered by DialogContent's default close) or by clicking outside (Radix Dialog overlay), only `setDriveDialogOpen(false)` fires — `driveUrl` and `driveResult` are NOT cleared. User scenario: (1) User opens dialog, pastes Drive URL, clicks Import. (2) Import succeeds → `driveResult` set to success response → dialog shows "Import Completed" screen. (3) User closes via X button (not the "Close" button). (4) User re-opens dialog → sees the OLD "Import Completed" success screen instead of the URL input form. The user is confused — they expected to import a new file but see the previous result. Compare with SettingsDialog (line 82-89) and PicManagementDialog (line 82-92) which both use the `prevOpen` render-time pattern to reset state on close — FilterBar's Drive Dialog is the only one missing this.
+- Fix: Wire `onOpenChange` to a handler that clears state on close:
+  ```tsx
+  <Dialog open={driveDialogOpen} onOpenChange={(v) => {
+    setDriveDialogOpen(v);
+    if (!v) { setDriveUrl(''); setDriveResult(null); }
+  }}>
+  ```
+
+## BUG 3.4: ExecutiveSummary "Waste + Susut + Trial" KPI shows waste-only growth, not combined growth
+- File: src/components/dashboard/ExecutiveSummary.tsx:100
+- Category: Data display bug / Wrong field for growth indicator
+- Code:
+  ```tsx
+  <KPICard
+    label="Waste + Susut + Trial"
+    value={(s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0)}  // ← SUM of 3
+    unit=""
+    growth={s.qtyWaste.growth}  // ← only WASTE growth, not combined
+    drillDown="waste"
+  />
+  ```
+- Why: The KPI card displays a VALUE that is the sum of Waste + Susut + Trial quantities, but the GROWTH indicator (trend arrow + percentage shown next to the value) uses `s.qtyWaste.growth` — the growth of Waste ALONE, not the combined sum. The KPICard component (line 49-81) renders the growth as a colored badge with TrendingUp/Down icon. User scenario: Waste grew +20% but Susut dropped -50% and Trial is flat. The combined value might have decreased, but the KPI shows "+20%" with a green up-arrow, misleading the user into thinking the total waste+susut+trial increased by 20%. The `previous` field is also omitted, so the "vs previous" line doesn't show. This is inconsistent with the other 5 KPI cards (Sales, Nominal Deviasi, QTY BOM, QTY Deviasi, Loss/Surplus) which all pass matching value/growth/previous triples.
+- Fix: Either compute the combined growth from previous values, or omit the growth indicator for this combined KPI:
+  ```tsx
+  // Option A: compute combined growth
+  const combinedCurrent = (s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0);
+  const combinedPrevious = (s.qtyWaste.previous || 0) + (s.qtySusut.previous || 0) + (s.qtyTrial.previous || 0);
+  const combinedGrowth = combinedPrevious !== 0 ? (combinedCurrent - combinedPrevious) / Math.abs(combinedPrevious) : null;
+
+  <KPICard
+    label="Waste + Susut + Trial"
+    value={combinedCurrent}
+    unit=""
+    growth={combinedGrowth}
+    previous={combinedPrevious || null}
+    drillDown="waste"
+  />
+  // Option B: omit growth entirely
+  <KPICard label="Waste + Susut + Trial" value={...} unit="" growth={null} drillDown="waste" />
+  ```
+
+## BUG 3.5: OutletRadarChart tooltip displays "outlet0" / "outlet1" key instead of outlet name
+- File: src/components/dashboard/ExtraCharts.tsx:567
+- Category: Chart tooltip bug / Wrong data shown
+- Code:
+  ```tsx
+  <Tooltip
+    content={({ active, payload, label }) => (
+      // ...
+      {payload.map((p, i) => (
+        <p key={i} className="text-muted-foreground">
+          <span className="inline-block h-2 w-2 rounded-sm mr-1" style={{ background: COLORS[i % COLORS.length] }} />
+          {p.payload ? Object.keys(p.payload).find((k) => k.startsWith('outlet') && p.payload[k] === p.value) : ''}: {(p.value as number).toFixed(0)}
+        </p>
+      ))}
+    )}
+  />
+  // Radar series defined as (line 549-556):
+  <Radar
+    key={o.outletCode}
+    name={`${o.outletName} (${o.outletCode})`}  // ← human-readable name available in p.name
+    dataKey={`outlet${i}`}                        // ← "outlet0", "outlet1", "outlet2"
+    // ...
+  />
+  ```
+- Why: The tooltip tries to find the outlet key by searching `p.payload` for a key starting with "outlet" whose value matches `p.value`. This returns the KEY name (e.g., "outlet0", "outlet1", "outlet2") — NOT the outlet's human-readable name. The user hovers over a radar point and sees "outlet0: 80" instead of "JAKARTA PUSAT (1030): 80". Additionally, if two outlets have the same normalized value for a metric (e.g., both score 100 on "% DEV TO BOM" because both are the max), `Object.keys().find()` returns the FIRST match — so the tooltip might attribute the value to the wrong outlet. The correct outlet name is already available in `p.name` (set via the Radar's `name` prop on line 551), which recharts popates for each tooltip entry.
+- Fix: Use `p.name` (the Radar series name) instead of the key-lookup hack:
+  ```tsx
+  {payload.map((p, i) => (
+    <p key={i} className="text-muted-foreground">
+      <span className="inline-block h-2 w-2 rounded-sm mr-1" style={{ background: COLORS[i % COLORS.length] }} />
+      {p.name}: {(p.value as number).toFixed(0)}
+    </p>
+  ))}
+  ```
+
+## BUG 3.6: Charts.tsx GrowthComparison mismatch threshold hardcoded to 2× — ignores SALES_DEVIATION_FACTOR / BOM_DEVIATION_FACTOR from QuickSettings
+- File: src/components/dashboard/Charts.tsx:24-27, 40-45
+- Category: TanStack Query / Settings disconnect / Chart visual logic ignores user setting
+- Code:
+  ```tsx
+  // Line 24-27 — chart computes mismatch with hardcoded `2 *`
+  const mismatchSales = g.salesGrowth != null && g.nominalDeviasiGrowth != null &&
+    g.nominalDeviasiGrowth > 2 * (g.salesGrowth > 0 ? g.salesGrowth : 0) && g.salesGrowth > 0;
+  const mismatchBom = g.bomGrowth != null && g.qtyDeviasiGrowth != null &&
+    g.qtyDeviasiGrowth > 2 * (g.bomGrowth > 0 ? g.bomGrowth : 0) && g.bomGrowth > 0;
+
+  // Line 40-45 — QuickSettings lets user change the factor
+  <QuickSettings
+    settings={[
+      { key: 'SALES_DEVIATION_FACTOR', label: 'Faktor Sales vs Deviasi', dataType: 'number', min: 1, max: 10, step: 0.5 },
+      { key: 'BOM_DEVIATION_FACTOR', label: 'Faktor BOM vs Deviasi', dataType: 'number', min: 1, max: 10, step: 0.5 },
+    ]}
+  />
+  ```
+- Why: The QuickSettings popover on the GrowthComparison chart lets the user change `SALES_DEVIATION_FACTOR` (default 2.0). The setting is saved to the server and affects server-side rule evaluation (SALES_DEVIATION_MISMATCH rule in rules.yaml). However, the chart's red-bar mismatch logic (lines 24-27) uses a HARDCODED `2 *` factor — it does NOT read the setting. User scenario: user sets SALES_DEVIATION_FACTOR to 3.0 via QuickSettings, expecting the chart to only flag bars where deviation growth > 3× sales growth. The chart still flags bars where deviation growth > 2× sales growth (the old threshold). The user sees MORE red bars than expected, inconsistent with the server's rule evaluation (which uses 3×). The QuickSettings gear icon is placed ON the chart, creating the expectation that it controls the chart's behavior. A similar issue exists in DeviationBreakdownChart (line 110): `color: b.residual / total > 0.5 ? '#dc2626' : '#64748b'` — hardcodes 0.5 threshold while QuickSettings offers RESIDUAL_LOSS_WARN_PCT (default 0.50) and RESIDUAL_LOSS_HIGH_PCT (default 0.70).
+- Fix: Either (a) pass the setting value from the server into the analysis response and use it in the chart, or (b) read the setting client-side via useQuery(['settings']) and use it in the mismatch logic. Option (b) is simpler:
+  ```tsx
+  const { data: settingsData } = useQuery({ queryKey: ['settings'], queryFn: fetchSettingsMap, staleTime: 10_000 });
+  const salesFactor = Number(settingsData?.values.SALES_DEVIATION_FACTOR ?? 2);
+  const bomFactor = Number(settingsData?.values.BOM_DEVIATION_FACTOR ?? 2);
+  const mismatchSales = ... g.nominalDeviasiGrowth > salesFactor * (g.salesGrowth > 0 ? g.salesGrowth : 0) ...;
+  ```
+
+## BUG 3.7: ExecutiveSummary stacked progress bar renders `width: "NaN%"` when healthStatus total is 0
+- File: src/components/dashboard/ExecutiveSummary.tsx:254-256
+- Category: Data display bug / Division by zero
+- Code:
+  ```tsx
+  const { normal, warning, abnormal, breakdown } = data.healthStatus;
+  const total = normal + warning + abnormal;
+  // ... (no early return when total === 0)
+  <div className="flex h-2 rounded-full overflow-hidden bg-muted">
+    <div className="bg-emerald-500" style={{ width: `${(normal / total) * 100}%` }} />
+    <div className="bg-amber-500" style={{ width: `${(warning / total) * 100}%` }} />
+    <div className="bg-red-500" style={{ width: `${(abnormal / total) * 100}%` }} />
+  </div>
+  ```
+- Why: When `total` is 0 (e.g., the analysis returned 0 records for the selected filter combination — all records filtered out by area/outlet/PIC), `normal / total` = `0 / 0` = `NaN`. The inline style becomes `width: "NaN%"`, which is invalid CSS — the browser ignores it and the bar renders with 0 width. Meanwhile, `healthScore` (line 148) IS guarded: `total > 0 ? Math.round((normal / total) * 100) : 100`, so it shows "100/100". The user sees "Skor Kondisi Inventory: 100/100" with an empty progress bar — misleading (score 100 implies perfect health, but there's no data). The `abnormalPct` and `warningPct` (lines 149-150) are also guarded with `total > 0 ?`, so only the progress bar divs are affected. This is an edge case — page.tsx guards against `totalRecords === 0` (shows EmptyState), but does NOT guard against the analysis returning healthStatus with all zeros when records exist but are filtered out by area/outlet/PIC.
+- Fix: Guard the progress bar widths:
+  ```tsx
+  <div className="bg-emerald-500" style={{ width: `${total > 0 ? (normal / total) * 100 : 0}%` }} />
+  <div className="bg-amber-500" style={{ width: `${total > 0 ? (warning / total) * 100 : 0}%` }} />
+  <div className="bg-red-500" style={{ width: `${total > 0 ? (abnormal / total) * 100 : 0}%` }} />
+  ```
+  Also consider showing "Tidak ada data" instead of "100/100" when total is 0.
+
+Stage Summary:
+- Total bugs: 7 (Critical: 0, High: 2, Medium: 4, Low: 1)
+- BUG 3.1 (High) is the most user-facing: the QuickSettings numeric Input is broken for decimal entry — users CANNOT type "0.05" into any percent setting field across 7 dashboard components. They must use the slider. Fix is a 3-line change (type="text" + value={valStr}).
+- BUG 3.2 (High) breaks the Investigasi tab's primary feature: worklist status tracking is lost on tab switch because Radix Tabs unmounts inactive content. Users marking items as RESOLVED lose all progress when cross-referencing other tabs.
+- BUG 3.3 (Medium) causes stale Drive import results to persist across dialog reopens — confusing UX where the user sees the old success screen instead of the input form.
+- BUG 3.4 (Medium) shows wrong growth indicator on a KPI card — waste-only growth displayed for a combined Waste+Susut+Trial value.
+- BUG 3.5 (Medium) makes the radar chart tooltip unreadable — shows "outlet0" instead of outlet names, and can misattribute values when two outlets share the same normalized score.
+- BUG 3.6 (Medium) is a settings-flow disconnect: QuickSettings on GrowthComparison chart lets users change SALES_DEVIATION_FACTOR, but the chart's red-bar logic hardcodes 2×, creating inconsistency between the chart visual and server-side rule evaluation.
+- BUG 3.7 (Low) is an edge-case div-by-zero in the progress bar when all healthStatus counts are 0.
+- No React hooks infinite-loop bugs found: useEffect deps are correct across the inspected files. The QuickSettings debounce useEffect includes `saveMutation` in deps (which changes identity every render), causing unnecessary effect re-runs, but the early-return guard (`dirtyKeys.size === 0`) and the `flushPending` safety net on popover close prevent data loss.
+- No Zustand store mutation bugs found: all state updates use `set()` correctly, no direct mutation of state objects.
+- No TanStack Query queryKey collisions found: ['settings'], ['analysis', params], ['outlet-focus', ...], ['status'], ['data-mgmt'], ['dq-issues', fileId], ['drilldown', params] are all distinct. `staleTime` values are reasonable (10s for settings, 60s for analysis/outlet-focus, 5min for status).
+- No memory leaks found: no setInterval/setTimeout in inspected components except FilterBar's `setTimeout(() => setIngestMsg(null), 8000)` which is a minor cleanup gap (not cleaned up on unmount, but React 18 no-ops setState on unmounted components).
+- Recommended fix order: 3.1 (high, 3-line fix) → 3.2 (high, lift state to parent) → 3.3 (medium, 1-line onOpenChange fix) → 3.5 (medium, use p.name) → 3.4 (medium, compute combined growth) → 3.6 (medium, read setting client-side) → 3.7 (low, add total>0 guard)

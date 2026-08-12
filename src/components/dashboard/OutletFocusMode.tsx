@@ -985,12 +985,17 @@ function Tab5DQ({ data }: { data: OutletFocusData }) {
   );
 }
 
-function Tab6Investigasi({ data }: { data: OutletFocusData }) {
-  const [status, setStatus] = useState<Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>>({});
-
-  const setItemStatus = (itemName: string, s: 'OPEN' | 'INVESTIGATING' | 'RESOLVED') => {
-    setStatus((prev) => ({ ...prev, [itemName]: s }));
-  };
+function Tab6Investigasi({
+  data,
+  status,
+  setItemStatus,
+}: {
+  data: OutletFocusData;
+  status: Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>;
+  setItemStatus: (itemName: string, s: 'OPEN' | 'INVESTIGATING' | 'RESOLVED') => void;
+}) {
+  // BUG 3.2 fix: status state lifted to parent OutletFocusMode so it persists
+  // across tab switches (Radix Tabs unmounts inactive TabsContent).
 
   const grouped = {
     P1: data.worklist.filter((w) => w.priority === 'P1'),
@@ -1193,6 +1198,13 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
   } = useDashboard();
   const { data: status } = useStatus();
   const [tab, setTab] = useState('overview');
+  // BUG 3.2 fix: lift worklist status tracker state here so it survives tab switches.
+  // Previously lived inside Tab6Investigasi (local useState) and was lost when
+  // Radix Tabs unmounted the inactive TabsContent.
+  const [worklistStatus, setWorklistStatus] = useState<Record<string, 'OPEN' | 'INVESTIGATING' | 'RESOLVED'>>({});
+  const setItemStatus = (itemName: string, s: 'OPEN' | 'INVESTIGATING' | 'RESOLVED') => {
+    setWorklistStatus((prev) => ({ ...prev, [itemName]: s }));
+  };
 
   // Find ranking entry for this outlet (for rank info)
   const ranking = data?.outletHealthRanking || [];
@@ -1387,7 +1399,7 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
                   <Tab5DQ data={focusQuery.data} />
                 </TabsContent>
                 <TabsContent value="investigasi" className="mt-0">
-                  <Tab6Investigasi data={focusQuery.data} />
+                  <Tab6Investigasi data={focusQuery.data} status={worklistStatus} setItemStatus={setItemStatus} />
                 </TabsContent>
               </div>
             </Tabs>

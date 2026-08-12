@@ -488,7 +488,7 @@ export async function GET(req: NextRequest) {
           period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
           sortKey: `${mk}|${r.weekLabel}`,
           sales: r.sales,
-          bom: r.devBom > 0 ? r.sales / r.devBom : 0, // approx BOM from devBom ratio
+          bom: null, // BUG 2.7 fix: was `r.sales / r.devBom` which is dimensionally wrong
           deviation: r.nominal,
           absDeviation: r.nominal,
           devBomRatio: r.devBom,
@@ -705,6 +705,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result);
   } catch (e: any) {
     console.error('Analysis error:', e);
-    return NextResponse.json({ success: false, error: e?.message || String(e), stack: e?.stack }, { status: 500 });
+    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
   }
 }

@@ -85,22 +85,29 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const def = SETTING_DEFINITIONS.find((d) => d.key === key)!;
-      const value = String(rawValue).trim();
+      let value = String(rawValue).trim();
 
       // Validate based on dataType
       if (def.dataType === 'number' || def.dataType === 'percent') {
-        const n = Number(value);
+        let n = Number(value);
         if (isNaN(n)) {
           errors.push({ key, error: `${def.label} must be a number` });
           continue;
         }
-        if (def.dataType === 'percent' && (n < 0 || n > 1)) {
-          // percent can be 0-1 OR 0-100, accept both but warn
-          // We'll accept 0-100 too and normalize later if needed
-        }
-        if (n < 0 && !key.includes('TOLERANCE') && def.dataType === 'percent') {
-          errors.push({ key, error: `${def.label} cannot be negative` });
-          continue;
+        // BUG 1.4 fix: percent values must be 0-1. If user enters 0-100, normalize.
+        // Previously the if-body was EMPTY — value 50 was stored as "50" (5000%),
+        // silently breaking all anomaly detection.
+        if (def.dataType === 'percent') {
+          if (n < 0) {
+            errors.push({ key, error: `${def.label} cannot be negative` });
+            continue;
+          }
+          // If user enters value > 1, treat as percentage and normalize to 0-1
+          // e.g., 50 → 0.5, 5 → 0.05, 0.5 → 0.5 (already normalized)
+          if (n > 1) {
+            n = n / 100;
+            value = String(n);
+          }
         }
       } else if (def.dataType === 'boolean') {
         if (!['true', 'false', '1', '0', 'yes', 'no'].includes(value.toLowerCase())) {
@@ -112,23 +119,34 @@ export async function POST(req: NextRequest) {
       updates.push({ key, value });
     }
 
-    // Apply updates via upsert
-    for (const { key, value } of updates) {
-      const def = SETTING_DEFINITIONS.find((d) => d.key === key)!;
-      await db.setting.upsert({
-        where: { key },
-        update: { value, updatedBy },
-        create: {
-          key,
-          value,
-          category: def.category,
-          label: def.label,
-          description: def.description,
-          dataType: def.dataType,
-          updatedBy,
-        },
-      });
+    if (updates.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'No valid settings to update',
+        errors: errors.length > 0 ? errors : undefined,
+      }, { status: 400 });
     }
+
+    // BUG 1.3 fix: wrap all upserts in a transaction so partial failures don't
+    // leave the DB in an inconsistent state with stale caches.
+    await db.$transaction(
+      updates.map(({ key, value }) => {
+        const def = SETTING_DEFINITIONS.find((d) => d.key === key)!;
+        return db.setting.upsert({
+          where: { key },
+          update: { value, updatedBy },
+          create: {
+            key,
+            value,
+            category: def.category,
+            label: def.label,
+            description: def.description,
+            dataType: def.dataType,
+            updatedBy,
+          },
+        });
+      })
+    );
 
     invalidateSettingsCache();
 

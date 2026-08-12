@@ -78,7 +78,14 @@ export async function GET() {
       if (!weeksByMonth[w.monthKey]) weeksByMonth[w.monthKey] = [];
       if (!weeksByMonth[w.monthKey].includes(w.weekLabel)) weeksByMonth[w.monthKey].push(w.weekLabel);
     }
-    for (const k of Object.keys(weeksByMonth)) weeksByMonth[k].sort();
+    // BUG 1.8 fix: sort weeks numerically, not lexicographically.
+    // "WEEK 10" > "WEEK 2" lexicographically, breaking week order in dropdown.
+    const weekSort = (a: string, b: string): number => {
+      const na = parseInt(a.replace(/\D/g, '')) || 0;
+      const nb = parseInt(b.replace(/\D/g, '')) || 0;
+      return na - nb;
+    };
+    for (const k of Object.keys(weeksByMonth)) weeksByMonth[k].sort(weekSort);
 
     const result = {
       success: true,

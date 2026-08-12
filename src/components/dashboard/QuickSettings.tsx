@@ -269,7 +269,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
                       <Input
                         type="number"
                         inputMode="decimal"
-                        value={isNum ? valNum : ''}
+                        value={valStr}
                         min={min}
                         max={max}
                         step={step}
