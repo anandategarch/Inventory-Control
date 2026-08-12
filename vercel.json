@@ -9,7 +9,7 @@
       "maxDuration": 60
     },
     "src/app/api/ingest-process": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "src/app/api/outlet-focus": {
       "maxDuration": 60

@@ -17,7 +17,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300; // Max for Vercel — import can take 1-2 min for large weeks
 
 // Reassemble file from DB chunks
 async function reassembleFile(fileHash: string, ext: string): Promise<string> {
@@ -169,11 +169,34 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Reassemble from DB chunks (may be different instance than detect)
-      const filePath = await reassembleFile(fileHash, fileExt);
+      console.log(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${fileHash})`);
+
+      // Reassemble from DB chunks
+      let filePath: string;
+      try {
+        filePath = await reassembleFile(fileHash, fileExt);
+        console.log(`[ingest-process] reassembled to ${filePath}`);
+      } catch (e: any) {
+        console.error('[ingest-process] reassemble failed:', e);
+        return NextResponse.json(
+          { success: false, error: `Gagal reassemble file: ${e?.message}` },
+          { status: 500 }
+        );
+      }
 
       // Parse Excel
-      const parsed = await parseExcelFile(filePath);
+      let parsed;
+      try {
+        parsed = await parseExcelFile(filePath);
+        console.log(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
+      } catch (e: any) {
+        console.error('[ingest-process] parse failed:', e);
+        await fs.unlink(filePath).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `Gagal parse Excel: ${e?.message}` },
+          { status: 500 }
+        );
+      }
 
       // Collect rows for this week
       const weekRows: Record<string, unknown>[] = [];

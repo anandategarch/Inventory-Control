@@ -262,6 +262,16 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             }),
           });
 
+          // Bug fix: check content-type before parsing JSON (Vercel errors return HTML)
+          const contentType = importRes.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const text = await importRes.text();
+            if (importRes.status === 504) {
+              throw new Error(`Timeout (504) — import ${weekLabel} terlalu lama. Coba lagi.`);
+            }
+            throw new Error(`Server error (HTTP ${importRes.status}). ${text.slice(0, 300)}`);
+          }
+
           const importData = await importRes.json();
           if (!importRes.ok || !importData.success) {
             throw new Error(importData.error || `HTTP ${importRes.status}`);
