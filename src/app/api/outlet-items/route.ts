@@ -1,0 +1,409 @@
+// ============================================================
+//  /api/outlet-items — Resto Analysis (Level 3+4)
+//  Query: ?outletCode=&month=&week=&compareWeek=&compareMonth=
+//
+//  Returns:
+//  1. Resto Profile (6 sections: Performance, Behavior, Historical, Benchmark, TopRisk, Investigation)
+//  2. Bahan Analysis (3 rankings: Financial, Operational, Unexplained)
+//  3. Per-item breakdown: BOM, Deviasi, Dev/BOM, Nominal, Direction, W/S/T, Residual
+// ============================================================
+import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
+import { db } from '@/lib/db';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
+  try {
+    const ip = getClientIP(req);
+    const rl = rateLimit(`outlet-items:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
+    const url = new URL(req.url);
+    const outletCode = url.searchParams.get('outletCode');
+    const month = url.searchParams.get('month');
+    const week = url.searchParams.get('week');
+    const compareWeek = url.searchParams.get('compareWeek');
+    const compareMonth = url.searchParams.get('compareMonth');
+
+    if (!outletCode || !month || !week) {
+      return NextResponse.json({ success: false, error: 'outletCode, month, week required' }, { status: 400 });
+    }
+
+    // Resolve outlet
+    const outlet = await db.outlet.findFirst({
+      where: { code: outletCode },
+      select: { id: true, code: true, name: true, area: true },
+    });
+    if (!outlet) {
+      return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
+    }
+
+    // Determine previous period
+    let prevWeek = compareWeek;
+    let prevMonth = compareMonth || month;
+    if (!prevWeek) {
+      const weeksRaw = await db.week.findMany({
+        select: { weekLabel: true, monthKey: true },
+        distinct: ['monthKey', 'weekLabel'],
+      });
+      const fileMonthKeys = await db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } });
+      const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
+      const allPeriods = weeksRaw.map(w => ({
+        monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+        weekLabel: w.weekLabel,
+        sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+      })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+      const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
+      if (currentIdx > 0) {
+        prevWeek = allPeriods[currentIdx - 1].weekLabel;
+        prevMonth = allPeriods[currentIdx - 1].monthLabel;
+      }
+    }
+
+    // ============================================================
+    //  PARALLEL: current records + prev records + area/network benchmarks
+    // ============================================================
+    const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
+      // Current period records for this outlet
+      db.$queryRaw<Array<{
+        itemId: number; itemName: string; satuan: string | null;
+        qtyBom: number | null; qtyCom: number | null; qtyDeviasi: number | null;
+        qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
+        qtyLossSurplus: number | null;
+        nominalDeviasi: number | null; nominalWaste: number | null; nominalSusut: number | null;
+        nominalTrial: number | null; nominalLossSurplus: number | null; nominalSales: number | null;
+        avgPrice: number | null; tolerancePct: number | null;
+        pctQtyDeviasiToBom: number | null;
+        direction: string | null;
+        residualQty: number | null; residualNominal: number | null; residualRatio: number | null;
+        absQtyDeviasi: number | null; absNominalDeviasi: number | null;
+        absQtyLossSurplus: number | null; absNominalLossSurplus: number | null;
+        isOverExplained: boolean | null;
+      }>>`
+        SELECT ir."itemId", i.name as "itemName", i.satuan,
+          ir."qtyBom", ir."qtyCom", ir."qtyDeviasi",
+          ir."qtyWaste", ir."qtySusut", ir."qtyTrial", ir."qtyLossSurplus",
+          ir."nominalDeviasi", ir."nominalWaste", ir."nominalSusut",
+          ir."nominalTrial", ir."nominalLossSurplus", ir."nominalSales",
+          ir."avgPrice", ir."tolerancePct",
+          ir."pctQtyDeviasiToBom", ir.direction,
+          ir."residualQty", ir."residualNominal", ir."residualRatio",
+          ir."absQtyDeviasi", ir."absNominalDeviasi",
+          ir."absQtyLossSurplus", ir."absNominalLossSurplus",
+          ir."isOverExplained"
+        FROM "InventoryRecord" ir
+        JOIN "Item" i ON ir."itemId" = i.id
+        JOIN "Outlet" o ON ir."outletId" = o.id
+        WHERE o.code = ${outletCode}
+          AND ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+      `,
+      // Previous period records
+      prevWeek ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null }>>`
+        SELECT ir."itemId", ir."qtyDeviasi", ir."nominalDeviasi", ir."qtyBom", ir."pctQtyDeviasiToBom"
+        FROM "InventoryRecord" ir
+        JOIN "Outlet" o ON ir."outletId" = o.id
+        WHERE o.code = ${outletCode}
+          AND ir."monthLabel" = ${prevMonth}
+          AND ir."weekLabel" = ${prevWeek}
+      ` : Promise.resolve([]),
+      // Area benchmark
+      db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
+        SELECT
+          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          NULL as "lossToSales"
+        FROM "InventoryRecord" ir
+        WHERE ir.area = ${outlet.area}
+          AND ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+      `,
+      // Network benchmark
+      db.$queryRaw<Array<{ avgDevBom: number }>>`
+        SELECT
+          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom"
+        FROM "InventoryRecord" ir
+        WHERE ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+      `,
+      // PIC
+      db.outletPIC.findUnique({ where: { outletCode: outlet.code } }).catch(() => null),
+    ]);
+
+    // ============================================================
+    //  RESTO PROFILE — 6 sections
+    // ============================================================
+    const toNum = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null;
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    };
+
+    // Dedup sales via MODE (most frequent)
+    const salesCounts = new Map<number, number>();
+    for (const r of currentRecs) {
+      const s = toNum(r.nominalSales);
+      if (s != null && s > 0) {
+        const rounded = Math.round(s * 100) / 100;
+        salesCounts.set(rounded, (salesCounts.get(rounded) ?? 0) + 1);
+      }
+    }
+    let bestSales = 0, bestCount = 0;
+    for (const [val, count] of salesCounts) {
+      if (count > bestCount || (count === bestCount && val > bestSales)) { bestSales = val; bestCount = count; }
+    }
+
+    // Aggregate metrics
+    let totalQtyBom = 0, totalQtyDeviasi = 0, totalNominalDeviasi = 0;
+    let totalQtyWaste = 0, totalQtySusut = 0, totalQtyTrial = 0;
+    let totalQtyLossSurplus = 0, totalNominalLossSurplus = 0;
+    let totalResidualQty = 0, totalAbsNominalLossSurplus = 0;
+    let totalLossNominal = 0, totalSurplusNominal = 0;
+    let normalCount = 0, warningCount = 0, abnormalCount = 0;
+
+    for (const r of currentRecs) {
+      const qb = toNum(r.qtyBom) ?? 0;
+      const qd = toNum(r.qtyDeviasi) ?? 0;
+      const nd = toNum(r.nominalDeviasi) ?? 0;
+      const qls = toNum(r.qtyLossSurplus) ?? 0;
+      const nls = toNum(r.nominalLossSurplus) ?? 0;
+      const anls = toNum(r.absNominalLossSurplus) ?? 0;
+
+      totalQtyBom += Math.abs(qb);
+      totalQtyDeviasi += Math.abs(qd);
+      totalNominalDeviasi += Math.abs(nd);
+      totalQtyWaste += Math.abs(toNum(r.qtyWaste) ?? 0);
+      totalQtySusut += Math.abs(toNum(r.qtySusut) ?? 0);
+      totalQtyTrial += Math.abs(toNum(r.qtyTrial) ?? 0);
+      totalQtyLossSurplus += Math.abs(qls);
+      totalNominalLossSurplus += nls;
+      totalAbsNominalLossSurplus += anls;
+      totalResidualQty += Math.abs(toNum(r.residualQty) ?? 0);
+
+      if (nls > 0) totalLossNominal += nls;
+      else if (nls < 0) totalSurplusNominal += Math.abs(nls);
+
+      // Count severity
+      if (qd === 0 || Math.abs(qd) < 0.01) normalCount++;
+      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > (toNum(r.tolerancePct) ?? 0.05)) abnormalCount++;
+      else warningCount++;
+    }
+
+    // Previous period aggregates
+    let prevQtyBom = 0, prevQtyDeviasi = 0, prevNominalDeviasi = 0;
+    const prevByItemId = new Map<number, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
+    for (const r of prevRecs) {
+      const qd = toNum(r.qtyDeviasi) ?? 0;
+      const nd = toNum(r.nominalDeviasi) ?? 0;
+      const qb = toNum(r.qtyBom) ?? 0;
+      const pdb = toNum(r.pctQtyDeviasiToBom);
+      prevQtyBom += Math.abs(qb);
+      prevQtyDeviasi += Math.abs(qd);
+      prevNominalDeviasi += Math.abs(nd);
+      prevByItemId.set(r.itemId, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
+    }
+
+    const calcGrowth = (curr: number, prev: number): number | null => {
+      if (prev === 0) return curr === 0 ? 0 : null;
+      return (curr - prev) / Math.abs(prev);
+    };
+
+    const restoProfile = {
+      // 1. Performance
+      performance: {
+        sales: bestSales,
+        salesGrowth: calcGrowth(bestSales, 0), // no prev sales in this query
+        qtyBom: totalQtyBom,
+        qtyBomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
+        qtyDeviasi: totalQtyDeviasi,
+        qtyDeviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
+        nominalDeviasi: totalNominalDeviasi,
+        nominalDeviasiGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
+        nominalLossSurplus: totalNominalLossSurplus,
+        devBom: totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : null,
+        lossToSales: bestSales > 0 ? totalLossNominal / bestSales : null,
+      },
+      // 2. Behavior
+      behavior: {
+        lossNominal: totalLossNominal,
+        surplusNominal: totalSurplusNominal,
+        lossPct: totalAbsNominalLossSurplus > 0 ? totalLossNominal / totalAbsNominalLossSurplus : null,
+        surplusPct: totalAbsNominalLossSurplus > 0 ? totalSurplusNominal / totalAbsNominalLossSurplus : null,
+        qtyWaste: totalQtyWaste,
+        qtySusut: totalQtySusut,
+        qtyTrial: totalQtyTrial,
+        qtyLossSurplus: totalQtyLossSurplus,
+        residualQty: totalResidualQty,
+        residualPct: totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null,
+        explainedPct: totalQtyDeviasi > 0 ? (totalQtyWaste + totalQtySusut + totalQtyTrial) / totalQtyDeviasi : null,
+      },
+      // 3. Historical (current vs previous)
+      historical: {
+        prevQtyBom: prevQtyBom,
+        prevQtyDeviasi: prevQtyDeviasi,
+        prevNominalDeviasi: prevNominalDeviasi,
+        bomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
+        deviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
+        nominalGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
+        trend: (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) > 0.1 ? 'DETERIORATING' :
+               (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) < -0.1 ? 'IMPROVING' : 'STABLE',
+      },
+      // 4. Benchmark
+      benchmark: {
+        areaAvgDevBom: toNum(areaBench[0]?.avgDevBom) ?? 0,
+        networkAvgDevBom: toNum(networkBench[0]?.avgDevBom) ?? 0,
+        outletDevBom: totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0,
+        areaMultiplier: (toNum(areaBench[0]?.avgDevBom) ?? 0) > 0
+          ? ((totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0)) / (toNum(areaBench[0]?.avgDevBom) ?? 1)
+          : null,
+      },
+      // 5. Top Risk (top 5 per category)
+      topRisk: {
+        byNominal: [...currentRecs]
+          .sort((a, b) => (toNum(b.absNominalLossSurplus) ?? 0) - (toNum(a.absNominalLossSurplus) ?? 0))
+          .slice(0, 5)
+          .map(r => ({ itemName: r.itemName, value: toNum(r.absNominalLossSurplus) ?? 0, direction: r.direction || 'NEUTRAL' })),
+        byDevBom: [...currentRecs]
+          .sort((a, b) => Math.abs(toNum(b.pctQtyDeviasiToBom) ?? 0) - Math.abs(toNum(a.pctQtyDeviasiToBom) ?? 0))
+          .slice(0, 5)
+          .map(r => ({ itemName: r.itemName, value: toNum(r.pctQtyDeviasiToBom) ?? 0 })),
+        byResidual: [...currentRecs]
+          .sort((a, b) => (toNum(b.residualRatio) ?? 0) - (toNum(a.residualRatio) ?? 0))
+          .slice(0, 5)
+          .map(r => ({ itemName: r.itemName, value: toNum(r.residualRatio) ?? 0 })),
+      },
+      // 6. Investigation counts
+      investigation: {
+        normal: normalCount,
+        warning: warningCount,
+        abnormal: abnormalCount,
+        total: normalCount + warningCount + abnormalCount,
+        healthScore: (() => {
+          const total = normalCount + warningCount + abnormalCount;
+          if (total === 0) return 100;
+          const abnormalRate = abnormalCount / (warningCount + abnormalCount || 1);
+          const devBom = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;
+          const devBomScore = Math.max(0, Math.min(100, 100 - (devBom / 0.50) * 100));
+          const abnormalScore = Math.max(0, Math.min(100, 100 - (abnormalRate / 0.50) * 100));
+          return Math.round(devBomScore * 0.50 + abnormalScore * 0.50);
+        })(),
+      },
+    };
+
+    // ============================================================
+    //  BAHAN ANALYSIS — 3 rankings + per-item breakdown
+    // ============================================================
+    const itemBreakdown = currentRecs.map(r => {
+      const itemId = r.itemId;
+      const prev = prevByItemId.get(itemId);
+      const qtyBom = toNum(r.qtyBom);
+      const qtyDeviasi = toNum(r.qtyDeviasi);
+      const pctDevBom = toNum(r.pctQtyDeviasiToBom);
+      const nominalLS = toNum(r.nominalLossSurplus);
+      const absNominalLS = toNum(r.absNominalLossSurplus) ?? 0;
+      const residualRatio = toNum(r.residualRatio);
+      const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
+      const outletDevBom = pctDevBom ?? 0;
+
+      // Dev/BOM growth vs previous
+      const prevPctDevBom = prev?.pctDevBom ?? null;
+      const devBomGrowth = (pctDevBom != null && prevPctDevBom != null && prevPctDevBom !== 0)
+        ? (Math.abs(pctDevBom) - Math.abs(prevPctDevBom)) / Math.abs(prevPctDevBom)
+        : null;
+
+      // Historical trend indicator
+      const historicalTrend = devBomGrowth != null
+        ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'
+        : '?';
+
+      // Area multiplier for this item
+      const areaMultiplier = areaAvgDevBom > 0 && pctDevBom != null
+        ? Math.abs(pctDevBom) / areaAvgDevBom
+        : null;
+
+      // Priority
+      const isHighNominal = absNominalLS > 1_000_000;
+      const isHighDevBom = pctDevBom != null && Math.abs(pctDevBom) > 0.10;
+      const isHighResidual = residualRatio != null && residualRatio > 0.50;
+      const priority: 'P1' | 'P2' | 'P3' =
+        (isHighNominal && (isHighDevBom || isHighResidual)) ? 'P1' :
+        (isHighDevBom || isHighResidual) ? 'P2' : 'P3';
+
+      return {
+        itemId,
+        itemName: r.itemName,
+        satuan: r.satuan,
+        qtyBom: Math.abs(qtyBom ?? 0),
+        qtyCom: toNum(r.qtyCom),
+        qtyDeviasi: qtyDeviasi,
+        qtyWaste: Math.abs(toNum(r.qtyWaste) ?? 0),
+        qtySusut: Math.abs(toNum(r.qtySusut) ?? 0),
+        qtyTrial: Math.abs(toNum(r.qtyTrial) ?? 0),
+        qtyLossSurplus: toNum(r.qtyLossSurplus),
+        nominalDeviasi: toNum(r.nominalDeviasi),
+        nominalLossSurplus: nominalLS,
+        absNominalLossSurplus: absNominalLS,
+        avgPrice: toNum(r.avgPrice),
+        tolerancePct: toNum(r.tolerancePct),
+        devBom: pctDevBom,
+        direction: r.direction || 'NEUTRAL',
+        residualQty: toNum(r.residualQty),
+        residualRatio: residualRatio,
+        isOverExplained: r.isOverExplained ?? false,
+        // Historical
+        prevQtyDeviasi: prev?.qtyDeviasi ?? null,
+        prevPctDevBom: prevPctDevBom,
+        devBomGrowth: devBomGrowth,
+        historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
+        // Benchmark
+        areaAvgDevBom: areaAvgDevBom,
+        areaMultiplier: areaMultiplier,
+        // Priority
+        priority,
+      };
+    });
+
+    // 3 Rankings
+    const rankings = {
+      // A. Financial Impact
+      financial: [...itemBreakdown]
+        .sort((a, b) => b.absNominalLossSurplus - a.absNominalLossSurplus)
+        .slice(0, 20)
+        .map((r, i) => ({ rank: i + 1, ...r })),
+      // B. Operational (Dev/BOM)
+      operational: [...itemBreakdown]
+        .sort((a, b) => Math.abs(b.devBom ?? 0) - Math.abs(a.devBom ?? 0))
+        .slice(0, 20)
+        .map((r, i) => ({ rank: i + 1, ...r })),
+      // C. Unexplained (Residual Ratio)
+      unexplained: [...itemBreakdown]
+        .sort((a, b) => (b.residualRatio ?? 0) - (a.residualRatio ?? 0))
+        .slice(0, 20)
+        .map((r, i) => ({ rank: i + 1, ...r })),
+    };
+
+    return NextResponse.json({
+      success: true,
+      outlet: {
+        code: outlet.code,
+        name: outlet.name,
+        area: outlet.area,
+        pic: outletPIC?.pic ?? null,
+      },
+      period: { month, week, prevWeek, prevMonth },
+      restoProfile,
+      rankings,
+      itemCount: currentRecs.length,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e: any) {
+    console.error('[outlet-items] error:', e);
+    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  }
+}

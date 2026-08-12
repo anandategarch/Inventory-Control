@@ -29,6 +29,7 @@ import {
 import { AlertPanel } from '@/components/dashboard/AlertPanel';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
 import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
+import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import {
   CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
@@ -43,7 +44,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
   TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
-  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target,
+  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -234,6 +235,9 @@ export default function DashboardPage() {
               </TabsTrigger>
               <TabsTrigger value="focus" className="text-xs">
                 <Target className="h-3.5 w-3.5" /> Focus Mode
+              </TabsTrigger>
+              <TabsTrigger value="resto" className="text-xs">
+                <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
             </TabsList>
 
@@ -523,6 +527,11 @@ export default function DashboardPage() {
             {/* ====== FOCUS MODE TAB ====== */}
             <TabsContent value="focus" className="space-y-4 mt-2">
               <OutletFocusMode data={analysis.data} />
+            </TabsContent>
+
+            {/* ====== RESTO ANALYSIS TAB ====== */}
+            <TabsContent value="resto" className="space-y-4 mt-2">
+              <RestoAnalysis />
             </TabsContent>
           </Tabs>
         ) : null}
