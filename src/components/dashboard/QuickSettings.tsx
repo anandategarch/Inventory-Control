@@ -75,7 +75,10 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
     queryKey: ['settings'],
     queryFn: fetchSettingsMap,
     enabled: open,
-    staleTime: 10_000,
+    // staleTime: 0 = always refetch when popover opens (never serve stale cached data)
+    // This ensures user always sees the latest DB values when opening the popover
+    staleTime: 0,
+    refetchOnMount: true,
   });
 
   // Derive effective values from server data + local edits (no setState-in-effect)
@@ -153,6 +156,28 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [dirtyKeys, localEdits, saveMutation]);
+
+  // CRITICAL: Save pending edits before page unloads (refresh, close tab, navigate away)
+  // Without this, if user changes a setting and immediately refreshes, the debounce
+  // timer is cleared but the save never fires → setting is lost.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (Object.keys(localEdits).length === 0) return;
+      // Clear pending debounce
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      // Use sendBeacon for reliable delivery during page unload
+      const payload = JSON.stringify({ values: localEdits, updatedBy: 'user-quick' });
+      navigator.sendBeacon(
+        '/api/settings',
+        new Blob([payload], { type: 'application/json' })
+      );
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [localEdits]);
 
   function handleChange(key: string, value: string) {
     setLocalEdits((prev) => ({ ...prev, [key]: value }));
@@ -305,7 +330,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
           )}
 
           <p className="text-[10px] text-muted-foreground pt-1.5 border-t leading-relaxed">
-            Perubahan disimpan otomatis. Chart akan diperbarui otomatis setelah simpan.
+            ✅ Perubahan disimpan permanen di database. Chart diperbarui otomatis. Pengaturan tetap ada saat buka aplikasi lagi.
           </p>
         </div>
       </PopoverContent>

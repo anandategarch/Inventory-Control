@@ -51,6 +51,13 @@ export async function GET() {
       settings: result,
       byCategory,
       categories: Object.keys(byCategory).sort(),
+    }, {
+      headers: {
+        // Prevent browser/proxy caching — settings must always be fresh from DB
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
     });
   } catch (e: any) {
     return NextResponse.json(

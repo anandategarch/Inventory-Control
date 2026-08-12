@@ -206,11 +206,15 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
 ];
 
 // ============================================================
-//  In-memory cache (avoid hitting DB every analysis request)
+//  Settings cache — DISABLED on serverless (Vercel)
+//  In-memory cache is per-instance: when user changes a setting,
+//  invalidateSettingsCache() only clears the CURRENT instance's cache.
+//  Other instances still return stale values for up to 30s.
+//  Fix: always read from DB (Setting table is tiny — 20 rows, <5ms).
 // ============================================================
 let _settingsCache: Map<string, string> | null = null;
 let _cacheLoadedAt = 0;
-const CACHE_TTL_MS = 30_000; // 30 seconds
+const CACHE_TTL_MS = 0; // 0 = disabled (always read from DB)
 
 async function loadSettingsFromDB(): Promise<Map<string, string>> {
   const settings = await db.setting.findMany({ select: { key: true, value: true } });
@@ -240,11 +244,10 @@ export async function ensureDefaultSettings(): Promise<void> {
 }
 
 // Get all settings (merged: DB overrides defaults)
+// NOTE: cache disabled (CACHE_TTL_MS = 0) — always reads from DB
+// to ensure consistency across Vercel serverless instances.
 export async function getAllSettings(forceRefresh = false): Promise<Map<string, string>> {
-  if (!forceRefresh && _settingsCache && (Date.now() - _cacheLoadedAt) < CACHE_TTL_MS) {
-    return _settingsCache;
-  }
-
+  // Cache disabled — always read from DB
   await ensureDefaultSettings();
   const dbSettings = await loadSettingsFromDB();
 
@@ -254,8 +257,6 @@ export async function getAllSettings(forceRefresh = false): Promise<Map<string, 
     merged.set(def.key, dbSettings.get(def.key) ?? def.defaultValue);
   }
 
-  _settingsCache = merged;
-  _cacheLoadedAt = Date.now();
   return merged;
 }
 
@@ -286,20 +287,15 @@ export function invalidateSettingsCache(): void {
 }
 
 // ============================================================
-//  Phase 3: Cache thresholdsVersion (avoid db.setting.count() per request)
-//  Bug fix: invalidate immediately when settings change (was 1 min TTL)
+//  thresholdsVersion — cache DISABLED on serverless (same per-instance issue)
 // ============================================================
 let _thresholdsVersionCache: number | null = null;
 let _thresholdsVersionAt = 0;
-const VERSION_CACHE_TTL_MS = 5_000; // 5 seconds (was 1 minute — too long for QuickSettings)
+const VERSION_CACHE_TTL_MS = 0; // 0 = disabled (always read from DB)
 
 export async function getThresholdsVersion(): Promise<number> {
-  if (_thresholdsVersionCache !== null && (Date.now() - _thresholdsVersionAt) < VERSION_CACHE_TTL_MS) {
-    return _thresholdsVersionCache;
-  }
-  _thresholdsVersionCache = await db.setting.count();
-  _thresholdsVersionAt = Date.now();
-  return _thresholdsVersionCache;
+  // Cache disabled — always read from DB for consistency across instances
+  return await db.setting.count();
 }
 
 // ============================================================
