@@ -31,6 +31,7 @@ export function FilterBar() {
   const [driveUrl, setDriveUrl] = useState('');
   const [driveImporting, setDriveImporting] = useState(false);
   const [driveResult, setDriveResult] = useState<any>(null);
+  const [progressLog, setProgressLog] = useState<string[]>([]);
   const queryClient = useQueryClient();
 
   // Settings dialog state
@@ -110,33 +111,73 @@ export function FilterBar() {
     if (!driveUrl.trim()) return;
     setDriveImporting(true);
     setDriveResult(null);
+    setProgressLog([]);
+
     try {
       const res = await fetch('/api/import-drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: driveUrl.trim() }),
       });
-      // FIX: Check content-type before parsing — server crash returns HTML
+
+      // SSE stream — read chunks
       const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
+      if (!contentType.includes('text/event-stream')) {
+        // Fallback: not SSE (error or old server)
         const text = await res.text();
-        throw new Error(
-          `Server error (HTTP ${res.status}).\n\n` +
-          `Kemungkinan penyebab:\n` +
-          `• File terlalu besar — server kehabisan memory (OOM)\n` +
-          `• Server timeout — proses terlalu lama\n` +
-          `• Server crash — coba refresh halaman dan ulangi\n\n` +
-          `Solusi:\n` +
-          `• Import 1 file saja (bukan folder)\n` +
-          `• Gunakan tab "Google Sheets" untuk import langsung sebagai CSV\n` +
-          `• Atau pecah file besar jadi 2-3 file lebih kecil`
-        );
+        let errMsg = `Server error (HTTP ${res.status})`;
+        try {
+          const d = JSON.parse(text);
+          errMsg = d.error || errMsg;
+        } catch {
+          errMsg = text.slice(0, 300);
+        }
+        throw new Error(errMsg);
       }
-      const d = await res.json();
-      setDriveResult(d);
-      if (d.success) {
-        queryClient.invalidateQueries({ queryKey: ['status'] });
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
+
+      // Read SSE stream
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('Stream tidak tersedia');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalResult: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.message) {
+                setProgressLog(prev => [...prev, data.message]);
+              }
+
+              if (data.phase === 'complete' || data.success === true || data.success === false) {
+                finalResult = data;
+              }
+            } catch {
+              // ignore parse errors for partial chunks
+            }
+          }
+        }
+      }
+
+      if (finalResult) {
+        setDriveResult(finalResult);
+        if (finalResult.success) {
+          queryClient.invalidateQueries({ queryKey: ['status'] });
+          queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        }
+      } else {
+        setDriveResult({ success: false, error: 'Stream ended without result' });
       }
     } catch (e: any) {
       setDriveResult({ success: false, error: e?.message || String(e) });
@@ -329,7 +370,22 @@ export function FilterBar() {
 
           {!driveResult && (
             <>
-              <div className="space-y-3 py-2">
+              {progressLog.length > 0 && (
+                <div className="bg-muted/50 rounded-lg p-3 max-h-[200px] overflow-y-auto mb-3">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Progress</p>
+                  <div className="space-y-1 font-mono text-xs">
+                    {progressLog.map((line, i) => (
+                      <p key={i} className="leading-relaxed">{line}</p>
+                    ))}
+                    {driveImporting && (
+                      <p className="text-primary flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Processing...
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className={`space-y-3 py-2 ${driveImporting ? 'pointer-events-none opacity-50' : ''}`}>
                 <Tabs defaultValue="folder">
                   <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="folder" className="text-xs">

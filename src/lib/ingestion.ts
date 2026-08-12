@@ -223,7 +223,7 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       const outletDbMap = new Map<string, number>();
       const itemDbMap = new Map<string, number>();
 
-      const BATCH_SIZE = 500;
+      const BATCH_SIZE = 2000; // Increased from 500 for faster inserts
       let batchRecords: any[] = [];
       let totalInserted = 0;
       let totalRows = 0;
