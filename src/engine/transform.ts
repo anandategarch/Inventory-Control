@@ -180,7 +180,10 @@ export function computeResidual(rec: NormalizedRecord): {
   const t = rec.qtyTrial ?? 0;
   const explained = Math.abs(w + s + t); // positive
   const absDev = Math.abs(rec.qtyDeviasi);
-  const absResidual = absDev - explained;
+  // Bug 2 fix: clamp residual to >= 0 to prevent negative residual from
+  // inflating dashboard totals via ABS() in SQL aggregates.
+  // If explained > absDev (over-explanation/fraud indicator), residual = 0.
+  const absResidual = Math.max(0, absDev - explained);
   const sign = rec.qtyDeviasi >= 0 ? 1 : -1;
   const residualQty = sign * absResidual;
 
@@ -190,7 +193,8 @@ export function computeResidual(rec: NormalizedRecord): {
   const nt = rec.nominalTrial ?? 0;
   const explainedNom = Math.abs(nw + ns + nt);
   const absDevNom = Math.abs(rec.nominalDeviasi ?? 0);
-  const residualNominal = sign * (absDevNom - explainedNom);
+  // Bug 2 fix: clamp nominal residual to >= 0 as well
+  const residualNominal = sign * Math.max(0, absDevNom - explainedNom);
 
   const residualRatio = absDev > 0 ? absResidual / absDev : null;
 

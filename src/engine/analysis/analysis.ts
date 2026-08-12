@@ -790,6 +790,7 @@ export function computeVarianceAnalysis(
     previousAbsNominal: number;
     delta: number;
     direction: string;
+    varianceDirection: string;
   }> = [];
 
   for (const curr of current) {
@@ -798,6 +799,11 @@ export function computeVarianceAnalysis(
     const prev = prevByOutletItem.get(key);
     if (!prev || prev.absNominalDeviasi == null || prev.absNominalDeviasi === 0) continue;
     const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;
+    // Bug 7 fix: add varianceDirection to show whether the item worsened or
+    // improved vs previous period. `direction` (curr.direction) shows the
+    // item's current LOSS/SURPLUS status, which is misleading for variance
+    // analysis — a LOSS item can still be improving if its deviation shrank.
+    const varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
     deltas.push({
       itemName: curr.item.name,
       outletCode: curr.outlet.code,
@@ -806,6 +812,7 @@ export function computeVarianceAnalysis(
       previousAbsNominal: prev.absNominalDeviasi,
       delta,
       direction: curr.direction || 'NEUTRAL',
+      varianceDirection,
     });
   }
 
@@ -922,8 +929,12 @@ export function computeOutletHealthRanking(
       const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
       // Loss/Sales: <2% → 100, >15% → 0 (linear)
       const lossToSalesScore = lossToSales != null ? clamp(100 - ((lossToSales - 0.02) / 0.13) * 100) : 50;
-      // Abnormal count: 0% abnormal → 100, >50% abnormal → 0 (linear)
-      const abnormalRate = total > 0 ? v.abnormal / total : 0;
+      // Bug 3 fix: abnormalRate should be abnormal / (warning + abnormal), NOT
+      // abnormal / total. Previously, zero-deviation items inflated `normal`
+      // (added at line 902), making large outlets appear healthy despite having
+      // many anomalies. Now we normalize by items WITH actual deviations only.
+      const activeItems = v.warning + v.abnormal;
+      const abnormalRate = activeItems > 0 ? v.abnormal / activeItems : 0;
       const abnormalScore = clamp(100 - (abnormalRate / 0.50) * 100);
 
       const healthScore = Math.round(

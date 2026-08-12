@@ -57,11 +57,13 @@ function buildExecSummaryFromSql(
     sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
     qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
     totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
+    qtyDeviasiLoss: number;
   } | null,
   prev: {
     sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
     qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
     totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
+    qtyDeviasiLoss: number;
   } | null,
   monthLabel: string,
   weekLabel: string,
@@ -70,7 +72,7 @@ function buildExecSummaryFromSql(
   const c = curr ?? {
     sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0,
     qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0,
-    residualLossQty: 0, residualLossNominal: 0,
+    residualLossQty: 0, residualLossNominal: 0, qtyDeviasiLoss: 0,
   };
   const salesPrev = prev?.sales ?? null;
   const nominalDeviasiPrev = prev?.nominalDeviasi ?? null;
@@ -97,7 +99,11 @@ function buildExecSummaryFromSql(
     surplusToSales: c.sales > 0 ? c.totalSurplus / c.sales : null,
     deviationToBom: c.qtyBom !== 0 ? c.qtyDeviasi / Math.abs(c.qtyBom) : null,
     residualLossQty: c.residualLossQty,
-    residualLossPct: c.qtyDeviasi > 0 ? c.residualLossQty / c.qtyDeviasi : null,
+    // Bug 6 fix: use qtyDeviasiLoss (LOSS items only) as denominator, not
+    // qtyDeviasi (ALL items incl SURPLUS). Previously, surplus items inflated
+    // the denominator, making residual loss % appear smaller (healthier) than
+    // reality. Now: residualLossPct = residualLossQty / qtyDeviasiLoss.
+    residualLossPct: c.qtyDeviasiLoss > 0 ? c.residualLossQty / c.qtyDeviasiLoss : null,
   };
 }
 

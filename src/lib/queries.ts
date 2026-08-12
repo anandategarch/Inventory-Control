@@ -128,6 +128,7 @@ export interface ExecSummaryRow {
   totalSurplus: number;
   residualLossQty: number;
   residualLossNominal: number;
+  qtyDeviasiLoss: number;
 }
 
 export async function queryExecSummary(
@@ -170,7 +171,8 @@ export async function queryExecSummary(
         COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "totalLoss",
         COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "totalSurplus",
         COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END), 0) as "residualLossQty",
-        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal"
+        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal",
+        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ir."absQtyDeviasi" ELSE 0 END), 0) as "qtyDeviasiLoss"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -180,7 +182,8 @@ export async function queryExecSummary(
       a."nominalDeviasi", a."qtyBom", a."qtyDeviasi", a."qtyWaste",
       a."qtySusut", a."qtyTrial", a."qtyLossSurplus",
       a."totalLoss", a."totalSurplus",
-      a."residualLossQty", a."residualLossNominal"
+      a."residualLossQty", a."residualLossNominal",
+      a."qtyDeviasiLoss"
     FROM aggs a, sales_mode sm
   `;
   return rows[0] || null;
