@@ -181,10 +181,26 @@ export function normalizeRow(
   };
 }
 
-export function classifyDirection(qtyDeviasi: number | null): Direction {
-  if (qtyDeviasi === null) return 'NEUTRAL';
-  if (qtyDeviasi > 0) return 'LOSS';   // actual > SOC
-  if (qtyDeviasi < 0) return 'SURPLUS'; // actual < SOC
+// Bug 2 fix: Direction must be based on NET DEVIATION (QTY LOSS/SURPLUS),
+// NOT GROSS DEVIATION (QTY DEVIASI).
+// Master context section #9:
+//   Net Deviation > 0 → LOSS (over-consumption)
+//   Net Deviation < 0 → SURPLUS (under-consumption)
+// Previously used qtyDeviasi (gross), which is wrong when gross and net
+// have different signs (e.g., over-explained items where W+S+T > |gross|).
+// Falls back to qtyDeviasi if qtyLossSurplus is null (data quality issue).
+export function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): Direction {
+  // Prefer net deviation (qtyLossSurplus) per master context
+  if (netDeviation !== null) {
+    if (netDeviation > 0) return 'LOSS';    // Net > 0 = over-consumption
+    if (netDeviation < 0) return 'SURPLUS';  // Net < 0 = under-consumption
+    return 'NEUTRAL';
+  }
+  // Fallback: use gross deviation if net is null
+  if (grossDeviation !== null) {
+    if (grossDeviation > 0) return 'LOSS';
+    if (grossDeviation < 0) return 'SURPLUS';
+  }
   return 'NEUTRAL';
 }
 
@@ -236,9 +252,27 @@ export function computeResidual(rec: NormalizedRecord): {
 }
 
 export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
-  const direction = classifyDirection(rec.qtyDeviasi);
+  // Bug 2 fix: direction based on NET deviation (qtyLossSurplus), not gross (qtyDeviasi)
+  const direction = classifyDirection(rec.qtyLossSurplus, rec.qtyDeviasi);
   const { residualQty, residualNominal, residualRatio, isOverExplained } = computeResidual(rec);
   const parsed = parseOutletCode(rec.resto);
+
+  // Bug 1 fix: validate Net Deviation formula
+  // Master context: Net = Gross - |Waste| - |Susut| - |Trial|
+  // If Excel's qtyLossSurplus ≠ computed net, flag as DQ issue
+  let netDeviationMismatch = false;
+  if (rec.qtyDeviasi !== null && rec.qtyLossSurplus !== null) {
+    const w = rec.qtyWaste ?? 0;
+    const s = rec.qtySusut ?? 0;
+    const t = rec.qtyTrial ?? 0;
+    const explainedMag = Math.abs(w + s + t);
+    const expectedNet = rec.qtyDeviasi - explainedMag * Math.sign(rec.qtyDeviasi);
+    // Tolerance: 1 unit or 1% of |expected|, whichever is larger
+    const tolerance = Math.max(1, Math.abs(expectedNet) * 0.01);
+    if (Math.abs(rec.qtyLossSurplus - expectedNet) > tolerance) {
+      netDeviationMismatch = true;
+    }
+  }
 
   // week period
   const period = CFG_RECON_SETTINGS.WEEK_PERIODS[rec.weekLabel] || { start: 1, end: 31 };
@@ -250,6 +284,7 @@ export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
     residualNominal,
     residualRatio,
     isOverExplained,
+    netDeviationMismatch,
     absQtyDeviasi: rec.qtyDeviasi !== null ? Math.abs(rec.qtyDeviasi) : null,
     absNominalDeviasi: rec.nominalDeviasi !== null ? Math.abs(rec.nominalDeviasi) : null,
     absQtyLossSurplus: rec.qtyLossSurplus !== null ? Math.abs(rec.qtyLossSurplus) : null,

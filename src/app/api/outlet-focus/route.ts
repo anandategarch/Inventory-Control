@@ -125,10 +125,18 @@ function fmtPct(v: number | null, digits = 1): string {
   return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 
-function classifyDirection(qtyDeviasi: number | null): string {
-  if (qtyDeviasi === null) return 'NEUTRAL';
-  if (qtyDeviasi > 0) return 'LOSS';
-  if (qtyDeviasi < 0) return 'SURPLUS';
+// Bug 2 fix: Direction must be based on NET DEVIATION (QTY LOSS/SURPLUS),
+// NOT GROSS DEVIATION (QTY DEVIASI). Falls back to gross if net is null.
+function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): string {
+  if (netDeviation !== null) {
+    if (netDeviation > 0) return 'LOSS';
+    if (netDeviation < 0) return 'SURPLUS';
+    return 'NEUTRAL';
+  }
+  if (grossDeviation !== null) {
+    if (grossDeviation > 0) return 'LOSS';
+    if (grossDeviation < 0) return 'SURPLUS';
+  }
   return 'NEUTRAL';
 }
 
@@ -513,7 +521,9 @@ export async function GET(req: NextRequest) {
       const devBom = first.pctQtyDeviasiToBom; // raw signed value
       const absDevBom = devBom != null ? Math.abs(devBom) : null;
 
-      const direction = first.direction || classifyDirection(sumQtyDeviasi);
+      // Bug 2 fix: use net deviation (qtyLossSurplus) for direction, fallback to gross
+      const sumQtyLossSurplus = rows.reduce((s, r) => s + (r.qtyLossSurplus ?? 0), 0);
+      const direction = first.direction || classifyDirection(sumQtyLossSurplus, sumQtyDeviasi);
       const residualQty = rows.reduce((s, r) => s + (r.residualQty ?? 0), 0);
       const residualRatio = first.residualRatio;
       const nominalDeviasi = sumNominalDeviasi;

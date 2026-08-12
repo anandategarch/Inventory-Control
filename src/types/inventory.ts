@@ -53,6 +53,7 @@ export interface DerivedRecord extends NormalizedRecord {
   residualNominal: number | null;
   residualRatio: number | null;
   isOverExplained: boolean;
+  netDeviationMismatch: boolean;
   absQtyDeviasi: number | null;
   absNominalDeviasi: number | null;
   absQtyLossSurplus: number | null;

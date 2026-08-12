@@ -145,6 +145,25 @@ export function validateRow(
     }
   }
 
+  // Bug 1 fix: Validate Net Deviation formula
+  // Master context #8: Gross Deviation - Waste - Susut - Trial = Net Deviation (QTY LOSS/SURPLUS)
+  // If Excel's qtyLossSurplus ≠ computed net, flag as DQ issue
+  const qtyLossSurplus = toNum(row.qtyLossSurplus);
+  if (qtyDeviasi !== null && qtyLossSurplus !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
+    const explainedMag = Math.abs((qtyWaste ?? 0) + (qtySusut ?? 0) + (qtyTrial ?? 0));
+    const expectedNet = qtyDeviasi - explainedMag * Math.sign(qtyDeviasi);
+    const tolerance = Math.max(1, Math.abs(expectedNet) * 0.01);
+    if (Math.abs(qtyLossSurplus - expectedNet) > tolerance) {
+      issues.push({
+        severity: 'WARNING',
+        code: 'NET_DEVIATION_MISMATCH',
+        message: `Row ${rowNumber}: QTY LOSS/SURPLUS (${qtyLossSurplus}) ≠ Gross - |W+S+T| (${expectedNet.toFixed(1)}). Formula mismatch — periksa perhitungan Excel.`,
+        rawValue: `excel=${qtyLossSurplus}, expected=${expectedNet.toFixed(1)}`,
+        rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
+      });
+    }
+  }
+
   return issues;
 }
 
