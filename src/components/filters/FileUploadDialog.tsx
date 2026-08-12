@@ -121,18 +121,17 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setResult(null);
 
     try {
-      // Compute file hash for chunk identification
+      // ===== PHASE 1: Upload chunks (fast, each <5s) =====
       const fileBuffer = await file.arrayBuffer();
       const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
       const fileHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      // Chunked upload: split file into 4MB chunks (Vercel body limit 4.5MB)
       const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-      setStatusLog(prev => [...prev, `📦 File dipecah jadi ${totalChunks} chunk (${(CHUNK_SIZE / 1024 / 1024)}MB per chunk)`]);
+      setStatusLog(prev => [...prev, `📦 File dipecah jadi ${totalChunks} chunk (4MB per chunk)`]);
 
-      let finalData: any = null;
+      let uploadResult: any = null;
 
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
@@ -147,7 +146,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         formData.append('fileHash', fileHash);
         formData.append('fileSize', String(file.size));
 
-        const chunkProgress = ((i + 1) / totalChunks) * 80; // 0-80% for upload
+        const chunkProgress = ((i + 1) / totalChunks) * 50; // 0-50% for upload
         setProgress(chunkProgress);
 
         if (i > 0) {
@@ -159,68 +158,173 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           body: formData,
         });
 
-        // Fix: check content-type before parsing JSON (413 returns HTML)
         const contentType = res.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
           const text = await res.text();
           if (res.status === 413) {
-            throw new Error('File terlalu besar untuk upload. Maksimal 4MB per chunk. Hubungi admin.');
+            throw new Error('Chunk terlalu besar. Hubungi admin.');
           }
           throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
         }
 
         const data = await res.json();
-
         if (!res.ok || !data.success) {
           throw new Error(data.error || `HTTP ${res.status}`);
         }
 
-        // Last chunk returns full result
         if (i === totalChunks - 1) {
-          finalData = data;
-          setProgress(90);
-          setStatusLog(prev => [...prev, '⏳ Parsing Excel, mendeteksi week...']);
+          uploadResult = data;
         }
       }
 
-      if (!finalData || !finalData.result) {
-        throw new Error('Upload selesai tapi tidak ada result dari server.');
+      if (!uploadResult || !uploadResult.uploaded) {
+        throw new Error('Upload selesai tapi tidak ada konfirmasi dari server.');
       }
 
-      const r: UploadResult = finalData.result;
-      setResult(r);
+      const filePath = uploadResult.filePath;
+      const fileSize = uploadResult.fileSize;
+      const fileName = uploadResult.fileName;
+
+      // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====
+      setProgress(55);
+      setStatusLog(prev => [...prev, '🔍 Parsing Excel, mendeteksi week...']);
+
+      const detectRes = await fetch('/api/ingest-process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'detect',
+          fileName,
+          fileHash,
+          fileSize,
+          filePath,
+        }),
+      });
+
+      const detectData = await detectRes.json();
+      if (!detectRes.ok || !detectData.success) {
+        throw new Error(detectData.error || `HTTP ${detectRes.status}`);
+      }
+
+      const weeksInFile: string[] = detectData.weeksInFile || [];
+      const existingWeeks: string[] = detectData.existingWeeks || [];
+      const weeksToImport: string[] = detectData.weeksToImport || [];
+      const rowCountPerWeek: Record<string, number> = detectData.rowCountPerWeek || {};
+      const monthLabel: string = detectData.monthLabel || '';
+
+      setProgress(60);
+      setStatusLog(prev => [...prev, `📅 Bulan: ${monthLabel}`]);
+      setStatusLog(prev => [...prev, `📊 Week di file: ${weeksInFile.join(', ')}`]);
+
+      if (existingWeeks.length > 0) {
+        setStatusLog(prev => [...prev, `ℹ️ Week sudah ada di DB: ${existingWeeks.join(', ')}`]);
+      }
+
+      if (weeksToImport.length === 0) {
+        setStatusLog(prev => [...prev, `✅ Semua week sudah ada. Tidak ada yang diimport.`]);
+        setProgress(100);
+        // Cleanup temp file
+        await fetch('/api/ingest-process', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath }),
+        });
+        queryClient.invalidateQueries({ queryKey: ['status'] });
+        toast({ title: 'ℹ️ Tidak ada import', description: 'Semua week sudah ada di DB.' });
+        return;
+      }
+
+      // ===== PHASE 3: Import each week (separate request per week) =====
+      const importedWeeks: WeekResult[] = [];
+      let totalInserted = 0;
+      const totalWeeksToImport = weeksToImport.length;
+
+      for (let wi = 0; wi < totalWeeksToImport; wi++) {
+        const weekLabel = weeksToImport[wi];
+        const weekRows = rowCountPerWeek[weekLabel] || 0;
+
+        const weekProgress = 60 + ((wi) / totalWeeksToImport) * 40; // 60-100%
+        setProgress(weekProgress);
+
+        setStatusLog(prev => [...prev, `⏳ Import ${weekLabel} (${weekRows.toLocaleString()} rows)...`]);
+
+        try {
+          const importRes = await fetch('/api/ingest-process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'import',
+              fileName,
+              fileHash,
+              fileSize,
+              filePath,
+              weekLabel,
+            }),
+          });
+
+          const importData = await importRes.json();
+          if (!importRes.ok || !importData.success) {
+            throw new Error(importData.error || `HTTP ${importRes.status}`);
+          }
+
+          totalInserted += importData.rowCount || 0;
+          importedWeeks.push({
+            weekLabel,
+            status: 'IMPORTED',
+            rowCount: importData.rowCount || 0,
+            dqErrors: importData.dqErrors || 0,
+            dqWarnings: importData.dqWarnings || 0,
+            durationMs: importData.durationMs || 0,
+          });
+
+          setStatusLog(prev => [...prev, `✅ ${weekLabel}: ${(importData.rowCount || 0).toLocaleString()} rows imported (${((importData.durationMs || 0) / 1000).toFixed(1)}s) | DQ: ${importData.dqErrors || 0}E ${importData.dqWarnings || 0}W`]);
+        } catch (e: any) {
+          importedWeeks.push({
+            weekLabel,
+            status: 'ERROR',
+            rowCount: 0,
+            dqErrors: 1,
+            dqWarnings: 0,
+            durationMs: 0,
+            error: e?.message || 'unknown',
+          });
+          setStatusLog(prev => [...prev, `❌ ${weekLabel}: ERROR — ${e?.message || 'unknown'}`]);
+        }
+      }
+
+      // Cleanup temp file
+      await fetch('/api/ingest-process', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath }),
+      }).catch(() => {});
+
+      const totalDuration = Date.now() - 0; // approximate
       setProgress(100);
 
-      // Build status log
-      const log: string[] = [];
-      log.push(`✅ File: ${r.fileName} (${(r.fileSize / 1024 / 1024).toFixed(1)}MB)`);
-      log.push(`📅 Bulan: ${r.monthLabel}`);
-      log.push(`📊 Week di file: ${r.weeksInFile.join(', ')}`);
+      const r: UploadResult = {
+        fileName,
+        monthLabel,
+        monthKey: detectData.monthKey || '',
+        fileSize,
+        fileHash,
+        weeksInFile,
+        existingWeeks,
+        importedWeeks,
+        totalInserted,
+        totalSkipped: existingWeeks.length,
+        durationMs: 0,
+      };
+      setResult(r);
 
-      if (r.existingWeeks.length > 0) {
-        log.push(`ℹ️ Week sudah ada di DB: ${r.existingWeeks.join(', ')}`);
-      }
+      setStatusLog(prev => [...prev, `✅ Total: ${totalInserted.toLocaleString()} rows inserted`]);
 
-      for (const w of r.importedWeeks) {
-        if (w.status === 'IMPORTED') {
-          log.push(`✅ ${w.weekLabel}: ${w.rowCount.toLocaleString()} rows imported (${(w.durationMs / 1000).toFixed(1)}s) | DQ: ${w.dqErrors}E ${w.dqWarnings}W`);
-        } else if (w.status === 'SKIPPED') {
-          log.push(`⏭️ ${w.weekLabel}: skipped (${w.error || 'no rows'})`);
-        } else {
-          log.push(`❌ ${w.weekLabel}: ERROR — ${w.error || 'unknown'}`);
-        }
-      }
-
-      log.push(`✅ Total: ${r.totalInserted.toLocaleString()} rows inserted in ${(r.durationMs / 1000).toFixed(1)}s`);
-      setStatusLog(log);
-
-      // Invalidate queries to refresh dashboard
       queryClient.invalidateQueries({ queryKey: ['status'] });
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
 
       toast({
         title: '✅ Import berhasil',
-        description: `${r.totalInserted.toLocaleString()} rows dari ${r.fileName}`,
+        description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,
       });
     } catch (e: any) {
       setError(e?.message || 'Upload gagal');
