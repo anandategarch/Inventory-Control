@@ -41,34 +41,61 @@ export async function POST(req: NextRequest) {
 
     let imported = 0;
     const errors: string[] = [];
+    const picRecords: Array<{ outletCode: string; pic: string }> = [];
 
     for (const line of lines) {
       const parts = line.includes(';') ? line.split(';') : line.split(',');
       const outletCode = parts[0]?.trim().replace(/"/g, '');
       const pic = parts[1]?.trim().replace(/"/g, '');
 
-      if (!outletCode || !pic) {
-        // Skip blank cells
-        continue;
-      }
-      // Skip header rows (common in PIC.csv: "RESTO;PIC")
-      if (outletCode.toUpperCase() === 'RESTO' || pic.toUpperCase() === 'PIC') {
-        continue;
-      }
+      if (!outletCode || !pic) continue;
+      if (outletCode.toUpperCase() === 'RESTO' || pic.toUpperCase() === 'PIC') continue;
       if (outletCode.length > 50 || pic.length > 100) {
         errors.push(`${outletCode}: panjang melebihi batas (max 50/100)`);
         continue;
       }
+      picRecords.push({ outletCode, pic });
+    }
 
+    // Batch: delete all existing + create all new (2 queries instead of 339)
+    if (picRecords.length > 0) {
       try {
-        await db.outletPIC.upsert({
-          where: { outletCode },
-          update: { pic },
-          create: { outletCode, pic },
+        // Get existing outletCodes to update (not delete all — only update existing + create new)
+        const existingCodes = picRecords.map(r => r.outletCode);
+        const existingPICs = await db.outletPIC.findMany({
+          where: { outletCode: { in: existingCodes } },
+          select: { outletCode: true },
         });
-        imported++;
+        const existingSet = new Set(existingPICs.map(p => p.outletCode));
+
+        // Split into updates and creates
+        const toUpdate = picRecords.filter(r => existingSet.has(r.outletCode));
+        const toCreate = picRecords.filter(r => !existingSet.has(r.outletCode));
+
+        // Batch create new entries
+        if (toCreate.length > 0) {
+          await db.outletPIC.createMany({
+            data: toCreate,
+            skipDuplicates: true,
+          });
+        }
+
+        // Batch update existing entries (use raw SQL for batch upsert)
+        if (toUpdate.length > 0) {
+          // Prisma doesn't support batch update, use transaction
+          await db.$transaction(
+            toUpdate.map(r =>
+              db.outletPIC.update({
+                where: { outletCode: r.outletCode },
+                data: { pic: r.pic },
+              })
+            )
+          );
+        }
+
+        imported = picRecords.length;
       } catch (e: any) {
-        errors.push(`${outletCode}: ${e?.message || 'gagal upsert'}`);
+        errors.push(`Batch error: ${e?.message || 'gagal batch insert'}`);
       }
     }
 
