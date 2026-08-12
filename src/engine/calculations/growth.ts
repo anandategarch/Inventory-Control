@@ -30,11 +30,16 @@ export function calcAvgPrice(nominal: number | null, qty: number | null): number
   return Math.abs(nominal / qty);
 }
 
-// Standard deviation (population) from list of values
+// Standard deviation (sample, Bessel's correction) from list of values
+// Bug 2 fix: use sample variance (n-1) instead of population variance (n)
+// Historical data is a sample of ongoing business process, not full population.
+// Population variance understates stdDev → inflates zScore → false positives.
 export function calcStdDev(values: number[]): { mean: number; stdDev: number; n: number } | null {
   if (values.length === 0) return null;
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
+  // Sample variance: divide by (n-1), not n. For n=1, use 0 (no variance).
+  const denom = values.length > 1 ? values.length - 1 : 1;
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / denom;
   const stdDev = Math.sqrt(variance);
   return { mean, stdDev, n: values.length };
 }

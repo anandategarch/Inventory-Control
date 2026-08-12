@@ -330,8 +330,10 @@ export function evaluateRules(ctx: RuleContext): AnomalyFlagResult[] {
           narrative: renderTemplate(rule.narrativeTemplate, evidence),
         });
       }
-    } catch {
-      // swallow per-rule errors to keep engine running
+    } catch (e) {
+      // Bug 6 fix: log per-rule errors instead of silent swallow
+      // Silent failures hide bugs in rule engine (type errors, null refs)
+      console.error(`[rule-engine] Rule "${rule.code}" failed:`, e instanceof Error ? e.message : String(e));
     }
   }
 

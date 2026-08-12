@@ -128,7 +128,10 @@ function parseTolerance(raw: unknown): { value: number | null; rawStr: string | 
   if (raw === null || raw === undefined || raw === '') return { value: null, rawStr: null };
   if (typeof raw === 'number') return { value: raw, rawStr: String(raw) };
   const s = String(raw).trim();
-  if (s.toUpperCase().includes(CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase())) {
+  // Bug 7 fix: use exact match (===) not includes() to avoid false positives
+  // "5% BELUM ADA TOLERANSI" should parse 5% as tolerance, not return null
+  // Only treat as "not set" if the ENTIRE string is the sentinel text
+  if (s.toUpperCase() === CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase()) {
     return { value: null, rawStr: s };
   }
   // Use robust toNum (handles "5%", "5,5", "5.5", etc.)

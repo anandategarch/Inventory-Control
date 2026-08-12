@@ -124,7 +124,10 @@ export async function parseExcelFile(filePath: string): Promise<ParsedWorkbook> 
     if (ws.state !== 'visible') continue;
     const headerRow = ws.getRow(1);
     const headers: { raw: string; canonical: string; index: number }[] = [];
-    for (let c = 1; c <= ws.columnCount; c++) {
+    // Bug 9 fix: cap column loop to prevent performance issues with merged cells
+    // ExcelJS may report columnCount = 16384 (max Excel) for some files
+    const maxCols = Math.min(ws.columnCount || 0, 100); // 100 cols is generous for inventory data
+    for (let c = 1; c <= maxCols; c++) {
       const cell = headerRow.getCell(c);
       const raw = String(cellToValue(cell) ?? '').trim();
       if (!raw) continue;
