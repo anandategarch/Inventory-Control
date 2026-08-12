@@ -34,11 +34,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
 
-    // Build area filter
-    const areaFilter = area && area !== 'all' ? `AND ir.area = '${area.replace(/'/g, "''")}'` : '';
+    // Build area filter using parameterized query (not string interpolation)
+    const areaCondition = area && area !== 'all'
+      ? Prisma.sql`AND ir.area = ${area}`
+      : Prisma.empty;
 
     // Get all outlet+item combos with deviation for this period
-    // Use raw SQL for performance — join Outlet, Item, InventoryRecord
     const rows = await db.$queryRaw<Array<{
       outletCode: string; outletName: string; area: string;
       itemName: string; satuan: string | null;
@@ -49,7 +50,6 @@ export async function GET(req: NextRequest) {
       qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
       residualRatio: number | null;
       tolerancePct: number | null;
-      isOverExplained: boolean | null;
     }>>`
       SELECT
         o.code as "outletCode", o.name as "outletName", ir.area,
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
         AND ir."weekLabel" = ${week}
         AND ir."absNominalLossSurplus" IS NOT NULL
         AND ir."absNominalLossSurplus" > 0
-        ${area ? Prisma.raw(areaFilter) : Prisma.empty}
+        ${areaCondition}
       ORDER BY ir."absNominalLossSurplus" DESC
       LIMIT ${limit * 3}
     `;

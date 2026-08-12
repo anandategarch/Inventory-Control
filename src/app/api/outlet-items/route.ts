@@ -285,11 +285,17 @@ export async function GET(req: NextRequest) {
         healthScore: (() => {
           const total = normalCount + warningCount + abnormalCount;
           if (total === 0) return 100;
+          const clamp = (n: number) => Math.max(0, Math.min(100, n));
           const abnormalRate = abnormalCount / (warningCount + abnormalCount || 1);
           const devBom = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;
-          const devBomScore = Math.max(0, Math.min(100, 100 - (devBom / 0.50) * 100));
-          const abnormalScore = Math.max(0, Math.min(100, 100 - (abnormalRate / 0.50) * 100));
-          return Math.round(devBomScore * 0.50 + abnormalScore * 0.50);
+          const residualPct = totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null;
+          const lossToSales = bestSales > 0 ? totalLossNominal / bestSales : null;
+          // Bug fix: use full formula 30/25/25/20 (was 50/50)
+          const devBomScore = clamp(100 - (devBom / 0.50) * 100);
+          const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
+          const lossToSalesScore = lossToSales != null ? clamp(100 - ((lossToSales - 0.02) / 0.13) * 100) : 50;
+          const abnormalScore = clamp(100 - (abnormalRate / 0.50) * 100);
+          return Math.round(devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20);
         })(),
       },
     };
@@ -401,6 +407,7 @@ export async function GET(req: NextRequest) {
       period: { month, week, prevWeek, prevMonth },
       restoProfile,
       rankings,
+      allItems: itemBreakdown, // Bug fix: return ALL items for MenuAnalysis (not just top 20)
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
     });

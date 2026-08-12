@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
       WHERE o.code = ${outletCode}
         AND i.name = ${itemName}
-      ORDER BY sf."monthKey" ASC, ir."weekLabel" ASC
+      ORDER BY COALESCE(sf."monthKey", '0000-00') ASC, ir."weekLabel" ASC
     `;
 
     if (allRecs.length === 0) {

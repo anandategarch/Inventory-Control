@@ -266,10 +266,14 @@ export function RestoAnalysis() {
       </div>
 
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
-      <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+      {focusOutlet && (
+        <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+      )}
 
       {/* Resto × Bahan Matrix — Phase 4 */}
-      <RestoBahanMatrix outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+      {focusOutlet && (
+        <RestoBahanMatrix outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+      )}
 
       {/* Bahan Analysis — 3 Rankings */}
       <Card>
@@ -539,15 +543,13 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem }: {
     stdDev: number; threshold: number; outlierCount: number;
     items: Array<any>;
   }>>(() => {
-    if (!outletData?.rankings?.financial) return [];
-    // Collect all unique items from all 3 rankings
+    if (!outletData?.allItems && !outletData?.rankings?.financial) return [];
+    // Bug fix: use allItems (complete list) instead of rankings (only top 20)
+    const allItemsArray = outletData.allItems || [];
+    if (allItemsArray.length === 0) return [];
     const allItems = new Map<string, any>();
-    for (const ranking of Object.values(outletData.rankings)) {
-      for (const item of ranking as any[]) {
-        if (!allItems.has(item.itemName)) {
-          allItems.set(item.itemName, item);
-        }
-      }
+    for (const item of allItemsArray) {
+      allItems.set(item.itemName, item);
     }
 
     // Group by first word (menu name)
