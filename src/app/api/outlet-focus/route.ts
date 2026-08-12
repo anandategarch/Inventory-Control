@@ -285,8 +285,8 @@ export async function GET(req: NextRequest) {
           SELECT ir."monthLabel", ir."weekLabel",
             COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
             COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
-            COALESCE(SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END), 0) as "lossNominal",
-            COALESCE(SUM(CASE WHEN ir."nominalDeviasi" < 0 THEN ABS(ir."nominalDeviasi") ELSE 0 END), 0) as "surplusNominal",
+            COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
+            COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal",
             COUNT(*) FILTER (WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
               AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05))::int as "abnormalCount",
             MODE() WITHIN GROUP (ORDER BY CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
@@ -315,7 +315,7 @@ export async function GET(req: NextRequest) {
         SELECT
           COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
           CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
-            THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
+            THEN SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END)
               / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
             ELSE NULL END as "lossToSales"
         FROM "InventoryRecord" ir
@@ -409,7 +409,7 @@ export async function GET(req: NextRequest) {
         SELECT
           COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
           CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
-            THEN SUM(CASE WHEN ir."nominalDeviasi" > 0 THEN ir."nominalDeviasi" ELSE 0 END)
+            THEN SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END)
               / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
             ELSE NULL END as "lossToSales"
         FROM "InventoryRecord" ir

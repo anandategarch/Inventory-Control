@@ -478,8 +478,8 @@ export async function queryLossVsSurplus(
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
     SELECT
-      COUNT(*) FILTER (WHERE ir."nominalDeviasi" > 0)::int as loss,
-      COUNT(*) FILTER (WHERE ir."nominalDeviasi" < 0)::int as surplus,
+      COUNT(*) FILTER (WHERE ir."nominalLossSurplus" > 0)::int as loss,
+      COUNT(*) FILTER (WHERE ir."nominalLossSurplus" < 0)::int as surplus,
       COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
       COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
     FROM "InventoryRecord" ir
