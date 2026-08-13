@@ -182,7 +182,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       }
 
       const fileSize = uploadResult.fileSize;
-      const fileName = uploadResult.fileName;
+      // FIX: Always prefer the original file.name from the user's selected file,
+      // not the server-returned fileName (which may be "Loading…" from Google Sheets).
+      // The server echoes back what we sent in formData, but if upload happened
+      // via Google Drive import, the file.name could be the Google placeholder.
+      // The user sees file.name in the UI, so it should match what they selected.
+      const fileName = file.name;
       const ext = uploadResult.ext || '.' + fileName.split('.').pop()?.toLowerCase();
 
       // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====

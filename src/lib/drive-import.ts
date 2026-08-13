@@ -293,26 +293,70 @@ export async function downloadGoogleSheetsAsCsv(
 
 // ============================================================
 //  Fetch Google Sheets metadata (title) for filename
+//  FIX: Google Sheets initial HTML may have <title>Loading…</title>
+//  as placeholder before JS loads the real title. We skip placeholder
+//  titles and prefer og:title / aria-label / docs-name fallbacks.
 // ============================================================
 async function getSheetsTitle(sheetId: string): Promise<string | null> {
   try {
     const res = await fetch(`https://docs.google.com/spreadsheets/d/${sheetId}/edit`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
       redirect: 'follow',
     });
     if (!res.ok) return null;
     const html = await res.text();
-    // Title format: "Sheet Name - Google Sheets"
-    const titleMatch = html.match(/<title>([^<]+)<\/title>/);
-    if (titleMatch) {
-      const rawTitle = titleMatch[1].replace(/\s*-\s*Google Sheets\s*$/i, '').trim();
-      if (rawTitle) return rawTitle;
+
+    // FIX: list of placeholder titles Google uses during loading.
+    // These should NOT be used as the real filename.
+    const PLACEHOLDER_TITLES = [
+      'loading',
+      'loading…',
+      'loading...',
+      'google sheets',
+      'google 試算表',
+      'google spreadsheets',
+      'untitled spreadsheet',
+      '',
+    ];
+    const isPlaceholder = (t: string | null | undefined): boolean => {
+      if (!t) return true;
+      const lower = t.trim().toLowerCase();
+      return PLACEHOLDER_TITLES.includes(lower);
+    };
+
+    // Strategy 1: og:title meta tag (most reliable — populated server-side)
+    const ogMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
+    if (ogMatch && !isPlaceholder(ogMatch[1])) {
+      return ogMatch[1].trim();
     }
-    // Fallback: og:title meta tag
-    const ogMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
-    if (ogMatch) return ogMatch[1];
+
+    // Strategy 2: <title> tag — strip " - Google Sheets" / " - Google 試算表" suffix
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+    if (titleMatch) {
+      const rawTitle = titleMatch[1]
+        .replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheets)\s*$/i, '')
+        .replace(/\s*-\s*Google\s*$/i, '')
+        .trim();
+      if (!isPlaceholder(rawTitle)) return rawTitle;
+    }
+
+    // Strategy 3: docs-name (aria-label on the title input) — populated after JS render
+    // Format: <input ... id="docs-title" ... aria-label="Sheet Name" ...>
+    const ariaMatch = html.match(/id="docs-title-input"[^>]*aria-label="([^"]+)"/i)
+      || html.match(/id="docs-title"[^>]*value="([^"]+)"/i)
+      || html.match(/docs-name="([^"]+)"/i);
+    if (ariaMatch && !isPlaceholder(ariaMatch[1])) {
+      return ariaMatch[1].trim();
+    }
+
+    // Strategy 4: og:description often contains the sheet title
+    const descMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
+    if (descMatch && !isPlaceholder(descMatch[1])) {
+      return descMatch[1].trim();
+    }
+
+    return null;
   } catch (e) {
-    // Bug 6 fix: log error instead of silent swallow
     console.error('[drive-import] getSheetsTitle failed:', e instanceof Error ? e.message : String(e));
   }
   return null;

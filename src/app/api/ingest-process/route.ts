@@ -65,13 +65,34 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { mode, fileName, fileHash, fileSize, ext } = body;
+    const { mode, fileName: rawFileName, fileHash, fileSize, ext } = body;
 
-    if (!mode || !fileName || !fileHash) {
+    if (!mode || !rawFileName || !fileHash) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields: mode, fileName, fileHash' },
         { status: 400 }
       );
+    }
+
+    // FIX: Sanitize fileName — if it's a Google Sheets placeholder like "Loading…",
+    // replace with a better name. Also strip " - Google Sheets" suffix.
+    const PLACEHOLDER_FILENAMES = [
+      'loading', 'loading…', 'loading...',
+      'google sheets', 'google 試算表', 'google spreadsheets',
+      'untitled spreadsheet',
+    ];
+    let fileName = rawFileName;
+    // Strip Google Sheets suffixes
+    fileName = fileName.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
+    // Check if remaining name is a placeholder
+    const baseName = fileName.replace(/\.(xlsx|csv)$/i, '').trim();
+    if (PLACEHOLDER_FILENAMES.includes(baseName.toLowerCase())) {
+      // Use monthLabel from filename parse as fallback, else keep original
+      const fallbackMonth = parseMonthFromFilename(rawFileName);
+      fileName = fallbackMonth
+        ? `${fallbackMonth.monthLabel}.xlsx`
+        : `spreadsheet_${fileHash.slice(0, 8)}.xlsx`;
+      console.log(`[ingest-process] fileName was placeholder "${rawFileName}", using "${fileName}" instead`);
     }
 
     // Validate filename format
