@@ -137,7 +137,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-1.5">
             <TrendingDown className="h-4 w-4 text-red-600" />
-            Analisis Pareto (ABC)
+            Analisis Pareto (ABC) — per Item+Outlet
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -161,7 +161,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-1.5">
           <TrendingDown className="h-4 w-4 text-red-600" />
-          Analisis Pareto (ABC)
+          Analisis Pareto (ABC) — per Item+Outlet
           <FormulaInfo
             formula="Class A: cumulative ≤ 70% | Class B: 70-90% | Class C: > 90%"
             description={'UNTUK APA: Mengidentifikasi vital few items yang menyumbang sebagian besar dampak biaya (prinsip 80/20).\nCARA BACA: Class A = 70% pertama cumulative biaya. Class B = 70-90%. Class C = > 90%.\nCONTOH: 15 item Class A (20% items) = 70% total biaya.\nACTION: Fokus investigasi pada Class A dulu → dampak terbesar dengan effort terkecil.'}

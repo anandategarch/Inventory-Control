@@ -43,13 +43,12 @@ function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
   // Pick MODE (most frequent) per outlet
   const result = new Map<number, number>();
   for (const [outletId, counts] of byOutlet) {
-    let bestVal = 0;
+    let bestVal = Infinity; // BUG-07 fix: start with Infinity so first entry always wins
     let bestCount = 0;
     for (const [val, count] of counts) {
-      // Bug 6 fix: on tie (same count), pick the HIGHER value to match
-      // SQL's ORDER BY cnt DESC, nominalSales DESC. Previously non-deterministic
-      // (first-inserted won), causing inconsistency between JS and SQL paths.
-      if (count > bestCount || (count === bestCount && val > bestVal)) {
+      // BUG-07 fix: match SQL ORDER BY cnt DESC, nominalSales ASC
+      // SQL picks SMALLER value on tie. JS must match.
+      if (count > bestCount || (count === bestCount && val < bestVal)) {
         bestVal = val;
         bestCount = count;
       }

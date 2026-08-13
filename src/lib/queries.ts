@@ -366,7 +366,9 @@ export async function queryTopOutlets(
     )
     SELECT o.code as "outletCode", o.name as "outletName", oa."absNominal",
       COALESCE(oa."devBom", 0) as "devBom",
-      CASE WHEN oa."lossAmount" > oa."surplusAmount" THEN 'LOSS' ELSE 'SURPLUS' END as direction,
+      CASE WHEN oa."lossAmount" > oa."surplusAmount" THEN 'LOSS'
+           WHEN oa."surplusAmount" > oa."lossAmount" THEN 'SURPLUS'
+           ELSE 'NEUTRAL' END as direction,
       COALESCE(sm.sales, 0) as sales,
       COALESCE(oa."lossAmount", 0) as "lossAmount",
       COALESCE(oa."surplusAmount", 0) as "surplusAmount",

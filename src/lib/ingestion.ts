@@ -152,11 +152,13 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
           });
           continue;
         }
-        // Clean up stale stub
-        await db.dQIssue.deleteMany({ where: { sourceFileId: existing.id } });
-        await db.inventoryRecord.deleteMany({ where: { sourceFileId: existing.id } });
-        await db.week.deleteMany({ where: { sourceFileId: existing.id } });
-        await db.sourceFile.delete({ where: { id: existing.id } });
+        // BUG-03 fix: clean up stale stub in transaction
+        await db.$transaction([
+          db.dQIssue.deleteMany({ where: { sourceFileId: existing.id } }),
+          db.inventoryRecord.deleteMany({ where: { sourceFileId: existing.id } }),
+          db.week.deleteMany({ where: { sourceFileId: existing.id } }),
+          db.sourceFile.delete({ where: { id: existing.id } }),
+        ]);
       }
 
       // STEP 1: Parse Excel directly (skip CSV conversion — 30% faster)
@@ -178,18 +180,20 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       const monthLabel = monthInfo?.monthLabel || fileName.replace(/\.(xlsx|csv)$/i, '');
       const monthKey = monthInfo?.monthKey || 'unknown';
 
-      // Dedup by period (monthLabel)
+      // BUG-03/11 fix: wrap dedup deletes in transaction for atomicity
       const existingPeriodFiles = await db.sourceFile.findMany({
         where: { monthLabel },
         select: { id: true, fileName: true },
       });
       if (existingPeriodFiles.length > 0) {
-        for (const oldFile of existingPeriodFiles) {
-          await db.dQIssue.deleteMany({ where: { sourceFileId: oldFile.id } });
-          await db.inventoryRecord.deleteMany({ where: { sourceFileId: oldFile.id } });
-          await db.week.deleteMany({ where: { sourceFileId: oldFile.id } });
-          await db.sourceFile.delete({ where: { id: oldFile.id } });
-        }
+        await db.$transaction(
+          existingPeriodFiles.flatMap(oldFile => [
+            db.dQIssue.deleteMany({ where: { sourceFileId: oldFile.id } }),
+            db.inventoryRecord.deleteMany({ where: { sourceFileId: oldFile.id } }),
+            db.week.deleteMany({ where: { sourceFileId: oldFile.id } }),
+            db.sourceFile.delete({ where: { id: oldFile.id } }),
+          ])
+        );
       }
 
       // STEP 2: Create SourceFile record
@@ -301,16 +305,17 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
 
         // Batch insert
         if (batchRecords.length >= BATCH_SIZE) {
-          await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-          totalInserted += batchRecords.length;
+          // BUG-06 fix: createMany returns { count: N } — use actual count, not batch length
+          const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+          totalInserted += result.count;
           batchRecords = [];
         }
       }
 
       // Insert remaining records
       if (batchRecords.length > 0) {
-        await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-        totalInserted += batchRecords.length;
+        const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+        totalInserted += result2.count;
       }
 
       // STEP 4: Update source file record
