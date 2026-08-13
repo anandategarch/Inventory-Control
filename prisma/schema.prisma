@@ -285,11 +285,12 @@ model OutletPIC {
 //  Auto-cleaned after processing (DELETE WHERE fileHash).
 // ------------------------------------------------------------
 model FileChunk {
-  id         Int      @id @default(autoincrement())
-  fileHash   String
-  chunkIndex Int
-  data       Bytes
-  createdAt  DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  fileHash     String
+  chunkIndex   Int
+  totalChunks  Int      @default(0) // P2-11 fix: track total for validation
+  data         Bytes
+  createdAt    DateTime @default(now())
 
   @@unique([fileHash, chunkIndex])
   @@index([fileHash])

@@ -136,7 +136,8 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       const ext = path.extname(filePath).toLowerCase();
       const fileName = path.basename(filePath);
 
-      const fileHash = await hashFile(filePath);
+      // P1-4 fix: skip hashFile if already provided (avoid double-read)
+      const fileHash = body.precomputedHash || await hashFile(filePath);
 
       // Check if already ingested (by hash)
       const existing = await db.sourceFile.findUnique({

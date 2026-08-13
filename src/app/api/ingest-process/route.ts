@@ -24,11 +24,17 @@ async function reassembleFile(fileHash: string, ext: string): Promise<string> {
   const chunks = await db.fileChunk.findMany({
     where: { fileHash },
     orderBy: { chunkIndex: 'asc' },
-    select: { chunkIndex: true, data: true },
+    select: { chunkIndex: true, data: true, totalChunks: true },
   });
 
   if (chunks.length === 0) {
     throw new Error('No chunks found in DB. Upload ulang file.');
+  }
+
+  // P2-11 fix: validate chunk count matches expected total
+  const expectedTotal = chunks[0]?.totalChunks || 0;
+  if (expectedTotal > 0 && chunks.length !== expectedTotal) {
+    throw new Error(`Chunk count mismatch: expected ${expectedTotal}, got ${chunks.length}. Upload corrupt atau tidak lengkap.`);
   }
 
   // Concatenate chunks
@@ -325,15 +331,15 @@ export async function POST(req: NextRequest) {
         }
 
         if (batchRecords.length >= BATCH_SIZE) {
-          await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-          inserted += batchRecords.length;
+          const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+          inserted += result.count; // P1-3 fix: use actual count, not batch length
           batchRecords = [];
         }
       }
 
       if (batchRecords.length > 0) {
-        await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-        inserted += batchRecords.length;
+        const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+        inserted += result2.count; // P1-3 fix: use actual count
       }
 
       // Update source file
@@ -398,6 +404,12 @@ export async function POST(req: NextRequest) {
 // Cleanup — delete chunks from DB after all weeks processed
 export async function DELETE(req: NextRequest) {
   try {
+    // P2-12 fix: rate limit DELETE to prevent abuse
+    const ip = getClientIP(req);
+    const rl = rateLimit(`ingest-process-delete:${ip}`, 10, 60_000); // 10 per min
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit.' }, { status: 429 });
+    }
     const body = await req.json();
     const { fileHash } = body;
     if (fileHash) {

@@ -65,10 +65,12 @@ export async function POST(req: NextRequest) {
       },
       update: {
         data: chunkBuffer,
+        totalChunks, // P2-11 fix: store totalChunks for validation
       },
       create: {
         fileHash,
         chunkIndex,
+        totalChunks,
         data: chunkBuffer,
       },
     });
