@@ -142,6 +142,9 @@ model InventoryRecord {
   @@index([area, weekId])
   @@index([monthLabel, weekLabel])
   @@index([direction])
+  @@index([outletId, itemId])
+  @@index([area, monthLabel, weekLabel])
+  @@index([monthLabel, weekLabel, outletId])
 }
 
 // ------------------------------------------------------------

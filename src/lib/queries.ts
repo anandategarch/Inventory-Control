@@ -647,18 +647,17 @@ export async function queryPareto(
     classACountFull: number; classAPctFull: number;
   }[]>`
     WITH item_totals AS (
-      SELECT i.name as "itemName", o.code as "outletCode",
+      SELECT i.name as "itemName",
         SUM(ir."absNominalLossSurplus") as "absNominal"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
         ${f}
-      GROUP BY i.name, o.code
+      GROUP BY i.name
     ),
     ranked AS (
-      SELECT "itemName", "outletCode", "absNominal",
+      SELECT "itemName", "absNominal",
         ROW_NUMBER() OVER (ORDER BY "absNominal" DESC)::int as rank,
         SUM("absNominal") OVER (ORDER BY "absNominal" DESC) as cumulative,
         SUM("absNominal") OVER () as grand_total,
@@ -672,7 +671,7 @@ export async function queryPareto(
       FROM ranked
       WHERE cumulative / NULLIF(grand_total, 0) <= 0.70
     )
-    SELECT r.rank, r."itemName", r."outletCode", r."absNominal", r.cumulative,
+    SELECT r.rank, r."itemName", NULL::text as "outletCode", r."absNominal", r.cumulative,
       (r.cumulative / NULLIF(r.grand_total, 0)) * 100 as "cumulativePct",
       CASE
         WHEN (r.cumulative / NULLIF(r.grand_total, 0)) * 100 <= 70 THEN 'A'
@@ -795,6 +794,12 @@ export async function queryHistoricalStats(
   const periodPairs = historicalPeriods.map(p => `${p.monthLabel}|${p.weekLabel}`);
   const f = buildSqlFilters(filters);
 
+  // P0-3 fix: use OR conditions instead of string concat for index usage
+  const periodConditions = historicalPeriods.map((p, i) =>
+    Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`
+  );
+  const periodFilter = Prisma.join(periodConditions, ' OR ');
+
   const rows = await db.$queryRaw<{
     outletId: number; itemId: number; mean: number; stdDev: number; n: number;
   }[]>`
@@ -803,7 +808,7 @@ export async function queryHistoricalStats(
       COALESCE(STDDEV_POP(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
       COUNT(*)::int as n
     FROM "InventoryRecord" ir
-    WHERE (ir."monthLabel" || '|' || ir."weekLabel") IN (${Prisma.join(periodPairs)})
+    WHERE (${periodFilter})
       AND ir."pctQtyDeviasiToBom" IS NOT NULL
       AND ir."qtyBom" != 0
       ${f}

@@ -393,7 +393,7 @@ export async function GET(req: NextRequest) {
             FROM "InventoryRecord" ir
             JOIN "Outlet" o ON ir."outletId" = o.id
             WHERE o.code = ${outletCode}
-              AND (ir."monthLabel" || '|' || ir."weekLabel") IN (${Prisma.join(periodPairs)})
+              AND (${Prisma.join(historicalPeriods.map(p => Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`), ' OR ')})
               AND ir."pctQtyDeviasiToBom" IS NOT NULL
               AND ir."qtyBom" != 0
             GROUP BY ir."itemId"
