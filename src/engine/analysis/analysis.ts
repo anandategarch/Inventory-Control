@@ -158,7 +158,9 @@ export function buildRuleContext(
   const priceGrowth = calcGrowth(currPrice, prevPrice);
 
   // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
-  const zScore = historicalStats && historicalStats.stdDev > 0
+  // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
+  // LOGIC-03 fix: enforce HISTORICAL_MIN_WEEKS — skip zScore if sample size too small
+  const zScore = historicalStats && historicalStats.stdDev > 0 && historicalStats.n >= (t.HISTORICAL_MIN_WEEKS ?? 4)
     ? calcZScore(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
     : null;
 

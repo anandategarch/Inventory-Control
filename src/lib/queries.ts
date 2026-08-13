@@ -804,8 +804,8 @@ export async function queryHistoricalStats(
     outletId: number; itemId: number; mean: number; stdDev: number; n: number;
   }[]>`
     SELECT ir."outletId", ir."itemId",
-      AVG(ir."pctQtyDeviasiToBom") as mean,
-      COALESCE(STDDEV_SAMP(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
+      AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
+      COALESCE(STDDEV_SAMP(ABS(ir."pctQtyDeviasiToBom")), 0) as "stdDev",
       COUNT(*)::int as n
     FROM "InventoryRecord" ir
     WHERE (${periodFilter})

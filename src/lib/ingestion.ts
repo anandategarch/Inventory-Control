@@ -268,10 +268,19 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
 
         // Outlet: check cache, create if missing (lazy — only on first encounter)
         if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
-          const created = await db.outlet.create({
-            data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
-          });
-          outletDbMap.set(derived.outletCode, created.id);
+          const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true, area: true } });
+          if (existingOutlet) {
+            outletDbMap.set(derived.outletCode, existingOutlet.id);
+            // LOGIC-12 fix: update area if changed (outlet moved to different area)
+            if (existingOutlet.area !== n.area && n.area) {
+              await db.outlet.update({ where: { id: existingOutlet.id }, data: { area: n.area, name: derived.outletName } });
+            }
+          } else {
+            const created = await db.outlet.create({
+              data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
+            });
+            outletDbMap.set(derived.outletCode, created.id);
+          }
         }
 
         // Item: check cache, create if missing (lazy)

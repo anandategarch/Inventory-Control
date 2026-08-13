@@ -44,10 +44,12 @@ export function calcStdDev(values: number[]): { mean: number; stdDev: number; n:
   return { mean, stdDev, n: values.length };
 }
 
-// Z-score
+// Z-score — LOGIC-04 fix: use absolute magnitude, not signed value
+// Deviation direction (LOSS/SURPLUS) is handled separately; zScore measures
+// how far the magnitude deviates from historical magnitude average.
 export function calcZScore(value: number | null, mean: number, stdDev: number): number | null {
   if (value == null || stdDev === 0) return null;
-  return (value - mean) / stdDev;
+  return (Math.abs(value) - mean) / stdDev;
 }
 
 import type { GrowthMetrics, HistoricalStats } from '@/types/inventory';

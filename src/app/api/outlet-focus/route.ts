@@ -387,8 +387,8 @@ export async function GET(req: NextRequest) {
       historicalPeriods.length > 0
         ? db.$queryRaw<Array<{ itemId: number; mean: number; stdDev: number; n: number }>>`
             SELECT ir."itemId",
-              AVG(ir."pctQtyDeviasiToBom") as mean,
-              COALESCE(STDDEV_SAMP(ir."pctQtyDeviasiToBom"), 0) as "stdDev",
+              AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
+              COALESCE(STDDEV_SAMP(ABS(ir."pctQtyDeviasiToBom")), 0) as "stdDev",
               COUNT(*)::int as n
             FROM "InventoryRecord" ir
             JOIN "Outlet" o ON ir."outletId" = o.id
