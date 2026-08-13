@@ -12,7 +12,8 @@ import type {
 import { CFG_THRESHOLDS } from '@/config/thresholds';
 import type { RuntimeThresholds } from '@/lib/settings';
 import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
-import { calcGrowth, calcGrowthAbs, calcZScore, safeRatio, calcAvgPrice } from '@/engine/calculations/growth';
+import { calcGrowth, calcGrowthAbs, safeRatio, calcAvgPrice, computeHealthScore, computeDevBomAggregate, computeResidualPctAggregate, computeLossToSales, type AggregateInput } from '@/lib/metrics';
+import { calcZScore } from '@/engine/calculations/growth';
 
 type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 
@@ -863,6 +864,11 @@ export function computeOutletHealthRanking(
   // Now consistent with dedupSalesByOutlet used elsewhere (Bug 6 fix).
   const salesByOutletMode = dedupSalesByOutlet(recsWithFlags.map((r) => r.curr));
 
+  // Phase 4: Accumulate AGGREGATE sums (SUM/SUM) for Metric Engine — NOT simple-average
+  // of per-row ratios. This aligns the dashboard health ranking with the Metric Engine
+  // single source of truth (computeHealthScore + computeDevBomAggregate).
+  // Previously: devBom = avg(|pctQtyDeviasiToBom|) (simple avg, unweighted)
+  // Now: devBom = SUM(|qtyDeviasi|) / SUM(|qtyBom|) (aggregate, volume-weighted)
   const byOutlet = new Map<number, {
     outlet: Outlet;
     area: string;
@@ -870,11 +876,13 @@ export function computeOutletHealthRanking(
     warning: number;
     abnormal: number;
     absNominal: number;
-    devBomSum: number;
-    devBomCount: number;
-    residualSum: number;
-    residualCount: number;
-    lossNominal: number;
+    totalQtyDeviasi: number;   // SUM(ABS(qtyDeviasi))
+    totalQtyBom: number;       // SUM(ABS(qtyBom))
+    totalQtyWaste: number;     // SUM(ABS(qtyWaste))
+    totalQtySusut: number;     // SUM(ABS(qtySusut))
+    totalQtyTrial: number;     // SUM(ABS(qtyTrial))
+    totalResidualQty: number;  // SUM(ABS(residualQty))
+    lossNominal: number;       // SUM(nominalLossSurplus WHERE > 0)
     sales: number;
   }>();
 
@@ -888,10 +896,12 @@ export function computeOutletHealthRanking(
         warning: 0,
         abnormal: 0,
         absNominal: 0,
-        devBomSum: 0,
-        devBomCount: 0,
-        residualSum: 0,
-        residualCount: 0,
+        totalQtyDeviasi: 0,
+        totalQtyBom: 0,
+        totalQtyWaste: 0,
+        totalQtySusut: 0,
+        totalQtyTrial: 0,
+        totalResidualQty: 0,
         lossNominal: 0,
         sales: 0,
       };
@@ -903,14 +913,13 @@ export function computeOutletHealthRanking(
   for (const { curr, flags } of recsWithFlags) {
     const e = ensure(curr);
     e.absNominal += curr.absNominalDeviasi ?? 0;
-    if (curr.pctQtyDeviasiToBom != null && curr.qtyBom !== 0) {
-      e.devBomSum += Math.abs(curr.pctQtyDeviasiToBom);
-      e.devBomCount++;
-    }
-    if (curr.residualRatio != null) {
-      e.residualSum += Math.abs(curr.residualRatio);
-      e.residualCount++;
-    }
+    // Phase 4: accumulate aggregate sums for Metric Engine
+    e.totalQtyDeviasi += Math.abs(curr.qtyDeviasi ?? 0);
+    e.totalQtyBom += Math.abs(curr.qtyBom ?? 0);
+    e.totalQtyWaste += Math.abs(curr.qtyWaste ?? 0);
+    e.totalQtySusut += Math.abs(curr.qtySusut ?? 0);
+    e.totalQtyTrial += Math.abs(curr.qtyTrial ?? 0);
+    e.totalResidualQty += Math.abs(curr.residualQty ?? 0);
     // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
     if (curr.nominalLossSurplus != null && curr.nominalLossSurplus > 0) {
       e.lossNominal += curr.nominalLossSurplus;
@@ -941,34 +950,26 @@ export function computeOutletHealthRanking(
 
   return [...byOutlet.values()]
     .map((v) => {
-      const total = v.normal + v.warning + v.abnormal;
-      const residualPct = v.residualCount > 0 ? v.residualSum / v.residualCount : null;
-      const lossToSales = v.sales > 0 ? v.lossNominal / v.sales : null;
-      const devBom = v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0;
+      // Phase 4: Use Metric Engine for all aggregate metrics (single source of truth)
+      const aggregateInput: AggregateInput = {
+        totalQtyDeviasi: v.totalQtyDeviasi,
+        totalQtyBom: v.totalQtyBom,
+        totalQtyWaste: v.totalQtyWaste,
+        totalQtySusut: v.totalQtySusut,
+        totalQtyTrial: v.totalQtyTrial,
+        totalResidualQty: v.totalResidualQty,
+        totalLossNominal: v.lossNominal,
+        totalSales: v.sales,
+        normalCount: v.normal,
+        warningCount: v.warning,
+        abnormalCount: v.abnormal,
+      };
 
-      // ============================================================
-      //  Health Score — composite weighted (Section 33 of master context)
-      //  Skor = 30% % DEV TO BOM + 25% RESIDUAL + 25% LOSS/PENJUALAN + 20% Jumlah Masalah
-      //  Each metric normalized to 0-100 (100 = healthy, 0 = critical)
-      // ============================================================
-      const clamp = (n: number) => Math.max(0, Math.min(100, n));
-      // Dev/BOM: <5% → 100, >50% → 0 (linear)
-      const devBomScore = clamp(100 - (devBom / 0.50) * 100);
-      // Residual: <20% → 100, >80% → 0 (linear)
-      const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
-      // Loss/Sales: <2% → 100, >15% → 0 (linear)
-      const lossToSalesScore = lossToSales != null ? clamp(100 - ((lossToSales - 0.02) / 0.13) * 100) : 50;
-      // Bug 3 fix: abnormalRate should be abnormal / (warning + abnormal), NOT
-      // abnormal / total. Previously, zero-deviation items inflated `normal`
-      // (added at line 902), making large outlets appear healthy despite having
-      // many anomalies. Now we normalize by items WITH actual deviations only.
-      const activeItems = v.warning + v.abnormal;
-      const abnormalRate = activeItems > 0 ? v.abnormal / activeItems : 0;
-      const abnormalScore = clamp(100 - (abnormalRate / 0.50) * 100);
-
-      const healthScore = Math.round(
-        devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20
-      );
+      // Metric Engine: aggregate Dev/BOM (SUM/SUM), Residual%, Loss/Sales, HealthScore
+      const devBom = computeDevBomAggregate(aggregateInput);
+      const residualPct = computeResidualPctAggregate(aggregateInput);
+      const lossToSales = computeLossToSales(aggregateInput);
+      const healthScore = computeHealthScore(aggregateInput);
 
       return {
         outletCode: v.outlet.code,

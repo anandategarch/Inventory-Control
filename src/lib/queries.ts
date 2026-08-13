@@ -1,7 +1,7 @@
 // ============================================================
 //  SQL Aggregate Queries — Phase 1b/2/4 egress optimization
-//  All aggregation done in PostgreSQL, only minimal rows returned
-//  Business logic preserved: Sales=MODE per outlet, DevBom=AVG(ABS), etc.
+//  All aggregation done in SQL (PostgreSQL + SQLite portable), only minimal rows returned
+//  Business logic preserved: Sales=MODE per outlet, DevBom=SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)), etc.
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -25,10 +25,10 @@ export function buildSqlFilters(opts: {
     parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);
   }
   if (opts.picOutletCodes && opts.picOutletCodes.length > 0) {
-    parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code = ANY(${opts.picOutletCodes}::text[]))`);
+    parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code IN (${Prisma.join(opts.picOutletCodes)}))`);
   }
   if (opts.itemName) {
-    parts.push(Prisma.sql`AND ir."itemId" IN (SELECT id FROM "Item" WHERE name ILIKE ${'%' + opts.itemName + '%'})`);
+    parts.push(Prisma.sql`AND ir."itemId" IN (SELECT id FROM "Item" WHERE name LIKE ${'%' + opts.itemName + '%'})`);
   }
   // Prisma.join requires ≥1 element; return empty fragment when no filters
   if (parts.length === 0) return Prisma.sql``;
@@ -43,7 +43,7 @@ export function buildSqlFilters(opts: {
 //  Business logic preserved:
 //  - sales = SUM(MODE(nominalSales) per outlet) — dedup via ROW_NUMBER
 //  - nominal = SUM(absNominalDeviasi)
-//  - devBom = AVG(ABS(pctQtyDeviasiToBom)) WHERE qtyBom != 0
+//  - devBom = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))  (volume-weighted, Metric Engine)
 //  - lossNominal = SUM(nominalDeviasi) WHERE > 0
 //  - surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0
 // ============================================================
@@ -90,7 +90,9 @@ export async function queryTrendAgg(filters: {
     period_aggs AS (
       SELECT ir."monthLabel", ir."weekLabel",
         COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
-        COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBom",
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
       FROM "InventoryRecord" ir
@@ -245,7 +247,9 @@ export async function queryTopItemsByDevBom(
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ itemName: string; outletCode: string; devBom: number; tolerance: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
-      AVG(ABS(ir."pctQtyDeviasiToBom")) as "devBom",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+        ELSE 0 END as "devBom",
       MAX(ir."tolerancePct") as "tolerance"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -356,7 +360,9 @@ export async function queryTopOutlets(
     outlet_aggs AS (
       SELECT ir."outletId",
         SUM(ir."absNominalLossSurplus") as "absNominal",
-        AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "devBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBom",
         SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossAmount",
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "surplusAmount"
       FROM "InventoryRecord" ir
@@ -480,8 +486,8 @@ export async function queryLossVsSurplus(
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
     SELECT
-      COUNT(*) FILTER (WHERE ir."nominalLossSurplus" > 0)::int as loss,
-      COUNT(*) FILTER (WHERE ir."nominalLossSurplus" < 0)::int as surplus,
+      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" > 0 THEN 1 END) AS INTEGER) as loss,
+      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as surplus,
       COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
       COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
     FROM "InventoryRecord" ir
@@ -540,9 +546,11 @@ export async function queryAreaAnalysis(
     ),
     area_aggs AS (
       SELECT ir.area,
-        COUNT(DISTINCT ir."outletId")::int as "outletCount",
+        CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
         SUM(ir."absNominalLossSurplus") as "totalAbsNominal",
-        AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "avgDevBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "avgDevBom",
         SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossNominal"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -658,20 +666,20 @@ export async function queryPareto(
     ),
     ranked AS (
       SELECT "itemName", "absNominal",
-        ROW_NUMBER() OVER (ORDER BY "absNominal" DESC)::int as rank,
+        CAST(ROW_NUMBER() OVER (ORDER BY "absNominal" DESC) AS INTEGER) as rank,
         SUM("absNominal") OVER (ORDER BY "absNominal" DESC) as cumulative,
         SUM("absNominal") OVER () as grand_total,
-        COUNT(*) OVER ()::int as total_items
+        CAST(COUNT(*) OVER () AS INTEGER) as total_items
       FROM item_totals
     ),
     class_a_stats AS (
       SELECT
-        COUNT(*)::int as class_a_count,
+        CAST(COUNT(*) AS INTEGER) as class_a_count,
         COALESCE(MAX(cumulative / NULLIF(grand_total, 0)), 0) as class_a_pct
       FROM ranked
       WHERE cumulative / NULLIF(grand_total, 0) <= 0.70
     )
-    SELECT r.rank, r."itemName", NULL::text as "outletCode", r."absNominal", r.cumulative,
+    SELECT r.rank, r."itemName", CAST(NULL AS TEXT) as "outletCode", r."absNominal", r.cumulative,
       (r.cumulative / NULLIF(r.grand_total, 0)) * 100 as "cumulativePct",
       CASE
         WHEN (r.cumulative / NULLIF(r.grand_total, 0)) * 100 <= 70 THEN 'A'
@@ -750,11 +758,13 @@ export async function queryItemConsistency(
   }[]>`
     WITH item_outlets AS (
       SELECT i.name as "itemName",
-        COUNT(DISTINCT ir."outletId")::int as "outletCount",
-        COUNT(DISTINCT CASE WHEN ir.direction = 'LOSS' THEN ir."outletId" END)::int as "lossOutlets",
-        COUNT(DISTINCT CASE WHEN ir.direction = 'SURPLUS' THEN ir."outletId" END)::int as "surplusOutlets",
+        CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+        CAST(COUNT(DISTINCT CASE WHEN ir.direction = 'LOSS' THEN ir."outletId" END) AS INTEGER) as "lossOutlets",
+        CAST(COUNT(DISTINCT CASE WHEN ir.direction = 'SURPLUS' THEN ir."outletId" END) AS INTEGER) as "surplusOutlets",
         SUM(ir."absNominalLossSurplus") as "totalAbsNominal",
-        AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "avgDevBom"
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "avgDevBom"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -801,12 +811,12 @@ export async function queryHistoricalStats(
   const periodFilter = Prisma.join(periodConditions, ' OR ');
 
   const rows = await db.$queryRaw<{
-    outletId: number; itemId: number; mean: number; stdDev: number; n: number;
+    outletId: number; itemId: number; mean: number; sumSq: number; n: number;
   }[]>`
     SELECT ir."outletId", ir."itemId",
       AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
-      COALESCE(STDDEV_SAMP(ABS(ir."pctQtyDeviasiToBom")), 0) as "stdDev",
-      COUNT(*)::int as n
+      SUM(ABS(ir."pctQtyDeviasiToBom") * ABS(ir."pctQtyDeviasiToBom")) as "sumSq",
+      CAST(COUNT(*) AS INTEGER) as n
     FROM "InventoryRecord" ir
     WHERE (${periodFilter})
       AND ir."pctQtyDeviasiToBom" IS NOT NULL
@@ -817,7 +827,15 @@ export async function queryHistoricalStats(
 
   const map = new Map<string, { mean: number; stdDev: number; n: number }>();
   for (const r of rows) {
-    map.set(`${r.outletId}|${r.itemId}`, { mean: r.mean, stdDev: r.stdDev, n: r.n });
+    // Sample variance (N-1, Bessel's correction) — same as STDDEV_SAMP
+    // Var = (Σx² - n·mean²) / (n-1)
+    // Coerce to Number — SQLite returns BigInt for COUNT/SUM, JSON can't serialize BigInt
+    const n = Number(r.n);
+    const mean = Number(r.mean) || 0;
+    const sumSq = Number(r.sumSq) || 0;
+    const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
+    const stdDev = Math.sqrt(variance);
+    map.set(`${r.outletId}|${r.itemId}`, { mean, stdDev, n });
   }
   return map;
 }

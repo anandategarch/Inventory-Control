@@ -24,7 +24,7 @@ import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { calcGrowth } from '@/engine/calculations/growth';
+import { calcGrowth, computePriceEffect } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -463,34 +463,32 @@ export async function GET(req: NextRequest) {
     const prevQtyDev = execSummary.qtyDeviasi.previous;
     const prevAvgPrice = prevQtyDev != null && Math.abs(prevQtyDev) > 0
       ? (execSummary.nominalDeviasi.previous ?? 0) / prevQtyDev : null;
-    const priceGrowth = currAvgPrice != null && prevAvgPrice != null && prevAvgPrice !== 0
-      ? (currAvgPrice - prevAvgPrice) / Math.abs(prevAvgPrice) : null;
+
+    // Phase 4: Use Metric Engine computePriceEffect for trend decomposition
+    // (Volume Effect + Price Effect + Operational Effect = Nominal Growth)
+    const priceEffectResult = computePriceEffect(
+      execSummary.nominalDeviasi.growth,  // nominalDeviasiGrowth
+      execSummary.qtyBom.growth,          // bomGrowth (volume effect)
+      currAvgPrice,                        // current average price
+      prevAvgPrice,                        // previous average price
+    );
 
     const growthMetrics = {
       salesGrowth: execSummary.sales.growth,
       bomGrowth: execSummary.qtyBom.growth,
       qtyDeviasiGrowth: execSummary.qtyDeviasi.growth,
       nominalDeviasiGrowth: execSummary.nominalDeviasi.growth,
-      priceGrowth,
+      priceGrowth: priceEffectResult.priceGrowth,
       deviationToSalesRatio: execSummary.sales.current > 0
         ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
       deviationToBomRatio: execSummary.deviationToBom,
-      // ===== Trend Decomposition (3-effect) =====
-      // Volume Effect = perubahan nominal deviasi akibat perubahan volume (BOM)
-      //   = prevNominalDeviasi × bomGrowth
-      // Price Effect = perubahan nominal deviasi akibat perubahan harga
-      //   = prevNominalDeviasi × priceGrowth
-      // Operational Effect = sisanya
-      //   = nominalDeviasiGrowth - volumeEffect - priceEffect
-      volumeEffect: (execSummary.nominalDeviasi.previous != null && execSummary.nominalDeviasi.previous !== 0
-        && execSummary.qtyBom.growth != null)
-        ? execSummary.qtyBom.growth : null,
-      priceEffect: (currAvgPrice != null && prevAvgPrice != null && prevAvgPrice !== 0)
-        ? (currAvgPrice - prevAvgPrice) / Math.abs(prevAvgPrice) : null,
-      operationalEffect: (execSummary.nominalDeviasi.growth != null
-        && execSummary.qtyBom.growth != null && priceGrowth != null)
-        ? execSummary.nominalDeviasi.growth - execSummary.qtyBom.growth - priceGrowth
-        : null,
+      // ===== Trend Decomposition (3-effect) — via Metric Engine computePriceEffect =====
+      // Volume Effect = bomGrowth (how much volume changed)
+      // Price Effect = priceGrowth (how much price changed)
+      // Operational Effect = nominalDeviasiGrowth - volumeEffect - priceEffect (residual)
+      volumeEffect: priceEffectResult.volumeEffect,
+      priceEffect: priceEffectResult.priceEffect,
+      operationalEffect: priceEffectResult.operationalEffect,
       // ===== Multi-Period Comparison =====
       // Built from trendAggRows (computed below, injected into growthComparison after)
       multiPeriodComparison: [] as Array<Record<string, unknown>>,
