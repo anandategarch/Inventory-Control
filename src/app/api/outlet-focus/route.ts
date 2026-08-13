@@ -561,12 +561,12 @@ export async function GET(req: NextRequest) {
         if (absDevBom != null && absDevBom > toleranceEffective) {
           issues.push('TOLERANCE_BREACH');
         }
-        // RESIDUAL_HIGH (> 50%)
-        if (residualRatio != null && residualRatio > 0.5) {
+        // RESIDUAL_HIGH — FIX: use Settings threshold (was hardcoded 0.5)
+        if (residualRatio != null && residualRatio > thresholds.RESIDUAL_LOSS_WARN_PCT) {
           issues.push('RESIDUAL_HIGH');
         }
-        // HISTORICAL_ABNORMAL (z > 2)
-        if (zScore != null && zScore > 2) {
+        // HISTORICAL_ABNORMAL — FIX: use Settings threshold (was hardcoded 2)
+        if (zScore != null && zScore > thresholds.HISTORICAL_ZSCORE_HIGH) {
           issues.push('HISTORICAL_ABNORMAL');
         }
         // OVER_EXPLAINED (|W+S+T| > |Deviasi|)
@@ -582,15 +582,15 @@ export async function GET(req: NextRequest) {
             overPct,
           });
         }
-        // HIGH_NOMINAL
-        if (sumAbsNominalDeviasi > 10_000_000) {
+        // HIGH_NOMINAL — FIX: use Settings threshold (was hardcoded 10M)
+        if (sumAbsNominalDeviasi > thresholds.HIGH_LOSS_NOMINAL_THRESHOLD) {
           issues.push('HIGH_NOMINAL');
         }
-        // BENCHMARK_ABOVE_AREA / NETWORK
-        if (absDevBom != null && areaAvgDevBom > 0 && absDevBom > areaAvgDevBom * 1.5) {
+        // BENCHMARK_ABOVE_AREA / NETWORK — FIX: use Settings factors (was hardcoded 1.5)
+        if (absDevBom != null && areaAvgDevBom > 0 && absDevBom > areaAvgDevBom * thresholds.BENCHMARK_AREA_FACTOR) {
           issues.push('ABOVE_AREA');
         }
-        if (absDevBom != null && networkAvgDevBom > 0 && absDevBom > networkAvgDevBom * 1.5) {
+        if (absDevBom != null && networkAvgDevBom > 0 && absDevBom > networkAvgDevBom * thresholds.BENCHMARK_NETWORK_FACTOR) {
           issues.push('ABOVE_NETWORK');
         }
       }
@@ -624,7 +624,9 @@ export async function GET(req: NextRequest) {
         issues.includes('HISTORICAL_ABNORMAL')
       );
       const isWarning = issues.length > 0 && !isAbnormal;
-      const isCritical = isAbnormal && (zScore != null && zScore > 3) || (isAbnormal && sumAbsNominalDeviasi > 50_000_000);
+      // FIX: use Settings thresholds (was hardcoded zScore>3 + 50M)
+      const isCritical = isAbnormal && (zScore != null && zScore > thresholds.HISTORICAL_ZSCORE_HIGH * 1.5)
+        || (isAbnormal && sumAbsNominalDeviasi > thresholds.HIGH_LOSS_NOMINAL_THRESHOLD);
 
       if (issues.length === 0) normalCount++;
       else if (isAbnormal) abnormalCount++;

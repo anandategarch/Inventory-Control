@@ -49,7 +49,7 @@ export function computeDirection(
 
 /**
  * Dev/BOM per-row: ABS(QTY DEVIASI) / ABS(QTY BOM)
- * Master context #19
+ * Master context #32: Deviation/BOM
  */
 export function computeDevBomPerRow(qtyDeviasi: number | null, qtyBom: number | null): number | null {
   if (qtyDeviasi == null || qtyBom == null || qtyBom === 0) return null;
@@ -58,7 +58,7 @@ export function computeDevBomPerRow(qtyDeviasi: number | null, qtyBom: number | 
 
 /**
  * Residual: Math.max(0, ABS(qtyDeviasi) - ABS(waste + susut + trial))
- * Master context #11.3
+ * Master context #11: Residual = sisa setelah W+S+T
  */
 export function computeResidual(
   qtyDeviasi: number | null,
@@ -87,7 +87,7 @@ export function computeResidualRatio(residualQty: number | null, qtyDeviasi: num
 
 /**
  * Explained %: (Waste + Susut + Trial) / Gross Deviation
- * Master context #12
+ * Master context #10: Waste/Susut/Trial menjelaskan deviation
  */
 export function computeExplainedPct(
   qtyDeviasi: number | null,

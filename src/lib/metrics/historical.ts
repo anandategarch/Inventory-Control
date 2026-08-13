@@ -9,7 +9,7 @@
 //   3. Exclude current period dari historical stats
 //   4. Require n >= HISTORICAL_MIN_WEEKS (default 4)
 //
-//  Master context #29: Historical harus membaca Magnitude + Direction + Consistency
+//  Master context #19: Historical Analysis — Magnitude + Direction + Consistency
 // ============================================================
 
 import type { RuntimeThresholds } from '@/lib/settings';
@@ -146,7 +146,7 @@ export function computeDeterioration(
  * Formula: (|value| - mean) / stdDev
  * Returns null if value is null or stdDev is 0.
  *
- * Master context #29: Z-Score uses ABS magnitude (not signed value).
+ * Master context #19: Z-Score uses ABS magnitude (not signed value).
  */
 export function calcZScoreFromStats(
   value: number | null,

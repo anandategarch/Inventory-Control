@@ -166,28 +166,32 @@ rules:
     narrative_template: >
       Nominal loss {{absNominalDeviasi}} tinggi.
 
-  # ===== BENCHMARK =====
+  # ===== BENCHMARK (historical zScore-based, NOT area/network pooled) =====
+  # FIX: benchmarkFlag values renamed from ABOVE_AREA_AVG/ABOVE_NETWORK_AVG
+  # to HISTORICAL_WARNING/HISTORICAL_HIGH in audit fix. These rules now
+  # fire on the correct flag values. Area/network pooled comparison is
+  # done separately in computeBenchmark() (benchmark.ts) and outlet-items route.
   - code: BENCHMARK_ABOVE_AREA
-    name: "Outlet dev/bom above area average"
+    name: "Deviation above historical average (warning level)"
     category: BENCHMARK
     severity: WARNING
     priority: 50
     condition:
-      benchmarkFlag: { eq: "ABOVE_AREA_AVG" }
+      benchmarkFlag: { eq: "HISTORICAL_WARNING" }
     narrative_template: >
-      Deviation/BOM outlet di atas rata-rata area.
+      Deviation/BOM outlet di atas historical average (zScore warning).
 
   - code: BENCHMARK_ABOVE_NETWORK
-    name: "Outlet dev/bom above network average"
+    name: "Deviation far above historical average (high level)"
     category: BENCHMARK
     severity: ABNORMAL
     priority: 72
     condition:
-      benchmarkFlag: { eq: "ABOVE_NETWORK_AVG" }
+      benchmarkFlag: { eq: "HISTORICAL_HIGH" }
     narrative_template: >
-      Deviation/BOM outlet jauh di atas rata-rata network.
+      Deviation/BOM outlet jauh di atas historical average (zScore high).
 
-  # ===== DIRECTION FLIP (Bug 3 fix — master context #30/#58) =====
+  # ===== DIRECTION FLIP (master context #23 Variance Analysis + #9 Loss/Surplus) =====
   - code: DIRECTION_FLIP
     name: "Direction flip LOSS ↔ SURPLUS antar periode"
     category: HISTORICAL

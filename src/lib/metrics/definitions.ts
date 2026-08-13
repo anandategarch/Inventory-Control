@@ -12,7 +12,7 @@
  * Dev/BOM per-row:
  *   ABS(QTY DEVIASI) / ABS(QTY BOM)
  *
- * Master context #19: % QTY DEVIASI TO BOM = QTY DEVIASI / QTY BOM
+ * Master context #32: Deviation/BOM = SUM(ABS(QTY Deviation)) / SUM(ABS(QTY BOM))
  *
  * NOTE: pctQtyDeviasiToBom dari Excel seharusnya = ini, tapi
  * bisa beda karena Excel rounding. Untuk konsistensi, selalu
@@ -37,8 +37,8 @@ export const DEV_BOM_AGGREGATE = 'SUM(absQtyDeviasi) / SUM(absQtyBom)';
  *   MODE (most frequent nominalSales value per outlet)
  *   Tie-break: smaller value wins (konsisten SQL + JS)
  *
- * Master context #21: Sales digunakan sebagai konteks utama
- * untuk menilai kewajaran kenaikan deviation.
+ * Master context #30: Sales merupakan outlet-level field (deduplicated).
+ * Master context #12: Sales vs Deviation untuk context kewajaran.
  */
 export const SALES_MODE = 'MODE(nominalSales) per outlet — tie: smaller value wins';
 
@@ -47,7 +47,7 @@ export const SALES_MODE = 'MODE(nominalSales) per outlet — tie: smaller value 
  *   QTY DEVIASI (Stok Fisik - Stok Sistem)
  *   Signed: positive = LOSS, negative = SURPLUS
  *
- * Master context #6: QTY DEVIASI = Gross Deviation
+ * Master context #8: QTY DEVIASI = Gross Deviation (Layer 1)
  */
 export const GROSS_DEVIATION = 'qtyDeviasi (signed, from Excel)';
 
@@ -56,7 +56,7 @@ export const GROSS_DEVIATION = 'qtyDeviasi (signed, from Excel)';
  *   QTY LOSS/SURPLUS = Gross Deviation - Waste - Susut - Trial
  *   Signed: positive = LOSS, negative = SURPLUS
  *
- * Master context #8: Net = Gross - W - S - T
+ * Master context #11: Three-Layer — Net = Gross - Explained (W+S+T)
  */
 export const NET_DEVIATION = 'qtyLossSurplus (signed, from Excel)';
 
@@ -64,7 +64,7 @@ export const NET_DEVIATION = 'qtyLossSurplus (signed, from Excel)';
  * Nominal Deviasi (GROSS):
  *   QTY DEVIASI × Price
  *
- * Master context #13: NOMINAL DEVIASI = GROSS × Price
+ * Master context #8: NOMINAL DEVIASI = GROSS Deviation × Price
  */
 export const NOMINAL_DEVIASI_GROSS = 'absNominalDeviasi (GROSS financial impact)';
 
@@ -72,7 +72,7 @@ export const NOMINAL_DEVIASI_GROSS = 'absNominalDeviasi (GROSS financial impact)
  * Nominal Loss/Surplus (NET):
  *   QTY LOSS/SURPLUS × Price
  *
- * Master context #17: NOMINAL LOSS/SURPLUS = NET × Price
+ * Master context #9: NOMINAL LOSS/SURPLUS = NET Deviation × Price
  */
 export const NOMINAL_LOSS_SURPLUS_NET = 'absNominalLossSurplus (NET financial impact)';
 
@@ -81,7 +81,7 @@ export const NOMINAL_LOSS_SURPLUS_NET = 'absNominalLossSurplus (NET financial im
  *   ABS(Net Deviation) — clamp to 0 if over-explained
  *   residual = Math.max(0, ABS(qtyDeviasi) - ABS(waste + susut + trial))
  *
- * Master context #11.3: Net Deviation = sisa setelah W+S+T
+ * Master context #11: Residual = sisa setelah W+S+T (unexplained deviation)
  */
 export const RESIDUAL = 'Math.max(0, absDev - explained)';
 
@@ -98,7 +98,7 @@ export const RESIDUAL_RATIO = 'residualQty / absQtyDeviasi (0-1)';
  *   (Waste + Susut + Trial) / Gross Deviation
  *
  *   Berapa % dari gross deviation yang sudah dijelaskan.
- *   Master context #12: Gross tinggi tapi mostly explained = tidak buruk
+ *   Master context #10: Waste/Susut/Trial menjelaskan bagian deviation
  */
 export const EXPLAINED_PCT = '(absWaste + absSusut + absTrial) / absQtyDeviasi';
 
@@ -107,7 +107,7 @@ export const EXPLAINED_PCT = '(absWaste + absSusut + absTrial) / absQtyDeviasi';
  *   (Current - Previous) / ABS(Previous)
  *   Signed: positive = increasing, negative = decreasing
  *
- * Master context #60: Growth = (curr - prev) / |prev|
+ * Master context #31: Growth = (curr - prev) / |prev|
  * NOTE: Tidak bisa dihitung dari zero base (prev = 0 → null)
  */
 export const GROWTH = '(curr - prev) / Math.abs(prev)';
@@ -131,7 +131,7 @@ export const GROWTH_ABS = '(Math.abs(curr) - Math.abs(prev)) / Math.abs(prev)';
  *   - Exclude current period dari historical stats
  *   - Require n >= HISTORICAL_MIN_WEEKS (default 4) — n = WEEK count, bukan row count
  *
- * Master context #29: Historical harus membaca Magnitude + Direction + Consistency
+ * Master context #19: Historical Analysis — Magnitude + Direction + Consistency
  */
 export const Z_SCORE = '(|current| - mean(weekly)) / stdDev(weekly) — sample variance, exclude current';
 
@@ -191,8 +191,8 @@ export const HEALTH_SCORE_THRESHOLDS = {
  *   P3: lainnya
  *
  * Thresholds dari Settings:
- *   P1_NOMINAL_THRESHOLD = HIGH_LOSS_NOMINAL_THRESHOLD (default 1,000,000)
- *   P2_NOMINAL_THRESHOLD = P2_NOMINAL_THRESHOLD (default 100,000) ← NEW
+ *   P1_NOMINAL_THRESHOLD = HIGH_LOSS_NOMINAL_THRESHOLD (default 50,000,000)
+ *   P2_NOMINAL_THRESHOLD = P2_NOMINAL_THRESHOLD (default 10,000,000)
  *   RESIDUAL_LOSS_HIGH_PCT = 0.70
  *   RESIDUAL_LOSS_WARN_PCT = 0.50
  *   STD_DEVIASI_BOM_PCT = 0.05

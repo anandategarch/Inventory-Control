@@ -7,7 +7,7 @@
 //   1. calcGrowth (signed): untuk nominal/sales — direction matters
 //   2. calcGrowthAbs (magnitude): untuk BOM/COM (negative consumption) — use absolute
 //
-//  Master context #60: Growth = (curr - prev) / |prev|
+//  Master context #31: Growth = (curr - prev) / |prev|
 //  Master context #31: Jangan mengandalkan growth saja pada signed value
 //  saat sign berubah (flip-flop) — flag sebagai direction change
 // ============================================================
@@ -124,7 +124,7 @@ export function calcAvgPrice(nominal: number | null, qty: number | null): number
 
 // ============================================================
 //  Price Effect Decomposition (multiplicative — exact)
-//  Master context #22, #55: Nominal effect = Quantity effect × Price effect
+//  Master context #13: Avg Price — Nominal effect = Quantity effect × Price effect
 //
 //  FIX (audit issue #12): Previous version used additive model
 //  (nominalGrowth ≈ volumeEffect + priceEffect + operationalEffect)

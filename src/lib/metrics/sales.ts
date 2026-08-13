@@ -4,8 +4,9 @@
 //  Sales per outlet = MODE (most frequent nominalSales value)
 //  Tie-break: smaller value wins (konsisten SQL + JS)
 //
-//  Master context #21: Sales sebagai konteks utama
-//  Master context #42: Volume sales harus dipertimbangkan
+//  Master context #30: Sales merupakan outlet-level field (deduplicated)
+//  Master context #12: Sales vs Deviation untuk context kewajaran
+//  Master context #18: Outlet dengan sales tinggi tidak boleh otomatis dianggap buruk
 // ============================================================
 
 interface SalesRecord {

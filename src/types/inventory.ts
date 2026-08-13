@@ -88,7 +88,9 @@ export interface BenchmarkResult {
   outletDevBom: number | null;
   areaAvgDevBom: number | null;
   networkAvgDevBom: number | null;
-  benchmarkFlag: 'ABOVE_AREA_AVG' | 'ABOVE_NETWORK_AVG' | 'NORMAL' | null;
+  // FIX: benchmarkFlag values are HISTORICAL_HIGH/HISTORICAL_WARNING (renamed from
+  // ABOVE_AREA_AVG/ABOVE_NETWORK_AVG in audit fix — zScore is historical comparison)
+  benchmarkFlag: 'HISTORICAL_HIGH' | 'HISTORICAL_WARNING' | 'NORMAL' | null;
   ratioVsArea: number | null;
   ratioVsNetwork: number | null;
 }
