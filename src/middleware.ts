@@ -17,6 +17,8 @@ import { NextRequest, NextResponse } from 'next/server';
 const PROTECTED_PATHS = [
   '/api/setup',
   '/api/ingest',
+  '/api/ingest-upload',
+  '/api/ingest-process',
   '/api/import-drive',
   '/api/settings',
   '/api/data',
@@ -70,6 +72,8 @@ export const config = {
   matcher: [
     '/api/setup/:path*',
     '/api/ingest/:path*',
+    '/api/ingest-upload/:path*',
+    '/api/ingest-process/:path*',
     '/api/import-drive/:path*',
     '/api/settings/:path*',
     '/api/data/:path*',

@@ -146,9 +146,9 @@ export async function GET(req: NextRequest) {
         AND ir."weekLabel" = ${currentPeriod?.weekLabel || ''}
     `;
 
-    // Historical stats (zScore)
+    // Historical stats (zScore) — Bug 6.7 fix: exclude current period from historical stats
     const devBomValues = timeline
-      .filter(t => t.devBom != null)
+      .filter(t => t.devBom != null && !t.isCurrent)
       .map(t => Math.abs(t.devBom!));
     const histMean = devBomValues.length > 0
       ? devBomValues.reduce((a, b) => a + b, 0) / devBomValues.length

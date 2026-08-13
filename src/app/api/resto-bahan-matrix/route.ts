@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
         WHERE ir."monthLabel" = ${prevPeriod.monthLabel}
           AND ir."weekLabel" = ${prevPeriod.weekLabel}
       `;
-      prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}`, r.pctDevBom ? Number(r.pctDevBom) : null]));
+      prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
     }
 
     const toNum = (v: unknown): number | null => {

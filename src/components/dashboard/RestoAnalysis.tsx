@@ -126,6 +126,18 @@ export function RestoAnalysis() {
     );
   }
 
+  // Bug 6.9 fix: show "select period" message instead of error when week not selected
+  if (!monthLabel || !currentWeek) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          <Target className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p>Pilih bulan dan minggu untuk melihat Resto Analysis</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (isLoading) {
     return (
       <Card>
@@ -267,7 +279,7 @@ export function RestoAnalysis() {
 
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
       {focusOutlet && (
-        <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
+        <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} allItemsData={data} />
       )}
 
       {/* Resto × Bahan Matrix — Phase 4 */}
@@ -524,19 +536,13 @@ function SummaryCard({ label, value, sub, color }: { label: string; value: strin
 //  Groups items by first word of itemName (menu name)
 //  Detects items where Dev growth >> BOM growth (outlier within menu)
 // ============================================================
-function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem }: {
+function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allItemsData }: {
   outletCode: string; monthLabel: string; currentWeek: string;
   onSelectItem: (item: { outletCode: string; itemName: string }) => void;
+  allItemsData: any;
 }) {
-  const { data: outletData } = useQuery({
-    queryKey: ['outlet-items', outletCode, monthLabel, currentWeek],
-    queryFn: async () => {
-      const p = new URLSearchParams({ outletCode, month: monthLabel, week: currentWeek });
-      const res = await fetch(`/api/outlet-items?${p.toString()}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    },
-  });
+  // Bug 6.10 fix: use parent's data instead of duplicate query
+  const outletData = allItemsData;
 
   const menuGroups = useMemo<Array<{
     menuName: string; itemCount: number; avgDevBom: number;

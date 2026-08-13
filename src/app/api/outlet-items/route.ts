@@ -254,16 +254,24 @@ export async function GET(req: NextRequest) {
         explainedPct: totalQtyDeviasi > 0 ? (totalQtyWaste + totalQtySusut + totalQtyTrial) / totalQtyDeviasi : null,
       },
       // 3. Historical (current vs previous)
-      historical: {
-        prevQtyBom: prevQtyBom,
-        prevQtyDeviasi: prevQtyDeviasi,
-        prevNominalDeviasi: prevNominalDeviasi,
-        bomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
-        deviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
-        nominalGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
-        trend: (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) > 0.1 ? 'DETERIORATING' :
-               (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) < -0.1 ? 'IMPROVING' : 'STABLE',
-      },
+      // Bug 6.3 fix: compute trend outside object for clarity
+      ...((() => {
+        const devGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
+        const trend = devGrowth != null
+          ? devGrowth > 0.1 ? 'DETERIORATING' : devGrowth < -0.1 ? 'IMPROVING' : 'STABLE'
+          : (totalQtyDeviasi > 0 && prevQtyDeviasi === 0) ? 'DETERIORATING'
+          : (totalQtyDeviasi === 0 && prevQtyDeviasi > 0) ? 'IMPROVING'
+          : 'STABLE';
+        return { historical: {
+          prevQtyBom: prevQtyBom,
+          prevQtyDeviasi: prevQtyDeviasi,
+          prevNominalDeviasi: prevNominalDeviasi,
+          bomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
+          deviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
+          nominalGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
+          trend,
+        }};
+      })()),
       // 4. Benchmark
       benchmark: {
         areaAvgDevBom: toNum(areaBench[0]?.avgDevBom) ?? 0,

@@ -2484,3 +2484,308 @@ Stage Summary:
 - No new missing-rate-limit issues found (all heavy API routes already covered by BUG 1.7/1.13 fixes).
 - Verified Recharts 2.15.4 Bar/Scatter onClick handlers in ExtraCharts.tsx and CostAccounting.tsx are NOT broken — confirmed via node_modules source that `adaptEventsOfChild` passes the entry object with user-data fields spread directly (Bar.js:438-444, Scatter.js:401), so `d.area` / `d.outletCode` access works correctly.
 - Recommended fix order: 5.3 (high, 3-line useEffect) → 5.1 (high, 5-line sort) → 5.2 (high, 5-line sort) → 5.5 (medium, add Date branch) → 5.4 (medium, clearTimeout) → 5.6 (medium, getSetCookie) → 5.7 (low, validate headers) → 5.8 (low, refresh recency in has)
+
+---
+Task ID: BUG-6
+Agent: general-purpose (round 6 bug hunter)
+Task: Deep bug hunt round 6
+
+Work Log:
+- Read worklog.md (first 50 + last 100 lines) for context on previously-found 60+ bugs
+- Inspected src/middleware.ts (auth middleware + matcher config)
+- Inspected src/app/api/outlet-items/route.ts (new Resto Analysis API, 431 lines)
+- Inspected src/app/api/item-history/route.ts (new item history API, 224 lines)
+- Inspected src/app/api/resto-bahan-matrix/route.ts (new matrix API, 222 lines)
+- Inspected src/components/dashboard/RestoAnalysis.tsx (new component, 837 lines)
+- Inspected src/components/filters/FileUploadDialog.tsx (chunked upload UI, 538 lines)
+- Inspected src/app/api/ingest-upload/route.ts (chunk storage API, 104 lines)
+- Inspected src/app/api/ingest-process/route.ts (process uploaded files, 411 lines)
+- Inspected src/components/dashboard/ItemDeepDive.tsx (item detail modal, 238 lines)
+- Inspected src/components/dashboard/OutletScorecard.tsx (outlet scorecard modal, 231 lines)
+- Inspected src/hooks/useDashboard.ts, src/hooks/useAnalysis.ts (state + queries)
+- Inspected src/engine/analysis/analysis.ts (computeOutletHealthRanking, topItemsByNominal)
+- Inspected src/lib/queries.ts (queryTopItemsByNominal SQL)
+- Cross-referenced FileUploadDialog usage — found it is DEAD CODE (not imported anywhere), but the API routes ingest-upload/ingest-process are still deployed
+- Verified Next.js middleware matcher semantics: `/api/ingest/:path*` does NOT match `/api/ingest-upload` (dash ≠ slash)
+
+Bugs Found:
+
+## BUG 6.1: Middleware matcher does not cover /api/ingest-upload and /api/ingest-process — unauthenticated database modification
+- File: src/middleware.ts:69-78 (config.matcher)
+- Category: Security / Auth bypass (CRITICAL)
+- Code:
+  ```ts
+  export const config = {
+    matcher: [
+      '/api/setup/:path*',
+      '/api/ingest/:path*',        // ← matches /api/ingest/, /api/ingest/foo — NOT /api/ingest-upload
+      '/api/import-drive/:path*',
+      '/api/settings/:path*',
+      '/api/data/:path*',
+      '/api/pic/:path*',
+    ],
+  };
+  ```
+- Why: The middleware protects `/api/ingest` (POST — full file ingest) via ADMIN_TOKEN. But the NEW chunked-upload routes `/api/ingest-upload` (POST — stores 4MB chunks in DB) and `/api/ingest-process` (POST — reassembles + imports Excel, creates Outlet/Item/InventoryRecord/SourceFile/Week rows) are NOT in the matcher. In Next.js, `/api/ingest/:path*` requires a literal `/` after `/api/ingest`; `/api/ingest-upload` has a `-` (dash), so the matcher does not fire. The middleware's internal `PROTECTED_PATHS.some(p => pathname.startsWith(p))` check WOULD catch them (`'/api/ingest-upload'.startsWith('/api/ingest')` is true), but that code never executes because the matcher prevents the middleware from running on these routes. Result: in production with ADMIN_TOKEN set, `/api/ingest` is protected but `/api/ingest-upload` + `/api/ingest-process` are wide open. An attacker can POST chunks with `fileName="JANUARI 2026.xlsx"` (passes `parseMonthFromFilename`), then POST `mode=import` to insert arbitrary InventoryRecord rows, create fake outlets/items, and corrupt the entire database. The rate limiter (10 req/min) is the only barrier — trivially overcome since one 4MB chunk upload + one import call = 2 requests for a full 50MB file's worth of bad data. Note: `FileUploadDialog.tsx` is dead code (not imported anywhere), but the API routes are deployed and reachable.
+- Fix: Add the two new routes to the matcher:
+  ```ts
+  export const config = {
+    matcher: [
+      '/api/setup/:path*',
+      '/api/ingest/:path*',
+      '/api/ingest-upload/:path*',     // ← add
+      '/api/ingest-process/:path*',    // ← add
+      '/api/import-drive/:path*',
+      '/api/settings/:path*',
+      '/api/data/:path*',
+      '/api/pic/:path*',
+    ],
+  };
+  ```
+
+## BUG 6.2: resto-bahan-matrix treats previous-period pctDevBom=0 as null — legitimate zero-deviation baseline becomes "no data"
+- File: src/app/api/resto-bahan-matrix/route.ts:119
+- Category: Data correctness / falsy-zero bug
+- Code:
+  ```ts
+  prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}`, r.pctDevBom ? Number(r.pctDevBom) : null]));
+  ```
+- Why: `r.pctDevBom ? ... : null` uses truthiness to decide whether to store the value. But `pctQtyDeviasiToBom` is `qtyDeviasi / qtyBom` — when `qtyDeviasi = 0` (perfect BOM adherence, no deviation), the ratio is legitimately `0`. The number `0` is falsy in JS, so the ternary returns `null` instead of `0`. Downstream (line 139-143), `historicalTrend` checks `devBom != null && prevDevBom != null` — when prev is wrongly null, trend becomes `'?'` instead of `'↑'` or `'↓'`. Concrete scenario: outlet had perfect adherence last week (devBom=0), this week devBom=0.15 (15% deviation, clearly deteriorating). The matrix shows `'?'` (no historical data) instead of `'↑'` (deteriorating). The P1/P2/P3 priority and the historical-trend column are both wrong for any outlet+item whose previous period had zero deviation — a common case for well-managed outlets.
+- Fix: Use explicit null check, not truthiness:
+  ```ts
+  prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
+  ```
+
+## BUG 6.3: outlet-items historical.trend returns STABLE when previous deviation was 0 and current is non-zero
+- File: src/app/api/outlet-items/route.ts:264-265
+- Category: Logic error / null-coalescing masks deviation onset
+- Code:
+  ```ts
+  trend: (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) > 0.1 ? 'DETERIORATING' :
+         (calcGrowth(totalQtyDeviasi, prevQtyDeviasi) ?? 0) < -0.1 ? 'IMPROVING' : 'STABLE',
+  ```
+  where (line 222-225):
+  ```ts
+  const calcGrowth = (curr: number, prev: number): number | null => {
+    if (prev === 0) return curr === 0 ? 0 : null;   // ← prev=0, curr>0 → returns null
+    return (curr - prev) / Math.abs(prev);
+  };
+  ```
+- Why: When the previous period had zero total deviation (`prevQtyDeviasi = 0`, e.g., a brand-new outlet with no prior data, or a perfect-adherence week) and the current period has non-zero deviation, `calcGrowth` returns `null` (the `curr === 0 ? 0 : null` branch). The `?? 0` then coerces null to `0`, and `0 > 0.1` is false and `0 < -0.1` is false, so trend = `'STABLE'`. But deviation went from 0 to non-zero — that is unambiguously DETERIORATING. The `?? 0` silently masks the "onset of deviation" case. Concrete scenario: outlet A had `totalQtyDeviasi=0` last week (perfect), this week `totalQtyDeviasi=50` (something broke). The RestoAnalysis Historical card shows "STABLE" with a flat `→` icon, hiding the regression.
+- Fix: Handle the null case explicitly — `calcGrowth` returns null specifically to signal "prev=0, curr≠0":
+  ```ts
+  const devGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
+  trend: devGrowth == null
+    ? (totalQtyDeviasi > 0 ? 'DETERIORATING' : 'STABLE')
+    : devGrowth > 0.1 ? 'DETERIORATING' : devGrowth < -0.1 ? 'IMPROVING' : 'STABLE',
+  ```
+
+## BUG 6.4: outlet-items areaMultiplier compares weighted-aggregate devBom (outlet) against simple-average devBom (area) — apples-to-oranges ratio
+- File: src/app/api/outlet-items/route.ts:271-274
+- Category: Data correctness / metric mismatch
+- Code:
+  ```ts
+  benchmark: {
+    areaAvgDevBom: toNum(areaBench[0]?.avgDevBom) ?? 0,          // SQL: AVG(ABS(pctQtyDeviasiToBom)) — simple mean of per-item ratios
+    networkAvgDevBom: toNum(networkBench[0]?.avgDevBom) ?? 0,
+    outletDevBom: totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0,  // sum(|deviasi|) / sum(|BOM|) — volume-weighted aggregate
+    areaMultiplier: (toNum(areaBench[0]?.avgDevBom) ?? 0) > 0
+      ? ((totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0)) / (toNum(areaBench[0]?.avgDevBom) ?? 1)
+      : null,
+  },
+  ```
+- Why: `outletDevBom` is computed as `sum(|qtyDeviasi|) / sum(|qtyBom|)` (a volume-weighted aggregate ratio dominated by high-BOM items), but `areaAvgDevBom` is `AVG(ABS(pctQtyDeviasiToBom))` (a simple mean of per-item ratios, unweighted). These are mathematically different and produce very different values for the same underlying data. Concrete scenario: outlet has 2 items — A (BOM=100, Dev=10 → 10% ratio) and B (BOM=1000, Dev=5 → 0.5% ratio). `outletDevBom = (10+5)/(100+1000) = 1.36%`. Area `avgDevBom = (10% + 0.5%)/2 = 5.25%`. `areaMultiplier = 1.36%/5.25% = 0.26×`. The outlet appears 4× BETTER than the area average — but the per-item ratios are identical to the area, so the true multiplier should be 1.0×. The displayed "Area Multiplier: 0.3×" in the RestoAnalysis Benchmark card misleads the user into thinking the outlet is well-controlled when it is actually average. The same flaw applies to `networkAvgDevBom` and any downstream P1/P2/P3 priority that uses `areaMultiplier`.
+- Fix: Compute `outletDevBom` the same way as the area benchmark — as a simple mean of per-item `|pctQtyDeviasiToBom|`:
+  ```ts
+  // In the currentRecs loop, accumulate:
+  let devBomSum = 0, devBomCount = 0;
+  for (const r of currentRecs) {
+    const pdb = toNum(r.pctQtyDeviasiToBom);
+    if (pdb != null && (toNum(r.qtyBom) ?? 0) !== 0) { devBomSum += Math.abs(pdb); devBomCount++; }
+  }
+  const outletDevBom = devBomCount > 0 ? devBomSum / devBomCount : 0;
+  // Use outletDevBom in both the benchmark.outletDevBom and areaMultiplier
+  ```
+
+## BUG 6.5: outlet-items healthScore uses weighted-aggregate devBom while computeOutletHealthRanking uses simple-average devBom — same outlet shows different scores in different views
+- File: src/app/api/outlet-items/route.ts:302-310 vs src/engine/analysis/analysis.ts:946-966
+- Category: Data consistency / metric mismatch
+- Code:
+  ```ts
+  // outlet-items/route.ts:302-310 — healthScore in RestoAnalysis:
+  const devBom = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;   // weighted aggregate
+  const residualPct = totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null;  // aggregate ratio
+  const devBomScore = clamp(100 - (devBom / 0.50) * 100);
+  const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
+  // ...
+  return Math.round(devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20);
+
+  // analysis.ts:946-966 — healthScore in computeOutletHealthRanking (main dashboard):
+  const devBom = v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0;  // simple average of |pctQtyDeviasiToBom|
+  const residualPct = v.residualCount > 0 ? v.residualSum / v.residualCount : null;  // average of |residualRatio|
+  const devBomScore = clamp(100 - (devBom / 0.50) * 100);
+  const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
+  // ...
+  return Math.round(devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20);
+  ```
+- Why: Both compute a "health score" using the SAME 30/25/25/20 formula and SAME thresholds, but use DIFFERENT definitions of `devBom` and `residualPct`. The outlet-items API uses volume-weighted aggregates (`sum(|dev|)/sum(|BOM|)` and `sum(|residualQty|)/sum(|dev|)`); the analysis engine uses simple per-item averages (`avg(|pctQtyDeviasiToBom|)` and `avg(|residualRatio|)`). Concrete scenario: outlet with items A (BOM=100, Dev=10, residualRatio=0.8) and B (BOM=1000, Dev=5, residualRatio=0.1). outlet-items: `devBom = 15/1100 = 1.36%`, `residualPct = (|resA|+|resB|)/15` (depends on residualQty). analysis engine: `devBom = (10%+0.5%)/2 = 5.25%`, `residualPct = (0.8+0.1)/2 = 0.45`. The devBomScore differs by ~8 points (97 vs 89), and residualScore differs too. The same outlet shows e.g. healthScore=82 on the RestoAnalysis tab but healthScore=74 on the main dashboard's outlet ranking. Users comparing the two views will be confused and may lose trust in the metrics.
+- Fix: Align the outlet-items healthScore computation with computeOutletHealthRanking — use per-item simple averages, not aggregates:
+  ```ts
+  let devBomSum = 0, devBomCount = 0, residualSum = 0, residualCount = 0;
+  for (const r of currentRecs) {
+    const pdb = toNum(r.pctQtyDeviasiToBom);
+    const qb = toNum(r.qtyBom) ?? 0;
+    if (pdb != null && qb !== 0) { devBomSum += Math.abs(pdb); devBomCount++; }
+    const rr = toNum(r.residualRatio);
+    if (rr != null) { residualSum += Math.abs(rr); residualCount++; }
+  }
+  const devBom = devBomCount > 0 ? devBomSum / devBomCount : 0;
+  const residualPct = residualCount > 0 ? residualSum / residualCount : null;
+  ```
+
+## BUG 6.6: item-history silently uses LAST available period as "current" when user-specified period has no data — benchmark computed for wrong period
+- File: src/app/api/item-history/route.ts:117
+- Category: Logic error / silent fallback
+- Code:
+  ```ts
+  // line 88-112: timeline built from ALL records for outlet+item (not filtered by month/week)
+  // line 110: isCurrent: r.monthLabel === currentMonth && r.weekLabel === currentWeek
+  // line 117:
+  const currentPeriod = timeline.find(t => t.isCurrent) || timeline[timeline.length - 1];
+  if (!currentPeriod) { return 404; }
+  const currentDevBom = currentPeriod.devBom;
+  // line 124-147: benchmark queries use currentPeriod.monthLabel / currentPeriod.weekLabel
+  const areaBench = await db.$queryRaw`... WHERE ir."monthLabel" = ${currentPeriod?.monthLabel || ''} AND ir."weekLabel" = ${currentPeriod?.weekLabel || ''}`;
+  ```
+- Why: `allRecs` (line 46-75) is filtered only by `outletCode` and `itemName` — it returns ALL periods for this outlet+item, NOT filtered by the user's `month`/`week` params. If the user-specified period has no record for this item+outlet (e.g., the item was not sold that week, or the outlet was closed), `timeline.find(t => t.isCurrent)` returns `undefined`, and the code falls back to `timeline[timeline.length - 1]` (the chronologically LAST period in the timeline). The API then computes the area/network benchmark for THIS WRONG PERIOD but labels it as if it were the user-specified period. The ItemDetailModal in RestoAnalysis.tsx displays this benchmark without any indication that the period is wrong. Concrete scenario: user opens item "Ayam" for outlet A, period "MEI 2026 WEEK 4". Outlet A sold "Ayam" in WEEK 1 and WEEK 2 but not WEEK 4. The timeline has 2 entries (WEEK 1, WEEK 2). `currentPeriod` falls back to WEEK 2. The benchmark "Area Avg Dev/BOM" shown in the modal is actually for WEEK 2, not WEEK 4. The user misinterprets it as the WEEK 4 benchmark. Additionally, `data.current` (line 215) is the WEEK 2 record, so the "Dev/BOM" summary card at the top of the modal also shows WEEK 2's value — but the modal title implies it's for the user-selected period.
+- Fix: When the user-specified period is not in the timeline, either (a) return 404 with a clear message, or (b) return the timeline WITHOUT a `current` entry and let the client handle it. Do NOT silently substitute the last period:
+  ```ts
+  const currentPeriod = timeline.find(t => t.isCurrent);
+  if (!currentPeriod) {
+    return NextResponse.json({ success: false, error: `No record for ${itemName} at ${outletCode} in ${currentMonth} ${currentWeek}. Available periods: ${timeline.map(t => t.weekLabel + ' ' + t.monthLabel).join(', ')}` }, { status: 404 });
+  }
+  ```
+
+## BUG 6.7: item-history z-score includes the current period in the historical mean/stddev — outlier is self-dampened
+- File: src/app/api/item-history/route.ts:150-161
+- Category: Statistical error / z-score dampened
+- Code:
+  ```ts
+  const devBomValues = timeline
+    .filter(t => t.devBom != null)
+    .map(t => Math.abs(t.devBom!));         // ← includes ALL timeline entries, including currentPeriod
+  const histMean = devBomValues.length > 0
+    ? devBomValues.reduce((a, b) => a + b, 0) / devBomValues.length
+    : 0;
+  const histStdDev = devBomValues.length > 1
+    ? Math.sqrt(devBomValues.reduce((a, b) => a + (b - histMean) ** 2, 0) / (devBomValues.length - 1))
+    : 0;
+  const zScore = currentDevBom != null && histStdDev > 0
+    ? (Math.abs(currentDevBom) - histMean) / histStdDev
+    : null;
+  ```
+- Why: The "historical" baseline used to compute the z-score INCLUDES the current period's value. When the current period is an outlier (the exact scenario z-score is meant to detect), including it in the mean and stddev inflates both, dramatically dampening the z-score. Concrete scenario: historical devBom values = [0.05, 0.06, 0.04, 0.05, 0.07] (mean=0.054, stddev=0.010), current devBom = 0.50. Correct z-score (excluding current) = (0.50 - 0.054) / 0.010 = 44.6 → extreme outlier. Buggy z-score (including current) = (0.50 - 0.138) / 0.155 = 2.34 → only moderately elevated. The ItemDetailModal SummaryCard shows "zScore: 2.34" and the priority logic (line 173: `isHighZScore = zScore > 2`) barely triggers P2 instead of P1. Outlier detection sensitivity is cut by ~95% for a 10× outlier. The `historical.trend` (line 211) also uses `deterioration` (current vs earliest) which is unaffected, but the zScore and downstream priority are wrong.
+- Fix: Exclude the current period from the historical baseline:
+  ```ts
+  const devBomValues = timeline
+    .filter(t => t.devBom != null && !t.isCurrent)
+    .map(t => Math.abs(t.devBom!));
+  ```
+  If the result is empty (only 1 period, which is the current), fall back to including it (current behavior) or return zScore=null.
+
+## BUG 6.8: ItemDeepDive "Total Kemunculan" and "LOSS vs SURPLUS" counts are based on top-N list, not actual occurrence count
+- File: src/components/dashboard/ItemDeepDive.tsx:30-38, 88, 96-100
+- Category: UI data correctness / misleading metrics
+- Code:
+  ```ts
+  // line 30-32:
+  const topOutlets = (data?.topItemsByNominal || [])
+    .filter((it: any) => it.itemName === itemName)
+    .slice(0, 5);
+  // line 35-38:
+  const allOccurrences = (data?.topItemsByNominal || []).filter((it: any) => it.itemName === itemName);
+  const lossCount = allOccurrences.filter((it: any) => it.direction === 'LOSS').length;
+  const surplusCount = allOccurrences.filter((it: any) => it.direction === 'SURPLUS').length;
+  const totalAbsNominal = allOccurrences.reduce((s: number, it: any) => s + (it.absNominal || 0), 0);
+  // line 88:
+  <p className="text-base font-bold">{allOccurrences.length}</p>   // ← labeled "Total Kemunculan"
+  // line 96-100:
+  <span className="text-red-600">{lossCount}L</span> ... <span className="text-emerald-600">{surplusCount}S</span>
+  ```
+- Why: `data.topItemsByNominal` is the top-N (default 10, configurable via `TOP_N_ITEMS`) item+outlet combos by `SUM(absNominalLossSurplus)` — see `queryTopItemsByNominal` in queries.ts:203-228, which does `GROUP BY i.name, o.code ORDER BY "absNominal" DESC LIMIT ${limit}`. So for a given itemName, `allOccurrences` is NOT all outlets that have that item — it's only the (item, outlet) pairs that made it into the top-N across ALL items. If item "Ayam" appears in 50 outlets but only 3 of those (item,outlet) combos are in the global top-10 by nominal, then `allOccurrences.length === 3`. The modal displays "Total Kemunculan: 3" and "LOSS 1 / SURPLUS 2", misleading the user into thinking the item only appears in 3 outlets. The pie chart (line 112-129) shows a distribution based on 3 samples, which is statistically meaningless. The `totalAbsNominal` (line 38) is also only the sum of the top-3, not the true total. Concrete scenario: user opens ItemDeepDive for "Beras Premium" expecting to see how many outlets carry it. The modal says "3 kemunculan" but the item is actually in 200 outlets — 197 were below the top-N cutoff and are invisible.
+- Fix: Either (a) rename the label to clarify it's top-N only ("Top-N Kemunculan"), or (b) better — fetch the true occurrence count via a separate API call (e.g., extend `/api/drilldown` to return a count without the 500-record limit, or add a new lightweight `/api/item-summary?itemName=...` that returns `{ outletCount, lossCount, surplusCount, totalAbsNominal }`).
+  ```ts
+  // Quick fix (rename):
+  <p className="text-[11px] text-muted-foreground">Top-{data?.topItemsByNominal?.length || 10} Kemunculan</p>
+  ```
+
+## BUG 6.9: RestoAnalysis shows "Error: Unknown" when focusOutlet is set but currentWeek is null (e.g., right after changing month)
+- File: src/components/dashboard/RestoAnalysis.tsx:115, 118-149
+- Category: React UI bug / misleading error state
+- Code:
+  ```ts
+  // line 115:
+  enabled: Boolean(focusOutlet && monthLabel && currentWeek),
+  // line 118-127:
+  if (!focusOutlet) { return <Card>Pilih outlet untuk melihat Resto Analysis</Card>; }
+  // line 129-138:
+  if (isLoading) { return <Card>Memuat Resto Analysis...</Card>; }
+  // line 140-149:
+  if (error || !data?.success) {
+    return <Card>Error: {error?.message || data?.error || 'Unknown'}</Card>;  // ← shows "Error: Unknown"
+  }
+  ```
+- Why: `useDashboard.setMonth` (line 49) resets `currentWeek` to null: `setMonth: (v) => set({ monthLabel: v, currentWeek: null, comparisonWeek: null, comparisonMonth: null })`. When the user is on the "resto" tab with a `focusOutlet` already set (e.g., they focused outlet A, then switched to resto tab, then changed the month dropdown), `focusOutlet` remains set but `currentWeek` becomes null. The query is disabled (`enabled: false`), so React Query returns `data: undefined` and `isLoading: false` (it's `isFetching` that would be true, not `isLoading`). The component then falls through the `!focusOutlet` check (focusOutlet is truthy), the `isLoading` check (false), and hits `error || !data?.success` — since `data` is undefined, `!data?.success` evaluates to `!undefined?.success` = `!undefined` = `true`, so the error branch fires. The user sees a red "Error: Unknown" card instead of a helpful "Pilih minggu" message. This erodes trust — the user thinks the API crashed when in reality no request was even made.
+- Fix: Add an explicit guard for missing `currentWeek`/`monthLabel` before the error check:
+  ```ts
+  if (!focusOutlet) { return <Card>Pilih outlet...</Card>; }
+  if (!monthLabel || !currentWeek) {
+    return <Card><CardContent className="py-12 text-center text-muted-foreground"><p>Pilih bulan dan minggu untuk melihat Resto Analysis</p></CardContent></Card>;
+  }
+  if (isLoading) { ... }
+  if (error || !data?.success) { ... }
+  ```
+
+## BUG 6.10: RestoAnalysis fires duplicate /api/outlet-items requests — main query and MenuAnalysis sub-query have different queryKeys but identical params
+- File: src/components/dashboard/RestoAnalysis.tsx:102-116 (main query) and 531-539 (MenuAnalysis sub-query)
+- Category: Performance / duplicate API calls
+- Code:
+  ```ts
+  // Main query (line 103):
+  queryKey: ['outlet-items', focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+  queryFn: ... fetch('/api/outlet-items?outletCode=...&month=...&week=...[&compareWeek=...&compareMonth=...]')
+
+  // MenuAnalysis sub-query (line 532):
+  queryKey: ['outlet-items', outletCode, monthLabel, currentWeek],   // ← 4-element key, no comparisonWeek/Month
+  queryFn: ... fetch('/api/outlet-items?outletCode=...&month=...&week=...')   // ← no compareWeek/compareMonth
+  ```
+- Why: When the RestoAnalysis tab renders, BOTH queries fire. The main query key is `['outlet-items', focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth]` (6 elements). The MenuAnalysis key is `['outlet-items', outletCode, monthLabel, currentWeek]` (4 elements). React Query does NOT deduplicate queries with different keys, so two separate `fetch('/api/outlet-items?...')` calls hit the server. When `comparisonWeek`/`comparisonMonth` are null (the common case), both calls produce IDENTICAL HTTP requests and IDENTICAL responses, but they're cached separately. The MenuAnalysis sub-component only uses `outletData.allItems` (line 548), which is also returned by the main query. So the second call is entirely redundant. Concrete impact: every time the user opens the resto tab, the server gets 2 heavy SQL queries (each joining InventoryRecord + Item + Outlet + Week + SourceFile + parallel benchmark queries) instead of 1. For a 50K-record dataset, each call takes 1-3s — the duplicate doubles server load and adds latency for no benefit.
+- Fix: Have MenuAnalysis consume the parent's data instead of re-fetching. Pass `data` down as a prop, or use React Query's `useQuery` with the SAME queryKey (including comparisonWeek/Month) so the cache is shared:
+  ```ts
+  // In RestoAnalysis parent (line 268-271):
+  <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} allItems={data?.allItems} />
+
+  // In MenuAnalysis:
+  function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allItems }: { ...; allItems?: any[] }) {
+    // Remove the useQuery entirely; use the passed allItems prop
+    const menuGroups = useMemo(() => {
+      if (!allItems || allItems.length === 0) return [];
+      // ... rest of grouping logic
+    }, [allItems]);
+    ...
+  }
+  ```
+
+Stage Summary:
+- Total bugs: 10 (Critical: 1, High: 4, Medium: 4, Low: 1)
+- BUG 6.1 (Critical) is the most urgent: the middleware matcher was not updated when `/api/ingest-upload` and `/api/ingest-process` were added. In production with ADMIN_TOKEN set, these routes are completely unauthenticated — an attacker can insert arbitrary inventory data, create fake outlets/items, and corrupt the database. The FileUploadDialog UI is dead code, but the API routes are deployed and reachable. Fix: add 2 lines to the matcher.
+- BUG 6.2 (High) and BUG 6.3 (High) are silent data-correctness bugs in the new Resto Analysis APIs: zero-deviation baselines are treated as missing data (6.2), and deviation onset (prev=0 → curr>0) is mislabeled as STABLE (6.3). Both affect the historical-trend column and P1/P2/P3 priority in the Resto × Bahan Matrix and Resto Analysis views.
+- BUG 6.4 (High) and BUG 6.5 (High) are metric-mismatch bugs: the outlet-items API computes `outletDevBom` as a volume-weighted aggregate (`sum(|dev|)/sum(|BOM|)`) but compares it against the area/network benchmark which is a simple average of per-item ratios (`AVG(|pctQtyDeviasiToBom|)`). This produces misleading `areaMultiplier` values (outlets appear 2-4× better/worse than reality) and inconsistent health scores between the RestoAnalysis tab and the main dashboard's outlet ranking.
+- BUG 6.6 (Medium) and BUG 6.7 (Medium) are logic/statistical bugs in item-history: silent fallback to the last available period when the user-specified period has no data (6.6) produces benchmarks for the wrong period; including the current period in the z-score baseline (6.7) dampens outlier detection by ~95% for 10× outliers.
+- BUG 6.8 (Medium) is a UI data-correctness bug: ItemDeepDive's "Total Kemunculan" and LOSS/SURPLUS counts are based on the top-N (default 10) list, not actual occurrence counts — an item in 200 outlets shows "3 kemunculan" if only 3 made the top-N.
+- BUG 6.9 (Medium) is a React UI bug: changing the month dropdown while on the RestoAnalysis tab with a focused outlet shows "Error: Unknown" instead of a "select period" message, because the query is disabled but the error branch fires on `!data?.success`.
+- BUG 6.10 (Low) is a performance bug: the RestoAnalysis main query and the MenuAnalysis sub-query fire duplicate `/api/outlet-items` requests because their queryKeys differ in length. Fix: pass data down as a prop or align the queryKeys.
+- No new SQL injection issues (all queries use Prisma `$queryRaw` tagged templates with parameterized values).
+- No new XSS issues (no `dangerouslySetInnerHTML` in inspected components).
+- No React hooks infinite-loop bugs found (all `useMemo`/`useEffect` dependencies are correct in inspected components).
+- Recommended fix order: 6.1 (critical, 2-line matcher fix) → 6.2 (1-line falsy-zero fix) → 6.3 (5-line trend fix) → 6.5 (align healthScore formula with analysis engine) → 6.4 (align outletDevBom with area benchmark) → 6.6 (404 instead of silent fallback) → 6.7 (exclude current from z-score baseline) → 6.8 (rename or add item-summary API) → 6.9 (add currentWeek guard) → 6.10 (pass data as prop)
