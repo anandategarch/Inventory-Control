@@ -1,27 +1,65 @@
 // ============================================================
-//  Analysis Engine — ranking, benchmarking, priority, worklist
+//  Analysis Engine — rule context, worklist, priorities, ranking
+//  --------------------------------------------------------
+//  Phase 5: Removed 20 dead functions (replaced by SQL queries
+//  in src/lib/queries.ts during Phase 4). Only actively-called
+//  functions remain. All metric computations use the Metric
+//  Engine (src/lib/metrics) as single source of truth.
+//
+//  Actively-used functions (8):
+//   - dedupSalesByOutlet (internal helper)
+//   - buildRuleContext (called by /api/analysis route rule loop)
+//   - recommendAction (called by buildWorklistFromFlags)
+//   - buildWorklistFromFlags (called by /api/analysis route)
+//   - computePrioritiesFromFlags (called by /api/analysis route)
+//   - computeVarianceAnalysis (called by /api/analysis route)
+//   - computeOutletHealthRanking (called by /api/analysis route)
+//   - computeHistoricalAnalysis (called by /api/analysis route)
+//
+//  Removed (dead code, replaced by SQL queries):
+//   - buildExecutiveSummary → queryExecSummary + buildExecSummaryFromSql
+//   - topItemsByNominal → queryTopItemsByNominal
+//   - topItemsByDevBom → queryTopItemsByDevBom
+//   - topOutlets → queryTopOutlets
+//   - topOutletsBySales → queryTopOutletsBySales
+//   - topItemsByWaste/Susut/Trial/LossSurplus → queryTopItemsByCategory
+//   - deviationBreakdown → queryDeviationBreakdown
+//   - lossVsSurplus → queryLossVsSurplus
+//   - buildWorklist → buildWorklistFromFlags (uses pre-computed flags)
+//   - computePriorities → computePrioritiesFromFlags (uses pre-computed flags)
+//   - buildTrend → queryTrendAgg
+//   - computeAreaAnalysis → queryAreaAnalysis
+//   - computePareto → queryPareto
+//   - computeCostImpact → queryCostImpact
+//   - computeItemConsistencyAnalysis → queryItemConsistency
+//   - computeNetCostTrend → queryTrendAgg (derived in route)
 // ============================================================
-import type { InventoryRecord, Outlet, Item, Week, Prisma } from '@prisma/client';
+import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type {
   PriorityScore,
   InvestigationItem,
-  ExecutiveSummary,
-  BenchmarkResult,
-  GrowthMetrics,
 } from '@/types/inventory';
 import { CFG_THRESHOLDS } from '@/config/thresholds';
 import type { RuntimeThresholds } from '@/lib/settings';
 import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
-import { calcGrowth, calcGrowthAbs, safeRatio, calcAvgPrice, computeHealthScore, computeDevBomAggregate, computeResidualPctAggregate, computeLossToSales, type AggregateInput } from '@/lib/metrics';
-import { calcZScore } from '@/engine/calculations/growth';
+import {
+  calcGrowth,
+  calcGrowthAbs,
+  safeRatio,
+  calcAvgPrice,
+  computeHealthScore,
+  computeDevBomAggregate,
+  computeResidualPctAggregate,
+  computeLossToSales,
+  calcZScoreFromStats,
+  type AggregateInput,
+} from '@/lib/metrics';
 
 type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 
 // ============================================================
-//  Executive Summary — current week vs previous week
-// ============================================================
-// ============================================================
-//  Bug 6 fix: dedupSalesMode — use MODE (most frequent value) not MAX
+//  Sales MODE dedup — internal helper
+//  Bug 6 fix: use MODE (most frequent value) not MAX.
 //  Sales is outlet-level denormalized (same value on every item row).
 //  MAX is vulnerable to typo (1 row with 10M instead of 1M → adopts wrong value).
 //  MODE = most frequent value, robust against single-row typo.
@@ -59,83 +97,6 @@ function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
   return result;
 }
 
-export function buildExecutiveSummary(
-  current: RecWithRels[],
-  previous: RecWithRels[],
-  monthLabel: string,
-  weekLabel: string,
-  prevWeekLabel: string | null
-): ExecutiveSummary {
-  // Bug 6 fix: use MODE per outlet (not MAX) — robust against typo
-  const sumSales = (recs: RecWithRels[]): number => {
-    const byOutlet = dedupSalesByOutlet(recs);
-    let total = 0;
-    for (const v of byOutlet.values()) total += v;
-    return total;
-  };
-
-  const sum = (recs: RecWithRels[], field: keyof InventoryRecord): number => {
-    let s = 0;
-    for (const r of recs) {
-      const v = r[field];
-      if (typeof v === 'number' && !isNaN(v)) s += v;
-    }
-    return s;
-  };
-
-  // Sales uses absolute value? No — sales is positive. Use as-is.
-  const salesCurr = sumSales(current);
-  const salesPrev = sumSales(previous);
-
-  // BOM, COM are negative — use absolute sum for "magnitude"
-  const qtyBomCurr = Math.abs(sum(current, 'qtyBom'));
-  const qtyBomPrev = Math.abs(sum(previous, 'qtyBom'));
-  const qtyDevCurr = sum(current, 'absQtyDeviasi');
-  const qtyDevPrev = sum(previous, 'absQtyDeviasi');
-  const qtyWasteCurr = Math.abs(sum(current, 'qtyWaste'));
-  const qtyWastePrev = Math.abs(sum(previous, 'qtyWaste'));
-  const qtySusutCurr = Math.abs(sum(current, 'qtySusut'));
-  const qtySusutPrev = Math.abs(sum(previous, 'qtySusut'));
-  const qtyTrialCurr = Math.abs(sum(current, 'qtyTrial'));
-  const qtyTrialPrev = Math.abs(sum(previous, 'qtyTrial'));
-  const qtyLSCurr = sum(current, 'absQtyLossSurplus');
-  const qtyLSPrev = sum(previous, 'absQtyLossSurplus');
-  const nomDevCurr = sum(current, 'absNominalDeviasi');
-  const nomDevPrev = sum(previous, 'absNominalDeviasi');
-
-  // Loss / Surplus split — Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
-  let totalLoss = 0, totalSurplus = 0;
-  for (const r of current) {
-    if (r.nominalLossSurplus == null) continue;
-    if (r.nominalLossSurplus > 0) totalLoss += r.nominalLossSurplus;
-    else if (r.nominalLossSurplus < 0) totalSurplus += Math.abs(r.nominalLossSurplus);
-  }
-
-  // Residual
-  let residualLossQty = 0;
-  for (const r of current) {
-    if (r.residualQty != null && r.residualQty > 0) residualLossQty += r.residualQty;
-  }
-  const residualLossPct = qtyDevCurr > 0 ? residualLossQty / qtyDevCurr : null;
-
-  return {
-    period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
-    sales: { current: salesCurr, previous: salesPrev || null, growth: calcGrowth(salesCurr, salesPrev || null) },
-    nominalDeviasi: { current: nomDevCurr, previous: nomDevPrev || null, growth: calcGrowth(nomDevCurr, nomDevPrev || null) },
-    qtyBom: { current: qtyBomCurr, previous: qtyBomPrev || null, growth: calcGrowth(qtyBomCurr, qtyBomPrev || null) },
-    qtyDeviasi: { current: qtyDevCurr, previous: qtyDevPrev || null, growth: calcGrowth(qtyDevCurr, qtyDevPrev || null) },
-    qtyWaste: { current: qtyWasteCurr, previous: qtyWastePrev || null, growth: calcGrowth(qtyWasteCurr, qtyWastePrev || null) },
-    qtySusut: { current: qtySusutCurr, previous: qtySusutPrev || null, growth: calcGrowth(qtySusutCurr, qtySusutPrev || null) },
-    qtyTrial: { current: qtyTrialCurr, previous: qtyTrialPrev || null, growth: calcGrowth(qtyTrialCurr, qtyTrialPrev || null) },
-    qtyLossSurplus: { current: qtyLSCurr, previous: qtyLSPrev || null, growth: calcGrowth(qtyLSCurr, qtyLSPrev || null) },
-    totalLoss, totalSurplus,
-    lossToSales: salesCurr > 0 ? totalLoss / salesCurr : null,
-    surplusToSales: salesCurr > 0 ? totalSurplus / salesCurr : null,
-    deviationToBom: qtyBomCurr > 0 ? qtyDevCurr / qtyBomCurr : null,
-    residualLossQty, residualLossPct,
-  };
-}
-
 // ============================================================
 //  Per-record rule evaluation + context building
 //  Optional `t` = runtime thresholds from DB (falls back to CFG_THRESHOLDS)
@@ -159,10 +120,10 @@ export function buildRuleContext(
   const priceGrowth = calcGrowth(currPrice, prevPrice);
 
   // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
-  // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
   // LOGIC-03 fix: enforce HISTORICAL_MIN_WEEKS — skip zScore if sample size too small
+  // Phase 5: use calcZScoreFromStats from Metric Engine (single source of truth)
   const zScore = historicalStats && historicalStats.stdDev > 0 && historicalStats.n >= (t.HISTORICAL_MIN_WEEKS ?? 4)
-    ? calcZScore(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
+    ? calcZScoreFromStats(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
     : null;
 
   // benchmark flag from zScore (uses runtime thresholds)
@@ -219,279 +180,8 @@ export function buildRuleContext(
 }
 
 // ============================================================
-//  Top items by various metrics
-// ============================================================
-export function topItemsByNominal(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.absNominalLossSurplus != null && r.absNominalLossSurplus > 0)
-    .sort((a, b) => (b.absNominalLossSurplus ?? 0) - (a.absNominalLossSurplus ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name,
-      outletCode: r.outlet.code,
-      absNominal: r.absNominalDeviasi ?? 0,
-      direction: r.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
-    }));
-}
-
-export function topItemsByDevBom(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.pctQtyDeviasiToBom != null && r.qtyBom !== 0)
-    .sort((a, b) => Math.abs(b.pctQtyDeviasiToBom ?? 0) - Math.abs(a.pctQtyDeviasiToBom ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name,
-      outletCode: r.outlet.code,
-      devBom: r.pctQtyDeviasiToBom ?? 0,
-      tolerance: r.tolerancePct,
-    }));
-}
-
-export function topOutlets(recs: RecWithRels[], n = 10) {
-  // Bug 6 fix: use MODE (most frequent) per outlet, not MAX — robust against typo
-  const salesByOutlet = dedupSalesByOutlet(recs);
-  const byOutlet = new Map<number, {
-    outlet: Outlet; absNominal: number; devBomSum: number; devBomCount: number;
-    area: string; sales: number;
-    lossAmount: number; surplusAmount: number;
-  }>();
-  for (const r of recs) {
-    const k = r.outletId;
-    const existing = byOutlet.get(k);
-    if (existing) {
-      existing.absNominal += r.absNominalDeviasi ?? 0;
-      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
-        existing.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
-        existing.devBomCount++;
-      }
-      // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
-      if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) existing.lossAmount += r.nominalLossSurplus;
-      else if (r.nominalLossSurplus != null && r.nominalLossSurplus < 0) existing.surplusAmount += Math.abs(r.nominalLossSurplus);
-    } else {
-      byOutlet.set(k, {
-        outlet: r.outlet, absNominal: r.absNominalDeviasi ?? 0,
-        devBomSum: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? Math.abs(r.pctQtyDeviasiToBom) : 0,
-        devBomCount: r.pctQtyDeviasiToBom != null && r.qtyBom !== 0 ? 1 : 0,
-        area: r.area,
-        sales: 0, // will be filled from salesByOutlet (MODE) below
-        lossAmount: r.nominalLossSurplus != null && r.nominalLossSurplus > 0 ? r.nominalLossSurplus : 0,
-        surplusAmount: r.nominalLossSurplus != null && r.nominalLossSurplus < 0 ? Math.abs(r.nominalLossSurplus) : 0,
-      });
-    }
-  }
-  // Fill sales from MODE map (Bug 6 fix)
-  for (const [outletId, sales] of salesByOutlet) {
-    const e = byOutlet.get(outletId);
-    if (e) e.sales = sales;
-  }
-  // area averages
-  const areaAvg = new Map<string, number>();
-  const areaCount = new Map<string, number>();
-  for (const v of byOutlet.values()) {
-    if (v.devBomCount > 0) {
-      const avg = v.devBomSum / v.devBomCount;
-      areaAvg.set(v.area, (areaAvg.get(v.area) ?? 0) + avg);
-      areaCount.set(v.area, (areaCount.get(v.area) ?? 0) + 1);
-    }
-  }
-  const areaFinal = new Map<string, number>();
-  for (const [area, sum] of areaAvg) {
-    areaFinal.set(area, sum / (areaCount.get(area) ?? 1));
-  }
-
-  return [...byOutlet.values()]
-    .map((v) => ({
-      outletCode: v.outlet.code, outletName: v.outlet.name, area: v.area,
-      absNominal: v.absNominal,
-      devBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
-      areaAvg: areaFinal.get(v.area) ?? 0,
-      sales: v.sales,
-      // BUG FIX #003: Include direction info for loss/surplus drill-down
-      lossAmount: v.lossAmount,
-      surplusAmount: v.surplusAmount,
-      direction: v.lossAmount > v.surplusAmount ? 'LOSS' : 'SURPLUS',
-    }))
-    .sort((a, b) => b.absNominal - a.absNominal)
-    .slice(0, n);
-}
-
-// ============================================================
-//  Top outlets by Sales (for card drill-down)
-//  BUG FIX #3: Sales is duplicated per item row — take 1 unique per outlet
-// ============================================================
-export function topOutletsBySales(recs: RecWithRels[], n = 10) {
-  // Bug 6 fix: use MODE (most frequent) per outlet, not MAX
-  const salesByOutlet = dedupSalesByOutlet(recs);
-  const byOutlet = new Map<number, { outlet: Outlet; area: string; sales: number; absNominal: number }>();
-  for (const r of recs) {
-    const k = r.outletId;
-    const existing = byOutlet.get(k);
-    if (existing) {
-      existing.absNominal += r.absNominalDeviasi ?? 0;
-    } else {
-      byOutlet.set(k, {
-        outlet: r.outlet, area: r.area,
-        sales: 0, // filled below from MODE
-        absNominal: r.absNominalDeviasi ?? 0,
-      });
-    }
-  }
-  // Fill sales from MODE map
-  for (const [outletId, sales] of salesByOutlet) {
-    const e = byOutlet.get(outletId);
-    if (e) e.sales = sales;
-  }
-  return [...byOutlet.values()]
-    .map((v) => ({
-      outletCode: v.outlet.code, outletName: v.outlet.name, area: v.area,
-      sales: v.sales, absNominal: v.absNominal,
-      devToSalesRatio: v.sales > 0 ? v.absNominal / v.sales : null,
-    }))
-    .filter((v) => v.sales > 0)
-    .sort((a, b) => b.sales - a.sales)
-    .slice(0, n);
-}
-
-// ============================================================
-//  Top items by Waste (for card drill-down)
-// ============================================================
-export function topItemsByWaste(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.qtyWaste != null && Math.abs(r.qtyWaste) > 0)
-    .sort((a, b) => Math.abs(b.qtyWaste ?? 0) - Math.abs(a.qtyWaste ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name, outletCode: r.outlet.code,
-      qtyWaste: Math.abs(r.qtyWaste ?? 0),
-      nominalWaste: Math.abs(r.nominalWaste ?? 0),
-    }));
-}
-
-// ============================================================
-//  Top items by Susut (for card drill-down)
-// ============================================================
-export function topItemsBySusut(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.qtySusut != null && Math.abs(r.qtySusut) > 0)
-    .sort((a, b) => Math.abs(b.qtySusut ?? 0) - Math.abs(a.qtySusut ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name, outletCode: r.outlet.code,
-      qtySusut: Math.abs(r.qtySusut ?? 0),
-      nominalSusut: Math.abs(r.nominalSusut ?? 0),
-    }));
-}
-
-// ============================================================
-//  Top items by Trial (for card drill-down)
-// ============================================================
-export function topItemsByTrial(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.qtyTrial != null && Math.abs(r.qtyTrial) > 0)
-    .sort((a, b) => Math.abs(b.qtyTrial ?? 0) - Math.abs(a.qtyTrial ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name, outletCode: r.outlet.code,
-      qtyTrial: Math.abs(r.qtyTrial ?? 0),
-      nominalTrial: Math.abs(r.nominalTrial ?? 0),
-    }));
-}
-
-// ============================================================
-//  Top items by Loss/Surplus (for card drill-down)
-// ============================================================
-export function topItemsByLossSurplus(recs: RecWithRels[], n = 10) {
-  return [...recs]
-    .filter((r) => r.qtyLossSurplus != null && Math.abs(r.qtyLossSurplus) > 0)
-    .sort((a, b) => Math.abs(b.qtyLossSurplus ?? 0) - Math.abs(a.qtyLossSurplus ?? 0))
-    .slice(0, n)
-    .map((r) => ({
-      itemName: r.item.name, outletCode: r.outlet.code,
-      qtyLossSurplus: Math.abs(r.qtyLossSurplus ?? 0),
-      nominalLossSurplus: Math.abs(r.nominalLossSurplus ?? 0),
-      direction: r.direction,
-    }));
-}
-
-// ============================================================
-//  Deviation Breakdown (Waterfall)
-// ============================================================
-export function deviationBreakdown(recs: RecWithRels[]) {
-  let waste = 0, susut = 0, trial = 0, residual = 0, total = 0;
-  for (const r of recs) {
-    waste += Math.abs(r.qtyWaste ?? 0);
-    susut += Math.abs(r.qtySusut ?? 0);
-    trial += Math.abs(r.qtyTrial ?? 0);
-    residual += Math.abs(r.residualQty ?? 0);
-    total += r.absQtyDeviasi ?? 0;
-  }
-  return { waste, susut, trial, residual, total };
-}
-
-// ============================================================
-//  Loss vs Surplus
-// ============================================================
-export function lossVsSurplus(recs: RecWithRels[]) {
-  let loss = 0, surplus = 0, lossNominal = 0, surplusNominal = 0;
-  for (const r of recs) {
-    if (r.direction === 'LOSS') {
-      loss += r.absQtyDeviasi ?? 0;
-      lossNominal += r.absNominalDeviasi ?? 0;
-    } else if (r.direction === 'SURPLUS') {
-      surplus += r.absQtyDeviasi ?? 0;
-      surplusNominal += r.absNominalDeviasi ?? 0;
-    }
-  }
-  return { loss, surplus, lossNominal, surplusNominal };
-}
-
-// ============================================================
-//  Investigation Worklist
-// ============================================================
-export function buildWorklist(
-  recs: RecWithRels[],
-  prevByOutletItem: Map<string, RecWithRels>,
-  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>
-): InvestigationItem[] {
-  const items: InvestigationItem[] = [];
-
-  for (const curr of recs) {
-    const key = `${curr.outletId}|${curr.itemId}`;
-    const prev = prevByOutletItem.get(key) ?? null;
-    const historicalStats = historicalByOutletItem.get(key) ?? null;
-    const ctx = buildRuleContext(curr, prev, historicalStats);
-    const flags = evaluateRules(ctx);
-
-    if (flags.length === 0) continue;
-
-    const top = flags[0];
-    const priority: 'P1' | 'P2' | 'P3' =
-      top.severity === 'ABNORMAL' ? 'P1' : top.severity === 'WARNING' ? 'P2' : 'P3';
-
-    items.push({
-      priority,
-      outletCode: curr.outlet.code,
-      outletName: curr.outlet.name,
-      area: curr.area,
-      itemName: curr.item.name,
-      issue: top.ruleName,
-      evidence: top.narrative || JSON.stringify(top.evidence).slice(0, 200),
-      recommendedAction: recommendAction(flags.map((f) => f.ruleCode)),
-      ruleCodes: flags.map((f) => f.ruleCode),
-      absNominalDeviasi: curr.absNominalLossSurplus ?? 0, // NET per master context #36
-      deviationToBom: curr.pctQtyDeviasiToBom,
-      direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
-    });
-  }
-
-  // Sort: priority then absNominal
-  const order = { P1: 0, P2: 1, P3: 2 };
-  items.sort((a, b) => order[a.priority] - order[b.priority] || b.absNominalDeviasi - a.absNominalDeviasi);
-  return items.slice(0, 100); // cap for UI
-}
-
-// ============================================================
 //  Recommendation Engine (rule-based)
+//  Called by buildWorklistFromFlags
 // ============================================================
 export function recommendAction(ruleCodes: string[]): string {
   const set = new Set(ruleCodes);
@@ -529,104 +219,6 @@ export function recommendAction(ruleCodes: string[]): string {
   }
 
   return actions.length > 0 ? actions.join(' | ') : 'Investigasi lanjutan diperlukan';
-}
-
-// ============================================================
-//  Priority ranking
-// ============================================================
-export function computePriorities(
-  recs: RecWithRels[],
-  prevByOutletItem: Map<string, RecWithRels>,
-  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>
-): PriorityScore[] {
-  const scores: PriorityScore[] = [];
-
-  for (const curr of recs) {
-    const key = `${curr.outletId}|${curr.itemId}`;
-    const prev = prevByOutletItem.get(key) ?? null;
-    const historicalStats = historicalByOutletItem.get(key) ?? null;
-    const ctx = buildRuleContext(curr, prev, historicalStats);
-    const flags = evaluateRules(ctx);
-
-    if (flags.length === 0) continue;
-
-    const top = flags[0];
-    const t = CFG_THRESHOLDS;
-
-    const devBomScore = ctx.pctQtyDeviasiToBom != null ? Math.abs(ctx.pctQtyDeviasiToBom) : 0;
-    const growthScore = Math.max(
-      Math.abs(ctx.qtyDeviasiGrowth ?? 0),
-      Math.abs(ctx.nominalDeviasiGrowth ?? 0),
-    );
-    const residualScore = Math.abs(ctx.residualRatio ?? 0);
-    const tolBreach = ctx.tolerancePct != null && ctx.pctQtyDeviasiToBom != null
-      ? Math.max(0, Math.abs(ctx.pctQtyDeviasiToBom) - Math.abs(ctx.tolerancePct))
-      : Math.abs(ctx.pctQtyDeviasiToBom ?? 0) * 0.5; // fallback
-    const histScore = Math.abs(ctx.zScore ?? 0);
-
-    const financialScore = (curr.absNominalLossSurplus ?? 0) / 1_000_000; // per million — NET per master context #36
-    const operationalScore =
-      devBomScore * t.WEIGHT_DEV_BOM +
-      Math.min(growthScore, 5) * t.WEIGHT_GROWTH +
-      residualScore * t.WEIGHT_RESIDUAL +
-      tolBreach * t.WEIGHT_TOLERANCE +
-      Math.min(histScore, 5) * t.WEIGHT_HISTORY;
-
-    scores.push({
-      itemId: curr.itemId,
-      itemName: curr.item.name,
-      outletId: curr.outletId,
-      outletCode: curr.outlet.code,
-      outletName: curr.outlet.name,
-      area: curr.area,
-      financialScore,
-      operationalScore,
-      financialRank: null,
-      operationalRank: null,
-      topAnomaly: top,
-    });
-  }
-
-  // Assign ranks
-  const byFin = [...scores].sort((a, b) => b.financialScore - a.financialScore);
-  byFin.forEach((s, i) => { s.financialRank = i + 1; });
-  const byOps = [...scores].sort((a, b) => b.operationalScore - a.operationalScore);
-  byOps.forEach((s, i) => { s.operationalRank = i + 1; });
-
-  // Bug 1 fix: sort by combined finalScore (lower combined rank = higher priority)
-  const sortedScores = scores
-    .map((s) => ({ ...s, finalScore: (s.financialRank ?? 9999) + (s.operationalRank ?? 9999) }))
-    .sort((a, b) => a.finalScore - b.finalScore);
-
-  return sortedScores;
-}
-
-// ============================================================
-//  Trend (last N weeks for selected scope)
-// ============================================================
-export function buildTrend(
-  recsByWeek: Array<{ weekLabel: string; recs: RecWithRels[] }>
-) {
-  return recsByWeek.map(({ weekLabel, recs }) => {
-    // Bug 6 fix: use MODE (most frequent) per outlet, not MAX
-    const salesByOutlet = dedupSalesByOutlet(recs);
-    let devBomSum = 0, devBomCount = 0, nominal = 0;
-    for (const r of recs) {
-      if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
-        devBomSum += Math.abs(r.pctQtyDeviasiToBom);
-        devBomCount++;
-      }
-      nominal += r.absNominalDeviasi ?? 0;
-    }
-    let sales = 0;
-    for (const v of salesByOutlet.values()) sales += v;
-    return {
-      weekLabel,
-      devBom: devBomCount > 0 ? devBomSum / devBomCount : 0,
-      sales,
-      nominal,
-    };
-  });
 }
 
 // ============================================================
@@ -741,68 +333,6 @@ export function computePrioritiesFromFlags(
 }
 
 // ============================================================
-//  Area Analysis — aggregate metrics per area
-// ============================================================
-export function computeAreaAnalysis(recs: RecWithRels[]) {
-  // Bug 6 fix: precompute sales per outlet via MODE (not MAX)
-  const salesByOutletAll = dedupSalesByOutlet(recs);
-  const byArea = new Map<string, {
-    outletIds: Set<number>;
-    salesByOutlet: Map<number, number>;
-    absNominal: number;
-    devBomSum: number;
-    devBomCount: number;
-    lossNominal: number;
-  }>();
-
-  for (const r of recs) {
-    const a = r.area || 'UNKNOWN';
-    let entry = byArea.get(a);
-    if (!entry) {
-      entry = {
-        outletIds: new Set(),
-        salesByOutlet: new Map(),
-        absNominal: 0,
-        devBomSum: 0,
-        devBomCount: 0,
-        lossNominal: 0,
-      };
-      byArea.set(a, entry);
-    }
-    entry.outletIds.add(r.outletId);
-    // Fill sales from precomputed MODE map
-    const sales = salesByOutletAll.get(r.outletId);
-    if (sales != null && sales > 0) {
-      entry.salesByOutlet.set(r.outletId, sales);
-    }
-    entry.absNominal += r.absNominalDeviasi ?? 0;
-    if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
-      entry.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
-      entry.devBomCount++;
-    }
-    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
-    if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) {
-      entry.lossNominal += r.nominalLossSurplus;
-    }
-  }
-
-  return [...byArea.entries()]
-    .map(([area, v]) => {
-      let totalSales = 0;
-      for (const s of v.salesByOutlet.values()) totalSales += s;
-      return {
-        area,
-        outletCount: v.outletIds.size,
-        totalSales,
-        totalAbsNominal: v.absNominal,
-        avgDevBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
-        lossToSales: totalSales > 0 ? v.lossNominal / totalSales : null,
-      };
-    })
-    .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
-}
-
-// ============================================================
 //  Variance Analysis — items whose deviation changed most
 //  Positive delta = worsened (deviasi naik)
 //  Negative delta = improved (deviasi turun)
@@ -853,6 +383,11 @@ export function computeVarianceAnalysis(
 // ============================================================
 //  Outlet Health Ranking — health score per outlet (worst first)
 //  Uses pre-computed flags from recsWithFlags
+//
+//  Phase 4: Uses Metric Engine (computeHealthScore, computeDevBomAggregate,
+//  computeResidualPctAggregate, computeLossToSales) as single source of truth.
+//  Previously: inline healthScore formula with hardcoded thresholds + simple-average devBom.
+//  Now: aggregate SUM/SUM devBom (volume-weighted) + Settings-driven thresholds.
 // ============================================================
 export function computeOutletHealthRanking(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
@@ -990,240 +525,10 @@ export function computeOutletHealthRanking(
 }
 
 // ============================================================
-//  Pareto — class A items (top contributors to total deviation cost)
-//  classACount = # items accounting for 80% of total |NOMINAL DEVIASI|
-// ============================================================
-export function computePareto(recs: RecWithRels[]) {
-  const items = [...recs]
-    .filter((r) => r.absNominalDeviasi != null && r.absNominalDeviasi > 0)
-    .map((r) => ({
-      itemName: r.item.name,
-      outletCode: r.outlet.code,
-      absNominal: r.absNominalDeviasi ?? 0,
-    }))
-    .sort((a, b) => b.absNominal - a.absNominal);
-
-  const totalAbsNominal = items.reduce((sum, it) => sum + it.absNominal, 0);
-  let cum = 0;
-  let classACount = 0;
-  let classAPctOfCost = 0;
-  const itemsWithCum = items.map((it) => {
-    cum += it.absNominal;
-    const cumPct = totalAbsNominal > 0 ? cum / totalAbsNominal : 0;
-    return { ...it, cumPct };
-  });
-  for (const it of itemsWithCum) {
-    if (it.cumPct <= 0.8) {
-      classACount++;
-      classAPctOfCost = it.cumPct;
-    } else {
-      break;
-    }
-  }
-
-  return {
-    classACount,
-    classAPctOfCost,
-    totalItems: items.length,
-    totalAbsNominal,
-    items: itemsWithCum.slice(0, 20),
-  };
-}
-
-// ============================================================
-//  Cost Impact — total |NOMINAL DEVIASI| as % of sales
-// ============================================================
-export function computeCostImpact(recs: RecWithRels[], salesTotal: number) {
-  let totalCost = 0;
-  let lossNominal = 0;
-  let surplusNominal = 0;
-  for (const r of recs) {
-    totalCost += r.absNominalDeviasi ?? 0;
-    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
-    if (r.nominalLossSurplus != null && r.nominalLossSurplus > 0) lossNominal += r.nominalLossSurplus;
-    else if (r.nominalLossSurplus != null && r.nominalLossSurplus < 0) surplusNominal += Math.abs(r.nominalLossSurplus);
-  }
-  return {
-    totalCost,
-    pctOfSales: salesTotal > 0 ? totalCost / salesTotal : null,
-    lossNominal,
-    surplusNominal,
-  };
-}
-
-// ============================================================
-//  Item Consistency — pola item antar outlet (Section 22, 38 master context)
-//  SYSTEMIC: ≥10 outlet menyimpang untuk item yang sama
-//  WIDESPREAD: 5-9 outlet
-//  ISOLATED: 2-4 outlet
-//  Direction consistency juga dianalisis (10 LOSS > 5 LOSS + 5 SURPLUS)
-// ============================================================
-export function computeItemConsistencyAnalysis(
-  current: RecWithRels[],
-  _historicalByOutletItem?: Map<string, { mean: number; stdDev: number; n: number }>,
-  _historicalPeriodCount?: number
-) {
-  // Group by itemName — count distinct outlets with significant deviation
-  const byItem = new Map<string, {
-    itemName: string;
-    satuan: string;
-    outlets: Set<string>;
-    lossOutlets: Set<string>;
-    surplusOutlets: Set<string>;
-    totalAbsNominal: number;
-    devBomSum: number;
-    devBomCount: number;
-  }>();
-
-  for (const r of current) {
-    if (r.absNominalDeviasi == null || r.absNominalDeviasi === 0) continue;
-    const name = r.item.name;
-    let e = byItem.get(name);
-    if (!e) {
-      e = {
-        itemName: name,
-        satuan: r.satuan ?? '',
-        outlets: new Set(),
-        lossOutlets: new Set(),
-        surplusOutlets: new Set(),
-        totalAbsNominal: 0,
-        devBomSum: 0,
-        devBomCount: 0,
-      };
-      byItem.set(name, e);
-    }
-    e.outlets.add(r.outlet.code);
-    if (r.direction === 'LOSS') e.lossOutlets.add(r.outlet.code);
-    else if (r.direction === 'SURPLUS') e.surplusOutlets.add(r.outlet.code);
-    e.totalAbsNominal += r.absNominalDeviasi;
-    if (r.pctQtyDeviasiToBom != null && r.qtyBom !== 0) {
-      e.devBomSum += Math.abs(r.pctQtyDeviasiToBom);
-      e.devBomCount++;
-    }
-  }
-
-  // Classify by outlet count (master context Section 22, 38)
-  const items = [...byItem.values()]
-    .map((v) => {
-      const outletCount = v.outlets.size;
-      const lossOutlets = v.lossOutlets.size;
-      const surplusOutlets = v.surplusOutlets.size;
-      let consistency: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED';
-      if (outletCount >= 10) consistency = 'SYSTEMIC';
-      else if (outletCount >= 5) consistency = 'WIDESPREAD';
-      else if (outletCount >= 2) consistency = 'ISOLATED';
-      else consistency = 'ISOLATED'; // 1 outlet = isolated (single occurrence)
-      return {
-        itemName: v.itemName,
-        satuan: v.satuan,
-        outletCount,
-        lossOutlets,
-        surplusOutlets,
-        totalAbsNominal: v.totalAbsNominal,
-        avgDevBom: v.devBomCount > 0 ? v.devBomSum / v.devBomCount : 0,
-        consistency,
-      };
-    })
-    .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
-
-  // Return unified list — backward compat: map to systemic/episodic shape
-  // but with proper outlet-count-based classification
-  const systemic = items.filter((i) => i.consistency === 'SYSTEMIC').map((i) => ({
-    itemName: i.itemName,
-    outletCode: '', // aggregated across outlets
-    area: '',
-    occurrences: i.outletCount,
-    avgDevBom: i.avgDevBom,
-    absNominal: i.totalAbsNominal,
-  }));
-  const episodic = items.filter((i) => i.consistency !== 'SYSTEMIC').map((i) => ({
-    itemName: i.itemName,
-    outletCode: '',
-    area: '',
-    absNominal: i.totalAbsNominal,
-    devBom: i.avgDevBom,
-  }));
-
-  // Also return unified items list with full classification
-  return { systemic, episodic, items };
-}
-
-// ============================================================
-//  Net Cost Trend — net (LOSS - SURPLUS) / SALES per week
-//  Positive = net cost leak; Negative = net surplus recovery
-// ============================================================
-export function computeNetCostTrend(
-  trendRecs: Array<{
-    monthLabel: string; weekLabel: string; nominalSales: number | null;
-    nominalDeviasi: number | null; outletId: number;
-  }>,
-  monthKeyByLabel: Map<string, string>
-) {
-  // Bug 6 fix: collect sales counts per outlet per period for MODE
-  const byPeriod = new Map<string, {
-    monthLabel: string; weekLabel: string; sortKey: string;
-    salesCounts: Map<number, Map<number, number>>; // outletId → (salesValue → count)
-    lossNominal: number; surplusNominal: number;
-  }>();
-
-  for (const r of trendRecs) {
-    const k = `${r.monthLabel}|${r.weekLabel}`;
-    const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-    const sortKey = `${mk}|${r.weekLabel}`;
-    let p = byPeriod.get(k);
-    if (!p) {
-      p = {
-        monthLabel: r.monthLabel, weekLabel: r.weekLabel, sortKey,
-        salesCounts: new Map(), lossNominal: 0, surplusNominal: 0,
-      };
-      byPeriod.set(k, p);
-    }
-    if (r.nominalSales != null && r.nominalSales > 0) {
-      let outletCounts = p.salesCounts.get(r.outletId);
-      if (!outletCounts) {
-        outletCounts = new Map();
-        p.salesCounts.set(r.outletId, outletCounts);
-      }
-      const rounded = Math.round(r.nominalSales * 100) / 100; // Bug 11 fix: 2 decimal places
-      outletCounts.set(rounded, (outletCounts.get(rounded) ?? 0) + 1);
-    }
-    // Bug A fix: use nominalLossSurplus (NET) not nominalDeviasi (GROSS)
-    // Note: this function is dead code (trend computed via SQL queryTrendAgg).
-    // Input type doesn't have nominalLossSurplus, so keeping nominalDeviasi here.
-    if (r.nominalDeviasi != null && r.nominalDeviasi > 0) p.lossNominal += r.nominalDeviasi;
-    else if (r.nominalDeviasi != null && r.nominalDeviasi < 0) p.surplusNominal += Math.abs(r.nominalDeviasi);
-  }
-
-  return [...byPeriod.values()]
-    .map((p) => {
-      // Compute sales = sum of MODE per outlet (Bug 6 fix)
-      let sales = 0;
-      for (const outletCounts of p.salesCounts.values()) {
-        let bestVal = 0, bestCount = 0;
-        for (const [val, count] of outletCounts) {
-          if (count > bestCount) { bestVal = val; bestCount = count; }
-        }
-        sales += bestVal;
-      }
-      return {
-        weekLabel: `${p.weekLabel} ${p.monthLabel.split(' ')[0].slice(0, 3)}`,
-        sortKey: p.sortKey,
-        netCostRatio: sales > 0 ? (p.lossNominal - p.surplusNominal) / sales : 0,
-        lossNominal: p.lossNominal,
-        surplusNominal: p.surplusNominal,
-        sales,
-      };
-    })
-    .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-    .map(({ sortKey, ...rest }) => rest);
-}
-
-// ============================================================
-//  Historical Analysis — items where current devBom deviates
-//  significantly from historical mean (z-score > 2 = critical)
-//
-//  Phase 4 optimization: historicalByOutletItem now contains precomputed
-//  stats (mean + stdDev + n) from SQL aggregate query, not raw arrays.
+//  Historical Analysis — critical items based on Z-Score
+//  Phase 4: uses pre-computed historical stats from SQL aggregate query
+//  (queryHistoricalStats), not raw arrays of historical records.
+//  Phase 5: uses calcZScoreFromStats from Metric Engine (single source of truth)
 // ============================================================
 export function computeHistoricalAnalysis(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
@@ -1240,8 +545,8 @@ export function computeHistoricalAnalysis(
     const key = `${curr.outletId}|${curr.itemId}`;
     const stats = historicalByOutletItem.get(key);
     if (!stats || stats.stdDev <= 0) continue;
-    // Phase 4: stats already computed by SQL (no need for calcStdDev on raw array)
-    const zScore = calcZScore(curr.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+    // Phase 5: use calcZScoreFromStats from Metric Engine (single source of truth)
+    const zScore = calcZScoreFromStats(curr.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
     criticalItems.push({
       itemName: curr.item.name,
       outletCode: curr.outlet.code,

@@ -20,7 +20,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
-import { calcGrowth, calcZScore } from '@/engine/calculations/growth';
+import { calcGrowth, calcZScoreFromStats } from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -528,11 +528,11 @@ export async function GET(req: NextRequest) {
       const residualRatio = first.residualRatio;
       const nominalDeviasi = sumNominalDeviasi;
 
-      // Z-score (from historical mean + stddev)
+      // Z-score (from historical mean + stddev) — Phase 5: calcZScoreFromStats from Metric Engine
       const hist = historicalStats.get(itemId);
       let zScore: number | null = null;
       if (hist && hist.stdDev > 0 && devBom != null) {
-        zScore = calcZScore(devBom, hist.mean, hist.stdDev);
+        zScore = calcZScoreFromStats(devBom, hist.mean, hist.stdDev);
       }
 
       // vs area + network (this outlet's per-item devBom vs aggregate benchmarks)

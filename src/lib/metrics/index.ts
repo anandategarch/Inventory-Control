@@ -39,6 +39,7 @@ export {
 export {
   computeZScore,
   computeDeterioration,
+  calcZScoreFromStats,
   HISTORICAL_STATS_SQL,
   type HistoricalStats,
   type HistoricalInput,

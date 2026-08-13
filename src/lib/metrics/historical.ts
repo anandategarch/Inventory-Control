@@ -133,6 +133,28 @@ export function computeDeterioration(
 }
 
 /**
+ * Compute Z-Score from pre-computed mean + stdDev (simple inline form).
+ *
+ * Use this when historical stats (mean, stdDev) are already available
+ * (e.g., from SQL aggregate query). Use computeZScore() instead when
+ * you have raw historical values and need the full result (trend,
+ * benchmarkFlag, warningLevel).
+ *
+ * Formula: (|value| - mean) / stdDev
+ * Returns null if value is null or stdDev is 0.
+ *
+ * Master context #29: Z-Score uses ABS magnitude (not signed value).
+ */
+export function calcZScoreFromStats(
+  value: number | null,
+  mean: number,
+  stdDev: number,
+): number | null {
+  if (value == null || stdDev === 0) return null;
+  return (Math.abs(value) - mean) / stdDev;
+}
+
+/**
  * SQL template for historical stats query
  * Uses ABS + STDDEV_SAMP (sample variance)
  *
