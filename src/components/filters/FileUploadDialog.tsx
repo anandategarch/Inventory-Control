@@ -182,12 +182,10 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       }
 
       const fileSize = uploadResult.fileSize;
-      // FIX: Always prefer the original file.name from the user's selected file,
-      // not the server-returned fileName (which may be "Loading…" from Google Sheets).
-      // The server echoes back what we sent in formData, but if upload happened
-      // via Google Drive import, the file.name could be the Google placeholder.
-      // The user sees file.name in the UI, so it should match what they selected.
-      const fileName = file.name;
+      // FIX: Start with the user's file.name, but the detect API may return
+      // a corrected fileName (extracted from Excel data) if the original was
+      // a Google Sheets placeholder like "Loading Google Sheet".
+      let fileName = file.name;
       const ext = uploadResult.ext || '.' + fileName.split('.').pop()?.toLowerCase();
 
       // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====
@@ -209,6 +207,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       const detectData = await detectRes.json();
       if (!detectRes.ok || !detectData.success) {
         throw new Error(detectData.error || `HTTP ${detectRes.status}`);
+      }
+
+      // FIX: If server extracted a better fileName from Excel data, use it
+      if (detectData.fileName && detectData.fileName !== fileName) {
+        console.log(`[upload] fileName corrected: "${fileName}" → "${detectData.fileName}"`);
+        fileName = detectData.fileName;
       }
 
       const weeksInFile: string[] = detectData.weeksInFile || [];

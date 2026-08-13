@@ -75,35 +75,46 @@ export async function POST(req: NextRequest) {
     }
 
     // FIX: Sanitize fileName — if it's a Google Sheets placeholder like "Loading…",
-    // replace with a better name. Also strip " - Google Sheets" suffix.
-    const PLACEHOLDER_FILENAMES = [
-      'loading', 'loading…', 'loading...',
-      'google sheets', 'google 試算表', 'google spreadsheets',
-      'untitled spreadsheet',
+    // "Loading Google Sheet", or contains those words, we need to extract the real
+    // month from the Excel data (BULAN/BULAN 2 fields) after parsing.
+    const PLACEHOLDER_PATTERNS = [
+      /loading/i,
+      /google\s*(sheet|spreadsheet|試算表|drive)/i,
+      /untitled/i,
     ];
+    const isPlaceholderName = (name: string): boolean => {
+      const base = name.replace(/\.(xlsx|csv)$/i, '').trim();
+      return PLACEHOLDER_PATTERNS.some(p => p.test(base));
+    };
+
     let fileName = rawFileName;
     // Strip Google Sheets suffixes
     fileName = fileName.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
-    // Check if remaining name is a placeholder
-    const baseName = fileName.replace(/\.(xlsx|csv)$/i, '').trim();
-    if (PLACEHOLDER_FILENAMES.includes(baseName.toLowerCase())) {
-      // Use monthLabel from filename parse as fallback, else keep original
-      const fallbackMonth = parseMonthFromFilename(rawFileName);
-      fileName = fallbackMonth
-        ? `${fallbackMonth.monthLabel}.xlsx`
-        : `spreadsheet_${fileHash.slice(0, 8)}.xlsx`;
-      console.log(`[ingest-process] fileName was placeholder "${rawFileName}", using "${fileName}" instead`);
-    }
 
-    // Validate filename format
-    const monthInfo = parseMonthFromFilename(fileName);
-    if (!monthInfo) {
-      return NextResponse.json(
-        { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx"` },
-        { status: 400 }
-      );
-    }
+    // Helper: extract monthLabel from Excel row data (BULAN / BULAN 2 fields)
+    // BULAN field typically contains "171.MEI 26" or "17.MEI 2026"
+    // BULAN 2 field typically contains "17.MEI"
+    const extractMonthFromRows = (rows: Array<Record<string, unknown>>): string | null => {
+      for (const row of rows) {
+        const bulan = String(row.bulan ?? row.BULAN ?? '').trim();
+        const bulan2 = String(row.bulan2 ?? row['BULAN 2'] ?? row.bulan_2 ?? '').trim();
+        // Try BULAN first (has year info)
+        for (const candidate of [bulan, bulan2, `${bulan2} 2026`]) {
+          if (candidate) {
+            const parsed = parseMonthFromFilename(candidate);
+            if (parsed) return parsed.monthLabel;
+          }
+        }
+      }
+      return null;
+    };
 
+    // Check if filename is a placeholder — if so, we'll fix it after parsing Excel
+    const fileNameIsPlaceholder = isPlaceholderName(fileName);
+
+    // Try to parse month from filename. If placeholder, this will likely fail —
+    // we'll re-parse from Excel data after parseExcelFile.
+    let monthInfo = parseMonthFromFilename(fileName);
     const fileExt = ext || path.extname(fileName).toLowerCase();
 
     // ============================================================
@@ -118,7 +129,6 @@ export async function POST(req: NextRequest) {
       const expectedSize = parseInt(String(fileSize || 0));
       if (expectedSize > 0 && actualSize !== expectedSize) {
         await fs.unlink(filePath).catch(() => {});
-        // Clean up chunks
         await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
         return NextResponse.json(
           { success: false, error: `File size mismatch: expected ${expectedSize}, got ${actualSize}. Chunks mungkin corrupt. Upload ulang.` },
@@ -128,6 +138,30 @@ export async function POST(req: NextRequest) {
 
       // Parse Excel
       const parsed = await parseExcelFile(filePath);
+
+      // FIX: If filename is placeholder, extract month from row data
+      if (fileNameIsPlaceholder || !monthInfo) {
+        const allRows: Array<Record<string, unknown>> = [];
+        for (const sheet of parsed.sheets) {
+          allRows.push(...sheet.rows);
+        }
+        const extractedMonth = extractMonthFromRows(allRows);
+        if (extractedMonth) {
+          fileName = `${extractedMonth}.xlsx`;
+          monthInfo = parseMonthFromFilename(fileName);
+          console.log(`[ingest-process] placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
+        }
+      }
+
+      if (!monthInfo) {
+        await fs.unlink(filePath).catch(() => {});
+        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx". Tidak bisa extract month dari data juga.` },
+          { status: 400 }
+        );
+      }
+
       const weeksInFileSet = new Set<string>();
       const rowCountPerWeek: Record<string, number> = {};
       for (const sheet of parsed.sheets) {
@@ -172,6 +206,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         mode: 'detect',
+        fileName, // FIX: return corrected filename so UI shows it
         monthLabel: monthInfo.monthLabel,
         monthKey: monthInfo.monthKey,
         weeksInFile,
@@ -222,6 +257,28 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { success: false, error: `Gagal parse Excel: ${e?.message}` },
           { status: 500 }
+        );
+      }
+
+      // FIX: If filename is placeholder, extract month from row data
+      if (fileNameIsPlaceholder || !monthInfo) {
+        const allRows: Array<Record<string, unknown>> = [];
+        for (const sheet of parsed.sheets) {
+          allRows.push(...sheet.rows);
+        }
+        const extractedMonth = extractMonthFromRows(allRows);
+        if (extractedMonth) {
+          fileName = `${extractedMonth}.xlsx`;
+          monthInfo = parseMonthFromFilename(fileName);
+          console.log(`[ingest-process] import mode: placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
+        }
+      }
+
+      if (!monthInfo) {
+        await fs.unlink(filePath).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Tidak bisa extract month dari data juga.` },
+          { status: 400 }
         );
       }
 
