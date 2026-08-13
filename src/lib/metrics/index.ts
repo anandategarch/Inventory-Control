@@ -34,3 +34,33 @@ export {
   computeTotalSales,
   SALES_MODE_SQL_CTE,
 } from './sales';
+
+// Historical metrics (Z-Score, trend, benchmark flag from historical)
+export {
+  computeZScore,
+  computeDeterioration,
+  HISTORICAL_STATS_SQL,
+  type HistoricalStats,
+  type HistoricalInput,
+  type HistoricalResult,
+} from './historical';
+
+// Benchmark metrics (Area/Network comparison)
+export {
+  computeBenchmark,
+  BENCHMARK_SQL,
+  type BenchmarkInput,
+  type BenchmarkResult,
+} from './benchmark';
+
+// Growth metrics (signed/abs growth, price effect decomposition)
+export {
+  calcGrowth,
+  calcGrowthAbs,
+  computeGrowthResult,
+  safeRatio,
+  calcAvgPrice,
+  computePriceEffect,
+  type GrowthResult,
+  type PriceEffectResult,
+} from './growth';
