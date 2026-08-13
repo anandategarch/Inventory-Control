@@ -615,14 +615,20 @@ export async function GET(req: NextRequest) {
     }));
 
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
-    // FIX (audit issue #6): Pass runtime health score weights from Settings
+    // FIX (audit issue #6, P2 #10): Pass runtime health score weights + thresholds from Settings
     const healthScoreWeights = {
       devBom: thresholds.HEALTH_WEIGHT_DEV_BOM,
       residual: thresholds.HEALTH_WEIGHT_RESIDUAL,
       lossToSales: thresholds.HEALTH_WEIGHT_LOSS_TO_SALES,
       abnormal: thresholds.HEALTH_WEIGHT_ABNORMAL,
     };
-    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights);
+    const healthScoreThresholds = {
+      devBom: { good: thresholds.HEALTH_THRESH_DEV_BOM_GOOD, bad: thresholds.HEALTH_THRESH_DEV_BOM_BAD },
+      residual: { good: thresholds.HEALTH_THRESH_RESIDUAL_GOOD, bad: thresholds.HEALTH_THRESH_RESIDUAL_BAD },
+      lossToSales: { good: thresholds.HEALTH_THRESH_LOSS_TO_SALES_GOOD, bad: thresholds.HEALTH_THRESH_LOSS_TO_SALES_BAD },
+      abnormal: { good: thresholds.HEALTH_THRESH_ABNORMAL_GOOD, bad: thresholds.HEALTH_THRESH_ABNORMAL_BAD },
+    };
+    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights, healthScoreThresholds);
 
     // Pareto — from parallel query result above
     // Remap items to JS shape (cumPct decimal 0-1, drop rank/cumulative)

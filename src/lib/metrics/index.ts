@@ -28,6 +28,7 @@ export {
   type AggregateInput,
   type PriorityInput,
   type HealthScoreWeights,
+  type HealthScoreThresholds,
 } from './deviation';
 
 // Sales metrics (MODE per outlet)

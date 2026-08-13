@@ -3194,3 +3194,35 @@ Stage Summary:
 - Audit issue #20 (Dev/BOM formula alignment): FIXED — all 4 AVG-of-pct SQL aggregates now use SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) matching computeDevBomAggregate in Metric Engine + queryHistoricalStats/queries.ts. historicalStats now uses weekly_dev two-level CTE (per-week SUM/SUM observation, then aggregate mean/sumSq/n across weeks) — same algorithm as queries.ts:queryHistoricalStats.
 - SQLite BigInt handling: all raw query results that flow into JS arithmetic or JSON serialization now explicitly Number()-coerced (n, mean, sumSq, itemId, cnt). TypeScript generic for totalOutletsInPeriod widened to { cnt: number | bigint } to accurately reflect SQLite's BigInt return type for COUNT.
 - Lint + tsc: both 0 errors. No other files touched.
+
+---
+Task ID: P2-2
+Agent: full-stack-developer
+Task: Split src/lib/queries.ts (858 lines) into domain-specific files
+
+Work Log:
+- Read /home/z/my-project/worklog.md last 50 lines for project context (P0/P2 audit fixes in outlet-focus route; SQL portability edits to CAST/NULLIF/SUM-SUM patterns already applied to queries.ts in prior tasks).
+- Read full 858-line src/lib/queries.ts to map all 15 exported functions + 4 exported interfaces (TrendAggRow, ExecSummaryRow, TopItemRow, TopOutletRow) and the buildSqlFilters helper. Verified only consumer is src/app/api/analysis/route.ts (confirmed via grep — single import site).
+- Created new directory src/lib/queries/ with 7 files:
+  1. shared.ts (36 lines) — buildSqlFilters + Prisma.sql fragment builder. Imported by all other domain files via `import { buildSqlFilters } from './shared'`.
+  2. dashboard.ts (272 lines) — queryTrendAgg + TrendAggRow, queryExecSummary + ExecSummaryRow, queryDeviationBreakdown, queryLossVsSurplus, queryCostImpact.
+  3. items.ts (291 lines) — queryTopItemsByNominal + TopItemRow, queryTopItemsByDevBom, queryTopItemsByCategory (uses Prisma.raw for dynamic column refs), queryPareto, queryItemConsistency.
+  4. outlets.ts (138 lines) — queryTopOutlets + TopOutletRow, queryTopOutletsBySales.
+  5. areas.ts (84 lines) — queryAreaAnalysis (intentionally passes area:null to buildSqlFilters so all areas are returned).
+  6. historical.ts (75 lines) — queryHistoricalStats (two-level CTE: weekly_dev → mean/sumSq/n; JS sample-variance with Bessel's correction).
+  7. index.ts (11 lines) — barrel `export *` from all 6 domain modules.
+- Replaced 858-line src/lib/queries.ts with 12-line thin re-export (`export * from './queries/index'`) + deprecation header comment listing all split files. Backward compat preserved: `import { queryTrendAgg, ... } from '@/lib/queries'` continues to resolve to the file first (Node/bundler resolution: file beats directory), then re-exports through the barrel.
+- Each new domain file imports `buildSqlFilters` from `./shared`, `db` from `@/lib/db`, and `Prisma` from `@prisma/client` per task spec. SQL strings copied byte-for-byte (no edits to template literals, CTEs, CAST/COALESCE/NULLIF/window functions). All TypeScript interfaces + inline filter types preserved verbatim with their functions.
+- Verification:
+  * `bun run lint` — 0 errors, 0 warnings (eslint config has @typescript-eslint/no-unused-vars OFF, so Prisma import in dashboard/outlets/areas files where it isn't directly used is acceptable).
+  * `npx tsc --noEmit --skipLibCheck` — 0 errors. Module resolution `bundler` + paths `@/* -> ./src/*` correctly resolves `@/lib/queries` to queries.ts (file) which re-exports from queries/index.ts (barrel). No circular imports (all domain files only import from ./shared, @/lib/db, @prisma/client).
+  * `grep -rn "from '@/lib/queries'" src/` — confirms src/app/api/analysis/route.ts:43 still imports successfully (unchanged).
+- No changes to analysis/route.ts or any other consumer. Pure refactor — zero behavioral change.
+
+Stage Summary:
+- Files created (7): src/lib/queries/{shared,dashboard,items,outlets,areas,historical,index}.ts
+- File modified (1): src/lib/queries.ts (858 → 12 lines, now thin re-export with deprecation header)
+- Line counts: shared=36, dashboard=272, items=291, outlets=138, areas=84, historical=75, index=11, queries.ts=12. Total=919 lines (slight +61 increase vs original 858 due to per-file header comments + import statements; expected and acceptable for module separation).
+- All 15 exported functions preserved: queryTrendAgg, queryExecSummary, queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByCategory, queryTopOutlets, queryTopOutletsBySales, queryDeviationBreakdown, queryLossVsSurplus, queryAreaAnalysis, queryCostImpact, queryPareto, queryItemConsistency, queryHistoricalStats + buildSqlFilters.
+- All 4 exported interfaces preserved: TrendAggRow, ExecSummaryRow, TopItemRow, TopOutletRow.
+- Lint: 0 errors. tsc: 0 errors. No consumer code changes required.

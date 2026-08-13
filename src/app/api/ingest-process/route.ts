@@ -10,8 +10,8 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
-import { normalizeRow, deriveRecord } from '@/engine/transform';
-import { validateRow, summarizeDQ } from '@/engine/validator';
+import { summarizeDQ } from '@/engine/validator';
+import { processRowsForImport } from '@/lib/ingestion';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -255,95 +255,28 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Process rows
+      // Process rows — P2 fix: use shared processRowsForImport from ingestion.ts
+      // (eliminates ~100 lines of duplicate validate/normalize/derive/insert logic)
       const seenKeys = new Set<string>();
-      const allIssues: any[] = [];
-      const weekDbMap = new Map<string, number>([[weekLabel, weekRec.id]]);
       const outletDbMap = new Map<string, number>();
-      const itemDbMap = new Map<string, number>();
-      const BATCH_SIZE = 500;
-      let batchRecords: any[] = [];
-      let inserted = 0;
+      const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
 
-      for (let i = 0; i < weekRows.length; i++) {
-        const rawRow = weekRows[i];
-        const rowNumber = i + 1;
+      const result = await processRowsForImport(
+        weekRows,
+        sourceFile.id,
+        weekRec.id,
+        fileName,
+        monthInfo.monthLabel,
+        0,
+        outletDbMap,
+        itemDbMap,
+        seenKeys,
+      );
 
-        const issues = validateRow(rawRow, rowNumber, seenKeys);
-        allIssues.push(...issues);
-
-        const hasError = issues.some((iss) => iss.severity === 'ERROR');
-        if (hasError) continue;
-
-        const n = normalizeRow(rawRow, fileName, rowNumber, monthInfo.monthLabel);
-        const derived = deriveRecord(n);
-
-        // Ensure outlet exists
-        if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
-          const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true } });
-          if (existingOutlet) {
-            outletDbMap.set(derived.outletCode, existingOutlet.id);
-          } else {
-            const created = await db.outlet.create({
-              data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
-            });
-            outletDbMap.set(derived.outletCode, created.id);
-          }
-        }
-
-        // Ensure item exists
-        if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
-          const existingItem = await db.item.findUnique({ where: { name: n.namaBahan }, select: { id: true, satuan: true } });
-          if (existingItem) {
-            itemDbMap.set(n.namaBahan, existingItem.id);
-            if (!existingItem.satuan && n.satuan) {
-              await db.item.update({ where: { id: existingItem.id }, data: { satuan: n.satuan } });
-            }
-          } else {
-            const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
-            itemDbMap.set(n.namaBahan, created.id);
-          }
-        }
-
-        const weekId = weekDbMap.get(weekLabel) ?? 0;
-        const outletId = outletDbMap.get(derived.outletCode) ?? 0;
-        const itemId = itemDbMap.get(n.namaBahan) ?? 0;
-
-        if (weekId > 0 && outletId > 0 && itemId > 0) {
-          batchRecords.push({
-            sourceFileId: sourceFile.id, weekId, outletId, itemId,
-            akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
-            qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
-            qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
-            nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
-            nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
-            avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
-            tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
-            pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
-            pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
-            pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
-            direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
-            residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
-            absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
-            absNominalLossSurplus: derived.absNominalLossSurplus,
-            area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
-          });
-        }
-
-        if (batchRecords.length >= BATCH_SIZE) {
-          const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-          inserted += result.count; // P1-3 fix: use actual count, not batch length
-          batchRecords = [];
-        }
-      }
-
-      if (batchRecords.length > 0) {
-        const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-        inserted += result2.count; // P1-3 fix: use actual count
-      }
+      const inserted = result.inserted;
 
       // Update source file
-      const dq = summarizeDQ(allIssues);
+      const dq = summarizeDQ(result.dqIssues);
       await db.sourceFile.update({
         where: { id: sourceFile.id },
         data: {
@@ -355,8 +288,8 @@ export async function POST(req: NextRequest) {
       });
 
       // Insert DQ issues
-      if (allIssues.length > 0) {
-        const dqRecords = allIssues.map((i) => ({
+      if (result.dqIssues.length > 0) {
+        const dqRecords = result.dqIssues.map((i) => ({
           sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
           message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
         }));

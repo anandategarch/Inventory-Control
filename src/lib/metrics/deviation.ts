@@ -159,9 +159,9 @@ export function computeLossToSales(input: AggregateInput): number | null {
 //  Master context #33: 30% DevBOM + 25% Residual + 25% Loss/Sales + 20% Abnormal
 //
 //  FIX (audit issue #6): Accepts optional runtime weights from Settings.
-//  If not provided, falls back to HEALTH_SCORE_WEIGHTS from definitions.ts.
-//  Settings keys: HEALTH_WEIGHT_DEV_BOM, HEALTH_WEIGHT_RESIDUAL,
-//  HEALTH_WEIGHT_LOSS_TO_SALES, HEALTH_WEIGHT_ABNORMAL (percent 0-100).
+//  FIX (audit P2 #10): Accepts optional runtime thresholds from Settings.
+//  If not provided, falls back to HEALTH_SCORE_WEIGHTS / HEALTH_SCORE_THRESHOLDS
+//  from definitions.ts.
 // ============================================================
 
 import { HEALTH_SCORE_THRESHOLDS, HEALTH_SCORE_WEIGHTS } from './definitions';
@@ -173,14 +173,21 @@ export interface HealthScoreWeights {
   abnormal: number;
 }
 
+export interface HealthScoreThresholds {
+  devBom: { good: number; bad: number };
+  residual: { good: number; bad: number };
+  lossToSales: { good: number; bad: number };
+  abnormal: { good: number; bad: number };
+}
+
 export function computeHealthScore(
   input: AggregateInput,
   weights?: HealthScoreWeights,
+  thresholds?: HealthScoreThresholds,
 ): number {
   const clamp = (n: number) => Math.max(0, Math.min(100, n));
 
   // Use provided weights or fall back to defaults
-  // Weights are normalized to sum=1 (e.g., 30+25+25+20=100 → 0.30+0.25+0.25+0.20)
   const w = weights ?? HEALTH_SCORE_WEIGHTS;
   const wSum = w.devBom + w.residual + w.lossToSales + w.abnormal;
   const nw = wSum > 0 ? {
@@ -190,33 +197,36 @@ export function computeHealthScore(
     abnormal: w.abnormal / wSum,
   } : HEALTH_SCORE_WEIGHTS;
 
-  // DevBOM: <5% → 100, >50% → 0 (linear)
+  // Use provided thresholds or fall back to defaults
+  const th = thresholds ?? HEALTH_SCORE_THRESHOLDS;
+
+  // DevBOM: <good → 100, >bad → 0 (linear)
   const devBom = computeDevBomAggregate(input);
   const devBomScore = clamp(
-    100 - ((devBom - HEALTH_SCORE_THRESHOLDS.devBom.good) /
-      (HEALTH_SCORE_THRESHOLDS.devBom.bad - HEALTH_SCORE_THRESHOLDS.devBom.good)) * 100
+    100 - ((devBom - th.devBom.good) /
+      (th.devBom.bad - th.devBom.good)) * 100
   );
 
-  // Residual: <20% → 100, >80% → 0 (linear)
+  // Residual: <good → 100, >bad → 0 (linear)
   const residualPct = computeResidualPctAggregate(input);
   const residualScore = clamp(
-    100 - ((residualPct - HEALTH_SCORE_THRESHOLDS.residual.good) /
-      (HEALTH_SCORE_THRESHOLDS.residual.bad - HEALTH_SCORE_THRESHOLDS.residual.good)) * 100
+    100 - ((residualPct - th.residual.good) /
+      (th.residual.bad - th.residual.good)) * 100
   );
 
-  // Loss/Sales: <2% → 100, >15% → 0 (linear)
+  // Loss/Sales: <good → 100, >bad → 0 (linear)
   const lossToSales = computeLossToSales(input);
   const lossToSalesScore = lossToSales != null
-    ? clamp(100 - ((lossToSales - HEALTH_SCORE_THRESHOLDS.lossToSales.good) /
-        (HEALTH_SCORE_THRESHOLDS.lossToSales.bad - HEALTH_SCORE_THRESHOLDS.lossToSales.good)) * 100)
+    ? clamp(100 - ((lossToSales - th.lossToSales.good) /
+        (th.lossToSales.bad - th.lossToSales.good)) * 100)
     : 50;
 
-  // Abnormal: abnormal / (warning + abnormal), 0% → 100, >50% → 0 (linear)
+  // Abnormal: abnormal / (warning + abnormal), <good → 100, >bad → 0 (linear)
   const activeItems = input.warningCount + input.abnormalCount;
   const abnormalRate = activeItems > 0 ? input.abnormalCount / activeItems : 0;
   const abnormalScore = clamp(
-    100 - ((abnormalRate - HEALTH_SCORE_THRESHOLDS.abnormal.good) /
-      (HEALTH_SCORE_THRESHOLDS.abnormal.bad - HEALTH_SCORE_THRESHOLDS.abnormal.good)) * 100
+    100 - ((abnormalRate - th.abnormal.good) /
+      (th.abnormal.bad - th.abnormal.good)) * 100
   );
 
   return Math.round(

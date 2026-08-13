@@ -243,6 +243,70 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     dataType: 'number',
     defaultValue: '20',
   },
+  {
+    key: 'HEALTH_THRESH_DEV_BOM_GOOD',
+    label: 'Health Threshold Dev/BOM — Sehat',
+    description: 'Dev/BOM di bawah ini = skor 100 (sehat). Default 0.05 (5%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.05',
+  },
+  {
+    key: 'HEALTH_THRESH_DEV_BOM_BAD',
+    label: 'Health Threshold Dev/BOM — Kritis',
+    description: 'Dev/BOM di atas ini = skor 0 (kritis). Default 0.50 (50%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.50',
+  },
+  {
+    key: 'HEALTH_THRESH_RESIDUAL_GOOD',
+    label: 'Health Threshold Residual — Sehat',
+    description: 'Residual % di bawah ini = skor 100. Default 0.20 (20%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.20',
+  },
+  {
+    key: 'HEALTH_THRESH_RESIDUAL_BAD',
+    label: 'Health Threshold Residual — Kritis',
+    description: 'Residual % di atas ini = skor 0. Default 0.80 (80%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.80',
+  },
+  {
+    key: 'HEALTH_THRESH_LOSS_TO_SALES_GOOD',
+    label: 'Health Threshold Loss/Sales — Sehat',
+    description: 'Loss/Sales di bawah ini = skor 100. Default 0.02 (2%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.02',
+  },
+  {
+    key: 'HEALTH_THRESH_LOSS_TO_SALES_BAD',
+    label: 'Health Threshold Loss/Sales — Kritis',
+    description: 'Loss/Sales di atas ini = skor 0. Default 0.15 (15%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.15',
+  },
+  {
+    key: 'HEALTH_THRESH_ABNORMAL_GOOD',
+    label: 'Health Threshold Abnormal Rate — Sehat',
+    description: 'Abnormal rate di bawah ini = skor 100. Default 0.0 (0%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.0',
+  },
+  {
+    key: 'HEALTH_THRESH_ABNORMAL_BAD',
+    label: 'Health Threshold Abnormal Rate — Kritis',
+    description: 'Abnormal rate di atas ini = skor 0. Default 0.50 (50%).',
+    category: 'BENCHMARK',
+    dataType: 'percent',
+    defaultValue: '0.50',
+  },
 ];
 
 // ============================================================
@@ -369,6 +433,15 @@ export interface RuntimeThresholds {
   HEALTH_WEIGHT_RESIDUAL: number;
   HEALTH_WEIGHT_LOSS_TO_SALES: number;
   HEALTH_WEIGHT_ABNORMAL: number;
+  // P2 fix: Health Score thresholds (configurable via Settings)
+  HEALTH_THRESH_DEV_BOM_GOOD: number;
+  HEALTH_THRESH_DEV_BOM_BAD: number;
+  HEALTH_THRESH_RESIDUAL_GOOD: number;
+  HEALTH_THRESH_RESIDUAL_BAD: number;
+  HEALTH_THRESH_LOSS_TO_SALES_GOOD: number;
+  HEALTH_THRESH_LOSS_TO_SALES_BAD: number;
+  HEALTH_THRESH_ABNORMAL_GOOD: number;
+  HEALTH_THRESH_ABNORMAL_BAD: number;
 }
 
 export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
@@ -407,5 +480,13 @@ export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
     HEALTH_WEIGHT_RESIDUAL: num('HEALTH_WEIGHT_RESIDUAL', 25),
     HEALTH_WEIGHT_LOSS_TO_SALES: num('HEALTH_WEIGHT_LOSS_TO_SALES', 25),
     HEALTH_WEIGHT_ABNORMAL: num('HEALTH_WEIGHT_ABNORMAL', 20),
+    HEALTH_THRESH_DEV_BOM_GOOD: num('HEALTH_THRESH_DEV_BOM_GOOD', 0.05),
+    HEALTH_THRESH_DEV_BOM_BAD: num('HEALTH_THRESH_DEV_BOM_BAD', 0.50),
+    HEALTH_THRESH_RESIDUAL_GOOD: num('HEALTH_THRESH_RESIDUAL_GOOD', 0.20),
+    HEALTH_THRESH_RESIDUAL_BAD: num('HEALTH_THRESH_RESIDUAL_BAD', 0.80),
+    HEALTH_THRESH_LOSS_TO_SALES_GOOD: num('HEALTH_THRESH_LOSS_TO_SALES_GOOD', 0.02),
+    HEALTH_THRESH_LOSS_TO_SALES_BAD: num('HEALTH_THRESH_LOSS_TO_SALES_BAD', 0.15),
+    HEALTH_THRESH_ABNORMAL_GOOD: num('HEALTH_THRESH_ABNORMAL_GOOD', 0.0),
+    HEALTH_THRESH_ABNORMAL_BAD: num('HEALTH_THRESH_ABNORMAL_BAD', 0.50),
   };
 }

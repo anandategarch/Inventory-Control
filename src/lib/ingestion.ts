@@ -384,3 +384,135 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
 
   return results;
 }
+
+// ============================================================
+//  P2 fix: Shared row-processing function for ImportService unification.
+//  Both processIngestion (full file) and ingest-process (per-week) call this.
+//  Eliminates ~150 lines of duplicate logic between the two ingestion paths.
+// ============================================================
+
+export interface ProcessRowsResult {
+  inserted: number;
+  skippedErrors: number;
+  dqIssues: any[];
+}
+
+/**
+ * Process rows for import — shared logic for both full-file and per-week ingestion.
+ *
+ * Takes raw rows, validates + normalizes + derives + ensures outlet/item exists,
+ * batch inserts InventoryRecords, returns insertion count + DQ issues.
+ *
+ * @param rows - Raw rows from Excel/CSV parse
+ * @param sourceFileId - SourceFile.id for this import
+ * @param weekId - Week.id for these rows
+ * @param fileName - Original filename (for normalizeRow)
+ * @param monthLabel - Month label (e.g., "MEI 2026")
+ * @param startRowNumber - Row number offset (for multi-week imports)
+ * @param outletDbMap - Pre-populated outlet cache (code → id)
+ * @param itemDbMap - Pre-populated item cache (name → {id, satuan})
+ * @param seenKeys - Set of seen (outlet+item+week) keys for dedup
+ * @returns { inserted, skippedErrors, dqIssues }
+ */
+export async function processRowsForImport(
+  rows: Array<Record<string, unknown> & { _sheetName?: string }>,
+  sourceFileId: number,
+  weekId: number,
+  fileName: string,
+  monthLabel: string,
+  startRowNumber: number = 0,
+  outletDbMap?: Map<string, number>,
+  itemDbMap?: Map<string, { id: number; satuan: string | null }>,
+  seenKeys?: Set<string>,
+): Promise<ProcessRowsResult> {
+  const _outletDbMap = outletDbMap ?? new Map<string, number>();
+  const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
+  const _seenKeys = seenKeys ?? new Set<string>();
+  const allIssues: any[] = [];
+  const BATCH_SIZE = 500;
+  let batchRecords: any[] = [];
+  let inserted = 0;
+  let skippedErrors = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const rawRow = rows[i];
+    const rowNumber = startRowNumber + i + 1;
+
+    const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName);
+    allIssues.push(...issues);
+
+    const hasError = issues.some((iss) => iss.severity === 'ERROR');
+    if (hasError) {
+      skippedErrors++;
+      continue;
+    }
+
+    const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
+    const derived = deriveRecord(n);
+
+    // Ensure outlet exists (lazy cache)
+    if (derived.outletCode && !_outletDbMap.has(derived.outletCode)) {
+      const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true } });
+      if (existingOutlet) {
+        _outletDbMap.set(derived.outletCode, existingOutlet.id);
+      } else {
+        const created = await db.outlet.create({
+          data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
+        });
+        _outletDbMap.set(derived.outletCode, created.id);
+      }
+    }
+
+    // Ensure item exists (lazy cache)
+    if (n.namaBahan && !_itemDbMap.has(n.namaBahan)) {
+      const existingItem = await db.item.findUnique({ where: { name: n.namaBahan }, select: { id: true, satuan: true } });
+      if (existingItem) {
+        _itemDbMap.set(n.namaBahan, { id: existingItem.id, satuan: existingItem.satuan });
+        if (!existingItem.satuan && n.satuan) {
+          await db.item.update({ where: { id: existingItem.id }, data: { satuan: n.satuan } });
+        }
+      } else {
+        const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
+        _itemDbMap.set(n.namaBahan, { id: created.id, satuan: n.satuan });
+      }
+    }
+
+    const outletId = _outletDbMap.get(derived.outletCode) ?? 0;
+    const itemEntry = _itemDbMap.get(n.namaBahan);
+    const itemId = itemEntry?.id ?? 0;
+
+    if (weekId > 0 && outletId > 0 && itemId > 0) {
+      batchRecords.push({
+        sourceFileId, weekId, outletId, itemId,
+        akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
+        qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
+        qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
+        nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
+        nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
+        avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
+        tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
+        pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
+        pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
+        pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
+        direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
+        residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
+        absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
+        absNominalLossSurplus: derived.absNominalLossSurplus,
+        area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
+      });
+    }
+
+    if (batchRecords.length >= BATCH_SIZE) {
+      const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+      inserted += result.count;
+      batchRecords = [];
+    }
+  }
+
+  if (batchRecords.length > 0) {
+    const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+    inserted += result2.count;
+  }
+
+  return { inserted, skippedErrors, dqIssues: allIssues };
+}
