@@ -45,6 +45,7 @@ import { evaluateRules, type RuleContext } from '@/engine/rules/evaluator';
 import {
   calcGrowth,
   calcGrowthAbs,
+  computeNominalDeviationGrowth,
   safeRatio,
   calcAvgPrice,
   computeHealthScore,
@@ -114,7 +115,9 @@ export function buildRuleContext(
 ): RuleContext {
   const bomGrowth = calcGrowthAbs(curr.qtyBom, prev?.qtyBom ?? null);
   const qtyDeviasiGrowth = calcGrowthAbs(curr.qtyDeviasi, prev?.qtyDeviasi ?? null);
-  const nominalDeviasiGrowth = calcGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
+  // FIX (audit issue #4): Use magnitude growth for nominalDeviasi — signed calcGrowth
+  // is misleading when sign flips (-10M→-20M gives -100% but magnitude grew 100%).
+  const nominalDeviasiGrowth = computeNominalDeviationGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
   const salesGrowth = calcGrowth(curr.nominalSales, prev?.nominalSales ?? null);
   const currPrice = calcAvgPrice(curr.nominalDeviasi, curr.qtyDeviasi);
   const prevPrice = calcAvgPrice(prev?.nominalDeviasi ?? null, prev?.qtyDeviasi ?? null);
@@ -127,11 +130,15 @@ export function buildRuleContext(
     ? calcZScoreFromStats(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
     : null;
 
-  // benchmark flag from zScore (uses runtime thresholds)
+  // FIX (audit issue #1): Historical benchmark flag from zScore — NOT area/network.
+  // zScore compares outlet vs its OWN history. Area/network comparison is done
+  // separately via computeBenchmark() (benchmark.ts) in the route layer.
+  // Old names ABOVE_NETWORK_AVG/ABOVE_AREA_AVG were misleading — renamed to
+  // HISTORICAL_HIGH/HISTORICAL_WARNING to match Metric Engine computeZScore().
   let benchmarkFlag: string | null = null;
   if (zScore != null) {
-    if (zScore > t.BENCHMARK_NETWORK_FACTOR) benchmarkFlag = 'ABOVE_NETWORK_AVG';
-    else if (zScore > t.BENCHMARK_AREA_FACTOR) benchmarkFlag = 'ABOVE_AREA_AVG';
+    if (zScore > t.HISTORICAL_ZSCORE_HIGH) benchmarkFlag = 'HISTORICAL_HIGH';
+    else if (zScore > t.HISTORICAL_ZSCORE_WARN) benchmarkFlag = 'HISTORICAL_WARNING';
   }
 
   // Bug 8 fix: compute isOverExplained on-the-fly (explained > absDev)

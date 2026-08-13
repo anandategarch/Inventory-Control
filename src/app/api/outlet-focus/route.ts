@@ -20,7 +20,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
-import { calcGrowth, calcZScoreFromStats, computeDirection } from '@/lib/metrics';
+import { calcGrowth, calcZScoreFromStats, computeDirection, computePriority, computeNominalDeviationGrowth } from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,6 +74,7 @@ interface ItemAnomaly {
   qtyBom: number | null;
   qtyDeviasi: number | null;
   nominalDeviasi: number | null;
+  absNominalLossSurplus: number | null;  // FIX (audit issue #3): needed for computePriority
   direction: string | null;
   devBom: number | null;
   tolerance: number | null;
@@ -125,11 +126,8 @@ function fmtPct(v: number | null, digits = 1): string {
   return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 
-// FIX (audit issue #14): Delegate to computeDirection() from Metric Engine
-// — single source of truth. Removed duplicate implementation.
-function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): string {
-  return computeDirection(netDeviation, grossDeviation);
-}
+// FIX (audit issue #6): classifyDirection wrapper REMOVED.
+// All consumers now use computeDirection() directly from @/lib/metrics.
 
 // Map issue codes → human-readable possible cause
 function possibleCauseFor(issues: string[]): string {
@@ -202,12 +200,14 @@ export async function GET(req: NextRequest) {
     //  fully independent. Previously these were 8 serial awaits → now 1 Promise.all.
     //  Queries: thresholds, outlet, pic, weeks, sourceFiles, currentRecs,
     //           trendRows (timeline), networkBench.
+    // FIX (audit issue #2): Load thresholds FIRST so trendRows SQL can use
+    // thresholds.FALLBACK_TOLERANCE_PCT (was hardcoded 0.05).
     // ============================================================
+    const thresholds = await getRuntimeThresholds();
     const [
-      thresholds, outlet, picRow, weeksRaw, fileMonthKeys,
+      outlet, picRow, weeksRaw, fileMonthKeys,
       currentRecs, trendRows, networkBenchRows,
     ] = await Promise.all([
-      getRuntimeThresholds(),
       db.outlet.findFirst({
         where: { code: outletCode },
         select: { id: true, code: true, name: true, area: true },
@@ -281,9 +281,9 @@ export async function GET(req: NextRequest) {
             COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
             COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal",
             CAST(COUNT(CASE WHEN ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-              AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05) THEN 1 END) AS INTEGER) as "abnormalCount",
+              AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", ${thresholds.FALLBACK_TOLERANCE_PCT}) THEN 1 END) AS INTEGER) as "abnormalCount",
             MAX(CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
-              AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05)
+              AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", ${thresholds.FALLBACK_TOLERANCE_PCT})
               THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
           FROM "InventoryRecord" ir
           JOIN "Outlet" o ON ir."outletId" = o.id
@@ -523,6 +523,8 @@ export async function GET(req: NextRequest) {
       const sumQtyTrial = rows.reduce((s, r) => s + (r.qtyTrial ?? 0), 0);
       const sumNominalDeviasi = rows.reduce((s, r) => s + (r.nominalDeviasi ?? 0), 0);
       const sumAbsNominalDeviasi = rows.reduce((s, r) => s + (r.absNominalDeviasi ?? 0), 0);
+      // FIX (audit issue #3): Sum NET absNominalLossSurplus for computePriority
+      const sumAbsNominalLossSurplus = rows.reduce((s, r) => s + (r.absNominalLossSurplus ?? 0), 0);
       const sumNominalWaste = rows.reduce((s, r) => s + Math.abs(r.nominalWaste ?? 0), 0);
       const sumNominalSusut = rows.reduce((s, r) => s + Math.abs(r.nominalSusut ?? 0), 0);
       const sumNominalTrial = rows.reduce((s, r) => s + Math.abs(r.nominalTrial ?? 0), 0);
@@ -534,7 +536,7 @@ export async function GET(req: NextRequest) {
 
       // Bug 2 fix: use net deviation (qtyLossSurplus) for direction, fallback to gross
       const sumQtyLossSurplus = rows.reduce((s, r) => s + (r.qtyLossSurplus ?? 0), 0);
-      const direction = first.direction || classifyDirection(sumQtyLossSurplus, sumQtyDeviasi);
+      const direction = first.direction || computeDirection(sumQtyLossSurplus, sumQtyDeviasi);
       const residualQty = rows.reduce((s, r) => s + (r.residualQty ?? 0), 0);
       const residualRatio = first.residualRatio;
       const nominalDeviasi = sumNominalDeviasi;
@@ -675,6 +677,7 @@ export async function GET(req: NextRequest) {
           qtyBom: first.qtyBom,
           qtyDeviasi: sumQtyDeviasi,
           nominalDeviasi,
+          absNominalLossSurplus: sumAbsNominalLossSurplus,
           direction,
           devBom,
           tolerance,
@@ -904,20 +907,23 @@ export async function GET(req: NextRequest) {
         const hasReversal = a.issues.includes('DIRECTION_REVERSAL');
         const isNew = a.issues.includes('NEW_ITEM');
 
-        let priority: 'P1' | 'P2' | 'P3' = 'P3';
-        if (absNominal > 10_000_000 && (hasBreach || hasOverExp) && absZ > 2) {
-          priority = 'P1';
-        } else if (absNominal > 10_000_000 && (hasBreach || hasOverExp)) {
-          priority = 'P1';
-        } else if (hasBreach && absNominal > 1_000_000) {
-          priority = 'P2';
-        } else if (hasOverExp && absNominal > 1_000_000) {
-          priority = 'P2';
-        } else if (hasReversal || isNew) {
-          priority = 'P3';
-        } else if (absNominal > 1_000_000) {
-          priority = 'P2';
-        }
+        // FIX (audit issue #2, #3): Use computePriority() from Metric Engine
+        // — no more hardcoded 10M/1M/2 thresholds. Uses Settings-driven values.
+        const priority = computePriority({
+          absNominalLossSurplus: a.absNominalLossSurplus ?? absNominal,
+          devBom: a.devBom ?? null,
+          residualRatio: a.residualRatio ?? null,
+          zScore: a.zScore ?? null,
+          isOverExplained: hasOverExp,
+          thresholds: {
+            HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+            P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
+            STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+            RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
+            RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
+            HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
+          },
+        });
 
         // Issue summary
         const issueBits: string[] = [];
@@ -998,9 +1004,11 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Step 14: Growth (sales + nominal)
+    // FIX (audit issue #5): Use computeNominalDeviationGrowth (magnitude) for
+    // nominal deviation growth — consistent with dashboard main route.
     // ============================================================
     const growthSales = calcGrowth(sales, prevSales);
-    const growthNominal = calcGrowth(totalAbsNominal, prevNominalDeviasi);
+    const growthNominal = computeNominalDeviationGrowth(totalAbsNominal, prevNominalDeviasi);
 
     // ============================================================
     //  Step 15: Assemble final response

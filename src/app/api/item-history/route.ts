@@ -145,10 +145,12 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Benchmark: area + network avg devBom for THIS ITEM per period
-    //  (Per-item benchmark uses AVG(ABS(pctQtyDeviasiToBom)) — this is
-    //   correct for a single item across multiple outlets in the area,
-    //   since they all share the same item so volume weighting is not
-    //   needed. Different from outlet-level benchmark which uses SUM/SUM.)
+    //  NOTE: This is AVG(ABS(pctQtyDeviasiToBom)) — the AVERAGE OF PER-ROW
+    //  Dev/BOM ratios across outlets for the same item. This is CORRECT for
+    //  item-level benchmarking (each outlet = 1 equal observation for the same
+    //  item). This is DIFFERENT from DevBomAggregate (SUM/SUM) used for
+    //  outlet-level Dev/BOM. Do not confuse the two.
+    //  Field name "avgDevBom" = avgRowDevBom (per-row ratio average).
     // ============================================================
     const [areaBench, networkBench] = await Promise.all([
       db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`

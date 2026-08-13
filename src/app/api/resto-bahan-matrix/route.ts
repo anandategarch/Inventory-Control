@@ -103,9 +103,11 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Get area avg devBom per item for benchmark
-    //  Per-item benchmark uses AVG(ABS(pctQtyDeviasiToBom)) — correct
-    //  for single item across multiple outlets in area (no volume
-    //  weighting needed since same item).
+    //  NOTE: This is AVG(ABS(pctQtyDeviasiToBom)) — the AVERAGE OF PER-ROW
+    //  Dev/BOM ratios across outlets for the same item. This is CORRECT for
+    //  item-level benchmarking (each outlet = 1 equal observation for the same
+    //  item). This is DIFFERENT from DevBomAggregate (SUM/SUM) used for
+    //  outlet-level Dev/BOM. Field name "avgDevBom" = avgRowDevBom.
     // ============================================================
     const itemAreaBench = await db.$queryRaw<Array<{
       itemName: string; avgDevBom: number; outletCount: number;

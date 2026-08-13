@@ -185,20 +185,10 @@ export function normalizeRow(
   };
 }
 
-// Bug 2 fix: Direction must be based on NET DEVIATION (QTY LOSS/SURPLUS),
-// NOT GROSS DEVIATION (QTY DEVIASI).
-// Master context section #9:
-//   Net Deviation > 0 → LOSS (over-consumption)
-//   Net Deviation < 0 → SURPLUS (under-consumption)
-// Previously used qtyDeviasi (gross), which is wrong when gross and net
-// have different signs (e.g., over-explained items where W+S+T > |gross|).
-// Falls back to qtyDeviasi if qtyLossSurplus is null (data quality issue).
-// FIX (audit issue #14): Delegate to computeDirection() from Metric Engine
-// — single source of truth. This wrapper kept for backward compat with
-// existing call sites that import classifyDirection.
-export function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): Direction {
-  return computeDirection(netDeviation, grossDeviation);
-}
+// FIX (audit issue #6): classifyDirection wrapper REMOVED.
+// All consumers now use computeDirection() directly from @/lib/metrics.
+// Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS.
+// Falls back to GROSS (qtyDeviasi) if NET is null.
 
 // Compute residual = qtyDeviasi - (qtyWaste + qtySusut + qtyTrial)
 // Note: WASTE/SUSUT/TRIAL are NEGATIVE (consumption), so residual uses sign-aware math.
@@ -249,7 +239,7 @@ export function computeResidual(rec: NormalizedRecord): {
 
 export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
   // Bug 2 fix: direction based on NET deviation (qtyLossSurplus), not gross (qtyDeviasi)
-  const direction = classifyDirection(rec.qtyLossSurplus, rec.qtyDeviasi);
+  const direction = computeDirection(rec.qtyLossSurplus, rec.qtyDeviasi);
   const { residualQty, residualNominal, residualRatio, isOverExplained } = computeResidual(rec);
   const parsed = parseOutletCode(rec.resto);
 

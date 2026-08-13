@@ -111,7 +111,11 @@ export interface AggregateInput {
   totalQtySusut: number;     // SUM(ABS(qtySusut))
   totalQtyTrial: number;     // SUM(ABS(qtyTrial))
   totalResidualQty: number;  // SUM(ABS(residualQty))
-  totalLossNominal: number;  // SUM(nominalLossSurplus WHERE > 0)
+  // FIX (audit issue #11): totalLossNominal = SUM(nominalLossSurplus WHERE > 0)
+  // = NET LOSS only (positive NET deviation items). NOT absolute total, NOT GROSS.
+  // This is the sum of all items where qtyLossSurplus > 0 (over-consumption / LOSS).
+  // Used by computeLossToSales() = totalLossNominal / totalSales.
+  totalLossNominal: number;  // SUM(nominalLossSurplus WHERE > 0) — NET LOSS only
   totalSales: number;        // MODE(sales)
   normalCount: number;
   warningCount: number;

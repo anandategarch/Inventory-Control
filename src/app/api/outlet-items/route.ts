@@ -102,6 +102,13 @@ export async function GET(req: NextRequest) {
     //  Phase 3: area/network benchmark uses SUM(ABS)/SUM(ABS) — same
     //  formula as computeDevBomAggregate, matching outletDevBom.
     //  (was: AVG(ABS(pctQtyDeviasiToBom)) — mathematically different)
+    //
+    //  FIX (audit issue #8): This is a POOLED area/network Dev/BOM
+    //  (volume-weighted aggregate). Alternative would be average of
+    //  per-outlet Dev/BOM ratios (unweighted). Pooled is the standard
+    //  approach for financial ratios — weights by volume, so large
+    //  outlets aren't dominated by small ones. This is a design choice,
+    //  documented here for clarity.
     // ============================================================
     const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
       // Current period records for this outlet
