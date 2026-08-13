@@ -97,6 +97,14 @@ export function normalizeHeader(raw: string): string {
 
 function cellToValue(cell: ExcelJS.Cell): unknown {
   let v: unknown = cell.value;
+  // FIX (BUG 8): Date objects fall through to JSON.stringify → ISO string with timezone shift.
+  // Handle Date BEFORE the generic object check.
+  if (v instanceof Date) {
+    const dd = String(v.getDate()).padStart(2, '0');
+    const mm = String(v.getMonth() + 1).padStart(2, '0');
+    const yyyy = v.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
   if (v && typeof v === 'object') {
     if ('richText' in v && Array.isArray(v.richText)) {
       v = v.richText.map((t) => t.text).join('');

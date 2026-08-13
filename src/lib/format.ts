@@ -12,7 +12,8 @@ function fmtDecimal(n: number, digits: number): string {
 }
 
 export function fmtIDR(v: number | null | undefined, compact = true): string {
-  if (v == null || isNaN(v)) return '—';
+  // FIX (BUG 3): Guard Infinity — isNaN(Infinity) is false, so it bypassed the guard
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
   if (compact) {
     const abs = Math.abs(v);
     const sign = v < 0 ? '-' : '';
@@ -25,7 +26,7 @@ export function fmtIDR(v: number | null | undefined, compact = true): string {
 }
 
 export function fmtNum(v: number | null | undefined, unit = '', compact = true): string {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
   if (compact) {
     const abs = Math.abs(v);
     const sign = v < 0 ? '-' : '';
@@ -37,14 +38,14 @@ export function fmtNum(v: number | null | undefined, unit = '', compact = true):
 }
 
 export function fmtPct(v: number | null | undefined, withSign = true, digits = 1): string {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
   const pct = v * 100;
   const sign = withSign && pct > 0 ? '+' : '';
   return `${sign}${pct.toFixed(digits).replace('.', ',')}%`;
 }
 
 export function fmtPctAbs(v: number | null | undefined, digits = 1): string {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
   return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 

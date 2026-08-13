@@ -153,7 +153,8 @@ export function getCsvPath(excelPath: string): string {
 export function getCachedCsvPath(excelPath: string, fileHash: string): string {
   const dir = path.dirname(excelPath);
   const base = path.basename(excelPath, path.extname(excelPath));
-  return path.join(dir, `${base}.${fileHash.slice(0, 8)}.csv`);
+  // FIX (BUG 13): Use 16 hex chars (64 bits) instead of 8 (32 bits) — collision-safe
+  return path.join(dir, `${base}.${fileHash.slice(0, 16)}.csv`);
 }
 
 export function csvCacheExists(csvPath: string): boolean {

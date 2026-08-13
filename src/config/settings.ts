@@ -39,6 +39,7 @@ export const CFG_RECON_SETTINGS = {
     'WEEK 2': { start: 8, end: 14 },
     'WEEK 3': { start: 15, end: 31 },
     'WEEK 4': { start: 15, end: 31 },
+    'WEEK 5': { start: 29, end: 31 }, // FIX (BUG 9): was missing — WEEK 5+ got whole month fallback
   } as Record<string, { start: number; end: number }>,
 
   // Outlet code patterns

@@ -73,11 +73,13 @@ export async function POST(req: NextRequest) {
         const toCreate = picRecords.filter(r => !existingSet.has(r.outletCode));
 
         // Batch create new entries
+        let actuallyCreated = 0;
         if (toCreate.length > 0) {
-          await db.outletPIC.createMany({
+          const result = await db.outletPIC.createMany({
             data: toCreate,
             skipDuplicates: true,
           });
+          actuallyCreated = result.count;
         }
 
         // Batch update existing entries (use raw SQL for batch upsert)
@@ -93,7 +95,9 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        imported = picRecords.length;
+        // FIX (BUG 10): Use actual created count, not picRecords.length
+        // (skipDuplicates may silently drop race-condition collisions)
+        imported = actuallyCreated + toUpdate.length;
       } catch (e: any) {
         errors.push(`Batch error: ${e?.message || 'gagal batch insert'}`);
       }

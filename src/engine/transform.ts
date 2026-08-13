@@ -269,7 +269,13 @@ export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
   }
 
   // week period
-  const period = CFG_RECON_SETTINGS.WEEK_PERIODS[rec.weekLabel] || { start: 1, end: 31 };
+  // FIX (BUG 9): Derive period from week number for WEEK 5+ instead of
+  // falling back to whole month (1-31). Matches ingestion.ts logic.
+  let period = CFG_RECON_SETTINGS.WEEK_PERIODS[rec.weekLabel];
+  if (!period) {
+    const weekNum = parseInt(rec.weekLabel.replace(/\D/g, '')) || 1;
+    period = { start: (weekNum - 1) * 7 + 1, end: Math.min(weekNum * 7, 31) };
+  }
 
   return {
     ...rec,

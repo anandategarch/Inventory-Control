@@ -173,7 +173,7 @@ export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
                             marginBottom: isPositive ? `${bottomPct - 50}%` : `${100 - bottomPct - barHeight}%`,
                             opacity: 0.85,
                           }}
-                          title={`${e.name}: ${fmtIDR(v)}`}
+                          title={`${e.name}: ${(v * 100).toFixed(1)}%`}
                         />
                         <p className="text-[10px] font-semibold mt-1" style={{ color: isPositive ? '#dc2626' : '#10b981' }}>
                           {v > 0 ? '+' : ''}{(v * 100).toFixed(1)}%
@@ -205,7 +205,7 @@ export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
                   <div key={e.name} className="space-y-1.5">
                     <p className="text-[11px] font-medium text-muted-foreground">{e.name}</p>
                     <p className={`text-lg font-bold ${positive ? 'text-red-600' : 'text-emerald-600'}`}>
-                      {fmtIDR(e.value)}
+                      {(e.value != null ? `${e.value > 0 ? '+' : ''}${(e.value * 100).toFixed(1)}%` : '—')}
                     </p>
                     <div className="h-2 rounded-full bg-muted overflow-hidden">
                       <div className="h-full rounded-full" style={{ width: `${barWidth}%`, background: barColor }} />

@@ -19,8 +19,8 @@ export const dynamic = 'force-dynamic';
 
 const picPostSchema = z
   .object({
-    outletCode: z.string().min(1).max(50),
-    pic: z.string().min(1).max(100),
+    outletCode: z.string().trim().min(1).max(50),
+    pic: z.string().trim().min(1, 'PIC tidak boleh kosong').max(100),
   })
   .strict();
 

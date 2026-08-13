@@ -121,8 +121,9 @@ function classBadge(cls: 'A' | 'B' | 'C'): string {
 }
 
 function classifyByCumPct(cumPct: number): 'A' | 'B' | 'C' {
-  if (cumPct <= 70) return 'A';
-  if (cumPct <= 90) return 'B';
+  // FIX (BUG 1): cumPct is 0-1 ratio (divided by 100 in route), not 0-100 scale
+  if (cumPct <= 0.70) return 'A';
+  if (cumPct <= 0.90) return 'B';
   return 'C';
 }
 
@@ -206,7 +207,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
                     <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{it.cumPct.toFixed(1)}%</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{(it.cumPct * 100).toFixed(1)}%</TableCell>
                   </TableRow>
                 );
               })}
@@ -314,7 +315,7 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
                   <Scatter
                     data={chartData}
                     cursor="pointer"
-                    onClick={(d: any) => d?.outletCode && setFocusOutlet(d.outletCode)}
+                    onClick={(d: any) => d?.payload?.outletCode && setFocusOutlet(d.payload.outletCode)}
                   >
                     {chartData.map((d, i) => {
                       const q = quadrantOf(d.sales, d.lossToSales);
