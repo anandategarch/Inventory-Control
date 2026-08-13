@@ -113,11 +113,12 @@ function evalOp(value: unknown, opDef: unknown, ctx?: Record<string, unknown>): 
       case 'between': {
         if (typeof value !== 'number' || !Array.isArray(operand)) return false;
         const arr = operand as unknown[];
-        // BUG 2.5 fix: resolve field references inside array elements
         const lo = typeof arr[0] === 'string' && ctx && arr[0] in ctx ? ctx[arr[0] as string] : arr[0];
         const hi = typeof arr[1] === 'string' && ctx && arr[1] in ctx ? ctx[arr[1] as string] : arr[1];
         if (typeof lo !== 'number' || typeof hi !== 'number') return false;
-        if (!(value >= lo && value <= hi)) return false;
+        // FIX (BUG 9): Auto-swap reversed bounds so {between: [0.5, 0.1]} still works
+        const [realLo, realHi] = lo <= hi ? [lo, hi] : [hi, lo];
+        if (!(value >= realLo && value <= realHi)) return false;
         break;
       }
       case 'in': {
@@ -148,25 +149,28 @@ function resolveExpr(expr: unknown, ctx: Record<string, unknown>): unknown {
   if (typeof expr === 'number' || typeof expr === 'boolean') return expr;
   if (typeof expr === 'object') {
     const e = expr as Record<string, unknown>;
+    // FIX (BUG 5): Check typeof number, not just non-null. A typo'd field reference
+    // returns a string (from resolveExpr line 146), which passes the null check
+    // but produces NaN in arithmetic → rule silently never fires.
     if ('mul' in e && Array.isArray(e.mul)) {
       const vals = e.mul.map((v) => resolveExpr(v, ctx));
-      if (vals.some((v) => v == null)) return null;
-      return (vals as number[]).reduce((a, b) => a * (b as number), 1);
+      if (vals.some((v) => v == null || typeof v !== 'number')) return null;
+      return (vals as number[]).reduce((a, b) => a * b, 1);
     }
     if ('add' in e && Array.isArray(e.add)) {
       const vals = e.add.map((v) => resolveExpr(v, ctx));
-      if (vals.some((v) => v == null)) return null;
-      return (vals as number[]).reduce((a, b) => a + (b as number), 0);
+      if (vals.some((v) => v == null || typeof v !== 'number')) return null;
+      return (vals as number[]).reduce((a, b) => a + b, 0);
     }
     if ('sub' in e && Array.isArray(e.sub)) {
       const vals = e.sub.map((v) => resolveExpr(v, ctx));
-      if (vals.some((v) => v == null)) return null;
+      if (vals.some((v) => v == null || typeof v !== 'number')) return null;
       const arr = vals as number[];
       return arr.slice(1).reduce((a, b) => a - b, arr[0]);
     }
     if ('div' in e && Array.isArray(e.div)) {
       const vals = e.div.map((v) => resolveExpr(v, ctx));
-      if (vals.some((v) => v == null) || (vals[1] as number) === 0) return null;
+      if (vals.some((v) => v == null || typeof v !== 'number') || (vals[1] as number) === 0) return null;
       return (vals[0] as number) / (vals[1] as number);
     }
     if ('abs' in e) {

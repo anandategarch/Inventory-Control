@@ -40,7 +40,8 @@ export const CFG_THRESHOLDS = {
   STD_WASTE_PCT: 0.05,              // 5% max waste
   STD_TRIAL_PCT: 0.03,              // 3% max trial
   STD_DEVIASI_BOM_PCT: 0.05,        // 5% max deviation/BOM
-  HIGH_LOSS_NOMINAL_THRESHOLD: 1_000_000,  // Rp 1M loss threshold
+  HIGH_LOSS_NOMINAL_THRESHOLD: 50_000_000,  // Rp 50M loss threshold (P1) — FIX (BUG 10): was 1M, mismatch with settings.ts
+  P2_NOMINAL_THRESHOLD: 10_000_000,  // Rp 10M loss threshold (P2) — FIX (BUG 10): was missing entirely
 
   // Week period ranges (user confirmed: WEEK 1=1-7, WEEK 2=8-14, WEEK 3/4=15-30/31)
   WEEK_RANGES: {

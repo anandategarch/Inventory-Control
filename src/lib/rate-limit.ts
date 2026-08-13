@@ -1,7 +1,7 @@
 // ============================================================
 //  Rate limiter — simple in-memory rate limiting (Bug #10)
 //  For production: use Redis-backed rate limiter (e.g. @upstash/ratelimit)
-//  For now: in-memory Map with sliding window
+//  For now: in-memory Map with fixed-window counter (BUG 8: not sliding window)
 // ============================================================
 
 interface RateLimitEntry {
@@ -55,12 +55,22 @@ export function rateLimit(key: string, maxRequests: number, windowMs: number): {
 
 /**
  * Get client IP from NextRequest (handles Vercel proxy)
+ * FIX (BUG 6): X-Forwarded-For first IP is client-supplied and spoofable.
+ * Use Vercel's x-vercel-forwarded-for (trusted edge) or x-real-ip instead.
+ * Fallback: LAST IP in XFF (closest to trusted proxy), not first (client-supplied).
  */
 export function getClientIP(req: Request): string {
-  const xff = req.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0].trim();
+  // Vercel sets this from trusted edge — cannot be spoofed by client
+  const vff = req.headers.get('x-vercel-forwarded-for');
+  if (vff) return vff.split(',')[0].trim();
   const xri = req.headers.get('x-real-ip');
-  if (xri) return xri;
+  if (xri) return xri.trim();
+  // Fallback: last IP in XFF (closest to trusted proxy), not first (spoofable)
+  const xff = req.headers.get('x-forwarded-for');
+  if (xff) {
+    const parts = xff.split(',').map(s => s.trim()).filter(Boolean);
+    return parts[parts.length - 1] || 'unknown';
+  }
   return 'unknown';
 }
 

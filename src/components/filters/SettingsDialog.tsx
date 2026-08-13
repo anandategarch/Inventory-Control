@@ -131,8 +131,12 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         setHasEdits(false);
         setEditValues({});
         queryClient.invalidateQueries({ queryKey: ['settings'] });
-        // Invalidate analysis cache so new thresholds take effect
+        // FIX (BUG 3): Invalidate ALL threshold-dependent queries, not just analysis
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+        queryClient.invalidateQueries({ queryKey: ['item-history'] });
+        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       } else {
         toast({
           title: '❌ Gagal menyimpan',
@@ -162,7 +166,12 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         description: key ? `Reset ${key}` : 'Semua pengaturan direset ke default',
       });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      // FIX (BUG 3): Invalidate ALL threshold-dependent queries
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
+      queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+      queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+      queryClient.invalidateQueries({ queryKey: ['item-history'] });
+      queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     },
   });
 

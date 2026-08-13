@@ -136,7 +136,15 @@ function parseTolerance(raw: unknown): { value: number | null; rawStr: string | 
     return { value: null, rawStr: s };
   }
   // Use robust toNum (handles "5%", "5,5", "5.5", etc.)
-  const n = toNum(s);
+  let n = toNum(s);
+  // FIX (BUG 4): If toNum failed (mixed string like "5% BELUM ADA TOLERANSI"),
+  // try extracting the leading numeric token before falling back to null.
+  if (n === null) {
+    const leadMatch = s.match(/^\s*([0-9.,%()RpIDR\s-]+)/i);
+    if (leadMatch) {
+      n = toNum(leadMatch[1]);
+    }
+  }
   return { value: n, rawStr: s };
 }
 

@@ -92,10 +92,10 @@ export function buildStructuredSummary(input: NarrativeInput): string {
 
   lines.push('DEVIATION COMPOSITION (QTY):');
   lines.push(`- Total Deviation: ${fmtNum(db.total)}`);
-  lines.push(`- Waste: ${fmtNum(db.waste)} (${db.total > 0 ? ((db.waste / db.total) * 100).toFixed(1) : 0}%)`);
-  lines.push(`- Susut: ${fmtNum(db.susut)} (${db.total > 0 ? ((db.susut / db.total) * 100).toFixed(1) : 0}%)`);
-  lines.push(`- Trial: ${fmtNum(db.trial)} (${db.total > 0 ? ((db.trial / db.total) * 100).toFixed(1) : 0}%)`);
-  lines.push(`- Residual: ${fmtNum(db.residual)} (${db.total > 0 ? ((db.residual / db.total) * 100).toFixed(1) : 0}%)`);
+  lines.push(`- Waste: ${fmtNum(db.waste)} (${db.total > 0 ? ((db.waste / db.total) * 100).toFixed(1) : '0.0'}%)`);
+  lines.push(`- Susut: ${fmtNum(db.susut)} (${db.total > 0 ? ((db.susut / db.total) * 100).toFixed(1) : '0.0'}%)`);
+  lines.push(`- Trial: ${fmtNum(db.trial)} (${db.total > 0 ? ((db.trial / db.total) * 100).toFixed(1) : '0.0'}%)`);
+  lines.push(`- Residual: ${fmtNum(db.residual)} (${db.total > 0 ? ((db.residual / db.total) * 100).toFixed(1) : '0.0'}%)`);
   lines.push('');
 
   lines.push(`TOP ANOMALIES (${topAnomalies.length} items, ${investigationCount} in worklist):`);
@@ -136,9 +136,9 @@ export function buildFallbackNarrative(input: NarrativeInput): string {
   parts.push(`\nDEVIATION COMPOSITION`);
   const residualPct = db.total > 0 ? (db.residual / db.total) * 100 : 0;
   parts.push(`Dari total QTY Deviasi ${fmtNum(db.total)}, ` +
-    `Waste ${fmtNum(db.waste)} (${db.total > 0 ? ((db.waste / db.total) * 100).toFixed(1) : 0}%), ` +
-    `Susut ${fmtNum(db.susut)} (${db.total > 0 ? ((db.susut / db.total) * 100).toFixed(1) : 0}%), ` +
-    `Trial ${fmtNum(db.trial)} (${db.total > 0 ? ((db.trial / db.total) * 100).toFixed(1) : 0}%), ` +
+    `Waste ${fmtNum(db.waste)} (${db.total > 0 ? ((db.waste / db.total) * 100).toFixed(1) : '0.0'}%), ` +
+    `Susut ${fmtNum(db.susut)} (${db.total > 0 ? ((db.susut / db.total) * 100).toFixed(1) : '0.0'}%), ` +
+    `Trial ${fmtNum(db.trial)} (${db.total > 0 ? ((db.trial / db.total) * 100).toFixed(1) : '0.0'}%), ` +
     `Residual ${fmtNum(db.residual)} (${residualPct.toFixed(1)}%).`);
   if (residualPct > 50) {
     parts.push(`Residual Loss tinggi (${residualPct.toFixed(1)}% dari deviation) — sebagian deviation tidak terjelaskan oleh Waste/Susut/Trial. Perlu ditelusuri.`);

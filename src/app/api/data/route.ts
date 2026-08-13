@@ -133,10 +133,13 @@ export async function DELETE(req: NextRequest) {
       deletedRecords = await db.inventoryRecord.count();
       deletedWeeks = await db.week.count();
 
-      await db.dQIssue.deleteMany();
-      await db.inventoryRecord.deleteMany();
-      await db.week.deleteMany();
-      await db.sourceFile.deleteMany();
+      // FIX (BUG 1): Wrap cascade in transaction for atomicity
+      await db.$transaction([
+        db.dQIssue.deleteMany(),
+        db.inventoryRecord.deleteMany(),
+        db.week.deleteMany(),
+        db.sourceFile.deleteMany(),
+      ]);
 
       detail = 'Reset SEMUA data (nuclear)';
     } else if (data.month) {
@@ -155,12 +158,15 @@ export async function DELETE(req: NextRequest) {
         });
       }
 
-      await db.dQIssue.deleteMany({ where: { sourceFileId: { in: fileIds } } });
+      // FIX (BUG 1): Capture counts BEFORE, then wrap deletes in transaction
       deletedRecords = await db.inventoryRecord.count({ where: { sourceFileId: { in: fileIds } } });
-      await db.inventoryRecord.deleteMany({ where: { sourceFileId: { in: fileIds } } });
       deletedWeeks = await db.week.count({ where: { sourceFileId: { in: fileIds } } });
-      await db.week.deleteMany({ where: { sourceFileId: { in: fileIds } } });
-      await db.sourceFile.deleteMany({ where: { id: { in: fileIds } } });
+      await db.$transaction([
+        db.dQIssue.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
+        db.inventoryRecord.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
+        db.week.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
+        db.sourceFile.deleteMany({ where: { id: { in: fileIds } } }),
+      ]);
       deletedFiles = fileIds.length;
 
       detail = `Hapus bulan ${data.month} (${deletedFiles} file, ${deletedRecords} record, ${deletedWeeks} week)`;
@@ -177,12 +183,15 @@ export async function DELETE(req: NextRequest) {
         );
       }
 
-      await db.dQIssue.deleteMany({ where: { sourceFileId: file.id } });
+      // FIX (BUG 1): Capture counts BEFORE, then wrap deletes in transaction
       deletedRecords = await db.inventoryRecord.count({ where: { sourceFileId: file.id } });
-      await db.inventoryRecord.deleteMany({ where: { sourceFileId: file.id } });
       deletedWeeks = await db.week.count({ where: { sourceFileId: file.id } });
-      await db.week.deleteMany({ where: { sourceFileId: file.id } });
-      await db.sourceFile.delete({ where: { id: file.id } });
+      await db.$transaction([
+        db.dQIssue.deleteMany({ where: { sourceFileId: file.id } }),
+        db.inventoryRecord.deleteMany({ where: { sourceFileId: file.id } }),
+        db.week.deleteMany({ where: { sourceFileId: file.id } }),
+        db.sourceFile.delete({ where: { id: file.id } }),
+      ]);
       deletedFiles = 1;
 
       detail = `Hapus file ID ${file.id} (${file.fileName}, ${file.monthLabel}) — ${deletedRecords} record, ${deletedWeeks} week`;

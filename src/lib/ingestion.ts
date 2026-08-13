@@ -253,7 +253,14 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
             'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 },
             'WEEK 3': { start: 15, end: 31 }, 'WEEK 4': { start: 15, end: 31 },
           };
-          const p = periods[wk] || { start: 1, end: 31 };
+          // FIX (BUG 7): Derive period from week number for WEEK 5+ instead of
+          // falling back to whole month (1-31). WEEK N → days (N-1)*7+1 to min(N*7, 31).
+          let p = periods[wk];
+          if (!p) {
+            const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
+            p = { start: (weekNum - 1) * 7 + 1, end: Math.min(weekNum * 7, 31) };
+            console.warn(`[ingest] Unknown weekLabel "${wk}", derived period ${p.start}-${p.end}`);
+          }
           const w = await db.week.upsert({
             where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
             update: {},

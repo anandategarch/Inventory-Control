@@ -398,8 +398,11 @@ let _thresholdsVersionAt = 0;
 const VERSION_CACHE_TTL_MS = 0; // 0 = disabled (always read from DB)
 
 export async function getThresholdsVersion(): Promise<number> {
-  // Cache disabled — always read from DB for consistency across instances
-  return await db.setting.count();
+  // FIX (BUG 2): Use MAX(updatedAt) instead of COUNT(*) — count only changes
+  // when rows are added/removed, NOT when values are updated. This caused stale
+  // cache on multi-instance (Vercel) after settings value change.
+  const result = await db.setting.aggregate({ _max: { updatedAt: true } });
+  return result._max.updatedAt?.getTime() ?? 0;
 }
 
 // ============================================================
