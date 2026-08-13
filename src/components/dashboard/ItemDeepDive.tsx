@@ -200,9 +200,9 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                       <TableBody>
                         {drilldownQuery.data.records.slice(0, 8).map((r: any, i: number) => (
                           <TableRow key={i}>
-                            <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{r.weekLabel || r.week || '—'}</TableCell>
-                            <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(r.qtyDeviasi ?? r.qtyDeviation)}</TableCell>
-                            <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(r.nominalDeviasi ?? r.absNominal)}</TableCell>
+                            <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{r.period?.weekLabel || '—'}</TableCell>
+                            <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(r.qty?.deviasi)}</TableCell>
+                            <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(r.nominal?.deviasi ?? r.derived?.absNominalDeviasi)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

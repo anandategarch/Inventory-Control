@@ -45,12 +45,11 @@ const CARD_CONFIG: Record<string, {
     getData: (data) => data.topItemsByNominal || [],
   },
   qtyBom: {
-    title: 'Top 10 Items by QTY BOM',
-    description: 'Item dengan volume aktivitas (BOM) tertinggi',
+    title: 'Top 10 Items (by Nominal Deviasi)',
+    description: 'Item dengan financial impact tertinggi — proxy untuk QTY BOM',
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      // Reuse topItemsByNominal but show absNominal as proxy
       { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v) },
       { key: 'direction', label: 'Dir', align: 'center', format: (v) => v?.[0] || '-', color: (v) => directionColor(v) },
     ],

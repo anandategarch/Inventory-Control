@@ -170,7 +170,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
           />
         </CardTitle>
         <div className="flex items-center gap-1.5 flex-wrap mt-1">
-          <Badge variant="outline" className={`text-[11px] ${classBadge('A')}`}>A: {pareto.classACount} ({pareto.classAPctOfCost.toFixed(1)}%)</Badge>
+          <Badge variant="outline" className={`text-[11px] ${classBadge('A')}`}>A: {pareto.classACount} ({(pareto.classAPctOfCost * 100).toFixed(1)}%)</Badge>
           <Badge variant="outline" className={`text-[11px] ${classBadge('B')}`}>B: {classBCount}</Badge>
           <Badge variant="outline" className={`text-[11px] ${classBadge('C')}`}>C: {classCCount}</Badge>
         </div>

@@ -16,7 +16,8 @@ export async function GET(req: NextRequest) {
     const itemName = url.searchParams.get('itemName');
     const weekLabel = url.searchParams.get('weekLabel');
     const monthLabel = url.searchParams.get('monthLabel');
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 500);
+    const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50, 500);
 
     const where: any = {};
     if (outletCode) where.outlet = { code: outletCode };

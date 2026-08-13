@@ -237,7 +237,7 @@ export function AreaContributionBar({ data }: { data: AnalysisData }) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
+                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}Jt`} fontSize={11} />
                 <YAxis type="category" dataKey="area" width={110} fontSize={10} />
                 <Tooltip
                   content={({ active, payload }: { active?: boolean; payload?: TipPayload }) =>
@@ -324,7 +324,7 @@ export function TopItemsHorizontalBar({ data }: { data: AnalysisData }) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
+                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}Jt`} fontSize={11} />
                 <YAxis type="category" dataKey="label" width={140} fontSize={10} />
                 <Tooltip
                   content={({ active, payload }: { active?: boolean; payload?: TipPayload }) =>
@@ -433,7 +433,7 @@ export function VarianceDivergingBar({ data }: { data: AnalysisData }) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
+                <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}Jt`} fontSize={11} />
                 <YAxis type="category" dataKey="label" width={140} fontSize={10} />
                 <ReferenceLine x={0} stroke="#94a3b8" />
                 <Tooltip
@@ -742,7 +742,7 @@ export function CumulativeDeviationArea({ data }: { data: AnalysisData }) {
                             <p key={i} className="text-muted-foreground">
                               {p.payload ? (p.payload as any).name || '' : ''} {p.payload ? '' : ''}
                               {p.name === 'Kumulatif' ? 'Kumulatif: ' : p.name === 'Dev/BOM' ? 'Dev/BOM: ' : 'Mingguan: '}
-                              {p.name === 'Dev/BOM' ? `${(p.value as number).toFixed(2)}%` : `Rp ${(p.value as number).toFixed(2)}M`}
+                              {p.name === 'Dev/BOM' ? `${(p.value as number).toFixed(2)}%` : `Rp ${(p.value as number).toFixed(2)}Jt`}
                             </p>
                           ))}
                         </div>

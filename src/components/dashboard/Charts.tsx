@@ -200,11 +200,11 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted-foreground">LOSS nominal:</span>{' '}
-            <span className="font-medium text-red-600">Rp {(l.lossNominal / 1_000_000).toFixed(2)}M</span>
+            <span className="font-medium text-red-600">Rp {(l.lossNominal / 1_000_000).toFixed(2)}Jt</span>
           </div>
           <div>
             <span className="text-muted-foreground">SURPLUS nominal:</span>{' '}
-            <span className="font-medium text-emerald-600">Rp {(l.surplusNominal / 1_000_000).toFixed(2)}M</span>
+            <span className="font-medium text-emerald-600">Rp {(l.surplusNominal / 1_000_000).toFixed(2)}Jt</span>
           </div>
         </div>
       </CardContent>
@@ -243,7 +243,13 @@ export function TrendChart({ data }: { data: AnalysisData }) {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="weekLabel" fontSize={11} />
               <YAxis yAxisId="left" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} />
-              <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toFixed(0)} fontSize={11} />
+              <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => {
+              const abs = Math.abs(v);
+              if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1).replace('.', ',')}M`;
+              if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(0)}Jt`;
+              if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
+              return v.toFixed(0);
+            }} fontSize={11} />
               <Tooltip
                 formatter={(v: any, n: any) => n === 'Dev/BOM' ? `${(v * 100).toFixed(2)}%` : v.toLocaleString()}
               />
