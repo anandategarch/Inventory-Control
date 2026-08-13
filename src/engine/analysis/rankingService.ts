@@ -180,7 +180,8 @@ export function computeVarianceAnalysis(
 
   for (const curr of current) {
     if (curr.absNominalDeviasi == null || curr.absNominalDeviasi === 0) continue;
-    const key = `${curr.outletId}|${curr.itemId}`;
+    // FIX (BUG 4): Include akunPenyesuaian in key — matches analysis route's prevByOutletItem
+    const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
     const prev = prevByOutletItem.get(key);
     if (!prev || prev.absNominalDeviasi == null || prev.absNominalDeviasi === 0) continue;
     const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;

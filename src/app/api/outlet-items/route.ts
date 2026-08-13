@@ -221,7 +221,11 @@ export async function GET(req: NextRequest) {
       else if (nls < 0) totalSurplusNominal += Math.abs(nls);
 
       // Count severity
-      if (qd === 0 || Math.abs(qd) < 0.01) normalCount++;
+      // FIX (BUG 5): Use AND-zero criterion (qtyDeviasi AND absNominalDeviasi both ~0)
+      // — matches analysis route. Previously: single-field |qd|<0.01 → price-only
+      // variance items (qty=0 but nominal>0) were wrongly counted as normal.
+      const isZeroDev = (qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01);
+      if (isZeroDev) normalCount++;
       else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > (toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
       else warningCount++;
     }

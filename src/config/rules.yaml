@@ -219,7 +219,9 @@ rules:
     severity: ABNORMAL
     priority: 77
     condition:
-      zScore: { lt: { mul: [-1, historicalZscoreHigh] } }
+      all:
+        - direction: { eq: "SURPLUS" }
+        - zScore: { lt: { mul: [-1, historicalZscoreHigh] } }
     narrative_template: >
       Deviation/BOM {{zScore}} std-dev di BAWAH historical average (SURPLUS abnormal).
 

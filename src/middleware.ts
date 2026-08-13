@@ -13,6 +13,7 @@
 //  If ADMIN_TOKEN not set in env → endpoints are PUBLIC (dev mode, backward compat)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 
 const PROTECTED_PATHS = [
   '/api/setup',
@@ -58,7 +59,18 @@ export function middleware(req: NextRequest) {
     providedToken = req.nextUrl.searchParams.get('admin_token');
   }
 
-  if (providedToken !== adminToken) {
+  // FIX (BUG 8): Use constant-time comparison to prevent timing attacks.
+  // Previously: !== short-circuits on first byte mismatch, leaking token info.
+  if (!providedToken) {
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized. Set ADMIN_TOKEN env var and provide via Authorization: Bearer <token> or ?admin_token=<token>.' },
+      { status: 401 }
+    );
+  }
+  const a = Buffer.from(providedToken);
+  const b = Buffer.from(adminToken);
+  const tokenValid = a.length === b.length && timingSafeEqual(a, b);
+  if (!tokenValid) {
     return NextResponse.json(
       { success: false, error: 'Unauthorized. Set ADMIN_TOKEN env var and provide via Authorization: Bearer <token> or ?admin_token=<token>.' },
       { status: 401 }

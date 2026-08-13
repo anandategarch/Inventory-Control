@@ -117,9 +117,12 @@ export function validateRow(
   }
 
   // WARNING: tolerance not set (sentinel text)
+  // FIX (BUG 3): Use exact match (===) not .includes() — transform.ts:135 uses exact
+  // match for parseTolerance, so "5% BELUM ADA TOLERANSI" parses 5% as tolerance.
+  // Validator must agree: only flag TOLERANCE_NOT_SET when the ENTIRE string is the sentinel.
   const tolRaw = row.toleranceRaw;
-  if (tolRaw !== null && tolRaw !== undefined && typeof tolRaw === 'string' &&
-      tolRaw.toUpperCase().includes(CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase())) {
+  if (typeof tolRaw === 'string' &&
+      tolRaw.trim().toUpperCase() === CFG_RECON_SETTINGS.TOLERANCE_NOT_SET_TEXT.toUpperCase()) {
     issues.push({
       severity: 'INFO',
       code: 'TOLERANCE_NOT_SET',

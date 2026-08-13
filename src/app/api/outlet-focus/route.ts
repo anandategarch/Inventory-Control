@@ -20,7 +20,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
-import { calcGrowth, calcZScoreFromStats, computeDirection, computePriority, computeNominalDeviationGrowth } from '@/lib/metrics';
+import { calcGrowth, calcZScoreFromStats, computeDirection, computePriority, computeNominalDeviationGrowth, computeHealthScore } from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -633,8 +633,14 @@ export async function GET(req: NextRequest) {
       else warningCount++;
 
       totalAbsNominal += sumAbsNominalDeviasi;
-      totalLossNominal += sumNominalDeviasi > 0 ? sumNominalDeviasi : 0;
-      totalSurplusNominal += sumNominalDeviasi < 0 ? Math.abs(sumNominalDeviasi) : 0;
+      // FIX (BUG 1): Use NET nominalLossSurplus (not GROSS nominalDeviasi) for loss/surplus split.
+      // Metric Engine defines totalLossNominal = SUM(nominalLossSurplus WHERE > 0).
+      // Split per-row to match SQL semantics (queries/dashboard.ts, trend query).
+      for (const r of rows) {
+        const nls = r.nominalLossSurplus ?? 0;
+        if (nls > 0) totalLossNominal += nls;
+        else if (nls < 0) totalSurplusNominal += Math.abs(nls);
+      }
       totalResidualNominal += rows.reduce((s, r) => s + Math.abs(r.residualNominal ?? 0), 0);
       totalWasteNominal += sumNominalWaste;
       totalSusutNominal += sumNominalSusut;
@@ -755,13 +761,35 @@ export async function GET(req: NextRequest) {
     const residualPct = totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null;
     const lossToSales = sales > 0 ? totalLossNominal / sales : null;
 
-    // Health score (same formula as analysis.ts: 30% devBom + 25% residual + 25% lossToSales + 20% abnormalCount)
-    const devBomScore = Math.max(0, 100 - devBomOutlet * 200); // 50% devBom → 0
-    const residualScore = residualPct != null ? Math.max(0, 100 - residualPct * 100) : 100;
-    const lossToSalesScore = lossToSales != null ? Math.max(0, 100 - lossToSales * 1000) : 100; // 10% loss/sales → 0
-    const abnormalScore = byItemId.size > 0 ? Math.max(0, 100 - (abnormalCount / byItemId.size) * 200) : 100; // 50% abnormal → 0
-    const healthScore = Math.round(
-      devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20,
+    // FIX (BUG 2): Use Metric Engine computeHealthScore() — same as main dashboard.
+    // Previously: hardcoded linear factors with different thresholds than definitions.ts.
+    // Now: uses Settings-driven weights + thresholds, consistent with analysis route.
+    const healthScore = computeHealthScore(
+      {
+        totalQtyDeviasi,
+        totalQtyBom,
+        totalQtyWaste,
+        totalQtySusut,
+        totalQtyTrial,
+        totalResidualQty,
+        totalLossNominal,
+        totalSales: sales,
+        normalCount,
+        warningCount,
+        abnormalCount,
+      },
+      {
+        devBom: thresholds.HEALTH_WEIGHT_DEV_BOM,
+        residual: thresholds.HEALTH_WEIGHT_RESIDUAL,
+        lossToSales: thresholds.HEALTH_WEIGHT_LOSS_TO_SALES,
+        abnormal: thresholds.HEALTH_WEIGHT_ABNORMAL,
+      },
+      {
+        devBom: { good: thresholds.HEALTH_THRESH_DEV_BOM_GOOD, bad: thresholds.HEALTH_THRESH_DEV_BOM_BAD },
+        residual: { good: thresholds.HEALTH_THRESH_RESIDUAL_GOOD, bad: thresholds.HEALTH_THRESH_RESIDUAL_BAD },
+        lossToSales: { good: thresholds.HEALTH_THRESH_LOSS_TO_SALES_GOOD, bad: thresholds.HEALTH_THRESH_LOSS_TO_SALES_BAD },
+        abnormal: { good: thresholds.HEALTH_THRESH_ABNORMAL_GOOD, bad: thresholds.HEALTH_THRESH_ABNORMAL_BAD },
+      },
     );
 
     // Rank: count outlets in same period with lower health score

@@ -295,10 +295,13 @@ export async function GET(req: NextRequest) {
       }, { status: 404 });
     }
 
-    // Build previous-by-outlet-item map (for rule context + variance analysis)
+    // Build previous-by-outlet-item-akun map (for rule context + variance analysis)
+    // FIX (BUG 4): Include akunPenyesuaian in key — schema natural key is
+    // (weekId, outletId, itemId, akunPenyesuaian). Without akun, multi-akun items
+    // get wrong prev record → wrong growth + false rule flags.
     const prevByOutletItem = new Map<string, RecWithRels>();
     for (const r of prevRecs) {
-      prevByOutletItem.set(`${r.outletId}|${r.itemId}`, r);
+      prevByOutletItem.set(`${r.outletId}|${r.itemId}|${r.akunPenyesuaian ?? ''}`, r);
     }
 
     // thresholds already loaded in parallel block above
@@ -336,7 +339,7 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      const key = `${curr.outletId}|${curr.itemId}`;
+      const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
       const prev = prevByOutletItem.get(key) ?? null;
       // Phase 4: historicalByOutletItem now contains precomputed stats (mean + stdDev)
       const historicalStats = historicalByOutletItem.get(key) ?? null;
@@ -460,9 +463,12 @@ export async function GET(req: NextRequest) {
     // when outlet has aggregate loss (negative nominal). Now only guard against qty=0 (division).
     const currAvgPrice = execSummary.qtyDeviasi.current != null && Math.abs(execSummary.qtyDeviasi.current) > 0
       ? execSummary.nominalDeviasi.current / execSummary.qtyDeviasi.current : null;
+    // FIX (BUG 7): Guard against prev nominal being null — use null not 0.
+    // Previously: (null ?? 0) / prevQtyDev = 0, which nullified priceEffect
+    // via calcGrowth(currPrice, 0) = null. Now: null when prev nominal is null.
     const prevQtyDev = execSummary.qtyDeviasi.previous;
-    const prevAvgPrice = prevQtyDev != null && Math.abs(prevQtyDev) > 0
-      ? (execSummary.nominalDeviasi.previous ?? 0) / prevQtyDev : null;
+    const prevAvgPrice = (prevQtyDev != null && Math.abs(prevQtyDev) > 0 && execSummary.nominalDeviasi.previous != null)
+      ? execSummary.nominalDeviasi.previous / prevQtyDev : null;
 
     // FIX (audit issue #11): Use computeNominalDeviationGrowth (magnitude) for
     // nominalDeviasi — signed calcGrowth is misleading when sign flips.
