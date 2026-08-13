@@ -208,7 +208,9 @@ export async function GET(req: NextRequest) {
     // Metric Engine: priority (Settings-driven, no hardcoded 1M/0.10/0.50/2.0)
     const priorityThresholds: PriorityInput['thresholds'] = {
       HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
       STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+      RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
       RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
       HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
     };

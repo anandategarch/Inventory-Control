@@ -121,28 +121,34 @@ export const GROWTH_ABS = '(Math.abs(curr) - Math.abs(prev)) / Math.abs(prev)';
 
 /**
  * Z-Score:
- *   (ABS(current Dev/BOM) - mean(ABS(historical Dev/BOM)))
- *   / STDDEV_SAMP(ABS(historical Dev/BOM))
+ *   (ABS(current Dev/BOM) - mean(weekly aggregate Dev/BOM))
+ *   / STDDEV_SAMP(weekly aggregate Dev/BOM)
  *
  * Aturan:
- *   - Gunakan ABS (magnitude), bukan signed value
+ *   - Each week = 1 observation (aggregate Dev/BOM = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)))
+ *   - BUKAN row-level AVG(ABS(pctQtyDeviasiToBom)) — itu weighted by row count
  *   - Sample variance (N-1, Bessel's correction)
  *   - Exclude current period dari historical stats
- *   - Require n >= HISTORICAL_MIN_WEEKS (default 4)
+ *   - Require n >= HISTORICAL_MIN_WEEKS (default 4) — n = WEEK count, bukan row count
  *
  * Master context #29: Historical harus membaca Magnitude + Direction + Consistency
  */
-export const Z_SCORE = '(Math.abs(value) - mean) / stdDev — sample variance, exclude current';
+export const Z_SCORE = '(|current| - mean(weekly)) / stdDev(weekly) — sample variance, exclude current';
 
 /**
- * Benchmark Flag:
+ * Historical Benchmark Flag:
  *   Berdasarkan Z-Score (historical comparison), BUKAN area/network comparison
- *   zScore > BENCHMARK_NETWORK_FACTOR → ABOVE_NETWORK_AVG
- *   zScore > BENCHMARK_AREA_FACTOR → ABOVE_AREA_AVG
+ *   zScore > HISTORICAL_ZSCORE_HIGH → HISTORICAL_HIGH (outlier vs pola sendiri)
+ *   zScore > HISTORICAL_ZSCORE_WARN → HISTORICAL_WARNING
  *
- * NOTE: Area/network comparison adalah query terpisah (areaAnalysis)
+ * FIX (audit issue #10): Renamed from ABOVE_NETWORK_AVG/ABOVE_AREA_AVG to
+ * HISTORICAL_HIGH/HISTORICAL_WARNING — nama lama menyesatkan karena
+ * zScore adalah perbandingan vs HISTORY sendiri, BUKAN vs outlet lain.
+ *
+ * Area/network comparison ada di computeBenchmark() (benchmark.ts)
+ * dengan flag ABOVE_NETWORK/ABOVE_AREA yang terpisah.
  */
-export const BENCHMARK_FLAG = 'from zScore vs historical — NOT vs other outlets';
+export const BENCHMARK_FLAG = 'from zScore vs historical — HISTORICAL_HIGH/HISTORICAL_WARNING';
 
 /**
  * Health Score:
@@ -173,23 +179,33 @@ export const HEALTH_SCORE_THRESHOLDS = {
 
 /**
  * Priority P1/P2/P3:
- *   Dari Settings (WEIGHT_*, thresholds)
- *   BUKAN hardcoded 1M / 10% / 50%
+ *   FIX (audit issue #5): Master rule uses OR logic, not AND.
  *
- * P1 = ABNORMAL severity (dari rule engine)
- * P2 = WARNING severity
- * P3 = NORMAL severity
- *
- * Untuk per-item priority (outlet-items, matrix, item-history):
- *   P1: absNominalLossSurplus > HIGH_LOSS_NOMINAL_THRESHOLD
- *       AND (Dev/BOM > STD_DEVIASI_BOM_PCT OR Residual > RESIDUAL_LOSS_HIGH_PCT)
- *   P2: Dev/BOM > STD_DEVIASI_BOM_PCT OR Residual > RESIDUAL_LOSS_HIGH_PCT
+ *   P1: absNominalLossSurplus > P1_NOMINAL_THRESHOLD
+ *       OR residualRatio > RESIDUAL_LOSS_HIGH_PCT
+ *       OR zScore > HISTORICAL_ZSCORE_HIGH
+ *       OR isOverExplained (fraud red flag)
+ *   P2: absNominalLossSurplus > P2_NOMINAL_THRESHOLD
+ *       OR residualRatio > RESIDUAL_LOSS_WARN_PCT
+ *       OR absDevBom > STD_DEVIASI_BOM_PCT
  *   P3: lainnya
+ *
+ * Thresholds dari Settings:
+ *   P1_NOMINAL_THRESHOLD = HIGH_LOSS_NOMINAL_THRESHOLD (default 1,000,000)
+ *   P2_NOMINAL_THRESHOLD = P2_NOMINAL_THRESHOLD (default 100,000) ← NEW
+ *   RESIDUAL_LOSS_HIGH_PCT = 0.70
+ *   RESIDUAL_LOSS_WARN_PCT = 0.50
+ *   STD_DEVIASI_BOM_PCT = 0.05
+ *   HISTORICAL_ZSCORE_HIGH = 2.0
+ *
+ * Master context: P1 = critical financial OR operational anomaly.
+ * Previously: AND logic (high nominal AND high devBom) → terlalu konservatif,
+ * banyak anomaly high-residual tapi nominal kecil terlewat.
  */
 export const PRIORITY_DEFINITIONS = {
-  p1: 'ABNORMAL severity OR (high nominal AND high devBom/residual)',
-  p2: 'WARNING severity OR high devBom/residual',
-  p3: 'NORMAL',
+  p1: 'high nominal OR high residual OR high zScore OR over-explained',
+  p2: 'medium nominal OR warn residual OR high devBom',
+  p3: 'normal',
 } as const;
 
 /**
@@ -201,7 +217,12 @@ export const PRIORITY_DEFINITIONS = {
  *
  * Master context #9: Direction dari Net Deviation
  * Fallback: jika qtyLossSurplus null, gunakan qtyDeviasi (GROSS)
+ *
+ * FIX (audit issue #14): computeDirection() implemented in deviation.ts
+ * — single source of truth. Sebelumnya classifyDirection() duplicate
+ * di transform.ts + outlet-focus/route.ts.
  */
+export type Direction = 'LOSS' | 'SURPLUS' | 'NEUTRAL';
 export const DIRECTION = 'from qtyLossSurplus (NET) — fallback to qtyDeviasi (GROSS)';
 
 /**

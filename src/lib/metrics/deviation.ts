@@ -5,9 +5,10 @@
 //  harus melalui file ini. Jangan hitung di tempat lain.
 //
 //  Sesuai definitions.ts dan Master Context.
+//
+//  FIX (audit issue #4, #18): No DB/Prisma imports — pure functions only.
+//  DB access stays in queries.ts/repository layer.
 // ============================================================
-import { db } from '@/lib/db';
-import { Prisma } from '@prisma/client';
 
 const toNum = (v: unknown): number | null => {
   if (v === null || v === undefined) return null;
@@ -16,6 +17,31 @@ const toNum = (v: unknown): number | null => {
 };
 
 const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;
+
+// ============================================================
+//  Direction — Single Implementation (audit issue #14)
+//  Master context #9: from NET Deviation (qtyLossSurplus), fallback to GROSS
+// ============================================================
+import type { Direction } from './definitions';
+
+/**
+ * Compute direction from NET deviation (qtyLossSurplus).
+ * Fallback to GROSS deviation (qtyDeviasi) if NET is null.
+ *
+ * Net > 0 → LOSS (over-consumption)
+ * Net < 0 → SURPLUS (under-consumption)
+ * Net = 0 → NEUTRAL
+ */
+export function computeDirection(
+  qtyLossSurplus: number | null,
+  qtyDeviasi: number | null = null,
+): Direction {
+  const net = qtyLossSurplus ?? qtyDeviasi;
+  if (net == null) return 'NEUTRAL';
+  if (net > 0) return 'LOSS';
+  if (net < 0) return 'SURPLUS';
+  return 'NEUTRAL';
+}
 
 // ============================================================
 //  Per-Row Metrics
@@ -127,12 +153,38 @@ export function computeLossToSales(input: AggregateInput): number | null {
 // ============================================================
 //  Health Score — Single Implementation
 //  Master context #33: 30% DevBOM + 25% Residual + 25% Loss/Sales + 20% Abnormal
+//
+//  FIX (audit issue #6): Accepts optional runtime weights from Settings.
+//  If not provided, falls back to HEALTH_SCORE_WEIGHTS from definitions.ts.
+//  Settings keys: HEALTH_WEIGHT_DEV_BOM, HEALTH_WEIGHT_RESIDUAL,
+//  HEALTH_WEIGHT_LOSS_TO_SALES, HEALTH_WEIGHT_ABNORMAL (percent 0-100).
 // ============================================================
 
 import { HEALTH_SCORE_THRESHOLDS, HEALTH_SCORE_WEIGHTS } from './definitions';
 
-export function computeHealthScore(input: AggregateInput): number {
+export interface HealthScoreWeights {
+  devBom: number;       // weight (0-1, will be normalized)
+  residual: number;
+  lossToSales: number;
+  abnormal: number;
+}
+
+export function computeHealthScore(
+  input: AggregateInput,
+  weights?: HealthScoreWeights,
+): number {
   const clamp = (n: number) => Math.max(0, Math.min(100, n));
+
+  // Use provided weights or fall back to defaults
+  // Weights are normalized to sum=1 (e.g., 30+25+25+20=100 → 0.30+0.25+0.25+0.20)
+  const w = weights ?? HEALTH_SCORE_WEIGHTS;
+  const wSum = w.devBom + w.residual + w.lossToSales + w.abnormal;
+  const nw = wSum > 0 ? {
+    devBom: w.devBom / wSum,
+    residual: w.residual / wSum,
+    lossToSales: w.lossToSales / wSum,
+    abnormal: w.abnormal / wSum,
+  } : HEALTH_SCORE_WEIGHTS;
 
   // DevBOM: <5% → 100, >50% → 0 (linear)
   const devBom = computeDevBomAggregate(input);
@@ -164,16 +216,20 @@ export function computeHealthScore(input: AggregateInput): number {
   );
 
   return Math.round(
-    devBomScore * HEALTH_SCORE_WEIGHTS.devBom +
-    residualScore * HEALTH_SCORE_WEIGHTS.residual +
-    lossToSalesScore * HEALTH_SCORE_WEIGHTS.lossToSales +
-    abnormalScore * HEALTH_SCORE_WEIGHTS.abnormal
+    devBomScore * nw.devBom +
+    residualScore * nw.residual +
+    lossToSalesScore * nw.lossToSales +
+    abnormalScore * nw.abnormal
   );
 }
 
 // ============================================================
 //  Priority — Single Implementation
-//  Uses Settings thresholds, not hardcoded
+//  FIX (audit issue #5): Master rule uses OR logic, not AND.
+//
+//  P1: high nominal OR high residual OR high zScore OR over-explained
+//  P2: medium nominal OR warn residual OR high devBom
+//  P3: lainnya
 // ============================================================
 
 export interface PriorityInput {
@@ -183,8 +239,10 @@ export interface PriorityInput {
   zScore: number | null;
   isOverExplained: boolean;
   thresholds: {
-    HIGH_LOSS_NOMINAL_THRESHOLD: number;
+    HIGH_LOSS_NOMINAL_THRESHOLD: number;   // P1 nominal threshold (default 1M)
+    P2_NOMINAL_THRESHOLD: number;           // P2 nominal threshold (default 100K) ← NEW
     STD_DEVIASI_BOM_PCT: number;
+    RESIDUAL_LOSS_WARN_PCT: number;
     RESIDUAL_LOSS_HIGH_PCT: number;
     HISTORICAL_ZSCORE_HIGH: number;
   };
@@ -192,12 +250,20 @@ export interface PriorityInput {
 
 export function computePriority(input: PriorityInput): 'P1' | 'P2' | 'P3' {
   const t = input.thresholds;
-  const isHighNominal = input.absNominalLossSurplus > t.HIGH_LOSS_NOMINAL_THRESHOLD;
-  const isHighDevBom = input.devBom != null && Math.abs(input.devBom) > t.STD_DEVIASI_BOM_PCT;
-  const isHighResidual = input.residualRatio != null && input.residualRatio > t.RESIDUAL_LOSS_HIGH_PCT;
-  const isHighZScore = input.zScore != null && input.zScore > t.HISTORICAL_ZSCORE_HIGH;
 
-  if (isHighNominal && (isHighDevBom || isHighResidual || input.isOverExplained || isHighZScore)) return 'P1';
-  if (isHighDevBom || isHighResidual || input.isOverExplained || isHighZScore) return 'P2';
+  // P1 conditions (OR logic — any single condition triggers P1)
+  const isP1HighNominal = input.absNominalLossSurplus > t.HIGH_LOSS_NOMINAL_THRESHOLD;
+  const isP1HighResidual = input.residualRatio != null && input.residualRatio > t.RESIDUAL_LOSS_HIGH_PCT;
+  const isP1HighZScore = input.zScore != null && input.zScore > t.HISTORICAL_ZSCORE_HIGH;
+
+  if (isP1HighNominal || isP1HighResidual || isP1HighZScore || input.isOverExplained) return 'P1';
+
+  // P2 conditions (OR logic)
+  const isP2MediumNominal = input.absNominalLossSurplus > t.P2_NOMINAL_THRESHOLD;
+  const isP2WarnResidual = input.residualRatio != null && input.residualRatio > t.RESIDUAL_LOSS_WARN_PCT;
+  const isP2HighDevBom = input.devBom != null && Math.abs(input.devBom) > t.STD_DEVIASI_BOM_PCT;
+
+  if (isP2MediumNominal || isP2WarnResidual || isP2HighDevBom) return 'P2';
+
   return 'P3';
 }

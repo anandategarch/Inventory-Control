@@ -5,6 +5,7 @@
 import type { NormalizedRecord, DerivedRecord, Direction } from '@/types/inventory';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { parseOutletCode } from '@/lib/outlet';
+import { computeDirection } from '@/lib/metrics';
 
 // ============================================================
 //  toNum — robust number parser (Indonesian / accounting / percent formats)
@@ -192,19 +193,11 @@ export function normalizeRow(
 // Previously used qtyDeviasi (gross), which is wrong when gross and net
 // have different signs (e.g., over-explained items where W+S+T > |gross|).
 // Falls back to qtyDeviasi if qtyLossSurplus is null (data quality issue).
+// FIX (audit issue #14): Delegate to computeDirection() from Metric Engine
+// — single source of truth. This wrapper kept for backward compat with
+// existing call sites that import classifyDirection.
 export function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): Direction {
-  // Prefer net deviation (qtyLossSurplus) per master context
-  if (netDeviation !== null) {
-    if (netDeviation > 0) return 'LOSS';    // Net > 0 = over-consumption
-    if (netDeviation < 0) return 'SURPLUS';  // Net < 0 = under-consumption
-    return 'NEUTRAL';
-  }
-  // Fallback: use gross deviation if net is null
-  if (grossDeviation !== null) {
-    if (grossDeviation > 0) return 'LOSS';
-    if (grossDeviation < 0) return 'SURPLUS';
-  }
-  return 'NEUTRAL';
+  return computeDirection(netDeviation, grossDeviation);
 }
 
 // Compute residual = qtyDeviasi - (qtyWaste + qtySusut + qtyTrial)

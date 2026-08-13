@@ -102,11 +102,14 @@ export function computeZScore(input: HistoricalInput): HistoricalResult {
     trend = 'DETERIORATING'; // deviation onset from zero base
   }
 
-  // Benchmark flag from zScore (historical comparison, NOT area/network)
+  // Historical benchmark flag from zScore (historical comparison, NOT area/network)
+  // FIX (audit issue #10): Renamed from ABOVE_NETWORK_AVG/ABOVE_AREA_AVG to
+  // HISTORICAL_HIGH/HISTORICAL_WARNING — these are historical outlier flags,
+  // NOT area/network comparison flags.
   let benchmarkFlag: string | null = null;
   if (zScore != null) {
-    if (zScore > thresholds.HISTORICAL_ZSCORE_HIGH) benchmarkFlag = 'ABOVE_NETWORK_AVG';
-    else if (zScore > thresholds.HISTORICAL_ZSCORE_WARN) benchmarkFlag = 'ABOVE_AREA_AVG';
+    if (zScore > thresholds.HISTORICAL_ZSCORE_HIGH) benchmarkFlag = 'HISTORICAL_HIGH';
+    else if (zScore > thresholds.HISTORICAL_ZSCORE_WARN) benchmarkFlag = 'HISTORICAL_WARNING';
   }
 
   // Warning level from zScore
@@ -155,19 +158,32 @@ export function calcZScoreFromStats(
 }
 
 /**
- * SQL template for historical stats query
- * Uses ABS + STDDEV_SAMP (sample variance)
+ * SQL template for historical stats query (REFERENCE ONLY)
  *
- * Caller must provide periodFilter as parameterized OR conditions.
+ * NOTE: The actual implementation is in src/lib/queries.ts queryHistoricalStats(),
+ * which uses a two-level CTE: weekly_dev (per-week aggregate) → final stats.
+ * This template is kept for documentation but NOT used — it shows the
+ * correct per-week aggregation pattern.
+ *
+ * Each week = 1 observation (SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))).
+ * mean/stddev computed across weekly observations, NOT raw rows.
+ * Sample variance (N-1, Bessel's correction).
  */
 export const HISTORICAL_STATS_SQL = `
-  SELECT ir."outletId", ir."itemId",
-    AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
-    COALESCE(STDDEV_SAMP(ABS(ir."pctQtyDeviasiToBom")), 0) as "stdDev",
-    COUNT(*)::int as n
-  FROM "InventoryRecord" ir
-  WHERE ({periodFilter})
-    AND ir."pctQtyDeviasiToBom" IS NOT NULL
-    AND ir."qtyBom" != 0
-  GROUP BY ir."outletId", ir."itemId"
+  WITH weekly_dev AS (
+    SELECT ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+        ELSE NULL END as "weeklyDevBom"
+    FROM "InventoryRecord" ir
+    WHERE ({periodFilter})
+    GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel"
+  )
+  SELECT "outletId", "itemId",
+    AVG("weeklyDevBom") as mean,
+    SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
+    CAST(COUNT(*) AS INTEGER) as n
+  FROM weekly_dev
+  WHERE "weeklyDevBom" IS NOT NULL
+  GROUP BY "outletId", "itemId"
 `;

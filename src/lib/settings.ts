@@ -197,11 +197,51 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
   },
   {
     key: 'HIGH_LOSS_NOMINAL_THRESHOLD',
-    label: 'Threshold Nominal Loss Tinggi (IDR)',
-    description: 'Nominal loss di atas ini akan ditandai sebagai HIGH_LOSS_NOMINAL. Dalam Rupiah.',
+    label: 'Threshold Nominal Loss Tinggi (IDR) — P1',
+    description: 'Nominal loss di atas ini akan ditandai sebagai P1 (critical). Dalam Rupiah.',
     category: 'TOLERANCE',
     dataType: 'number',
     defaultValue: '1000000',
+  },
+  {
+    key: 'P2_NOMINAL_THRESHOLD',
+    label: 'Threshold Nominal Loss Sedang (IDR) — P2',
+    description: 'Nominal loss di atas ini (tapi di bawah P1 threshold) akan ditandai sebagai P2 (warning). Dalam Rupiah.',
+    category: 'TOLERANCE',
+    dataType: 'number',
+    defaultValue: '100000',
+  },
+  {
+    key: 'HEALTH_WEIGHT_DEV_BOM',
+    label: 'Bobot Dev/BOM untuk Health Score',
+    description: 'Bobot Dev/BOM dalam health score (default 30). Total bobot akan dinormalisasi.',
+    category: 'PRIORITY',
+    dataType: 'number',
+    defaultValue: '30',
+  },
+  {
+    key: 'HEALTH_WEIGHT_RESIDUAL',
+    label: 'Bobot Residual untuk Health Score',
+    description: 'Bobot Residual dalam health score (default 25).',
+    category: 'PRIORITY',
+    dataType: 'number',
+    defaultValue: '25',
+  },
+  {
+    key: 'HEALTH_WEIGHT_LOSS_TO_SALES',
+    label: 'Bobot Loss/Sales untuk Health Score',
+    description: 'Bobot Loss/Sales dalam health score (default 25).',
+    category: 'PRIORITY',
+    dataType: 'number',
+    defaultValue: '25',
+  },
+  {
+    key: 'HEALTH_WEIGHT_ABNORMAL',
+    label: 'Bobot Abnormal untuk Health Score',
+    description: 'Bobot Abnormal count dalam health score (default 20).',
+    category: 'PRIORITY',
+    dataType: 'number',
+    defaultValue: '20',
   },
 ];
 
@@ -324,6 +364,11 @@ export interface RuntimeThresholds {
   TOP_N_ITEMS: number;
   TOP_N_OUTLETS: number;
   HIGH_LOSS_NOMINAL_THRESHOLD: number;
+  P2_NOMINAL_THRESHOLD: number;
+  HEALTH_WEIGHT_DEV_BOM: number;
+  HEALTH_WEIGHT_RESIDUAL: number;
+  HEALTH_WEIGHT_LOSS_TO_SALES: number;
+  HEALTH_WEIGHT_ABNORMAL: number;
 }
 
 export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
@@ -357,5 +402,10 @@ export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
     TOP_N_ITEMS: num('TOP_N_ITEMS', 10),
     TOP_N_OUTLETS: num('TOP_N_OUTLETS', 10),
     HIGH_LOSS_NOMINAL_THRESHOLD: num('HIGH_LOSS_NOMINAL_THRESHOLD', 1_000_000),
+    P2_NOMINAL_THRESHOLD: num('P2_NOMINAL_THRESHOLD', 100_000),
+    HEALTH_WEIGHT_DEV_BOM: num('HEALTH_WEIGHT_DEV_BOM', 30),
+    HEALTH_WEIGHT_RESIDUAL: num('HEALTH_WEIGHT_RESIDUAL', 25),
+    HEALTH_WEIGHT_LOSS_TO_SALES: num('HEALTH_WEIGHT_LOSS_TO_SALES', 25),
+    HEALTH_WEIGHT_ABNORMAL: num('HEALTH_WEIGHT_ABNORMAL', 20),
   };
 }

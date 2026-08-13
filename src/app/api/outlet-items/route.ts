@@ -367,7 +367,9 @@ export async function GET(req: NextRequest) {
     // ============================================================
     const priorityThresholds: PriorityInput['thresholds'] = {
       HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
       STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+      RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
       RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
       HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
     };

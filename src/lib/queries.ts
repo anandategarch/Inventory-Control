@@ -786,7 +786,16 @@ export async function queryItemConsistency(
 }
 
 // ============================================================
-//  Historical Stats — per outlet+item AVG/STDDEV (Phase 4)
+//  Historical Stats — per outlet+item, ONE OBSERVATION PER WEEK
+//  --------------------------------------------------------
+//  FIX (audit issues #1, #2): Each week is 1 observation using
+//  aggregate Dev/BOM = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)).
+//  Then mean/stddev computed across weekly observations.
+//
+//  Previously: AVG(ABS(pctQtyDeviasiToBom)) across ALL records →
+//  weeks with more rows got more weight, and n = row count not
+//  week count → HISTORICAL_MIN_WEEKS check was meaningless.
+//
 //  Returns ~N rows (outlet+item pairs) instead of 540K raw records
 // ============================================================
 export async function queryHistoricalStats(
@@ -800,29 +809,37 @@ export async function queryHistoricalStats(
 ): Promise<Map<string, { mean: number; stdDev: number; n: number }>> {
   if (historicalPeriods.length === 0) return new Map();
 
-  // Build OR conditions for historical periods
-  const periodPairs = historicalPeriods.map(p => `${p.monthLabel}|${p.weekLabel}`);
   const f = buildSqlFilters(filters);
 
   // P0-3 fix: use OR conditions instead of string concat for index usage
-  const periodConditions = historicalPeriods.map((p, i) =>
+  const periodConditions = historicalPeriods.map((p) =>
     Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`
   );
   const periodFilter = Prisma.join(periodConditions, ' OR ');
 
+  // Two-level aggregation:
+  // 1. weekly_dev: per outlet+item+week → 1 observation = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))
+  // 2. final: per outlet+item → mean/stddev/n across weekly observations
   const rows = await db.$queryRaw<{
     outletId: number; itemId: number; mean: number; sumSq: number; n: number;
   }[]>`
-    SELECT ir."outletId", ir."itemId",
-      AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
-      SUM(ABS(ir."pctQtyDeviasiToBom") * ABS(ir."pctQtyDeviasiToBom")) as "sumSq",
+    WITH weekly_dev AS (
+      SELECT ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE NULL END as "weeklyDevBom"
+      FROM "InventoryRecord" ir
+      WHERE (${periodFilter})
+        ${f}
+      GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel"
+    )
+    SELECT "outletId", "itemId",
+      AVG("weeklyDevBom") as mean,
+      SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
       CAST(COUNT(*) AS INTEGER) as n
-    FROM "InventoryRecord" ir
-    WHERE (${periodFilter})
-      AND ir."pctQtyDeviasiToBom" IS NOT NULL
-      AND ir."qtyBom" != 0
-      ${f}
-    GROUP BY ir."outletId", ir."itemId"
+    FROM weekly_dev
+    WHERE "weeklyDevBom" IS NOT NULL
+    GROUP BY "outletId", "itemId"
   `;
 
   const map = new Map<string, { mean: number; stdDev: number; n: number }>();

@@ -3124,3 +3124,73 @@ Stage Summary:
   * Phase 4: analysis route + queries.ts + analysis engine
   * Phase 5: removed old growth.ts + dead code in analysis.ts
 - All 5 phases complete. No more duplicate metric computations anywhere in the codebase.
+
+---
+Task ID: Audit-Fix-9
+Agent: full-stack-developer
+Task: Fix outlet-focus SQL portability + Dev/BOM formula alignment (audit issues #9, #20)
+
+Work Log:
+- Read worklog.md tail to understand context: Next.js inventory analysis dashboard, Metric Engine at src/lib/metrics/, SQLite for local testing + PostgreSQL for production. Phase 5 noted that outlet-focus route still had PostgreSQL-isms (::int, FILTER, STDDEV_SAMP, MODE WITHIN GROUP) — out of Phase 5 scope; this task fixes them.
+- Audited /home/z/my-project/src/app/api/outlet-focus/route.ts (1049 lines) for all PostgreSQL-specific syntax via grep:
+  * 2 occurrences of NULL::int as "rowNumber" (lines 235, 368)
+  * 4 occurrences of AVG(ABS(ir."pctQtyDeviasiToBom")) [FILTER (WHERE ...)] (lines 278, 307, 381, 401)
+  * 1 occurrence of COUNT(*) FILTER (WHERE ...)::int (lines 281-282)
+  * 1 occurrence of MODE() WITHIN GROUP (ORDER BY ...) (lines 283-285)
+  * 1 occurrence of STDDEV_SAMP(ABS(...)) (line 382)
+  * 1 occurrence of COUNT(*)::int as n (line 383)
+  * 1 occurrence of COUNT(DISTINCT "outletId")::int (line 745)
+- Read src/lib/queries.ts:queryHistoricalStats (lines 801-858) as reference for two-level CTE approach for historical stats (weekly_dev CTE → mean/sumSq/n aggregates → JS sample-variance computation).
+- Applied 8 edits via MultiEdit on src/app/api/outlet-focus/route.ts (only file touched, per task scope):
+
+  EDIT 1 (line 235 — currentRecs query): NULL::int → CAST(NULL AS INTEGER)
+  EDIT 2 (lines 275-292 — period_aggs CTE in trendRows):
+    * COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ...), 0) as "devBom"
+      → CASE WHEN SUM(ABS(ir."qtyBom")) > 0 THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom")) ELSE 0 END as "devBom"
+    * COUNT(*) FILTER (WHERE ...)::int as "abnormalCount"
+      → CAST(COUNT(CASE WHEN ... THEN 1 END) AS INTEGER) as "abnormalCount"
+    * MODE() WITHIN GROUP (ORDER BY CASE WHEN ... THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
+      → MAX(CASE WHEN ... THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
+      (MAX returns the string if any row matches, NULL otherwise — same effective result as MODE for single-value discriminant)
+  EDIT 3 (lines 307-311 — networkBench avgDevBom): Same SUM/SUM CASE replacement as EDIT 2
+  EDIT 4 (line 372 — prevRecs query): NULL::int → CAST(NULL AS INTEGER)
+  EDIT 5 (lines 382-403 — historicalStats query, histRows):
+    * Replaced single-level AVG(ABS(pctQtyDeviasiToBom)) + STDDEV_SAMP + COUNT::int with two-level CTE:
+      - weekly_dev CTE: per itemId+monthLabel+weekLabel → SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) as "weeklyDevBom"
+      - final SELECT: AVG("weeklyDevBom") as mean, SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq", CAST(COUNT(*) AS INTEGER) as n
+    * Changed TypeScript generic from { mean, stdDev, n } → { mean, sumSq, n }
+    * Promise.resolve fallback type updated to match
+    * This aligns the historical baseline with computeDevBomAggregate (Metric Engine) and with queries.ts:queryHistoricalStats
+  EDIT 6 (lines 411-414 — areaBench avgDevBom): Same SUM/SUM CASE replacement as EDIT 3 (but scoped to area)
+  EDIT 7 (lines 426-437 — historicalStats JS map building):
+    * Replaced toNum(r.stdDev) with sample-variance computation from sumSq:
+      n = Number(r.n); mean = Number(r.mean) || 0; sumSq = Number(r.sumSq) || 0;
+      variance = n > 1 ? Math.max(0, (sumSq - n*mean*mean)/(n-1)) : 0;
+      stdDev = Math.sqrt(variance);
+    * Added Number(r.itemId) coercion (SQLite returns BigInt for COUNT/SUM aggregates)
+    * Added explanatory comment referencing queryHistoricalStats in queries.ts
+  EDIT 8 (lines 764-769 — totalOutletsInPeriod query):
+    * COUNT(DISTINCT "outletId")::int as cnt → CAST(COUNT(DISTINCT "outletId") AS INTEGER) as cnt
+    * TypeScript generic changed from { cnt: number } → { cnt: number | bigint }
+    * Added Number() coercion: const totalOutletsInPeriod = Number(totalOutletsInPeriodRows[0]?.cnt ?? 0)
+
+  Result: all 9 PostgreSQL-specific syntaxes replaced. Zero ::int, FILTER (WHERE, AVG(ABS(pctQtyDeviasiToBom)), STDDEV_SAMP, MODE() remaining in actual SQL (only a comment reference to STDDEV_SAMP remains at line 428, expected).
+  All raw query results that flow into JS arithmetic or JSON serialization are now Number()-coerced (incl. r.n, r.mean, r.sumSq, r.itemId, cnt).
+
+- Verified by post-edit grep: only 1 match for the search pattern remains, and it's the comment line explaining why we compute stdDev in JS.
+- Lint: 0 errors, 0 warnings (`bun run lint`)
+- TypeScript: 0 errors (`npx tsc --noEmit --skipLibCheck`)
+
+Stage Summary:
+- 1 file edited: src/app/api/outlet-focus/route.ts (1049 → 1068 lines, +19)
+- Audit issue #9 (SQL portability): FIXED — all PostgreSQL-specific syntax replaced with portable SQLite+PostgreSQL equivalents:
+  * AVG(ABS(pctQtyDeviasiToBom)) FILTER (WHERE ...) → CASE WHEN SUM(ABS(qtyBom)) > 0 THEN SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) ELSE 0 END (4 occurrences)
+  * COUNT(*) FILTER (WHERE ...)::int → CAST(COUNT(CASE WHEN ... THEN 1 END) AS INTEGER) (1 occurrence)
+  * MODE() WITHIN GROUP (ORDER BY ...) → MAX(CASE WHEN ... THEN 'TOLERANCE_BREACH' END) (1 occurrence)
+  * NULL::int → CAST(NULL AS INTEGER) (2 occurrences)
+  * STDDEV_SAMP(ABS(...)) → removed; replaced with SUM(x*x)/COUNT(*) + JS sample-variance (N-1, Bessel's correction)
+  * COUNT(*)::int as n → CAST(COUNT(*) AS INTEGER) as n
+  * COUNT(DISTINCT x)::int → CAST(COUNT(DISTINCT x) AS INTEGER)
+- Audit issue #20 (Dev/BOM formula alignment): FIXED — all 4 AVG-of-pct SQL aggregates now use SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) matching computeDevBomAggregate in Metric Engine + queryHistoricalStats/queries.ts. historicalStats now uses weekly_dev two-level CTE (per-week SUM/SUM observation, then aggregate mean/sumSq/n across weeks) — same algorithm as queries.ts:queryHistoricalStats.
+- SQLite BigInt handling: all raw query results that flow into JS arithmetic or JSON serialization now explicitly Number()-coerced (n, mean, sumSq, itemId, cnt). TypeScript generic for totalOutletsInPeriod widened to { cnt: number | bigint } to accurately reflect SQLite's BigInt return type for COUNT.
+- Lint + tsc: both 0 errors. No other files touched.

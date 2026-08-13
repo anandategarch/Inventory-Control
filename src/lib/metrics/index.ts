@@ -12,8 +12,9 @@
 // Definitions (Single Source of Truth)
 export * from './definitions';
 
-// Deviation metrics (Gross/Explained/Net/DevBOM/Residual/Health/Priority)
+// Deviation metrics (Gross/Explained/Net/DevBOM/Residual/Health/Priority/Direction)
 export {
+  computeDirection,
   computeDevBomPerRow,
   computeResidual,
   computeResidualRatio,
@@ -26,6 +27,7 @@ export {
   computePriority,
   type AggregateInput,
   type PriorityInput,
+  type HealthScoreWeights,
 } from './deviation';
 
 // Sales metrics (MODE per outlet)
@@ -54,10 +56,11 @@ export {
   type BenchmarkResult,
 } from './benchmark';
 
-// Growth metrics (signed/abs growth, price effect decomposition)
+// Growth metrics (signed vs abs growth, price effect decomposition)
 export {
   calcGrowth,
   calcGrowthAbs,
+  computeNominalDeviationGrowth,
   computeGrowthResult,
   safeRatio,
   calcAvgPrice,

@@ -24,7 +24,7 @@ import { evaluateRules } from '@/engine/rules/evaluator';
 import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { calcGrowth, computePriceEffect } from '@/lib/metrics';
+import { calcGrowth, computePriceEffect, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -464,20 +464,28 @@ export async function GET(req: NextRequest) {
     const prevAvgPrice = prevQtyDev != null && Math.abs(prevQtyDev) > 0
       ? (execSummary.nominalDeviasi.previous ?? 0) / prevQtyDev : null;
 
+    // FIX (audit issue #11): Use computeNominalDeviationGrowth (magnitude) for
+    // nominalDeviasi — signed calcGrowth is misleading when sign flips.
+    // For -10M → -20M: signed gives -100% (decreasing), magnitude gives +100% (worsening).
+    const nominalDeviasiGrowthMagnitude = computeNominalDeviationGrowth(
+      execSummary.nominalDeviasi.current,
+      execSummary.nominalDeviasi.previous ?? null,
+    );
+
     // Phase 4: Use Metric Engine computePriceEffect for trend decomposition
-    // (Volume Effect + Price Effect + Operational Effect = Nominal Growth)
+    // FIX (audit issue #12): Multiplicative decomposition (exact, not additive)
     const priceEffectResult = computePriceEffect(
-      execSummary.nominalDeviasi.growth,  // nominalDeviasiGrowth
-      execSummary.qtyBom.growth,          // bomGrowth (volume effect)
-      currAvgPrice,                        // current average price
-      prevAvgPrice,                        // previous average price
+      nominalDeviasiGrowthMagnitude,    // nominalDeviasiGrowth (magnitude)
+      execSummary.qtyBom.growth,        // bomGrowth (volume effect)
+      currAvgPrice,                      // current average price
+      prevAvgPrice,                      // previous average price
     );
 
     const growthMetrics = {
       salesGrowth: execSummary.sales.growth,
       bomGrowth: execSummary.qtyBom.growth,
       qtyDeviasiGrowth: execSummary.qtyDeviasi.growth,
-      nominalDeviasiGrowth: execSummary.nominalDeviasi.growth,
+      nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
       priceGrowth: priceEffectResult.priceGrowth,
       deviationToSalesRatio: execSummary.sales.current > 0
         ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
@@ -607,7 +615,14 @@ export async function GET(req: NextRequest) {
     }));
 
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
-    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
+    // FIX (audit issue #6): Pass runtime health score weights from Settings
+    const healthScoreWeights = {
+      devBom: thresholds.HEALTH_WEIGHT_DEV_BOM,
+      residual: thresholds.HEALTH_WEIGHT_RESIDUAL,
+      lossToSales: thresholds.HEALTH_WEIGHT_LOSS_TO_SALES,
+      abnormal: thresholds.HEALTH_WEIGHT_ABNORMAL,
+    };
+    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights);
 
     // Pareto — from parallel query result above
     // Remap items to JS shape (cumPct decimal 0-1, drop rank/cumulative)

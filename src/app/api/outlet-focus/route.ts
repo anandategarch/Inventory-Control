@@ -20,7 +20,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
-import { calcGrowth, calcZScoreFromStats } from '@/lib/metrics';
+import { calcGrowth, calcZScoreFromStats, computeDirection } from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,19 +125,10 @@ function fmtPct(v: number | null, digits = 1): string {
   return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 
-// Bug 2 fix: Direction must be based on NET DEVIATION (QTY LOSS/SURPLUS),
-// NOT GROSS DEVIATION (QTY DEVIASI). Falls back to gross if net is null.
+// FIX (audit issue #14): Delegate to computeDirection() from Metric Engine
+// — single source of truth. Removed duplicate implementation.
 function classifyDirection(netDeviation: number | null, grossDeviation: number | null = null): string {
-  if (netDeviation !== null) {
-    if (netDeviation > 0) return 'LOSS';
-    if (netDeviation < 0) return 'SURPLUS';
-    return 'NEUTRAL';
-  }
-  if (grossDeviation !== null) {
-    if (grossDeviation > 0) return 'LOSS';
-    if (grossDeviation < 0) return 'SURPLUS';
-  }
-  return 'NEUTRAL';
+  return computeDirection(netDeviation, grossDeviation);
 }
 
 // Map issue codes → human-readable possible cause
@@ -241,7 +232,7 @@ export async function GET(req: NextRequest) {
           ir."absQtyDeviasi", ir."absNominalDeviasi",
           ir."absQtyLossSurplus", ir."absNominalLossSurplus",
           ir.area, ir.bulan, ir."monthLabel", ir."weekLabel",
-          ir."akunPenyesuaian", NULL::int as "rowNumber",
+          ir."akunPenyesuaian", CAST(NULL AS INTEGER) as "rowNumber",
           o.code as "outletCode", o.name as "outletName"
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
@@ -284,12 +275,14 @@ export async function GET(req: NextRequest) {
         period_aggs AS (
           SELECT ir."monthLabel", ir."weekLabel",
             COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
-            COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "devBom",
+            CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+              THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+              ELSE 0 END as "devBom",
             COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
             COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal",
-            COUNT(*) FILTER (WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-              AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05))::int as "abnormalCount",
-            MODE() WITHIN GROUP (ORDER BY CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
+            CAST(COUNT(CASE WHEN ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+              AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05) THEN 1 END) AS INTEGER) as "abnormalCount",
+            MAX(CASE WHEN ir."absNominalDeviasi" > 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL
               AND ABS(ir."pctQtyDeviasiToBom") > COALESCE(ir."tolerancePct", 0.05)
               THEN 'TOLERANCE_BREACH' ELSE NULL END) as "topIssue"
           FROM "InventoryRecord" ir
@@ -313,7 +306,9 @@ export async function GET(req: NextRequest) {
             AND "nominalSales" > 0
         )
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "avgDevBom",
           CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
             THEN SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END)
               / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
@@ -374,7 +369,7 @@ export async function GET(req: NextRequest) {
               ir."absQtyDeviasi", ir."absNominalDeviasi",
               ir."absQtyLossSurplus", ir."absNominalLossSurplus",
               ir.area, ir.bulan, ir."monthLabel", ir."weekLabel",
-              ir."akunPenyesuaian", NULL::int as "rowNumber",
+              ir."akunPenyesuaian", CAST(NULL AS INTEGER) as "rowNumber",
               o.code as "outletCode", o.name as "outletName"
             FROM "InventoryRecord" ir
             JOIN "Item" i ON ir."itemId" = i.id
@@ -385,20 +380,27 @@ export async function GET(req: NextRequest) {
           `
         : Promise.resolve([] as OutletFocusRow[]),
       historicalPeriods.length > 0
-        ? db.$queryRaw<Array<{ itemId: number; mean: number; stdDev: number; n: number }>>`
-            SELECT ir."itemId",
-              AVG(ABS(ir."pctQtyDeviasiToBom")) as mean,
-              COALESCE(STDDEV_SAMP(ABS(ir."pctQtyDeviasiToBom")), 0) as "stdDev",
-              COUNT(*)::int as n
-            FROM "InventoryRecord" ir
-            JOIN "Outlet" o ON ir."outletId" = o.id
-            WHERE o.code = ${outletCode}
-              AND (${Prisma.join(historicalPeriods.map(p => Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`), ' OR ')})
-              AND ir."pctQtyDeviasiToBom" IS NOT NULL
-              AND ir."qtyBom" != 0
-            GROUP BY ir."itemId"
+        ? db.$queryRaw<Array<{ itemId: number; mean: number; sumSq: number; n: number }>>`
+            WITH weekly_dev AS (
+              SELECT ir."itemId", ir."monthLabel", ir."weekLabel",
+                CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+                  THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+                  ELSE NULL END as "weeklyDevBom"
+              FROM "InventoryRecord" ir
+              JOIN "Outlet" o ON ir."outletId" = o.id
+              WHERE o.code = ${outletCode}
+                AND (${Prisma.join(historicalPeriods.map(p => Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`), ' OR ')})
+              GROUP BY ir."itemId", ir."monthLabel", ir."weekLabel"
+            )
+            SELECT "itemId",
+              AVG("weeklyDevBom") as mean,
+              SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
+              CAST(COUNT(*) AS INTEGER) as n
+            FROM weekly_dev
+            WHERE "weeklyDevBom" IS NOT NULL
+            GROUP BY "itemId"
           `
-        : Promise.resolve([] as Array<{ itemId: number; mean: number; stdDev: number; n: number }>),
+        : Promise.resolve([] as Array<{ itemId: number; mean: number; sumSq: number; n: number }>),
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         WITH sales_per_outlet AS (
           SELECT DISTINCT "outletId", "nominalSales"
@@ -407,7 +409,9 @@ export async function GET(req: NextRequest) {
             AND "nominalSales" > 0
         )
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "avgDevBom",
           CASE WHEN (SELECT COALESCE(SUM("nominalSales"), 0) FROM sales_per_outlet) > 0
             THEN SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END)
               / NULLIF((SELECT SUM("nominalSales") FROM sales_per_outlet), 0)
@@ -420,9 +424,16 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Build historicalStats map from parallel histRows result
+    // stdDev is computed in JS from sumSq (sample variance, N-1 Bessel's correction)
+    // because SQLite has no STDDEV_SAMP. Same approach as queryHistoricalStats in queries.ts.
     const historicalStats = new Map<number, { mean: number; stdDev: number; n: number }>();
     for (const r of histRows) {
-      historicalStats.set(r.itemId, { mean: toNum(r.mean) ?? 0, stdDev: toNum(r.stdDev) ?? 0, n: r.n });
+      const n = Number(r.n);
+      const mean = Number(r.mean) || 0;
+      const sumSq = Number(r.sumSq) || 0;
+      const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
+      const stdDev = Math.sqrt(variance);
+      historicalStats.set(Number(r.itemId), { mean, stdDev, n });
     }
 
     const areaAvgDevBom = toNum(areaBenchRows[0]?.avgDevBom) ?? 0;
@@ -750,12 +761,12 @@ export async function GET(req: NextRequest) {
 
     // Rank: count outlets in same period with lower health score
     // (simplified — health computed only for current outlet, rank is approximated)
-    const totalOutletsInPeriodRows = await db.$queryRaw<Array<{ cnt: number }>>`
-      SELECT COUNT(DISTINCT "outletId")::int as cnt
+    const totalOutletsInPeriodRows = await db.$queryRaw<Array<{ cnt: number | bigint }>>`
+      SELECT CAST(COUNT(DISTINCT "outletId") AS INTEGER) as cnt
       FROM "InventoryRecord"
       WHERE "monthLabel" = ${month} AND "weekLabel" = ${week}
     `;
-    const totalOutletsInPeriod = totalOutletsInPeriodRows[0]?.cnt ?? 0;
+    const totalOutletsInPeriod = Number(totalOutletsInPeriodRows[0]?.cnt ?? 0);
 
     // ============================================================
     //  Step 10: Waste analysis summary

@@ -53,6 +53,7 @@ import {
   computeLossToSales,
   calcZScoreFromStats,
   type AggregateInput,
+  type HealthScoreWeights,
 } from '@/lib/metrics';
 
 type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
@@ -391,7 +392,8 @@ export function computeVarianceAnalysis(
 // ============================================================
 export function computeOutletHealthRanking(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
-  zeroDevByOutlet?: Map<number, number>
+  zeroDevByOutlet?: Map<number, number>,
+  healthScoreWeights?: HealthScoreWeights,
 ) {
   // BUG 2.2 fix: precompute sales per outlet via MODE (not MAX).
   // Previously used MAX which is vulnerable to single-row typos (1 row with 10M
@@ -501,10 +503,11 @@ export function computeOutletHealthRanking(
       };
 
       // Metric Engine: aggregate Dev/BOM (SUM/SUM), Residual%, Loss/Sales, HealthScore
+      // FIX (audit issue #6): Pass runtime health score weights from Settings
       const devBom = computeDevBomAggregate(aggregateInput);
       const residualPct = computeResidualPctAggregate(aggregateInput);
       const lossToSales = computeLossToSales(aggregateInput);
-      const healthScore = computeHealthScore(aggregateInput);
+      const healthScore = computeHealthScore(aggregateInput, healthScoreWeights);
 
       return {
         outletCode: v.outlet.code,
