@@ -2,18 +2,43 @@
 //  /api/outlet-items — Resto Analysis (Level 3+4)
 //  Query: ?outletCode=&month=&week=&compareWeek=&compareMonth=
 //
+//  Phase 3: Menggunakan Metric Engine (src/lib/metrics) sebagai
+//  single source of truth untuk semua perhitungan metric.
+//
 //  Returns:
 //  1. Resto Profile (6 sections: Performance, Behavior, Historical, Benchmark, TopRisk, Investigation)
 //  2. Bahan Analysis (3 rankings: Financial, Operational, Unexplained)
 //  3. Per-item breakdown: BOM, Deviasi, Dev/BOM, Nominal, Direction, W/S/T, Residual
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getRuntimeThresholds, type RuntimeThresholds } from '@/lib/settings';
+import {
+  computeSalesModePerOutlet,
+  computeDevBomAggregate,
+  computeResidualPctAggregate,
+  computeExplainedPctAggregate,
+  computeLossToSales,
+  computeHealthScore,
+  computePriority,
+  type AggregateInput,
+  type PriorityInput,
+} from '@/lib/metrics';
+import {
+  calcGrowth,
+  calcGrowthAbs,
+  computeGrowthResult,
+} from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+const toNum = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+};
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -34,6 +59,11 @@ export async function GET(req: NextRequest) {
     if (!outletCode || !month || !week) {
       return NextResponse.json({ success: false, error: 'outletCode, month, week required' }, { status: 400 });
     }
+
+    // ============================================================
+    //  Load runtime thresholds (Settings-driven, no hardcoding)
+    // ============================================================
+    const thresholds = await getRuntimeThresholds();
 
     // Resolve outlet
     const outlet = await db.outlet.findFirst({
@@ -69,6 +99,9 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  PARALLEL: current records + prev records + area/network benchmarks
+    //  Phase 3: area/network benchmark uses SUM(ABS)/SUM(ABS) — same
+    //  formula as computeDevBomAggregate, matching outletDevBom.
+    //  (was: AVG(ABS(pctQtyDeviasiToBom)) — mathematically different)
     // ============================================================
     const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
       // Current period records for this outlet
@@ -112,20 +145,24 @@ export async function GET(req: NextRequest) {
           AND ir."monthLabel" = ${prevMonth}
           AND ir."weekLabel" = ${prevWeek}
       ` : Promise.resolve([]),
-      // Area benchmark
+      // Area benchmark — Phase 3: SUM(ABS)/SUM(ABS) matching computeDevBomAggregate
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "avgDevBom",
           NULL as "lossToSales"
         FROM "InventoryRecord" ir
         WHERE ir.area = ${outlet.area}
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
       `,
-      // Network benchmark
+      // Network benchmark — Phase 3: SUM(ABS)/SUM(ABS)
       db.$queryRaw<Array<{ avgDevBom: number }>>`
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom"
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "avgDevBom"
         FROM "InventoryRecord" ir
         WHERE ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
@@ -136,28 +173,17 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  RESTO PROFILE — 6 sections
+    //  Phase 3: All metrics via Metric Engine
     // ============================================================
-    const toNum = (v: unknown): number | null => {
-      if (v === null || v === undefined) return null;
-      const n = Number(v);
-      return isNaN(n) ? null : n;
-    };
 
-    // Dedup sales via MODE (most frequent)
-    const salesCounts = new Map<number, number>();
-    for (const r of currentRecs) {
-      const s = toNum(r.nominalSales);
-      if (s != null && s > 0) {
-        const rounded = Math.round(s * 100) / 100;
-        salesCounts.set(rounded, (salesCounts.get(rounded) ?? 0) + 1);
-      }
-    }
-    let bestSales = 0, bestCount = 0;
-    for (const [val, count] of salesCounts) {
-      if (count > bestCount || (count === bestCount && val > bestSales)) { bestSales = val; bestCount = count; }
-    }
+    // Sales via MODE (Metric Engine: computeSalesModePerOutlet)
+    // Tie-break: smaller value wins (consistent SQL + JS)
+    const currentSalesMap = computeSalesModePerOutlet(
+      currentRecs.map(r => ({ outletId: outlet.id, nominalSales: toNum(r.nominalSales) }))
+    );
+    const bestSales = currentSalesMap.get(outlet.id) ?? 0;
 
-    // Aggregate metrics
+    // Aggregate metrics — build AggregateInput for Metric Engine
     let totalQtyBom = 0, totalQtyDeviasi = 0, totalNominalDeviasi = 0;
     let totalQtyWaste = 0, totalQtySusut = 0, totalQtyTrial = 0;
     let totalQtyLossSurplus = 0, totalNominalLossSurplus = 0;
@@ -189,14 +215,26 @@ export async function GET(req: NextRequest) {
 
       // Count severity
       if (qd === 0 || Math.abs(qd) < 0.01) normalCount++;
-      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > (toNum(r.tolerancePct) ?? 0.05)) abnormalCount++;
+      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > (toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
       else warningCount++;
     }
 
+    const aggregateInput: AggregateInput = {
+      totalQtyDeviasi,
+      totalQtyBom,
+      totalQtyWaste,
+      totalQtySusut,
+      totalQtyTrial,
+      totalResidualQty,
+      totalLossNominal,
+      totalSales: bestSales,
+      normalCount,
+      warningCount,
+      abnormalCount,
+    };
+
     // Previous period aggregates
     let prevQtyBom = 0, prevQtyDeviasi = 0, prevNominalDeviasi = 0;
-    // Bug fix: compute prev sales via MODE for salesGrowth
-    const prevSalesCounts = new Map<number, number>();
     const prevByItemId = new Map<number, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
     for (const r of prevRecs) {
       const qd = toNum(r.qtyDeviasi) ?? 0;
@@ -207,37 +245,45 @@ export async function GET(req: NextRequest) {
       prevQtyDeviasi += Math.abs(qd);
       prevNominalDeviasi += Math.abs(nd);
       prevByItemId.set(r.itemId, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
-      // Bug fix: collect prev sales via MODE
-      const ps = toNum((r as any).nominalSales);
-      if (ps != null && ps > 0) {
-        const rounded = Math.round(ps * 100) / 100;
-        prevSalesCounts.set(rounded, (prevSalesCounts.get(rounded) ?? 0) + 1);
-      }
     }
-    let prevBestSales = 0, prevBestCount = 0;
-    for (const [val, count] of prevSalesCounts) {
-      if (count > prevBestCount || (count === prevBestCount && val > prevBestSales)) { prevBestSales = val; prevBestCount = count; }
-    }
+    // Previous sales via Metric Engine MODE
+    const prevSalesMap = computeSalesModePerOutlet(
+      prevRecs
+        .filter((r): r is typeof r & { nominalSales: number | null } => true)
+        .map(r => ({ outletId: outlet.id, nominalSales: toNum(r.nominalSales) }))
+    );
+    const prevBestSales = prevSalesMap.get(outlet.id) ?? 0;
 
-    const calcGrowth = (curr: number, prev: number): number | null => {
-      if (prev === 0) return curr === 0 ? 0 : null;
-      return (curr - prev) / Math.abs(prev);
-    };
+    // Metric Engine: aggregate metrics
+    const devBomAggregate = computeDevBomAggregate(aggregateInput);
+    const residualPctAggregate = computeResidualPctAggregate(aggregateInput);
+    const explainedPctAggregate = computeExplainedPctAggregate(aggregateInput);
+    const lossToSales = computeLossToSales(aggregateInput);
+    const healthScore = computeHealthScore(aggregateInput);
+
+    // Metric Engine: growth
+    const salesGrowth = calcGrowth(bestSales, prevBestSales);
+    const qtyBomGrowth = calcGrowthAbs(totalQtyBom, prevQtyBom); // BOM is consumption, use abs growth
+    const qtyDeviasiGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
+    const nominalDeviasiGrowth = calcGrowth(totalNominalDeviasi, prevNominalDeviasi);
+
+    // Metric Engine: growth result (with direction flip + trend)
+    const devGrowthResult = computeGrowthResult(totalQtyDeviasi, prevQtyDeviasi, 0.1);
 
     const restoProfile = {
       // 1. Performance
       performance: {
         sales: bestSales,
-        salesGrowth: prevBestSales > 0 ? calcGrowth(bestSales, prevBestSales) : null,
+        salesGrowth,
         qtyBom: totalQtyBom,
-        qtyBomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
+        qtyBomGrowth,
         qtyDeviasi: totalQtyDeviasi,
-        qtyDeviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
+        qtyDeviasiGrowth,
         nominalDeviasi: totalNominalDeviasi,
-        nominalDeviasiGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
+        nominalDeviasiGrowth,
         nominalLossSurplus: totalNominalLossSurplus,
-        devBom: totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : null,
-        lossToSales: bestSales > 0 ? totalLossNominal / bestSales : null,
+        devBom: devBomAggregate,
+        lossToSales,
       },
       // 2. Behavior
       behavior: {
@@ -250,37 +296,46 @@ export async function GET(req: NextRequest) {
         qtyTrial: totalQtyTrial,
         qtyLossSurplus: totalQtyLossSurplus,
         residualQty: totalResidualQty,
-        residualPct: totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null,
-        explainedPct: totalQtyDeviasi > 0 ? (totalQtyWaste + totalQtySusut + totalQtyTrial) / totalQtyDeviasi : null,
+        residualPct: residualPctAggregate,
+        explainedPct: explainedPctAggregate,
       },
       // 3. Historical (current vs previous)
-      // Bug 6.3 fix: compute trend outside object for clarity
-      ...((() => {
-        const devGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
-        const trend = devGrowth != null
-          ? devGrowth > 0.1 ? 'DETERIORATING' : devGrowth < -0.1 ? 'IMPROVING' : 'STABLE'
-          : (totalQtyDeviasi > 0 && prevQtyDeviasi === 0) ? 'DETERIORATING'
-          : (totalQtyDeviasi === 0 && prevQtyDeviasi > 0) ? 'IMPROVING'
-          : 'STABLE';
-        return { historical: {
-          prevQtyBom: prevQtyBom,
-          prevQtyDeviasi: prevQtyDeviasi,
-          prevNominalDeviasi: prevNominalDeviasi,
-          bomGrowth: calcGrowth(totalQtyBom, prevQtyBom),
-          deviasiGrowth: calcGrowth(totalQtyDeviasi, prevQtyDeviasi),
-          nominalGrowth: calcGrowth(totalNominalDeviasi, prevNominalDeviasi),
-          trend,
-        }};
-      })()),
-      // 4. Benchmark
-      benchmark: {
-        areaAvgDevBom: toNum(areaBench[0]?.avgDevBom) ?? 0,
-        networkAvgDevBom: toNum(networkBench[0]?.avgDevBom) ?? 0,
-        outletDevBom: totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0,
-        areaMultiplier: (toNum(areaBench[0]?.avgDevBom) ?? 0) > 0
-          ? ((totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0)) / (toNum(areaBench[0]?.avgDevBom) ?? 1)
-          : null,
+      historical: {
+        prevQtyBom: prevQtyBom,
+        prevQtyDeviasi: prevQtyDeviasi,
+        prevNominalDeviasi: prevNominalDeviasi,
+        bomGrowth: qtyBomGrowth,
+        deviasiGrowth: qtyDeviasiGrowth,
+        nominalGrowth: nominalDeviasiGrowth,
+        trend: devGrowthResult.trend === 'INCREASING' ? 'DETERIORATING'
+          : devGrowthResult.trend === 'DECREASING' ? 'IMPROVING'
+          : devGrowthResult.trend === 'NEW' ? 'DETERIORATING'  // onset from zero base
+          : devGrowthResult.trend === 'RESOLVED' ? 'IMPROVING'
+          : 'STABLE',
       },
+      // 4. Benchmark — Metric Engine: computeBenchmark
+      //  Phase 3: outletDevBom and areaAvgDevBom both use SUM(ABS)/SUM(ABS)
+      //  (was: outletDevBom = SUM/SUM, areaAvgDevBom = AVG(ABS) — mismatch)
+      benchmark: (() => {
+        const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
+        const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
+        // Map trend to "ABOVE_NETWORK" / "ABOVE_AREA" / "NORMAL" using Settings factors
+        const areaMultiplier = areaAvgDevBom > 0 ? devBomAggregate / areaAvgDevBom : null;
+        const networkMultiplier = networkAvgDevBom > 0 ? devBomAggregate / networkAvgDevBom : null;
+        const isAboveNetwork = networkMultiplier != null && networkMultiplier > thresholds.BENCHMARK_NETWORK_FACTOR;
+        const isAboveArea = !isAboveNetwork && areaMultiplier != null && areaMultiplier > thresholds.BENCHMARK_AREA_FACTOR;
+        const status = isAboveNetwork ? 'ABOVE_NETWORK' : isAboveArea ? 'ABOVE_AREA' : 'NORMAL';
+        return {
+          areaAvgDevBom,
+          networkAvgDevBom,
+          outletDevBom: devBomAggregate,
+          areaMultiplier,
+          networkMultiplier,
+          isAboveArea,
+          isAboveNetwork,
+          status,
+        };
+      })(),
       // 5. Top Risk (top 5 per category)
       topRisk: {
         byNominal: [...currentRecs]
@@ -296,33 +351,27 @@ export async function GET(req: NextRequest) {
           .slice(0, 5)
           .map(r => ({ itemName: r.itemName, value: toNum(r.residualRatio) ?? 0 })),
       },
-      // 6. Investigation counts
+      // 6. Investigation counts + health score (Metric Engine)
       investigation: {
         normal: normalCount,
         warning: warningCount,
         abnormal: abnormalCount,
         total: normalCount + warningCount + abnormalCount,
-        healthScore: (() => {
-          const total = normalCount + warningCount + abnormalCount;
-          if (total === 0) return 100;
-          const clamp = (n: number) => Math.max(0, Math.min(100, n));
-          const abnormalRate = abnormalCount / (warningCount + abnormalCount || 1);
-          const devBom = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;
-          const residualPct = totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null;
-          const lossToSales = bestSales > 0 ? totalLossNominal / bestSales : null;
-          // Bug fix: use full formula 30/25/25/20 (was 50/50)
-          const devBomScore = clamp(100 - (devBom / 0.50) * 100);
-          const residualScore = residualPct != null ? clamp(100 - ((residualPct - 0.20) / 0.60) * 100) : 50;
-          const lossToSalesScore = lossToSales != null ? clamp(100 - ((lossToSales - 0.02) / 0.13) * 100) : 50;
-          const abnormalScore = clamp(100 - (abnormalRate / 0.50) * 100);
-          return Math.round(devBomScore * 0.30 + residualScore * 0.25 + lossToSalesScore * 0.25 + abnormalScore * 0.20);
-        })(),
+        healthScore,
       },
     };
 
     // ============================================================
     //  BAHAN ANALYSIS — 3 rankings + per-item breakdown
+    //  Phase 3: Priority via Metric Engine (Settings-driven thresholds)
     // ============================================================
+    const priorityThresholds: PriorityInput['thresholds'] = {
+      HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+      RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
+      HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
+    };
+
     const itemBreakdown = currentRecs.map(r => {
       const itemId = r.itemId;
       const prev = prevByItemId.get(itemId);
@@ -333,31 +382,38 @@ export async function GET(req: NextRequest) {
       const absNominalLS = toNum(r.absNominalLossSurplus) ?? 0;
       const residualRatio = toNum(r.residualRatio);
       const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
-      const outletDevBom = pctDevBom ?? 0;
+      const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
 
-      // Dev/BOM growth vs previous
+      // Over-explained check (inline; same logic as computeResidual)
+      const isOverExplained = (() => {
+        const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
+        const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
+        return absDev > 0 && explained > absDev;
+      })();
+
+      // Dev/BOM growth vs previous (Magnitude — use calcGrowthAbs)
       const prevPctDevBom = prev?.pctDevBom ?? null;
-      const devBomGrowth = (pctDevBom != null && prevPctDevBom != null && prevPctDevBom !== 0)
-        ? (Math.abs(pctDevBom) - Math.abs(prevPctDevBom)) / Math.abs(prevPctDevBom)
-        : null;
+      const devBomGrowth = calcGrowthAbs(pctDevBom, prevPctDevBom);
 
       // Historical trend indicator
       const historicalTrend = devBomGrowth != null
         ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'
         : '?';
 
-      // Area multiplier for this item
+      // Area multiplier for this item (item-level: simple ratio of per-row devBom vs area avg)
       const areaMultiplier = areaAvgDevBom > 0 && pctDevBom != null
         ? Math.abs(pctDevBom) / areaAvgDevBom
         : null;
 
-      // Priority
-      const isHighNominal = absNominalLS > 1_000_000;
-      const isHighDevBom = pctDevBom != null && Math.abs(pctDevBom) > 0.10;
-      const isHighResidual = residualRatio != null && residualRatio > 0.50;
-      const priority: 'P1' | 'P2' | 'P3' =
-        (isHighNominal && (isHighDevBom || isHighResidual)) ? 'P1' :
-        (isHighDevBom || isHighResidual) ? 'P2' : 'P3';
+      // Metric Engine: priority (Settings-driven thresholds, no hardcoding)
+      const priority = computePriority({
+        absNominalLossSurplus: absNominalLS,
+        devBom: pctDevBom,
+        residualRatio,
+        zScore: null, // zScore not computed at item level here (item-history route handles that)
+        isOverExplained,
+        thresholds: priorityThresholds,
+      });
 
       return {
         itemId,
@@ -379,11 +435,7 @@ export async function GET(req: NextRequest) {
         direction: r.direction || 'NEUTRAL',
         residualQty: toNum(r.residualQty),
         residualRatio: residualRatio,
-        isOverExplained: (() => {
-          const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
-          const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
-          return absDev > 0 && explained > absDev;
-        })(),
+        isOverExplained,
         // Historical
         prevQtyDeviasi: prev?.qtyDeviasi ?? null,
         prevPctDevBom: prevPctDevBom,
@@ -391,6 +443,7 @@ export async function GET(req: NextRequest) {
         historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
         // Benchmark
         areaAvgDevBom: areaAvgDevBom,
+        networkAvgDevBom: networkAvgDevBom,
         areaMultiplier: areaMultiplier,
         // Priority
         priority,
@@ -427,7 +480,7 @@ export async function GET(req: NextRequest) {
       period: { month, week, prevWeek, prevMonth },
       restoProfile,
       rankings,
-      allItems: itemBreakdown, // Bug fix: return ALL items for MenuAnalysis (not just top 20)
+      allItems: itemBreakdown,
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
     });

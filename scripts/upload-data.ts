@@ -355,7 +355,7 @@ async function main() {
     const outlets = await db.outlet.count();
     const items = await db.item.count();
     const records = await db.inventoryRecord.count();
-    const months = await db.sourceFile.findMany({ select: { monthLabel: true }, orderBy: { monthLabel: true } });
+    const months = await db.sourceFile.findMany({ select: { monthLabel: true }, orderBy: { monthLabel: 'asc' } });
 
     console.log('\n═══════════════════════════════════════════════');
     console.log('  ✅ UPLOAD COMPLETE!');

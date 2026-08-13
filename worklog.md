@@ -2789,3 +2789,87 @@ Stage Summary:
 - No new XSS issues (no `dangerouslySetInnerHTML` in inspected components).
 - No React hooks infinite-loop bugs found (all `useMemo`/`useEffect` dependencies are correct in inspected components).
 - Recommended fix order: 6.1 (critical, 2-line matcher fix) → 6.2 (1-line falsy-zero fix) → 6.3 (5-line trend fix) → 6.5 (align healthScore formula with analysis engine) → 6.4 (align outletDevBom with area benchmark) → 6.6 (404 instead of silent fallback) → 6.7 (exclude current from z-score baseline) → 6.8 (rename or add item-summary API) → 6.9 (add currentWeek guard) → 6.10 (pass data as prop)
+
+---
+Task ID: Phase 3
+Agent: Main (Z.ai Code)
+Task: Metric Engine Phase 3 — Refactor outlet-items / item-history / resto-bahan-matrix routes to use single source of truth
+
+Work Log:
+- Read worklog.md to understand Phase 1 (definitions + deviation + sales) and Phase 2 (historical + benchmark + growth) context — Metric Engine library at src/lib/metrics/ established as single source of truth
+- Audited 3 routes with inline metric computations that bypassed the Metric Engine:
+  * /api/outlet-items — local calcGrowth, local Sales MODE (with tie-break bug: `val > bestSales` instead of smaller-wins), local healthScore (weighted aggregate devBom inconsistent with area benchmark AVG(ABS)), local priority with hardcoded 1M/0.10/0.50 thresholds, area/network benchmark SQL used AVG(ABS(pctQtyDeviasiToBom)) while outletDevBom used SUM(ABS)/SUM(ABS) — BUG 6.4
+  * /api/item-history — local zScore computation including current period in baseline (BUG 6.7), silent fallback `timeline[timeline.length - 1]` when user-specified period not in timeline (BUG 6.6), local priority with hardcoded 1M/0.10/0.50/2.0 thresholds
+  * /api/resto-bahan-matrix — local priority with hardcoded 1M/0.10/0.50 thresholds, local trend computation
+
+- Refactored /api/outlet-items/route.ts (273 lines changed):
+  * Import + use computeSalesModePerOutlet from metrics (fixes tie-break bug — smaller value wins, consistent SQL+JS)
+  * Import + use calcGrowth, calcGrowthAbs, computeGrowthResult from metrics (replaces local calcGrowth function)
+  * Build AggregateInput + use computeDevBomAggregate, computeResidualPctAggregate, computeExplainedPctAggregate, computeLossToSales, computeHealthScore from metrics (30/25/25/20 weighted composite with thresholds from definitions)
+  * Change area/network benchmark SQL from `AVG(ABS(pctQtyDeviasiToBom))` (simple avg) to `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` (aggregate, matching outletDevBom) — fixes BUG 6.4
+  * Use computePriority from metrics with Settings-driven thresholds (HIGH_LOSS_NOMINAL_THRESHOLD, STD_DEVIASI_BOM_PCT, RESIDUAL_LOSS_HIGH_PCT, HISTORICAL_ZSCORE_HIGH) — no more hardcoded 1M/0.10/0.50
+  * Load getRuntimeThresholds() at route start for all Settings
+  * Use calcGrowthAbs for BOM growth (BOM is consumption, magnitude matters)
+
+- Refactored /api/item-history/route.ts (193 lines changed):
+  * Import + use computeZScore from metrics (handles ABS magnitude, sample variance N-1, exclude current, min weeks guard, trend, benchmarkFlag, warningLevel)
+  * Import + use computeDeterioration from metrics (replaces inline |current| - |earliest|)
+  * Import + use computePriority from metrics with Settings thresholds (no more hardcoded 1M/0.10/0.50/2.0)
+  * BUG 6.6 FIX: Remove silent fallback `timeline[timeline.length - 1]` — now returns 404 with `availablePeriods` list when user-specified period not in timeline
+  * BUG 6.7 FIX: computeZScore caller passes `historicalValues` filtered with `!t.isCurrent` — current period excluded from baseline (was included before, dampening zScore by ~95% for 10× outliers)
+  * Run area + network benchmark queries in parallel via Promise.all
+  * Coerce outletCount to Number (SQLite returns BigInt, JSON can't serialize)
+
+- Refactored /api/resto-bahan-matrix/route.ts (77 lines changed):
+  * Import + use computePriority from metrics with Settings thresholds (no more hardcoded 1M/0.10/0.50)
+  * Import + use calcGrowthAbs from metrics for devBomGrowth (replaces inline `Math.abs(devBom) > Math.abs(prevDevBom) * 1.1` threshold check)
+  * Return devBomGrowth field in matrix rows (new field, in addition to historicalTrend arrow)
+  * Coerce outletCount to Number for JSON serialization
+
+- Bonus fix in scripts/upload-data.ts: `orderBy: { monthLabel: true }` → `orderBy: { monthLabel: 'asc' }` (was invalid Prisma syntax — `true` is not a valid sort direction)
+
+- Verification (local SQLite with 54,207 records from 17.MEI 2026.xlsx):
+  * /api/outlet-items outlet 1030.BDGSET MEI 2026 WEEK 4 (has prev period WEEK 2):
+    - success=true, 105 items, durationMs=21
+    - salesGrowth=+68.75%, qtyBomGrowth=+105.76% (calcGrowthAbs), qtyDeviasiGrowth=+39.42%, nominalDeviasiGrowth=+43.18%
+    - trend=DETERIORATING (deviasiGrowth > 0.1)
+    - outletDevBom=0.1866, areaAvgDevBom=0.1593, networkAvgDevBom=0.1365 (all SUM/SUM — comparable)
+    - SANITY CHECK: outletDevBom / areaAvgDevBom = 1.171736178670816 === areaMultiplier (exact match — BUG 6.4 fixed)
+    - status=NORMAL (areaMultiplier 1.17 < 1.5 threshold, networkMultiplier 1.37 < 2.0 threshold)
+    - healthScore=45 (Metric Engine 30/25/25/20 weighted composite)
+    - Priority dist: 10 P1, 41 P2, 54 P3 (Settings-driven thresholds)
+  * /api/resto-bahan-matrix MEI 2026 WEEK 4 limit=500:
+    - success=true, 1500 total records, 500 in matrix
+    - All P1 (top-1500 by nominal all have high nominal >1M AND high devBom >5% — expected)
+    - Trend dist: 175 `?` (no prev data), 222 `↓` (improving), 67 `→` (stable), 36 `↑` (deteriorating) — calcGrowthAbs working
+    - Priority filter P1: returns only P1 records ✓
+  * /api/item-history outlet 1060.CKRTHA item UDANG KEJU FROZEN MEI 2026 WEEK 4:
+    - success=true, timeline has 3 periods (WEEK 1, 2, 4)
+    - current=WEEK 4 (isCurrent=true), devBom=-1.9383, qtyDeviasi=-171315, nominal=248M, direction=SURPLUS
+    - historical: sampleSize=2 (WEEK 1 + WEEK 2, EXCLUDING current — BUG 6.7 fixed), mean=0, stdDev=0, zScore=null (correctly null because stdDev=0, not infinity)
+    - deterioration=1.9383 (|current| - |earliest| = 1.9383 - 0), trend=DETERIORATING
+    - priority=P1 (high nominal 248M > 1M AND high devBom 1.93 > 0.05 AND high residual 0.999 > 0.70)
+    - benchmark: outletDevBom=-1.9383, areaAvgDevBom=1.8649 (49 outlets in JAWA BARAT 2), areaMultiplier=1.0393
+    - SANITY CHECK: zScore formula (|curr| - mean) / std = null === actual zScore null (exact match)
+  * BUG 6.6 FIX verified: querying WEEK 3 (doesn't exist) returns 404 with `availablePeriods: [WEEK 1, WEEK 2, WEEK 4]` — NOT silent fallback to last period
+
+- Response shape compatibility verified:
+  * RestoAnalysis.tsx reads restoProfile.{performance,behavior,historical,benchmark,investigation,healthScore}, rankings.{financial,operational,unexplained}, allItems[] — all present in refactored response
+  * ItemDetailModal reads data.{outlet,priority,current,historical.zScore,historical.trend,benchmark.*,timeline[]} — all present
+  * RestoBahanMatrix reads data.{matrix[],stats} — all present
+
+- Lint: 0 errors, 0 warnings
+- TypeScript: 0 errors (npx tsc --noEmit --skipLibCheck)
+- Note: Full UI browser render blocked by pre-existing PostgreSQL-isms (`::int` casts) in src/lib/queries.ts used by /api/analysis — out of Phase 3 scope (Phase 4 will refactor analysis route + queries.ts). The 3 Phase 3 routes verified working individually via direct API calls with 200 responses and correct metric values.
+
+Stage Summary:
+- 3 routes refactored to use Metric Engine as single source of truth
+- 4 bugs fixed: BUG 6.4 (outletDevBom/areaAvgDevBom formula mismatch), BUG 6.5 (healthScore inline vs Metric Engine), BUG 6.6 (silent fallback to last period), BUG 6.7 (zScore baseline includes current)
+- All hardcoded thresholds (1M/0.10/0.50/2.0) replaced with Settings-driven values via getRuntimeThresholds()
+- All Sales MODE computations use computeSalesModePerOutlet (fixes tie-break bug)
+- All growth computations use calcGrowth/calcGrowthAbs from metrics
+- All priority computations use computePriority from metrics
+- All zScore computations use computeZScore from metrics
+- All benchmark comparisons use SUM(ABS)/SUM(ABS) consistently (outlet vs area vs network)
+- Response shapes preserved — UI components (RestoAnalysis, ItemDetailModal, RestoBahanMatrix) work without changes
+- Next: Phase 4 = Refactor /api/analysis route + src/lib/queries.ts to use Metric Engine (will also fix the `::int` PostgreSQL-isms for full UI verification)

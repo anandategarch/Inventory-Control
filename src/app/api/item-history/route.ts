@@ -2,6 +2,9 @@
 //  /api/item-history — Historical timeline per outlet+item
 //  Query: ?outletCode=&itemName=&month=&week=
 //
+//  Phase 3: Menggunakan Metric Engine (src/lib/metrics) sebagai
+//  single source of truth untuk Z-Score, deterioration, priority.
+//
 //  Returns:
 //  1. Timeline: all periods for this outlet+item (qtyBom, qtyDeviasi, devBom, direction, nominal, W/S/T, residual)
 //  2. Benchmark per period: area avg devBom for this item, network avg devBom for this item
@@ -10,9 +13,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getRuntimeThresholds } from '@/lib/settings';
+import {
+  computeZScore,
+  computeDeterioration,
+  computePriority,
+  type HistoricalInput,
+  type PriorityInput,
+} from '@/lib/metrics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+const toNum = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+};
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -32,6 +49,11 @@ export async function GET(req: NextRequest) {
     if (!outletCode || !itemName) {
       return NextResponse.json({ success: false, error: 'outletCode and itemName required' }, { status: 400 });
     }
+
+    // ============================================================
+    //  Load runtime thresholds (Settings-driven)
+    // ============================================================
+    const thresholds = await getRuntimeThresholds();
 
     // Resolve outlet
     const outlet = await db.outlet.findFirst({
@@ -78,12 +100,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: `No records found for ${itemName} at ${outletCode}` }, { status: 404 });
     }
 
-    const toNum = (v: unknown): number | null => {
-      if (v === null || v === undefined) return null;
-      const n = Number(v);
-      return isNaN(n) ? null : n;
-    };
-
     // Build timeline with sortKey
     const timeline = allRecs.map(r => {
       const mk = r.monthKey || '0000-00';
@@ -112,72 +128,109 @@ export async function GET(req: NextRequest) {
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
     // ============================================================
-    //  Benchmark: area + network avg devBom for THIS ITEM per period
+    //  BUG 6.6 fix: NO silent fallback to last available period.
+    //  If user-specified period is not in timeline, return 404 with
+    //  the list of available periods — do NOT substitute the last period.
     // ============================================================
-    const currentPeriod = timeline.find(t => t.isCurrent) || timeline[timeline.length - 1];
+    const currentPeriod = timeline.find(t => t.isCurrent);
     if (!currentPeriod) {
-      return NextResponse.json({ success: false, error: 'No current period found in timeline' }, { status: 404 });
+      const available = timeline.map(t => `${t.weekLabel} ${t.monthLabel}`).join(', ');
+      return NextResponse.json({
+        success: false,
+        error: `No record for ${itemName} at ${outletCode} in ${currentMonth || '?'} ${currentWeek || '?'}. Available periods: ${available}`,
+        availablePeriods: timeline.map(t => ({ monthLabel: t.monthLabel, weekLabel: t.weekLabel })),
+      }, { status: 404 });
     }
     const currentDevBom = currentPeriod.devBom;
 
-    // Area benchmark for this item (current period)
-    const areaBench = await db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`
-      SELECT
-        COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
-        COUNT(DISTINCT ir."outletId")::int as "outletCount"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE i.name = ${itemName}
-        AND ir.area = ${outlet.area}
-        AND ir."monthLabel" = ${currentPeriod?.monthLabel || ''}
-        AND ir."weekLabel" = ${currentPeriod?.weekLabel || ''}
-    `;
+    // ============================================================
+    //  Benchmark: area + network avg devBom for THIS ITEM per period
+    //  (Per-item benchmark uses AVG(ABS(pctQtyDeviasiToBom)) — this is
+    //   correct for a single item across multiple outlets in the area,
+    //   since they all share the same item so volume weighting is not
+    //   needed. Different from outlet-level benchmark which uses SUM/SUM.)
+    // ============================================================
+    const [areaBench, networkBench] = await Promise.all([
+      db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`
+        SELECT
+          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
+        FROM "InventoryRecord" ir
+        JOIN "Item" i ON ir."itemId" = i.id
+        WHERE i.name = ${itemName}
+          AND ir.area = ${outlet.area}
+          AND ir."monthLabel" = ${currentPeriod.monthLabel}
+          AND ir."weekLabel" = ${currentPeriod.weekLabel}
+      `,
+      db.$queryRaw<Array<{ avgDevBom: number; outletCount: number; bestDevBom: number | null }>>`
+        SELECT
+          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+          MIN(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "bestDevBom"
+        FROM "InventoryRecord" ir
+        JOIN "Item" i ON ir."itemId" = i.id
+        WHERE i.name = ${itemName}
+          AND ir."monthLabel" = ${currentPeriod.monthLabel}
+          AND ir."weekLabel" = ${currentPeriod.weekLabel}
+      `,
+    ]);
 
-    // Network benchmark for this item (current period)
-    const networkBench = await db.$queryRaw<Array<{ avgDevBom: number; outletCount: number; bestDevBom: number | null }>>`
-      SELECT
-        COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
-        COUNT(DISTINCT ir."outletId")::int as "outletCount",
-        MIN(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "bestDevBom"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE i.name = ${itemName}
-        AND ir."monthLabel" = ${currentPeriod?.monthLabel || ''}
-        AND ir."weekLabel" = ${currentPeriod?.weekLabel || ''}
-    `;
-
-    // Historical stats (zScore) — Bug 6.7 fix: exclude current period from historical stats
-    const devBomValues = timeline
+    // ============================================================
+    //  Historical stats (Z-Score) via Metric Engine
+    //  Phase 3: use computeZScore — handles ABS, sample variance,
+    //  exclude current (caller passes historicalValues WITHOUT current),
+    //  min weeks guard, trend, benchmarkFlag, warningLevel.
+    //  BUG 6.7 fix: exclude current period from historical baseline.
+    // ============================================================
+    const historicalValues = timeline
       .filter(t => t.devBom != null && !t.isCurrent)
-      .map(t => Math.abs(t.devBom!));
-    const histMean = devBomValues.length > 0
-      ? devBomValues.reduce((a, b) => a + b, 0) / devBomValues.length
-      : 0;
-    const histStdDev = devBomValues.length > 1
-      ? Math.sqrt(devBomValues.reduce((a, b) => a + (b - histMean) ** 2, 0) / (devBomValues.length - 1))
-      : 0;
-    const zScore = currentDevBom != null && histStdDev > 0
-      ? (Math.abs(currentDevBom) - histMean) / histStdDev
-      : null;
+      .map(t => t.devBom as number);
 
-    // Trend: compare current vs earliest
-    const earliestDevBom = timeline[0]?.devBom;
-    const deterioration = (currentDevBom != null && earliestDevBom != null)
-      ? Math.abs(currentDevBom) - Math.abs(earliestDevBom)
-      : null;
+    const historicalInput: HistoricalInput = {
+      currentValue: currentDevBom,
+      historicalValues,
+      thresholds: {
+        HISTORICAL_MIN_WEEKS: thresholds.HISTORICAL_MIN_WEEKS,
+        HISTORICAL_ZSCORE_WARN: thresholds.HISTORICAL_ZSCORE_WARN,
+        HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
+      },
+    };
+    const historicalResult = computeZScore(historicalInput);
 
-    // Priority
-    const isHighNominal = (currentPeriod?.absNominalLossSurplus ?? 0) > 1_000_000;
-    const isHighDevBom = currentDevBom != null && Math.abs(currentDevBom) > 0.10;
-    const isHighResidual = currentPeriod?.residualRatio != null && currentPeriod.residualRatio > 0.50;
-    const isHighZScore = zScore != null && zScore > 2;
-    const priority: 'P1' | 'P2' | 'P3' =
-      (isHighNominal && (isHighDevBom || isHighResidual || isHighZScore)) ? 'P1' :
-      (isHighDevBom || isHighResidual || isHighZScore) ? 'P2' : 'P3';
+    // Trend: compare current vs earliest via Metric Engine
+    const earliestDevBom = timeline[0]?.devBom ?? null;
+    const deterioration = computeDeterioration(currentDevBom, earliestDevBom);
+    const trend = deterioration != null
+      ? deterioration > 0.02 ? 'DETERIORATING' : deterioration < -0.02 ? 'IMPROVING' : 'STABLE'
+      : historicalResult.trend === 'INSUFFICIENT_DATA' ? 'INSUFFICIENT_DATA'
+      : 'STABLE';
 
-    // Area multiplier
+    // Metric Engine: priority (Settings-driven, no hardcoded 1M/0.10/0.50/2.0)
+    const priorityThresholds: PriorityInput['thresholds'] = {
+      HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+      RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
+      HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
+    };
+    const priority = computePriority({
+      absNominalLossSurplus: currentPeriod.absNominalLossSurplus,
+      devBom: currentDevBom,
+      residualRatio: currentPeriod.residualRatio,
+      zScore: historicalResult.zScore,
+      isOverExplained: (() => {
+        const explained = currentPeriod.qtyWaste + currentPeriod.qtySusut + currentPeriod.qtyTrial;
+        const absDev = Math.abs(currentPeriod.qtyDeviasi ?? 0);
+        return absDev > 0 && explained > absDev;
+      })(),
+      thresholds: priorityThresholds,
+    });
+
+    // Area/network multiplier (item-level: simple ratio)
     const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
     const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
+    const areaOutletCount = toNum(areaBench[0]?.outletCount) ?? 0;
+    const networkOutletCount = toNum(networkBench[0]?.outletCount) ?? 0;
+    const bestDevBom = toNum(networkBench[0]?.bestDevBom);
     const areaMultiplier = areaAvgDevBom > 0 && currentDevBom != null
       ? Math.abs(currentDevBom) / areaAvgDevBom
       : null;
@@ -194,23 +247,23 @@ export async function GET(req: NextRequest) {
         outletDevBom: currentDevBom,
         areaAvgDevBom,
         networkAvgDevBom,
-        bestDevBom: toNum(networkBench[0]?.bestDevBom),
+        bestDevBom,
         areaMultiplier,
         networkMultiplier,
-        areaOutletCount: areaBench[0]?.outletCount ?? 0,
-        networkOutletCount: networkBench[0]?.outletCount ?? 0,
+        areaOutletCount,
+        networkOutletCount,
       },
       historical: {
-        mean: histMean,
-        stdDev: histStdDev,
-        zScore,
-        sampleSize: devBomValues.length,
+        mean: historicalResult.mean,
+        stdDev: historicalResult.stdDev,
+        zScore: historicalResult.zScore,
+        sampleSize: historicalResult.sampleSize,
         earliestDevBom,
         currentDevBom,
         deterioration,
-        trend: deterioration != null
-          ? deterioration > 0.02 ? 'DETERIORATING' : deterioration < -0.02 ? 'IMPROVING' : 'STABLE'
-          : 'UNKNOWN',
+        trend,
+        warningLevel: historicalResult.warningLevel,
+        benchmarkFlag: historicalResult.benchmarkFlag,
       },
       current: currentPeriod,
       priority,
