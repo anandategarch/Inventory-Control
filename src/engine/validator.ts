@@ -22,12 +22,14 @@ export interface DQIssueRow {
   outletCode?: string;
   itemName?: string;
   weekLabel?: string;
+  sheetName?: string; // P1-9 fix: track which sheet the issue came from
 }
 
 export function validateRow(
   row: Record<string, unknown>,
   rowNumber: number,
-  seenKeys: Set<string>
+  seenKeys: Set<string>,
+  sheetName?: string // P1-9 fix: pass sheet name for multi-sheet audit
 ): DQIssueRow[] {
   const issues: DQIssueRow[] = [];
   const resto = String(row.resto ?? '').trim();
@@ -199,6 +201,13 @@ export function validateRow(
         rawValue: `excel=${qtyLossSurplus}, expected=${expectedNet.toFixed(1)}`,
         rowNumber, outletCode: resto, itemName: namaBahan, weekLabel,
       });
+    }
+  }
+
+  // P1-9 fix: tag all issues with sheetName for multi-sheet audit
+  if (sheetName) {
+    for (const issue of issues) {
+      issue.sheetName = sheetName;
     }
   }
 

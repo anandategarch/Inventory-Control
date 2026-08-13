@@ -188,6 +188,7 @@ model DQIssue {
   message     String
   rawValue    String?
   rowNumber   Int?
+  sheetName   String?  // P1-9 fix: which Excel sheet the issue came from
   createdAt   DateTime @default(now())
 
   @@index([sourceFileId])

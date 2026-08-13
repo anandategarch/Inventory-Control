@@ -163,11 +163,14 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       }
 
       // STEP 1: Parse Excel directly (skip CSV conversion — 30% faster)
-      let allRows: Record<string, unknown>[] = [];
+      // P1-9 fix: track sheetName per row for DQ audit
+      let allRows: Array<Record<string, unknown> & { _sheetName?: string }> = [];
       if (ext === '.xlsx') {
         const parsed = await parseExcelFile(filePath);
         for (const sheet of parsed.sheets) {
-          allRows.push(...sheet.rows);
+          for (const row of sheet.rows) {
+            allRows.push({ ...row, _sheetName: sheet.sheetName });
+          }
         }
       } else {
         // CSV: use stream parser
@@ -230,7 +233,7 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
         const rowNumber = totalRows + 1;
 
         // Validate
-        const issues = validateRow(rawRow, rowNumber, seenKeys);
+        const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName);
         allIssues.push(...issues);
 
         const hasError = issues.some((i) => i.severity === 'ERROR');
@@ -336,6 +339,7 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
         const dqRecords = allIssues.map((i) => ({
           sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
           message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
+          sheetName: (i as any).sheetName ?? null, // P1-9 fix
         }));
         for (let i = 0; i < dqRecords.length; i += 500) {
           await db.dQIssue.createMany({ data: dqRecords.slice(i, i + 500) });
