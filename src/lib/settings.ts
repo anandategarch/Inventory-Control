@@ -330,10 +330,11 @@ async function loadSettingsFromDB(): Promise<Map<string, string>> {
 }
 
 // Initialize default settings on first run
+// FIX (BUG-2-5): Previously, `count > 0` early-return meant that any
+// missing setting row (deleted, or new key added in a code release) was
+// never re-inserted. Now we always attempt to create missing rows and let
+// `skipDuplicates: true` skip the ones that already exist.
 export async function ensureDefaultSettings(): Promise<void> {
-  const count = await db.setting.count();
-  if (count > 0) return; // already initialized
-
   const data = SETTING_DEFINITIONS.map((d) => ({
     key: d.key,
     value: d.defaultValue,
@@ -449,9 +450,12 @@ export interface RuntimeThresholds {
 
 export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
   const all = await getAllSettings();
+  // FIX (BUG-2-4): Treat empty/whitespace strings as fallback.
+  // `Number('') === 0`, so previously a cleared HISTORICAL_MIN_WEEKS
+  // became 0 (bypassing the min-weeks guard). Now it returns the default.
   const num = (key: string, fallback: number): number => {
     const v = all.get(key);
-    if (v == null) return fallback;
+    if (v == null || String(v).trim() === '') return fallback;
     const n = Number(v);
     return isNaN(n) ? fallback : n;
   };

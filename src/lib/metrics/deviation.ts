@@ -186,6 +186,8 @@ export function computeHealthScore(
   thresholds?: HealthScoreThresholds,
 ): number {
   const clamp = (n: number) => Math.max(0, Math.min(100, n));
+  // FIX (BUG-2-2): Neutral score when NaN could appear in the weighted sum.
+  const neutralScore = 50;
 
   // Use provided weights or fall back to defaults
   const w = weights ?? HEALTH_SCORE_WEIGHTS;
@@ -200,41 +202,41 @@ export function computeHealthScore(
   // Use provided thresholds or fall back to defaults
   const th = thresholds ?? HEALTH_SCORE_THRESHOLDS;
 
+  // Linear-interpolation component scorer with div-by-zero guard (BUG-2-2).
+  // When good===bad, the threshold pair is misconfigured — return neutral.
+  const componentScore = (value: number, c: { good: number; bad: number }): number => {
+    if (c.bad === c.good) return neutralScore;
+    return clamp(100 - ((value - c.good) / (c.bad - c.good)) * 100);
+  };
+
   // DevBOM: <good → 100, >bad → 0 (linear)
   const devBom = computeDevBomAggregate(input);
-  const devBomScore = clamp(
-    100 - ((devBom - th.devBom.good) /
-      (th.devBom.bad - th.devBom.good)) * 100
-  );
+  const devBomScore = componentScore(devBom, th.devBom);
 
   // Residual: <good → 100, >bad → 0 (linear)
   const residualPct = computeResidualPctAggregate(input);
-  const residualScore = clamp(
-    100 - ((residualPct - th.residual.good) /
-      (th.residual.bad - th.residual.good)) * 100
-  );
+  const residualScore = componentScore(residualPct, th.residual);
 
   // Loss/Sales: <good → 100, >bad → 0 (linear)
   const lossToSales = computeLossToSales(input);
   const lossToSalesScore = lossToSales != null
-    ? clamp(100 - ((lossToSales - th.lossToSales.good) /
-        (th.lossToSales.bad - th.lossToSales.good)) * 100)
-    : 50;
+    ? componentScore(lossToSales, th.lossToSales)
+    : neutralScore;
 
   // Abnormal: abnormal / (warning + abnormal), <good → 100, >bad → 0 (linear)
   const activeItems = input.warningCount + input.abnormalCount;
   const abnormalRate = activeItems > 0 ? input.abnormalCount / activeItems : 0;
-  const abnormalScore = clamp(
-    100 - ((abnormalRate - th.abnormal.good) /
-      (th.abnormal.bad - th.abnormal.good)) * 100
-  );
+  const abnormalScore = componentScore(abnormalRate, th.abnormal);
 
-  return Math.round(
+  // FIX (BUG-2-3): clamp the final weighted sum to [0, 100] so negative
+  // weights or extreme inputs cannot push the score outside the valid range.
+  const finalScore = Math.round(
     devBomScore * nw.devBom +
     residualScore * nw.residual +
     lossToSalesScore * nw.lossToSales +
     abnormalScore * nw.abnormal
   );
+  return clamp(finalScore);
 }
 
 // ============================================================

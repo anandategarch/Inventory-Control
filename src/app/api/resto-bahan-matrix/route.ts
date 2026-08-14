@@ -67,10 +67,17 @@ export async function GET(req: NextRequest) {
       ? Prisma.sql`AND ir.area = ${area}`
       : Prisma.empty;
 
-    // Get all outlet+item combos with deviation for this period
+    // ============================================================
+    //  Get all outlet+item combos with deviation for this period.
+    //  FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
+    //    SUM/MAX aggregates so multi-akun items don't produce duplicate rows
+    //    when multiple source files contribute records for the same week.
+    //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT so the prev lookup
+    //    can be keyed by (outletCode, itemName, akunPenyesuaian).
+    // ============================================================
     const rows = await db.$queryRaw<Array<{
       outletCode: string; outletName: string; area: string;
-      itemName: string; satuan: string | null;
+      itemName: string; satuan: string | null; akunPenyesuaian: string | null;
       qtyBom: number | null; qtyDeviasi: number | null;
       pctQtyDeviasiToBom: number | null;
       nominalLossSurplus: number | null; absNominalLossSurplus: number | null;
@@ -81,14 +88,15 @@ export async function GET(req: NextRequest) {
     }>>`
       SELECT
         o.code as "outletCode", o.name as "outletName", ir.area,
-        i.name as "itemName", i.satuan,
-        ir."qtyBom", ir."qtyDeviasi",
-        ir."pctQtyDeviasiToBom",
-        ir."nominalLossSurplus", ir."absNominalLossSurplus",
-        ir.direction,
-        ir."qtyWaste", ir."qtySusut", ir."qtyTrial",
-        ir."residualRatio",
-        ir."tolerancePct"
+        i.name as "itemName", i.satuan, ir."akunPenyesuaian",
+        SUM(ir."qtyBom") as "qtyBom", SUM(ir."qtyDeviasi") as "qtyDeviasi",
+        MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+        SUM(ir."nominalLossSurplus") as "nominalLossSurplus",
+        SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus",
+        MAX(ir.direction) as "direction",
+        SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial",
+        MAX(ir."residualRatio") as "residualRatio",
+        MAX(ir."tolerancePct") as "tolerancePct"
       FROM "InventoryRecord" ir
       JOIN "Outlet" o ON ir."outletId" = o.id
       JOIN "Item" i ON ir."itemId" = i.id
@@ -97,7 +105,8 @@ export async function GET(req: NextRequest) {
         AND ir."absNominalLossSurplus" IS NOT NULL
         AND ir."absNominalLossSurplus" > 0
         ${areaCondition}
-      ORDER BY ir."absNominalLossSurplus" DESC
+      GROUP BY ir."outletId", o.code, o.name, ir.area, ir."itemId", i.name, i.satuan, ir."akunPenyesuaian"
+      ORDER BY SUM(ir."absNominalLossSurplus") DESC
       LIMIT ${limit * 3}
     `;
 
@@ -109,11 +118,16 @@ export async function GET(req: NextRequest) {
     //  item). This is DIFFERENT from DevBomAggregate (SUM/SUM) used for
     //  outlet-level Dev/BOM. Field name "avgDevBom" = avgRowDevBom.
     // ============================================================
+    // ============================================================
+    //  FIX (BUG-1-2): Replaced PostgreSQL-specific `AVG(...) FILTER (WHERE ...)`
+    //  with portable `AVG(CASE WHEN ... THEN ... END)`. AVG ignores NULLs
+    //  naturally, so CASE-THEN-NULL reproduces FILTER semantics.
+    // ============================================================
     const itemAreaBench = await db.$queryRaw<Array<{
       itemName: string; avgDevBom: number; outletCount: number;
     }>>`
       SELECT i.name as "itemName",
-        COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+        COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
         CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
@@ -150,19 +164,26 @@ export async function GET(req: NextRequest) {
       if (!prevPeriod && currentIdx > 0) prevPeriod = allPeriods[currentIdx - 1];
     }
 
-    // Get previous period devBom per outlet+item
+    // ============================================================
+    //  Get previous period devBom per outlet+item.
+    //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT and GROUP BY,
+    //    and include akunPenyesuaian in the prevDevBomMap key. Multi-akun
+    //    items no longer get the LAST row's prev value — they get the
+    //    matching-akun value (or null).
+    // ============================================================
     let prevDevBomMap = new Map<string, number | null>();
     if (prevPeriod) {
-      const prevRows = await db.$queryRaw<Array<{ outletCode: string; itemName: string; pctDevBom: number | null }>>`
-        SELECT o.code as "outletCode", i.name as "itemName",
-          ir."pctQtyDeviasiToBom" as "pctDevBom"
+      const prevRows = await db.$queryRaw<Array<{ outletCode: string; itemName: string; akunPenyesuaian: string | null; pctDevBom: number | null }>>`
+        SELECT o.code as "outletCode", i.name as "itemName", ir."akunPenyesuaian",
+          MAX(ir."pctQtyDeviasiToBom") as "pctDevBom"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
         JOIN "Item" i ON ir."itemId" = i.id
         WHERE ir."monthLabel" = ${prevPeriod.monthLabel}
           AND ir."weekLabel" = ${prevPeriod.weekLabel}
+        GROUP BY o.code, i.name, ir."akunPenyesuaian"
       `;
-      prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
+      prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
     }
 
     // ============================================================
@@ -181,7 +202,9 @@ export async function GET(req: NextRequest) {
 
       // Historical trend — Phase 3: calcGrowthAbs from Metric Engine
       // (Magnitude growth for Dev/BOM — direction is always positive when comparing |.|)
-      const prevDevBom = prevDevBomMap.get(`${r.outletCode}|${r.itemName}`) ?? null;
+      // FIX (BUG-1-5): Lookup key now includes akunPenyesuaian so multi-akun
+      //   items get the matching-akun prev value instead of the last row's.
+      const prevDevBom = prevDevBomMap.get(`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`) ?? null;
       const devBomGrowth = calcGrowthAbs(devBom, prevDevBom);
       const historicalTrend = devBomGrowth != null
         ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'

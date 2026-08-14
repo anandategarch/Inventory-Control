@@ -463,10 +463,14 @@ export async function GET(req: NextRequest) {
     // Timeline (from parallel trendRows result in Phase 1)
     const timeline = trendRows.map((r) => {
       const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+      // FIX (BUG-1-12): Extract numeric week number and zero-pad so that
+      //   "WEEK 10" sorts AFTER "WEEK 2" (raw string sort would put it before).
+      //   Matches the pattern used in analysis/route.ts:554 and outlet-items:92.
+      const wkNum = String(parseInt((r.weekLabel || '').replace(/\D/g, '') || '0') || 0).padStart(2, '0');
       return {
         weekLabel: r.weekLabel,
         monthLabel: r.monthLabel,
-        sortKey: `${mk}|${r.weekLabel}`,
+        sortKey: `${mk}|${wkNum}`,
         sales: toNum(r.sales) ?? 0,
         nominal: toNum(r.nominal) ?? 0,
         devBom: toNum(r.devBom) ?? 0,
@@ -816,10 +820,13 @@ export async function GET(req: NextRequest) {
 
     // Rank: count outlets in same period with lower health score
     // (simplified — health computed only for current outlet, rank is approximated)
+    // FIX (BUG-1-9): Filter by area so rank context is "in area" not "nationally".
+    //   An outlet ranked #5 of 20 in its area was previously shown as #5 of 333
+    //   nationally, misleading users about relative performance.
     const totalOutletsInPeriodRows = await db.$queryRaw<Array<{ cnt: number | bigint }>>`
       SELECT CAST(COUNT(DISTINCT "outletId") AS INTEGER) as cnt
       FROM "InventoryRecord"
-      WHERE "monthLabel" = ${month} AND "weekLabel" = ${week}
+      WHERE "monthLabel" = ${month} AND "weekLabel" = ${week} AND area = ${area}
     `;
     const totalOutletsInPeriod = Number(totalOutletsInPeriodRows[0]?.cnt ?? 0);
 

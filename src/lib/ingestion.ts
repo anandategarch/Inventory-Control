@@ -276,27 +276,38 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
           weekDbMap.set(wk, w.id);
         }
 
-        // Outlet: check cache, create if missing (lazy — only on first encounter)
+        // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
+        // findUnique + create. Two concurrent imports of different weeks for the
+        // same NEW outlet code previously raced: both findUnique miss → both create →
+        // P2002 unique constraint violation → entire week import fails.
+        // Upsert is atomic: if the row exists, update area/name if changed; if not,
+        // create it. Either way, no P2002.
         if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
-          const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true, area: true } });
-          if (existingOutlet) {
-            outletDbMap.set(derived.outletCode, existingOutlet.id);
-            // LOGIC-12 fix: update area if changed (outlet moved to different area)
-            if (existingOutlet.area !== n.area && n.area) {
-              await db.outlet.update({ where: { id: existingOutlet.id }, data: { area: n.area, name: derived.outletName } });
-            }
-          } else {
-            const created = await db.outlet.create({
-              data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
-            });
-            outletDbMap.set(derived.outletCode, created.id);
-          }
+          const outlet = await db.outlet.upsert({
+            where: { code: derived.outletCode },
+            // LOGIC-12 fix: update area + name if outlet moved to different area.
+            // Conditional update avoids unnecessary writes when nothing changed.
+            update: n.area ? { area: n.area, name: derived.outletName } : {},
+            create: {
+              code: derived.outletCode,
+              name: derived.outletName,
+              outletCode: derived.outletNumericCode,
+              area: n.area,
+            },
+            select: { id: true },
+          });
+          outletDbMap.set(derived.outletCode, outlet.id);
         }
 
-        // Item: check cache, create if missing (lazy)
+        // FIX-A-4 (BUG-5-5): Race-safe item creation — same upsert pattern.
         if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
-          const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
-          itemDbMap.set(n.namaBahan, { id: created.id, satuan: n.satuan });
+          const item = await db.item.upsert({
+            where: { name: n.namaBahan },
+            update: {}, // existing items keep their satuan (see processRowsForImport for satuan fill)
+            create: { name: n.namaBahan, satuan: n.satuan },
+            select: { id: true },
+          });
+          itemDbMap.set(n.namaBahan, { id: item.id, satuan: n.satuan });
         }
 
         // Get IDs from cache (O(1) Map lookup, no DB query)
@@ -471,31 +482,43 @@ export async function processRowsForImport(
     const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
     const derived = deriveRecord(n);
 
-    // Ensure outlet exists (lazy cache)
+    // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
+    // findUnique + create. Two concurrent imports of different weeks for the
+    // same NEW outlet code previously raced: both findUnique miss → both create →
+    // P2002 unique constraint violation → entire week import fails.
+    // Upsert is atomic: if the row exists, update area/name if changed; if not,
+    // create it. Either way, no P2002.
     if (derived.outletCode && !_outletDbMap.has(derived.outletCode)) {
-      const existingOutlet = await db.outlet.findUnique({ where: { code: derived.outletCode }, select: { id: true } });
-      if (existingOutlet) {
-        _outletDbMap.set(derived.outletCode, existingOutlet.id);
-      } else {
-        const created = await db.outlet.create({
-          data: { code: derived.outletCode, name: derived.outletName, outletCode: derived.outletNumericCode, area: n.area },
-        });
-        _outletDbMap.set(derived.outletCode, created.id);
-      }
+      const outlet = await db.outlet.upsert({
+        where: { code: derived.outletCode },
+        // LOGIC-12 fix: update area + name if outlet moved to different area.
+        update: n.area ? { area: n.area, name: derived.outletName } : {},
+        create: {
+          code: derived.outletCode,
+          name: derived.outletName,
+          outletCode: derived.outletNumericCode,
+          area: n.area,
+        },
+        select: { id: true },
+      });
+      _outletDbMap.set(derived.outletCode, outlet.id);
     }
 
-    // Ensure item exists (lazy cache)
+    // FIX-A-4 (BUG-5-5): Race-safe item creation — use upsert instead of
+    // findUnique + create to handle concurrent imports of the same new item.
+    // Preserves the original behavior of back-filling `satuan` on existing items
+    // when the DB row has null satuan and the current row provides one.
     if (n.namaBahan && !_itemDbMap.has(n.namaBahan)) {
-      const existingItem = await db.item.findUnique({ where: { name: n.namaBahan }, select: { id: true, satuan: true } });
-      if (existingItem) {
-        _itemDbMap.set(n.namaBahan, { id: existingItem.id, satuan: existingItem.satuan });
-        if (!existingItem.satuan && n.satuan) {
-          await db.item.update({ where: { id: existingItem.id }, data: { satuan: n.satuan } });
-        }
-      } else {
-        const created = await db.item.create({ data: { name: n.namaBahan, satuan: n.satuan } });
-        _itemDbMap.set(n.namaBahan, { id: created.id, satuan: n.satuan });
-      }
+      const item = await db.item.upsert({
+        where: { name: n.namaBahan },
+        // If existing item has no satuan, fill it from the current row.
+        // (Prisma returns the row AFTER the upsert, so the returned satuan is the
+        // post-update value — either the newly-filled one or the pre-existing one.)
+        update: n.satuan ? { satuan: n.satuan } : {},
+        create: { name: n.namaBahan, satuan: n.satuan },
+        select: { id: true, satuan: true },
+      });
+      _itemDbMap.set(n.namaBahan, { id: item.id, satuan: item.satuan });
     }
 
     const outletId = _outletDbMap.get(derived.outletCode) ?? 0;

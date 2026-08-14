@@ -14,6 +14,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
+import { clickableRowProps } from '@/lib/a11y';
 
 export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
@@ -56,7 +57,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={`${it.itemName}-${it.outletCode}`}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
+                  {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                 >
                   <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
@@ -116,7 +117,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={`${it.itemName}-${it.outletCode}`}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName })}
+                    {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
@@ -179,7 +180,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={o.outletCode}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => { setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); }}
+                    {...clickableRowProps(() => { setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); })}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
@@ -300,7 +301,7 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={`${w.outletCode}-${w.itemName}-${i}`}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setDrilldown({ outletCode: w.outletCode, itemName: w.itemName })}
+                  {...clickableRowProps(() => setDrilldown({ outletCode: w.outletCode, itemName: w.itemName }))}
                 >
                   <TableCell>
                     <Badge variant="outline" className={`text-[11px] px-1.5 py-0 ${priorityColor(w.priority)}`}>{w.priority}</Badge>

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { X, Activity, Heart, TrendingDown, TrendingUp, Target } from 'lucide-react';
 
@@ -169,11 +170,11 @@ export function OutletScorecard({ data }: { data: AnalysisData | undefined }) {
                       <TableRow
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => {
+                        {...clickableRowProps(() => {
                           // Close scorecard first, then open deep dive (avoid triple overlay)
                           setScorecardOutlet(null);
                           setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
-                        }}
+                        })}
                       >
                         <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[220px]" title={it.itemName}>{it.itemName}</TableCell>
                         <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>

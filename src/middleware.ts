@@ -13,7 +13,18 @@
 //  If ADMIN_TOKEN not set in env → endpoints are PUBLIC (dev mode, backward compat)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
-import { timingSafeEqual } from 'crypto';
+
+// FIX: `crypto.timingSafeEqual` is a Node.js module not available in Edge Runtime.
+// Implement a runtime-agnostic constant-time string comparison (XOR + accumulate).
+// This prevents timing attacks without depending on Node's `crypto` module.
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
 
 const PROTECTED_PATHS = [
   '/api/setup',
@@ -67,9 +78,7 @@ export function middleware(req: NextRequest) {
       { status: 401 }
     );
   }
-  const a = Buffer.from(providedToken);
-  const b = Buffer.from(adminToken);
-  const tokenValid = a.length === b.length && timingSafeEqual(a, b);
+  const tokenValid = constantTimeEqual(providedToken, adminToken);
   if (!tokenValid) {
     return NextResponse.json(
       { success: false, error: 'Unauthorized. Set ADMIN_TOKEN env var and provide via Authorization: Bearer <token> or ?admin_token=<token>.' },

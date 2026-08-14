@@ -210,15 +210,17 @@ export function computeResidual(rec: NormalizedRecord): {
   if (rec.qtyDeviasi === null) {
     return { residualQty: null, residualNominal: null, residualRatio: null, isOverExplained: false };
   }
-  // waste+susut+trial are negative (or zero). Their sum is negative (or zero).
-  // In convention where deviation is positive = LOSS:
-  //   explained = |waste + susut + trial|  (positive magnitude)
-  //   residual = |deviasi| - explained
-  // We'll keep residualQty in same sign as deviasi for direction consistency.
+  // waste+susut+trial are negative (or zero) in well-formed data, but may
+  // have mixed signs in malformed inputs (e.g. positive trial qty). Use
+  // abs-each-then-sum so the explained magnitude is correct for mixed signs.
+  // FIX (BUG-2-9): was `Math.abs(w + s + t)` which undercounts explained
+  // deviation when waste/susut/trial have mixed signs, inflating residual
+  // and triggering false RESIDUAL_LOSS flags.
+  //   e.g. w=+5, s=-3, t=-2 → wrong = |0| = 0, correct = 5+3+2 = 10.
   const w = rec.qtyWaste ?? 0;
   const s = rec.qtySusut ?? 0;
   const t = rec.qtyTrial ?? 0;
-  const explained = Math.abs(w + s + t); // positive
+  const explained = Math.abs(w) + Math.abs(s) + Math.abs(t); // positive
   const absDev = Math.abs(rec.qtyDeviasi);
   // Bug 2 fix: clamp residual to >= 0 to prevent negative residual from
   // inflating dashboard totals via ABS() in SQL aggregates.
@@ -227,11 +229,11 @@ export function computeResidual(rec: NormalizedRecord): {
   const sign = rec.qtyDeviasi >= 0 ? 1 : -1;
   const residualQty = sign * absResidual;
 
-  // nominal residual
+  // nominal residual — same abs-each-then-sum fix (BUG-2-9).
   const nw = rec.nominalWaste ?? 0;
   const ns = rec.nominalSusut ?? 0;
   const nt = rec.nominalTrial ?? 0;
-  const explainedNom = Math.abs(nw + ns + nt);
+  const explainedNom = Math.abs(nw) + Math.abs(ns) + Math.abs(nt);
   const absDevNom = Math.abs(rec.nominalDeviasi ?? 0);
   // Bug 2 fix: clamp nominal residual to >= 0 as well
   const residualNominal = sign * Math.max(0, absDevNom - explainedNom);

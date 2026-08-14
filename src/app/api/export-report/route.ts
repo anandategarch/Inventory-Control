@@ -424,7 +424,6 @@ export async function GET(req: NextRequest) {
     const total = (hs.normal || 0) + (hs.warning || 0) + (hs.abnormal || 0);
     children.push(heading('2. STATUS KESEHATAN INVENTORY'));
     children.push(paragraph('Jumlah item normal, perlu perhatian, dan bermasalah. Sertakan aturan deteksi anomali yang terpicu.'));
-    children.push(paragraph('Jumlah record normal, perlu perhatian, dan bermasalah. Aturan deteksi anomali yang terpicu.'));
     children.push(paragraph(`Total: ${total.toLocaleString('id-ID')} | Normal: ${hs.normal} | Warning: ${hs.warning} | Abnormal: ${hs.abnormal} (${total > 0 ? ((hs.abnormal / total) * 100).toFixed(1) : 0}%)`));
     const rules = Object.entries(hs.breakdown?.byRule || {}).map(([k, v]: [string, any]) => `${k} (${v})`).join(', ');
     children.push(paragraph(`Rules: ${rules || 'None'}`));
@@ -435,7 +434,6 @@ export async function GET(req: NextRequest) {
     const g = data.growthComparison || {};
     children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
     children.push(paragraph('Perubahan antar periode. Pengaruh Volume = perubahan karena kenaikan volume penjualan. Pengaruh Harga = perubahan karena harga naik/turun. Pengaruh Operasional = sisa perubahan setelah volume dan harga dijelaskan.'));
-    children.push(paragraph('Perubahan antar periode. Pengaruh Volume = perubahan karena kenaikan volume. Pengaruh Harga = perubahan karena harga naik/turun. Pengaruh Operasional = sisa perubahan setelah volume dan harga dijelaskan.'));
     children.push(makeTable(['Metric', 'Value'], [
       ['Sales Growth', fmtPct(g.salesGrowth, true)],
       ['BOM Growth', fmtPct(g.bomGrowth, true)],

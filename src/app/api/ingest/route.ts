@@ -47,6 +47,19 @@ export async function GET(req: NextRequest) {
   // Pure import — validation can be run separately later via /api/dq-check.
   const startedAt = Date.now();
   try {
+    // FIX-A-2 (BUG-5-3): GET handler triggers BULK INGESTION (heavier than POST —
+    // reads all .xlsx in DATA_DIR, parses, inserts). Without rate limiting, an
+    // attacker can DoS by hammering GET /api/ingest?fast=true. Apply the same
+    // rate limiter used by POST.
+    const ip = getClientIP(req);
+    const rl = rateLimit(`ingest:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Ingestion adalah operasi berat, tunggu beberapa menit.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+      );
+    }
+
     const fastMode = req.nextUrl.searchParams.get('fast') === 'true';
     const results = await processIngestion({}, fastMode);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt, fastMode });

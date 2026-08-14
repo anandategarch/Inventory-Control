@@ -157,8 +157,8 @@ rules:
   - code: HIGH_LOSS_NOMINAL
     name: "High nominal loss"
     category: DIRECTION
-    severity: WARNING
-    priority: 55
+    severity: ABNORMAL
+    priority: 80
     condition:
       all:
         - direction: { eq: "LOSS" }
@@ -209,9 +209,11 @@ rules:
     severity: ABNORMAL
     priority: 78
     condition:
-      zScore: { gt: historicalZscoreHigh }
+      all:
+        - direction: { eq: "LOSS" }
+        - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
-      Deviation/BOM {{zScore}} std-dev di atas historical average.
+      Sangat abnormal: Deviation/BOM {{zScore}} std-dev di atas historical average (z > 2.0).
 
   - code: HISTORICAL_ABNORMAL_SURPLUS
     name: "Deviation abnormal vs historical behavior (SURPLUS direction)"
@@ -221,7 +223,7 @@ rules:
     condition:
       all:
         - direction: { eq: "SURPLUS" }
-        - zScore: { lt: { mul: [-1, historicalZscoreHigh] } }
+        - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
       Deviation/BOM {{zScore}} std-dev di BAWAH historical average (SURPLUS abnormal).
 
@@ -235,4 +237,4 @@ rules:
         - zScore: { gt: historicalZscoreWarn }
         - zScore: { lte: historicalZscoreHigh }
     narrative_template: >
-      Deviation/BOM {{zScore}} std-dev di atas historical average.
+      Peringatan: Deviation/BOM {{zScore}} std-dev di atas historical average (z > 1.0).

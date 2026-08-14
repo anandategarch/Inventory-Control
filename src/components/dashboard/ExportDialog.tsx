@@ -61,8 +61,16 @@ export function ExportDialog({ open, onOpenChange, onExport, isExporting }: Expo
     onExport([...selected]);
   };
 
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      // Reset to default selection on close so the next open starts fresh
+      setSelected(new Set(SECTIONS.filter(s => s.default).map(s => s.key)));
+    }
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">

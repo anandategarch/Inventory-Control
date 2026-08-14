@@ -188,7 +188,7 @@ export async function DELETE(req: NextRequest) {
     const key = url.searchParams.get('key');
 
     if (key) {
-      // Reset specific key
+      // Reset specific key — single upsert, atomic by itself.
       const def = SETTING_DEFINITIONS.find((d) => d.key === key);
       if (!def) {
         return NextResponse.json(
@@ -210,22 +210,27 @@ export async function DELETE(req: NextRequest) {
         },
       });
     } else {
-      // Reset all to defaults
-      for (const def of SETTING_DEFINITIONS) {
-        await db.setting.upsert({
-          where: { key: def.key },
-          update: { value: def.defaultValue, updatedBy: 'reset' },
-          create: {
-            key: def.key,
-            value: def.defaultValue,
-            category: def.category,
-            label: def.label,
-            description: def.description,
-            dataType: def.dataType,
-            updatedBy: 'reset',
-          },
-        });
-      }
+      // FIX-A-6 (BUG-5-14): Reset all to defaults — wrap in a single transaction
+      // so the DB is never left in a partial-reset state. If one upsert fails
+      // midway (e.g., DB timeout on the 5th of 30 settings), the entire batch
+      // rolls back. Mirrors the POST handler pattern at line ~139.
+      await db.$transaction(
+        SETTING_DEFINITIONS.map((def) =>
+          db.setting.upsert({
+            where: { key: def.key },
+            update: { value: def.defaultValue, updatedBy: 'reset' },
+            create: {
+              key: def.key,
+              value: def.defaultValue,
+              category: def.category,
+              label: def.label,
+              description: def.description,
+              dataType: def.dataType,
+              updatedBy: 'reset',
+            },
+          })
+        )
+      );
     }
 
     invalidateSettingsCache();

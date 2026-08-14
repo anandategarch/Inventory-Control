@@ -9,6 +9,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs, directionColor } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
   TrendingDown, Heart, Link2, MapPin,
@@ -85,7 +86,7 @@ export function VarianceAnalysis({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={`${it.itemName}-${it.outletCode}-${i}`}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => onClick(it)}
+                    {...clickableRowProps(() => onClick(it))}
                   >
                     <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
@@ -187,7 +188,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={o.outletCode}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setFocusOutlet(o.outletCode)}
+                  {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                 >
                   <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                   <TableCell className="px-2 py-1">
@@ -196,7 +197,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                   </TableCell>
                   <TableCell className="px-2 py-1">
                     <div className="flex items-center gap-1.5 min-w-[80px]">
-                      <Progress value={o.healthScore} className={`h-1.5 ${healthScoreBg(o.healthScore)}`} />
+                      <Progress value={o.healthScore} className="h-1.5" indicatorClassName={healthScoreBg(o.healthScore)} />
                       <span className={`text-[11px] font-semibold ${healthScoreColor(o.healthScore)}`}>{o.healthScore}</span>
                     </div>
                   </TableCell>
@@ -319,7 +320,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={`${row.itemName}-${i}`}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => onClick(row)}
+                  {...clickableRowProps(() => onClick(row))}
                 >
                   <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
                   <TableCell className="px-2 py-1">
@@ -395,7 +396,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={a.area}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => setArea(a.area)}
+                    {...clickableRowProps(() => setArea(a.area))}
                   >
                     <TableCell className="text-[11px] px-2 py-1 font-medium">
                       <span className="mr-1">{marker}</span>{a.area}

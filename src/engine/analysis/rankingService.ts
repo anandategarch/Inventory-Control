@@ -16,6 +16,7 @@ import {
   computeResidualPctAggregate,
   computeLossToSales,
   calcZScoreFromStats,
+  computePriority,
   type AggregateInput,
   type HealthScoreWeights,
   type HealthScoreThresholds,
@@ -64,7 +65,7 @@ function dedupSalesByOutlet(recs: RecWithRels[]): Map<number, number> {
 // ============================================================
 export function buildWorklistFromFlags(
   recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }>,
-  _t?: RuntimeThresholds | typeof CFG_THRESHOLDS,
+  t: RuntimeThresholds | typeof CFG_THRESHOLDS = CFG_THRESHOLDS,
 ): InvestigationItem[] {
   const items: InvestigationItem[] = [];
 
@@ -72,8 +73,32 @@ export function buildWorklistFromFlags(
     if (flags.length === 0) continue;
 
     const top = flags[0];
-    const priority: 'P1' | 'P2' | 'P3' =
-      top.severity === 'ABNORMAL' ? 'P1' : top.severity === 'WARNING' ? 'P2' : 'P3';
+
+    // FIX (BUG-2-1): Delegate to computePriority from the Metric Engine so
+    // the Investigation Worklist's P-level matches the priority shown in the
+    // item-history / outlet-items / outlet-focus detail views. Previously
+    // this used a severity→P-level map (ABNORMAL→P1, WARNING→P2, else P3)
+    // which diverged from computePriority's criteria-OR logic for cases like
+    // (a) HIGH_LOSS_NOMINAL firing (was WARNING→P2) but absNominalLossSurplus
+    // > HIGH_LOSS_NOMINAL_THRESHOLD (computePriority P1), or (b)
+    // TOLERANCE_BREACH_HIGH firing (ABNORMAL→P1) with no P1 criterion met
+    // (computePriority P2/P3). Now both code paths produce the same result.
+    const evidence = top.evidence as Record<string, unknown>;
+    const priority = computePriority({
+      absNominalLossSurplus: curr.absNominalLossSurplus ?? 0,
+      devBom: curr.pctQtyDeviasiToBom,
+      residualRatio: curr.residualRatio,
+      zScore: typeof evidence.zScore === 'number' ? evidence.zScore : null,
+      isOverExplained: evidence.isOverExplained === true,
+      thresholds: {
+        HIGH_LOSS_NOMINAL_THRESHOLD: t.HIGH_LOSS_NOMINAL_THRESHOLD,
+        P2_NOMINAL_THRESHOLD: t.P2_NOMINAL_THRESHOLD,
+        STD_DEVIASI_BOM_PCT: t.STD_DEVIASI_BOM_PCT,
+        RESIDUAL_LOSS_WARN_PCT: t.RESIDUAL_LOSS_WARN_PCT,
+        RESIDUAL_LOSS_HIGH_PCT: t.RESIDUAL_LOSS_HIGH_PCT,
+        HISTORICAL_ZSCORE_HIGH: t.HISTORICAL_ZSCORE_HIGH,
+      },
+    });
 
     items.push({
       priority,

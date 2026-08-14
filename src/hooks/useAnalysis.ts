@@ -188,6 +188,15 @@ export function useStatus() {
     queryKey: ['status'],
     queryFn: async () => {
       const res = await fetch('/api/status');
+      // Guard: server crashes return HTML, not JSON
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
+      }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ message: 'Request failed' }));
+        throw new Error((e as any)?.message || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<StatusData>;
     },
     staleTime: 5 * 60 * 1000, // Phase 1d: 5 min (was 30s) — data rarely changes
@@ -211,6 +220,15 @@ export function useDrilldown(params: { outletCode?: string | null; itemName?: st
     queryKey: ['drilldown', params],
     queryFn: async () => {
       const res = await fetch(`/api/drilldown?${p.toString()}`);
+      // Guard: server crashes return HTML, not JSON
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
+      }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ message: 'Request failed' }));
+        throw new Error((e as any)?.message || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<DrilldownData>;
     },
     enabled: Boolean(params.outletCode || params.itemName),

@@ -27,7 +27,11 @@ export function buildSqlFilters(opts: {
     parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code IN (${Prisma.join(opts.picOutletCodes)}))`);
   }
   if (opts.itemName) {
-    parts.push(Prisma.sql`AND ir."itemId" IN (SELECT id FROM "Item" WHERE name LIKE ${'%' + opts.itemName + '%'})`);
+    // FIX (BUG-1-7): Wrap both sides in LOWER() so matching is case-insensitive
+    // on BOTH SQLite (default case-insensitive LIKE) and PostgreSQL (default
+    // case-sensitive LIKE). Without this, "ayam" matches "Ayam Goreng" in
+    // local SQLite testing but NOT in production PostgreSQL.
+    parts.push(Prisma.sql`AND ir."itemId" IN (SELECT id FROM "Item" WHERE LOWER(name) LIKE LOWER(${'%' + opts.itemName + '%'}))`);
   }
   // Prisma.join requires ≥1 element; return empty fragment when no filters
   if (parts.length === 0) return Prisma.sql``;

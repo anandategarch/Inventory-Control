@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { X, Package, TrendingDown, TrendingUp } from 'lucide-react';
 import {
@@ -168,11 +169,11 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                       <TableRow
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => {
+                        {...clickableRowProps(() => {
                           // Close deep dive first, then open drilldown drawer (avoid double overlay)
                           onClose();
                           setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
-                        }}
+                        })}
                       >
                         <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                         <TableCell className="text-[11px] px-2 py-1 font-medium">{it.outletCode}</TableCell>

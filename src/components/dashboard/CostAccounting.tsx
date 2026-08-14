@@ -8,6 +8,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
   Coins, TrendingDown, Grid3x3, Calculator, Activity,
@@ -198,7 +199,7 @@ export function ParetoAnalysis({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={`${it.itemName}-${it.outletCode}-${i}`}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => onClick(it)}
+                    {...clickableRowProps(() => onClick(it))}
                   >
                     <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
                     <TableCell className="px-2 py-1">
@@ -406,7 +407,7 @@ export function CostPerThousandCard({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={o.outletCode}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setFocusOutlet(o.outletCode)}
+                  {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                 >
                   <TableCell className="text-[11px] px-2 py-1">
                     <div className="font-medium whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>

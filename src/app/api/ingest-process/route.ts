@@ -20,6 +20,32 @@ import { existsSync } from 'fs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Max for Vercel — import can take 1-2 min for large weeks
 
+// FIX-A-1 (BUG-5-1): Sanitize fileHash + ext to prevent path traversal in reassembleFile.
+// fileHash must be a hex string (SHA-256 / SHA-512 hex) — no '..', '/', ':', etc.
+// ext must be in the upload allowlist. Reject otherwise with 400 before any disk I/O.
+const SAFE_FILEHASH_RE = /^[a-f0-9]{8,128}$/i;
+const SAFE_EXT_ALLOWLIST = new Set(['.xlsx', '.xls', '.csv']);
+
+function validateFileMetadata(fileHash: unknown, ext: unknown): { ok: true; fileHash: string; ext: string } | { ok: false; error: string } {
+  if (typeof fileHash !== 'string' || !SAFE_FILEHASH_RE.test(fileHash)) {
+    return { ok: false, error: 'Invalid fileHash: must be hex-only (a-f0-9), 8-128 chars.' };
+  }
+  // ext is optional in detect/import payload — fall back to extension parsed from fileName.
+  // If provided, it must be in the allowlist.
+  let extStr: string;
+  if (ext === undefined || ext === null || ext === '') {
+    extStr = ''; // caller resolves from fileName via path.extname
+  } else if (typeof ext === 'string') {
+    extStr = ext.toLowerCase();
+    if (!SAFE_EXT_ALLOWLIST.has(extStr)) {
+      return { ok: false, error: `Invalid ext: ${extStr}. Allowed: ${[...SAFE_EXT_ALLOWLIST].join(', ')}.` };
+    }
+  } else {
+    return { ok: false, error: 'Invalid ext: must be a string.' };
+  }
+  return { ok: true, fileHash, ext: extStr };
+}
+
 // Reassemble file from DB chunks
 async function reassembleFile(fileHash: string, ext: string): Promise<string> {
   const chunks = await db.fileChunk.findMany({
@@ -75,6 +101,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // FIX-A-1 (BUG-5-1): validate fileHash + ext BEFORE reassembleFile to prevent
+    // path traversal via malicious fileHash (e.g., "../../etc/cron.d/evil") or ext
+    // (e.g., ".php"). Without this, path.join('/tmp/ingest-process', `${fileHash}${ext}`)
+    // could escape the intended directory.
+    const metaCheck = validateFileMetadata(fileHash, ext);
+    if (!metaCheck.ok) {
+      return NextResponse.json(
+        { success: false, error: metaCheck.error },
+        { status: 400 }
+      );
+    }
+    const safeFileHash = metaCheck.fileHash;
+    // Resolve final ext: validated client-supplied ext, else fall back to fileName extension.
+    const fileExt = metaCheck.ext || path.extname(rawFileName).toLowerCase();
+    if (!fileExt || !SAFE_EXT_ALLOWLIST.has(fileExt)) {
+      return NextResponse.json(
+        { success: false, error: `Unsupported file extension: "${fileExt}". Allowed: ${[...SAFE_EXT_ALLOWLIST].join(', ')}.` },
+        { status: 400 }
+      );
+    }
+
     // FIX: Sanitize fileName — if it's a Google Sheets placeholder like "Loading…",
     // "Loading Google Sheet", or contains those words, we need to extract the real
     // month from the Excel data (BULAN/BULAN 2 fields) after parsing.
@@ -116,21 +163,23 @@ export async function POST(req: NextRequest) {
     // Try to parse month from filename. If placeholder, this will likely fail —
     // we'll re-parse from Excel data after parseExcelFile.
     let monthInfo = parseMonthFromFilename(fileName);
-    const fileExt = ext || path.extname(fileName).toLowerCase();
+    // (fileExt already validated above via validateFileMetadata — do NOT recompute from raw `ext`.)
 
     // ============================================================
     // MODE 1: DETECT — reassemble, parse Excel, return weeks list
     // ============================================================
     if (mode === 'detect') {
-      // Reassemble from DB chunks
-      const filePath = await reassembleFile(fileHash, fileExt);
+      // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
+      const filePath = await reassembleFile(safeFileHash, fileExt);
 
-      // Verify size
+      // Verify size — FIX-A-1 note: client-provided fileSize is advisory only (used to
+      // detect chunk corruption). The real size enforcement happens at upload time
+      // (see /api/ingest-upload FIX-A-3) where totalBytes is computed server-side.
       const actualSize = (await fs.stat(filePath)).size;
       const expectedSize = parseInt(String(fileSize || 0));
       if (expectedSize > 0 && actualSize !== expectedSize) {
         await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
         return NextResponse.json(
           { success: false, error: `File size mismatch: expected ${expectedSize}, got ${actualSize}. Chunks mungkin corrupt. Upload ulang.` },
           { status: 400 }
@@ -156,7 +205,7 @@ export async function POST(req: NextRequest) {
 
       if (!monthInfo) {
         await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
         return NextResponse.json(
           { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx". Tidak bisa extract month dari data juga.` },
           { status: 400 }
@@ -178,7 +227,7 @@ export async function POST(req: NextRequest) {
 
       if (weeksInFile.length === 0) {
         await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
         return NextResponse.json(
           { success: false, error: 'Tidak ada week label (WEEK 1/2/3/4) di file.' },
           { status: 400 }
@@ -232,12 +281,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      console.log(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${fileHash})`);
+      console.log(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${safeFileHash})`);
 
-      // Reassemble from DB chunks
+      // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
       let filePath: string;
       try {
-        filePath = await reassembleFile(fileHash, fileExt);
+        filePath = await reassembleFile(safeFileHash, fileExt);
         console.log(`[ingest-process] reassembled to ${filePath}`);
       } catch (e: any) {
         console.error('[ingest-process] reassemble failed:', e);
@@ -307,14 +356,14 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Create SourceFile record
+      // Create SourceFile record — uses safeFileHash (validated) for fileHash composite key.
       const sourceFile = await db.sourceFile.create({
         data: {
           fileName: `${fileName} [${weekLabel}]`,
           filePath: '',
           monthLabel: monthInfo.monthLabel,
           monthKey: monthInfo.monthKey,
-          fileHash: `${fileHash}-${weekLabel}`,
+          fileHash: `${safeFileHash}-${weekLabel}`,
           rowCount: 0,
           dqStatus: 'OK',
         },

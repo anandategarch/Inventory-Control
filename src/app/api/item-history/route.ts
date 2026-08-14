@@ -152,10 +152,17 @@ export async function GET(req: NextRequest) {
     //  outlet-level Dev/BOM. Do not confuse the two.
     //  Field name "avgDevBom" = avgRowDevBom (per-row ratio average).
     // ============================================================
+    // ============================================================
+    //  FIX (BUG-1-1): Replaced PostgreSQL-specific `AVG(...) FILTER (WHERE ...)`
+    //  and `MIN(...) FILTER (WHERE ...)` with portable `AVG(CASE WHEN ... THEN ... END)`
+    //  and `MIN(CASE WHEN ... THEN ... END)`. AVG/MIN naturally ignore NULLs,
+    //  so CASE-THEN-NULL reproduces FILTER semantics. Works on both SQLite
+    //  (local testing) and PostgreSQL (production).
+    // ============================================================
     const [areaBench, networkBench] = await Promise.all([
       db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
           CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
@@ -166,9 +173,9 @@ export async function GET(req: NextRequest) {
       `,
       db.$queryRaw<Array<{ avgDevBom: number; outletCount: number; bestDevBom: number | null }>>`
         SELECT
-          COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL), 0) as "avgDevBom",
+          COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
           CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-          MIN(ABS(ir."pctQtyDeviasiToBom")) FILTER (WHERE ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL) as "bestDevBom"
+          MIN(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END) as "bestDevBom"
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
         WHERE i.name = ${itemName}

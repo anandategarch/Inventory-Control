@@ -16,6 +16,7 @@ import {
 } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData, OutletHealthRanking } from '@/hooks/useAnalysis';
 import {
   Activity, TrendingDown, TrendingUp, ShieldAlert, Package,
@@ -344,7 +345,7 @@ function Tab1Overview({ data, ranking }: { data: OutletFocusData; ranking: Outle
                 <ComposedChart data={timelineData} margin={{ left: 0, right: 20, top: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="label" fontSize={11} />
-                  <YAxis yAxisId="left" fontSize={11} tickFormatter={(v) => `${v.toFixed(0)}M`} />
+                  <YAxis yAxisId="left" fontSize={11} tickFormatter={(v) => `${v.toFixed(0)}Jt`} />
                   <YAxis yAxisId="right" orientation="right" fontSize={11} tickFormatter={(v) => `${v.toFixed(0)}%`} />
                   <Tooltip
                     content={({ active, payload, label }: { active?: boolean; payload?: TipPayload; label?: string }) =>
@@ -488,10 +489,10 @@ function Tab2AnomaliItem({ data }: { data: OutletFocusData }) {
                 <TableRow
                   key={i}
                   className={`cursor-pointer hover:bg-muted/50 ${a.isCritical ? 'bg-red-50/40 dark:bg-red-950/10' : a.isAbnormal ? 'bg-red-50/20 dark:bg-red-950/5' : ''}`}
-                  onClick={() => {
+                  {...clickableRowProps(() => {
                     // Bug fix: jangan tutup Focus Mode, buka ItemDeepDive di atas
                     setDeepDiveItem({ itemName: a.itemName, outletCode: data.outlet.code });
-                  }}
+                  })}
                 >
                   <TableCell className="text-xs px-2 py-1">
                     <div className="font-medium leading-tight whitespace-normal max-w-[300px]" title={a.itemName}>{a.itemName}</div>

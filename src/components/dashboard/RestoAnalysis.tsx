@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, ChevronRight, Grid3x3, Utensils } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { clickableRowProps } from '@/lib/a11y';
 import { useState, useMemo } from 'react';
 
 interface RestoProfile {
@@ -329,7 +330,7 @@ export function RestoAnalysis() {
                   </TableHeader>
                   <TableBody>
                     {currentRanking.map((r) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} onClick={() => setSelectedItem({ outletCode: focusOutlet!, itemName: r.itemName })}>
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} {...clickableRowProps(() => setSelectedItem({ outletCode: focusOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-[11px] py-1.5 font-mono">{r.rank}</TableCell>
                         <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(r.qtyBom)}</TableCell>
@@ -741,6 +742,7 @@ function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }:
           <select
             value={priorityFilter}
             onChange={(e) => setPriorityFilter(e.target.value)}
+            aria-label="Filter priority"
             className="h-7 text-[11px] rounded-md border bg-background px-2"
           >
             <option value="all">Semua Priority</option>
@@ -757,6 +759,7 @@ function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }:
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari outlet/bahan/area..."
+            aria-label="Cari outlet, bahan, atau area"
             className="w-full h-8 text-xs rounded-md border bg-background pl-3 pr-3"
           />
         </div>
@@ -790,7 +793,7 @@ function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }:
                     <TableRow
                       key={i}
                       className={`${priorityBg(r.priority)} ${isCurrentOutlet ? 'ring-1 ring-primary/40' : ''} cursor-pointer hover:ring-1 hover:ring-primary/30`}
-                      onClick={() => onSelectItem({ outletCode: r.outletCode, itemName: r.itemName })}
+                      {...clickableRowProps(() => onSelectItem({ outletCode: r.outletCode, itemName: r.itemName }))}
                     >
                       <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
                         <span className="font-medium">{r.outletCode}</span>

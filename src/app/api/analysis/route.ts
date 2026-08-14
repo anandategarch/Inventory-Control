@@ -147,8 +147,17 @@ export async function GET(req: NextRequest) {
     let month = monthLabel;
     let week = currentWeek;
     if (!month || !week) {
+      // FIX-A-5 (BUG-5-2): Order by Week.monthKey (YYYY-MM, chronologically sortable)
+      // and Week.periodEnd (cumulative day-end: 7 < 14 < 21 < 25), NOT by
+      // InventoryRecord.monthLabel which sorts Indonesian month names alphabetically
+      // (SEPTEMBER > OKTOBER > NOVEMBER > MEI > ...). The old sort returned the
+      // wrong "latest" period (e.g., September instead of December) when no query
+      // params were supplied — dashboard showed stale month by default.
       const latest = await db.inventoryRecord.findFirst({
-        orderBy: [{ monthLabel: 'desc' }, { weekLabel: 'desc' }],
+        orderBy: [
+          { week: { monthKey: 'desc' } },
+          { week: { periodEnd: 'desc' } },
+        ],
         select: { monthLabel: true, weekLabel: true },
       });
       if (!latest) {

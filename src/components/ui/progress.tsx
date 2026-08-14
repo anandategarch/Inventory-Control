@@ -7,9 +7,13 @@ import { cn } from "@/lib/utils"
 
 function Progress({
   className,
+  indicatorClassName,
   value,
   ...props
-}: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+}: React.ComponentProps<typeof ProgressPrimitive.Root> & {
+  /** Class applied to the inner Indicator (overrides default bg-primary). */
+  indicatorClassName?: string;
+}) {
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
@@ -21,7 +25,10 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="bg-primary h-full w-full flex-1 transition-all"
+        className={cn(
+          "h-full w-full flex-1 transition-all",
+          indicatorClassName ?? "bg-primary"
+        )}
         style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
       />
     </ProgressPrimitive.Root>

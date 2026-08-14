@@ -125,9 +125,17 @@ export async function GET(req: NextRequest) {
     //  documented here for clarity.
     // ============================================================
     const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
-      // Current period records for this outlet
+      // Current period records for this outlet.
+      // FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
+      //   SUM/MAX aggregates so duplicate source-file rows for the same
+      //   (outlet, item, akun) collapse to a single row. Previously each
+      //   source-file contribution appeared as a separate UI row and inflated
+      //   priority counts.
+      // FIX (BUG-1-4): Added ir."akunPenyesuaian" to SELECT so prev lookup can
+      //   be keyed by (itemId, akunPenyesuaian).
       db.$queryRaw<Array<{
         itemId: number; itemName: string; satuan: string | null;
+        akunPenyesuaian: string | null;
         qtyBom: number | null; qtyCom: number | null; qtyDeviasi: number | null;
         qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
         qtyLossSurplus: number | null;
@@ -140,31 +148,40 @@ export async function GET(req: NextRequest) {
         absQtyDeviasi: number | null; absNominalDeviasi: number | null;
         absQtyLossSurplus: number | null; absNominalLossSurplus: number | null;
       }>>`
-        SELECT ir."itemId", i.name as "itemName", i.satuan,
-          ir."qtyBom", ir."qtyCom", ir."qtyDeviasi",
-          ir."qtyWaste", ir."qtySusut", ir."qtyTrial", ir."qtyLossSurplus",
-          ir."nominalDeviasi", ir."nominalWaste", ir."nominalSusut",
-          ir."nominalTrial", ir."nominalLossSurplus", ir."nominalSales",
-          ir."avgPrice", ir."tolerancePct",
-          ir."pctQtyDeviasiToBom", ir.direction,
-          ir."residualQty", ir."residualNominal", ir."residualRatio",
-          ir."absQtyDeviasi", ir."absNominalDeviasi",
-          ir."absQtyLossSurplus", ir."absNominalLossSurplus"
+        SELECT ir."itemId", i.name as "itemName", i.satuan, ir."akunPenyesuaian",
+          SUM(ir."qtyBom") as "qtyBom", SUM(ir."qtyCom") as "qtyCom", SUM(ir."qtyDeviasi") as "qtyDeviasi",
+          SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial", SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
+          SUM(ir."nominalDeviasi") as "nominalDeviasi", SUM(ir."nominalWaste") as "nominalWaste", SUM(ir."nominalSusut") as "nominalSusut",
+          SUM(ir."nominalTrial") as "nominalTrial", SUM(ir."nominalLossSurplus") as "nominalLossSurplus", SUM(ir."nominalSales") as "nominalSales",
+          AVG(ir."avgPrice") as "avgPrice", MAX(ir."tolerancePct") as "tolerancePct",
+          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom", MAX(ir.direction) as "direction",
+          SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal", MAX(ir."residualRatio") as "residualRatio",
+          SUM(ir."absQtyDeviasi") as "absQtyDeviasi", SUM(ir."absNominalDeviasi") as "absNominalDeviasi",
+          SUM(ir."absQtyLossSurplus") as "absQtyLossSurplus", SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus"
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
         JOIN "Outlet" o ON ir."outletId" = o.id
         WHERE o.code = ${outletCode}
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
+        GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian", i.name, i.satuan
       `,
-      // Previous period records
-      prevWeek && prevMonth ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
-        SELECT ir."itemId", ir."qtyDeviasi", ir."nominalDeviasi", ir."qtyBom", ir."pctQtyDeviasiToBom", ir."nominalSales"
+      // Previous period records.
+      // FIX (BUG-1-6): Same GROUP BY + aggregates as currentRecs.
+      // FIX (BUG-1-4): Include akunPenyesuaian so prev lookup can key by it.
+      prevWeek && prevMonth ? db.$queryRaw<Array<{ itemId: number; akunPenyesuaian: string | null; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
+        SELECT ir."itemId", ir."akunPenyesuaian",
+          SUM(ir."qtyDeviasi") as "qtyDeviasi",
+          SUM(ir."nominalDeviasi") as "nominalDeviasi",
+          SUM(ir."qtyBom") as "qtyBom",
+          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+          SUM(ir."nominalSales") as "nominalSales"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
         WHERE o.code = ${outletCode}
           AND ir."monthLabel" = ${prevMonth}
           AND ir."weekLabel" = ${prevWeek}
+        GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian"
       ` : Promise.resolve([]),
       // Area benchmark — Phase 3: SUM(ABS)/SUM(ABS) matching computeDevBomAggregate
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
@@ -260,7 +277,11 @@ export async function GET(req: NextRequest) {
 
     // Previous period aggregates
     let prevQtyBom = 0, prevQtyDeviasi = 0, prevNominalDeviasi = 0;
-    const prevByItemId = new Map<number, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
+    // FIX (BUG-1-4): Key prevByItemId by `${itemId}|${akunPenyesuaian ?? ''}` so
+    //   multi-akun items get the matching-akun prev record instead of the LAST
+    //   row's prev data. Matches the pattern used in outlet-focus/route.ts:495
+    //   (`${r.itemId}|${r.akunPenyesuaian ?? ''}`) and analysis/route.ts:321.
+    const prevByItemId = new Map<string, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
     for (const r of prevRecs) {
       const qd = toNum(r.qtyDeviasi) ?? 0;
       const nd = toNum(r.nominalDeviasi) ?? 0;
@@ -269,7 +290,7 @@ export async function GET(req: NextRequest) {
       prevQtyBom += Math.abs(qb);
       prevQtyDeviasi += Math.abs(qd);
       prevNominalDeviasi += Math.abs(nd);
-      prevByItemId.set(r.itemId, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
+      prevByItemId.set(`${r.itemId}|${r.akunPenyesuaian ?? ''}`, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
     }
     // Previous sales via Metric Engine MODE
     const prevSalesMap = computeSalesModePerOutlet(
@@ -401,7 +422,9 @@ export async function GET(req: NextRequest) {
 
     const itemBreakdown = currentRecs.map(r => {
       const itemId = r.itemId;
-      const prev = prevByItemId.get(itemId);
+      // FIX (BUG-1-4): Lookup prev record by (itemId, akunPenyesuaian) so
+      //   multi-akun items get the matching-akun prev data.
+      const prev = prevByItemId.get(`${itemId}|${r.akunPenyesuaian ?? ''}`);
       const qtyBom = toNum(r.qtyBom);
       const qtyDeviasi = toNum(r.qtyDeviasi);
       const pctDevBom = toNum(r.pctQtyDeviasiToBom);

@@ -9,6 +9,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
   History, GitBranch, Calendar, Utensils,
@@ -81,11 +82,11 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
                 <TableRow
                   key={`${it.outletCode}-${it.itemName}-${i}`}
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => {
+                  {...clickableRowProps(() => {
                     setScorecardOutlet(it.outletCode);
                     setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
                     setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
-                  }}
+                  })}
                 >
                   <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
@@ -253,7 +254,7 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
               <ComposedChart data={multi} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="period" fontSize={11} />
-                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString()} fontSize={11} />
+                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString()} fontSize={11} />
                 <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} />
                 <Tooltip
                   content={({ active, payload, label }: { active?: boolean; payload?: TipPayload; label?: string }) =>
