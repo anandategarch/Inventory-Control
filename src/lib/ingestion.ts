@@ -135,12 +135,22 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
     }
     try {
       const ext = path.extname(filePath).toLowerCase();
-      // Support manual rename: if body.manualFileName is provided, use it instead
-      // of the basename. This lets users override "Loading Google Sheet.csv" with
-      // "JULI 2026.xlsx" when importing from Google Drive/Sheets.
-      const fileName = body.manualFileName && typeof body.manualFileName === 'string' && body.manualFileName.trim()
-        ? body.manualFileName.trim()
-        : path.basename(filePath);
+      // Support manual rename: if body.manualFileName is provided, sanitize + validate
+      // it before use (defense-in-depth — the API route should have validated already,
+      // but processIngestion may be called from other paths in the future).
+      let fileName = path.basename(filePath);
+      if (body.manualFileName && typeof body.manualFileName === 'string' && body.manualFileName.trim()) {
+        // Inline sanitize (avoid circular import with @/lib/filename which imports from excel.ts)
+        const sanitized = String(body.manualFileName)
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+          .replace(/^\.+/, '')
+          .trim();
+        if (sanitized) {
+          // Ensure extension
+          const hasExt = /\.(xlsx|csv)$/i.test(sanitized);
+          fileName = hasExt ? sanitized : `${sanitized}.xlsx`;
+        }
+      }
 
       // P1-4 fix: skip hashFile if already provided (avoid double-read)
       const fileHash = body.precomputedHash || await hashFile(filePath);

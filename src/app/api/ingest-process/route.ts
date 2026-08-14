@@ -10,6 +10,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
+import { validateManualFileName } from '@/lib/filename';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { summarizeDQ } from '@/engine/validator';
 import { processRowsForImport } from '@/lib/ingestion';
@@ -103,42 +104,22 @@ export async function POST(req: NextRequest) {
 
     // ============================================================
     // Manual rename support (user override for "Loading Google Sheet" etc.)
-    // If manualFileName is provided and non-empty, it takes precedence over
-    // rawFileName. We sanitize it (strip path traversal chars) and validate
-    // that it contains parseable month info (e.g., "MEI 2026.xlsx").
+    // Uses shared validateManualFileName helper from @/lib/filename for
+    // consistency with /api/import-drive (AUDIT-RENAME-2,3,4,9 fix).
     // When manual mode is active, the auto-extract-from-Excel-data fallback
     // is SKIPPED — user explicitly chose this name.
     // ============================================================
-    const sanitizeFileName = (name: string): string => {
-      // Strip path traversal and filesystem-unsafe chars
-      let cleaned = name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim();
-      // Remove any leading dots (hidden files / ../ traversal leftover)
-      cleaned = cleaned.replace(/^\.+/, '').trim();
-      return cleaned;
-    };
-
     let effectiveRawFileName = rawFileName;
     let manualMode = false;
     if (manualFileName && typeof manualFileName === 'string' && manualFileName.trim()) {
-      const cleaned = sanitizeFileName(manualFileName);
-      if (!cleaned) {
+      const result = validateManualFileName(manualFileName);
+      if (!result.ok) {
         return NextResponse.json(
-          { success: false, error: 'manualFileName kosong setelah sanitisasi.' },
+          { success: false, error: result.error || 'manualFileName tidak valid.' },
           { status: 400 }
         );
       }
-      // Ensure extension exists — default to .xlsx if missing
-      const hasExt = /\.(xlsx|csv)$/i.test(cleaned);
-      const withExt = hasExt ? cleaned : `${cleaned}.xlsx`;
-      // Validate that the manual name contains parseable month info
-      const parsedManual = parseMonthFromFilename(withExt);
-      if (!parsedManual) {
-        return NextResponse.json(
-          { success: false, error: `Nama manual "${withExt}" tidak mengandung info bulan. Format: "BULAN TAHUN.xlsx" contoh: "MEI 2026.xlsx".` },
-          { status: 400 }
-        );
-      }
-      effectiveRawFileName = withExt;
+      effectiveRawFileName = result.cleaned;
       manualMode = true;
       console.log(`[ingest-process] manual rename: "${rawFileName}" → "${effectiveRawFileName}"`);
     }

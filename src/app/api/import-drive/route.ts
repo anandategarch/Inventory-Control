@@ -8,6 +8,7 @@ import { importFromDriveUrl } from '@/lib/drive-import';
 import { processIngestion } from '@/lib/ingestion';
 import { safeParse, importDriveBodySchema } from '@/lib/validation';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { resolveManualFileName } from '@/lib/filename';
 import path from 'path';
 
 export const dynamic = 'force-dynamic';
@@ -37,12 +38,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `Invalid input: ${validationError}` }, { status: 400 });
     }
     const url = validatedBody.url;
-    // Optional manual filename override — when provided, takes precedence over the
-    // downloaded filename (fixes "Loading Google Sheet" issue). User types this in
-    // the rename field before clicking "Import Now".
-    const manualFileName: string | undefined = typeof body.manualFileName === 'string' && body.manualFileName.trim()
-      ? body.manualFileName.trim()
-      : undefined;
+    // Resolve manual filename via shared validator (sanitize + format check + extension).
+    // Throws on invalid input → caught by outer try/catch → 400 response.
+    let manualFileName: string | null = null;
+    try {
+      manualFileName = resolveManualFileName(validatedBody.manualFileName);
+    } catch (e: any) {
+      return NextResponse.json(
+        { success: false, error: e?.message || 'manualFileName tidak valid.' },
+        { status: 400 }
+      );
+    }
 
     // SSRF protection
     const ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];
@@ -83,9 +89,20 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
+    // AUDIT-RENAME-1 fix: manualFileName + folder import (multiple files) → reject.
+    // Applying the same manual name to all files in a folder would cause the
+    // monthLabel-based dedup cascade to delete prior files' records (silent data loss).
+    // manualFileName is ONLY valid for single-file imports (File Drive or Google Sheets tab).
+    if (manualFileName && successful.length > 1) {
+      return NextResponse.json({
+        success: false,
+        error: `Rename Manual hanya untuk import 1 file (tab "File Drive" atau "Google Sheets"). Folder import mengunduh ${successful.length} file — nama manual tidak bisa diterapkan ke semua. Hapus nama manual atau gunakan tab File/Sheets.`,
+      }, { status: 400 });
+    }
+
     // Step 2: Ingest each file (optimized)
-    // If manualFileName is provided, pass it through so processIngestion uses it
-    // instead of the basename-derived filename (fixes "Loading Google Sheet").
+    // If manualFileName is provided (single-file only — guarded above), pass it through
+    // so processIngestion uses it instead of the basename-derived filename.
     const ingestResults: any[] = [];
     for (const file of successful) {
       const result = await processIngestion({

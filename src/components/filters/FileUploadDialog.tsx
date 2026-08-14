@@ -55,7 +55,13 @@ interface DetectResult {
 
 // Client-side manual filename validation.
 // Must contain an Indonesian month name + 2-4 digit year, and end with .xlsx/.csv.
-const MONTH_NAMES = ['januari','februari','maret','april','mei','juni','juli','agustus','september','oktober','november','desember','jan','feb','mar','apr','jun','jul','agu','aug','sep','okt','nov','des'];
+// AUDIT-RENAME-9 fix: aligned with server-side MONTH_MAP in src/lib/excel.ts
+// (server also accepts: may, agt, pebruari, okteber, nopember)
+const MONTH_NAMES = [
+  'januari','jan','februari','pebruari','feb','maret','mar','april','apr',
+  'mei','may','juni','jun','juli','jul','agustus','agu','agt',
+  'september','sep','oktober','okt','okteber','november','nopember','nov','desember','des',
+];
 
 function validateManualFileName(raw: string): { ok: boolean; error?: string; cleaned?: string } {
   const trimmed = raw.trim();

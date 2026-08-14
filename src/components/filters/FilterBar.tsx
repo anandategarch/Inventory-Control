@@ -7,7 +7,7 @@ import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, 
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -36,9 +36,27 @@ export function FilterBar() {
   // Manual rename for Drive import — overrides downloaded filename (fixes "Loading Google Sheet")
   const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
   const [driveManualName, setDriveManualName] = useState('');
+  // Active Drive import tab: 'folder' | 'file' | 'sheets' — rename only allowed for file/sheets
+  const [driveTab, setDriveTab] = useState<string>('folder');
   // Local file upload dialog (alternative to Drive import)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const queryClient = useQueryClient();
+
+  // Client-side validation for Drive manual filename (mirrors server-side validateManualFileName)
+  const driveManualValid = useMemo(() => {
+    if (driveRenameMode !== 'manual') return true;
+    const trimmed = driveManualName.trim();
+    if (!trimmed) return false;
+    // Must contain an Indonesian month name + 2-4 digit year
+    const monthNames = ['januari','februari','maret','april','mei','juni','juli','agustus','september','oktober','november','desember','jan','feb','mar','apr','jun','jul','agu','sep','okt','nov','des'];
+    const lower = trimmed.toLowerCase();
+    const hasMonth = monthNames.some(m => lower.includes(m));
+    const hasYear = /\b(20\d{2}|\d{2})\b/.test(lower);
+    return hasMonth && hasYear;
+  }, [driveRenameMode, driveManualName]);
+
+  // Rename is only applicable to single-file imports (file/sheets tabs), NOT folder
+  const renameAllowedForTab = driveTab === 'file' || driveTab === 'sheets';
 
   // Settings dialog state
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -388,7 +406,7 @@ export function FilterBar() {
                 </div>
               )}
               <div className={`space-y-3 py-2 ${driveImporting ? 'pointer-events-none opacity-50' : ''}`}>
-                <Tabs defaultValue="folder">
+                <Tabs value={driveTab} onValueChange={setDriveTab}>
                   <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="folder" className="text-xs">
                       <Folder className="h-3.5 w-3.5 mr-1.5" /> Folder
@@ -455,61 +473,74 @@ export function FilterBar() {
                 </Tabs>
               </div>
 
-              {/* Rename option — fixes "Loading Google Sheet" filename issue */}
-              <div className="border rounded-lg p-2.5 space-y-2 bg-muted/20">
-                <div className="flex items-center gap-2 text-xs font-semibold">
-                  <Pencil className="h-3.5 w-3.5" />
-                  Nama File
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    disabled={driveImporting}
-                    onClick={() => setDriveRenameMode('auto')}
-                    className={`text-left p-2 rounded-lg border text-xs transition-colors ${
-                      driveRenameMode === 'auto'
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                        : 'border-muted hover:border-muted-foreground/40'
-                    } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="font-medium">Auto-Detect</div>
-                    <p className="text-muted-foreground mt-0.5">Pakai nama dari Google Drive</p>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={driveImporting}
-                    onClick={() => setDriveRenameMode('manual')}
-                    className={`text-left p-2 rounded-lg border text-xs transition-colors ${
-                      driveRenameMode === 'manual'
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                        : 'border-muted hover:border-muted-foreground/40'
-                    } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="font-medium">Rename Manual</div>
-                    <p className="text-muted-foreground mt-0.5">Ketik nama sendiri</p>
-                  </button>
-                </div>
-                {driveRenameMode === 'manual' && (
-                  <div className="space-y-1">
-                    <Input
-                      value={driveManualName}
-                      onChange={(e) => setDriveManualName(e.target.value)}
-                      placeholder="JULI 2026.xlsx"
-                      disabled={driveImporting}
-                      className="font-mono text-xs h-8"
-                      autoComplete="off"
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      Format: BULAN TAHUN.xlsx (contoh: MEI 2026.xlsx). Pakai ini kalau nama Google Sheets &quot;Loading Google Sheet&quot;.
-                    </p>
+              {/* Rename option — fixes "Loading Google Sheet" filename issue.
+                  Only shown for single-file tabs (file/sheets), NOT folder. */}
+              {renameAllowedForTab ? (
+                <div className="border rounded-lg p-2.5 space-y-2 bg-muted/20">
+                  <div className="flex items-center gap-2 text-xs font-semibold">
+                    <Pencil className="h-3.5 w-3.5" />
+                    Nama File
                   </div>
-                )}
-              </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={driveImporting}
+                      onClick={() => setDriveRenameMode('auto')}
+                      className={`text-left p-2 rounded-lg border text-xs transition-colors ${
+                        driveRenameMode === 'auto'
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                          : 'border-muted hover:border-muted-foreground/40'
+                      } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-medium">Auto-Detect</div>
+                      <p className="text-muted-foreground mt-0.5">Pakai nama dari Google Drive</p>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={driveImporting}
+                      onClick={() => setDriveRenameMode('manual')}
+                      className={`text-left p-2 rounded-lg border text-xs transition-colors ${
+                        driveRenameMode === 'manual'
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                          : 'border-muted hover:border-muted-foreground/40'
+                      } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-medium">Rename Manual</div>
+                      <p className="text-muted-foreground mt-0.5">Ketik nama sendiri</p>
+                    </button>
+                  </div>
+                  {driveRenameMode === 'manual' && (
+                    <div className="space-y-1">
+                      <Input
+                        value={driveManualName}
+                        onChange={(e) => setDriveManualName(e.target.value)}
+                        placeholder="JULI 2026.xlsx"
+                        disabled={driveImporting}
+                        className="font-mono text-xs h-8"
+                        autoComplete="off"
+                        aria-label="Nama file manual"
+                      />
+                      <p className={`text-[11px] ${driveManualValid ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {driveManualValid
+                          ? '✓ Format OK — nama akan dipakai untuk import'
+                          : '⚠ Format: BULAN TAHUN.xlsx (contoh: MEI 2026.xlsx)'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="border rounded-lg p-2.5 bg-muted/20 text-[11px] text-muted-foreground">
+                  💡 Rename Manual hanya tersedia untuk tab <strong>File Drive</strong> atau <strong>Google Sheets</strong>. Folder import memproses banyak file sekaligus.
+                </div>
+              )}
               <DialogFooter>
                 <Button variant="outline" onClick={handleCloseDialog} disabled={driveImporting}>
                   Cancel
                 </Button>
-                <Button onClick={handleDriveImport} disabled={driveImporting || !driveUrl.trim()}>
+                <Button
+                  onClick={handleDriveImport}
+                  disabled={driveImporting || !driveUrl.trim() || !driveManualValid}
+                >
                   {driveImporting ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />

@@ -7,18 +7,25 @@ import { z } from 'zod';
 
 // ============================================================
 //  /api/ingest — POST body
+//  manualFileName: optional override for the basename-derived filename
+//  (fixes "Loading Google Sheet" when importing from Google Drive/Sheets)
 // ============================================================
 export const ingestBodySchema = z.object({
   filePath: z.string().max(500).optional(),
   dir: z.string().max(500).optional(),
   fileName: z.string().max(255).optional(),
+  manualFileName: z.string().max(255).optional(),
+  precomputedHash: z.string().max(128).optional(),
 }).strict().optional().default({});
 
 // ============================================================
 //  /api/import-drive — POST body
+//  manualFileName: optional override — when set, server uses this name
+//  instead of the downloaded filename (fixes "Loading Google Sheet").
 // ============================================================
 export const importDriveBodySchema = z.object({
   url: z.string().url().max(2000),
+  manualFileName: z.string().max(255).optional(),
 }).strict();
 
 // ============================================================
