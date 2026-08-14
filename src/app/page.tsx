@@ -183,12 +183,19 @@ export default function DashboardPage() {
     if (!analysis.data) return;
     setIsExporting(true);
     try {
-      const res = await fetch('/api/export-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: analysis.data }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const params = new URLSearchParams({ month: monthLabel || '', week: currentWeek || '' });
+      if (comparisonWeek) params.set('compareWeek', comparisonWeek);
+      if (comparisonMonth) params.set('compareMonth', comparisonMonth);
+      if (area) params.set('area', area);
+      if (outletCode) params.set('outlet', outletCode);
+      if (itemName) params.set('item', itemName);
+      if (pic) params.set('pic', pic);
+
+      const res = await fetch(`/api/export-report?${params.toString()}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
