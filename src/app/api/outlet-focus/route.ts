@@ -265,7 +265,7 @@ export async function GET(req: NextRequest) {
         ),
         ranked_sales AS (
           SELECT "monthLabel", "weekLabel", "outletId", "nominalSales",
-            ROW_NUMBER() OVER (PARTITION BY "monthLabel", "weekLabel", "outletId" ORDER BY cnt DESC, "nominalSales" DESC) as rn
+            ROW_NUMBER() OVER (PARTITION BY "monthLabel", "weekLabel", "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
           FROM sales_counts
         ),
         sales_per_period AS (

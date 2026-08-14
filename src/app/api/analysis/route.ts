@@ -359,7 +359,11 @@ export async function GET(req: NextRequest) {
       const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
       const prev = prevByOutletItem.get(key) ?? null;
       // Phase 4: historicalByOutletItem now contains precomputed stats (mean + stdDev)
-      const historicalStats = historicalByOutletItem.get(key) ?? null;
+      // FIX: historicalByOutletItem map key is outletId|itemId (NOT outletId|itemId|akun
+      // — historical stats are per outlet+item, not per akun). Previous code used the
+      // same key as prevByOutletItem (which includes akun), causing lookup to ALWAYS
+      // return null → zScore always null → all HISTORICAL_* rules never fired.
+      const historicalStats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`) ?? null;
       const ctx = buildRuleContext(curr, prev, historicalStats, thresholds);
       const flags = evaluateRules(ctx);
 

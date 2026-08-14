@@ -187,7 +187,12 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ['data-mgmt'] });
     queryClient.invalidateQueries({ queryKey: ['status'] });
+    // FIX: Invalidate ALL data-dependent queries, not just analysis
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+    queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
   }
 
   // Wrap mutations to invalidate after settle

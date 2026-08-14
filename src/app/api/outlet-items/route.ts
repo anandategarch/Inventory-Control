@@ -158,7 +158,7 @@ export async function GET(req: NextRequest) {
           AND ir."weekLabel" = ${week}
       `,
       // Previous period records
-      prevWeek ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
+      prevWeek && prevMonth ? db.$queryRaw<Array<{ itemId: number; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
         SELECT ir."itemId", ir."qtyDeviasi", ir."nominalDeviasi", ir."qtyBom", ir."pctQtyDeviasiToBom", ir."nominalSales"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id

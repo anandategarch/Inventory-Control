@@ -339,7 +339,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       setStatusLog(prev => [...prev, `✅ Total: ${totalInserted.toLocaleString()} rows inserted`]);
 
       queryClient.invalidateQueries({ queryKey: ['status'] });
+      // FIX: Invalidate ALL data-dependent queries after upload
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
+      queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+      queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+      queryClient.invalidateQueries({ queryKey: ['item-history'] });
+      queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
 
       toast({
         title: '✅ Import berhasil',

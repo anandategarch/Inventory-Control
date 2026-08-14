@@ -95,7 +95,12 @@ export function FilterBar() {
         const errors = d.results.filter((r: any) => r.status === 'ERROR');
         setIngestMsg(`Ingested: ${ingested.length}, Skipped: ${skipped.length}, Errors: ${errors.length}`);
         queryClient.invalidateQueries({ queryKey: ['status'] });
+        // FIX: Invalidate ALL data-dependent queries after ingest
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+        queryClient.invalidateQueries({ queryKey: ['item-history'] });
+        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       } else {
         setIngestMsg(`Failed: ${d.message || d.error}`);
       }
@@ -148,7 +153,12 @@ export function FilterBar() {
       setDriveResult(d);
       if (d.success) {
         queryClient.invalidateQueries({ queryKey: ['status'] });
+        // FIX: Invalidate ALL data-dependent queries after import-drive
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+        queryClient.invalidateQueries({ queryKey: ['item-history'] });
+        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       }
     } catch (e: any) {
       clearInterval(stepInterval);

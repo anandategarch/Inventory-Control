@@ -194,7 +194,12 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
 
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ['status'] });
+    // FIX: Invalidate ALL data-dependent queries — PIC change affects filters
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+    queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
+    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
   }
 
   // ---------- Handlers ----------
