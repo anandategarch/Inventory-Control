@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
@@ -41,10 +41,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
   TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
   History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
+  FileDown,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -173,6 +176,36 @@ export default function DashboardPage() {
     pic,
   });
 
+  const { toast } = useToast();
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (!analysis.data) return;
+    setIsExporting(true);
+    try {
+      const res = await fetch('/api/export-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: analysis.data }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_Analisis_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: '✅ Export berhasil', description: 'File Word telah diunduh' });
+    } catch (e: any) {
+      toast({ title: '❌ Export gagal', description: e?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const isLoading = analysis.isLoading || analysis.isFetching;
   const statusLoaded = status !== undefined;
   const hasData = statusLoaded && Boolean(status?.stats?.totalRecords && status.stats.totalRecords > 0);
@@ -210,6 +243,21 @@ export default function DashboardPage() {
               <Badge variant="default" className="text-[11px] hidden sm:inline-flex">
                 <Brain className="h-3 w-3 mr-1" /> Narasi AI
               </Badge>
+            )}
+            {analysis.data && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                disabled={isExporting}
+                onClick={handleExport}
+              >
+                {isExporting ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Exporting...</>
+                ) : (
+                  <><FileDown className="h-3.5 w-3.5" /> Export Word</>
+                )}
+              </Button>
             )}
           </div>
         </div>
