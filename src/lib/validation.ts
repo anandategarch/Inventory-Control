@@ -8,7 +8,7 @@ import { z } from 'zod';
 // ============================================================
 //  /api/ingest — POST body
 //  manualFileName: optional override for the basename-derived filename
-//  (fixes "Loading Google Sheet" when importing from Google Drive/Sheets)
+//  numberLocale: optional — 'auto' | 'id' | 'us' for CSV number parsing
 // ============================================================
 export const ingestBodySchema = z.object({
   filePath: z.string().max(500).optional(),
@@ -16,16 +16,19 @@ export const ingestBodySchema = z.object({
   fileName: z.string().max(255).optional(),
   manualFileName: z.string().max(255).optional(),
   precomputedHash: z.string().max(128).optional(),
+  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
 }).strict().optional().default({});
 
 // ============================================================
 //  /api/import-drive — POST body
 //  manualFileName: optional override — when set, server uses this name
 //  instead of the downloaded filename (fixes "Loading Google Sheet").
+//  numberLocale: optional — 'auto' | 'id' | 'us' (default 'us' for Google exports)
 // ============================================================
 export const importDriveBodySchema = z.object({
   url: z.string().url().max(2000),
   manualFileName: z.string().max(255).optional(),
+  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
 }).strict();
 
 // ============================================================

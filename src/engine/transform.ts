@@ -8,18 +8,31 @@ import { parseOutletCode } from '@/lib/outlet';
 import { computeDirection } from '@/lib/metrics';
 
 // ============================================================
-//  toNum — robust number parser (Indonesian / accounting / percent formats)
-//  Handles: "12.345,67", "(310)", "Rp 269", "5%", "-1.234,56"
-//  Exported so validator.ts can reuse (avoid false-positive INVALID_NUMBER)
+//  Number locale hint for parsing string values from CSV/text.
+//  - 'id': Indonesian format — dot=thousands, comma=decimal ("1.234,56")
+//  - 'us': US format — comma=thousands, dot=decimal ("1,234.56")
+//  - 'auto' (default): heuristic — tries to guess based on separator positions
 // ============================================================
-export function toNum(v: unknown): number | null {
+export type NumberLocale = 'auto' | 'id' | 'us';
+
+// ============================================================
+//  toNum — robust number parser (Indonesian / US / accounting / percent)
+//  Handles: "12.345,67", "12,345.67", "(310)", "Rp 269", "5%", "-1.234,56"
+//  Exported so validator.ts can reuse (avoid false-positive INVALID_NUMBER)
+//
+//  locale param:
+//    'id'  → strict Indonesian: dot=thousands, comma=decimal
+//    'us'  → strict US: comma=thousands, dot=decimal
+//    'auto' (default) → heuristic (best-effort, may misinterpret "1.234")
+// ============================================================
+export function toNum(v: unknown, locale: NumberLocale = 'auto'): number | null {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return isNaN(v) ? null : v;
 
   let s = String(v).trim();
   if (s === '') return null;
 
-  // ===== Handle Indonesian / accounting number formats =====
+  // ===== Common preprocessing (applies to all locales) =====
 
   // 1. Remove "Rp" / "IDR" anywhere (Indonesian Rupiah): "Rp269", "-Rp269", "Rp 269"
   s = s.replace(/Rp/i, '').replace(/IDR/i, '').trim();
@@ -38,75 +51,11 @@ export function toNum(v: unknown): number | null {
     s = s.slice(0, -1).trim();
   }
 
-  // 4. Remove all spaces (e.g., "- 310 " → "-310", "1 345" → "1345")
+  // 4. Remove all spaces
   s = s.replace(/\s+/g, '');
 
-  // 5. Handle comma + dot separators (Indonesian/European/US formats)
-  //    BUG FIX #006: Handle "1.234,56" (dot=thousands, comma=decimal) correctly
-  //    Strategy:
-  //      a. If BOTH dot and comma present:
-  //         - Last separator is decimal, other is thousands
-  //         - "1.234,56" → comma=decimal, dot=thousands → "1234.56"
-  //         - "1,234.56" → dot=decimal, comma=thousands → "1234.56"
-  //      b. If only comma:
-  //         - 3 digits after → thousands: "1,345" → "1345"
-  //         - 1-2 digits after → decimal: "1,5" → "1.5"
-  //      c. If only dot:
-  //         - 3 digits after AND number > 9999 → thousands: "1.234" → "1234"
-  //         - Otherwise → decimal: "1.5" → "1.5"
-  if (s.includes(',') && s.includes('.')) {
-    // Both present — determine which is decimal (last one)
-    const lastComma = s.lastIndexOf(',');
-    const lastDot = s.lastIndexOf('.');
-    if (lastComma > lastDot) {
-      // Comma is decimal, dot is thousands: "1.234,56" → "1234.56"
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else {
-      // Dot is decimal, comma is thousands: "1,234.56" → "1234.56"
-      s = s.replace(/,/g, '');
-    }
-  } else if (s.includes(',')) {
-    const lastComma = s.lastIndexOf(',');
-    const afterComma = s.slice(lastComma + 1);
-    if (afterComma.length === 3 && /^\d+$/.test(afterComma)) {
-      // Thousands separator: "1,345" → "1345"
-      s = s.replace(/,/g, '');
-    } else if (afterComma.length >= 1 && afterComma.length <= 2 && /^\d+$/.test(afterComma)) {
-      // Decimal separator: "1,5" → "1.5"
-      s = s.replace(/,/g, '.');
-    } else {
-      s = s.replace(/,/g, '');
-    }
-  } else if (s.includes('.')) {
-    // Bug 1 fix: handle dot-only format (Indonesian thousands with multiple dots)
-    // The comment described this case but the code was missing!
-    // Strategy:
-    //   - Multiple dots → all are thousands separators: "1.234.567" → "1234567"
-    //   - Single dot with exactly 3 digits after AND value > 9999 → thousands: "1.234" → "1234"
-    //     (but "12.345" where 12 is the integer part → also thousands → "12345")
-    //   - Single dot with 1-2 digits after → decimal: "1.5" → "1.5"
-    //   - Single dot with 3 digits after but integer part ≤ 3 digits → ambiguous, treat as decimal
-    const dots = s.split('.');
-    if (dots.length > 2) {
-      // Multiple dots = Indonesian thousands: "1.234.567" → "1234567"
-      s = s.replace(/\./g, '');
-    } else if (dots.length === 2) {
-      const afterDot = dots[1];
-      const beforeDot = dots[0];
-      if (afterDot.length === 3 && /^\d+$/.test(afterDot) && /^\d+$/.test(beforeDot)) {
-        // Single dot with 3 digits after — could be thousands or decimal
-        // Heuristic: if the integer part is 1-2 digits, treat as thousands
-        // "1.234" → 1234 (thousands), "12.345" → 12345 (thousands)
-        // "123.456" → 123.456 (decimal, since 123 > 99)
-        // This matches Indonesian format where "1.234" = one thousand two hundred thirty-four
-        if (beforeDot.length <= 2) {
-          s = s.replace(/\./g, '');
-        }
-        // else: leave as decimal (e.g., "123.456" stays as 123.456)
-      }
-      // else: leave as decimal (e.g., "1.5", "1.50")
-    }
-  }
+  // ===== Locale-specific separator handling =====
+  s = normalizeSeparators(s, locale);
 
   // 6. Parse the cleaned number
   const n = Number(s);
@@ -119,13 +68,98 @@ export function toNum(v: unknown): number | null {
   return isPercent ? result / 100 : result;
 }
 
+// ============================================================
+//  normalizeSeparators — convert locale-specific number format to JS-parseable string
+//  Returns a string with only digits, at most one '.', and optional leading '-'.
+// ============================================================
+function normalizeSeparators(s: string, locale: NumberLocale): string {
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+
+  if (locale === 'id') {
+    // Indonesian: dot=thousands, comma=decimal
+    // "1.234.567,89" → "1234567.89", "1.234" → "1234", "1,5" → "1.5"
+    if (hasComma && hasDot) {
+      return s.replace(/\./g, '').replace(',', '.');
+    }
+    if (hasComma) {
+      return s.replace(/,/g, '.');
+    }
+    if (hasDot) {
+      // All dots are thousands separators
+      return s.replace(/\./g, '');
+    }
+    return s;
+  }
+
+  if (locale === 'us') {
+    // US: comma=thousands, dot=decimal
+    // "1,234,567.89" → "1234567.89", "1,234" → "1234", "1.5" → "1.5"
+    if (hasComma) {
+      // Remove all commas (thousands); keep dot as decimal
+      return s.replace(/,/g, '');
+    }
+    // Dot is decimal — leave as-is
+    return s;
+  }
+
+  // ===== 'auto' — heuristic (best-effort) =====
+  // This is the legacy behavior. May misinterpret "1.234" (could be 1.234 or 1234).
+  // Users should prefer explicit locale ('id' or 'us') for CSV imports.
+  if (hasComma && hasDot) {
+    // Both present — last separator is decimal
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      // Comma is decimal, dot is thousands: "1.234,56" → "1234.56"
+      return s.replace(/\./g, '').replace(',', '.');
+    } else {
+      // Dot is decimal, comma is thousands: "1,234.56" → "1234.56"
+      return s.replace(/,/g, '');
+    }
+  }
+  if (hasComma) {
+    const lastComma = s.lastIndexOf(',');
+    const afterComma = s.slice(lastComma + 1);
+    if (afterComma.length === 3 && /^\d+$/.test(afterComma)) {
+      // Thousands separator: "1,345" → "1345"
+      return s.replace(/,/g, '');
+    }
+    if (afterComma.length >= 1 && afterComma.length <= 2 && /^\d+$/.test(afterComma)) {
+      // Decimal separator: "1,5" → "1.5"
+      return s.replace(/,/g, '.');
+    }
+    return s.replace(/,/g, '');
+  }
+  if (hasDot) {
+    const dots = s.split('.');
+    if (dots.length > 2) {
+      // Multiple dots = thousands: "1.234.567" → "1234567"
+      return s.replace(/\./g, '');
+    }
+    if (dots.length === 2) {
+      const afterDot = dots[1];
+      const beforeDot = dots[0];
+      if (afterDot.length === 3 && /^\d+$/.test(afterDot) && /^\d+$/.test(beforeDot)) {
+        // Single dot with 3 digits after — ambiguous
+        // Heuristic: integer part 1-2 digits → thousands ("1.234" → 1234)
+        //            integer part 3+ digits → decimal ("123.456" → 123.456)
+        if (beforeDot.length <= 2) {
+          return s.replace(/\./g, '');
+        }
+      }
+    }
+  }
+  return s;
+}
+
 function toStr(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null;
   return String(v).trim();
 }
 
 // Parse tolerance: numeric value OR sentinel "BELUM ADA TOLERANSI"
-function parseTolerance(raw: unknown): { value: number | null; rawStr: string | null } {
+function parseTolerance(raw: unknown, locale: NumberLocale = 'auto'): { value: number | null; rawStr: string | null } {
   if (raw === null || raw === undefined || raw === '') return { value: null, rawStr: null };
   if (typeof raw === 'number') return { value: raw, rawStr: String(raw) };
   const s = String(raw).trim();
@@ -136,13 +170,13 @@ function parseTolerance(raw: unknown): { value: number | null; rawStr: string | 
     return { value: null, rawStr: s };
   }
   // Use robust toNum (handles "5%", "5,5", "5.5", etc.)
-  let n = toNum(s);
+  let n = toNum(s, locale);
   // FIX (BUG 4): If toNum failed (mixed string like "5% BELUM ADA TOLERANSI"),
   // try extracting the leading numeric token before falling back to null.
   if (n === null) {
     const leadMatch = s.match(/^\s*([0-9.,%()RpIDR\s-]+)/i);
     if (leadMatch) {
-      n = toNum(leadMatch[1]);
+      n = toNum(leadMatch[1], locale);
     }
   }
   return { value: n, rawStr: s };
@@ -152,40 +186,41 @@ export function normalizeRow(
   row: Record<string, unknown>,
   sourceFile: string,
   rowNumber: number,
-  monthLabel: string
+  monthLabel: string,
+  locale: NumberLocale = 'auto',
 ): NormalizedRecord {
-  const tol = parseTolerance(row.toleranceRaw);
+  const tol = parseTolerance(row.toleranceRaw, locale);
   return {
     akunPenyesuaian: toStr(row.akunPenyesuaian),
     status: toStr(row.status),
     resto: String(row.resto ?? '').trim(),
     namaBahan: String(row.namaBahan ?? '').trim(),
     satuan: toStr(row.satuan),
-    qtyBom: toNum(row.qtyBom),
-    qtyCom: toNum(row.qtyCom),
-    qtyDeviasi: toNum(row.qtyDeviasi),
-    qtyWaste: toNum(row.qtyWaste),
-    qtySusut: toNum(row.qtySusut),
-    qtyTrial: toNum(row.qtyTrial),
-    qtyLossSurplus: toNum(row.qtyLossSurplus),
-    nominalDeviasi: toNum(row.nominalDeviasi),
-    nominalWaste: toNum(row.nominalWaste),
-    nominalSusut: toNum(row.nominalSusut),
-    nominalTrial: toNum(row.nominalTrial),
-    nominalLossSurplus: toNum(row.nominalLossSurplus),
-    qtyWasteSusut: toNum(row.qtyWasteSusut),
-    pctWasteSusut: toNum(row.pctWasteSusut),
+    qtyBom: toNum(row.qtyBom, locale),
+    qtyCom: toNum(row.qtyCom, locale),
+    qtyDeviasi: toNum(row.qtyDeviasi, locale),
+    qtyWaste: toNum(row.qtyWaste, locale),
+    qtySusut: toNum(row.qtySusut, locale),
+    qtyTrial: toNum(row.qtyTrial, locale),
+    qtyLossSurplus: toNum(row.qtyLossSurplus, locale),
+    nominalDeviasi: toNum(row.nominalDeviasi, locale),
+    nominalWaste: toNum(row.nominalWaste, locale),
+    nominalSusut: toNum(row.nominalSusut, locale),
+    nominalTrial: toNum(row.nominalTrial, locale),
+    nominalLossSurplus: toNum(row.nominalLossSurplus, locale),
+    qtyWasteSusut: toNum(row.qtyWasteSusut, locale),
+    pctWasteSusut: toNum(row.pctWasteSusut, locale),
     tolerancePct: tol.value,
     toleranceRaw: tol.rawStr,
-    pctQtyDeviasiToBom: toNum(row.pctQtyDeviasiToBom),
-    pctQtyWasteToBom: toNum(row.pctQtyWasteToBom),
-    pctQtySusutToBom: toNum(row.pctQtySusutToBom),
-    pctQtyTrialToBom: toNum(row.pctQtyTrialToBom),
-    pctQtyLossToBom: toNum(row.pctQtyLossToBom),
+    pctQtyDeviasiToBom: toNum(row.pctQtyDeviasiToBom, locale),
+    pctQtyWasteToBom: toNum(row.pctQtyWasteToBom, locale),
+    pctQtySusutToBom: toNum(row.pctQtySusutToBom, locale),
+    pctQtyTrialToBom: toNum(row.pctQtyTrialToBom, locale),
+    pctQtyLossToBom: toNum(row.pctQtyLossToBom, locale),
     area: String(row.area ?? '').trim(),
     bulan: String(row.bulan ?? '').trim(),
     bulan2: toStr(row.bulan2),
-    nominalSales: toNum(row.nominalSales),
+    nominalSales: toNum(row.nominalSales, locale),
     weekLabel: String(row.weekLabel ?? '').trim().toUpperCase(),
     monthLabel,
     sourceFile,

@@ -263,8 +263,8 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
           }
         }
 
-        // Normalize
-        const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
+        // Normalize — pass numberLocale from body (default 'auto')
+        const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, body.numberLocale || 'auto');
         const derived = deriveRecord(n);
 
         // Ensure week exists (only 3-4 unique weeks per file)
@@ -466,6 +466,7 @@ export async function processRowsForImport(
   itemDbMap?: Map<string, { id: number; satuan: string | null }>,
   seenKeys?: Set<string>,
   fastMode?: boolean,
+  numberLocale?: 'auto' | 'id' | 'us',
 ): Promise<ProcessRowsResult> {
   const _outletDbMap = outletDbMap ?? new Map<string, number>();
   const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
@@ -494,7 +495,7 @@ export async function processRowsForImport(
       }
     }
 
-    const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);
+    const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, numberLocale || 'auto');
     const derived = deriveRecord(n);
 
     // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of

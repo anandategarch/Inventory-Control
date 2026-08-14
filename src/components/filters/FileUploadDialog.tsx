@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X, Pencil, ArrowRight, Wand2, Keyboard } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface WeekResult {
   weekLabel: string;
@@ -94,6 +95,8 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
   // Rename mode state
   const [renameMode, setRenameMode] = useState<'auto' | 'manual'>(renameModeDefault());
   const [manualFileName, setManualFileName] = useState('');
+  // Number locale for CSV parsing — default 'auto' (local files could be either)
+  const [numberLocale, setNumberLocale] = useState<'auto' | 'id' | 'us'>('auto');
   const manualValidation = useMemo(() => {
     if (renameMode !== 'manual') return { ok: true, cleaned: '' };
     return validateManualFileName(manualFileName);
@@ -118,6 +121,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setError(null);
     setRenameMode(renameModeDefault());
     setManualFileName('');
+    setNumberLocale('auto');
     setDetectData(null);
     fileMetaRef.current = { fileHash: '', fileSize: 0, ext: '' };
   }, []);
@@ -279,6 +283,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           fileHash,
           fileSize,
           ext,
+          numberLocale,
           ...manualPayload,
         }),
       });
@@ -390,6 +395,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
               fileSize,
               ext,
               weekLabel,
+              numberLocale,
               // Pass manualFileName through to import too, so server uses the same name
               ...(detectData.manualMode ? { manualFileName: fileName } : {}),
             }),
@@ -642,6 +648,26 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
                   ℹ️ Jika nama file adalah placeholder (mis. &quot;Loading Google Sheet&quot;), sistem otomatis extract bulan dari data Excel. Jika gagal, switch ke &quot;Rename Manual&quot;.
                 </p>
               )}
+
+              {/* Number format selector — for CSV file parsing */}
+              <div className="space-y-1.5 pt-1 border-t">
+                <Label htmlFor="upload-number-locale" className="text-xs font-semibold">
+                  Format Angka (untuk CSV)
+                </Label>
+                <Select value={numberLocale} onValueChange={(v) => setNumberLocale(v as 'auto' | 'id' | 'us')} disabled={isBusy}>
+                  <SelectTrigger id="upload-number-locale" className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto" className="text-sm">Auto-detect (heuristic)</SelectItem>
+                    <SelectItem value="id" className="text-sm">Indonesia: 1.234,56 (titik=ribuan)</SelectItem>
+                    <SelectItem value="us" className="text-sm">US: 1,234.56 (koma=ribuan)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  File .xlsx tidak terpengaruh (Excel sudah parse angka). Hanya relevan untuk .csv — pilih sesuai format angka di file.
+                </p>
+              </div>
             </div>
           )}
 

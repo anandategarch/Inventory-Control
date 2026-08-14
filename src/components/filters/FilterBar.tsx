@@ -36,6 +36,8 @@ export function FilterBar() {
   // Manual rename for Drive import — overrides downloaded filename (fixes "Loading Google Sheet")
   const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
   const [driveManualName, setDriveManualName] = useState('');
+  // Number locale for parsing CSV values — default 'us' (Google exports use US format)
+  const [driveNumberLocale, setDriveNumberLocale] = useState<'auto' | 'id' | 'us'>('us');
   // Active Drive import tab: 'folder' | 'file' | 'sheets' — rename only allowed for file/sheets
   const [driveTab, setDriveTab] = useState<string>('folder');
   // Local file upload dialog (alternative to Drive import)
@@ -164,6 +166,7 @@ export function FilterBar() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: driveUrl.trim(),
+          numberLocale: driveNumberLocale,
           // Pass manual filename if user chose to rename
           ...(driveRenameMode === 'manual' && driveManualName.trim() ? { manualFileName: driveManualName.trim() } : {}),
         }),
@@ -336,7 +339,7 @@ export function FilterBar() {
               variant="secondary"
               size="sm"
               className="h-9"
-              onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); }}
+              onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
             >
               <CloudDownload className="h-3.5 w-3.5 mr-1" />
               Import dari Drive
@@ -533,6 +536,29 @@ export function FilterBar() {
                   💡 Rename Manual hanya tersedia untuk tab <strong>File Drive</strong> atau <strong>Google Sheets</strong>. Folder import memproses banyak file sekaligus.
                 </div>
               )}
+
+              {/* Number format selector — controls how CSV string numbers are parsed.
+                  Default 'us' for Google exports (1,234.56). User can switch to 'id'
+                  if their Google Sheet uses Indonesian locale (1.234,56). */}
+              <div className="border rounded-lg p-2.5 space-y-1.5 bg-muted/20">
+                <Label htmlFor="number-locale" className="text-xs font-semibold flex items-center gap-1.5">
+                  <Pencil className="h-3.5 w-3.5" />
+                  Format Angka (CSV)
+                </Label>
+                <Select value={driveNumberLocale} onValueChange={(v) => setDriveNumberLocale(v as 'auto' | 'id' | 'us')}>
+                  <SelectTrigger id="number-locale" className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="us" className="text-xs">US: 1,234.56 (koma=ribuan, titik=desimal)</SelectItem>
+                    <SelectItem value="id" className="text-xs">Indonesia: 1.234,56 (titik=ribuan, koma=desimal)</SelectItem>
+                    <SelectItem value="auto" className="text-xs">Auto-detect (heuristic, mungkin salah)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Google Sheets export biasanya US. Ubah ke Indonesia kalau angka di file pakai format titik=ribuan.
+                </p>
+              </div>
               <DialogFooter>
                 <Button variant="outline" onClick={handleCloseDialog} disabled={driveImporting}>
                   Cancel

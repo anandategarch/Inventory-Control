@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName } = body;
+    const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName, numberLocale } = body;
 
     if (!mode || !rawFileName || !fileHash) {
       return NextResponse.json(
@@ -101,6 +101,10 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Validate numberLocale if provided (default 'auto' for local file uploads)
+    const validLocales = ['auto', 'id', 'us'];
+    const locale: 'auto' | 'id' | 'us' = validLocales.includes(numberLocale) ? numberLocale : 'auto';
 
     // ============================================================
     // Manual rename support (user override for "Loading Google Sheet" etc.)
@@ -429,6 +433,7 @@ export async function POST(req: NextRequest) {
         itemDbMap,
         seenKeys,
         true, // fastMode: skip DQ validation — pure import for speed
+        locale, // numberLocale: 'auto' | 'id' | 'us' for CSV separator parsing
       );
 
       const inserted = result.inserted;

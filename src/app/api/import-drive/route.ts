@@ -49,6 +49,10 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    // Number locale for parsing CSV string values.
+    // Default 'us' for Google Drive/Sheets exports (Google uses US format: 1,234.56).
+    // User can override to 'id' if their Google Sheet is configured with Indonesian locale.
+    const numberLocale: 'auto' | 'id' | 'us' = validatedBody.numberLocale || 'us';
 
     // SSRF protection
     const ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];
@@ -103,10 +107,12 @@ export async function POST(req: NextRequest) {
     // Step 2: Ingest each file (optimized)
     // If manualFileName is provided (single-file only — guarded above), pass it through
     // so processIngestion uses it instead of the basename-derived filename.
+    // Also pass numberLocale so toNum() parses separators correctly.
     const ingestResults: any[] = [];
     for (const file of successful) {
       const result = await processIngestion({
         filePath: file.localPath,
+        numberLocale,
         ...(manualFileName ? { manualFileName } : {}),
       });
       ingestResults.push(result[0] || {
