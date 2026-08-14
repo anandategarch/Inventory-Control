@@ -180,7 +180,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <Package className="h-4 w-4" />,
       severity: 'critical',
       title: `Item Sistemik: ${top.itemName}`,
-      body: `${top.itemName} (${top.outletCode}) muncul dengan deviation signifikan di ${top.occurrences} periode historis. Pola recurring — kemungkinan masalah struktural (SOC/recipe/receiving).`,
+      body: `${top.itemName} muncul dengan deviation signifikan di ${top.occurrences} outlet. Pola recurring — kemungkinan masalah struktural (SOC/recipe/receiving).`,
       action: 'Drill-down item',
       actionTarget: { type: 'item', value: top.itemName },
     });

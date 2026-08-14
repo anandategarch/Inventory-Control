@@ -148,7 +148,7 @@ export async function GET(req: NextRequest) {
     let week = currentWeek;
     if (!month || !week) {
       const latest = await db.inventoryRecord.findFirst({
-        orderBy: { id: 'desc' },
+        orderBy: [{ monthLabel: 'desc' }, { weekLabel: 'desc' }],
         select: { monthLabel: true, weekLabel: true },
       });
       if (!latest) {

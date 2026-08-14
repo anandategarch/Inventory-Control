@@ -49,10 +49,10 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setMonth: (v) => set({ monthLabel: v, currentWeek: null, comparisonWeek: null, comparisonMonth: null }),
   setWeek: (v) => set({ currentWeek: v, comparisonWeek: null, comparisonMonth: null }), // reset compare saat ganti week, auto-set akan jalan via useEffect
   setCompareWeek: (v, m) => set({ comparisonWeek: v, comparisonMonth: m }),
-  setArea: (v) => set({ area: v, outletCode: null }),
+  setArea: (v) => set({ area: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
   setOutlet: (v) => set({ outletCode: v }),
   setItem: (v) => set({ itemName: v }),
-  setPic: (v) => set({ pic: v, outletCode: null }),
+  setPic: (v) => set({ pic: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
   reset: () => set({ area: null, outletCode: null, itemName: null, pic: null }),
   drilldown: { outletCode: null, itemName: null },
   setDrilldown: (d) => set({ drilldown: d }),

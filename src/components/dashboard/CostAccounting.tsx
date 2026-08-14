@@ -315,7 +315,11 @@ export function OutletEfficiencyMatrix({ data }: { data: AnalysisData }) {
                   <Scatter
                     data={chartData}
                     cursor="pointer"
-                    onClick={(d: any) => d?.payload?.outletCode && setFocusOutlet(d.payload.outletCode)}
+                    onClick={(d: any) => {
+                      // Recharts Scatter onClick: d can be the data item directly OR wrapped in d.payload
+                      const code = d?.outletCode ?? d?.payload?.outletCode;
+                      if (code) setFocusOutlet(code);
+                    }}
                   >
                     {chartData.map((d, i) => {
                       const q = quadrantOf(d.sales, d.lossToSales);
@@ -460,7 +464,7 @@ export function NetCostTrendChart({ data }: { data: AnalysisData }) {
               <ComposedChart data={chartData} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="weekLabel" fontSize={11} />
-                <YAxis yAxisId="left" tickFormatter={(v) => `${v.toFixed(0)}M`} fontSize={11} />
+                <YAxis yAxisId="left" tickFormatter={(v) => `${v.toFixed(0)}Jt`} fontSize={11} />
                 <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(1)}%`} fontSize={11} />
                 <Tooltip
                   content={({ active, payload, label }: { active?: boolean; payload?: TipPayload; label?: string }) =>
@@ -472,7 +476,7 @@ export function NetCostTrendChart({ data }: { data: AnalysisData }) {
                             <p key={i} className="text-muted-foreground">
                               {p.name}: {p.name === 'Net Cost Ratio'
                                 ? `${(p.value as number).toFixed(2)}%`
-                                : `Rp ${(p.value as number).toFixed(2)}M`}
+                                : `Rp ${(p.value as number).toFixed(2)}Jt`}
                             </p>
                           ))}
                         </div>

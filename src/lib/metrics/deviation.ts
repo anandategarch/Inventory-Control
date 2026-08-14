@@ -70,7 +70,7 @@ export function computeResidual(
   const w = qtyWaste ?? 0;
   const s = qtySusut ?? 0;
   const t = qtyTrial ?? 0;
-  const explained = Math.abs(w + s + t);
+  const explained = Math.abs(w) + Math.abs(s) + Math.abs(t);
   const absDev = Math.abs(qtyDeviasi);
   const residualQty = Math.max(0, absDev - explained);
   const isOverExplained = absDev > 0 && explained > absDev;
@@ -96,7 +96,7 @@ export function computeExplainedPct(
   qtyTrial: number | null,
 ): number | null {
   if (qtyDeviasi == null || Math.abs(qtyDeviasi) === 0) return null;
-  const explained = Math.abs((qtyWaste ?? 0) + (qtySusut ?? 0) + (qtyTrial ?? 0));
+  const explained = Math.abs(qtyWaste ?? 0) + Math.abs(qtySusut ?? 0) + Math.abs(qtyTrial ?? 0);
   return explained / Math.abs(qtyDeviasi);
 }
 

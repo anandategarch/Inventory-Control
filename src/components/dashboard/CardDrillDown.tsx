@@ -117,7 +117,7 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'absNominal', label: 'Loss Amount', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'lossAmount', label: 'Loss Amount', align: 'right', format: (v) => fmtIDR(v) },
       { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
     ],
     // BUG FIX #003: Filter by LOSS direction, not just absNominal
@@ -131,7 +131,7 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'absNominal', label: 'Surplus Amount', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'surplusAmount', label: 'Surplus Amount', align: 'right', format: (v) => fmtIDR(v) },
       { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
     ],
     // BUG FIX #003: Filter by SURPLUS direction, not just absNominal

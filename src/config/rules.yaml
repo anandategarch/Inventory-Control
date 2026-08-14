@@ -162,9 +162,9 @@ rules:
     condition:
       all:
         - direction: { eq: "LOSS" }
-        - absNominalDeviasi: { gt: highLossNominalThreshold }
+        - absNominalLossSurplus: { gt: highLossNominalThreshold }
     narrative_template: >
-      Nominal loss {{absNominalDeviasi}} tinggi.
+      Nominal loss {{absNominalLossSurplus}} tinggi.
 
   # ===== BENCHMARK (historical zScore-based, NOT area/network pooled) =====
   # FIX: benchmarkFlag values renamed from ABOVE_AREA_AVG/ABOVE_NETWORK_AVG

@@ -779,7 +779,7 @@ export async function GET(req: NextRequest) {
       ? prevRecs.reduce((s, r) => s + (r.absNominalDeviasi ?? 0), 0)
       : null;
 
-    const devBomOutlet = validDevBomCount > 0 ? sumAbsDevBom / validDevBomCount : 0;
+    const devBomOutlet = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;
     const residualPct = totalQtyDeviasi > 0 ? totalResidualQty / totalQtyDeviasi : null;
     const lossToSales = sales > 0 ? totalLossNominal / sales : null;
 

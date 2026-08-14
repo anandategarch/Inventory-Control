@@ -61,7 +61,7 @@ export function buildRuleContext(
 
   // Bug 8 fix: compute isOverExplained on-the-fly (explained > absDev)
   // This is a fraud red flag: Waste+Susut+Trial exceeds total deviation.
-  const explainedQty = Math.abs((curr.qtyWaste ?? 0) + (curr.qtySusut ?? 0) + (curr.qtyTrial ?? 0));
+  const explainedQty = Math.abs(curr.qtyWaste ?? 0) + Math.abs(curr.qtySusut ?? 0) + Math.abs(curr.qtyTrial ?? 0);
   const absDevQty = Math.abs(curr.qtyDeviasi ?? 0);
   const isOverExplained = absDevQty > 0 && explainedQty > absDevQty;
 
@@ -86,6 +86,7 @@ export function buildRuleContext(
     prevDirection,
     isDirectionFlip,
     absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,
+    absNominalLossSurplus: curr.absNominalLossSurplus, absQtyLossSurplus: curr.absQtyLossSurplus,
     isOverExplained,
     // ===== P2 fix: inject runtime thresholds into context so rules.yaml =====
     // ===== can reference them as field names instead of hardcoded values.  =====

@@ -297,6 +297,9 @@ export interface RuleContext extends Record<string, unknown> {
   isDirectionFlip?: boolean;
   absNominalDeviasi?: number | null;
   absQtyDeviasi?: number | null;
+  // FIX: NET financial/quantity fields for NET-based rules (HIGH_LOSS_NOMINAL)
+  absNominalLossSurplus?: number | null;
+  absQtyLossSurplus?: number | null;
   // These allow rules.yaml to use dynamic field references instead of hardcoded values.
   stdDeviasiBomPct?: number;
   stdSusutPct?: number;

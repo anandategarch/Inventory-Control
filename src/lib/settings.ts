@@ -343,7 +343,7 @@ export async function ensureDefaultSettings(): Promise<void> {
     dataType: d.dataType,
   }));
 
-  await db.setting.createMany({ data });
+  await db.setting.createMany({ data, skipDuplicates: true });
   _settingsCache = null; // force reload
 }
 

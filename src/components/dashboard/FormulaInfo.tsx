@@ -22,7 +22,7 @@ interface FormulaInfoProps {
  * - Description text: text-primary-foreground/90 (slightly dimmed white)
  * - leading-relaxed for comfortable line height
  */
-export function FormulaInfo({ formula, description, side = 'top' }: FormulaInfoProps) {
+export function FormulaInfo({ formula, description, example, side = 'top' }: FormulaInfoProps) {
   return (
     <TooltipProvider>
       <Tooltip>
@@ -63,6 +63,9 @@ export function FormulaInfo({ formula, description, side = 'top' }: FormulaInfoP
                   return <p key={i} className="text-primary-foreground/85">{line}</p>;
                 })}
               </div>
+            )}
+            {example && (
+              <p className="text-[11px] text-amber-300 italic">Contoh: {example}</p>
             )}
           </div>
         </TooltipContent>

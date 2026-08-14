@@ -107,7 +107,7 @@ export default function DashboardPage() {
   }, [status, monthLabel, setMonth]);
 
   useEffect(() => {
-    if (monthLabel && !currentWeek && status?.weeksByMonth) {
+    if (monthLabel && !currentWeek && status?.weeksByMonth && status?.months) {
       const m = status.months.find((mm) => mm.label === monthLabel);
       if (m) {
         const weeks = status.weeksByMonth[m.key];
@@ -150,7 +150,7 @@ export default function DashboardPage() {
 
   // Bug 8 fix: validate currentWeek belongs to monthLabel — reset if invalid
   useEffect(() => {
-    if (monthLabel && currentWeek && status?.weeksByMonth) {
+    if (monthLabel && currentWeek && status?.weeksByMonth && status?.months) {
       const m = status.months.find((mm) => mm.label === monthLabel);
       if (m) {
         const weeks = status.weeksByMonth[m.key] || [];
