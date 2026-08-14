@@ -31,6 +31,7 @@ import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
 import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
+import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import {
   CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
 } from '@/components/dashboard/CostAccounting';
@@ -178,9 +179,11 @@ export default function DashboardPage() {
 
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
-  const handleExport = async () => {
+  const handleExport = async (selectedSections: string[]) => {
     if (!analysis.data) return;
+    setExportDialogOpen(false);
     setIsExporting(true);
     try {
       const params = new URLSearchParams({ month: monthLabel || '', week: currentWeek || '' });
@@ -190,6 +193,7 @@ export default function DashboardPage() {
       if (outletCode) params.set('outlet', outletCode);
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
+      params.set('sections', selectedSections.join(','));
 
       const res = await fetch(`/api/export-report?${params.toString()}`);
       if (!res.ok) {
@@ -205,7 +209,7 @@ export default function DashboardPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast({ title: '✅ Export berhasil', description: 'File Word telah diunduh' });
+      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section di-export ke Word` });
     } catch (e: any) {
       toast({ title: '❌ Export gagal', description: e?.message || 'Unknown error', variant: 'destructive' });
     } finally {
@@ -257,7 +261,7 @@ export default function DashboardPage() {
                 size="sm"
                 className="h-8 gap-1.5 text-xs"
                 disabled={isExporting}
-                onClick={handleExport}
+                onClick={() => setExportDialogOpen(true)}
               >
                 {isExporting ? (
                   <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Exporting...</>
@@ -635,6 +639,12 @@ export default function DashboardPage() {
       <CardDrillDown data={analysis.data} />
       <OutletScorecard data={analysis.data} />
       <ItemDeepDive data={analysis.data} />
+      <ExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        onExport={handleExport}
+        isExporting={isExporting}
+      />
     </div>
   );
 }

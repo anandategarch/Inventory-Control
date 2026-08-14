@@ -153,6 +153,9 @@ export async function GET(req: NextRequest) {
     const outletCode = url.searchParams.get('outlet');
     const itemName = url.searchParams.get('item');
     const pic = url.searchParams.get('pic');
+    const sectionsParam = url.searchParams.get('sections');
+    const sections = sectionsParam ? sectionsParam.split(',').filter(Boolean) : null;
+    const hasSection = (key: string) => !sections || sections.includes(key);
 
     if (!month || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
@@ -394,7 +397,7 @@ export async function GET(req: NextRequest) {
       divider(),
     );
 
-    // 1. Executive Summary
+    if (hasSection('exec')) {
     const s = data.executiveSummary;
     children.push(heading('1. EXECUTIVE SUMMARY'));
     children.push(makeTable(['Metric', 'Current', 'Growth', 'Previous'], [
@@ -414,7 +417,8 @@ export async function GET(req: NextRequest) {
       ['Residual Loss %', fmtPct(s.residualLossPct, false), '—', '—'],
     ]));
 
-    // 2. Health Status
+    }
+    if (hasSection('health')) {
     const hs = data.healthStatus;
     const total = (hs.normal || 0) + (hs.warning || 0) + (hs.abnormal || 0);
     children.push(heading('2. HEALTH STATUS'));
@@ -423,7 +427,8 @@ export async function GET(req: NextRequest) {
     children.push(paragraph(`Rules: ${rules || 'None'}`));
     children.push(divider());
 
-    // 3. Growth Analysis
+    }
+    if (hasSection('growth')) {
     const g = data.growthComparison || {};
     children.push(heading('3. ANALISIS PERTUMBUHAN'));
     children.push(makeTable(['Metric', 'Value'], [
@@ -438,7 +443,8 @@ export async function GET(req: NextRequest) {
     ]));
     children.push(divider());
 
-    // 4. Top Items
+    }
+    if (hasSection('topItems')) {
     children.push(heading('4. TOP ITEMS'));
     const topSections = [
       { title: '4.1 Top by Nominal', items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', 'Nominal', 'Dir'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), it.direction] },
@@ -457,7 +463,8 @@ export async function GET(req: NextRequest) {
     }
     children.push(divider());
 
-    // 5. Deviation Breakdown
+    }
+    if (hasSection('breakdown')) {
     const b = data.deviationBreakdown || {};
     const bdTotal = b.total || 0;
     children.push(heading('5. DEVIATION BREAKDOWN'));
@@ -470,13 +477,15 @@ export async function GET(req: NextRequest) {
     ]));
     children.push(divider());
 
-    // 6. Loss vs Surplus
+    }
+    if (hasSection('lossSurplus')) {
     const lvsData = data.lossVsSurplus || {};
     children.push(heading('6. LOSS VS SURPLUS'));
     children.push(makeTable(['Category', 'Count', 'Nominal'], [['LOSS', String(lvsData.loss || 0), fmtIDR(lvsData.lossNominal)], ['SURPLUS', String(lvsData.surplus || 0), fmtIDR(lvsData.surplusNominal)]]));
     children.push(divider());
 
-    // 7. Area Analysis
+    }
+    if (hasSection('area')) {
     if (data.areaAnalysis && data.areaAnalysis.length > 0) {
       children.push(heading('7. PERBANDINGAN AREA'));
       children.push(makeTable(['Area', 'Outlets', 'Sales', 'Abs Nominal', 'Dev/BOM', 'Loss/Sales'],
@@ -484,7 +493,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 8. Outlet Ranking
+    }
+    if (hasSection('ranking')) {
     if (data.outletHealthRanking && data.outletHealthRanking.length > 0) {
       children.push(heading('8. OUTLET HEALTH RANKING'));
       children.push(makeTable(['#', 'Outlet', 'Area', 'Skor', 'Dev/BOM', 'Abn', 'Nominal', 'Sales'],
@@ -492,7 +502,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 9. Cost Impact
+    }
+    if (hasSection('cost')) {
     const ci = data.costImpact || {};
     if (ci.totalCost) {
       children.push(heading('9. COST IMPACT'));
@@ -507,7 +518,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 10. Pareto
+    }
+    if (hasSection('pareto')) {
     const paretoData = data.pareto || {};
     if (paretoData.items && paretoData.items.length > 0) {
       children.push(heading('10. PARETO (ABC)'));
@@ -517,7 +529,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 11. Variance Analysis
+    }
+    if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
     if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
       children.push(heading('11. VARIANCE ANALYSIS'));
@@ -533,7 +546,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 12. Worklist
+    }
+    if (hasSection('worklist')) {
     if (data.investigationWorklist && data.investigationWorklist.length > 0) {
       const wl = data.investigationWorklist;
       const p1 = wl.filter((w: any) => w.priority === 'P1');
@@ -549,7 +563,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 13. Item Consistency
+    }
+    if (hasSection('consistency')) {
     const ic = data.itemConsistencyAnalysis || {};
     if (ic.items && ic.items.length > 0) {
       children.push(heading('13. ITEM CONSISTENCY'));
@@ -558,7 +573,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 14. Trend
+    }
+    if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
       children.push(heading('14. TREND MULTI-PERIODE'));
       children.push(makeTable(['Period', 'Sales', 'Nominal', 'Dev/BOM'],
@@ -566,7 +582,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 15. Narrative
+    }
+    if (hasSection('narrative')) {
     if (data.narrative && typeof data.narrative === 'string') {
       children.push(heading('15. NARASI ANALISIS'));
       for (const line of data.narrative?.split('\n')) {
@@ -578,7 +595,8 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
-    // 16. Recommendations
+    }
+    if (hasSection('recommendations')) {
     if (data.recommendation && data.recommendation.length > 0) {
       children.push(heading('16. REKOMENDASI TINDAK LANJUT'));
       data.recommendation.forEach((rec: any, i: number) => {
@@ -588,6 +606,7 @@ export async function GET(req: NextRequest) {
       children.push(divider());
     }
 
+    }
     // Footer
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
     children.push(divider());
