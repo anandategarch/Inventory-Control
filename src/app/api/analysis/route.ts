@@ -231,21 +231,22 @@ export async function GET(req: NextRequest) {
       if (compareMonthExplicit) {
         prevMonth = compareMonthExplicit;
       } else {
-        // Find same weekLabel in most recent month before current
+        // FIX (BUG 2): Find same weekLabel in most recent month BEFORE current
+        // (exclude same month — was missing, caused W4 vs W2 same-month comparison)
         const currentIdx = allPeriods.findIndex(
           (p) => p.monthLabel === month && p.weekLabel === week
         );
         let foundMonth: string | null = null;
         const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
         for (let i = startIdx; i >= 0; i--) {
-          if (allPeriods[i].weekLabel === prevWeek) {
+          if (allPeriods[i].weekLabel === prevWeek && allPeriods[i].monthLabel !== month) {
             foundMonth = allPeriods[i].monthLabel;
             break;
           }
         }
         if (!foundMonth) {
           for (let i = (currentIdx >= 0 ? currentIdx + 1 : 0); i < allPeriods.length; i++) {
-            if (allPeriods[i].weekLabel === prevWeek) {
+            if (allPeriods[i].weekLabel === prevWeek && allPeriods[i].monthLabel !== month) {
               foundMonth = allPeriods[i].monthLabel;
               break;
             }

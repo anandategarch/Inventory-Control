@@ -340,7 +340,7 @@ export async function GET(req: NextRequest) {
     const allPeriods = weeksRaw
       .map((w) => {
         const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
-        return { monthLabel: ml, weekLabel: w.weekLabel, monthKey: w.monthKey, sortKey: `${w.monthKey}|${w.weekLabel}` };
+        return { monthLabel: ml, weekLabel: w.weekLabel, monthKey: w.monthKey, sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}` };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
@@ -488,9 +488,11 @@ export async function GET(req: NextRequest) {
       byItemId.set(r.itemId, arr);
     }
 
-    const prevByItemId = new Map<number, OutletFocusRow>();
+    // FIX (BUG 6): Include akunPenyesuaian in key — same fix as analysis/route.ts.
+    // Without akun, multi-akun items get wrong prev record → wrong growth + false flags.
+    const prevByItemId = new Map<string, OutletFocusRow>();
     for (const r of prevRecs) {
-      prevByItemId.set(r.itemId, r);
+      prevByItemId.set(`${r.itemId}|${r.akunPenyesuaian ?? ''}`, r);
     }
 
     const itemAnomalies: ItemAnomaly[] = [];
@@ -614,8 +616,8 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // NEW_ITEM (no prev record)
-      const prev = prevByItemId.get(itemId);
+      // NEW_ITEM (no prev record) — FIX (BUG 6): use akunPenyesuaian in key
+      const prev = prevByItemId.get(`${itemId}|${first.akunPenyesuaian ?? ''}`);
       if (!prev) {
         if (!isZeroDev) issues.push('NEW_ITEM');
         newItems.push({ itemName: first.itemName, nominalDeviasi });
@@ -722,9 +724,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Disappeared items
-    for (const [itemId, prev] of prevByItemId.entries()) {
-      if (!byItemId.has(itemId) && (prev.absNominalDeviasi ?? 0) > 0) {
+    // Disappeared items — FIX (BUG 6): key is now string (itemId|akun)
+    for (const [itemKey, prev] of prevByItemId.entries()) {
+      const itemId = itemKey.split('|')[0];
+      if (!byItemId.has(Number(itemId)) && (prev.absNominalDeviasi ?? 0) > 0) {
         disappearedItems.push({
           itemName: prev.itemName,
           previousNominal: prev.nominalDeviasi,

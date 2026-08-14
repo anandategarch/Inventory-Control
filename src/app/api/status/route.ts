@@ -90,7 +90,15 @@ export async function GET() {
     const result = {
       success: true,
       files,
-      months: files.map((f) => ({ label: f.monthLabel, key: f.monthKey })),
+      months: (() => {
+        // FIX (BUG 7): Dedupe by monthKey — re-upload creates duplicate SourceFile rows
+        const seen = new Set<string>();
+        return files.filter((f) => {
+          if (seen.has(f.monthKey)) return false;
+          seen.add(f.monthKey);
+          return true;
+        }).map((f) => ({ label: f.monthLabel, key: f.monthKey }));
+      })(),
       weeksByMonth,
       outlets: outletsWithPic,
       areas,

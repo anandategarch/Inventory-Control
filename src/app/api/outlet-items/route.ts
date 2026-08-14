@@ -75,8 +75,10 @@ export async function GET(req: NextRequest) {
     }
 
     // Determine previous period
+    // FIX (BUG 3): Same-weekLabel in previous month (cumulative weeks).
+    // Was: chronological previous (W4→W2 same month = false positive growth).
     let prevWeek = compareWeek;
-    let prevMonth = compareMonth || month;
+    let prevMonth = compareMonth || null;
     if (!prevWeek) {
       const weeksRaw = await db.week.findMany({
         select: { weekLabel: true, monthKey: true },
@@ -91,7 +93,19 @@ export async function GET(req: NextRequest) {
       })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
       const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-      if (currentIdx > 0) {
+      // Search backwards for same weekLabel in a DIFFERENT month
+      prevWeek = week;
+      let foundMonth: string | null = null;
+      const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
+      for (let i = startIdx; i >= 0; i--) {
+        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+          foundMonth = allPeriods[i].monthLabel;
+          break;
+        }
+      }
+      prevMonth = foundMonth;
+      if (!prevMonth && currentIdx > 0) {
+        // Fallback: chronological previous
         prevWeek = allPeriods[currentIdx - 1].weekLabel;
         prevMonth = allPeriods[currentIdx - 1].monthLabel;
       }

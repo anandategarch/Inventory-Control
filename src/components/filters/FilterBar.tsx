@@ -66,7 +66,7 @@ export function FilterBar() {
           label: `${w} — ${m.label}`,
           monthLabel: m.label,
           weekLabel: w,
-          sortKey: `${m.key}|${w}`,
+          sortKey: `${m.key}|${String(parseInt(w.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
         });
       }
     }

@@ -33,8 +33,10 @@ model SourceFile {
 }
 
 // ------------------------------------------------------------
-//  Week (period within a month). User confirmed:
-//  WEEK 1 = day 1-7, WEEK 2 = day 8-14, WEEK 3 = day 15-30/31
+//  Week (period within a month). CUMULATIVE (user confirmed):
+//  WEEK 1 = day 1-7, WEEK 2 = day 1-14, WEEK 3 = day 1-21, WEEK 4 = day 1-25
+//  Each week INCLUDES all previous weeks. Comparison must be same-week
+//  across months (W4 Juli vs W4 Juni, NOT W4 vs W2).
 // ------------------------------------------------------------
 model Week {
   id            Int      @id @default(autoincrement())

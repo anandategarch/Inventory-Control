@@ -6,11 +6,19 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    // FIX (BUG 8): Add rate limiting — was missing, DoS vector
+    const ip = getClientIP(req);
+    const rl = rateLimit(`drilldown:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
     const url = new URL(req.url);
     const outletCode = url.searchParams.get('outletCode');
     const itemName = url.searchParams.get('itemName');

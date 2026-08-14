@@ -183,9 +183,11 @@ export async function GET(req: NextRequest) {
     //  exclude current (caller passes historicalValues WITHOUT current),
     //  min weeks guard, trend, benchmarkFlag, warningLevel.
     //  BUG 6.7 fix: exclude current period from historical baseline.
+    //  FIX (BUG 5): Filter by SAME weekLabel only (cumulative weeks).
+    //  Z-Score W4 Juli must compare vs [W4 Mei, W4 Juni], NOT [W1,W2,W4 Mei, W1,W2,W4 Juni].
     // ============================================================
     const historicalValues = timeline
-      .filter(t => t.devBom != null && !t.isCurrent)
+      .filter(t => t.devBom != null && !t.isCurrent && t.weekLabel === currentWeek)
       .map(t => t.devBom as number);
 
     const historicalInput: HistoricalInput = {

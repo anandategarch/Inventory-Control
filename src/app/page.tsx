@@ -116,10 +116,11 @@ export default function DashboardPage() {
     }
   }, [status, monthLabel, currentWeek, setWeek]);
 
-  // Auto-set default periode pembanding = same week, previous month (chronological)
+  // Auto-set default periode pembanding = SAME weekLabel in previous month (cumulative weeks)
+  // FIX (BUG 1): Was using chronological previous (W4→W2 same month = false positive growth).
+  // Now finds same weekLabel in most recent month BEFORE current (W4 Juli → W4 Juni).
   useEffect(() => {
     if (monthLabel && currentWeek && !comparisonWeek && status?.weeksByMonth && status?.months) {
-      // Build chronological period list
       const allPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }> = [];
       for (const m of status.months) {
         const ws = status.weeksByMonth[m.key] || [];
@@ -129,9 +130,20 @@ export default function DashboardPage() {
       }
       allPeriods.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
       const currentIdx = allPeriods.findIndex((p) => p.monthLabel === monthLabel && p.weekLabel === currentWeek);
-      if (currentIdx > 0) {
-        const prev = allPeriods[currentIdx - 1];
-        setCompareWeek(prev.weekLabel, prev.monthLabel);
+      if (currentIdx >= 0) {
+        // Search backwards for same weekLabel in a DIFFERENT month
+        let found: { monthLabel: string; weekLabel: string } | null = null;
+        for (let i = currentIdx - 1; i >= 0; i--) {
+          if (allPeriods[i].weekLabel === currentWeek && allPeriods[i].monthLabel !== monthLabel) {
+            found = allPeriods[i];
+            break;
+          }
+        }
+        // Fallback: chronological previous period
+        if (!found && currentIdx > 0) {
+          found = allPeriods[currentIdx - 1];
+        }
+        if (found) setCompareWeek(found.weekLabel, found.monthLabel);
       }
     }
   }, [status, monthLabel, currentWeek, comparisonWeek, setCompareWeek]);

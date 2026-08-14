@@ -137,7 +137,18 @@ export async function GET(req: NextRequest) {
     })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
     const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-    const prevPeriod = currentIdx > 0 ? allPeriods[currentIdx - 1] : null;
+    // FIX (BUG 4): Same-weekLabel in previous month (cumulative weeks).
+    // Was: chronological previous (W4→W2 same month = false positive trend).
+    let prevPeriod: { monthLabel: string; weekLabel: string } | null = null;
+    if (currentIdx >= 0) {
+      for (let i = currentIdx - 1; i >= 0; i--) {
+        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+          prevPeriod = allPeriods[i];
+          break;
+        }
+      }
+      if (!prevPeriod && currentIdx > 0) prevPeriod = allPeriods[currentIdx - 1];
+    }
 
     // Get previous period devBom per outlet+item
     let prevDevBomMap = new Map<string, number | null>();
