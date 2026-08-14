@@ -10,6 +10,7 @@ import { db } from '@/lib/db';
 import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
+import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { summarizeDQ } from '@/engine/validator';
 import { processRowsForImport } from '@/lib/ingestion';
 import path from 'path';
@@ -319,12 +320,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Create Week record
-      const periods: Record<string, { start: number; end: number }> = {
-        'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 },
-        'WEEK 3': { start: 15, end: 31 }, 'WEEK 4': { start: 15, end: 31 },
-      };
-      const p = periods[weekLabel] || { start: 1, end: 31 };
+      // Create Week record — FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+      const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g,'')) * 7, 31) };
       const weekRec = await db.week.create({
         data: {
           sourceFileId: sourceFile.id, weekLabel,

@@ -260,6 +260,7 @@ export async function GET(req: NextRequest) {
           JOIN "Outlet" o ON ir."outletId" = o.id
           WHERE o.code = ${outletCode}
             AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+            AND ir."weekLabel" = ${week}  -- FIX: filter trend to same weekLabel only
           GROUP BY ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
         ),
         ranked_sales AS (
@@ -288,6 +289,7 @@ export async function GET(req: NextRequest) {
           FROM "InventoryRecord" ir
           JOIN "Outlet" o ON ir."outletId" = o.id
           WHERE o.code = ${outletCode}
+            AND ir."weekLabel" = ${week}  -- FIX: filter trend to same weekLabel only (cumulative weeks)
           GROUP BY ir."monthLabel", ir."weekLabel"
         )
         SELECT pa."monthLabel", pa."weekLabel",
@@ -343,11 +345,28 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
     const currentPeriodIdx = allPeriods.findIndex((p) => p.monthLabel === month && p.weekLabel === week);
-    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
-    // Use explicit compareWeek from filter if provided, else auto-chronological
+    // FIX: Historical periods filter by SAME weekLabel only (cumulative weeks).
+    // Comparing W4 vs W1+W2+W4 (mixed) inflates mean → false positive Z-Score.
+    const historicalPeriods = allPeriods.filter(
+      (p) => p.weekLabel === week && p.monthLabel !== month
+    ).filter((p) => {
+      const current = allPeriods.find(ap => ap.monthLabel === month && ap.weekLabel === week);
+      return !current || p.sortKey < current.sortKey;
+    });
+    // FIX: Auto-compare finds SAME weekLabel in previous month (cumulative weeks).
+    // W4 Juli → W4 Juni (apples-to-apples), NOT W4 → W2 (different day ranges).
     const prevPeriod = compareWeekParam && compareMonthParam
       ? { monthLabel: compareMonthParam, weekLabel: compareWeekParam }
-      : currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
+      : (() => {
+          // Find same weekLabel in most recent month before current
+          for (let i = (currentPeriodIdx >= 0 ? currentPeriodIdx - 1 : allPeriods.length - 1); i >= 0; i--) {
+            if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+              return allPeriods[i];
+            }
+          }
+          // Fallback: chronological previous period
+          return currentPeriodIdx > 0 ? allPeriods[currentPeriodIdx - 1] : null;
+        })();
 
     // ============================================================
     //  P1 fix: Phase 2 — dependent queries (3 parallel)

@@ -269,12 +269,13 @@ export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
   }
 
   // week period
-  // FIX (BUG 9): Derive period from week number for WEEK 5+ instead of
-  // falling back to whole month (1-31). Matches ingestion.ts logic.
+  // FIX: CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+  // Previously: discrete ranges (W2=8-14) which was wrong — weeks are cumulative.
   let period = CFG_RECON_SETTINGS.WEEK_PERIODS[rec.weekLabel];
   if (!period) {
+    // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
     const weekNum = parseInt(rec.weekLabel.replace(/\D/g, '')) || 1;
-    period = { start: (weekNum - 1) * 7 + 1, end: Math.min(weekNum * 7, 31) };
+    period = { start: 1, end: Math.min(weekNum * 7, 31) };
   }
 
   return {

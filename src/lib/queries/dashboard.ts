@@ -34,8 +34,12 @@ export async function queryTrendAgg(filters: {
   outletCode?: string | null;
   itemName?: string | null;
   picOutletCodes?: string[] | null;
+  weekLabel?: string | null; // FIX: filter trend to same weekLabel only (cumulative weeks)
 }): Promise<TrendAggRow[]> {
   const f = buildSqlFilters(filters);
+  const weekFilter = filters.weekLabel
+    ? Prisma.sql`AND ir."weekLabel" = ${filters.weekLabel}`
+    : Prisma.empty;
   const rows = await db.$queryRaw<TrendAggRow[]>`
     WITH sales_counts AS (
       SELECT ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales",
@@ -43,6 +47,7 @@ export async function queryTrendAgg(filters: {
       FROM "InventoryRecord" ir
       WHERE ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
         ${f}
+        ${weekFilter}
       GROUP BY ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
     ),
     ranked_sales AS (
@@ -70,6 +75,7 @@ export async function queryTrendAgg(filters: {
       FROM "InventoryRecord" ir
       WHERE 1=1
         ${f}
+        ${weekFilter}
       GROUP BY ir."monthLabel", ir."weekLabel"
     )
     SELECT pa."monthLabel", pa."weekLabel",

@@ -196,53 +196,62 @@ export async function GET(req: NextRequest) {
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-    // ===== BUG FIX #2: Auto-previous = chronologically previous period (cross-month) =====
+    // ===== FIX: Auto-previous = SAME weekLabel in chronologically previous month =====
+    // Weeks are CUMULATIVE (W1=1-7, W2=1-14, W4=1-25). Comparing W4 vs W2 is NOT
+    // apples-to-apples (25 days vs 14 days → always positive growth). Must compare
+    // same weekLabel: W4 Juli vs W4 Juni, W2 Juli vs W2 Juni, etc.
     let prevWeek = compareWeek;
     let prevMonth: string | null = null;
     if (!prevWeek) {
+      // Auto-compare: find same weekLabel in the most recent month BEFORE current
+      prevWeek = week; // SAME week as current — compare W4 vs W4 (prev month)
       const currentPeriodIdx = allPeriods.findIndex(
         (p) => p.monthLabel === month && p.weekLabel === week
       );
-      if (currentPeriodIdx > 0) {
-        const prev = allPeriods[currentPeriodIdx - 1];
-        prevWeek = prev.weekLabel;
-        prevMonth = prev.monthLabel;
+      // Search backwards from current period for same weekLabel in a different month
+      let foundMonth: string | null = null;
+      const startIdx = currentPeriodIdx >= 0 ? currentPeriodIdx - 1 : allPeriods.length - 1;
+      for (let i = startIdx; i >= 0; i--) {
+        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+          foundMonth = allPeriods[i].monthLabel;
+          break;
+        }
+      }
+      prevMonth = foundMonth;
+      if (!prevMonth) {
+        // No previous month with same week — fall back to chronological previous period
+        if (currentPeriodIdx > 0) {
+          const prev = allPeriods[currentPeriodIdx - 1];
+          prevWeek = prev.weekLabel;
+          prevMonth = prev.monthLabel;
+        }
       }
     } else {
+      // Manual compare — user specified a weekLabel
       if (compareMonthExplicit) {
         prevMonth = compareMonthExplicit;
       } else {
-        const match = allPeriods.find((p) => p.weekLabel === prevWeek && p.monthLabel === month);
-        if (match) {
-          prevMonth = month;
-        } else {
-          // Bug fix: find the most recent period with this weekLabel that is BEFORE
-          // the current period (not the oldest overall). Previously used find() on
-          // ascending array → returned oldest match (e.g., Mei W1 instead of Juni W1
-          // when current is Juli).
-          const currentIdx = allPeriods.findIndex(
-            (p) => p.monthLabel === month && p.weekLabel === week
-          );
-          // Search backwards from current period for the given weekLabel
-          let foundMonth: string | null = null;
-          const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
-          for (let i = startIdx; i >= 0; i--) {
+        // Find same weekLabel in most recent month before current
+        const currentIdx = allPeriods.findIndex(
+          (p) => p.monthLabel === month && p.weekLabel === week
+        );
+        let foundMonth: string | null = null;
+        const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
+        for (let i = startIdx; i >= 0; i--) {
+          if (allPeriods[i].weekLabel === prevWeek) {
+            foundMonth = allPeriods[i].monthLabel;
+            break;
+          }
+        }
+        if (!foundMonth) {
+          for (let i = (currentIdx >= 0 ? currentIdx + 1 : 0); i < allPeriods.length; i++) {
             if (allPeriods[i].weekLabel === prevWeek) {
               foundMonth = allPeriods[i].monthLabel;
               break;
             }
           }
-          // Fallback: if not found before current, search forward (rare edge case)
-          if (!foundMonth) {
-            for (let i = (currentIdx >= 0 ? currentIdx + 1 : 0); i < allPeriods.length; i++) {
-              if (allPeriods[i].weekLabel === prevWeek) {
-                foundMonth = allPeriods[i].monthLabel;
-                break;
-              }
-            }
-          }
-          prevMonth = foundMonth || month;
         }
+        prevMonth = foundMonth || month;
       }
     }
 
@@ -266,11 +275,18 @@ export async function GET(req: NextRequest) {
     //  P1 fix: RAW RECORD FETCH + HISTORICAL STATS — ALL PARALLEL
     //  currentRecs + prevRecs + historicalByOutletItem are independent.
     //  Select only fields needed by rule engine + UI drilldown.
+    //
+    //  FIX: Historical periods now filter by SAME weekLabel only.
+    //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline
+    //  must compare W4 vs W4 (prev months), NOT W4 vs W1+W2+W4 (mixed).
+    //  Mixed weeks inflate mean (W1 is smaller) → false positive Z-Score.
     // ============================================================
-    const currentPeriodIdx = allPeriods.findIndex(
-      (p) => p.monthLabel === month && p.weekLabel === week
-    );
-    const historicalPeriods = currentPeriodIdx >= 0 ? allPeriods.slice(0, currentPeriodIdx) : [];
+    const historicalPeriods = allPeriods.filter(
+      (p) => p.weekLabel === week && p.monthLabel !== month
+    ).filter((p) => {
+      const current = allPeriods.find(ap => ap.monthLabel === month && ap.weekLabel === week);
+      return !current || p.sortKey < current.sortKey;
+    });
 
     const [currentRecs, prevRecs, historicalByOutletItem] = await Promise.all([
       db.inventoryRecord.findMany({
@@ -416,7 +432,7 @@ export async function GET(req: NextRequest) {
       queryTopOutletsBySales(week!, month!, filterOpts, topNOutlets),
       queryDeviationBreakdown(week!, month!, filterOpts),
       queryLossVsSurplus(week!, month!, filterOpts),
-      queryTrendAgg(filterOpts),
+      queryTrendAgg({ ...filterOpts, weekLabel: week }),
       queryPareto(week!, month!, filterOpts, 50),
       queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
       queryItemConsistency(week!, month!, filterOpts),

@@ -13,6 +13,7 @@ import { parseOutletCode } from '@/lib/outlet';
 import { convertExcelToCsv, getCachedCsvPath, csvCacheExists } from '@/lib/excel-to-csv';
 import { parseCsvStream } from '@/lib/csv-parser';
 import { hashFile } from '@/lib/excel';
+import { CFG_RECON_SETTINGS } from '@/config/settings';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -249,17 +250,14 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
         // Ensure week exists (only 3-4 unique weeks per file)
         const wk = n.weekLabel || 'UNKNOWN';
         if (!weekDbMap.has(wk)) {
-          const periods: Record<string, { start: number; end: number }> = {
-            'WEEK 1': { start: 1, end: 7 }, 'WEEK 2': { start: 8, end: 14 },
-            'WEEK 3': { start: 15, end: 31 }, 'WEEK 4': { start: 15, end: 31 },
-          };
-          // FIX (BUG 7): Derive period from week number for WEEK 5+ instead of
-          // falling back to whole month (1-31). WEEK N → days (N-1)*7+1 to min(N*7, 31).
-          let p = periods[wk];
+          // FIX: Use CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+          // Previously: inline duplicate with WRONG discrete ranges (W2=8-14, W3/4=15-31)
+          let p = CFG_RECON_SETTINGS.WEEK_PERIODS[wk];
           if (!p) {
+            // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
             const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
-            p = { start: (weekNum - 1) * 7 + 1, end: Math.min(weekNum * 7, 31) };
-            console.warn(`[ingest] Unknown weekLabel "${wk}", derived period ${p.start}-${p.end}`);
+            p = { start: 1, end: Math.min(weekNum * 7, 31) };
+            console.warn(`[ingest] Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
           }
           const w = await db.week.upsert({
             where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
