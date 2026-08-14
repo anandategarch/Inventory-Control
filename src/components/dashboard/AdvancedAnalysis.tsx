@@ -156,11 +156,10 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
           />
           <QuickSettings
             settings={[
-              { key: 'WEIGHT_DEV_BOM', label: 'Bobot Dev/BOM', dataType: 'number', min: 0, max: 100, step: 5 },
-              { key: 'WEIGHT_GROWTH', label: 'Bobot Pertumbuhan', dataType: 'number', min: 0, max: 100, step: 5 },
-              { key: 'WEIGHT_RESIDUAL', label: 'Bobot Residual', dataType: 'number', min: 0, max: 100, step: 5 },
-              { key: 'WEIGHT_TOLERANCE', label: 'Bobot Toleransi', dataType: 'number', min: 0, max: 100, step: 5 },
-              { key: 'WEIGHT_HISTORY', label: 'Bobot Historical', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'HEALTH_WEIGHT_DEV_BOM', label: 'Bobot Dev/BOM (Health)', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'HEALTH_WEIGHT_RESIDUAL', label: 'Bobot Residual (Health)', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'HEALTH_WEIGHT_LOSS_TO_SALES', label: 'Bobot Loss/Sales (Health)', dataType: 'number', min: 0, max: 100, step: 5 },
+              { key: 'HEALTH_WEIGHT_ABNORMAL', label: 'Bobot Abnormal (Health)', dataType: 'number', min: 0, max: 100, step: 5 },
             ]}
           />
         </CardTitle>

@@ -163,9 +163,11 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
 
 export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
   const l = data.lossVsSurplus;
+  // FIX: l.loss/l.surplus are RECORD COUNTS, not QTY sums.
+  // Label was "qty" (misleading) — changed to "records" for clarity.
   const chartData = [
-    { name: 'LOSS', qty: l.loss, nominal: l.lossNominal, color: '#dc2626' },
-    { name: 'SURPLUS', qty: l.surplus, nominal: l.surplusNominal, color: '#10b981' },
+    { name: 'LOSS', records: l.loss, nominal: l.lossNominal, color: '#dc2626' },
+    { name: 'SURPLUS', records: l.surplus, nominal: l.surplusNominal, color: '#10b981' },
   ];
 
   return (
@@ -174,9 +176,9 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
         <CardTitle className="text-base flex items-center gap-1.5">
           Loss vs Surplus
           <FormulaInfo
-            formula="LOSS: QTY Deviasi > 0 (actual > SOC)  |  SURPLUS: QTY Deviasi < 0 (actual < SOC)"
-            description="Direction split berdasarkan tanda QTY Deviasi. Magnitude = |QTY Deviasi|. LOSS = pemakaian aktual melebihi SOC (Stock Opname Cost). SURPLUS = pemakaian aktual di bawah SOC."
-            example="QTY Deviasi = +50 → LOSS 50  |  QTY Deviasi = -30 → SURPLUS 30"
+            formula="LOSS: NET Deviation > 0 (actual > SOC)  |  SURPLUS: NET Deviation < 0 (actual < SOC)"
+            description="Direction split berdasarkan tanda NET Deviation (qtyLossSurplus). Jumlah record LOSS vs SURPLUS. Nominal = |NET Deviasi × Price|."
+            example="qtyLossSurplus = +50 → LOSS  |  qtyLossSurplus = -30 → SURPLUS"
             side="bottom"
           />
         </CardTitle>
@@ -191,7 +193,7 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} />
               <Tooltip formatter={(v: any) => v.toLocaleString()} />
               <Legend />
-              <Bar dataKey="qty" name="QTY" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]}>
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
               </Bar>
             </BarChart>
