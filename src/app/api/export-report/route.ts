@@ -100,11 +100,13 @@ function fmtPct(v: number | null | undefined, withSign = false): string {
 }
 
 function heading(text: string): Paragraph {
-  return new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 200, after: 100 } });
+  const safeText = text == null ? '' : String(text);
+  return new Paragraph({ text: safeText, heading: HeadingLevel.HEADING_1, spacing: { before: 200, after: 100 } });
 }
 
 function paragraph(text: string, bold = false, size = 20): Paragraph {
-  return new Paragraph({ children: [new TextRun({ text, bold, size })], spacing: { after: 60 } });
+  const safeText = text == null ? '' : String(text);
+  return new Paragraph({ children: [new TextRun({ text: safeText, bold, size })], spacing: { after: 60 } });
 }
 
 function divider(): Paragraph {
@@ -112,8 +114,12 @@ function divider(): Paragraph {
 }
 
 function tableCell(text: string, bold = false, align: 'left' | 'right' = 'left'): TableCell {
+  const safeText = text == null ? '' : String(text);
   return new TableCell({
-    children: [new Paragraph({ children: [new TextRun({ text, bold, size: 18 })], alignment: align === 'right' ? AlignmentType.RIGHT : AlignmentType.LEFT })],
+    children: [new Paragraph({
+      children: [new TextRun({ text: safeText, bold, size: 18 })],
+      alignment: align === 'right' ? AlignmentType.RIGHT : AlignmentType.LEFT,
+    })],
     margins: { top: 40, bottom: 40, left: 80, right: 80 },
   });
 }

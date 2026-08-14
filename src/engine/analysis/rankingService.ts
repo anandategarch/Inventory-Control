@@ -87,7 +87,7 @@ export function buildWorklistFromFlags(
       ruleCodes: flags.map((f) => f.ruleCode),
       absNominalDeviasi: curr.absNominalLossSurplus ?? 0, // NET per master context #36
       deviationToBom: curr.pctQtyDeviasiToBom,
-      direction: curr.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
+      direction: (curr.direction || 'NEUTRAL') as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
     });
   }
 
