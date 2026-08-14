@@ -4066,3 +4066,39 @@ Stage Summary:
 - Lint + tsc: both 0 errors
 - Page renders correctly in browser
 - Remaining LOW-severity bugs (36) documented in worklog for future cleanup
+
+---
+Task ID: RENAME-FEATURE
+Agent: Main Orchestrator (Z.ai Code)
+Task: Add manual rename option + confirmation step to file upload flow
+
+Work Log:
+- Analyzed current flow: /api/ingest-process had auto-detect-only logic with isPlaceholderName() + extractMonthFromRows() fallback. User had no manual override when auto-detect failed ("Loading Google Sheet" leak-through case).
+- Backend (src/app/api/ingest-process/route.ts):
+  * Added optional `manualFileName` field to request body (detect + import modes).
+  * Added `sanitizeFileName()` helper — strips path traversal chars (<>:"/\|?*, control chars, leading dots).
+  * When manualFileName present: sanitize → ensure .xlsx/.csv extension → validate via parseMonthFromFilename (must contain month+year) → use as effectiveRawFileName, set manualMode=true.
+  * When manualMode=true: SKIP isPlaceholderName check + SKIP extractMonthFromRows fallback (user explicitly chose name).
+  * Added `manualMode` boolean to detect response so frontend knows name origin.
+  * Error messages updated with tip: "Tip: gunakan opsi Rename Manual saat upload."
+- Frontend (src/components/filters/FileUploadDialog.tsx) — full rewrite:
+  * New state: renameMode ('auto'|'manual', default 'auto'), manualFileName, detectData, importing.
+  * New client-side validator: validateManualFileName() — checks month name + year + extension, mirrors server sanitize.
+  * Split handleUpload into handleUploadAndDetect (phase 1+2, stops at confirmation) + handleRunImport (phase 3, triggered by "Lanjut Import").
+  * fileMetaRef persists fileHash/fileSize/ext across detect→import so no re-upload needed.
+  * New UI section "Nama File untuk Import" with 2 toggle cards: Auto-Detect (Wand2 icon) vs Rename Manual (Keyboard icon).
+  * Manual mode shows Input field with live validation (✓ green / ⚠ amber).
+  * New confirmation panel (border-primary/30, bg-primary/5) shows: nama file, bulan, week di file, week sudah ada, week akan diimport. Buttons: "Edit Nama" (goes back to manual mode) + "Lanjut Import" (ArrowRight icon).
+  * Footer buttons adapt to phase: select→"Upload & Deteksi", confirm→"Lanjut Import", done→"Selesai".
+  * Import button disabled when manual mode + validation fails.
+  * handleEditName: pre-fills manualFileName with detected name so user can tweak.
+- Verification: lint 0 errors, tsc 0 errors, page HTTP 200 (46KB), no runtime errors.
+
+Stage Summary:
+- 2 files modified: src/app/api/ingest-process/route.ts, src/components/filters/FileUploadDialog.tsx
+- New feature: dual-mode filename handling (auto-detect default + manual override) with confirmation gate before import.
+- User flow: pilih file → pilih mode (auto/manual) → upload+detect → konfirmasi (lihat nama+bulan+weeks, edit nama jika perlu) → import.
+- Manual name validation: wajib format "BULAN TAHUN.xlsx" (e.g., "MEI 2026.xlsx", "17.JULI 2026.xlsx"). Server validates via parseMonthFromFilename.
+- No cross-check between manual month vs Excel data month (per user request: "gak perlu cek biar gak tambah berat").
+- Backward compatible: if manualFileName not sent, existing auto-detect behavior unchanged.
+- Security: manualFileName sanitized server-side (path traversal chars stripped).

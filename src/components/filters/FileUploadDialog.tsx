@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X, Pencil, ArrowRight, Wand2, Keyboard } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -38,13 +40,64 @@ interface FileUploadDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+// Detect result shape (kept loose since backend may add fields)
+interface DetectResult {
+  fileName: string;
+  manualMode: boolean;
+  monthLabel: string;
+  monthKey: string;
+  weeksInFile: string[];
+  existingWeeks: string[];
+  weeksToImport: string[];
+  rowCountPerWeek: Record<string, number>;
+  message?: string;
+}
+
+// Client-side manual filename validation.
+// Must contain an Indonesian month name + 2-4 digit year, and end with .xlsx/.csv.
+const MONTH_NAMES = ['januari','februari','maret','april','mei','juni','juli','agustus','september','oktober','november','desember','jan','feb','mar','apr','jun','jul','agu','aug','sep','okt','nov','des'];
+
+function validateManualFileName(raw: string): { ok: boolean; error?: string; cleaned?: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, error: 'Nama file tidak boleh kosong.' };
+  // Strip filesystem-unsafe chars (mirror server-side sanitize)
+  const cleaned = trimmed.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/^\.+/, '').trim();
+  if (!cleaned) return { ok: false, error: 'Nama file mengandung karakter tidak valid.' };
+  // Ensure extension
+  const hasExt = /\.(xlsx|csv)$/i.test(cleaned);
+  const withExt = hasExt ? cleaned : `${cleaned}.xlsx`;
+  // Must contain month name + year
+  const lower = withExt.toLowerCase();
+  const hasMonth = MONTH_NAMES.some(m => lower.includes(m));
+  const hasYear = /\b(20\d{2}|\d{2})\b/.test(lower);
+  if (!hasMonth || !hasYear) {
+    return { ok: false, error: 'Format harus "BULAN TAHUN.xlsx". Contoh: "MEI 2026.xlsx" atau "17.JULI 2026.xlsx".', cleaned: withExt };
+  }
+  return { ok: true, cleaned: withExt };
+}
+
 export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(false);       // upload + detect phase
+  const [importing, setImporting] = useState(false);       // import loop phase
   const [progress, setProgress] = useState(0);
   const [statusLog, setStatusLog] = useState<string[]>([]);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Rename mode state
+  const [renameMode, setRenameMode] = useState<'auto' | 'manual'>(renameModeDefault());
+  const [manualFileName, setManualFileName] = useState('');
+  const manualValidation = useMemo(() => {
+    if (renameMode !== 'manual') return { ok: true, cleaned: '' };
+    return validateManualFileName(manualFileName);
+  }, [renameMode, manualFileName]);
+
+  // Detect result + confirmation gate
+  const [detectData, setDetectData] = useState<DetectResult | null>(null);
+  // Persist upload metadata across detect → import so the import call doesn't need to re-upload
+  const fileMetaRef = useRef<{ fileHash: string; fileSize: number; ext: string }>({ fileHash: '', fileSize: 0, ext: '' });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -52,14 +105,19 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
   const reset = useCallback(() => {
     setFile(null);
     setUploading(false);
+    setImporting(false);
     setProgress(0);
     setStatusLog([]);
     setResult(null);
     setError(null);
+    setRenameMode(renameModeDefault());
+    setManualFileName('');
+    setDetectData(null);
+    fileMetaRef.current = { fileHash: '', fileSize: 0, ext: '' };
   }, []);
 
   const handleClose = () => {
-    if (uploading) return; // Don't close during upload
+    if (uploading || importing) return; // Don't close during processing
     reset();
     onOpenChange(false);
   };
@@ -68,14 +126,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     const selected = e.target.files?.[0];
     if (!selected) return;
 
-    // Validate file type
     const ext = selected.name.split('.').pop()?.toLowerCase();
     if (ext !== 'xlsx' && ext !== 'csv') {
       setError(`Format file tidak didukung: .${ext}. Hanya .xlsx dan .csv.`);
       return;
     }
 
-    // Validate file size (50MB)
     if (selected.size > 50 * 1024 * 1024) {
       setError(`File terlalu besar: ${(selected.size / 1024 / 1024).toFixed(1)}MB. Maksimal 50MB.`);
       return;
@@ -84,8 +140,11 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setError(null);
     setFile(selected);
     setResult(null);
+    setDetectData(null);
     setStatusLog([]);
     setProgress(0);
+    // Pre-fill manual name with the original filename (user can edit)
+    setManualFileName(selected.name);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -107,18 +166,29 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setError(null);
     setFile(dropped);
     setResult(null);
+    setDetectData(null);
     setStatusLog([]);
     setProgress(0);
+    setManualFileName(dropped.name);
   };
 
-  const handleUpload = async () => {
+  // ============================================================
+  // PHASE 1+2: Upload chunks + Detect weeks (stops at confirmation)
+  // ============================================================
+  const handleUploadAndDetect = async () => {
     if (!file) return;
+    // If manual mode, validate before starting upload
+    if (renameMode === 'manual' && !manualValidation.ok) {
+      setError(manualValidation.error || 'Nama manual tidak valid.');
+      return;
+    }
 
     setUploading(true);
     setProgress(0);
     setStatusLog([`⏳ Mengupload ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)...`]);
     setError(null);
     setResult(null);
+    setDetectData(null);
 
     try {
       // ===== PHASE 1: Upload chunks (fast, each <5s) =====
@@ -146,7 +216,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         formData.append('fileHash', fileHash);
         formData.append('fileSize', String(file.size));
 
-        const chunkProgress = ((i + 1) / totalChunks) * 50; // 0-50% for upload
+        const chunkProgress = ((i + 1) / totalChunks) * 40; // 0-40% for upload
         setProgress(chunkProgress);
 
         if (i > 0) {
@@ -182,14 +252,16 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       }
 
       const fileSize = uploadResult.fileSize;
-      // FIX: Start with the user's file.name, but the detect API may return
-      // a corrected fileName (extracted from Excel data) if the original was
-      // a Google Sheets placeholder like "Loading Google Sheet".
-      let fileName = file.name;
-      const ext = uploadResult.ext || '.' + fileName.split('.').pop()?.toLowerCase();
+      const ext = uploadResult.ext || '.' + (file.name.split('.').pop()?.toLowerCase() || 'xlsx');
+      fileMetaRef.current = { fileHash, fileSize, ext };
+
+      // Determine manualFileName to send (only if mode is manual and valid)
+      const manualPayload = renameMode === 'manual' && manualValidation.ok
+        ? { manualFileName: manualValidation.cleaned }
+        : {};
 
       // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====
-      setProgress(55);
+      setProgress(50);
       setStatusLog(prev => [...prev, '🔍 Parsing Excel, mendeteksi week...']);
 
       const detectRes = await fetch('/api/ingest-process', {
@@ -197,62 +269,106 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode: 'detect',
-          fileName,
+          fileName: file.name,
           fileHash,
           fileSize,
           ext,
+          ...manualPayload,
         }),
       });
 
-      const detectData = await detectRes.json();
-      if (!detectRes.ok || !detectData.success) {
-        throw new Error(detectData.error || `HTTP ${detectRes.status}`);
+      const ct = detectRes.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        const text = await detectRes.text();
+        throw new Error(`Server error (HTTP ${detectRes.status}). ${text.slice(0, 300)}`);
       }
 
-      // FIX: If server extracted a better fileName from Excel data, use it
-      if (detectData.fileName && detectData.fileName !== fileName) {
-        console.log(`[upload] fileName corrected: "${fileName}" → "${detectData.fileName}"`);
-        fileName = detectData.fileName;
+      const detectDataResp = await detectRes.json();
+      if (!detectRes.ok || !detectDataResp.success) {
+        throw new Error(detectDataResp.error || `HTTP ${detectRes.status}`);
       }
 
-      const weeksInFile: string[] = detectData.weeksInFile || [];
-      const existingWeeks: string[] = detectData.existingWeeks || [];
-      const weeksToImport: string[] = detectData.weeksToImport || [];
-      const rowCountPerWeek: Record<string, number> = detectData.rowCountPerWeek || {};
-      const monthLabel: string = detectData.monthLabel || '';
+      // Use server-corrected fileName (auto-extracted or manual-validated)
+      const finalFileName: string = detectDataResp.fileName || file.name;
+      const monthLabel: string = detectDataResp.monthLabel || '';
 
-      setProgress(60);
+      setProgress(55);
       setStatusLog(prev => [...prev, `📅 Bulan: ${monthLabel}`]);
-      setStatusLog(prev => [...prev, `📊 Week di file: ${weeksInFile.join(', ')}`]);
+      setStatusLog(prev => [...prev, `📊 Week di file: ${(detectDataResp.weeksInFile || []).join(', ')}`]);
 
-      if (existingWeeks.length > 0) {
-        setStatusLog(prev => [...prev, `ℹ️ Week sudah ada di DB: ${existingWeeks.join(', ')}`]);
+      if ((detectDataResp.existingWeeks || []).length > 0) {
+        setStatusLog(prev => [...prev, `ℹ️ Week sudah ada di DB: ${(detectDataResp.existingWeeks || []).join(', ')}`]);
       }
 
-      if (weeksToImport.length === 0) {
+      // If nothing to import, short-circuit (same as before)
+      if ((detectDataResp.weeksToImport || []).length === 0) {
         setStatusLog(prev => [...prev, `✅ Semua week sudah ada. Tidak ada yang diimport.`]);
         setProgress(100);
-        // Cleanup temp file
         await fetch('/api/ingest-process', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileHash }),
-        });
+        }).catch(() => {});
         queryClient.invalidateQueries({ queryKey: ['status'] });
         toast({ title: 'ℹ️ Tidak ada import', description: 'Semua week sudah ada di DB.' });
+        setUploading(false);
         return;
       }
 
-      // ===== PHASE 3: Import each week (separate request per week) =====
-      const importedWeeks: WeekResult[] = [];
-      let totalInserted = 0;
-      const totalWeeksToImport = weeksToImport.length;
+      // ===== STOP HERE — show confirmation panel =====
+      setDetectData({
+        fileName: finalFileName,
+        manualMode: !!detectDataResp.manualMode,
+        monthLabel,
+        monthKey: detectDataResp.monthKey || '',
+        weeksInFile: detectDataResp.weeksInFile || [],
+        existingWeeks: detectDataResp.existingWeeks || [],
+        weeksToImport: detectDataResp.weeksToImport || [],
+        rowCountPerWeek: detectDataResp.rowCountPerWeek || {},
+        message: detectDataResp.message,
+      });
+      setStatusLog(prev => [...prev, '⏸️ Konfirmasi nama & week sebelum import.']);
+      setUploading(false);
+      // Keep progress at 55% — import will fill 60-100%
+    } catch (e: any) {
+      setError(e?.message || 'Upload gagal');
+      setStatusLog(prev => [...prev, `❌ Error: ${e?.message || 'unknown'}`]);
+      toast({
+        title: '❌ Upload gagal',
+        description: e?.message || 'Unknown error',
+        variant: 'destructive',
+      });
+      setUploading(false);
+    }
+  };
 
-      for (let wi = 0; wi < totalWeeksToImport; wi++) {
+  // ============================================================
+  // PHASE 3: Import weeks (triggered by "Lanjut Import" button)
+  // ============================================================
+  const handleRunImport = async () => {
+    if (!detectData) return;
+    const { fileHash, fileSize, ext } = fileMetaRef.current;
+    if (!fileHash) {
+      setError('Sesi kedaluwarsa. Upload ulang file.');
+      return;
+    }
+
+    setImporting(true);
+    setError(null);
+    setProgress(60);
+
+    const fileName = detectData.fileName;
+    const weeksToImport = detectData.weeksToImport;
+    const rowCountPerWeek = detectData.rowCountPerWeek;
+    const importedWeeks: WeekResult[] = [];
+    let totalInserted = 0;
+
+    try {
+      for (let wi = 0; wi < weeksToImport.length; wi++) {
         const weekLabel = weeksToImport[wi];
         const weekRows = rowCountPerWeek[weekLabel] || 0;
 
-        const weekProgress = 60 + ((wi) / totalWeeksToImport) * 40; // 60-100%
+        const weekProgress = 60 + ((wi) / weeksToImport.length) * 40; // 60-100%
         setProgress(weekProgress);
 
         setStatusLog(prev => [...prev, `⏳ Import ${weekLabel} (${weekRows.toLocaleString()} rows)...`]);
@@ -268,10 +384,11 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
               fileSize,
               ext,
               weekLabel,
+              // Pass manualFileName through to import too, so server uses the same name
+              ...(detectData.manualMode ? { manualFileName: fileName } : {}),
             }),
           });
 
-          // Bug fix: check content-type before parsing JSON (Vercel errors return HTML)
           const contentType = importRes.headers.get('content-type') || '';
           if (!contentType.includes('application/json')) {
             const text = await importRes.text();
@@ -318,28 +435,27 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         body: JSON.stringify({ fileHash }),
       }).catch(() => {});
 
-      const totalDuration = Date.now() - 0; // approximate
       setProgress(100);
 
       const r: UploadResult = {
         fileName,
-        monthLabel,
-        monthKey: detectData.monthKey || '',
+        monthLabel: detectData.monthLabel,
+        monthKey: detectData.monthKey,
         fileSize,
         fileHash,
-        weeksInFile,
-        existingWeeks,
+        weeksInFile: detectData.weeksInFile,
+        existingWeeks: detectData.existingWeeks,
         importedWeeks,
         totalInserted,
-        totalSkipped: existingWeeks.length,
+        totalSkipped: detectData.existingWeeks.length,
         durationMs: 0,
       };
       setResult(r);
+      setDetectData(null);
 
       setStatusLog(prev => [...prev, `✅ Total: ${totalInserted.toLocaleString()} rows inserted`]);
 
       queryClient.invalidateQueries({ queryKey: ['status'] });
-      // FIX: Invalidate ALL data-dependent queries after upload
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
@@ -351,7 +467,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,
       });
     } catch (e: any) {
-      setError(e?.message || 'Upload gagal');
+      setError(e?.message || 'Import gagal');
       setStatusLog(prev => [...prev, `❌ Error: ${e?.message || 'unknown'}`]);
       toast({
         title: '❌ Import gagal',
@@ -359,9 +475,23 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         variant: 'destructive',
       });
     } finally {
-      setUploading(false);
+      setImporting(false);
     }
   };
+
+  // "Edit Nama" from confirmation: go back to rename mode, keep detectData for reference
+  const handleEditName = () => {
+    setDetectData(null);
+    setRenameMode('manual');
+    // Pre-fill with the current detected filename so user can tweak
+    if (detectData?.fileName) {
+      setManualFileName(detectData.fileName);
+    }
+    setStatusLog(prev => [...prev, '✏️ Mode rename manual aktif. Perbaiki nama lalu upload ulang.']);
+  };
+
+  const isBusy = uploading || importing;
+  const showConfirm = !!detectData && !result;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -377,11 +507,11 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* File Drop Zone */}
-          {!result && (
+          {/* File Drop Zone — hidden once confirmation or result is shown */}
+          {!result && !showConfirm && (
             <div
               className="border-2 border-dashed border-muted-foreground/30 rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !isBusy && fileInputRef.current?.click()}
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
             >
@@ -403,9 +533,11 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
                     variant="ghost"
                     size="sm"
                     className="mt-2"
+                    disabled={isBusy}
                     onClick={(e) => {
                       e.stopPropagation();
                       setFile(null);
+                      setManualFileName('');
                     }}
                   >
                     <X className="h-4 w-4" /> Ganti file
@@ -426,6 +558,142 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             </div>
           )}
 
+          {/* Rename Mode Section — only show when file is selected and not yet confirmed/imported */}
+          {file && !result && !showConfirm && (
+            <div className="border rounded-lg p-3 space-y-3 bg-muted/30">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Pencil className="h-4 w-4" />
+                Nama File untuk Import
+              </div>
+
+              {/* Mode toggle */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => setRenameMode('auto')}
+                  className={`text-left p-2.5 rounded-lg border text-sm transition-colors ${
+                    renameMode === 'auto'
+                      ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                      : 'border-muted hover:border-muted-foreground/40'
+                  } ${isBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <Wand2 className="h-3.5 w-3.5" />
+                    Auto-Detect
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Sistem extract bulan dari nama file / data Excel
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => setRenameMode('manual')}
+                  className={`text-left p-2.5 rounded-lg border text-sm transition-colors ${
+                    renameMode === 'manual'
+                      ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                      : 'border-muted hover:border-muted-foreground/40'
+                  } ${isBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <Keyboard className="h-3.5 w-3.5" />
+                    Rename Manual
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Ketik nama sendiri (format: BULAN TAHUN.xlsx)
+                  </p>
+                </button>
+              </div>
+
+              {/* Manual input */}
+              {renameMode === 'manual' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="manual-filename" className="text-xs">
+                    Nama file manual
+                  </Label>
+                  <Input
+                    id="manual-filename"
+                    value={manualFileName}
+                    onChange={(e) => setManualFileName(e.target.value)}
+                    placeholder="MEI 2026.xlsx"
+                    disabled={isBusy}
+                    className="font-mono text-sm"
+                    autoComplete="off"
+                  />
+                  {manualFileName && (
+                    <p className={`text-xs ${manualValidation.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {manualValidation.ok
+                        ? `✓ Akan disimpan sebagai: ${manualValidation.cleaned}`
+                        : `⚠ ${manualValidation.error}`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {renameMode === 'auto' && (
+                <p className="text-xs text-muted-foreground">
+                  ℹ️ Jika nama file adalah placeholder (mis. &quot;Loading Google Sheet&quot;), sistem otomatis extract bulan dari data Excel. Jika gagal, switch ke &quot;Rename Manual&quot;.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Confirmation Panel — shown after detect, before import */}
+          {showConfirm && detectData && (
+            <div className="border-2 border-primary/30 rounded-lg p-4 space-y-3 bg-primary/5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+                <CheckCircle2 className="h-4 w-4" />
+                Konfirmasi Import
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-muted-foreground shrink-0">📁 Nama file:</span>
+                  <span className="font-mono font-semibold text-right break-all">{detectData.fileName}</span>
+                </div>
+                {detectData.manualMode && (
+                  <p className="text-xs text-blue-600 dark:text-blue-400">✏️ Nama di-set manual</p>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">📅 Bulan:</span>
+                  <span className="font-semibold">{detectData.monthLabel}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">📊 Week di file:</span>
+                  <span className="font-semibold">{detectData.weeksInFile.join(', ') || '-'}</span>
+                </div>
+                {detectData.existingWeeks.length > 0 && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">ℹ️ Sudah ada:</span>
+                    <span className="text-blue-600 dark:text-blue-400 font-medium">{detectData.existingWeeks.join(', ')}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t">
+                  <span className="text-muted-foreground">📦 Akan diimport:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">{detectData.weeksToImport.join(', ')}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={handleEditName} className="gap-1.5">
+                  <Pencil className="h-3.5 w-3.5" /> Edit Nama
+                </Button>
+                <Button size="sm" onClick={handleRunImport} disabled={importing} className="gap-1.5 flex-1">
+                  {importing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Mengimport...
+                    </>
+                  ) : (
+                    <>
+                      Lanjut Import <ArrowRight className="h-3.5 w-3.5" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
@@ -435,12 +703,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           )}
 
           {/* Progress */}
-          {uploading && (
+          {isBusy && (
             <div className="space-y-2">
               <Progress value={progress} className="h-2" />
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Memproses... (bisa 1-5 menit untuk file besar)</span>
+                <span>{uploading ? 'Memproses... (bisa 1-5 menit untuk file besar)' : 'Mengimport week...'}</span>
               </div>
             </div>
           )}
@@ -507,14 +775,14 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           )}
 
           {/* Info */}
-          {!file && !result && (
+          {!file && !result && !showConfirm && (
             <div className="text-xs text-muted-foreground space-y-1">
               <p>📋 <strong>Cara kerja:</strong></p>
               <p>1. Pilih file Excel (.xlsx) dari komputer</p>
-              <p>2. Sistem parse nama file → deteksi bulan</p>
-              <p>3. Cek database: week mana yang belum ada untuk bulan itu</p>
-              <p>4. Import hanya week yang belum ada (partial commit per week)</p>
-              <p>5. Jika WEEK 1 & 2 sudah ada, hanya WEEK 4 yang diimport</p>
+              <p>2. Pilih mode: Auto-Detect (otomatis) atau Rename Manual</p>
+              <p>3. Upload + sistem deteksi week yang belum ada</p>
+              <p>4. Konfirmasi nama file &amp; week sebelum import</p>
+              <p>5. Import hanya week yang belum ada (partial commit per week)</p>
             </div>
           )}
         </div>
@@ -524,12 +792,34 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             <Button onClick={handleClose} className="w-full">
               Selesai
             </Button>
-          ) : (
+          ) : showConfirm ? (
             <>
-              <Button variant="ghost" onClick={handleClose} disabled={uploading}>
+              <Button variant="ghost" onClick={handleClose} disabled={importing}>
                 Batal
               </Button>
-              <Button onClick={handleUpload} disabled={!file || uploading} className="gap-2">
+              <Button onClick={handleRunImport} disabled={importing} className="gap-2">
+                {importing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Mengimport...
+                  </>
+                ) : (
+                  <>
+                    Lanjut Import <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={handleClose} disabled={isBusy}>
+                Batal
+              </Button>
+              <Button
+                onClick={handleUploadAndDetect}
+                disabled={!file || isBusy || (renameMode === 'manual' && !manualValidation.ok)}
+                className="gap-2"
+              >
                 {uploading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -538,7 +828,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
                 ) : (
                   <>
                     <Upload className="h-4 w-4" />
-                    Import File
+                    Upload &amp; Deteksi
                   </>
                 )}
               </Button>
@@ -548,4 +838,8 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       </DialogContent>
     </Dialog>
   );
+}
+
+function renameModeDefault(): 'auto' | 'manual' {
+  return 'auto';
 }

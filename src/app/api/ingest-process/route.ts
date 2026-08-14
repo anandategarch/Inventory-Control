@@ -92,13 +92,55 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { mode, fileName: rawFileName, fileHash, fileSize, ext } = body;
+    const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName } = body;
 
     if (!mode || !rawFileName || !fileHash) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields: mode, fileName, fileHash' },
         { status: 400 }
       );
+    }
+
+    // ============================================================
+    // Manual rename support (user override for "Loading Google Sheet" etc.)
+    // If manualFileName is provided and non-empty, it takes precedence over
+    // rawFileName. We sanitize it (strip path traversal chars) and validate
+    // that it contains parseable month info (e.g., "MEI 2026.xlsx").
+    // When manual mode is active, the auto-extract-from-Excel-data fallback
+    // is SKIPPED — user explicitly chose this name.
+    // ============================================================
+    const sanitizeFileName = (name: string): string => {
+      // Strip path traversal and filesystem-unsafe chars
+      let cleaned = name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim();
+      // Remove any leading dots (hidden files / ../ traversal leftover)
+      cleaned = cleaned.replace(/^\.+/, '').trim();
+      return cleaned;
+    };
+
+    let effectiveRawFileName = rawFileName;
+    let manualMode = false;
+    if (manualFileName && typeof manualFileName === 'string' && manualFileName.trim()) {
+      const cleaned = sanitizeFileName(manualFileName);
+      if (!cleaned) {
+        return NextResponse.json(
+          { success: false, error: 'manualFileName kosong setelah sanitisasi.' },
+          { status: 400 }
+        );
+      }
+      // Ensure extension exists — default to .xlsx if missing
+      const hasExt = /\.(xlsx|csv)$/i.test(cleaned);
+      const withExt = hasExt ? cleaned : `${cleaned}.xlsx`;
+      // Validate that the manual name contains parseable month info
+      const parsedManual = parseMonthFromFilename(withExt);
+      if (!parsedManual) {
+        return NextResponse.json(
+          { success: false, error: `Nama manual "${withExt}" tidak mengandung info bulan. Format: "BULAN TAHUN.xlsx" contoh: "MEI 2026.xlsx".` },
+          { status: 400 }
+        );
+      }
+      effectiveRawFileName = withExt;
+      manualMode = true;
+      console.log(`[ingest-process] manual rename: "${rawFileName}" → "${effectiveRawFileName}"`);
     }
 
     // FIX-A-1 (BUG-5-1): validate fileHash + ext BEFORE reassembleFile to prevent
@@ -135,9 +177,11 @@ export async function POST(req: NextRequest) {
       return PLACEHOLDER_PATTERNS.some(p => p.test(base));
     };
 
-    let fileName = rawFileName;
-    // Strip Google Sheets suffixes
-    fileName = fileName.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
+    let fileName = effectiveRawFileName;
+    // Strip Google Sheets suffixes (only relevant in auto mode; manual name already cleaned)
+    if (!manualMode) {
+      fileName = fileName.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
+    }
 
     // Helper: extract monthLabel from Excel row data (BULAN / BULAN 2 fields)
     // BULAN field typically contains "171.MEI 26" or "17.MEI 2026"
@@ -189,8 +233,10 @@ export async function POST(req: NextRequest) {
       // Parse Excel
       const parsed = await parseExcelFile(filePath);
 
-      // FIX: If filename is placeholder, extract month from row data
-      if (fileNameIsPlaceholder || !monthInfo) {
+      // FIX: If filename is placeholder, extract month from row data.
+      // SKIP this auto-extract when user provided manualFileName — they explicitly
+      // chose the name, so we respect it (monthInfo already parsed from manual name).
+      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
         const allRows: Array<Record<string, unknown>> = [];
         for (const sheet of parsed.sheets) {
           allRows.push(...sheet.rows);
@@ -207,7 +253,7 @@ export async function POST(req: NextRequest) {
         await fs.unlink(filePath).catch(() => {});
         await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
         return NextResponse.json(
-          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx". Tidak bisa extract month dari data juga.` },
+          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx". Tidak bisa extract month dari data juga. Tip: gunakan opsi "Rename Manual" saat upload.` },
           { status: 400 }
         );
       }
@@ -257,6 +303,7 @@ export async function POST(req: NextRequest) {
         success: true,
         mode: 'detect',
         fileName, // FIX: return corrected filename so UI shows it
+        manualMode, // let frontend know whether name came from user override
         monthLabel: monthInfo.monthLabel,
         monthKey: monthInfo.monthKey,
         weeksInFile,
@@ -310,8 +357,9 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // FIX: If filename is placeholder, extract month from row data
-      if (fileNameIsPlaceholder || !monthInfo) {
+      // FIX: If filename is placeholder, extract month from row data.
+      // SKIP auto-extract in manual mode (user explicitly chose the name).
+      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
         const allRows: Array<Record<string, unknown>> = [];
         for (const sheet of parsed.sheets) {
           allRows.push(...sheet.rows);
@@ -327,7 +375,7 @@ export async function POST(req: NextRequest) {
       if (!monthInfo) {
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
-          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Tidak bisa extract month dari data juga.` },
+          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Tidak bisa extract month dari data juga. Tip: gunakan opsi "Rename Manual" saat upload.` },
           { status: 400 }
         );
       }
