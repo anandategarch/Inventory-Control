@@ -37,6 +37,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `Invalid input: ${validationError}` }, { status: 400 });
     }
     const url = validatedBody.url;
+    // Optional manual filename override — when provided, takes precedence over the
+    // downloaded filename (fixes "Loading Google Sheet" issue). User types this in
+    // the rename field before clicking "Import Now".
+    const manualFileName: string | undefined = typeof body.manualFileName === 'string' && body.manualFileName.trim()
+      ? body.manualFileName.trim()
+      : undefined;
 
     // SSRF protection
     const ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];
@@ -78,11 +84,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 2: Ingest each file (optimized)
+    // If manualFileName is provided, pass it through so processIngestion uses it
+    // instead of the basename-derived filename (fixes "Loading Google Sheet").
     const ingestResults: any[] = [];
     for (const file of successful) {
-      const result = await processIngestion({ filePath: file.localPath });
+      const result = await processIngestion({
+        filePath: file.localPath,
+        ...(manualFileName ? { manualFileName } : {}),
+      });
       ingestResults.push(result[0] || {
-        fileName: path.basename(file.localPath), status: 'ERROR', rowCount: 0,
+        fileName: manualFileName || path.basename(file.localPath),
+        status: 'ERROR', rowCount: 0,
         dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: 'No result',
       });
     }

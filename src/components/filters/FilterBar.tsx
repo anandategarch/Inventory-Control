@@ -3,7 +3,7 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users } from 'lucide-react';
+import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { SettingsDialog } from '@/components/filters/SettingsDialog';
 import { DataManagementDialog } from '@/components/filters/DataManagementDialog';
 import { PicManagementDialog } from '@/components/filters/PicManagementDialog';
+import { FileUploadDialog } from '@/components/filters/FileUploadDialog';
 
 export function FilterBar() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
@@ -32,6 +33,11 @@ export function FilterBar() {
   const [driveImporting, setDriveImporting] = useState(false);
   const [driveResult, setDriveResult] = useState<any>(null);
   const [progressLog, setProgressLog] = useState<string[]>([]);
+  // Manual rename for Drive import — overrides downloaded filename (fixes "Loading Google Sheet")
+  const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
+  const [driveManualName, setDriveManualName] = useState('');
+  // Local file upload dialog (alternative to Drive import)
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // Settings dialog state
@@ -138,7 +144,11 @@ export function FilterBar() {
       const res = await fetch('/api/import-drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: driveUrl.trim() }),
+        body: JSON.stringify({
+          url: driveUrl.trim(),
+          // Pass manual filename if user chose to rename
+          ...(driveRenameMode === 'manual' && driveManualName.trim() ? { manualFileName: driveManualName.trim() } : {}),
+        }),
       });
 
       const contentType = res.headers.get('content-type') || '';
@@ -308,10 +318,19 @@ export function FilterBar() {
               variant="secondary"
               size="sm"
               className="h-9"
-              onClick={() => { setDriveDialogOpen(true); setDriveResult(null); }}
+              onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); }}
             >
               <CloudDownload className="h-3.5 w-3.5 mr-1" />
               Import dari Drive
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-9"
+              onClick={() => setUploadDialogOpen(true)}
+            >
+              <Upload className="h-3.5 w-3.5 mr-1" />
+              Upload File
             </Button>
             <Button variant="default" size="sm" className="h-9" onClick={handleIngest} disabled={ingesting}>
               <RefreshCw className={`h-3.5 w-3.5 mr-1 ${ingesting ? 'animate-spin' : ''}`} />
@@ -435,6 +454,57 @@ export function FilterBar() {
                   </TabsContent>
                 </Tabs>
               </div>
+
+              {/* Rename option — fixes "Loading Google Sheet" filename issue */}
+              <div className="border rounded-lg p-2.5 space-y-2 bg-muted/20">
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <Pencil className="h-3.5 w-3.5" />
+                  Nama File
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={driveImporting}
+                    onClick={() => setDriveRenameMode('auto')}
+                    className={`text-left p-2 rounded-lg border text-xs transition-colors ${
+                      driveRenameMode === 'auto'
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                        : 'border-muted hover:border-muted-foreground/40'
+                    } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="font-medium">Auto-Detect</div>
+                    <p className="text-muted-foreground mt-0.5">Pakai nama dari Google Drive</p>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={driveImporting}
+                    onClick={() => setDriveRenameMode('manual')}
+                    className={`text-left p-2 rounded-lg border text-xs transition-colors ${
+                      driveRenameMode === 'manual'
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                        : 'border-muted hover:border-muted-foreground/40'
+                    } ${driveImporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="font-medium">Rename Manual</div>
+                    <p className="text-muted-foreground mt-0.5">Ketik nama sendiri</p>
+                  </button>
+                </div>
+                {driveRenameMode === 'manual' && (
+                  <div className="space-y-1">
+                    <Input
+                      value={driveManualName}
+                      onChange={(e) => setDriveManualName(e.target.value)}
+                      placeholder="JULI 2026.xlsx"
+                      disabled={driveImporting}
+                      className="font-mono text-xs h-8"
+                      autoComplete="off"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Format: BULAN TAHUN.xlsx (contoh: MEI 2026.xlsx). Pakai ini kalau nama Google Sheets &quot;Loading Google Sheet&quot;.
+                    </p>
+                  </div>
+                )}
+              </div>
               <DialogFooter>
                 <Button variant="outline" onClick={handleCloseDialog} disabled={driveImporting}>
                   Cancel
@@ -537,6 +607,9 @@ export function FilterBar() {
 
       {/* PIC Management Dialog */}
       <PicManagementDialog open={picMgmtOpen} onOpenChange={setPicMgmtOpen} />
+
+      {/* Local File Upload Dialog — alternative to Drive import, with rename + confirmation */}
+      <FileUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
     </>
   );
 }
