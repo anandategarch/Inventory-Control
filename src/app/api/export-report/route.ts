@@ -324,13 +324,13 @@ export async function GET(req: NextRequest) {
 
     const multiPeriodComparison = trendAggRows.map(r => {
       const mk = monthLabelByKey.get(r.monthLabel) || '0000-00';
-      return { period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
+      return { period: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0 && arr[i - 1].deviation > 0) row.growthPct = (row.deviation - arr[i - 1].deviation) / Math.abs(arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
     (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
 
     const trend = trendAggRows.map(r => {
       const mk = monthLabelByKey.get(r.monthLabel) || '0000-00';
-      return { weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
+      return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
     // Narrative
@@ -561,9 +561,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 15. Narrative
-    if (data.narrative) {
+    if (data.narrative && typeof data.narrative === 'string') {
       children.push(heading('15. NARASI ANALISIS'));
-      for (const line of data.narrative.split('\n')) {
+      for (const line of data.narrative?.split('\n')) {
         const trimmed = line.trim();
         if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
         else if (trimmed.startsWith('**') && trimmed.endsWith('**')) { children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22 })], spacing: { before: 100, after: 60 } })); }

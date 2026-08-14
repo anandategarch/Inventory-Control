@@ -65,7 +65,7 @@ export async function queryTopOutlets(
         ${f}
       GROUP BY ir."outletId"
     )
-    SELECT o.code as "outletCode", o.name as "outletName", oa."absNominal",
+    SELECT o.code as "outletCode", o.name as "outletName", COALESCE(oa."absNominal", 0) as "absNominal",
       COALESCE(oa."devBom", 0) as "devBom",
       CASE WHEN oa."lossAmount" > oa."surplusAmount" THEN 'LOSS'
            WHEN oa."surplusAmount" > oa."lossAmount" THEN 'SURPLUS'
