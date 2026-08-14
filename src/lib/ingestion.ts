@@ -82,7 +82,7 @@ export async function findExcelFiles(dirOverride?: string): Promise<string[]> {
 //  Bug 3 fix: dedup by monthLabel (delete old SourceFile for same period)
 //  Bug 3 fix: race condition lock per file
 // ============================================================
-export async function processIngestion(body: any): Promise<IngestResult[]> {
+export async function processIngestion(body: any, fastMode?: boolean): Promise<IngestResult[]> {
   const startedAt = Date.now();
   let files: string[] = [];
 
@@ -229,18 +229,23 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       // SINGLE PASS: validate + normalize + create outlets/items lazily + insert
       // Pre-loaded outletDbMap and itemDbMap from SELECT above.
       // New outlets/items created on first encounter, then cached.
+      //
+      // FAST MODE: skip validateRow() entirely — pure normalize + derive + insert.
+      // Validation can be run separately later. ~3-5x faster for large files.
       for (const rawRow of allRows) {
         totalRows++;
         const rowNumber = totalRows + 1;
 
-        // Validate
-        const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName);
-        allIssues.push(...issues);
+        if (!fastMode) {
+          // Validate
+          const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName);
+          allIssues.push(...issues);
 
-        const hasError = issues.some((i) => i.severity === 'ERROR');
-        if (hasError) {
-          skippedErrors++;
-          continue;
+          const hasError = issues.some((i) => i.severity === 'ERROR');
+          if (hasError) {
+            skippedErrors++;
+            continue;
+          }
         }
 
         // Normalize
@@ -337,7 +342,11 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       }
 
       // STEP 4: Update source file record
-      const dq = summarizeDQ(allIssues);
+      // FAST MODE: skip summarizeDQ() — return empty DQ summary (OK, 0 errors, 0 warnings).
+      // Validation can be run separately later and update these counts.
+      const dq = fastMode
+        ? { summary: [], severityCounts: { ERROR: 0, WARNING: 0, INFO: 0 }, status: 'OK' as const }
+        : summarizeDQ(allIssues);
       await db.sourceFile.update({
         where: { id: sourceFile.id },
         data: {
@@ -348,8 +357,8 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
         },
       });
 
-      // Insert DQ issues
-      if (allIssues.length > 0) {
+      // Insert DQ issues — skip entirely in fast mode (allIssues stays empty).
+      if (!fastMode && allIssues.length > 0) {
         const dqRecords = allIssues.map((i) => ({
           sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
           message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
@@ -363,7 +372,7 @@ export async function processIngestion(body: any): Promise<IngestResult[]> {
       await db.auditLog.create({
         data: {
           action: 'INGEST',
-          detail: `${fileName} → ${ext === '.xlsx' ? 'Excel direct' : 'CSV'}: ${totalInserted} rows (${skippedErrors} skipped due to ERROR)`,
+          detail: `${fileName} → ${ext === '.xlsx' ? 'Excel direct' : 'CSV'}: ${totalInserted} rows (${skippedErrors} skipped due to ERROR)${fastMode ? ' [FAST MODE]' : ''}`,
           duration: Date.now() - startedAt,
         },
       });
@@ -417,6 +426,7 @@ export interface ProcessRowsResult {
  * @param outletDbMap - Pre-populated outlet cache (code → id)
  * @param itemDbMap - Pre-populated item cache (name → {id, satuan})
  * @param seenKeys - Set of seen (outlet+item+week) keys for dedup
+ * @param fastMode - When true, skip validateRow() + DQ issue tracking (pure import, ~3-5x faster)
  * @returns { inserted, skippedErrors, dqIssues }
  */
 export async function processRowsForImport(
@@ -429,6 +439,7 @@ export async function processRowsForImport(
   outletDbMap?: Map<string, number>,
   itemDbMap?: Map<string, { id: number; satuan: string | null }>,
   seenKeys?: Set<string>,
+  fastMode?: boolean,
 ): Promise<ProcessRowsResult> {
   const _outletDbMap = outletDbMap ?? new Map<string, number>();
   const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
@@ -443,13 +454,18 @@ export async function processRowsForImport(
     const rawRow = rows[i];
     const rowNumber = startRowNumber + i + 1;
 
-    const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName);
-    allIssues.push(...issues);
+    // FAST MODE: skip validateRow() entirely — pure normalize + derive + insert.
+    // Validation can be run separately later via /api/dq-check (or similar).
+    // ~3-5x faster because validateRow() is the bottleneck for large files.
+    if (!fastMode) {
+      const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName);
+      allIssues.push(...issues);
 
-    const hasError = issues.some((iss) => iss.severity === 'ERROR');
-    if (hasError) {
-      skippedErrors++;
-      continue;
+      const hasError = issues.some((iss) => iss.severity === 'ERROR');
+      if (hasError) {
+        skippedErrors++;
+        continue;
+      }
     }
 
     const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel);

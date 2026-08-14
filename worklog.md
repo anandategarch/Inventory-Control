@@ -3226,3 +3226,54 @@ Stage Summary:
 - All 15 exported functions preserved: queryTrendAgg, queryExecSummary, queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByCategory, queryTopOutlets, queryTopOutletsBySales, queryDeviationBreakdown, queryLossVsSurplus, queryAreaAnalysis, queryCostImpact, queryPareto, queryItemConsistency, queryHistoricalStats + buildSqlFilters.
 - All 4 exported interfaces preserved: TrendAggRow, ExecSummaryRow, TopItemRow, TopOutletRow.
 - Lint: 0 errors. tsc: 0 errors. No consumer code changes required.
+
+---
+Task ID: ImportSpeed
+Agent: full-stack-developer
+Task: Optimize import speed — fast mode skips DQ validation
+
+Work Log:
+- Read /home/z/my-project/worklog.md last 30 lines for project context (P2-2 split of queries.ts into domain files — no prior fast-mode work; ingest paths use shared processRowsForImport + processIngestion in src/lib/ingestion.ts).
+- Read full src/lib/ingestion.ts (524 lines), src/app/api/ingest-process/route.ts (431 lines), src/app/api/ingest/route.ts (54 lines) to map current flow: validateRow() called inline per row in both processIngestion (full file) and processRowsForImport (per-week import); summarizeDQ() runs after loop; DQ issues batch-inserted via createMany in chunks of 500.
+- Confirmed validateRow signature (validator.ts:28) and summarizeDQ signature (validator.ts:220) returns `{ summary, severityCounts: {ERROR,WARNING,INFO}, status }` — used this shape for the fast-mode empty DQ summary literal.
+- Modified src/lib/ingestion.ts `processRowsForImport` (line 422):
+  * Added `fastMode?: boolean` as the 10th positional parameter (after `seenKeys`).
+  * Updated JSDoc to document the new `fastMode` param.
+  * Wrapped the `validateRow()` call + `allIssues.push()` + ERROR-skip check in `if (!fastMode) { ... }` block. When fastMode is true, the loop goes straight to normalizeRow → deriveRecord → ensure outlet/item exists → batch insert. `allIssues` stays empty.
+  * No changes to batch insert logic, outlet/item lazy cache, or return shape.
+- Modified src/lib/ingestion.ts `processIngestion` (line 85):
+  * Updated signature to `processIngestion(body: any, fastMode?: boolean): Promise<IngestResult[]>`.
+  * Wrapped the inline `validateRow()` call + `allIssues.push()` + ERROR-skip in `if (!fastMode) { ... }` block inside the per-row loop.
+  * STEP 4 (source file update): replaced unconditional `summarizeDQ(allIssues)` with ternary — fast mode returns `{ summary: [], severityCounts: {ERROR:0,WARNING:0,INFO:0}, status: 'OK' }`; non-fast mode calls summarizeDQ as before. SourceFile.rowCount still always updated.
+  * DQ issue insert: guarded with `if (!fastMode && allIssues.length > 0)` — skipped entirely in fast mode (no createMany call, no DQIssue rows).
+  * Audit log: detail string appends ` [FAST MODE]` when fastMode is true, for traceability. Audit log row is always created.
+- Modified src/app/api/ingest-process/route.ts (import mode, line 333):
+  * Passed `true` as the 10th positional argument to `processRowsForImport` (fastMode: true) — the import mode always uses fast mode per task spec ("the ingest-process route always uses fastMode for import").
+  * SourceFile update: still calls `summarizeDQ(result.dqIssues)` — in fast mode `result.dqIssues` is `[]` so summarizeDQ naturally returns OK/0/0. No short-circuit needed.
+  * DQ issue insert block: kept the `if (result.dqIssues.length > 0)` guard — in fast mode it's a no-op (length is 0), but the guard makes intent explicit and avoids the createMany call entirely.
+  * Audit log: detail string now appends ` [FAST MODE]` for traceability.
+  * Detect mode (mode='detect') and DELETE handler unchanged — fast mode only applies to import.
+- Modified src/app/api/ingest/route.ts GET handler (line 44):
+  * Added `req: NextRequest` parameter (was parameterless before).
+  * Reads `req.nextUrl.searchParams.get('fast') === 'true'` → boolean `fastMode`.
+  * Passes `fastMode` as 2nd arg to `processIngestion({}, fastMode)`.
+  * Includes `fastMode` in JSON response so caller can confirm mode was applied.
+  * POST handler unchanged — POST validates body via Zod schema; fast mode is GET-only for now (POST callers can extend later if needed).
+- Backward compatibility verified:
+  * `processIngestion(body)` — fastMode is `undefined`, falsy → behaves exactly as before (validation runs, DQ issues inserted).
+  * `processRowsForImport(rows, sfId, wId, fname, mLabel, ...)` without 10th arg — fastMode is `undefined`, falsy → validation runs as before.
+  * `GET /api/ingest` without `?fast=true` — fastMode is `false` → processIngestion runs in legacy mode.
+  * No database schema changes. No column renames. validateRow + summarizeDQ functions untouched — they can still be called separately later for a "validate-only" pass.
+- Verification:
+  * `bun run lint` — 0 errors, 0 warnings (eslint config has @typescript-eslint/no-unused-vars OFF, so the `summary: []` literal in the fast-mode DQ shape that's never read is fine).
+  * `npx tsc --noEmit --skipLibCheck` — 0 errors. The `status: 'OK' as const` literal correctly narrows to the union type `'OK' | 'WARNING' | 'ERROR'` returned by summarizeDQ. No type drift between the fast-mode empty DQ shape and the real summarizeDQ return type.
+
+Stage Summary:
+- Files modified (3): src/lib/ingestion.ts, src/app/api/ingest-process/route.ts, src/app/api/ingest/route.ts
+- New parameter added to 2 exported functions: `processRowsForImport` (10th arg) and `processIngestion` (2nd arg), both `fastMode?: boolean`, both default to undefined/falsy for backward compat.
+- Fast mode behavior: skips `validateRow()` call, skips `allIssues` tracking (stays empty), skips `summarizeDQ()` (returns empty DQ summary), skips DQ issue `createMany` insert. Still runs: normalize, derive, outlet/item lazy cache + create, week upsert, batch `inventoryRecord.createMany`, SourceFile.rowCount update, AuditLog create, analysisCache.clear.
+- Expected speedup: ~3-5x for large files (validateRow is the per-row bottleneck — it parses strings, checks types, validates ranges, dedups via Set).
+- Import path (`/api/ingest-process` POST mode='import') now always uses fast mode — FileUploadDialog.tsx unchanged as specified.
+- Bulk ingest path (`/api/ingest` GET) gains optional `?fast=true` query param for ad-hoc fast ingestion.
+- Validation is NOT removed — `validateRow` and `summarizeDQ` are still exported and can be invoked separately to populate DQ issues post-import.
+- Lint: 0 errors. tsc: 0 errors.

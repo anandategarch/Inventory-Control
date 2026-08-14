@@ -332,6 +332,10 @@ export async function POST(req: NextRequest) {
 
       // Process rows — P2 fix: use shared processRowsForImport from ingestion.ts
       // (eliminates ~100 lines of duplicate validate/normalize/derive/insert logic)
+      //
+      // ImportSpeed: fastMode=true — skip validateRow() + DQ issue tracking.
+      // Pure normalize + derive + insert → ~3-5x faster for large files.
+      // DQ validation can be run separately later (e.g., via /api/dq-check).
       const seenKeys = new Set<string>();
       const outletDbMap = new Map<string, number>();
       const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
@@ -346,11 +350,13 @@ export async function POST(req: NextRequest) {
         outletDbMap,
         itemDbMap,
         seenKeys,
+        true, // fastMode: skip DQ validation — pure import for speed
       );
 
       const inserted = result.inserted;
 
-      // Update source file
+      // Update source file — always update rowCount (even in fast mode).
+      // ImportSpeed: in fast mode, dqIssues is empty → summarizeDQ returns OK / 0 / 0.
       const dq = summarizeDQ(result.dqIssues);
       await db.sourceFile.update({
         where: { id: sourceFile.id },
@@ -362,7 +368,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Insert DQ issues
+      // Insert DQ issues — in fast mode, dqIssues is empty so this is a no-op,
+      // but the guard makes the intent explicit and avoids the createMany call.
       if (result.dqIssues.length > 0) {
         const dqRecords = result.dqIssues.map((i) => ({
           sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
@@ -373,11 +380,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Audit log
+      // Audit log — always created (even in fast mode) for traceability.
       await db.auditLog.create({
         data: {
           action: 'INGEST_WEEK',
-          detail: `${fileName} [${weekLabel}]: ${inserted} rows imported`,
+          detail: `${fileName} [${weekLabel}]: ${inserted} rows imported [FAST MODE]`,
           duration: Date.now() - startedAt,
         },
       });

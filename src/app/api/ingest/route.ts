@@ -41,12 +41,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   // Bug 7 fix: call processIngestion directly (no NextRequest mock)
+  // ImportSpeed: support ?fast=true query param to skip DQ validation during ingest.
+  // Pure import — validation can be run separately later via /api/dq-check.
   const startedAt = Date.now();
   try {
-    const results = await processIngestion({});
-    return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
+    const fastMode = req.nextUrl.searchParams.get('fast') === 'true';
+    const results = await processIngestion({}, fastMode);
+    return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt, fastMode });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
   }
