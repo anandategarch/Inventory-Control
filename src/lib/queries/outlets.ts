@@ -73,11 +73,10 @@ export async function queryTopOutlets(
       COALESCE(sm.sales, 0) as sales,
       COALESCE(oa."lossAmount", 0) as "lossAmount",
       COALESCE(oa."surplusAmount", 0) as "surplusAmount",
-      ir2.area
+      o.area
     FROM outlet_aggs oa
     JOIN "Outlet" o ON oa."outletId" = o.id
     LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
-    JOIN (SELECT DISTINCT "outletId", area FROM "InventoryRecord" WHERE "monthLabel" = ${month} AND "weekLabel" = ${week}) ir2 ON oa."outletId" = ir2."outletId"
     ORDER BY oa."absNominal" DESC
     LIMIT ${limit}
   `;
@@ -126,11 +125,10 @@ export async function queryTopOutletsBySales(
     SELECT o.code as "outletCode", o.name as "outletName",
       COALESCE(sm.sales, 0) as sales,
       COALESCE(on2."absNominal", 0) as "absNominal",
-      ir2.area
+      o.area
     FROM sales_mode sm
     JOIN "Outlet" o ON sm."outletId" = o.id
     LEFT JOIN outlet_nominal on2 ON sm."outletId" = on2."outletId"
-    JOIN (SELECT DISTINCT "outletId", area FROM "InventoryRecord" WHERE "monthLabel" = ${month} AND "weekLabel" = ${week}) ir2 ON sm."outletId" = ir2."outletId"
     ORDER BY sm.sales DESC
     LIMIT ${limit}
   `;
