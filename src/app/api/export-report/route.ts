@@ -100,30 +100,89 @@ function fmtPct(v: number | null | undefined, withSign = false): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
+// ============================================================
+//  Document styling — color palette for eye-catching tables
+// ============================================================
+const COLOR = {
+  PRIMARY: '1F4E79',      // deep blue — header background
+  PRIMARY_LIGHT: 'D6E4F0', // light blue — zebra stripe
+  PRIMARY_TEXT: 'FFFFFF',  // white — header text
+  BORDER: 'B4C6E7',        // soft blue border
+  BODY_TEXT: '1F2937',     // dark slate — body text
+  MUTED: '6B7280',         // gray — secondary text
+  NEGATIVE: 'DC2626',      // red — negative numbers
+  POSITIVE: '059669',      // green — positive numbers
+};
+
 function heading(text: string): Paragraph {
   const safeText = text == null ? '' : String(text);
-  return new Paragraph({ text: safeText, heading: HeadingLevel.HEADING_1, spacing: { before: 200, after: 100 } });
+  return new Paragraph({
+    text: safeText,
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 280, after: 120 },
+    border: { bottom: { style: 'single' as any, size: 12, color: COLOR.PRIMARY, space: 4 } },
+  });
 }
 
 function paragraph(text: string, bold = false, size = 20): Paragraph {
   const safeText = text == null ? '' : String(text);
-  return new Paragraph({ children: [new TextRun({ text: safeText, bold, size })], spacing: { after: 60 } });
+  return new Paragraph({ children: [new TextRun({ text: safeText, bold, size, color: COLOR.BODY_TEXT })], spacing: { after: 80 } });
 }
 
 function divider(): Paragraph {
-  return new Paragraph({ children: [new TextRun({ text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', color: 'CCCCCC', size: 16 })], spacing: { before: 100, after: 100 } });
+  return new Paragraph({
+    children: [new TextRun({ text: '', size: 8 })],
+    spacing: { before: 80, after: 80 },
+    border: { bottom: { style: 'single' as any, size: 6, color: COLOR.BORDER, space: 1 } },
+  });
 }
 
-function tableCell(text: string, bold = false, align: 'left' | 'right' = 'left'): TableCell {
+// ============================================================
+//  Table helpers — styled with header bg, zebra rows, borders
+// ============================================================
+
+interface CellOpts {
+  bold?: boolean;
+  align?: 'left' | 'right';
+  isHeader?: boolean;
+  isZebra?: boolean;
+}
+
+function tableCell(text: string, opts: CellOpts = {}): TableCell {
+  const { bold = false, align = 'left', isHeader = false, isZebra = false } = opts;
   const safeText = text == null ? '' : String(text);
-  // Rev 1: Negative numbers in red — detect leading '-' (but not '—' em-dash which is null indicator)
+  // Negative numbers in red (but not em-dash null indicator)
   const isNegative = safeText.startsWith('-') && safeText !== '—' && !safeText.startsWith('—');
+
+  // Header: white text on primary bg
+  // Zebra row: light blue bg
+  // Normal: white bg
+  const shadingFill = isHeader
+    ? { fill: COLOR.PRIMARY, type: 'clear' as any, color: 'auto' }
+    : isZebra
+      ? { fill: COLOR.PRIMARY_LIGHT, type: 'clear' as any, color: 'auto' }
+      : undefined;
+
+  const textColor = isHeader
+    ? COLOR.PRIMARY_TEXT
+    : isNegative
+      ? COLOR.NEGATIVE
+      : COLOR.BODY_TEXT;
+
   return new TableCell({
     children: [new Paragraph({
-      children: [new TextRun({ text: safeText, bold, size: 18, color: isNegative ? 'FF0000' : undefined })],
+      children: [new TextRun({ text: safeText, bold: bold || isHeader, size: 18, color: textColor })],
       alignment: align === 'right' ? AlignmentType.RIGHT : AlignmentType.LEFT,
+      spacing: { before: 20, after: 20 },
     })],
-    margins: { top: 40, bottom: 40, left: 80, right: 80 },
+    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+    shading: shadingFill,
+    borders: {
+      top: { style: 'single' as any, size: 4, color: COLOR.BORDER },
+      bottom: { style: 'single' as any, size: 4, color: COLOR.BORDER },
+      left: { style: 'single' as any, size: 4, color: COLOR.BORDER },
+      right: { style: 'single' as any, size: 4, color: COLOR.BORDER },
+    },
   });
 }
 
@@ -131,8 +190,13 @@ function makeTable(headers: string[], rows: string[][]): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
-      new TableRow({ tableHeader: true, children: headers.map((l, i) => tableCell(l, true, i > 0 ? 'right' : 'left')) }),
-      ...rows.map(r => new TableRow({ children: r.map((v, i) => tableCell(v, false, i > 0 ? 'right' : 'left')) })),
+      new TableRow({
+        tableHeader: true,
+        children: headers.map((l, i) => tableCell(l, { bold: true, align: i > 0 ? 'right' : 'left', isHeader: true })),
+      }),
+      ...rows.map((r, idx) => new TableRow({
+        children: r.map((v, i) => tableCell(v, { align: i > 0 ? 'right' : 'left', isZebra: idx % 2 === 1 })),
+      })),
     ],
   });
 }
@@ -454,12 +518,20 @@ export async function GET(req: NextRequest) {
       ? `Hist Avg (${histMonths.join(', ')})`
       : 'Hist Avg (—)';
 
-    // Title
+    // Title — branded header with color band
     children.push(
-      new Paragraph({ children: [new TextRun({ text: 'LAPORAN ANALISIS INVENTORY CONTROL', bold: true, size: 32 })], alignment: AlignmentType.CENTER, spacing: { before: 400, after: 200 } }),
-      new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, size: 24 })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
-      new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Outlet: ${outletCode}` : 'Network'} | ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 22, color: '666666' })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
-      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 20, color: '999999' })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
+      new Paragraph({
+        children: [new TextRun({ text: 'INVENTORY CONTROL INTELLIGENCE', bold: true, size: 36, color: COLOR.PRIMARY })],
+        alignment: AlignmentType.CENTER, spacing: { before: 400, after: 80 },
+      }),
+      new Paragraph({
+        children: [new TextRun({ text: 'LAPORAN ANALISIS DEVIASI PEMAKAIAN BAHAN', bold: true, size: 22, color: COLOR.MUTED })],
+        alignment: AlignmentType.CENTER, spacing: { after: 200 },
+        border: { bottom: { style: 'single' as any, size: 18, color: COLOR.PRIMARY, space: 6 } },
+      }),
+      new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, bold: true, size: 26, color: COLOR.BODY_TEXT })], alignment: AlignmentType.CENTER, spacing: { before: 200, after: 80 } }),
+      new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Resto: ${outletCode}` : 'Network (Semua Resto)'}  |  ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 20, color: COLOR.MUTED })], alignment: AlignmentType.CENTER, spacing: { after: 60 } }),
+      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 18, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
       divider(),
     );
 
@@ -518,14 +590,14 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = SURPLUS (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', `Nominal Deviasi ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi), it.direction] },
+      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi), it.direction] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
-      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Outlet', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Outlet', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalWaste)] },
-      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Outlet', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalSusut)] },
-      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Outlet', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalTrial)] },
-      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Outlet', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Loss/Surplus ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalLossSurplus), it.direction] },
+      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalWaste)] },
+      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalSusut)] },
+      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalTrial)] },
+      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Loss/Surplus ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalLossSurplus), it.direction] },
     ];
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
@@ -563,7 +635,7 @@ export async function GET(req: NextRequest) {
     if (data.areaAnalysis && data.areaAnalysis.length > 0) {
       children.push(heading('7. PERBANDINGAN ANTAR AREA'));
     children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
-      children.push(makeTable(['Area', 'Outlets', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
+      children.push(makeTable(['Area', 'Resto', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
         data.areaAnalysis.map((a: any) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
       children.push(divider());
     }
@@ -571,8 +643,8 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('ranking')) {
     if (data.outletHealthRanking && data.outletHealthRanking.length > 0) {
-      children.push(heading('8. RANKING KONDISI OUTLET'));
-      children.push(makeTable(['#', 'Outlet', 'Area', 'Health Score', '% Deviasi To BOM', 'Abnormal', 'Abs Nominal Deviasi', 'Penjualan'],
+      children.push(heading('8. RANKING KONDISI RESTO'));
+      children.push(makeTable(['#', 'Resto', 'Area', 'Health Score', '% Deviasi To BOM', 'Abnormal', 'Abs Nominal Deviasi', 'Penjualan'],
         data.outletHealthRanking.slice(0, 30).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, String(o.healthScore ?? '—'), fmtPct(o.devBom, false), String(o.abnormal || 0), fmtIDR(o.absNominal), fmtIDR(o.sales)])));
       children.push(divider());
     }
@@ -601,7 +673,7 @@ export async function GET(req: NextRequest) {
       children.push(heading('10. ANALISIS PARETO (ABC)'));
     children.push(paragraph('Aturan 80/20: sedikit item menyumbang selisih terbesar. Class A = item dengan kontribusi tertinggi (prioritas investigasi).'));
       children.push(paragraph(`Class A: ${paretoData.classACount || 0} items (${((paretoData.classAPctOfCost || 0) * 100).toFixed(1)}% of cost) | Total: ${paretoData.totalItems || 0}`));
-      children.push(makeTable(['#', 'Item', 'Outlet', 'Abs Nominal Deviasi', 'Cum %'],
+      children.push(makeTable(['#', 'Item', 'Resto', 'Abs Nominal Deviasi', 'Cum %'],
         (paretoData.items || []).slice(0, 20).map((it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), `${((it.cumPct || 0) * 100).toFixed(1)}%`])));
       children.push(divider());
     }
@@ -616,12 +688,12 @@ export async function GET(req: NextRequest) {
         children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
         // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
         // Use dynamic period labels (currLabel / prevLabel) instead of Current/Previous
-        children.push(makeTable(['Item', 'Outlet', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
         children.push(paragraph(''));
       }
       if ((va.topImproved || []).length > 0) {
         children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
-        children.push(makeTable(['Item', 'Outlet', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       }
       children.push(divider());
     }
@@ -634,7 +706,7 @@ export async function GET(req: NextRequest) {
       children.push(heading('12. DAFTAR PRIORITAS INVESTIGASI'));
     children.push(paragraph('P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap item ada issue, Nominal Deviasi, dan rekomendasi tindakan.'));
       children.push(paragraph(`P1: ${p1.length} | P2: ${wl.filter((w: any) => w.priority === 'P2').length} | P3: ${wl.filter((w: any) => w.priority === 'P3').length} | Total: ${wl.length}`));
-      children.push(makeTable(['Pri', 'Outlet', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM', 'Direction'],
+      children.push(makeTable(['Pri', 'Resto', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM', 'Direction'],
         wl.slice(0, 50).map((w: any) => [w.priority, w.outletCode, w.itemName, w.issue, fmtIDR(w.absNominalDeviasi), w.deviationToBom != null ? fmtPct(w.deviationToBom, false) : '—', w.direction])));
       if (p1.length > 0) {
         children.push(paragraph(''));
@@ -648,8 +720,8 @@ export async function GET(req: NextRequest) {
     if (hasSection('consistency')) {
     const ic = data.itemConsistencyAnalysis || {};
     if (ic.items && ic.items.length > 0) {
-      children.push(heading('13. POLA ITEM ANTAR OUTLET (Consistency)'));
-      children.push(makeTable(['Item', 'Outlets', 'LOSS', 'SURPLUS', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Type'],
+      children.push(heading('13. POLA ITEM ANTAR RESTO (Consistency)'));
+      children.push(makeTable(['Item', 'Resto Count', 'LOSS', 'SURPLUS', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Type'],
         ic.items.slice(0, 20).map((it: any) => [it.itemName, String(it.outletCount || 0), String(it.lossOutlets || 0), String(it.surplusOutlets || 0), fmtIDR(it.totalAbsNominal), fmtPct(it.avgDevBom, false), it.consistency])));
       children.push(divider());
     }
@@ -691,11 +763,15 @@ export async function GET(req: NextRequest) {
     }
 
     }
-    // Footer
+    // Footer — branded closing
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
-    children.push(divider());
-    children.push(new Paragraph({ children: [new TextRun({ text: 'Inventory Control Intelligence Platform', size: 16, color: '999999', italics: true })], alignment: AlignmentType.CENTER }));
-    children.push(new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleString('id-ID')} | Duration: ${data.durationMs}ms`, size: 16, color: '999999' })], alignment: AlignmentType.CENTER }));
+    children.push(new Paragraph({
+      children: [new TextRun({ text: '', size: 8 })],
+      spacing: { before: 60, after: 60 },
+      border: { top: { style: 'single' as any, size: 12, color: COLOR.PRIMARY, space: 2 } },
+    }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Inventory Control Intelligence Platform', size: 18, color: COLOR.PRIMARY, bold: true, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 40 } }));
+    children.push(new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleString('id-ID')}  |  Duration: ${data.durationMs}ms`, size: 14, color: COLOR.MUTED })], alignment: AlignmentType.CENTER }));
 
     // Generate document
     const doc = new Document({
