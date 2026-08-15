@@ -24,7 +24,7 @@ export interface NarrativeInput {
   investigationCount: number;
 }
 
-const SYSTEM_PROMPT = `Anda adalah Inventory Control Analyst senior untuk jaringan 19 outlet F&B.
+const SYSTEM_PROMPT = `Anda adalah Inventory Control Analyst senior untuk jaringan F&B.
 Tugas Anda: menulis narasi analisis inventory berdasarkan ANGKA yang sudah dihitung oleh calculation engine.
 
 ATURAN MUTLAK:

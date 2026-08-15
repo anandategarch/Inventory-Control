@@ -129,6 +129,26 @@ function paragraph(text: string, bold = false, size = 20): Paragraph {
   return new Paragraph({ children: [new TextRun({ text: safeText, bold, size, color: COLOR.BODY_TEXT })], spacing: { after: 80 } });
 }
 
+// BUG FIX (AUDIT-EXPORT-AI-4): render inline **bold** markdown within a line.
+// Previously only whole-line bold was detected. Now splits on **...** and emits multiple TextRuns.
+function renderMarkdownLine(line: string, baseSize = 20, baseColor = COLOR.BODY_TEXT): Paragraph {
+  const trimmed = line.trim();
+  if (trimmed === '') return new Paragraph({ text: '', spacing: { after: 40 } });
+  // Split on **bold** segments — keep the delimiters to detect bold
+  const parts = trimmed.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  const runs: any[] = [];
+  for (const part of parts) {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      runs.push(new TextRun({ text: part.slice(2, -2), bold: true, size: baseSize, color: baseColor }));
+    } else if (part.startsWith('- ') || part.startsWith('• ')) {
+      runs.push(new TextRun({ text: `  ${part}`, size: baseSize, color: baseColor }));
+    } else {
+      runs.push(new TextRun({ text: part, size: baseSize, color: baseColor }));
+    }
+  }
+  return new Paragraph({ children: runs, spacing: { after: 60 } });
+}
+
 function divider(): Paragraph {
   return new Paragraph({
     children: [new TextRun({ text: '', size: 8 })],
@@ -220,6 +240,10 @@ export async function GET(req: NextRequest) {
     const outletCode = url.searchParams.get('outlet');
     const itemName = url.searchParams.get('item');
     const pic = url.searchParams.get('pic');
+    // BUG FIX (AUDIT-EXPORT-AI-2): read compareWeek/compareMonth from URL params.
+    // Previously export ignored user's comparison selection — always auto-computed.
+    const userCompareWeek = url.searchParams.get('compareWeek');
+    const userCompareMonth = url.searchParams.get('compareMonth');
     const sectionsParam = url.searchParams.get('sections');
     const sections = sectionsParam ? sectionsParam.split(',').filter(Boolean) : null;
     const hasSection = (key: string) => !sections || sections.includes(key);
@@ -256,17 +280,22 @@ export async function GET(req: NextRequest) {
       db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
     ]);
     const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
+    // BUG FIX (AUDIT-EXPORT-AI-1): monthKeyByLabel — reverse lookup for trend sort.
+    // Previously trendAggRows used monthLabelByKey.get(r.monthLabel) which always returned
+    // undefined (map is keyed by monthKey, not monthLabel) → sortKey collapsed → sort broken.
+    const monthKeyByLabel = new Map(fileMonthKeys.map(f => [f.monthLabel, f.monthKey]));
     const allPeriods = weeksRaw.map(w => ({
       monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
       weekLabel: w.weekLabel,
       sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
     })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-    // Auto-compare: same weekLabel in previous month
+    // BUG FIX (AUDIT-EXPORT-AI-2): use user's compareWeek/compareMonth if provided.
+    // Fall back to auto-compute (same weekLabel in previous month) only when user didn't specify.
     const currentPeriodIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-    let prevWeek = week;
-    let prevMonth: string | null = null;
-    if (currentPeriodIdx >= 0) {
+    let prevWeek = userCompareWeek || week;
+    let prevMonth: string | null = userCompareMonth || null;
+    if (!prevMonth && currentPeriodIdx >= 0) {
       for (let i = currentPeriodIdx - 1; i >= 0; i--) {
         if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
           prevMonth = allPeriods[i].monthLabel;
@@ -448,13 +477,13 @@ export async function GET(req: NextRequest) {
     };
 
     const multiPeriodComparison = trendAggRows.map(r => {
-      const mk = monthLabelByKey.get(r.monthLabel) || '0000-00';
+      const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
       return { period: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0 && arr[i - 1].deviation > 0) row.growthPct = (row.deviation - arr[i - 1].deviation) / Math.abs(arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
     (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
 
     const trend = trendAggRows.map(r => {
-      const mk = monthLabelByKey.get(r.monthLabel) || '0000-00';
+      const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
       return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
@@ -501,6 +530,8 @@ export async function GET(req: NextRequest) {
       narrativeSource,
       aiSummary,
       aiInsight,
+      // NEW: expose dqIssues for Section 18
+      dqIssues: dqIssuesRaw.map(d => ({ code: d.code, severity: d.severity, count: d._count._all, message: d.message })),
       recommendation: recommendations,
       priorities,
       durationMs: Date.now() - startedAt,
@@ -520,10 +551,13 @@ export async function GET(req: NextRequest) {
       : '—';
     // Historical periods: list of months/weeks the avg comes from
     // All historical periods share the same weekLabel (filtered), so list the months
+    // BUG FIX (AUDIT-EXPORT-AI-5): cap to 3 months + "+N lainnya" to avoid overly long column headers
     const histMonths = historicalPeriods.map(p => p.monthLabel).filter(Boolean);
-    const histLabel = histMonths.length > 0
-      ? `Hist Avg (${histMonths.join(', ')})`
-      : 'Hist Avg (—)';
+    const histLabel = histMonths.length === 0
+      ? 'Hist Avg (—)'
+      : histMonths.length <= 3
+        ? `Hist Avg (${histMonths.join(', ')})`
+        : `Hist Avg (${histMonths.slice(0, 3).join(', ')} +${histMonths.length - 3} lainnya)`;
 
     // Title — branded header with color band
     children.push(
@@ -546,17 +580,9 @@ export async function GET(req: NextRequest) {
     if (hasSection('aiSummary') && data.aiSummary) {
       children.push(heading('🤖 AI ANALYST SUMMARY'));
       children.push(paragraph('Ringkasan opini AI berdasarkan data periode ini. Baca section ini dulu sebelum lihat tabel detail.'));
-      // Render AI text — support markdown-like **bold** + bullet points
+      // BUG FIX (AUDIT-EXPORT-AI-4): use renderMarkdownLine for inline **bold** support
       for (const line of data.aiSummary.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
-        else if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-          children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22, color: COLOR.PRIMARY })], spacing: { before: 100, after: 60 } }));
-        } else if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
-          children.push(new Paragraph({ children: [new TextRun({ text: `  ${trimmed}`, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 40 } }));
-        } else {
-          children.push(new Paragraph({ children: [new TextRun({ text: trimmed, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 60 } }));
-        }
+        children.push(renderMarkdownLine(line));
       }
       children.push(divider());
     }
@@ -767,14 +793,9 @@ export async function GET(req: NextRequest) {
     if (hasSection('aiInsight') && data.aiInsight) {
       children.push(heading('🔍 AI PATTERN INSIGHT'));
       children.push(paragraph('Pola dan insight yang AI temukan dari data — cross-correlation, anomaly pattern, composition insight.'));
+      // BUG FIX (AUDIT-EXPORT-AI-4, -10): use renderMarkdownLine for inline **bold** + bullet support
       for (const line of data.aiInsight.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
-        else if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-          children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22, color: COLOR.PRIMARY })], spacing: { before: 100, after: 60 } }));
-        } else {
-          children.push(new Paragraph({ children: [new TextRun({ text: trimmed, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 60 } }));
-        }
+        children.push(renderMarkdownLine(line));
       }
       children.push(divider());
     }
@@ -805,6 +826,54 @@ export async function GET(req: NextRequest) {
     }
 
     }
+
+    // ============================================================
+    // NEW SECTIONS — additional analyses
+    // ============================================================
+
+    // 17. Top Resto by Sales — highest revenue outlets (already computed: topOutlets)
+    if (hasSection('topOutlets')) {
+      if (data.topOutlets && data.topOutlets.length > 0) {
+        children.push(heading('17. TOP RESTO BY SALES'));
+        children.push(paragraph('Resto dengan Penjualan tertinggi. Loss/Surplus menunjukkan net direction. Area Avg = rata-rata Dev/BOM area resto tersebut.'));
+        children.push(makeTable(['#', 'Resto', 'Area', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Area Avg', 'Loss', 'Surplus', 'Direction'],
+          data.topOutlets.slice(0, 15).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, fmtIDR(o.sales), fmtIDR(o.absNominal), fmtPct(o.devBom, false), fmtPct(o.areaAvg, false), fmtIDR(o.lossAmount), fmtIDR(o.surplusAmount), o.direction])));
+        children.push(divider());
+      }
+    }
+
+    // 18. Data Quality Issues — DQ validation summary (already fetched: dqIssuesRaw)
+    if (hasSection('dqIssues')) {
+      const dq = (data as any).dqIssues || [];
+      if (dq.length > 0) {
+        children.push(heading('18. DATA QUALITY ISSUES'));
+        children.push(paragraph('Ringkasan issue kualitas data yang terdeteksi saat import. Severity: ERROR (block), WARNING (review), INFO (informational).'));
+        children.push(makeTable(['Code', 'Severity', 'Count', 'Message'],
+          dq.slice(0, 30).map((d: any) => [d.code || d.key, d.severity, String(d.count), (d.message || '').slice(0, 80)])));
+        children.push(divider());
+      } else {
+        children.push(heading('18. DATA QUALITY ISSUES'));
+        children.push(paragraph('✅ Tidak ada issue kualitas data terdeteksi pada periode ini.'));
+        children.push(divider());
+      }
+    }
+
+    // 19. Historical Anomaly Analysis — items with z-score > threshold (already computed: historicalAnalysis)
+    if (hasSection('historical')) {
+      const ha = (data as any).historicalAnalysis || data.growthComparison?.historicalAnalysis;
+      if (ha && ha.criticalItems && ha.criticalItems.length > 0) {
+        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
+        children.push(paragraph('Item yang deviation-nya abnormal dibanding perilaku historical (z-score > 1.0). Z-score > 2.0 = sangat abnormal. Historical Avg = rata-rata Dev/BOM periode sama di bulan-bulan sebelumnya.'));
+        children.push(makeTable(['#', 'Item', 'Resto', 'Area', 'Current Dev/BOM', 'Historical Avg', 'Z-Score', 'Abs Nominal Deviasi'],
+          ha.criticalItems.slice(0, 15).map((it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtPct(it.currentDevBom, false), fmtPct(it.historicalAvg, false), it.zScore != null ? it.zScore.toFixed(2) : '—', fmtIDR(it.absNominal)])));
+        children.push(divider());
+      } else {
+        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
+        children.push(paragraph('✅ Tidak ada item dengan anomali historical signifikan pada periode ini (z-score semua ≤ 1.0).'));
+        children.push(divider());
+      }
+    }
+
     // Footer — branded closing
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
     children.push(new Paragraph({

@@ -235,9 +235,10 @@ export function computeVarianceAnalysis(
     });
   }
 
-  // Sort by abs(selisih) to surface biggest magnitude changes
+  // BUG FIX (AUDIT-EXPORT-AI-3): topImproved should be MOST IMPROVED (most negative selisih),
+  // not smallest-magnitude changes. Sort ascending by signed selisih → most negative first.
   const topWorsened = [...deltas].sort((a, b) => Math.abs(b.selisih) - Math.abs(a.selisih)).slice(0, 5);
-  const topImproved = [...deltas].sort((a, b) => Math.abs(a.selisih) - Math.abs(b.selisih)).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => a.selisih - b.selisih).slice(0, 5);
   return { topWorsened, topImproved };
 }
 
