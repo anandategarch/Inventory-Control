@@ -192,10 +192,15 @@ export function computeVarianceAnalysis(
   current: RecWithRels[],
   prevByOutletItem: Map<string, RecWithRels>
 ) {
+  // Rev 6: Return signed nominalDeviasi (actual, not abs) + rename delta → selisih.
+  // Sort still by abs(selisih) to surface biggest changes (regardless of direction).
   const deltas: Array<{
     itemName: string;
     outletCode: string;
     area: string;
+    currentNominal: number;
+    previousNominal: number;
+    selisih: number;
     currentAbsNominal: number;
     previousAbsNominal: number;
     delta: number;
@@ -210,11 +215,18 @@ export function computeVarianceAnalysis(
     const prev = prevByOutletItem.get(key);
     if (!prev || prev.absNominalDeviasi == null || prev.absNominalDeviasi === 0) continue;
     const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;
+    // Rev 6: selisih = signed difference (current nominalDeviasi - previous nominalDeviasi)
+    const currentNominal = curr.nominalDeviasi ?? 0;
+    const previousNominal = prev.nominalDeviasi ?? 0;
+    const selisih = currentNominal - previousNominal;
     const varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
     deltas.push({
       itemName: curr.item.name,
       outletCode: curr.outlet.code,
       area: curr.area,
+      currentNominal,
+      previousNominal,
+      selisih,
       currentAbsNominal: curr.absNominalDeviasi,
       previousAbsNominal: prev.absNominalDeviasi,
       delta,
@@ -223,8 +235,9 @@ export function computeVarianceAnalysis(
     });
   }
 
-  const topWorsened = [...deltas].sort((a, b) => b.delta - a.delta).slice(0, 5);
-  const topImproved = [...deltas].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  // Sort by abs(selisih) to surface biggest magnitude changes
+  const topWorsened = [...deltas].sort((a, b) => Math.abs(b.selisih) - Math.abs(a.selisih)).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => Math.abs(a.selisih) - Math.abs(b.selisih)).slice(0, 5);
   return { topWorsened, topImproved };
 }
 

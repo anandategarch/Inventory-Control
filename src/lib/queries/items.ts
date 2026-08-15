@@ -28,11 +28,14 @@ export async function queryTopItemsByNominal(
     picOutletCodes?: string[] | null;
   },
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; absNominal: number; direction: string }>> {
+): Promise<Array<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }>> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; direction: string }[]>`
+  // Rev 3: Sort by ABS(nominalDeviasi), but return signed nominalDeviasi for display.
+  // Previous version sorted/displayed absNominalLossSurplus (NET) — user wants nominalDeviasi (GROSS).
+  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
-      SUM(ir."absNominalLossSurplus") as "absNominal",
+      SUM(ir."absNominalDeviasi") as "absNominal",
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
       CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
@@ -40,7 +43,7 @@ export async function queryTopItemsByNominal(
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY i.name, o.code
     ORDER BY "absNominal" DESC
@@ -59,13 +62,18 @@ export async function queryTopItemsByDevBom(
     picOutletCodes?: string[] | null;
   },
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; devBom: number; tolerance: number | null }>> {
+): Promise<Array<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }>> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; devBom: number; tolerance: number | null }[]>`
+  // Rev 4: Sort by ABS(devBom), but return signed devBom for display.
+  // Signed devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) — can be negative (SURPLUS) or positive (LOSS).
+  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+        THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBom",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+        ELSE 0 END as "devBomAbs",
       MAX(ir."tolerancePct") as "tolerance"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -74,7 +82,7 @@ export async function queryTopItemsByDevBom(
       AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."qtyBom" != 0
       ${f}
     GROUP BY i.name, o.code
-    ORDER BY "devBom" DESC
+    ORDER BY "devBomAbs" DESC
     LIMIT ${limit}
   `;
   return rows;
@@ -127,6 +135,62 @@ export async function queryTopItemsByCategory(
     LIMIT ${limit}
   `;
   return rows;
+}
+
+// ============================================================
+//  Historical Category Average — avg QTY/Nominal across historical periods
+//  Rev 2: For comparing Waste/Susut/Trial/LossSurplus with historical.
+//  Returns a Map keyed by "itemName|outletCode" → { avgQty, avgNominal }
+// ============================================================
+export async function queryHistoricalCategoryAvg(
+  historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
+): Promise<Map<string, { avgQty: number; avgNominal: number }>> {
+  if (historicalPeriods.length === 0) return new Map();
+  const f = buildSqlFilters(filters);
+  const qtyCol = category === 'waste' ? 'qtyWaste'
+    : category === 'susut' ? 'qtySusut'
+    : category === 'trial' ? 'qtyTrial'
+    : 'qtyLossSurplus';
+  const nomCol = category === 'waste' ? 'nominalWaste'
+    : category === 'susut' ? 'nominalSusut'
+    : category === 'trial' ? 'nominalTrial'
+    : 'nominalLossSurplus';
+  const qtyRef = Prisma.raw(`ir."${qtyCol}"`);
+  const nomRef = Prisma.raw(`ir."${nomCol}"`);
+
+  // Build (monthLabel, weekLabel) pairs for the IN filter
+  // Use a simpler approach: filter by weekLabel + any of the historical monthLabels
+  const historicalMonths = [...new Set(historicalPeriods.map(p => p.monthLabel))];
+  const monthClauses = Prisma.join(historicalMonths, ', ');
+
+  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; avgQty: number; avgNominal: number }[]>`
+    SELECT i.name as "itemName", o.code as "outletCode",
+      AVG(ABS(${qtyRef})) as "avgQty",
+      AVG(ABS(${nomRef})) as "avgNominal"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    WHERE ir."weekLabel" = ${historicalPeriods[0].weekLabel}
+      AND ir."monthLabel" IN (${monthClauses})
+      AND ${qtyRef} IS NOT NULL AND ${qtyRef} != 0
+      ${f}
+    GROUP BY i.name, o.code
+  `;
+  const map = new Map<string, { avgQty: number; avgNominal: number }>();
+  for (const r of rows) {
+    map.set(`${r.itemName}|${r.outletCode}`, {
+      avgQty: Number(r.avgQty) || 0,
+      avgNominal: Number(r.avgNominal) || 0,
+    });
+  }
+  return map;
 }
 
 // ============================================================
