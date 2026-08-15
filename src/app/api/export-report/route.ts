@@ -20,7 +20,7 @@ import {
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
-import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
+import { generateNarrative, buildRecommendations, generateAIExecutiveSummary, generateAIPatternInsight } from '@/engine/narrative/narrative';
 import { calcGrowth, computePriceEffect, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
@@ -458,9 +458,13 @@ export async function GET(req: NextRequest) {
       return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
-    // Narrative
+    // Narrative + AI Executive Summary + AI Pattern Insight (parallel)
     const narrativeInput = { period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth }, executiveSummary: execSummary, growthMetrics, healthStatus: { normal, warning, abnormal }, topAnomalies: topAnomaliesForNarrative, deviationBreakdown: breakdownEnriched, investigationCount: worklist.length };
     const narrativePromise = generateNarrative(narrativeInput);
+    // AI Exec Summary: only generate if user selected 'aiSummary' section
+    const aiSummaryPromise = hasSection('aiSummary') ? generateAIExecutiveSummary(narrativeInput) : Promise.resolve(null);
+    // AI Pattern Insight: only generate if user selected 'aiInsight' section
+    const aiInsightPromise = hasSection('aiInsight') ? generateAIPatternInsight(narrativeInput) : Promise.resolve(null);
     const recommendations = buildRecommendations(worklist);
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
@@ -470,7 +474,8 @@ export async function GET(req: NextRequest) {
     const itemConsistencyAnalysis = { systemic: consistencyItems.filter(i => i.consistency === 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', occurrences: i.outletCount, avgDevBom: i.avgDevBom, absNominal: i.totalAbsNominal })), episodic: consistencyItems.filter(i => i.consistency !== 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', absNominal: i.totalAbsNominal, devBom: i.avgDevBom })), items: consistencyItems.map(i => ({ itemName: i.itemName, outletCount: i.outletCount, lossOutlets: i.lossOutlets, surplusOutlets: i.surplusOutlets, totalAbsNominal: i.totalAbsNominal, avgDevBom: i.avgDevBom, consistency: i.consistency })) };
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
-    const { narrative, source: narrativeSource } = await narrativePromise;
+    const [narrativeResult, aiSummary, aiInsight] = await Promise.all([narrativePromise, aiSummaryPromise, aiInsightPromise]);
+    const { narrative, source: narrativeSource } = narrativeResult;
 
     // Build data object for document
     const data = {
@@ -494,6 +499,8 @@ export async function GET(req: NextRequest) {
       trend,
       narrative,
       narrativeSource,
+      aiSummary,
+      aiInsight,
       recommendation: recommendations,
       priorities,
       durationMs: Date.now() - startedAt,
@@ -534,6 +541,25 @@ export async function GET(req: NextRequest) {
       new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 18, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
       divider(),
     );
+
+    // AI Executive Summary — Opsi A (di awal, sebelum section detail)
+    if (hasSection('aiSummary') && data.aiSummary) {
+      children.push(heading('🤖 AI ANALYST SUMMARY'));
+      children.push(paragraph('Ringkasan opini AI berdasarkan data periode ini. Baca section ini dulu sebelum lihat tabel detail.'));
+      // Render AI text — support markdown-like **bold** + bullet points
+      for (const line of data.aiSummary.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
+        else if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+          children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22, color: COLOR.PRIMARY })], spacing: { before: 100, after: 60 } }));
+        } else if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+          children.push(new Paragraph({ children: [new TextRun({ text: `  ${trimmed}`, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 40 } }));
+        } else {
+          children.push(new Paragraph({ children: [new TextRun({ text: trimmed, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 60 } }));
+        }
+      }
+      children.push(divider());
+    }
 
     if (hasSection('exec')) {
     const s = data.executiveSummary;
@@ -737,6 +763,22 @@ export async function GET(req: NextRequest) {
     }
 
     }
+    // AI Pattern Insight — Opsi D (sebelum narrative section 15)
+    if (hasSection('aiInsight') && data.aiInsight) {
+      children.push(heading('🔍 AI PATTERN INSIGHT'));
+      children.push(paragraph('Pola dan insight yang AI temukan dari data — cross-correlation, anomaly pattern, composition insight.'));
+      for (const line of data.aiInsight.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
+        else if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+          children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22, color: COLOR.PRIMARY })], spacing: { before: 100, after: 60 } }));
+        } else {
+          children.push(new Paragraph({ children: [new TextRun({ text: trimmed, size: 20, color: COLOR.BODY_TEXT })], spacing: { after: 60 } }));
+        }
+      }
+      children.push(divider());
+    }
+
     if (hasSection('narrative')) {
     if (data.narrative && typeof data.narrative === 'string') {
       children.push(heading('15. NARASI ANALISIS'));

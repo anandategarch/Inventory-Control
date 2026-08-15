@@ -15,6 +15,7 @@ interface SectionOption {
 }
 
 const SECTIONS: SectionOption[] = [
+  { key: 'aiSummary', label: '🤖 AI Analyst Summary', description: 'Opini AI di awal laporan: kondisi, key highlights, risk level + next step (2-3 paragraf)', default: true },
   { key: 'exec', label: '1. Executive Summary', description: '14 KPI: Sales, Deviasi, BOM, Waste, Susut, Trial, Loss/Surplus, Dev/BOM, Residual', default: true },
   { key: 'health', label: '2. Health Status', description: 'Normal/Warning/Abnormal counts + rule violations', default: true },
   { key: 'growth', label: '3. Analisis Pertumbuhan', description: '8 growth metrics + multi-period comparison + price effect', default: true },
@@ -29,6 +30,7 @@ const SECTIONS: SectionOption[] = [
   { key: 'worklist', label: '12. Investigation Worklist', description: 'P1/P2/P3 dengan issue, nominal, rules, recommended actions', default: true },
   { key: 'consistency', label: '13. Item Consistency', description: 'SYSTEMIC/WIDESPREAD/ISOLATED dengan outlet counts', default: true },
   { key: 'trend', label: '14. Trend Multi-Periode', description: 'Same-weekLabel across months', default: true },
+  { key: 'aiInsight', label: '🔍 AI Pattern Insight', description: 'Pola & insight AI: cross-correlation, anomaly pattern, composition insight (1-2 paragraf)', default: true },
   { key: 'narrative', label: '15. Narasi Analisis', description: 'LLM-generated narrative analysis', default: true },
   { key: 'recommendations', label: '16. Rekomendasi', description: 'Structured recommendations with priority + actions', default: true },
 ];

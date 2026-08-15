@@ -254,3 +254,145 @@ export function buildRecommendations(worklist: InvestigationItem[]): Array<{
 
   return recommendations;
 }
+
+// ============================================================
+//  AI Executive Summary — Opsi A
+//  2-3 paragraf opini AI di awal laporan, sebelum section detail.
+//  Persona: Business Consultant (strategis, fokus impact + risk).
+//  Memberi context + key highlights sebelum SM/AM/RM baca tabel.
+// ============================================================
+const EXEC_SUMMARY_PROMPT = `Anda adalah Business Consultant senior untuk jaringan F&B.
+Tugas: tulis EXECUTIVE SUMMARY singkat (2-3 paragraf) untuk laporan analisis deviasi inventory.
+
+STRUKTUR WAJIB:
+Paragraf 1 — KONDISI: Ringkas kondisi periode ini (baik/waspada/kritis) + 1-2 angka kunci.
+Paragraf 2 — KEY HIGHLIGHTS: 3-5 bullet point temuan penting (item/outlet/area yang menonjol).
+Paragraf 3 — RISK LEVEL + NEXT STEP: Risk (LOW/MEDIUM/HIGH) + alasan + 1-2 action immediate.
+
+ATURAN:
+1. Bahasa: Indonesia formal-professional, padat, tidak bertele-tele.
+2. Sebutkan angka dengan eksplisit (Sales, Deviasi, Growth %).
+3. Jangan hitung ulang — pakai angka yang diberikan.
+4. Jangan sebut root cause pasti — pakai "indikasi", "kemungkinan".
+5. Maksimal 250 kata. Eye-catching untuk SM/AM/RM baca 30 detik.`;
+
+export async function generateAIExecutiveSummary(input: NarrativeInput): Promise<string> {
+  const structuredSummary = buildStructuredSummary(input);
+  try {
+    const zai = await ZAI.create();
+    const completion = await zai.chat.completions.create({
+      messages: [
+        { role: 'system', content: EXEC_SUMMARY_PROMPT },
+        { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
+      ],
+      thinking: { type: 'disabled' },
+    });
+    const summary = completion.choices[0]?.message?.content?.trim();
+    if (!summary) return buildFallbackExecSummary(input);
+    return summary;
+  } catch (e: any) {
+    return buildFallbackExecSummary(input);
+  }
+}
+
+function buildFallbackExecSummary(input: NarrativeInput): string {
+  const { period, executiveSummary: s, growthMetrics: g, healthStatus: hs, topAnomalies } = input;
+  const total = hs.normal + hs.warning + hs.abnormal;
+  const abnPct = total > 0 ? ((hs.abnormal / total) * 100).toFixed(1) : '0.0';
+  const riskLevel = hs.abnormal > 10 || (g.nominalDeviasiGrowth != null && g.nominalDeviasiGrowth > 0.2) ? 'HIGH' : hs.abnormal > 5 ? 'MEDIUM' : 'LOW';
+  const lines: string[] = [];
+  lines.push(`KONDISI: Periode ${period.weekLabel} ${period.monthLabel} menunjukkan ${riskLevel === 'HIGH' ? 'kondisi yang perlu perhatian segera' : riskLevel === 'MEDIUM' ? 'kondisi yang perlu monitoring' : 'kondisi stabil'}. Sales ${fmtNum(s.sales.current, ' IDR')}${s.sales.growth != null ? ` (${fmtPct(s.sales.growth)})` : ''}, Nominal Deviasi ${fmtNum(s.nominalDeviasi.current, ' IDR')}${s.nominalDeviasi.growth != null ? ` (${fmtPct(s.nominalDeviasi.growth)})` : ''}. ${hs.abnormal} item abnormal dari ${total} total (${abnPct}%).`);
+  lines.push('');
+  lines.push('KEY HIGHLIGHTS:');
+  topAnomalies.slice(0, 3).forEach((a, i) => {
+    lines.push(`- ${a.itemName} @ ${a.outletCode} (${a.direction}): ${fmtNum(a.absNominal, ' IDR')} — ${a.issue}`);
+  });
+  if (g.nominalDeviasiGrowth != null && g.salesGrowth != null && g.nominalDeviasiGrowth > g.salesGrowth * 1.5) {
+    lines.push(`- Deviasi growth (${fmtPct(g.nominalDeviasiGrowth)}) jauh melebihi Sales growth (${fmtPct(g.salesGrowth)}) — indikasi masalah operational, bukan volume.`);
+  }
+  lines.push('');
+  lines.push(`RISK LEVEL: ${riskLevel} — ${riskLevel === 'HIGH' ? 'investigasi P1 dalam 7 hari' : riskLevel === 'MEDIUM' ? 'monitoring ketat minggu depan' : 'lanjutkan practice, monitoring rutin'}.`);
+  return lines.join('\n');
+}
+
+// ============================================================
+//  AI Pattern Insight — Opsi D
+//  1-2 paragraf insight pola/korelasi/anomaly yang AI temukan.
+//  Persona: Inventory Analyst (teknis, fokus pattern + correlation).
+//  Ditempatkan sebelum section narrative (15).
+// ============================================================
+const PATTERN_PROMPT = `Anda adalah Inventory Data Analyst senior.
+Tugas: temukan POLA dan INSIGHT tersembunyi dari data deviasi inventory.
+
+FOKUS:
+1. Cross-correlation: hubungan antar metric (mis. sales↑ vs waste↑, BOM↑ vs deviasi↓)
+2. Anomaly pattern: item/outlet yang muncul berulang atau punya pola tidak wajar
+3. Composition insight: apakah Waste/Susut/Trial/Residual proporsional atau ada yang dominan
+4. Historical context: bandingkan dengan growth trend
+5. Benchmark indication: area/outlet yang menonjol dari network
+
+FORMAT:
+- 1-2 paragraf naratif (maks 200 kata)
+- Sebutkan pola spesifik dengan angka
+- Berikan interpretasi (bukan deskripsi ulang data)
+- Akhiri dengan 1 pertanyaan investigasi yang critical
+
+ATURAN:
+1. Bahasa Indonesia formal-professional
+2. Jangan ulang data mentah — beri INSIGHT/INTERPRETASI
+3. Jangan sebut root cause pasti
+4. Fokus pada "APA ARTINYA" bukan "APA ANGKANYA"`;
+
+export async function generateAIPatternInsight(input: NarrativeInput): Promise<string> {
+  const structuredSummary = buildStructuredSummary(input);
+  try {
+    const zai = await ZAI.create();
+    const completion = await zai.chat.completions.create({
+      messages: [
+        { role: 'system', content: PATTERN_PROMPT },
+        { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
+      ],
+      thinking: { type: 'disabled' },
+    });
+    const insight = completion.choices[0]?.message?.content?.trim();
+    if (!insight) return buildFallbackPatternInsight(input);
+    return insight;
+  } catch (e: any) {
+    return buildFallbackPatternInsight(input);
+  }
+}
+
+function buildFallbackPatternInsight(input: NarrativeInput): string {
+  const { executiveSummary: s, growthMetrics: g, deviationBreakdown: db, topAnomalies, healthStatus: hs } = input;
+  const lines: string[] = [];
+  // Pattern 1: composition
+  const residualPct = db.total > 0 ? (db.residual / db.total) * 100 : 0;
+  const wastePct = db.total > 0 ? (db.waste / db.total) * 100 : 0;
+  if (residualPct > 40) {
+    lines.push(`Pola komposisi menunjukkan Residual Loss mendominasi (${residualPct.toFixed(1)}% dari total deviation) — ini mengindikasikan sebagian besar selisih TIDAK terjelaskan oleh Waste/Susut/Trial. Kemungkinan: gap antara Actual Usage vs SOC, atau pencatatan Waste/Susut/Trial tidak lengkap. Investigasi: apakah SOC perlu review, atau apakah ada item yang belum dikategorisasi dengan benar?`);
+  } else if (wastePct > 50) {
+    lines.push(`Waste mendominasi komposisi deviation (${wastePct.toFixed(1)}%) — fokus investigasi pada handling process, storage, dan portion control. Residual hanya ${residualPct.toFixed(1)}% menunjukkan pencatatan relatif lengkap.`);
+  } else {
+    lines.push(`Komposisi deviation relatif terdistribusi: Waste ${wastePct.toFixed(1)}%, Residual ${residualPct.toFixed(1)}%. Tidak ada single driver dominan — investigasi per-item lebih efektif daripada per-category.`);
+  }
+  // Pattern 2: growth mismatch
+  if (g.nominalDeviasiGrowth != null && g.salesGrowth != null) {
+    const ratio = g.salesGrowth !== 0 ? g.nominalDeviasiGrowth / g.salesGrowth : 0;
+    if (ratio > 2) {
+      lines.push(`Deviasi growth (${fmtPct(g.nominalDeviasiGrowth)}) ${ratio.toFixed(1)}× lebih besar dari Sales growth (${fmtPct(g.salesGrowth)}) — pola ini sering muncul saat ada operational issue (bukan volume). Pertanyaan kritis: apakah item P1 terkonsentrasi di area tertentu atau menyebar?`);
+    } else if (ratio < 0.5 && g.nominalDeviasiGrowth < 0) {
+      lines.push(`Deviasi turun (${fmtPct(g.nominalDeviasiGrowth)}) meski Sales ${fmtPct(g.salesGrowth)} — indikasi perbaikan operational. Pertanyaan: practice apa yang berubah? Dapat direplikasi ke outlet lain?`);
+    }
+  }
+  // Pattern 3: anomaly concentration
+  if (topAnomalies.length > 0) {
+    const outlets = new Set(topAnomalies.map(a => a.outletCode));
+    const items = new Set(topAnomalies.map(a => a.itemName));
+    if (outlets.size === 1 && topAnomalies.length > 2) {
+      lines.push(`Anomaly terkonsentrasi di 1 outlet (${[...outlets][0]}) dengan ${topAnomalies.length} item — indikasi masalah operational lokal, bukan systemic. Pertanyaan: apakah ada perubahan staff atau proses di outlet ini?`);
+    } else if (items.size === 1 && topAnomalies.length > 2) {
+      lines.push(`Anomaly terkonsentrasi di 1 item (${[...items][0]}) di multiple outlet — indikasi masalah recipe/BOM/supplier systemic. Pertanyaan: apakah BOM item ini perlu review?`);
+    }
+  }
+  return lines.length > 0 ? lines.join('\n\n') : 'Tidak ada pola signifikan terdeteksi pada periode ini. Data relatif normal — monitoring rutin dilanjutkan.';
+}
