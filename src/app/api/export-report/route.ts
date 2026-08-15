@@ -440,12 +440,26 @@ export async function GET(req: NextRequest) {
     // ============================================================
     const children: any[] = [];
 
+    // Build dynamic period labels for column headers (replace static Current/Prev/Hist)
+    // Current period: e.g., "WEEK 4 MEI 2026"
+    const currLabel = `${data.period.weekLabel} ${data.period.monthLabel}`;
+    // Previous period: e.g., "WEEK 4 APR 2026" (or "—" if no comparison)
+    const prevLabel = data.period.comparisonWeek
+      ? `${data.period.comparisonWeek} ${data.period.comparisonMonth || ''}`
+      : '—';
+    // Historical periods: list of months/weeks the avg comes from
+    // All historical periods share the same weekLabel (filtered), so list the months
+    const histMonths = historicalPeriods.map(p => p.monthLabel).filter(Boolean);
+    const histLabel = histMonths.length > 0
+      ? `Hist Avg (${histMonths.join(', ')})`
+      : 'Hist Avg (—)';
+
     // Title
     children.push(
       new Paragraph({ children: [new TextRun({ text: 'LAPORAN ANALISIS INVENTORY CONTROL', bold: true, size: 32 })], alignment: AlignmentType.CENTER, spacing: { before: 400, after: 200 } }),
-      new Paragraph({ children: [new TextRun({ text: `Periode: ${data.period.weekLabel} ${data.period.monthLabel}`, size: 24 })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
+      new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, size: 24 })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
       new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Outlet: ${outletCode}` : 'Network'} | ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 22, color: '666666' })], alignment: AlignmentType.CENTER, spacing: { after: 100 } }),
-      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${data.period.comparisonWeek} ${data.period.comparisonMonth || ''}` : 'Perbandingan: Otomatis', size: 20, color: '999999' })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
+      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 20, color: '999999' })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
       divider(),
     );
 
@@ -453,7 +467,7 @@ export async function GET(req: NextRequest) {
     const s = data.executiveSummary;
     children.push(heading('1. RINGKASAN UTAMA (Executive Summary)'));
     children.push(paragraph('Ringkasan KPI utama periode ini dibandingkan periode sebelumnya. Growth = persentase perubahan.'));
-    children.push(makeTable(['Metrik', 'Nilai Sekarang', 'Perubahan', 'Periode Sebelumnya'], [
+    children.push(makeTable(['Metrik', currLabel, 'Perubahan', prevLabel], [
       ['Penjualan', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
       ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
       ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
@@ -504,14 +518,14 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = SURPLUS (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: '4.1 Nominal Deviasi Terbesar (sort by abs, tampilkan nominal deviasi actual)', items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', 'Nominal Deviasi', 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi), it.direction] },
+      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', `Nominal Deviasi ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi), it.direction] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
-      { title: '4.2 % Deviasi To BOM Terbesar (sort by abs, tampilkan nilai actual)', items: data.topItemsByDevBom, cols: ['#', 'Item', 'Outlet', '% Deviasi To BOM', '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Outlet', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: '4.3 QTY Waste Terbesar (dengan perbandingan prev & historical)', items: data.topItemsByWaste, cols: ['#', 'Item', 'Outlet', 'QTY Waste', 'QTY Prev', 'QTY Hist Avg', 'Nominal Waste'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalWaste)] },
-      { title: '4.4 QTY Susut Terbesar (dengan perbandingan prev & historical)', items: data.topItemsBySusut, cols: ['#', 'Item', 'Outlet', 'QTY Susut', 'QTY Prev', 'QTY Hist Avg', 'Nominal Susut'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalSusut)] },
-      { title: '4.5 QTY Trial Terbesar (dengan perbandingan prev & historical)', items: data.topItemsByTrial, cols: ['#', 'Item', 'Outlet', 'QTY Trial', 'QTY Prev', 'QTY Hist Avg', 'Nominal Trial'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalTrial)] },
-      { title: '4.6 QTY Loss/Surplus Terbesar (dengan perbandingan prev & historical)', items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Outlet', 'QTY Loss/Surplus', 'QTY Prev', 'QTY Hist Avg', 'Nominal Loss/Surplus', 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalLossSurplus), it.direction] },
+      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Outlet', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalWaste)] },
+      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Outlet', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalSusut)] },
+      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Outlet', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalTrial)] },
+      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Outlet', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Loss/Surplus ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalLossSurplus), it.direction] },
     ];
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
@@ -601,12 +615,13 @@ export async function GET(req: NextRequest) {
       if ((va.topWorsened || []).length > 0) {
         children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
         // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
-        children.push(makeTable(['Item', 'Outlet', 'Nominal Deviasi Current', 'Nominal Deviasi Previous', 'Selisih'], va.topWorsened.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        // Use dynamic period labels (currLabel / prevLabel) instead of Current/Previous
+        children.push(makeTable(['Item', 'Outlet', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
         children.push(paragraph(''));
       }
       if ((va.topImproved || []).length > 0) {
         children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
-        children.push(makeTable(['Item', 'Outlet', 'Nominal Deviasi Current', 'Nominal Deviasi Previous', 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        children.push(makeTable(['Item', 'Outlet', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       }
       children.push(divider());
     }
