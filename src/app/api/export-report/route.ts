@@ -402,20 +402,20 @@ export async function GET(req: NextRequest) {
     children.push(heading('1. RINGKASAN UTAMA (Executive Summary)'));
     children.push(paragraph('Ringkasan KPI utama periode ini dibandingkan periode sebelumnya. Growth = persentase perubahan.'));
     children.push(makeTable(['Metrik', 'Nilai Sekarang', 'Perubahan', 'Periode Sebelumnya'], [
-      ['Penjualan (Sales)', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
-      ['Nominal Selisih (Deviasi)', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
-      ['Volume BOM (Qty)', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
-      ['Qty Selisih (Deviasi)', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth != null ? fmtPct(s.qtyDeviasi.growth, true) : '—', fmtNum(s.qtyDeviasi.previous)],
-      ['Qty Waste (Sampah)', fmtNum(s.qtyWaste.current), s.qtyWaste.growth != null ? fmtPct(s.qtyWaste.growth, true) : '—', fmtNum(s.qtyWaste.previous)],
-      ['Qty Susut (Penyusutan)', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
-      ['Qty Trial (Uji Coba)', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
-      ['Qty Loss/Surplus (Kelebihan/Kekurangan)', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
-      ['% Selisih terhadap BOM', fmtPct(s.deviationToBom, false), '—', '—'],
-      ['Loss terhadap Penjualan', fmtPct(s.lossToSales, false), '—', '—'],
-      ['Total Kelebihan Pakai (LOSS)', fmtIDR(s.totalLoss), '—', '—'],
-      ['Total Kekurangan Pakai (SURPLUS)', fmtIDR(s.totalSurplus), '—', '—'],
-      ['Sisa Selisih Tidak Terjelaskan (Qty)', fmtNum(s.residualLossQty), '—', '—'],
-      ['% Sisa Selisih Tidak Terjelaskan', fmtPct(s.residualLossPct, false), '—', '—'],
+      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
+      ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
+      ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
+      ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth != null ? fmtPct(s.qtyDeviasi.growth, true) : '—', fmtNum(s.qtyDeviasi.previous)],
+      ['QTY Waste', fmtNum(s.qtyWaste.current), s.qtyWaste.growth != null ? fmtPct(s.qtyWaste.growth, true) : '—', fmtNum(s.qtyWaste.previous)],
+      ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
+      ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
+      ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
+      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), '—', '—'],
+      ['Loss To Sales', fmtPct(s.lossToSales, false), '—', '—'],
+      ['Total LOSS', fmtIDR(s.totalLoss), '—', '—'],
+      ['Total SURPLUS', fmtIDR(s.totalSurplus), '—', '—'],
+      ['Residual Qty', fmtNum(s.residualLossQty), '—', '—'],
+      ['Residual %', fmtPct(s.residualLossPct, false), '—', '—'],
     ]));
 
     }
@@ -435,8 +435,8 @@ export async function GET(req: NextRequest) {
     children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
     children.push(paragraph('Perubahan antar periode. Pengaruh Volume = perubahan karena kenaikan volume penjualan. Pengaruh Harga = perubahan karena harga naik/turun. Pengaruh Operasional = sisa perubahan setelah volume dan harga dijelaskan.'));
     children.push(makeTable(['Metric', 'Value'], [
-      ['Sales Growth', fmtPct(g.salesGrowth, true)],
-      ['BOM Growth', fmtPct(g.bomGrowth, true)],
+      ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
+      ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
       ['QTY Deviasi Growth', fmtPct(g.qtyDeviasiGrowth, true)],
       ['Nominal Deviasi Growth', fmtPct(g.nominalDeviasiGrowth, true)],
       ['Price Growth', fmtPct(g.priceGrowth, true)],
@@ -452,12 +452,12 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori.'));
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori.'));
     const topSections = [
-      { title: '4.1 Nominal Selisih Terbesar', items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', 'Nominal', 'Dir'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), it.direction] },
-      { title: '4.2 % Selisih terhadap BOM Terbesar', items: data.topItemsByDevBom, cols: ['#', 'Item', 'Outlet', 'Dev/BOM', 'Tol'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
-      { title: '4.3 Waste (Sampah) Terbesar', items: data.topItemsByWaste, cols: ['#', 'Item', 'Outlet', 'QTY', 'Nominal'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), fmtIDR(it.nominalWaste)] },
-      { title: '4.4 Susut (Penyusutan) Terbesar', items: data.topItemsBySusut, cols: ['#', 'Item', 'Outlet', 'QTY', 'Nominal'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), fmtIDR(it.nominalSusut)] },
-      { title: '4.5 Trial (Uji Coba) Terbesar', items: data.topItemsByTrial, cols: ['#', 'Item', 'Outlet', 'QTY', 'Nominal'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), fmtIDR(it.nominalTrial)] },
-      { title: '4.6 Loss/Surplus Terbesar', items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Outlet', 'QTY', 'Nominal', 'Dir'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), fmtIDR(it.nominalLossSurplus), it.direction] },
+      { title: '4.1 Nominal Deviasi Terbesar', items: data.topItemsByNominal, cols: ['#', 'Item', 'Outlet', 'Abs Nominal Deviasi', 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), it.direction] },
+      { title: '4.2 % Deviasi To BOM Terbesar', items: data.topItemsByDevBom, cols: ['#', 'Item', 'Outlet', '% Deviasi To BOM', '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      { title: '4.3 QTY Waste Terbesar', items: data.topItemsByWaste, cols: ['#', 'Item', 'Outlet', 'QTY Waste', 'Nominal Waste'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), fmtIDR(it.nominalWaste)] },
+      { title: '4.4 QTY Susut Terbesar', items: data.topItemsBySusut, cols: ['#', 'Item', 'Outlet', 'QTY Susut', 'Nominal Susut'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), fmtIDR(it.nominalSusut)] },
+      { title: '4.5 QTY Trial Terbesar', items: data.topItemsByTrial, cols: ['#', 'Item', 'Outlet', 'QTY Trial', 'Nominal Trial'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), fmtIDR(it.nominalTrial)] },
+      { title: '4.6 QTY Loss/Surplus Terbesar', items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Outlet', 'QTY Loss/Surplus', 'Nominal Loss/Surplus', 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), fmtIDR(it.nominalLossSurplus), it.direction] },
     ];
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
@@ -474,10 +474,10 @@ export async function GET(req: NextRequest) {
     const bdTotal = b.total || 0;
     children.push(heading('5. RINCIAN KOMPOSISI SELISIH (Deviation Breakdown)'));
     children.push(makeTable(['Component', 'QTY', '% of Total'], [
-      ['Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['Trial', fmtNum(b.trial), bdTotal > 0 ? `${((b.trial / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['Residual', fmtNum(b.residual), bdTotal > 0 ? `${((b.residual / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['QTY Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['QTY Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['QTY Trial', fmtNum(b.trial), bdTotal > 0 ? `${((b.trial / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['Residual Qty', fmtNum(b.residual), bdTotal > 0 ? `${((b.residual / bdTotal) * 100).toFixed(1)}%` : '—'],
       ['TOTAL', fmtNum(bdTotal), '100%'],
     ]));
     children.push(divider());
@@ -485,17 +485,17 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('lossSurplus')) {
     const lvsData = data.lossVsSurplus || {};
-    children.push(heading('6. KELEBIHAN VS KEKURANGAN PEMAKAIAN (Loss vs Surplus)'));
-    children.push(paragraph('Loss = pemakaian aktual melebihi standar (SOC). Surplus = pemakaian aktual di bawah standar.'));
-    children.push(makeTable(['Category', 'Count', 'Nominal'], [['LOSS', String(lvsData.loss || 0), fmtIDR(lvsData.lossNominal)], ['SURPLUS', String(lvsData.surplus || 0), fmtIDR(lvsData.surplusNominal)]]));
+    children.push(heading('6. LOSS VS SURPLUS'));
+    children.push(paragraph('LOSS = pemakaian aktual melebihi standar (SOC). SURPLUS = pemakaian aktual di bawah standar.'));
+    children.push(makeTable(['Category', 'Count', 'Nominal Deviasi'], [['LOSS', String(lvsData.loss || 0), fmtIDR(lvsData.lossNominal)], ['SURPLUS', String(lvsData.surplus || 0), fmtIDR(lvsData.surplusNominal)]]));
     children.push(divider());
 
     }
     if (hasSection('area')) {
     if (data.areaAnalysis && data.areaAnalysis.length > 0) {
       children.push(heading('7. PERBANDINGAN ANTAR AREA'));
-    children.push(paragraph('Perbandingan performa antar area. Loss terhadap Penjualan = efisiensi area (makin rendah makin baik).'));
-      children.push(makeTable(['Area', 'Outlets', 'Sales', 'Abs Nominal', 'Dev/BOM', 'Loss/Sales'],
+    children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
+      children.push(makeTable(['Area', 'Outlets', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
         data.areaAnalysis.map((a: any) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
       children.push(divider());
     }
@@ -504,7 +504,7 @@ export async function GET(req: NextRequest) {
     if (hasSection('ranking')) {
     if (data.outletHealthRanking && data.outletHealthRanking.length > 0) {
       children.push(heading('8. RANKING KONDISI OUTLET'));
-      children.push(makeTable(['#', 'Outlet', 'Area', 'Skor', 'Dev/BOM', 'Abn', 'Nominal', 'Sales'],
+      children.push(makeTable(['#', 'Outlet', 'Area', 'Health Score', '% Deviasi To BOM', 'Abnormal', 'Abs Nominal Deviasi', 'Penjualan'],
         data.outletHealthRanking.slice(0, 30).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, String(o.healthScore ?? '—'), fmtPct(o.devBom, false), String(o.abnormal || 0), fmtIDR(o.absNominal), fmtIDR(o.sales)])));
       children.push(divider());
     }
@@ -514,12 +514,12 @@ export async function GET(req: NextRequest) {
     const ci = data.costImpact || {};
     if (ci.totalCost) {
       children.push(heading('9. DAMPAK BIAYA (Cost Impact)'));
-    children.push(paragraph('Rincian biaya selisih: Waste + Susut + Trial + Sisa. % of Sales = seberapa besar selisih dibanding penjualan.'));
+    children.push(paragraph('Rincian biaya selisih: Nominal Waste + Nominal Susut + Nominal Trial + Residual Nominal. % of Sales = seberapa besar selisih dibanding Penjualan.'));
       children.push(makeTable(['Component', 'Nominal', '% of Cost'], [
-        ['Waste', fmtIDR(ci.wasteCost), ci.wastePct != null ? fmtPct(ci.wastePct, false) : '—'],
-        ['Susut', fmtIDR(ci.susutCost), ci.susutPct != null ? fmtPct(ci.susutPct, false) : '—'],
-        ['Trial', fmtIDR(ci.trialCost), ci.trialPct != null ? fmtPct(ci.trialPct, false) : '—'],
-        ['Residual', fmtIDR(ci.residualCost), ci.residualPct != null ? fmtPct(ci.residualPct, false) : '—'],
+        ['Nominal Waste', fmtIDR(ci.wasteCost), ci.wastePct != null ? fmtPct(ci.wastePct, false) : '—'],
+        ['Nominal Susut', fmtIDR(ci.susutCost), ci.susutPct != null ? fmtPct(ci.susutPct, false) : '—'],
+        ['Nominal Trial', fmtIDR(ci.trialCost), ci.trialPct != null ? fmtPct(ci.trialPct, false) : '—'],
+        ['Residual Nominal', fmtIDR(ci.residualCost), ci.residualPct != null ? fmtPct(ci.residualPct, false) : '—'],
         ['TOTAL', fmtIDR(ci.totalCost), '100%'],
         ['% of Sales', fmtPct(ci.pctOfSales, false), '—'],
       ]));
@@ -533,7 +533,7 @@ export async function GET(req: NextRequest) {
       children.push(heading('10. ANALISIS PARETO (ABC)'));
     children.push(paragraph('Aturan 80/20: sedikit item menyumbang selisih terbesar. Class A = item dengan kontribusi tertinggi (prioritas investigasi).'));
       children.push(paragraph(`Class A: ${paretoData.classACount || 0} items (${((paretoData.classAPctOfCost || 0) * 100).toFixed(1)}% of cost) | Total: ${paretoData.totalItems || 0}`));
-      children.push(makeTable(['#', 'Item', 'Outlet', 'Nominal', 'Cum %'],
+      children.push(makeTable(['#', 'Item', 'Outlet', 'Abs Nominal Deviasi', 'Cum %'],
         (paretoData.items || []).slice(0, 20).map((it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), `${((it.cumPct || 0) * 100).toFixed(1)}%`])));
       children.push(divider());
     }
@@ -562,9 +562,9 @@ export async function GET(req: NextRequest) {
       const wl = data.investigationWorklist;
       const p1 = wl.filter((w: any) => w.priority === 'P1');
       children.push(heading('12. DAFTAR PRIORITAS INVESTIGASI'));
-    children.push(paragraph('P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap item ada issue, nominal, dan rekomendasi tindakan.'));
+    children.push(paragraph('P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap item ada issue, Nominal Deviasi, dan rekomendasi tindakan.'));
       children.push(paragraph(`P1: ${p1.length} | P2: ${wl.filter((w: any) => w.priority === 'P2').length} | P3: ${wl.filter((w: any) => w.priority === 'P3').length} | Total: ${wl.length}`));
-      children.push(makeTable(['Pri', 'Outlet', 'Item', 'Issue', 'Nominal', 'Dev/BOM', 'Dir'],
+      children.push(makeTable(['Pri', 'Outlet', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM', 'Direction'],
         wl.slice(0, 50).map((w: any) => [w.priority, w.outletCode, w.itemName, w.issue, fmtIDR(w.absNominalDeviasi), w.deviationToBom != null ? fmtPct(w.deviationToBom, false) : '—', w.direction])));
       if (p1.length > 0) {
         children.push(paragraph(''));
@@ -579,7 +579,7 @@ export async function GET(req: NextRequest) {
     const ic = data.itemConsistencyAnalysis || {};
     if (ic.items && ic.items.length > 0) {
       children.push(heading('13. POLA ITEM ANTAR OUTLET (Consistency)'));
-      children.push(makeTable(['Item', 'Outlets', 'LOSS', 'SURPLUS', 'Nominal', 'Dev/BOM', 'Type'],
+      children.push(makeTable(['Item', 'Outlets', 'LOSS', 'SURPLUS', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Type'],
         ic.items.slice(0, 20).map((it: any) => [it.itemName, String(it.outletCount || 0), String(it.lossOutlets || 0), String(it.surplusOutlets || 0), fmtIDR(it.totalAbsNominal), fmtPct(it.avgDevBom, false), it.consistency])));
       children.push(divider());
     }
@@ -589,7 +589,7 @@ export async function GET(req: NextRequest) {
     if (data.trend && data.trend.length > 0) {
       children.push(heading('14. TREND ANTAR PERIODE'));
     children.push(paragraph('Perbandingan periode yang sama di bulan-bulan sebelumnya.'));
-      children.push(makeTable(['Period', 'Sales', 'Nominal', 'Dev/BOM'],
+      children.push(makeTable(['Period', 'Penjualan', 'Nominal Deviasi', '% Deviasi To BOM'],
         data.trend.map((t: any) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
       children.push(divider());
     }
