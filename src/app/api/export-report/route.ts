@@ -576,11 +576,10 @@ export async function GET(req: NextRequest) {
       divider(),
     );
 
-    // AI Executive Summary — Opsi A (di awal, sebelum section detail)
+    // Ringkasan Eksekutif — analisis singkat di awal laporan (sebelum section detail)
     if (hasSection('aiSummary') && data.aiSummary) {
-      children.push(heading('🤖 AI ANALYST SUMMARY'));
-      children.push(paragraph('Ringkasan opini AI berdasarkan data periode ini. Baca section ini dulu sebelum lihat tabel detail.'));
-      // BUG FIX (AUDIT-EXPORT-AI-4): use renderMarkdownLine for inline **bold** support
+      children.push(heading('RINGKASAN EKSEKUTIF'));
+      children.push(paragraph('Ringkasan kondisi dan highlight periode ini. Baca section ini dulu sebelum lihat tabel detail.'));
       for (const line of data.aiSummary.split('\n')) {
         children.push(renderMarkdownLine(line));
       }
@@ -789,11 +788,10 @@ export async function GET(req: NextRequest) {
     }
 
     }
-    // AI Pattern Insight — Opsi D (sebelum narrative section 15)
+    // Observasi & Pola — analisis pola dari data (sebelum narrative section 15)
     if (hasSection('aiInsight') && data.aiInsight) {
-      children.push(heading('🔍 AI PATTERN INSIGHT'));
-      children.push(paragraph('Pola dan insight yang AI temukan dari data — cross-correlation, anomaly pattern, composition insight.'));
-      // BUG FIX (AUDIT-EXPORT-AI-4, -10): use renderMarkdownLine for inline **bold** + bullet support
+      children.push(heading('OBSERVASI & POLA DEVIASI'));
+      children.push(paragraph('Pola dan observasi dari analisis data — cross-correlation, anomaly pattern, composition insight.'));
       for (const line of data.aiInsight.split('\n')) {
         children.push(renderMarkdownLine(line));
       }
@@ -803,7 +801,7 @@ export async function GET(req: NextRequest) {
     if (hasSection('narrative')) {
     if (data.narrative && typeof data.narrative === 'string') {
       children.push(heading('15. NARASI ANALISIS'));
-    children.push(paragraph('Analisis otomatis berbasis data oleh AI.'));
+    children.push(paragraph('Analisis deviasi periode ini.'));
       for (const line of data.narrative?.split('\n')) {
         const trimmed = line.trim();
         if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
@@ -874,19 +872,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Footer — branded closing
+    // Footer — simple closing with date only (no technical metadata)
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
     children.push(new Paragraph({
       children: [new TextRun({ text: '', size: 8 })],
       spacing: { before: 60, after: 60 },
       border: { top: { style: 'single' as any, size: 12, color: COLOR.PRIMARY, space: 2 } },
     }));
-    children.push(new Paragraph({ children: [new TextRun({ text: 'Inventory Control Intelligence Platform', size: 18, color: COLOR.PRIMARY, bold: true, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 40 } }));
-    children.push(new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleString('id-ID')}  |  Duration: ${data.durationMs}ms`, size: 14, color: COLOR.MUTED })], alignment: AlignmentType.CENTER }));
+    children.push(new Paragraph({ children: [new TextRun({ text: `Dibuat: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, size: 16, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER }));
 
-    // Generate document
+    // Generate document — creator metadata neutral (no AI/platform mention)
     const doc = new Document({
-      creator: 'Inventory Control Intelligence Platform',
+      creator: 'Inventory Analyst',
       title: `Laporan Analisis ${data.period.weekLabel} ${data.period.monthLabel}`,
       sections: [{ properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } }, children }],
     });
