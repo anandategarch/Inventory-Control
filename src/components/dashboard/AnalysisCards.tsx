@@ -12,10 +12,10 @@ import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
-  History, GitBranch, Calendar, Utensils,
+  History, Calendar, Utensils,
 } from 'lucide-react';
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer, Cell,
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer,
 } from 'recharts';
 
 // Shared tooltip payload type (any required by Recharts typing)
@@ -99,125 +99,6 @@ export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
             </TableBody>
           </Table>
         </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ============================================================
-//  2.2 TrendDecompositionCard
-//  Dekomposisi trend (Volume + Price + Operational Effect)
-// ============================================================
-export function TrendDecompositionCard({ data }: { data: AnalysisData }) {
-  const g = data.growthComparison as any;
-  const volumeEffect: number | null = g?.volumeEffect ?? null;
-  const priceEffect: number | null = g?.priceEffect ?? null;
-  const operationalEffect: number | null = g?.operationalEffect ?? null;
-  const allNull = volumeEffect == null && priceEffect == null && operationalEffect == null;
-
-  const effects = [
-    { name: 'Efek Volume', value: volumeEffect, color: '#06b6d4', desc: 'Perubahan deviation akibat perubahan volume aktivitas (BOM)' },
-    { name: 'Efek Harga', value: priceEffect, color: '#f59e0b', desc: 'Perubahan deviation akibat perubahan harga' },
-    { name: 'Efek Operasional', value: operationalEffect, color: '#dc2626', desc: 'Perubahan deviation akibat inefisiensi operasional (Dev/BOM ratio)' },
-  ];
-
-  const maxAbs = Math.max(...effects.map((e) => Math.abs(e.value ?? 0)), 1);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <GitBranch className="h-4 w-4 text-cyan-600" />
-          Dekomposisi Trend (3-Efek)
-          <FormulaInfo
-            formula="ΔNOMINAL = Volume Effect + Price Effect + Operational Effect"
-            description={'UNTUK APA: Mendekomposisi kenaikan NOMINAL DEVIASI ke dalam 3 efek: Volume, Price, Operational.\nCARA BACA: Volume Effect = dampak kenaikan qty. Price Effect = dampak kenaikan harga. Operational Effect = dampak perubahan usage vs SOC.\nCONTOH: Sales +54%, BOM +42%, Deviasi +442% → Volume +42%, Price +X%, Operational +sisanya.\nACTION: Operational Effect dominan → investigasi proses/portioning. Price Effect dominan → cek harga beli.'}
-            example="Δ +20M = Volume +15M + Price +5M + Operational +0M"
-            side="bottom"
-          />
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">Dekomposisi perubahan deviation vs periode sebelumnya</p>
-      </CardHeader>
-      <CardContent>
-        {allNull ? (
-          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data dekomposisi</p>
-        ) : (
-          <div className="space-y-4">
-            {/* Bug 7 fix: Waterfall chart showing Price vs Quantity decomposition
-                Master context #22/#55: Nominal effect = Quantity effect + Price effect + Operational */}
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="text-[11px] font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-                Kenaikan Nominal Deviasi = Volume + Harga + Operasional
-              </p>
-              <div className="flex items-end gap-1 h-32">
-                {(() => {
-                  // Waterfall: start from 0, each effect stacks
-                  const vals = effects.map(e => e.value ?? 0);
-                  const totalChange = vals.reduce((a, b) => a + b, 0);
-                  const scaleMax = Math.max(Math.abs(totalChange), ...vals.map(Math.abs), 1);
-                  let cumulative = 0;
-                  return effects.map((e, i) => {
-                    const v = e.value ?? 0;
-                    const isPositive = v > 0;
-                    const barHeight = (Math.abs(v) / scaleMax) * 100;
-                    // Waterfall positioning: each bar starts from cumulative
-                    const bottomPct = (cumulative / scaleMax) * 50 + 50; // center at 50%
-                    cumulative += v;
-                    return (
-                      <div key={i} className="flex-1 flex flex-col items-center justify-end relative h-full">
-                        <div className="absolute bottom-0 left-0 right-0 top-1/2 border-t border-dashed border-muted-foreground/20" />
-                        <div
-                          className="w-full rounded-t transition-all"
-                          style={{
-                            height: `${barHeight}%`,
-                            background: isPositive ? e.color : '#10b981',
-                            marginBottom: isPositive ? `${bottomPct - 50}%` : `${100 - bottomPct - barHeight}%`,
-                            opacity: 0.85,
-                          }}
-                          title={`${e.name}: ${(v * 100).toFixed(1)}%`}
-                        />
-                        <p className="text-[10px] font-semibold mt-1" style={{ color: isPositive ? '#dc2626' : '#10b981' }}>
-                          {v > 0 ? '+' : ''}{(v * 100).toFixed(1)}%
-                        </p>
-                        <p className="text-[9px] text-muted-foreground text-center leading-tight">{e.name}</p>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-              <div className="mt-2 pt-2 border-t flex justify-between items-center text-[11px]">
-                <span className="text-muted-foreground">Total perubahan:</span>
-                <span className={`font-bold ${(effects.reduce((a, e) => a + (e.value ?? 0), 0)) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {(() => {
-                    const total = effects.reduce((a, e) => a + (e.value ?? 0), 0);
-                    return (total > 0 ? '+' : '') + (total * 100).toFixed(1) + '%';
-                  })()}
-                </span>
-              </div>
-            </div>
-            {/* Original 3-card breakdown (kept for detail) */}
-            <div className="grid grid-cols-3 gap-3">
-              {effects.map((e) => {
-                const positive = (e.value ?? 0) > 0;
-                const barWidth = (Math.abs(e.value ?? 0) / maxAbs) * 100;
-                // For deviation: positive effect = bad (red), negative = good (emerald)
-                const barColor = positive ? '#dc2626' : '#10b981';
-                return (
-                  <div key={e.name} className="space-y-1.5">
-                    <p className="text-[11px] font-medium text-muted-foreground">{e.name}</p>
-                    <p className={`text-lg font-bold ${positive ? 'text-red-600' : 'text-emerald-600'}`}>
-                      {(e.value != null ? `${e.value > 0 ? '+' : ''}${(e.value * 100).toFixed(1)}%` : '—')}
-                    </p>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${barWidth}%`, background: barColor }} />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground leading-tight">{e.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

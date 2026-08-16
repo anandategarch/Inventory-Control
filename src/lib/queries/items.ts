@@ -1,6 +1,6 @@
 // ============================================================
-//  Item-level queries — top-N items by various metrics, Pareto
-//  classification, and item consistency (outlet coverage) analysis.
+//  Item-level queries — top-N items by various metrics
+//  and item consistency (outlet coverage) analysis.
 //  All aggregation done in SQL (PostgreSQL + SQLite portable).
 // ============================================================
 import { Prisma } from '@prisma/client';
@@ -290,106 +290,6 @@ export async function queryHistoricalCategoryAvg(
     });
   }
   return map;
-}
-
-// ============================================================
-//  Pareto Analysis — window function (Phase 4)
-//  Returns top N items + total item count + class A stats (across ALL items)
-// ============================================================
-export async function queryPareto(
-  week: string,
-  month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
-  limit: number = 50
-): Promise<{
-  items: Array<{ rank: number; itemName: string; outletCode: string; absNominal: number; cumulative: number; cumulativePct: number; classification: 'A' | 'B' | 'C' }>;
-  classACount: number; classACost: number; classAPct: number;
-  classBCount: number; classBCost: number; classBPct: number;
-  classCCount: number; classCCost: number; classCPct: number;
-  totalItems: number; totalAbsNominal: number;
-  // Phase 4: true class A stats across ALL items (not capped by LIMIT)
-  classACountFull: number; classAPctFull: number;
-}> {
-  const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{
-    rank: number; itemName: string; outletCode: string; absNominal: number;
-    cumulative: number; cumulativePct: number; classification: 'A' | 'B' | 'C';
-    totalItems: number; grandTotal: number;
-    classACountFull: number; classAPctFull: number;
-  }[]>`
-    WITH item_totals AS (
-      SELECT i.name as "itemName",
-        SUM(ir."absNominalLossSurplus") as "absNominal"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
-        ${f}
-      GROUP BY i.name
-    ),
-    ranked AS (
-      SELECT "itemName", "absNominal",
-        CAST(ROW_NUMBER() OVER (ORDER BY "absNominal" DESC) AS INTEGER) as rank,
-        SUM("absNominal") OVER (ORDER BY "absNominal" DESC) as cumulative,
-        SUM("absNominal") OVER () as grand_total,
-        CAST(COUNT(*) OVER () AS INTEGER) as total_items
-      FROM item_totals
-    ),
-    class_a_stats AS (
-      SELECT
-        CAST(COUNT(*) AS INTEGER) as class_a_count,
-        COALESCE(MAX(cumulative / NULLIF(grand_total, 0)), 0) as class_a_pct
-      FROM ranked
-      WHERE cumulative / NULLIF(grand_total, 0) <= 0.70
-    )
-    SELECT r.rank, r."itemName", CAST(NULL AS TEXT) as "outletCode", r."absNominal", r.cumulative,
-      (r.cumulative / NULLIF(r.grand_total, 0)) * 100 as "cumulativePct",
-      CASE
-        WHEN (r.cumulative / NULLIF(r.grand_total, 0)) * 100 <= 70 THEN 'A'
-        WHEN (r.cumulative / NULLIF(r.grand_total, 0)) * 100 <= 90 THEN 'B'
-        ELSE 'C'
-      END as classification,
-      r.total_items as "totalItems",
-      r.grand_total as "grandTotal",
-      (SELECT class_a_count FROM class_a_stats) as "classACountFull",
-      (SELECT class_a_pct FROM class_a_stats) as "classAPctFull"
-    FROM ranked r
-    ORDER BY r.rank
-    LIMIT ${limit}
-  `;
-
-  const items = rows;
-  const grandTotal = items.length > 0 ? items[0].grandTotal : 0;
-  const totalItemsCount = items.length > 0 ? items[0].totalItems : 0;
-  const classACountFull = items.length > 0 ? items[0].classACountFull : 0;
-  const classAPctFull = items.length > 0 ? items[0].classAPctFull : 0;
-
-  // Class A/B/C stats WITHIN returned items (for backward compat)
-  const classA = items.filter(i => i.classification === 'A');
-  const classB = items.filter(i => i.classification === 'B');
-  const classC = items.filter(i => i.classification === 'C');
-
-  return {
-    items,
-    classACount: classA.length,
-    classACost: classA.reduce((s, i) => s + i.absNominal, 0),
-    classAPct: grandTotal > 0 ? classA.reduce((s, i) => s + i.absNominal, 0) / grandTotal : 0,
-    classBCount: classB.length,
-    classBCost: classB.reduce((s, i) => s + i.absNominal, 0),
-    classBPct: grandTotal > 0 ? classB.reduce((s, i) => s + i.absNominal, 0) / grandTotal : 0,
-    classCCount: classC.length,
-    classCCost: classC.reduce((s, i) => s + i.absNominal, 0),
-    classCPct: grandTotal > 0 ? classC.reduce((s, i) => s + i.absNominal, 0) / grandTotal : 0,
-    totalItems: totalItemsCount,
-    totalAbsNominal: grandTotal,
-    classACountFull,
-    classAPctFull,
-  };
 }
 
 // ============================================================

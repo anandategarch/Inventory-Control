@@ -2,43 +2,8 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { FileText, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import { CheckCircle2, AlertCircle } from 'lucide-react';
 import type { AnalysisData } from '@/hooks/useAnalysis';
-
-export function NarrativePanel({ data }: { data: AnalysisData }) {
-  const isLLM = data.narrativeSource === 'llm';
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            Narasi Otomatis
-          </CardTitle>
-          <Badge variant={isLLM ? 'default' : 'secondary'} className="text-xs">
-            {isLLM ? (
-              <><Sparkles className="h-3 w-3 mr-1" /> Narasi AI</>
-            ) : (
-              'Fallback (berbasis aturan)'
-            )}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <ScrollArea className="h-64">
-          <div className="text-sm leading-relaxed text-foreground/90 prose prose-sm max-w-none dark:prose-invert
-            prose-headings:text-base prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
-            prose-p:my-1 prose-li:my-0.5 prose-strong:text-foreground
-            prose-ul:my-1 prose-ol:my-1">
-            <ReactMarkdown>{data.narrative}</ReactMarkdown>
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
 
 export function RecommendationPanel({ data }: { data: AnalysisData }) {
   const recs = data.recommendation || [];

@@ -11,7 +11,7 @@ import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
-  Coins, TrendingDown, Grid3x3, Calculator, Activity,
+  Coins, Grid3x3, Calculator, Activity,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer, Cell,
@@ -104,117 +104,6 @@ export function CostImpactDecomposition({ data }: { data: AnalysisData }) {
             </div>
           </>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ============================================================
-//  6.2 ParetoAnalysis
-//  ABC classification berdasarkan cumulative cost
-// ============================================================
-function classBadge(cls: 'A' | 'B' | 'C'): string {
-  switch (cls) {
-    case 'A': return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-950/60 dark:border-red-800 dark:text-red-400';
-    case 'B': return 'text-amber-700 bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-800 dark:text-amber-400';
-    case 'C': return 'text-sky-700 bg-sky-100 border-sky-300 dark:bg-sky-950/60 dark:border-sky-800 dark:text-sky-400';
-  }
-}
-
-function classifyByCumPct(cumPct: number): 'A' | 'B' | 'C' {
-  // FIX (BUG 1): cumPct is 0-1 ratio (divided by 100 in route), not 0-100 scale
-  if (cumPct <= 0.70) return 'A';
-  if (cumPct <= 0.90) return 'B';
-  return 'C';
-}
-
-export function ParetoAnalysis({ data }: { data: AnalysisData }) {
-  const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
-  const pareto = data.pareto;
-
-  if (!pareto) {
-    return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-1.5">
-            <TrendingDown className="h-4 w-4 text-red-600" />
-            Analisis Pareto (ABC) — per Item+Outlet
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">Tidak ada data</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const items = (pareto.items || []).slice(0, 30);
-  const classBCount = items.filter((it) => classifyByCumPct(it.cumPct) === 'B').length;
-  const classCCount = items.filter((it) => classifyByCumPct(it.cumPct) === 'C').length;
-
-  const onClick = (it: any) => {
-    setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
-    setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <TrendingDown className="h-4 w-4 text-red-600" />
-          Analisis Pareto (ABC) — per Item+Outlet
-          <FormulaInfo
-            formula="Class A: cumulative ≤ 70% | Class B: 70-90% | Class C: > 90%"
-            description={'UNTUK APA: Mengidentifikasi vital few items yang menyumbang sebagian besar dampak biaya (prinsip 80/20).\nCARA BACA: Class A = 70% pertama cumulative biaya. Class B = 70-90%. Class C = > 90%.\nCONTOH: 15 item Class A (20% items) = 70% total biaya.\nACTION: Fokus investigasi pada Class A dulu → dampak terbesar dengan effort terkecil.'}
-            example="20 item Class A menghasilkan 70% total |NOMINAL DEVIASI|"
-            side="bottom"
-          />
-        </CardTitle>
-        <div className="flex items-center gap-1.5 flex-wrap mt-1">
-          <Badge variant="outline" className={`text-[11px] ${classBadge('A')}`}>A: {pareto.classACount} ({(pareto.classAPctOfCost * 100).toFixed(1)}%)</Badge>
-          <Badge variant="outline" className={`text-[11px] ${classBadge('B')}`}>B: {classBCount}</Badge>
-          <Badge variant="outline" className={`text-[11px] ${classBadge('C')}`}>C: {classCCount}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-64">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] h-7 px-2 w-8">#</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">Kelas</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">RESTO</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Biaya</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Cum %</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
-              ) : items.map((it, i) => {
-                const cls = classifyByCumPct(it.cumPct);
-                return (
-                  <TableRow
-                    key={`${it.itemName}-${it.outletCode}-${i}`}
-                    className="cursor-pointer hover:bg-muted/50"
-                    {...clickableRowProps(() => onClick(it))}
-                  >
-                    <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
-                    <TableCell className="px-2 py-1">
-                      <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${classBadge(cls)}`}>{cls}</Badge>
-                    </TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{(it.cumPct * 100).toFixed(1)}%</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </ScrollArea>
       </CardContent>
     </Card>
   );

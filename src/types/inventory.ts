@@ -72,7 +72,6 @@ export interface GrowthMetrics {
   bomGrowth: number | null;
   qtyDeviasiGrowth: number | null;
   nominalDeviasiGrowth: number | null;
-  priceGrowth: number | null;
   deviationToSalesRatio: number | null;
   deviationToBomRatio: number | null;
 }

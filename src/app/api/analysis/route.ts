@@ -6,7 +6,7 @@
 //  - Raw record fetching kept ONLY for rule evaluation (currentRecs + prevRecs)
 //  - All aggregation pushed to SQL via /lib/queries.ts (PostgreSQL)
 //  - Historical stats computed via SQL GROUP BY (avoids 540K row fetch)
-//  - Trend, exec summary, top items/outlets, pareto, etc. all SQL-aggregated
+//  - Trend, exec summary, top items/outlets, etc. all SQL-aggregated
 //  - Rule evaluation loop, worklist, priorities, health ranking, historical
 //    analysis, variance analysis still use raw records (per-record logic)
 // ============================================================
@@ -21,10 +21,10 @@ import {
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
-import { generateNarrative, buildRecommendations } from '@/engine/narrative/narrative';
+import { buildRecommendations } from '@/engine/narrative/narrative';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { calcGrowth, computePriceEffect, computeNominalDeviationGrowth } from '@/lib/metrics';
+import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -37,7 +37,6 @@ import {
   queryLossVsSurplus,
   queryAreaAnalysis,
   queryCostImpact,
-  queryPareto,
   queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
@@ -353,10 +352,6 @@ export async function GET(req: NextRequest) {
     let normal = 0, warning = 0, abnormal = 0;
     const ruleCategoryCounts = new Map<string, number>();
     const ruleCodeCounts = new Map<string, number>();
-    const topAnomaliesForNarrative: Array<{
-      itemName: string; outletCode: string; area: string;
-      issue: string; absNominal: number; devBom: number | null; direction: string;
-    }> = [];
 
     interface RecWithFlags {
       curr: RecWithRels;
@@ -401,18 +396,6 @@ export async function GET(req: NextRequest) {
 
         ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
         ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
-
-        if (topAnomaliesForNarrative.length < 5 && top.severity !== 'NORMAL') {
-          topAnomaliesForNarrative.push({
-            itemName: curr.item.name,
-            outletCode: curr.outlet.code,
-            area: curr.area,
-            issue: top.ruleName,
-            absNominal: curr.absNominalDeviasi ?? 0,
-            devBom: curr.pctQtyDeviasiToBom,
-            direction: curr.direction || 'NEUTRAL',
-          });
-        }
       }
     }
 
@@ -433,7 +416,7 @@ export async function GET(req: NextRequest) {
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
-    // Group 2: All top items + breakdown + area + outlets + trend + pareto + cost + consistency — ALL independent
+    // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency — ALL independent
     // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
     const topNItems = thresholds.TOP_N_ITEMS || 10;
     const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
@@ -443,7 +426,6 @@ export async function GET(req: NextRequest) {
       areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw,
       breakdown, lvs,
       trendAggRows,
-      paretoSql,
       costImpactSql,
       consistencyItems,
       dqIssuesRaw,
@@ -460,7 +442,6 @@ export async function GET(req: NextRequest) {
       queryDeviationBreakdown(week!, month!, filterOpts),
       queryLossVsSurplus(week!, month!, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
-      queryPareto(week!, month!, filterOpts, 50),
       queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
       queryItemConsistency(week!, month!, filterOpts),
       db.dQIssue.groupBy({
@@ -501,18 +482,6 @@ export async function GET(req: NextRequest) {
     // Investigation worklist — use pre-computed flags (no re-evaluation)
     const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
 
-    // ===== BUG FIX #5: Compute aggregate priceGrowth from total nominal/qty =====
-    // Bug fix: previously checked `nominalDeviasi.current > 0` which caused null priceGrowth
-    // when outlet has aggregate loss (negative nominal). Now only guard against qty=0 (division).
-    const currAvgPrice = execSummary.qtyDeviasi.current != null && Math.abs(execSummary.qtyDeviasi.current) > 0
-      ? execSummary.nominalDeviasi.current / execSummary.qtyDeviasi.current : null;
-    // FIX (BUG 7): Guard against prev nominal being null — use null not 0.
-    // Previously: (null ?? 0) / prevQtyDev = 0, which nullified priceEffect
-    // via calcGrowth(currPrice, 0) = null. Now: null when prev nominal is null.
-    const prevQtyDev = execSummary.qtyDeviasi.previous;
-    const prevAvgPrice = (prevQtyDev != null && Math.abs(prevQtyDev) > 0 && execSummary.nominalDeviasi.previous != null)
-      ? execSummary.nominalDeviasi.previous / prevQtyDev : null;
-
     // FIX (audit issue #11): Use computeNominalDeviationGrowth (magnitude) for
     // nominalDeviasi — signed calcGrowth is misleading when sign flips.
     // For -10M → -20M: signed gives -100% (decreasing), magnitude gives +100% (worsening).
@@ -521,31 +490,14 @@ export async function GET(req: NextRequest) {
       execSummary.nominalDeviasi.previous ?? null,
     );
 
-    // Phase 4: Use Metric Engine computePriceEffect for trend decomposition
-    // FIX (audit issue #12): Multiplicative decomposition (exact, not additive)
-    const priceEffectResult = computePriceEffect(
-      nominalDeviasiGrowthMagnitude,    // nominalDeviasiGrowth (magnitude)
-      execSummary.qtyBom.growth,        // bomGrowth (volume effect)
-      currAvgPrice,                      // current average price
-      prevAvgPrice,                      // previous average price
-    );
-
     const growthMetrics = {
       salesGrowth: execSummary.sales.growth,
       bomGrowth: execSummary.qtyBom.growth,
       qtyDeviasiGrowth: execSummary.qtyDeviasi.growth,
       nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
-      priceGrowth: priceEffectResult.priceGrowth,
       deviationToSalesRatio: execSummary.sales.current > 0
         ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
       deviationToBomRatio: execSummary.deviationToBom,
-      // ===== Trend Decomposition (3-effect) — via Metric Engine computePriceEffect =====
-      // Volume Effect = bomGrowth (how much volume changed)
-      // Price Effect = priceGrowth (how much price changed)
-      // Operational Effect = nominalDeviasiGrowth - volumeEffect - priceEffect (residual)
-      volumeEffect: priceEffectResult.volumeEffect,
-      priceEffect: priceEffectResult.priceEffect,
-      operationalEffect: priceEffectResult.operationalEffect,
       // ===== Multi-Period Comparison =====
       // Built from trendAggRows (computed below, injected into growthComparison after)
       multiPeriodComparison: [] as Array<Record<string, unknown>>,
@@ -626,27 +578,8 @@ export async function GET(req: NextRequest) {
       .map(({ sortKey, ...rest }) => rest);
 
     // ============================================================
-    //  P2 fix: Start LLM narrative EARLY (no await) — runs in background
-    //  while CPU computations below execute on the event loop.
-    //  narrativeInput only needs: execSummary, growthMetrics, healthStatus,
-    //  topAnomalies, breakdown, worklist — all available now.
-    //  Saves 2-5s by overlapping LLM network I/O with CPU work.
-    // ============================================================
-    const narrativeInput = {
-      period: { monthLabel: month!, weekLabel: week!, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
-      executiveSummary: execSummary,
-      growthMetrics,
-      healthStatus: { normal, warning, abnormal },
-      topAnomalies: topAnomaliesForNarrative,
-      deviationBreakdown: breakdownEnriched,
-      investigationCount: worklist.length,
-    };
-    const narrativePromise = generateNarrative(narrativeInput);
-
-    // ============================================================
-    //  P2 fix: CPU computations run WHILE LLM generates (parallel overlap)
-    //  These are synchronous but don't block the in-flight LLM network call.
-    //  Ordered heaviest-first to maximize overlap with LLM latency.
+    //  CPU computations (LLM narrative removed — Task REMOVE-AI).
+    //  Recommendations remain rule-based.
     // ============================================================
     const recommendations = buildRecommendations(worklist);
     const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
@@ -678,23 +611,6 @@ export async function GET(req: NextRequest) {
       abnormal: { good: thresholds.HEALTH_THRESH_ABNORMAL_GOOD, bad: thresholds.HEALTH_THRESH_ABNORMAL_BAD },
     };
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights, healthScoreThresholds);
-
-    // Pareto — from parallel query result above
-    // Remap items to JS shape (cumPct decimal 0-1, drop rank/cumulative)
-    const paretoItems = paretoSql.items.map(it => ({
-      itemName: it.itemName,
-      outletCode: it.outletCode,
-      absNominal: it.absNominal,
-      cumPct: it.cumulativePct / 100, // SQL returns 0-100, JS expects 0-1
-    }));
-    // Use full class A stats from SQL (computed across ALL items, not capped by LIMIT)
-    const pareto = {
-      classACount: paretoSql.classACountFull,
-      classAPctOfCost: paretoSql.classAPctFull,
-      totalItems: paretoSql.totalItems,
-      totalAbsNominal: paretoSql.totalAbsNominal,
-      items: paretoItems.slice(0, 20),
-    };
 
     // Cost Impact — from parallel query result above
     const costImpact = {
@@ -752,13 +668,6 @@ export async function GET(req: NextRequest) {
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
-    // ============================================================
-    //  P2 fix: Await narrative AFTER all CPU work is done.
-    //  By now LLM has been generating in the background for the entire
-    //  duration of the CPU computations above — likely already resolved.
-    // ============================================================
-    const { narrative, source: narrativeSource } = await narrativePromise;
-
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -783,8 +692,6 @@ export async function GET(req: NextRequest) {
       deviationBreakdown: breakdownEnriched,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,
-      narrative,
-      narrativeSource,
       recommendation: recommendations,
       trend,
       priorities,
@@ -792,7 +699,6 @@ export async function GET(req: NextRequest) {
       areaAnalysis,
       varianceAnalysis,
       outletHealthRanking,
-      pareto,
       costImpact,
       itemConsistencyAnalysis,
       netCostTrend,

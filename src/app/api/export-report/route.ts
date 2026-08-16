@@ -20,8 +20,8 @@ import {
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
-import { generateNarrative, buildRecommendations, generateAIExecutiveSummary, generateAIPatternInsight } from '@/engine/narrative/narrative';
-import { calcGrowth, computePriceEffect, computeNominalDeviationGrowth } from '@/lib/metrics';
+import { buildRecommendations } from '@/engine/narrative/narrative';
+import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -36,7 +36,6 @@ import {
   queryLossVsSurplus,
   queryAreaAnalysis,
   queryCostImpact,
-  queryPareto,
   queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
@@ -140,26 +139,6 @@ function heading(text: string): Paragraph {
 function paragraph(text: string, bold = false, size = 20): Paragraph {
   const safeText = text == null ? '' : String(text);
   return new Paragraph({ children: [new TextRun({ text: safeText, bold, size, color: COLOR.BODY_TEXT })], spacing: { after: 80 } });
-}
-
-// BUG FIX (AUDIT-EXPORT-AI-4): render inline **bold** markdown within a line.
-// Previously only whole-line bold was detected. Now splits on **...** and emits multiple TextRuns.
-function renderMarkdownLine(line: string, baseSize = 20, baseColor = COLOR.BODY_TEXT): Paragraph {
-  const trimmed = line.trim();
-  if (trimmed === '') return new Paragraph({ text: '', spacing: { after: 40 } });
-  // Split on **bold** segments — keep the delimiters to detect bold
-  const parts = trimmed.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
-  const runs: any[] = [];
-  for (const part of parts) {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      runs.push(new TextRun({ text: part.slice(2, -2), bold: true, size: baseSize, color: baseColor }));
-    } else if (part.startsWith('- ') || part.startsWith('• ')) {
-      runs.push(new TextRun({ text: `  ${part}`, size: baseSize, color: baseColor }));
-    } else {
-      runs.push(new TextRun({ text: part, size: baseSize, color: baseColor }));
-    }
-  }
-  return new Paragraph({ children: runs, spacing: { after: 60 } });
 }
 
 function divider(): Paragraph {
@@ -390,7 +369,6 @@ export async function GET(req: NextRequest) {
     let normal = 0, warning = 0, abnormal = 0;
     const ruleCategoryCounts = new Map<string, number>();
     const ruleCodeCounts = new Map<string, number>();
-    const topAnomaliesForNarrative: any[] = [];
     const recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }> = [];
     const zeroDevByOutlet = new Map<number, number>();
 
@@ -412,9 +390,6 @@ export async function GET(req: NextRequest) {
         else normal++;
         ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
         ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
-        if (topAnomaliesForNarrative.length < 5 && top.severity !== 'NORMAL') {
-          topAnomaliesForNarrative.push({ itemName: curr.item.name, outletCode: curr.outlet.code, area: curr.area, issue: top.ruleName, absNominal: curr.absNominalDeviasi ?? 0, devBom: curr.pctQtyDeviasiToBom, direction: curr.direction || 'NEUTRAL' });
-        }
       }
     }
 
@@ -432,7 +407,7 @@ export async function GET(req: NextRequest) {
 
     // Rev 2: Fetch previous period + historical category data for comparison
     const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
-    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, breakdown, lvs, trendAggRows, paretoSql, costImpactSql, consistencyItems, dqIssuesRaw,
+    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, breakdown, lvs, trendAggRows, costImpactSql, consistencyItems, dqIssuesRaw,
       // Previous period category data (Rev 2)
       prevWasteRows, prevSusutRows, prevTrialRows, prevLossSurplusRows,
       // Historical category averages (Rev 2)
@@ -451,7 +426,6 @@ export async function GET(req: NextRequest) {
       queryDeviationBreakdown(week, month, filterOpts),
       queryLossVsSurplus(week, month, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
-      queryPareto(week, month, filterOpts, 50),
       queryCostImpact(week, month, execSummary.sales.current, filterOpts),
       queryItemConsistency(week, month, filterOpts),
       db.dQIssue.groupBy({ by: ['code', 'severity', 'message'], where: { sourceFile: { monthLabel: month } }, _count: { _all: true } }),
@@ -515,18 +489,12 @@ export async function GET(req: NextRequest) {
     const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
     // Growth metrics
-    const currAvgPrice = execSummary.qtyDeviasi.current != null && Math.abs(execSummary.qtyDeviasi.current) > 0 ? execSummary.nominalDeviasi.current / execSummary.qtyDeviasi.current : null;
-    const prevQtyDev = execSummary.qtyDeviasi.previous;
-    const prevAvgPrice = (prevQtyDev != null && Math.abs(prevQtyDev) > 0 && execSummary.nominalDeviasi.previous != null) ? execSummary.nominalDeviasi.previous / prevQtyDev : null;
     const nominalDeviasiGrowthMagnitude = computeNominalDeviationGrowth(execSummary.nominalDeviasi.current, execSummary.nominalDeviasi.previous ?? null);
-    const priceEffectResult = computePriceEffect(nominalDeviasiGrowthMagnitude, execSummary.qtyBom.growth, currAvgPrice, prevAvgPrice);
     const growthMetrics = {
       salesGrowth: execSummary.sales.growth, bomGrowth: execSummary.qtyBom.growth,
       qtyDeviasiGrowth: execSummary.qtyDeviasi.growth, nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
-      priceGrowth: priceEffectResult.priceGrowth,
       deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
       deviationToBomRatio: execSummary.deviationToBom,
-      volumeEffect: priceEffectResult.volumeEffect, priceEffect: priceEffectResult.priceEffect, operationalEffect: priceEffectResult.operationalEffect,
       multiPeriodComparison: [] as any[],
     };
 
@@ -541,25 +509,13 @@ export async function GET(req: NextRequest) {
       return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
-    // Narrative + AI Executive Summary + AI Pattern Insight (parallel)
-    const narrativeInput = { period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth }, executiveSummary: execSummary, growthMetrics, healthStatus: { normal, warning, abnormal }, topAnomalies: topAnomaliesForNarrative, deviationBreakdown: breakdownEnriched, investigationCount: worklist.length };
-    const narrativePromise = generateNarrative(narrativeInput);
-    // AI Exec Summary: only generate if user selected 'aiSummary' section
-    const aiSummaryPromise = hasSection('aiSummary') ? generateAIExecutiveSummary(narrativeInput) : Promise.resolve(null);
-    // AI Pattern Insight: only generate if user selected 'aiInsight' section
-    const aiInsightPromise = hasSection('aiInsight') ? generateAIPatternInsight(narrativeInput) : Promise.resolve(null);
     const recommendations = buildRecommendations(worklist);
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
-    const paretoItems = paretoSql.items.map(it => ({ itemName: it.itemName, outletCode: it.outletCode, absNominal: it.absNominal, cumPct: it.cumulativePct / 100 }));
-    const pareto = { classACount: paretoSql.classACountFull, classAPctOfCost: paretoSql.classAPctFull, totalItems: paretoSql.totalItems, totalAbsNominal: paretoSql.totalAbsNominal, items: paretoItems.slice(0, 20) };
     const costImpact = { totalCost: costImpactSql.totalCost, pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null, lossNominal: lvs.lossNominal, surplusNominal: lvs.surplusNominal, wasteCost: costImpactSql.wasteCost, susutCost: costImpactSql.susutCost, trialCost: costImpactSql.trialCost, residualCost: costImpactSql.residualCost, wastePct: costImpactSql.wastePct, susutPct: costImpactSql.susutPct, trialPct: costImpactSql.trialPct, residualPct: costImpactSql.residualPct };
     const itemConsistencyAnalysis = { systemic: consistencyItems.filter(i => i.consistency === 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', occurrences: i.outletCount, avgDevBom: i.avgDevBom, absNominal: i.totalAbsNominal })), episodic: consistencyItems.filter(i => i.consistency !== 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', absNominal: i.totalAbsNominal, devBom: i.avgDevBom })), items: consistencyItems.map(i => ({ itemName: i.itemName, outletCount: i.outletCount, lossOutlets: i.lossOutlets, surplusOutlets: i.surplusOutlets, totalAbsNominal: i.totalAbsNominal, avgDevBom: i.avgDevBom, consistency: i.consistency })) };
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
-    const [narrativeResult, aiSummary, aiInsight] = await Promise.all([narrativePromise, aiSummaryPromise, aiInsightPromise]);
-    const { narrative, source: narrativeSource } = narrativeResult;
-
     // Build data object for document
     const data = {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -575,16 +531,11 @@ export async function GET(req: NextRequest) {
       areaAnalysis: areaAnalysisRaw.map(a => ({ area: a.area, outletCount: a.outletCount, totalSales: a.totalSales, totalAbsNominal: a.totalAbsNominal, avgDevBom: a.avgDevBom, lossToSales: a.lossToSales })),
       outletHealthRanking,
       costImpact,
-      pareto,
       varianceAnalysis,
       investigationWorklist: worklist,
       itemConsistencyAnalysis,
       topDeviasiRank,
       trend,
-      narrative,
-      narrativeSource,
-      aiSummary,
-      aiInsight,
       // NEW: expose dqIssues for Section 18
       dqIssues: dqIssuesRaw.map(d => ({ code: d.code, severity: d.severity, count: d._count._all, message: d.message })),
       recommendation: recommendations,
@@ -631,16 +582,6 @@ export async function GET(req: NextRequest) {
       divider(),
     );
 
-    // Ringkasan Eksekutif — analisis singkat di awal laporan (sebelum section detail)
-    if (hasSection('aiSummary') && data.aiSummary) {
-      children.push(heading('RINGKASAN EKSEKUTIF'));
-      children.push(paragraph('Ringkasan kondisi dan highlight periode ini. Baca section ini dulu sebelum lihat tabel detail.'));
-      for (const line of data.aiSummary.split('\n')) {
-        children.push(renderMarkdownLine(line));
-      }
-      children.push(divider());
-    }
-
     if (hasSection('exec')) {
     const s = data.executiveSummary;
     children.push(heading('1. RINGKASAN UTAMA (Executive Summary)'));
@@ -678,16 +619,12 @@ export async function GET(req: NextRequest) {
     if (hasSection('growth')) {
     const g = data.growthComparison || {};
     children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
-    children.push(paragraph('Perubahan antar periode. Pengaruh Volume = perubahan karena kenaikan volume penjualan. Pengaruh Harga = perubahan karena harga naik/turun. Pengaruh Operasional = sisa perubahan setelah volume dan harga dijelaskan.'));
+    children.push(paragraph('Perubahan antar periode untuk metrik kunci (Sales, BOM, QTY Deviasi, Nominal Deviasi).'));
     children.push(makeTable(['Metric', 'Value'], [
       ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
       ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
       ['QTY Deviasi Growth', fmtPct(g.qtyDeviasiGrowth, true)],
       ['Nominal Deviasi Growth', fmtPct(g.nominalDeviasiGrowth, true)],
-      ['Price Growth', fmtPct(g.priceGrowth, true)],
-      ['Volume Effect', fmtPct(g.volumeEffect, true)],
-      ['Price Effect', fmtPct(g.priceEffect, true)],
-      ['Operational Effect', fmtPct(g.operationalEffect, true)],
     ]));
     children.push(divider());
 
@@ -774,18 +711,6 @@ export async function GET(req: NextRequest) {
     }
 
     }
-    if (hasSection('pareto')) {
-    const paretoData = data.pareto || {};
-    if (paretoData.items && paretoData.items.length > 0) {
-      children.push(heading('10. ANALISIS PARETO (ABC)'));
-    children.push(paragraph('Aturan 80/20: sedikit item menyumbang selisih terbesar. Class A = item dengan kontribusi tertinggi (prioritas investigasi).'));
-      children.push(paragraph(`Class A: ${paretoData.classACount || 0} items (${((paretoData.classAPctOfCost || 0) * 100).toFixed(1)}% of cost) | Total: ${paretoData.totalItems || 0}`));
-      children.push(makeTable(['#', 'Item', 'Resto', 'Abs Nominal Deviasi', 'Cum %'],
-        (paretoData.items || []).slice(0, 20).map((it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.absNominal), `${((it.cumPct || 0) * 100).toFixed(1)}%`])));
-      children.push(divider());
-    }
-
-    }
     if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
     if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
@@ -860,30 +785,6 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Perbandingan periode yang sama di bulan-bulan sebelumnya.'));
       children.push(makeTable(['Period', 'Penjualan', 'Nominal Deviasi', '% Deviasi To BOM'],
         data.trend.map((t: any) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
-      children.push(divider());
-    }
-
-    }
-    // Observasi & Pola — analisis pola dari data (sebelum narrative section 15)
-    if (hasSection('aiInsight') && data.aiInsight) {
-      children.push(heading('OBSERVASI & POLA DEVIASI'));
-      children.push(paragraph('Pola dan observasi dari analisis data — cross-correlation, anomaly pattern, composition insight.'));
-      for (const line of data.aiInsight.split('\n')) {
-        children.push(renderMarkdownLine(line));
-      }
-      children.push(divider());
-    }
-
-    if (hasSection('narrative')) {
-    if (data.narrative && typeof data.narrative === 'string') {
-      children.push(heading('15. NARASI ANALISIS'));
-    children.push(paragraph('Analisis deviasi periode ini.'));
-      for (const line of data.narrative?.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed === '') { children.push(new Paragraph({ text: '', spacing: { after: 40 } })); }
-        else if (trimmed.startsWith('**') && trimmed.endsWith('**')) { children.push(new Paragraph({ children: [new TextRun({ text: trimmed.replace(/\*\*/g, ''), bold: true, size: 22 })], spacing: { before: 100, after: 60 } })); }
-        else { children.push(new Paragraph({ children: [new TextRun({ text: trimmed, size: 20 })], spacing: { after: 60 } })); }
-      }
       children.push(divider());
     }
 

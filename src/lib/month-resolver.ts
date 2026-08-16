@@ -4,7 +4,7 @@
 //  BUG FIX (DEEP-AUDIT-API-2 / FIX-DEEP-1):
 //  `resolveMonthLabel` was previously inlined in /api/analysis + /api/export-report
 //  with identical logic, but missing from 5 other routes that accept the `month`
-//  query param (outlet-focus, outlet-items, item-history, resto-bahan-matrix,
+//  query param (outlet-focus, outlet-items, item-history,
 //  drilldown). This module provides a single shared resolver.
 //
 //  Background: production DB may contain mixed-case `SourceFile.monthLabel`

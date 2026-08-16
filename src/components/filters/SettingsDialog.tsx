@@ -136,7 +136,6 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
         queryClient.invalidateQueries({ queryKey: ['item-history'] });
-        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       } else {
         toast({
           title: '❌ Gagal menyimpan',
@@ -171,7 +170,6 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
       queryClient.invalidateQueries({ queryKey: ['item-history'] });
-      queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     },
   });
 

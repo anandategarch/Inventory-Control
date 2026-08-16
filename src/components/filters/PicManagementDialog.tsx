@@ -199,7 +199,6 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
     queryClient.invalidateQueries({ queryKey: ['item-history'] });
-    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
   }
 
   // ---------- Handlers ----------

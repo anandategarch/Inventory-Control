@@ -126,7 +126,6 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
         queryClient.invalidateQueries({ queryKey: ['item-history'] });
-        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       } else {
         setIngestMsg(`Failed: ${d.message || d.error}`);
       }
@@ -189,7 +188,6 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
         queryClient.invalidateQueries({ queryKey: ['item-history'] });
-        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
       }
     } catch (e: any) {
       clearInterval(stepInterval);

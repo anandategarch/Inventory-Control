@@ -192,7 +192,6 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
     queryClient.invalidateQueries({ queryKey: ['item-history'] });
-    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
   }
 
   // Wrap mutations to invalidate after settle

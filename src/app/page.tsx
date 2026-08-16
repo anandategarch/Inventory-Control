@@ -7,24 +7,13 @@ import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist } from '@/components/dashboard/TopItems';
-import { NarrativePanel, RecommendationPanel } from '@/components/dashboard/Narrative';
-import {
-  HealthDistributionDonut,
-  DeviationCategoryDonut,
-  AreaContributionBar,
-  TopItemsHorizontalBar,
-  VarianceDivergingBar,
-  OutletRadarChart,
-  DirectionDistributionPie,
-  CumulativeDeviationArea,
-  AreaLossSalesComparison,
-} from '@/components/dashboard/ExtraCharts';
+import { RecommendationPanel } from '@/components/dashboard/Narrative';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
   VarianceAnalysis, OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
 import {
-  HistoricalAnalysisCard, TrendDecompositionCard, MultiPeriodComparisonCard, MenuAnalysisCard,
+  HistoricalAnalysisCard, MultiPeriodComparisonCard, MenuAnalysisCard,
 } from '@/components/dashboard/AnalysisCards';
 import { AlertPanel } from '@/components/dashboard/AlertPanel';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
@@ -33,7 +22,7 @@ import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import {
-  CostImpactDecomposition, ParetoAnalysis, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
+  CostImpactDecomposition, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
 } from '@/components/dashboard/CostAccounting';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -45,9 +34,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Brain, Lightbulb,
-  TrendingUp, MapPin, Coins, PieChart as PieChartIcon,
-  History, GitBranch, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
+  Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Lightbulb,
+  MapPin, Coins,
+  History, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
   FileDown,
 } from 'lucide-react';
 
@@ -250,11 +239,6 @@ export default function DashboardPage() {
                 {analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms
               </Badge>
             )}
-            {analysis.data?.narrativeSource === 'llm' && (
-              <Badge variant="default" className="text-[11px] hidden sm:inline-flex">
-                <Brain className="h-3 w-3 mr-1" /> Narasi AI
-              </Badge>
-            )}
             {analysis.data && (
               <Button
                 variant="outline"
@@ -324,33 +308,11 @@ export default function DashboardPage() {
                 <InsightsPanel data={analysis.data} />
               </section>
 
-              {/* Section: Distribusi Visual (3 donuts) */}
-              <section>
-                <SectionHeader
-                  icon={<PieChartIcon className="h-4 w-4 text-muted-foreground" />}
-                  title="Distribusi Visual"
-                />
-                <div className="grid md:grid-cols-3 gap-4">
-                  <HealthDistributionDonut data={analysis.data} />
-                  <DirectionDistributionPie data={analysis.data} />
-                  <DeviationCategoryDonut data={analysis.data} />
-                </div>
-              </section>
-
               {/* Section: Health + Growth */}
               <section className="grid lg:grid-cols-3 gap-4">
                 <HealthAlert data={analysis.data} />
                 <GrowthComparison data={analysis.data} />
                 <DeviationBreakdownChart data={analysis.data} />
-              </section>
-
-              {/* Section: Trend Decomposition */}
-              <section>
-                <SectionHeader
-                  icon={<GitBranch className="h-4 w-4 text-muted-foreground" />}
-                  title="Dekomposisi Trend"
-                />
-                <TrendDecompositionCard data={analysis.data} />
               </section>
 
               {/* Section: Multi-Period Comparison */}
@@ -381,28 +343,6 @@ export default function DashboardPage() {
                 <TrendChart data={analysis.data} />
               </section>
 
-              {/* Section: Cumulative Deviation */}
-              <section>
-                <CumulativeDeviationArea data={analysis.data} />
-              </section>
-
-              {/* Section: Ranking Visual */}
-              <section>
-                <SectionHeader
-                  icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
-                  title="Ranking Visual"
-                />
-                <div className="grid lg:grid-cols-2 gap-4">
-                  <TopItemsHorizontalBar data={analysis.data} />
-                  <VarianceDivergingBar data={analysis.data} />
-                </div>
-              </section>
-
-              {/* Section: Outlet Radar */}
-              <section>
-                <OutletRadarChart data={analysis.data} />
-              </section>
-
               {/* Section: Daftar Investigasi */}
               <section>
                 <SectionHeader
@@ -413,9 +353,8 @@ export default function DashboardPage() {
                 <InvestigationWorklist data={analysis.data} />
               </section>
 
-              {/* Section: Narrative + Recommendation */}
+              {/* Section: Recommendation */}
               <section className="grid lg:grid-cols-2 gap-4">
-                <NarrativePanel data={analysis.data} />
                 <RecommendationPanel data={analysis.data} />
               </section>
             </TabsContent>
@@ -424,22 +363,7 @@ export default function DashboardPage() {
             <TabsContent value="insight" className="space-y-4 mt-2">
               <InsightsPanel data={analysis.data} />
 
-              <section className="grid md:grid-cols-2 gap-4">
-                <HealthDistributionDonut data={analysis.data} />
-                <DeviationCategoryDonut data={analysis.data} />
-              </section>
-
               <section className="grid lg:grid-cols-2 gap-4">
-                <TopItemsHorizontalBar data={analysis.data} />
-                <VarianceDivergingBar data={analysis.data} />
-              </section>
-
-              <OutletRadarChart data={analysis.data} />
-
-              <CumulativeDeviationArea data={analysis.data} />
-
-              <section className="grid lg:grid-cols-2 gap-4">
-                <NarrativePanel data={analysis.data} />
                 <RecommendationPanel data={analysis.data} />
               </section>
             </TabsContent>
@@ -510,18 +434,6 @@ export default function DashboardPage() {
                 <AreaComparison data={analysis.data} />
               </section>
 
-              {/* Area Contribution + Loss/Sales */}
-              <section>
-                <SectionHeader
-                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Kontribusi Area"
-                />
-                <div className="grid lg:grid-cols-2 gap-4">
-                  <AreaContributionBar data={analysis.data} />
-                  <AreaLossSalesComparison data={analysis.data} />
-                </div>
-              </section>
-
               {/* Outlet Health Ranking + Efficiency Matrix */}
               <section className="grid lg:grid-cols-2 gap-4">
                 <OutletHealthRanking data={analysis.data} />
@@ -553,8 +465,6 @@ export default function DashboardPage() {
                 />
                 <TopOutlets data={analysis.data} />
               </section>
-
-              <OutletRadarChart data={analysis.data} />
             </TabsContent>
 
             {/* ====== COST TAB ====== */}
@@ -564,9 +474,8 @@ export default function DashboardPage() {
                   icon={<Coins className="h-4 w-4 text-muted-foreground" />}
                   title="Analisis Cost Accounting"
                 />
-                <div className="grid lg:grid-cols-2 gap-4">
+                <div className="grid lg:grid-cols-1 gap-4">
                   <CostImpactDecomposition data={analysis.data} />
-                  <ParetoAnalysis data={analysis.data} />
                 </div>
               </section>
 
@@ -579,19 +488,9 @@ export default function DashboardPage() {
                 <NetCostTrendChart data={analysis.data} />
               </section>
 
-              {/* Cumulative Deviation */}
-              <section>
-                <CumulativeDeviationArea data={analysis.data} />
-              </section>
-
               <section className="grid lg:grid-cols-2 gap-4">
                 <LossVsSurplusChart data={analysis.data} />
                 <TrendChart data={analysis.data} />
-              </section>
-
-              <section className="grid lg:grid-cols-2 gap-4">
-                <TopItemsHorizontalBar data={analysis.data} />
-                <AreaContributionBar data={analysis.data} />
               </section>
             </TabsContent>
 

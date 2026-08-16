@@ -57,7 +57,7 @@ export {
   type BenchmarkResult,
 } from './benchmark';
 
-// Growth metrics (signed vs abs growth, price effect decomposition)
+// Growth metrics (signed vs abs growth)
 export {
   calcGrowth,
   calcGrowthAbs,
@@ -65,7 +65,5 @@ export {
   computeGrowthResult,
   safeRatio,
   calcAvgPrice,
-  computePriceEffect,
   type GrowthResult,
-  type PriceEffectResult,
 } from './growth';

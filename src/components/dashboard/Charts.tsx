@@ -18,7 +18,6 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
     { name: 'BOM', growth: g.bomGrowth },
     { name: 'QTY Deviasi', growth: g.qtyDeviasiGrowth },
     { name: 'Nominal Deviasi', growth: g.nominalDeviasiGrowth },
-    { name: 'Price', growth: g.priceGrowth },
   ].filter((d) => d.growth != null);
 
   const mismatchSales = g.salesGrowth != null && g.nominalDeviasiGrowth != null &&

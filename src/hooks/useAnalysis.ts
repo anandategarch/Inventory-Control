@@ -36,14 +36,6 @@ export interface OutletHealthRanking {
   sales: number;
 }
 
-export interface ParetoResult {
-  classACount: number;
-  classAPctOfCost: number;
-  totalItems: number;
-  totalAbsNominal: number;
-  items: Array<{ itemName: string; outletCode: string; absNominal: number; cumPct: number }>;
-}
-
 export interface CostImpact {
   totalCost: number;
   pctOfSales: number | null;
@@ -93,7 +85,7 @@ export interface AnalysisData {
     };
   };
   dqStatus: { ok: number; warnings: number; errors: number; issues: any[] };
-  growthComparison: { salesGrowth: number | null; bomGrowth: number | null; qtyDeviasiGrowth: number | null; nominalDeviasiGrowth: number | null; priceGrowth: number | null; deviationToSalesRatio: number | null; deviationToBomRatio: number | null; historicalAnalysis?: HistoricalAnalysisResult } & Record<string, any>;
+  growthComparison: { salesGrowth: number | null; bomGrowth: number | null; qtyDeviasiGrowth: number | null; nominalDeviasiGrowth: number | null; deviationToSalesRatio: number | null; deviationToBomRatio: number | null; historicalAnalysis?: HistoricalAnalysisResult } & Record<string, any>;
   topItemsByNominal: any[];
   topItemsByDevBom: any[];
   topOutlets: any[];
@@ -105,8 +97,6 @@ export interface AnalysisData {
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   investigationWorklist: any[];
-  narrative: string;
-  narrativeSource: string;
   recommendation: Array<{ why: string; what: string[]; priority: string }>;
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
   priorities: any[];
@@ -114,7 +104,6 @@ export interface AnalysisData {
   areaAnalysis?: AreaAnalysis[];
   varianceAnalysis?: { topWorsened: VarianceItem[]; topImproved: VarianceItem[] };
   outletHealthRanking?: OutletHealthRanking[];
-  pareto?: ParetoResult;
   costImpact?: CostImpact;
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, ChevronRight, Grid3x3, Utensils } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Utensils } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
@@ -267,11 +267,6 @@ export function RestoAnalysis() {
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
       {focusOutlet && (
         <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} allItemsData={data} />
-      )}
-
-      {/* Resto × Bahan Matrix — Phase 4 */}
-      {focusOutlet && (
-        <RestoBahanMatrix outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} />
       )}
 
       {/* Bahan Analysis — 3 Rankings */}
@@ -664,159 +659,6 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
         )}
         <p className="text-[10px] text-muted-foreground mt-2">
           ⚠ Outlier = Dev/BOM &gt; (avg + 2σ) DAN &gt; 1.5× avg menu · Klik bahan untuk lihat Investigation Card
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ============================================================
-//  RestoBahanMatrix — Phase 4: Cross-tabulation Outlet × Bahan
-//  Shows top worst outlet+item combos across ALL outlets
-// ============================================================
-function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }: {
-  outletCode: string; monthLabel: string; currentWeek: string;
-  onSelectItem: (item: { outletCode: string; itemName: string }) => void;
-}) {
-  const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [search, setSearch] = useState('');
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['resto-bahan-matrix', monthLabel, currentWeek, priorityFilter],
-    queryFn: async () => {
-      const p = new URLSearchParams({ month: monthLabel, week: currentWeek, limit: '100' });
-      if (priorityFilter !== 'all') p.set('priority', priorityFilter);
-      const res = await fetch(`/api/resto-bahan-matrix?${p.toString()}`);
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    },
-  });
-
-  const matrix = data?.matrix || [];
-  const stats = data?.stats || { total: 0, P1: 0, P2: 0, P3: 0, outlets: 0, items: 0 };
-
-  // Filter by outlet (highlight current outlet) + search
-  const filtered = useMemo(() => {
-    let result = matrix;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(m =>
-        m.outletName.toLowerCase().includes(q) ||
-        m.outletCode.toLowerCase().includes(q) ||
-        m.itemName.toLowerCase().includes(q) ||
-        m.area.toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [matrix, search]);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Grid3x3 className="h-4 w-4" />
-          Resto × Bahan Matrix
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Cross-tabulasi semua outlet × bahan — prioritaskan investigasi
-        </p>
-      </CardHeader>
-      <CardContent>
-        {/* Stats + Filter */}
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <Badge variant="outline" className="text-[11px]">{stats.total} combos</Badge>
-          <Badge variant="outline" className="text-[11px] text-red-600 border-red-300">🔴 P1: {stats.P1}</Badge>
-          <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-300">🟡 P2: {stats.P2}</Badge>
-          <Badge variant="outline" className="text-[11px] text-emerald-600 border-emerald-300">🟢 P3: {stats.P3}</Badge>
-          <span className="text-[10px] text-muted-foreground">{stats.outlets} outlet · {stats.items} bahan</span>
-          <div className="flex-1" />
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-            aria-label="Filter priority"
-            className="h-7 text-[11px] rounded-md border bg-background px-2"
-          >
-            <option value="all">Semua Priority</option>
-            <option value="P1">P1 saja</option>
-            <option value="P2">P2 saja</option>
-            <option value="P3">P3 saja</option>
-          </select>
-        </div>
-
-        {/* Search */}
-        <div className="relative mb-3">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari outlet/bahan/area..."
-            aria-label="Cari outlet, bahan, atau area"
-            className="w-full h-8 text-xs rounded-md border bg-background pl-3 pr-3"
-          />
-        </div>
-
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">Tidak ada data sesuai filter.</div>
-        ) : (
-          <div className="overflow-x-auto max-h-[400px] overflow-y-auto border rounded-md">
-            <Table>
-              <TableHeader className="sticky top-0 bg-background z-10">
-                <TableRow>
-                  <TableHead className="text-[11px] h-8">Resto</TableHead>
-                  <TableHead className="text-[11px] h-8">Bahan</TableHead>
-                  <TableHead className="text-[11px] h-8 text-right">Dev/BOM</TableHead>
-                  <TableHead className="text-[11px] h-8 text-center">Hist</TableHead>
-                  <TableHead className="text-[11px] h-8 text-right">Area Avg</TableHead>
-                  <TableHead className="text-[11px] h-8 text-right">vs Area</TableHead>
-                  <TableHead className="text-[11px] h-8 text-right">Resid%</TableHead>
-                  <TableHead className="text-[11px] h-8 text-right">Nominal</TableHead>
-                  <TableHead className="text-[11px] h-8 text-center">Pri</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((r: any, i: number) => {
-                  const isCurrentOutlet = r.outletCode === outletCode;
-                  return (
-                    <TableRow
-                      key={i}
-                      className={`${priorityBg(r.priority)} ${isCurrentOutlet ? 'ring-1 ring-primary/40' : ''} cursor-pointer hover:ring-1 hover:ring-primary/30`}
-                      {...clickableRowProps(() => onSelectItem({ outletCode: r.outletCode, itemName: r.itemName }))}
-                    >
-                      <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
-                        <span className="font-medium">{r.outletCode}</span>
-                        {isCurrentOutlet && <span className="ml-1 text-[9px] text-primary">●</span>}
-                        <div className="text-[9px] text-muted-foreground truncate max-w-[100px]">{r.outletName}</div>
-                      </TableCell>
-                      <TableCell className="text-[11px] py-1.5 max-w-[140px] truncate" title={r.itemName}>{r.itemName}</TableCell>
-                      <TableCell className="text-[11px] py-1.5 text-right font-mono font-semibold text-red-600">{fmtPct(r.devBom)}</TableCell>
-                      <TableCell className={`text-[11px] py-1.5 text-center font-bold ${r.historicalTrend === '↑' ? 'text-red-600' : r.historicalTrend === '↓' ? 'text-emerald-600' : 'text-muted-foreground'}`}>{r.historicalTrend}</TableCell>
-                      <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{fmtPct(r.areaAvgDevBom)}</TableCell>
-                      <TableCell className="text-[11px] py-1.5 text-right font-mono">
-                        {r.areaMultiplier != null ? (
-                          <span className={r.areaMultiplier > 1.5 ? 'text-red-600 font-semibold' : ''}>{r.areaMultiplier.toFixed(1)}×</span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell className="text-[11px] py-1.5 text-right font-mono">{r.residualRatio != null ? fmtPct(r.residualRatio) : '—'}</TableCell>
-                      <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtIDR(r.nominalLossSurplus)}</TableCell>
-                      <TableCell className={`text-[11px] py-1.5 text-center font-bold ${priorityColor(r.priority)}`}>{r.priority}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        <p className="text-[10px] text-muted-foreground mt-2">
-          Klik baris untuk lihat Investigation Card · ● = outlet saat ini · Hist = ↑ memburuk, ↓ membaik
         </p>
       </CardContent>
     </Card>

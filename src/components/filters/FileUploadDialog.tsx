@@ -472,7 +472,6 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
       queryClient.invalidateQueries({ queryKey: ['item-history'] });
-      queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
 
       toast({
         title: '✅ Import berhasil',

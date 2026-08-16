@@ -128,7 +128,6 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
         // Thresholds also affect anomaly detection in these routes
         queryClient.invalidateQueries({ queryKey: ['outlet-items'], refetchType: 'active' });
         queryClient.invalidateQueries({ queryKey: ['item-history'], refetchType: 'active' });
-        queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'], refetchType: 'active' });
       } else {
         toast({
           title: '❌ Gagal menyimpan',

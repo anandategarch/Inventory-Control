@@ -7,7 +7,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
-  Lightbulb, TrendingUp, TrendingDown, AlertTriangle, Target, Coins,
+  Lightbulb, TrendingUp, TrendingDown, AlertTriangle, Coins,
   MapPin, Package, ShieldAlert, Zap, ArrowRight,
 } from 'lucide-react';
 
@@ -125,19 +125,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     });
   }
 
-  // ----- 4. Pareto -----
-  const pareto = data.pareto;
-  if (pareto && pareto.classACount > 0) {
-    out.push({
-      id: 'pareto',
-      icon: <Target className="h-4 w-4" />,
-      severity: 'info',
-      title: 'Aturan Pareto Berlaku',
-      body: `${pareto.classACount} item (${((pareto.classACount / Math.max(pareto.totalItems, 1)) * 100).toFixed(1)}% dari total item) menyumbang ${(pareto.classAPctOfCost * 100).toFixed(1)}% biaya deviation. Fokuskan investigasi pada item-item ini.`,
-    });
-  }
-
-  // ----- 5. Worst area -----
+  // ----- 4. Worst area -----
   const areas = data.areaAnalysis || [];
   if (areas.length >= 2) {
     const sorted = [...areas].sort((a, b) => (b.lossToSales ?? 0) - (a.lossToSales ?? 0));
@@ -157,7 +145,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     });
   }
 
-  // ----- 6. Cost impact -----
+  // ----- 5. Cost impact -----
   const ci = data.costImpact;
   if (ci) {
     const pct = (ci.pctOfSales ?? 0) * 100;
@@ -171,7 +159,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     });
   }
 
-  // ----- 7. Systemic item -----
+  // ----- 6. Systemic item -----
   const consistency = data.itemConsistencyAnalysis;
   if (consistency && consistency.systemic.length > 0) {
     const top = consistency.systemic[0];
@@ -186,7 +174,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     });
   }
 
-  // ----- 8. Net cost trend -----
+  // ----- 7. Net cost trend -----
   const nct = data.netCostTrend || [];
   if (nct.length >= 2) {
     const first = nct[0];
@@ -211,7 +199,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     }
   }
 
-  // ----- 9. LOSS/SURPLUS balance -----
+  // ----- 8. LOSS/SURPLUS balance -----
   const lvs = data.lossVsSurplus;
   const totalLS = lvs.lossNominal + lvs.surplusNominal;
   if (totalLS > 0) {
@@ -235,7 +223,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     }
   }
 
-  // ----- 10. Historical anomaly -----
+  // ----- 9. Historical anomaly -----
   const histAnalysis = g.historicalAnalysis;
   if (histAnalysis && histAnalysis.criticalItems.length > 0) {
     const top = histAnalysis.criticalItems[0];
