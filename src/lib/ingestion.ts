@@ -5,7 +5,7 @@
 //  Both routes now call this shared function instead of duplicating ~250 lines.
 // ============================================================
 import { db } from '@/lib/db';
-import { analysisCache } from '@/lib/cache';
+import { analysisCache, statusCache } from '@/lib/cache';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ } from '@/engine/validator';
@@ -197,14 +197,26 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 
       // Parse month from filename
       const monthInfo = parseMonthFromFilename(fileName);
+      // BUG FIX (BUG-NORECORDS-5): normalize monthLabel to Title Case for consistency.
+      // upload-data.ts produces UPPERCASE, excel.ts produces Title Case → mixed DB.
+      // Always store Title Case (e.g., "Agustus 2026") to match parseMonthFromFilename output.
       const monthLabel = monthInfo?.monthLabel || fileName.replace(/\.(xlsx|csv)$/i, '');
       const monthKey = monthInfo?.monthKey || 'unknown';
 
-      // BUG-03/11 fix: wrap dedup deletes in transaction for atomicity
-      const existingPeriodFiles = await db.sourceFile.findMany({
-        where: { monthLabel },
-        select: { id: true, fileName: true },
-      });
+      // BUG FIX (BUG-NORECORDS-4): dedup by monthKey instead of monthLabel.
+      // Previously dedup was case-sensitive on monthLabel — "AGUSTUS 2026" (from upload-data.ts)
+      // didn't match "Agustus 2026" (from dashboard import) → old SourceFile not deleted →
+      // duplicate records split by case → query returns 0 for one case variant.
+      // monthKey is always "2026-08" (numeric, case-insensitive) → safe dedup.
+      const existingPeriodFiles = monthKey !== 'unknown'
+        ? await db.sourceFile.findMany({
+            where: { monthKey },
+            select: { id: true, fileName: true },
+          })
+        : await db.sourceFile.findMany({
+            where: { monthLabel },
+            select: { id: true, fileName: true },
+          });
       if (existingPeriodFiles.length > 0) {
         await db.$transaction(
           existingPeriodFiles.flatMap(oldFile => [
@@ -405,6 +417,9 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 
       // Phase 3: invalidate analysis cache when new data is ingested
       analysisCache.clear();
+      // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.
+      // Previously statusCache had 5-min TTL → user couldn't see newly imported months for 5 min.
+      statusCache.clear();
 
       results.push({
         fileName, status: 'INGESTED', rowCount: totalInserted,

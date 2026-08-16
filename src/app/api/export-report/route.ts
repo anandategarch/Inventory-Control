@@ -234,7 +234,9 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
-    const month = url.searchParams.get('month');
+    // BUG FIX (BUG-NORECORDS-4/5): use `let` for month so we can reassign after
+    // case-insensitive resolution (DB may have different case than URL param).
+    let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const area = url.searchParams.get('area');
     const outletCode = url.searchParams.get('outlet');
@@ -263,11 +265,12 @@ export async function GET(req: NextRequest) {
     }
 
     // Build where clause
+    // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
       if (outletCode && outletCode !== 'all') w.outlet = { code: outletCode };
-      if (itemName) w.item = { name: { contains: itemName } };
+      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
       if (picOutletCodes && picOutletCodes.length > 0) w.outlet = { ...(w.outlet || {}), code: { in: picOutletCodes } };
       return w;
     };
@@ -284,6 +287,18 @@ export async function GET(req: NextRequest) {
     // Previously trendAggRows used monthLabelByKey.get(r.monthLabel) which always returned
     // undefined (map is keyed by monthKey, not monthLabel) → sortKey collapsed → sort broken.
     const monthKeyByLabel = new Map(fileMonthKeys.map(f => [f.monthLabel, f.monthKey]));
+    // BUG FIX (BUG-NORECORDS-4/5): Case-insensitive monthLabel resolution.
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Resolve user-sent month to actual DB case to avoid "No records found".
+    const monthLabelLowerToActual = new Map(fileMonthKeys.map(f => [f.monthLabel.toLowerCase(), f.monthLabel]));
+    const resolveMonthLabel = (label: string | null): string | null => {
+      if (!label) return null;
+      if (monthKeyByLabel.has(label)) return label;
+      return monthLabelLowerToActual.get(label.toLowerCase()) || label;
+    };
+    // Resolve current + compare month labels to actual DB case
+    month = resolveMonthLabel(month) || month;
+    const resolvedCompareMonth = userCompareMonth ? resolveMonthLabel(userCompareMonth) : null;
     const allPeriods = weeksRaw.map(w => ({
       monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
       weekLabel: w.weekLabel,
@@ -294,7 +309,7 @@ export async function GET(req: NextRequest) {
     // Fall back to auto-compute (same weekLabel in previous month) only when user didn't specify.
     const currentPeriodIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
     let prevWeek = userCompareWeek || week;
-    let prevMonth: string | null = userCompareMonth || null;
+    let prevMonth: string | null = resolvedCompareMonth || null;
     if (!prevMonth && currentPeriodIdx >= 0) {
       for (let i = currentPeriodIdx - 1; i >= 0; i--) {
         if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
@@ -328,7 +343,15 @@ export async function GET(req: NextRequest) {
     ]);
 
     if (currentRecs.length === 0) {
-      return NextResponse.json({ success: false, error: 'No records found' }, { status: 404 });
+      // BUG FIX (BUG-NORECORDS-11): include filter context in error message for debugging
+      const filterSummary = [
+        `month="${month}"`, `week="${week}"`,
+        area && area !== 'all' ? `area="${area}"` : null,
+        outletCode && outletCode !== 'all' ? `outlet="${outletCode}"` : null,
+        itemName ? `item="${itemName}"` : null,
+        pic ? `pic="${pic}"` : null,
+      ].filter(Boolean).join(', ');
+      return NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 });
     }
 
     // Rule evaluation

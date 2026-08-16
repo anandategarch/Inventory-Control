@@ -193,6 +193,22 @@ export async function GET(req: NextRequest) {
     const picOutletCodes = picOutletCodesRaw;
     const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
     const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
+    // BUG FIX (BUG-NORECORDS-4/5): Case-insensitive monthLabel resolution.
+    // DB may have "AGUSTUS 2026" (from upload-data.ts) or "Agustus 2026" (from dashboard import).
+    // User sends whichever case the status API returned. Resolve to actual DB label to avoid
+    // "No records found" due to case mismatch.
+    const monthLabelLowerToActual = new Map(fileMonthKeys.map((f) => [f.monthLabel.toLowerCase(), f.monthLabel]));
+    const resolveMonthLabel = (label: string | null): string | null => {
+      if (!label) return null;
+      // Try exact match first (fast path)
+      if (monthKeyByLabel.has(label)) return label;
+      // Fallback: case-insensitive lookup
+      return monthLabelLowerToActual.get(label.toLowerCase()) || label;
+    };
+    // Resolve current + compare month labels to actual DB case
+    month = resolveMonthLabel(month) || month;
+    if (compareMonthExplicit) compareMonthExplicit = resolveMonthLabel(compareMonthExplicit) || compareMonthExplicit;
+    // Note: prevMonth is computed later from allPeriods (which uses DB case) — no resolution needed.
     const allPeriods = weeksRaw
       .map((w) => {
         const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
@@ -266,12 +282,14 @@ export async function GET(req: NextRequest) {
     }
 
     // ===== BUG FIX #4: buildWhere accepts monthLabel parameter (for cross-month) =====
-    // picOutletCodes already resolved in parallel block above
+    // BUG FIX (BUG-NORECORDS-1): add area/outletCode 'all' guards (was missing — caused
+    // "No records found" if frontend sent 'all' as literal string).
+    // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter (mode: 'insensitive').
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
-      if (area) w.area = area;
-      if (outletCode) w.outlet = { code: outletCode };
-      if (itemName) w.item = { name: { contains: itemName } };
+      if (area && area !== 'all') w.area = area;
+      if (outletCode && outletCode !== 'all') w.outlet = { code: outletCode };
+      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
       if (picOutletCodes && picOutletCodes.length > 0) {
         w.outlet = { ...(w.outlet || {}), code: { in: picOutletCodes } };
       }
