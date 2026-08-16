@@ -87,7 +87,7 @@ function buildExecSummaryFromSql(
   return {
     period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
     sales: { current: c.sales, previous: salesPrev, growth: calcGrowth(c.sales, salesPrev) },
-    nominalDeviasi: { current: c.nominalDeviasi, previous: nominalDeviasiPrev, growth: calcGrowth(c.nominalDeviasi, nominalDeviasiPrev) },
+    nominalDeviasi: { current: c.nominalDeviasi, previous: nominalDeviasiPrev, growth: computeNominalDeviationGrowth(c.nominalDeviasi, nominalDeviasiPrev) },
     qtyBom: { current: c.qtyBom, previous: qtyBomPrev, growth: calcGrowth(c.qtyBom, qtyBomPrev) },
     qtyDeviasi: { current: c.qtyDeviasi, previous: qtyDeviasiPrev, growth: calcGrowth(c.qtyDeviasi, qtyDeviasiPrev) },
     qtyWaste: { current: c.qtyWaste, previous: qtyWastePrev, growth: calcGrowth(c.qtyWaste, qtyWastePrev) },
@@ -599,9 +599,9 @@ export async function GET(req: NextRequest) {
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
       .map((row, i, arr) => {
-        // Calculate growth vs previous period
-        if (i > 0 && arr[i - 1].deviation > 0) {
-          row.growthPct = (row.deviation - arr[i - 1].deviation) / Math.abs(arr[i - 1].deviation);
+        // Calculate growth vs previous period (magnitude — handles negative deviation)
+        if (i > 0) {
+          row.growthPct = computeNominalDeviationGrowth(row.deviation, arr[i - 1].deviation);
         }
         const { sortKey, ...rest } = row;
         return rest;

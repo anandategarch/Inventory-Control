@@ -60,7 +60,7 @@ function buildExecSummaryFromSql(
   return {
     period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
     sales: { current: c.sales, previous: salesPrev, growth: calcGrowth(c.sales, salesPrev) },
-    nominalDeviasi: { current: c.nominalDeviasi, previous: prev?.nominalDeviasi ?? null, growth: calcGrowth(c.nominalDeviasi, prev?.nominalDeviasi ?? null) },
+    nominalDeviasi: { current: c.nominalDeviasi, previous: prev?.nominalDeviasi ?? null, growth: computeNominalDeviationGrowth(c.nominalDeviasi, prev?.nominalDeviasi ?? null) },
     qtyBom: { current: c.qtyBom, previous: prev?.qtyBom ?? null, growth: calcGrowth(c.qtyBom, prev?.qtyBom ?? null) },
     qtyDeviasi: { current: c.qtyDeviasi, previous: prev?.qtyDeviasi ?? null, growth: calcGrowth(c.qtyDeviasi, prev?.qtyDeviasi ?? null) },
     qtyWaste: { current: c.qtyWaste, previous: prev?.qtyWaste ?? null, growth: calcGrowth(c.qtyWaste, prev?.qtyWaste ?? null) },
@@ -528,7 +528,7 @@ export async function GET(req: NextRequest) {
     const multiPeriodComparison = trendAggRows.map(r => {
       const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
       return { period: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
-    }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0 && arr[i - 1].deviation > 0) row.growthPct = (row.deviation - arr[i - 1].deviation) / Math.abs(arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
+    }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0) row.growthPct = computeNominalDeviationGrowth(row.deviation, arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
     (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
 
     const trend = trendAggRows.map(r => {

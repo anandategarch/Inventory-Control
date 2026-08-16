@@ -29,6 +29,7 @@ import {
   calcGrowth,
   calcGrowthAbs,
   computeGrowthResult,
+  computeNominalDeviationGrowth,
 } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
@@ -321,7 +322,7 @@ export async function GET(req: NextRequest) {
     const salesGrowth = calcGrowth(bestSales, prevBestSales);
     const qtyBomGrowth = calcGrowthAbs(totalQtyBom, prevQtyBom); // BOM is consumption, use abs growth
     const qtyDeviasiGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
-    const nominalDeviasiGrowth = calcGrowth(totalNominalDeviasi, prevNominalDeviasi);
+    const nominalDeviasiGrowth = computeNominalDeviationGrowth(totalNominalDeviasi, prevNominalDeviasi);
 
     // Metric Engine: growth result (with direction flip + trend)
     const devGrowthResult = computeGrowthResult(totalQtyDeviasi, prevQtyDeviasi, 0.1);
