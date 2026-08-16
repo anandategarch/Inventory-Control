@@ -73,7 +73,18 @@ function buildExecSummaryFromSql(
     deviationToBom: c.qtyBom !== 0 ? c.qtyDeviasi / Math.abs(c.qtyBom) : null,
     residualLossQty: c.residualLossQty,
     residualLossPct: c.qtyDeviasiLoss > 0 ? c.residualLossQty / c.qtyDeviasiLoss : null,
-  };
+    // FIX: store prev values for the 6 metrics that previously showed '—' in the prev column.
+    // These are computed from the same `prev` SQL row that already has sales, qtyBom, etc.
+    _prevMetrics: prev ? {
+      totalLoss: prev.totalLoss ?? null,
+      totalSurplus: prev.totalSurplus ?? null,
+      lossToSales: prev.sales > 0 ? (prev.totalLoss ?? 0) / prev.sales : null,
+      surplusToSales: prev.sales > 0 ? (prev.totalSurplus ?? 0) / prev.sales : null,
+      deviationToBom: prev.qtyBom !== 0 ? (prev.qtyDeviasi ?? 0) / Math.abs(prev.qtyBom) : null,
+      residualLossQty: prev.residualLossQty ?? null,
+      residualLossPct: prev.qtyDeviasiLoss > 0 ? (prev.residualLossQty ?? 0) / prev.qtyDeviasiLoss : null,
+    } : null,
+  } as ExecutiveSummary & { _prevMetrics: any };
 }
 
 // ============================================================
@@ -174,6 +185,9 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
   const safeText = text == null ? '' : String(text);
   // Negative numbers in red (but not em-dash null indicator)
   const isNegative = safeText.startsWith('-') && safeText !== '—' && !safeText.startsWith('—');
+  // FIX #3: Detect "↑" (increase vs historical = warning/red) and "↓" (decrease = good/green)
+  const isIncrease = safeText.startsWith('↑');
+  const isDecrease = safeText.startsWith('↓');
 
   // Header: white text on primary bg
   // Zebra row: light blue bg
@@ -188,11 +202,15 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
     ? COLOR.PRIMARY_TEXT
     : isNegative
       ? COLOR.NEGATIVE
-      : COLOR.BODY_TEXT;
+      : isIncrease
+        ? COLOR.NEGATIVE   // red for increase (warning)
+        : isDecrease
+          ? COLOR.POSITIVE  // green for decrease (good)
+          : COLOR.BODY_TEXT;
 
   return new TableCell({
     children: [new Paragraph({
-      children: [new TextRun({ text: safeText, bold: bold || isHeader, size: 18, color: textColor })],
+      children: [new TextRun({ text: safeText, bold: bold || isHeader || isIncrease || isDecrease, size: 18, color: textColor })],
       alignment: align === 'right' ? AlignmentType.RIGHT : AlignmentType.LEFT,
       spacing: { before: 20, after: 20 },
     })],
@@ -205,6 +223,17 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
       right: { style: 'single' as any, size: 4, color: COLOR.BORDER },
     },
   });
+}
+
+// FIX #3: Format "vs Hist" column — compares current vs historical average.
+// Returns "↑ X%" (red, increase = warning) or "↓ X%" (green, decrease = good) or "—".
+function fmtVsHist(current: number | null, histAvg: number | null): string {
+  if (current == null || histAvg == null || histAvg === 0) return '—';
+  const pctChange = (current - histAvg) / Math.abs(histAvg);
+  const pctStr = `${(Math.abs(pctChange) * 100).toFixed(1)}%`;
+  if (pctChange > 0) return `↑ ${pctStr}`;
+  if (pctChange < 0) return `↓ ${pctStr}`;
+  return '= 0%';
 }
 
 function makeTable(headers: string[], rows: string[][]): Table {
@@ -619,12 +648,13 @@ export async function GET(req: NextRequest) {
       ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
-      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), '—', '—'],
-      ['Loss To Sales', fmtPct(s.lossToSales, false), '—', '—'],
-      ['Total LOSS', fmtIDR(s.totalLoss), '—', '—'],
-      ['Total SURPLUS', fmtIDR(s.totalSurplus), '—', '—'],
-      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), '—', '—'],
-      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), '—', '—'],
+      // FIX: 6 metrics now show prev value + growth (previously '—')
+      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), (s as any)._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, (s as any)._prevMetrics.deviationToBom), true) : '—', (s as any)._prevMetrics?.deviationToBom != null ? fmtPct((s as any)._prevMetrics.deviationToBom, false) : '—'],
+      ['Loss To Sales', fmtPct(s.lossToSales, false), (s as any)._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, (s as any)._prevMetrics.lossToSales), true) : '—', (s as any)._prevMetrics?.lossToSales != null ? fmtPct((s as any)._prevMetrics.lossToSales, false) : '—'],
+      ['Total LOSS', fmtIDR(s.totalLoss), (s as any)._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, (s as any)._prevMetrics.totalLoss), true) : '—', (s as any)._prevMetrics?.totalLoss != null ? fmtIDR((s as any)._prevMetrics.totalLoss) : '—'],
+      ['Total SURPLUS', fmtIDR(s.totalSurplus), (s as any)._prevMetrics?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, (s as any)._prevMetrics.totalSurplus), true) : '—', (s as any)._prevMetrics?.totalSurplus != null ? fmtIDR((s as any)._prevMetrics.totalSurplus) : '—'],
+      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), (s as any)._prevMetrics?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, (s as any)._prevMetrics.residualLossQty), true) : '—', (s as any)._prevMetrics?.residualLossQty != null ? fmtNum((s as any)._prevMetrics.residualLossQty) : '—'],
+      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), (s as any)._prevMetrics?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, (s as any)._prevMetrics.residualLossPct), true) : '—', (s as any)._prevMetrics?.residualLossPct != null ? fmtPct((s as any)._prevMetrics.residualLossPct, false) : '—'],
     ]));
 
     }
@@ -661,14 +691,14 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = SURPLUS (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi), it.direction] },
+      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
       { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalWaste)] },
-      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalSusut)] },
-      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalTrial)] },
-      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, `Nominal Loss/Surplus ${currLabel}`, 'Direction'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtIDR(it.nominalLossSurplus), it.direction] },
+      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
+      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
+      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
+      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
     ];
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
@@ -777,8 +807,8 @@ export async function GET(req: NextRequest) {
       children.push(heading('12. DAFTAR PRIORITAS INVESTIGASI'));
     children.push(paragraph('P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap item ada issue, Nominal Deviasi, dan rekomendasi tindakan.'));
       children.push(paragraph(`P1: ${p1.length} | P2: ${wl.filter((w: any) => w.priority === 'P2').length} | P3: ${wl.filter((w: any) => w.priority === 'P3').length} | Total: ${wl.length}`));
-      children.push(makeTable(['Pri', 'Resto', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM', 'Direction'],
-        wl.slice(0, 50).map((w: any) => [w.priority, w.outletCode, w.itemName, w.issue, fmtIDR(w.absNominalDeviasi), w.deviationToBom != null ? fmtPct(w.deviationToBom, false) : '—', w.direction])));
+      children.push(makeTable(['Pri', 'Resto', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM'],
+        wl.slice(0, 50).map((w: any) => [w.priority, w.outletCode, w.itemName, w.issue, fmtIDR(w.absNominalDeviasi), w.deviationToBom != null ? fmtPct(w.deviationToBom, false) : '—'])));
       if (p1.length > 0) {
         children.push(paragraph(''));
         children.push(paragraph('Rekomendasi Tindakan (P1):', true));
@@ -854,8 +884,8 @@ export async function GET(req: NextRequest) {
       if (data.topOutlets && data.topOutlets.length > 0) {
         children.push(heading('17. TOP RESTO BY SALES'));
         children.push(paragraph('Resto dengan Penjualan tertinggi. Loss/Surplus menunjukkan net direction. Area Avg = rata-rata Dev/BOM area resto tersebut.'));
-        children.push(makeTable(['#', 'Resto', 'Area', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Area Avg', 'Loss', 'Surplus', 'Direction'],
-          data.topOutlets.slice(0, 15).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, fmtIDR(o.sales), fmtIDR(o.absNominal), fmtPct(o.devBom, false), fmtPct(o.areaAvg, false), fmtIDR(o.lossAmount), fmtIDR(o.surplusAmount), o.direction])));
+        children.push(makeTable(['#', 'Resto', 'Area', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Area Avg', 'Loss', 'Surplus'],
+          data.topOutlets.slice(0, 15).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, fmtIDR(o.sales), fmtIDR(o.absNominal), fmtPct(o.devBom, false), fmtPct(o.areaAvg, false), fmtIDR(o.lossAmount), fmtIDR(o.surplusAmount)])));
         children.push(divider());
       }
     }
