@@ -66,7 +66,7 @@ export async function queryTrendAgg(filters: {
     ),
     period_aggs AS (
       SELECT ir."monthLabel", ir."weekLabel",
-        COALESCE(SUM(ir."absNominalDeviasi"), 0) as nominal,
+        COALESCE(SUM(ir."nominalDeviasi"), 0) as nominal,
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
@@ -141,7 +141,7 @@ export async function queryExecSummary(
     ),
     aggs AS (
       SELECT
-        COALESCE(SUM(ir."absNominalDeviasi"), 0) as "nominalDeviasi",
+        COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
         COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
         COALESCE(SUM(ir."absQtyDeviasi"), 0) as "qtyDeviasi",
         COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "qtyWaste",
