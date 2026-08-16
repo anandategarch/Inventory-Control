@@ -28,6 +28,7 @@ import {
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
   queryTopItemsByCategory,
+  queryTopItemsByDeviasiRank,
   queryHistoricalCategoryAvg,
   queryTopOutlets,
   queryTopOutletsBySales,
@@ -436,6 +437,8 @@ export async function GET(req: NextRequest) {
       prevWasteRows, prevSusutRows, prevTrialRows, prevLossSurplusRows,
       // Historical category averages (Rev 2)
       histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
+      // Top Items by Deviasi Rank (Section 13 replacement)
+      topDeviasiRank,
     ] = await Promise.all([
       queryTopItemsByNominal(week, month, filterOpts, topNItems),
       queryTopItemsByDevBom(week, month, filterOpts, topNItems),
@@ -462,6 +465,8 @@ export async function GET(req: NextRequest) {
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
+      // Section 13: Top Items by Deviasi Rank (national ranking)
+      queryTopItemsByDeviasiRank(week, month, filterOpts, 20),
     ]);
 
     // Build prev + historical lookup maps keyed by "itemName|outletCode"
@@ -574,6 +579,7 @@ export async function GET(req: NextRequest) {
       varianceAnalysis,
       investigationWorklist: worklist,
       itemConsistencyAnalysis,
+      topDeviasiRank,
       trend,
       narrative,
       narrativeSource,
@@ -819,11 +825,31 @@ export async function GET(req: NextRequest) {
 
     }
     if (hasSection('consistency')) {
-    const ic = data.itemConsistencyAnalysis || {};
-    if (ic.items && ic.items.length > 0) {
-      children.push(heading('13. POLA ITEM ANTAR RESTO (Consistency)'));
-      children.push(makeTable(['Item', 'Resto Count', 'LOSS', 'SURPLUS', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Type'],
-        ic.items.slice(0, 20).map((it: any) => [it.itemName, String(it.outletCount || 0), String(it.lossOutlets || 0), String(it.surplusOutlets || 0), fmtIDR(it.totalAbsNominal), fmtPct(it.avgDevBom, false), it.consistency])));
+    // Section 13: Top Items by Deviasi Rank (national ranking — replaced Consistency)
+    const dr = data.topDeviasiRank || [];
+    if (dr.length > 0) {
+      children.push(heading('13. RANKING ITEM NASIONAL (Deviasi)'));
+      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = SURPLUS, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata ABS(% Deviasi To BOM) item tersebut di semua resto (network average).'));
+      children.push(makeTable([
+        'Item', 'Rank Nasional', 'Rank BOM', 'Resto', 'PIC', 'Satuan',
+        'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',
+        'AVG Deviasi By BOM', 'Nominal Deviasi'
+      ],
+        dr.map((it: any) => [
+          it.itemName,
+          String(it.rankNominal),
+          String(it.rankBom),
+          it.outletCode,
+          it.pic || '—',
+          it.satuan || '—',
+          fmtNum(it.qtyDeviasi),
+          fmtNum(it.qtyWaste),
+          fmtNum(it.qtyLossSurplus),
+          it.pctLossSurplusToBom != null ? fmtPct(it.pctLossSurplusToBom, false) : '—',
+          fmtNum(it.qtyBom),
+          it.avgDeviasiByBom != null ? fmtPct(it.avgDeviasiByBom, false) : '—',
+          fmtIDR(it.nominalDeviasi),
+        ])));
       children.push(divider());
     }
 

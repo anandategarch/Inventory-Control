@@ -89,6 +89,105 @@ export async function queryTopItemsByDevBom(
 }
 
 // ============================================================
+//  Top Items by Deviasi Rank — national item ranking
+//  Returns per (item, resto) with:
+//  - Rank Item Nasional (by abs(nominalDeviasi) DESC)
+//  - Rank BOM (by abs(qtyBom) DESC)
+//  - qtyDeviasi, qtyWaste, qtyLossSurplus, qtyBom (all signed)
+//  - pctLossSurplusToBom = SUM(qtyLossSurplus) / SUM(qtyBom) (signed, tanpa ABS)
+//  - avgDeviasiByBom = AVG(ABS(pctQtyDeviasiToBom)) across ALL outlets for that item (network avg)
+//  - nominalDeviasi (signed)
+//  - PIC, Satuan
+// ============================================================
+export async function queryTopItemsByDeviasiRank(
+  week: string,
+  month: string,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 20
+): Promise<Array<{
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtyLossSurplus: number;
+  pctLossSurplusToBom: number | null;
+  qtyBom: number;
+  avgDeviasiByBom: number | null;
+  nominalDeviasi: number;
+  rankNominal: number;
+  rankBom: number;
+}>> {
+  const f = buildSqlFilters(filters);
+  const rows = await db.$queryRaw<any[]>`
+    WITH item_per_outlet AS (
+      SELECT
+        i.name as "itemName",
+        o.code as "outletCode",
+        o.name as "outletName",
+        pic.pic,
+        MAX(ir."satuan") as "satuan",
+        SUM(ir."qtyDeviasi") as "qtyDeviasi",
+        SUM(ir."qtyWaste") as "qtyWaste",
+        SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
+        CASE WHEN SUM(ir."qtyBom") != 0
+          THEN SUM(ir."qtyLossSurplus") / SUM(ir."qtyBom")
+          ELSE NULL END as "pctLossSurplusToBom",
+        SUM(ir."qtyBom") as "qtyBom",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        ${f}
+      GROUP BY i.name, o.code, o.name, pic.pic
+    ),
+    item_network_avg AS (
+      -- AVG Deviasi By BOM: network average of ABS(pctQtyDeviasiToBom) per item
+      SELECT
+        i.name as "itemName",
+        AVG(ABS(ir."pctQtyDeviasiToBom")) as "avgDeviasiByBom"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."pctQtyDeviasiToBom" IS NOT NULL
+      GROUP BY i.name
+    )
+    SELECT
+      ipo.*,
+      ina."avgDeviasiByBom",
+      ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
+      ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"
+    FROM item_per_outlet ipo
+    LEFT JOIN item_network_avg ina ON ipo."itemName" = ina."itemName"
+    ORDER BY ABS(ipo."nominalDeviasi") DESC
+    LIMIT ${limit}
+  `;
+  // Coerce BigInt/Decimal to Number
+  return rows.map((r: any) => ({
+    ...r,
+    qtyDeviasi: Number(r.qtyDeviasi),
+    qtyWaste: Number(r.qtyWaste),
+    qtyLossSurplus: Number(r.qtyLossSurplus),
+    pctLossSurplusToBom: r.pctLossSurplusToBom != null ? Number(r.pctLossSurplusToBom) : null,
+    qtyBom: Number(r.qtyBom),
+    avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
+    nominalDeviasi: Number(r.nominalDeviasi),
+    rankNominal: Number(r.rankNominal),
+    rankBom: Number(r.rankBom),
+  }));
+}
+
+// ============================================================
 //  Top Items by Waste/Susut/Trial/LossSurplus (Phase 2)
 // ============================================================
 export async function queryTopItemsByCategory(

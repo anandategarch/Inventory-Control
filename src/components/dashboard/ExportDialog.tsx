@@ -28,7 +28,7 @@ const SECTIONS: SectionOption[] = [
   { key: 'pareto', label: '10. Pareto (ABC)', description: 'Class A count + top 20 items dengan cumulative %', default: true },
   { key: 'variance', label: '11. Variance Analysis', description: 'Items memburuk + membaik (selisih vs previous)', default: true },
   { key: 'worklist', label: '12. Investigation Worklist', description: 'P1/P2/P3 dengan issue, nominal, rules, recommended actions', default: true },
-  { key: 'consistency', label: '13. Item Consistency', description: 'SYSTEMIC/WIDESPREAD/ISOLATED dengan resto counts', default: true },
+  { key: 'consistency', label: '13. Ranking Item Nasional', description: 'Ranking item per resto: Rank Nasional, Rank BOM, QTY Deviasi/Waste/LS, %LS to BOM, AVG Deviasi By BOM, Nominal Deviasi', default: true },
   { key: 'trend', label: '14. Trend Multi-Periode', description: 'Same-weekLabel across months', default: true },
   { key: 'aiInsight', label: 'Observasi & Pola Deviasi', description: 'Pola & observasi: cross-correlation, anomaly pattern, composition insight (1-2 paragraf)', default: true },
   { key: 'narrative', label: '15. Narasi Analisis', description: 'Narasi analisis deviasi periode ini', default: true },
