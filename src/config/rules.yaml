@@ -1,37 +1,37 @@
 # ============================================================
-#  ANOMALY RULES — Inventory Control Intelligence Platform
+#  ATURAN ANOMALI — Inventory Control Intelligence Platform
 #  ----------------------------------------------------------
-#  Edit/add rules here WITHOUT touching engine code.
-#  Engine evaluates each rule against every (outlet, item, week) record.
+#  Edit/tambah aturan di sini tanpa menyentuh kode engine.
+#  Engine mengevaluasi setiap aturan terhadap setiap record (outlet, item, week).
 #
-#  Condition DSL (JSON-like):
+#  Condition DSL (mirip JSON):
 #    - Comparison: { field: { op: value } }
 #      ops: gt, gte, lt, lte, eq, neq, between, in, is_null, not_null
 #    - Logical:  { all: [...] }  /  { any: [...] }
 #    - Arithmetic: { mul: [a, b] }, { add: [...] }, { sub: [a, b] }, { div: [a, b] }, { abs: a }
 #
-#  Available fields (from PeriodComparison + InventoryRecord):
+#  Field yang tersedia (dari PeriodComparison + InventoryRecord):
 #    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth
 #    deviationToSalesRatio, deviationToBomRatio, benchmarkFlag, zScore
 #    qtyDeviasi, nominalDeviasi, qtyWaste, qtySusut, qtyTrial, qtyLossSurplus
 #    residualQty, residualRatio, tolerancePct, pctQtyDeviasiToBom
 #    direction (LOSS | SURPLUS | NEUTRAL)
 #
-#  Runtime threshold fields (from Settings DB — can be used as operands):
+#  Field threshold runtime (dari Settings DB — bisa dipakai sebagai operand):
 #    stdDeviasiBomPct, stdSusutPct, stdWastePct, stdTrialPct
 #    fallbackTolerancePct, residualLossWarnPct, residualLossHighPct
 #    highLossNominalThreshold, historicalZscoreWarn, historicalZscoreHigh
 #    salesDeviationFactor, bomDeviationFactor
-#    (e.g. { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } })
+#    (contoh: { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } })
 #
 #  severity: NORMAL | WARNING | ABNORMAL
-#  priority: higher = more important (used for tie-break)
+#  priority: makin tinggi = makin penting (dipakai untuk tie-break)
 # ============================================================
 
 rules:
-  # ===== SALES-RELATED =====
+  # ===== TERKAIT PENJUALAN =====
   - code: SALES_DEVIATION_MISMATCH
-    name: "Deviation growth far exceeds sales growth"
+    name: "Pertumbuhan deviasi jauh melebihi pertumbuhan Penjualan"
     category: SALES
     severity: ABNORMAL
     priority: 90
@@ -40,10 +40,10 @@ rules:
         - salesGrowth: { gt: 0 }
         - nominalDeviasiGrowth: { gt: { mul: [salesGrowth, salesDeviationFactor] } }
     narrative_template: >
-      Deviasi meningkat {{nominalDeviasiGrowth}} jauh melebihi pertumbuhan Sales {{salesGrowth}}.
+      Deviasi meningkat {{nominalDeviasiGrowth}} jauh melebihi pertumbuhan Penjualan {{salesGrowth}}.
 
   - code: SALES_DEV_DECREASE
-    name: "Sales down but deviation up"
+    name: "Penjualan turun tapi deviasi naik"
     category: SALES
     severity: ABNORMAL
     priority: 85
@@ -52,11 +52,11 @@ rules:
         - salesGrowth: { lt: 0 }
         - nominalDeviasiGrowth: { gt: 0 }
     narrative_template: >
-      Sales turun {{salesGrowth}} namun deviasi naik {{nominalDeviasiGrowth}}.
+      Penjualan turun {{salesGrowth}} namun deviasi naik {{nominalDeviasiGrowth}}.
 
-  # ===== BOM-RELATED =====
+  # ===== TERKAIT BOM =====
   - code: BOM_DEVIATION_MISMATCH
-    name: "Deviation growth far exceeds BOM growth"
+    name: "Pertumbuhan deviasi jauh melebihi pertumbuhan BOM"
     category: BOM
     severity: ABNORMAL
     priority: 88
@@ -65,10 +65,10 @@ rules:
         - bomGrowth: { gt: 0 }
         - qtyDeviasiGrowth: { gt: { mul: [bomGrowth, bomDeviationFactor] } }
     narrative_template: >
-      QTY BOM meningkat {{bomGrowth}}, namun QTY deviation meningkat {{qtyDeviasiGrowth}}.
+      QTY BOM meningkat {{bomGrowth}}, namun QTY Deviasi meningkat {{qtyDeviasiGrowth}}.
 
   - code: BOM_DOWN_DEV_UP
-    name: "BOM down but deviation up"
+    name: "BOM turun tapi deviasi naik"
     category: BOM
     severity: ABNORMAL
     priority: 82
@@ -77,11 +77,11 @@ rules:
         - bomGrowth: { lt: 0 }
         - qtyDeviasiGrowth: { gt: 0 }
     narrative_template: >
-      QTY BOM turun {{bomGrowth}} namun QTY deviation naik {{qtyDeviasiGrowth}}.
+      QTY BOM turun {{bomGrowth}} namun QTY Deviasi naik {{qtyDeviasiGrowth}}.
 
-  # ===== TOLERANCE =====
+  # ===== TOLERANSI =====
   - code: TOLERANCE_BREACH_HIGH
-    name: "Deviation/BOM exceeds tolerance significantly"
+    name: "Deviasi/BOM melebihi toleransi secara signifikan"
     category: TOLERANCE
     severity: ABNORMAL
     priority: 80
@@ -90,10 +90,10 @@ rules:
         - tolerancePct: { not_null: true }
         - pctQtyDeviasiToBom: { gt: { mul: [tolerancePct, 2] } }
     narrative_template: >
-      Deviation/BOM {{pctQtyDeviasiToBom}} melebihi tolerance {{tolerancePct}} lebih dari 2x.
+      Deviasi/BOM {{pctQtyDeviasiToBom}} melebihi toleransi {{tolerancePct}} lebih dari 2x.
 
   - code: TOLERANCE_BREACH
-    name: "Deviation/BOM exceeds tolerance"
+    name: "Deviasi/BOM melebihi toleransi"
     category: TOLERANCE
     severity: WARNING
     priority: 70
@@ -102,10 +102,10 @@ rules:
         - tolerancePct: { not_null: true }
         - pctQtyDeviasiToBom: { gt: tolerancePct }
     narrative_template: >
-      Deviation/BOM {{pctQtyDeviasiToBom}} melebihi tolerance {{tolerancePct}}.
+      Deviasi/BOM {{pctQtyDeviasiToBom}} melebihi toleransi {{tolerancePct}}.
 
   - code: TOLERANCE_NOT_SET_HIGH_DEV
-    name: "High deviation but no tolerance set"
+    name: "Deviasi tinggi namun toleransi belum diset"
     category: TOLERANCE
     severity: WARNING
     priority: 65
@@ -114,11 +114,11 @@ rules:
         - tolerancePct: { is_null: true }
         - pctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
     narrative_template: >
-      Deviation/BOM {{pctQtyDeviasiToBom}} tinggi namun tolerance belum diset (analytical flag).
+      Deviasi/BOM {{pctQtyDeviasiToBom}} tinggi namun toleransi belum diset (flag analitik).
 
-  # ===== OVER_EXPLAINED (Bug 8 fix — fraud red flag) =====
+  # ===== OVER_EXPLAINED (Bug 8 fix — red flag fraud) =====
   - code: OVER_EXPLAINED
-    name: "Waste+Susut+Trial exceeds total deviation (fraud indicator)"
+    name: "Waste+Susut+Trial melebihi total deviasi (indikasi fraud)"
     category: RESIDUAL
     severity: ABNORMAL
     priority: 76
@@ -127,9 +127,9 @@ rules:
     narrative_template: >
       Waste+Susut+Trial ({{qtyWaste}}+{{qtySusut}}+{{qtyTrial}}) melampaui total deviasi ({{qtyDeviasi}}) — indikasi salah input SPV, double-counting, atau fraud.
 
-  # ===== RESIDUAL =====
+  # ===== SISA SELISIH =====
   - code: RESIDUAL_LOSS_HIGH
-    name: "High residual loss after Waste/Susut/Trial"
+    name: "Sisa selisih LOSS tinggi setelah dikurangi Waste/Susut/Trial"
     category: RESIDUAL
     severity: ABNORMAL
     priority: 75
@@ -138,10 +138,10 @@ rules:
         - direction: { eq: "LOSS" }
         - residualRatio: { gt: residualLossHighPct }
     narrative_template: >
-      Residual Loss {{residualRatio}} ({{residualQty}}) tinggi setelah dikurangi Waste/Susut/Trial.
+      Sisa selisih LOSS {{residualRatio}} ({{residualQty}}) tinggi setelah dikurangi Waste/Susut/Trial.
 
   - code: RESIDUAL_LOSS_WARN
-    name: "Moderate residual loss"
+    name: "Sisa selisih LOSS moderat"
     category: RESIDUAL
     severity: WARNING
     priority: 60
@@ -151,11 +151,11 @@ rules:
         - residualRatio: { gt: residualLossWarnPct }
         - residualRatio: { lte: residualLossHighPct }
     narrative_template: >
-      Residual Loss {{residualRatio}} moderat.
+      Sisa selisih LOSS {{residualRatio}} moderat.
 
-  # ===== DIRECTION (LOSS magnitude) =====
+  # ===== DIRECTION (besaran LOSS) =====
   - code: HIGH_LOSS_NOMINAL
-    name: "High nominal loss"
+    name: "Nominal LOSS tinggi"
     category: DIRECTION
     severity: ABNORMAL
     priority: 80
@@ -164,36 +164,36 @@ rules:
         - direction: { eq: "LOSS" }
         - absNominalLossSurplus: { gt: highLossNominalThreshold }
     narrative_template: >
-      Nominal loss {{absNominalLossSurplus}} tinggi.
+      Nominal LOSS {{absNominalLossSurplus}} tinggi.
 
-  # ===== BENCHMARK (historical zScore-based, NOT area/network pooled) =====
-  # FIX: benchmarkFlag values renamed from ABOVE_AREA_AVG/ABOVE_NETWORK_AVG
-  # to HISTORICAL_WARNING/HISTORICAL_HIGH in audit fix. These rules now
-  # fire on the correct flag values. Area/network pooled comparison is
-  # done separately in computeBenchmark() (benchmark.ts) and outlet-items route.
+  # ===== BENCHMARK (berbasis zScore historis, BUKAN pooled area/network) =====
+  # FIX: nilai benchmarkFlag di-rename dari ABOVE_AREA_AVG/ABOVE_NETWORK_AVG
+  # ke HISTORICAL_WARNING/HISTORICAL_HIGH pada audit fix. Aturan ini sekarang
+  # fire pada nilai flag yang benar. Perbandingan pooled area/network dilakukan
+  # terpisah di computeBenchmark() (benchmark.ts) dan route outlet-items.
   - code: BENCHMARK_ABOVE_AREA
-    name: "Deviation above historical average (warning level)"
+    name: "Deviasi di atas rata-rata historis (level peringatan)"
     category: BENCHMARK
     severity: WARNING
     priority: 50
     condition:
       benchmarkFlag: { eq: "HISTORICAL_WARNING" }
     narrative_template: >
-      Deviation/BOM outlet di atas historical average (zScore warning).
+      Deviasi/BOM outlet di atas rata-rata historis (zScore peringatan).
 
   - code: BENCHMARK_ABOVE_NETWORK
-    name: "Deviation far above historical average (high level)"
+    name: "Deviasi jauh di atas rata-rata historis (level tinggi)"
     category: BENCHMARK
     severity: ABNORMAL
     priority: 72
     condition:
       benchmarkFlag: { eq: "HISTORICAL_HIGH" }
     narrative_template: >
-      Deviation/BOM outlet jauh di atas historical average (zScore high).
+      Deviasi/BOM outlet jauh di atas rata-rata historis (zScore tinggi).
 
   # ===== DIRECTION FLIP (master context #23 Variance Analysis + #9 Loss/Surplus) =====
   - code: DIRECTION_FLIP
-    name: "Direction flip LOSS ↔ SURPLUS antar periode"
+    name: "Arah deviasi berbalik LOSS ↔ SURPLUS antar periode"
     category: HISTORICAL
     severity: WARNING
     priority: 60
@@ -202,9 +202,9 @@ rules:
     narrative_template: >
       Arah deviasi berbalik dari {{prevDirection}} → {{direction}} antar periode — indikasi perubahan pola operasional atau error input. Perlu investigasi.
 
-  # ===== HISTORICAL =====
+  # ===== HISTORIS =====
   - code: HISTORICAL_ABNORMAL
-    name: "Deviation abnormal vs historical behavior (LOSS direction)"
+    name: "Deviasi abnormal vs perilaku historis (arah LOSS)"
     category: HISTORICAL
     severity: ABNORMAL
     priority: 78
@@ -213,10 +213,10 @@ rules:
         - direction: { eq: "LOSS" }
         - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
-      Sangat abnormal: Deviation/BOM {{zScore}} std-dev di atas historical average (z > 2.0).
+      Sangat abnormal: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 2.0).
 
   - code: HISTORICAL_ABNORMAL_SURPLUS
-    name: "Deviation abnormal vs historical behavior (SURPLUS direction)"
+    name: "Deviasi abnormal vs perilaku historis (arah SURPLUS)"
     category: HISTORICAL
     severity: ABNORMAL
     priority: 77
@@ -225,10 +225,10 @@ rules:
         - direction: { eq: "SURPLUS" }
         - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
-      Deviation/BOM {{zScore}} std-dev di BAWAH historical average (SURPLUS abnormal).
+      Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (SURPLUS abnormal).
 
   - code: HISTORICAL_WARNING
-    name: "Deviation above historical average"
+    name: "Deviasi di atas rata-rata historis"
     category: HISTORICAL
     severity: WARNING
     priority: 58
@@ -237,4 +237,4 @@ rules:
         - zScore: { gt: historicalZscoreWarn }
         - zScore: { lte: historicalZscoreHigh }
     narrative_template: >
-      Peringatan: Deviation/BOM {{zScore}} std-dev di atas historical average (z > 1.0).
+      Peringatan: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 1.0).
