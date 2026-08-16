@@ -14,6 +14,7 @@ import {
   type SettingDefinition,
 } from '@/lib/settings';
 import { analysisCache } from '@/lib/cache';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,16 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    // FIX (DEEP-AUDIT-API-5): Rate limit settings mutation endpoint
+    const ip = getClientIP(req);
+    const rl = rateLimit(`settings:${ip}`, RATE_LIMITS.settings.maxRequests, RATE_LIMITS.settings.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Tunggu beberapa menit sebelum mencoba lagi.' },
+        { status: 429 }
+      );
+    }
+
     await ensureDefaultSettings();
     const body = await req.json();
     const values: Record<string, string> = body.values || {};

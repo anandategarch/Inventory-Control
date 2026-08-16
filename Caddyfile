@@ -1,6 +1,14 @@
 :81 {
+	# FIX (DEEP-AUDIT-SECURITY-3): SSRF via XTransformPort query param.
+	# Previously `query XTransformPort=*` allowed proxying to ANY port
+	# (e.g. =5432 → PostgreSQL, =6379 → Redis, =22 → SSH banner).
+	# Now restricted to an explicit allowlist of mini-service ports.
+	#
+	# Currently allowed: 3003 (websocket example — see examples/websocket/server.ts)
+	# Add more `query XTransformPort=<port>` lines as new mini-services are created.
 	@transform_port_query {
-		query XTransformPort=*
+		query XTransformPort=3003
+		# Add more allowed ports here as needed
 	}
 
 	handle @transform_port_query {

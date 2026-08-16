@@ -6,6 +6,7 @@
 // ============================================================
 import { db } from '@/lib/db';
 import { analysisCache, statusCache } from '@/lib/cache';
+import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ } from '@/engine/validator';
@@ -420,6 +421,11 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.
       // Previously statusCache had 5-min TTL → user couldn't see newly imported months for 5 min.
       statusCache.clear();
+      // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
+      // monthLabel added by this ingestion. Without this, getMonthResolver() would
+      // keep returning the pre-ingestion resolver and queries for the new month
+      // would fail to resolve case correctly.
+      clearMonthResolverCache();
 
       results.push({
         fileName, status: 'INGESTED', rowCount: totalInserted,

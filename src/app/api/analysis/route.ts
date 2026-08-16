@@ -41,6 +41,7 @@ import {
   queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 
@@ -193,21 +194,15 @@ export async function GET(req: NextRequest) {
     const picOutletCodes = picOutletCodesRaw;
     const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
     const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
-    // BUG FIX (BUG-NORECORDS-4/5): Case-insensitive monthLabel resolution.
-    // DB may have "AGUSTUS 2026" (from upload-data.ts) or "Agustus 2026" (from dashboard import).
-    // User sends whichever case the status API returned. Resolve to actual DB label to avoid
+    // BUG FIX (BUG-NORECORDS-4/5 / FIX-DEEP-1): Case-insensitive monthLabel resolution
+    // via shared util `@/lib/month-resolver`. DB may have "AGUSTUS 2026" (from
+    // upload-data.ts) or "Agustus 2026" (from dashboard import). User sends whichever
+    // case the status API returned. Resolve to actual DB label to avoid
     // "No records found" due to case mismatch.
-    const monthLabelLowerToActual = new Map(fileMonthKeys.map((f) => [f.monthLabel.toLowerCase(), f.monthLabel]));
-    const resolveMonthLabel = (label: string | null): string | null => {
-      if (!label) return null;
-      // Try exact match first (fast path)
-      if (monthKeyByLabel.has(label)) return label;
-      // Fallback: case-insensitive lookup
-      return monthLabelLowerToActual.get(label.toLowerCase()) || label;
-    };
+    const monthResolver = await getMonthResolver();
     // Resolve current + compare month labels to actual DB case
-    month = resolveMonthLabel(month) || month;
-    if (compareMonthExplicit) compareMonthExplicit = resolveMonthLabel(compareMonthExplicit) || compareMonthExplicit;
+    month = resolveMonthLabel(month, monthResolver) || month;
+    if (compareMonthExplicit) compareMonthExplicit = resolveMonthLabel(compareMonthExplicit, monthResolver) || compareMonthExplicit;
     // Note: prevMonth is computed later from allPeriods (which uses DB case) — no resolution needed.
     const allPeriods = weeksRaw
       .map((w) => {

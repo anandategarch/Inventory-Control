@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,16 @@ export async function GET(req: NextRequest) {
     const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
     const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50, 500);
 
+    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+    // monthLabel may be a single value or comma-separated list (multi-period compare).
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Without this, `where.monthLabel = months[0]` returns 0 records on case mismatch.
+    const monthResolver = await getMonthResolver();
+    // Resolve each comma-separated label to its actual DB case.
+    const resolvedMonths = monthLabel
+      ? monthLabel.split(',').map((m) => m.trim()).filter(Boolean).map((m) => resolveMonthLabel(m, monthResolver) || m)
+      : [];
+
     const where: any = {};
     if (outletCode) where.outlet = { code: outletCode };
     if (itemName) where.item = { name: itemName };
@@ -36,11 +47,8 @@ export async function GET(req: NextRequest) {
       if (weeks.length === 1) where.weekLabel = weeks[0];
       else if (weeks.length > 1) where.weekLabel = { in: weeks };
     }
-    if (monthLabel) {
-      const months = monthLabel.split(',').map((m) => m.trim()).filter(Boolean);
-      if (months.length === 1) where.monthLabel = months[0];
-      else if (months.length > 1) where.monthLabel = { in: months };
-    }
+    if (resolvedMonths.length === 1) where.monthLabel = resolvedMonths[0];
+    else if (resolvedMonths.length > 1) where.monthLabel = { in: resolvedMonths };
 
     const records = await db.inventoryRecord.findMany({
       where,

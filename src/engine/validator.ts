@@ -174,7 +174,13 @@ export function validateRow(
   const qtySusut = toNum(row.qtySusut);
   const qtyTrial = toNum(row.qtyTrial);
   if (qtyDeviasi !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
-    const explainedAbs = Math.abs(qtyWaste + qtySusut + qtyTrial);
+    // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-3): use abs-each-then-sum so the
+    // explained magnitude is correct for mixed-sign inputs. Was
+    // `Math.abs(qtyWaste + qtySusut + qtyTrial)` which undercounts explained
+    // magnitude when components have mixed signs (e.g. w=+5, s=-3, t=-2 →
+    // wrong = |0| = 0, correct = 5+3+2 = 10), suppressing valid OVER_EXPLAINED
+    // flags. Mirrors the fix already applied to computeResidual (transform.ts).
+    const explainedAbs = Math.abs(qtyWaste) + Math.abs(qtySusut) + Math.abs(qtyTrial);
     const deviasiAbs = Math.abs(qtyDeviasi);
     if (deviasiAbs > 0 && explainedAbs > deviasiAbs) {
       const overPct = ((explainedAbs - deviasiAbs) / deviasiAbs) * 100;
@@ -193,7 +199,13 @@ export function validateRow(
   // If Excel's qtyLossSurplus ≠ computed net, flag as DQ issue
   const qtyLossSurplus = toNum(row.qtyLossSurplus);
   if (qtyDeviasi !== null && qtyLossSurplus !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
-    const explainedMag = Math.abs((qtyWaste ?? 0) + (qtySusut ?? 0) + (qtyTrial ?? 0));
+    // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-4): use abs-each-then-sum so the
+    // explained magnitude is correct for mixed-sign inputs. Was
+    // `Math.abs((qtyWaste ?? 0) + (qtySusut ?? 0) + (qtyTrial ?? 0))` which
+    // undercounts explained magnitude when components have mixed signs,
+    // inflating expectedNet and triggering false NET_DEVIATION_MISMATCH flags.
+    // Mirrors the fix applied to deriveRecord in transform.ts.
+    const explainedMag = Math.abs(qtyWaste ?? 0) + Math.abs(qtySusut ?? 0) + Math.abs(qtyTrial ?? 0);
     const expectedNet = qtyDeviasi - explainedMag * Math.sign(qtyDeviasi);
     const tolerance = Math.max(1, Math.abs(expectedNet) * 0.01);
     if (Math.abs(qtyLossSurplus - expectedNet) > tolerance) {

@@ -296,7 +296,13 @@ export function deriveRecord(rec: NormalizedRecord): DerivedRecord {
     const w = rec.qtyWaste ?? 0;
     const s = rec.qtySusut ?? 0;
     const t = rec.qtyTrial ?? 0;
-    const explainedMag = Math.abs(w + s + t);
+    // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-2): use abs-each-then-sum so the
+    // explained magnitude is correct for mixed-sign inputs (mirrors
+    // computeResidual above). Was `Math.abs(w + s + t)` which undercounts the
+    // explained magnitude when waste/susut/trial have mixed signs (e.g.
+    // w=+5, s=-3, t=-2 → wrong = |0| = 0, correct = 5+3+2 = 10), inflating
+    // expectedNet and triggering false NET_DEVIATION_MISMATCH flags.
+    const explainedMag = Math.abs(w) + Math.abs(s) + Math.abs(t);
     const expectedNet = rec.qtyDeviasi - explainedMag * Math.sign(rec.qtyDeviasi);
     // Tolerance: 1 unit or 1% of |expected|, whichever is larger
     const tolerance = Math.max(1, Math.abs(expectedNet) * 0.01);

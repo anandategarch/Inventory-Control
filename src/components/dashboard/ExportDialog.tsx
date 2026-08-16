@@ -125,7 +125,7 @@ export function ExportDialog({ open, onOpenChange, onExport, isExporting }: Expo
         </div>
 
         <DialogFooter className="shrink-0 pt-2">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={isExporting}>
+          <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)} disabled={isExporting}>
             Batal
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting || selected.size === 0} className="gap-1.5">

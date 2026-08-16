@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { analysisCache, statusCache } from '@/lib/cache';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,16 @@ const importSchema = z
 
 export async function POST(req: NextRequest) {
   try {
+    // FIX (DEEP-AUDIT-API-5): Rate limit PIC bulk import endpoint
+    const ip = getClientIP(req);
+    const rl = rateLimit(`pic-import:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Import adalah operasi berat, tunggu beberapa menit.' },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const parsed = importSchema.safeParse(body);
     if (!parsed.success) {

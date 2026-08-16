@@ -19,6 +19,7 @@ import {
   type PriorityInput,
 } from '@/lib/metrics';
 import { calcGrowthAbs } from '@/lib/metrics';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -39,7 +40,8 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
-    const month = url.searchParams.get('month');
+    // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
+    let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const area = url.searchParams.get('area');
     const priorityFilter = url.searchParams.get('priority'); // P1, P2, P3, or null for all
@@ -48,6 +50,13 @@ export async function GET(req: NextRequest) {
     if (!month || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
+
+    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Without this, raw SQL `WHERE ir."monthLabel" = ${month}` returns 0 rows on
+    // case mismatch → "Tidak ada data sesuai filter" + currentIdx -1 → trend "?".
+    const monthResolver = await getMonthResolver();
+    month = resolveMonthLabel(month, monthResolver) || month;
 
     // ============================================================
     //  Load runtime thresholds (Settings-driven)

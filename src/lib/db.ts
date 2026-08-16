@@ -48,10 +48,18 @@ function createPrismaClient(): PrismaClient {
     });
   }
 
-  // Reject SQLite/Turso URLs — Prisma client is compiled for PostgreSQL
-  if (dbUrl.startsWith('libsql://') || dbUrl.startsWith('file:') || dbUrl.startsWith('http')) {
-    console.error('[db] SQLite/Turso URLs are no longer supported. Schema is locked to PostgreSQL.');
-    throw new Error('DATABASE_URL must be PostgreSQL (postgresql:// or postgres://). SQLite/Turso not supported.');
+  // Reject SQLite/Turso URLs — Prisma client is compiled for PostgreSQL.
+  // FIX (DEEP-AUDIT-SECURITY-5): Allow SQLite/libsql in development mode so
+  // local dev doesn't crash when DATABASE_URL points to a local SQLite file.
+  // Production still hard-requires PostgreSQL.
+  if (dbUrl.startsWith('file:') || dbUrl.startsWith('libsql://') || dbUrl.startsWith('http')) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[db] SQLite/Turso URLs not supported in production. Use PostgreSQL.');
+      throw new Error('SQLite/Turso not supported in production. Use PostgreSQL (postgresql:// or postgres://).');
+    }
+    // Dev mode — allow SQLite for local development
+    console.warn('[db] Using SQLite (dev mode). Not for production.');
+    return new PrismaClient({ log: ['error', 'warn'] });
   }
 
   console.error('[db] DATABASE_URL must start with postgresql:// or postgres://');

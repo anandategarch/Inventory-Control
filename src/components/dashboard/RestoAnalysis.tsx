@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, ChevronRight, Grid3x3, Utensils } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { clickableRowProps } from '@/lib/a11y';
+import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { useState, useMemo } from 'react';
 
 interface RestoProfile {
@@ -51,26 +52,6 @@ interface ItemRow {
   priority: 'P1' | 'P2' | 'P3';
 }
 
-function fmtIDR(v: number | null | undefined): string {
-  if (v == null) return '—';
-  const abs = Math.abs(v);
-  const sign = v < 0 ? '-' : '';
-  if (abs >= 1_000_000_000) return `${sign}Rp ${(abs / 1_000_000_000).toFixed(2)}M`;
-  if (abs >= 1_000_000) return `${sign}Rp ${(abs / 1_000_000).toFixed(2)}Jt`;
-  if (abs >= 1_000) return `${sign}Rp ${(abs / 1_000).toFixed(0)}Rb`;
-  return `${sign}Rp ${abs.toFixed(0)}`;
-}
-
-function fmtNum(v: number | null | undefined): string {
-  if (v == null) return '—';
-  return Math.abs(v).toLocaleString('id-ID');
-}
-
-function fmtPct(v: number | null | undefined, digits = 1): string {
-  if (v == null) return '—';
-  return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
-}
-
 function fmtGrowth(v: number | null | undefined): string {
   if (v == null) return '—';
   const pct = (v * 100).toFixed(1);
@@ -110,6 +91,11 @@ export function RestoAnalysis() {
       if (comparisonWeek) p.set('compareWeek', comparisonWeek);
       if (comparisonMonth) p.set('compareMonth', comparisonMonth);
       const res = await fetch(`/api/outlet-items?${p.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -389,6 +375,11 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
     queryFn: async () => {
       const p = new URLSearchParams({ outletCode, itemName, month, week });
       const res = await fetch(`/api/item-history?${p.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -696,6 +687,11 @@ function RestoBahanMatrix({ outletCode, monthLabel, currentWeek, onSelectItem }:
       const p = new URLSearchParams({ month: monthLabel, week: currentWeek, limit: '100' });
       if (priorityFilter !== 'all') p.set('priority', priorityFilter);
       const res = await fetch(`/api/resto-bahan-matrix?${p.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },

@@ -6,6 +6,21 @@
 import ZAI from 'z-ai-web-dev-sdk';
 import type { ExecutiveSummary, GrowthMetrics, InvestigationItem } from '@/types/inventory';
 
+// ============================================================
+//  FIX (FIX-DEEP-3D / DEEP-AUDIT-ENGINE-8): LLM timeout guard.
+//  ZAI calls can hang indefinitely if the upstream service stalls. Wrap every
+//  `zai.chat.completions.create()` call in `withTimeout` so the request fails
+//  fast (15s) and the caller falls back to the rule-based narrative.
+// ============================================================
+const LLM_TIMEOUT_MS = 15000; // 15 seconds
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('LLM timeout')), ms),
+  );
+  return Promise.race([promise, timeout]) as Promise<T>;
+}
+
 export interface NarrativeInput {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
   executiveSummary: ExecutiveSummary;
@@ -168,14 +183,19 @@ export async function generateNarrative(input: NarrativeInput): Promise<{ narrat
 
   try {
     const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        // Bug 4 fix: role must be 'system' (not 'assistant') for system prompt
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `Berdasarkan data terstruktur berikut, tulis narasi analisis inventory:\n\n${structuredSummary}` },
-      ],
-      thinking: { type: 'disabled' },
-    });
+    // FIX (FIX-DEEP-3D): wrap LLM call in 15s timeout — falls back to
+    // buildFallbackNarrative on timeout error (caught below).
+    const completion = await withTimeout(
+      zai.chat.completions.create({
+        messages: [
+          // Bug 4 fix: role must be 'system' (not 'assistant') for system prompt
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: `Berdasarkan data terstruktur berikut, tulis narasi analisis inventory:\n\n${structuredSummary}` },
+        ],
+        thinking: { type: 'disabled' },
+      }),
+      LLM_TIMEOUT_MS,
+    );
 
     const narrative = completion.choices[0]?.message?.content?.trim();
     if (!narrative) {
@@ -286,13 +306,18 @@ export async function generateAIExecutiveSummary(input: NarrativeInput): Promise
   const structuredSummary = buildStructuredSummary(input);
   try {
     const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'system', content: EXEC_SUMMARY_PROMPT },
-        { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
-      ],
-      thinking: { type: 'disabled' },
-    });
+    // FIX (FIX-DEEP-3D): wrap LLM call in 15s timeout — falls back to
+    // buildFallbackExecSummary on timeout error (caught below).
+    const completion = await withTimeout(
+      zai.chat.completions.create({
+        messages: [
+          { role: 'system', content: EXEC_SUMMARY_PROMPT },
+          { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
+        ],
+        thinking: { type: 'disabled' },
+      }),
+      LLM_TIMEOUT_MS,
+    );
     const summary = completion.choices[0]?.message?.content?.trim();
     if (!summary) return buildFallbackExecSummary(input);
     return summary;
@@ -356,13 +381,18 @@ export async function generateAIPatternInsight(input: NarrativeInput): Promise<s
   const structuredSummary = buildStructuredSummary(input);
   try {
     const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'system', content: PATTERN_PROMPT },
-        { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
-      ],
-      thinking: { type: 'disabled' },
-    });
+    // FIX (FIX-DEEP-3D): wrap LLM call in 15s timeout — falls back to
+    // buildFallbackPatternInsight on timeout error (caught below).
+    const completion = await withTimeout(
+      zai.chat.completions.create({
+        messages: [
+          { role: 'system', content: PATTERN_PROMPT },
+          { role: 'user', content: `Data terstruktur:\n\n${structuredSummary}` },
+        ],
+        thinking: { type: 'disabled' },
+      }),
+      LLM_TIMEOUT_MS,
+    );
     const insight = completion.choices[0]?.message?.content?.trim();
     if (!insight) return buildFallbackPatternInsight(input);
     return insight;

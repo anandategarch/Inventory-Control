@@ -7,8 +7,9 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache } from '@/lib/cache';
+import { analysisCache, statusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
 import { validateManualFileName } from '@/lib/filename';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
@@ -266,8 +267,13 @@ export async function POST(req: NextRequest) {
       }
 
       // Check DB: which weeks already exist?
+      // FIX (DEEP-AUDIT-FLOW-6, DEEP-AUDIT-ENGINE-7): query by monthKey, NOT monthLabel.
+      // monthLabel is case-sensitive (e.g., "Juli 2026" vs "JULI 2026"), so a mixed-case DB
+      // would falsely report zero existing files → weeksToImport would include already-existing
+      // weeks → P2002 unique constraint violation on import. monthKey is always "YYYY-MM"
+      // (digits + dash) so case is irrelevant.
       const existingFiles = await db.sourceFile.findMany({
-        where: { monthLabel: monthInfo.monthLabel },
+        where: { monthKey: monthInfo.monthKey },
         select: { id: true },
       });
       const existingWeeksSet = new Set<string>();
@@ -472,7 +478,18 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // FIX (DEEP-AUDIT-API-1, DEEP-AUDIT-FLOW-1): clear BOTH caches after import.
+      // analysisCache was already cleared; statusCache must also be cleared because
+      // /api/status returns month/file/row counts in its dropdown payload — without
+      // this, the dashboard month dropdown stays stale for up to 5 min after upload.
       analysisCache.clear();
+      statusCache.clear();
+      // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
+      // monthLabel added by this import. Without this, getMonthResolver() would
+      // keep returning the pre-import resolver and the new month's case might
+      // not be in the resolver's `exact` set → resolveMonthLabel would fall back
+      // to the (possibly different-case) input label → potential mismatch.
+      clearMonthResolverCache();
 
       return NextResponse.json({
         success: true,

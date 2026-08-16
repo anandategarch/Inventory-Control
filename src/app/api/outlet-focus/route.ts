@@ -21,6 +21,7 @@ import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
 import { calcGrowth, calcZScoreFromStats, computeDirection, computePriority, computeNominalDeviationGrowth, computeHealthScore } from '@/lib/metrics';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 
@@ -175,10 +176,11 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const outletCode = url.searchParams.get('outletCode');
-    const month = url.searchParams.get('month');
+    // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
+    let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const compareWeekParam = url.searchParams.get('compareWeek');
-    const compareMonthParam = url.searchParams.get('compareMonth');
+    let compareMonthParam = url.searchParams.get('compareMonth');
 
     if (!outletCode) {
       return NextResponse.json({ success: false, error: 'outletCode is required' }, { status: 400 });
@@ -186,6 +188,14 @@ export async function GET(req: NextRequest) {
     if (!month || !week) {
       return NextResponse.json({ success: false, error: 'month and week are required' }, { status: 400 });
     }
+
+    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Without this, raw SQL `WHERE ir."monthLabel" = ${month}` returns 0 rows on
+    // case mismatch → "No records found for outlet X in MEI 2026 / WEEK 1".
+    const monthResolver = await getMonthResolver();
+    if (month) month = resolveMonthLabel(month, monthResolver) || month;
+    if (compareMonthParam) compareMonthParam = resolveMonthLabel(compareMonthParam, monthResolver) || compareMonthParam;
 
     const thresholdsVersion = await getThresholdsVersion();
     const cacheKey = `outlet-focus|${outletCode}|${month}|${week}|${compareWeekParam || ''}|${compareMonthParam || ''}|tv${thresholdsVersion}`;

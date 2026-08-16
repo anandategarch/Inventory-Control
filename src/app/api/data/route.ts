@@ -11,13 +11,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { analysisCache, statusCache } from '@/lib/cache';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
 const deleteQuerySchema = z
   .object({
-    month: z.string().max(50).optional(),
+    month: z.string().max(50).optional(),       // legacy: monthLabel (resolved to monthKey server-side)
+    monthKey: z.string().max(10).optional(),     // preferred: "YYYY-MM" (case-insensitive)
     fileId: z.coerce.number().int().optional(),
     all: z.enum(['true', '1', 'yes']).optional(),
     confirm: z.enum(['true', '1', 'yes']).optional(),
@@ -75,14 +78,17 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Group by monthLabel for the UI
+    // Group by monthKey (FIX DEEP-AUDIT-API-4): grouping by monthLabel is case-sensitive,
+    // so a mixed-case DB (e.g., "Juli 2026" + "JULI 2026" for the same month) would produce
+    // duplicate month entries in the UI dropdown. monthKey is always "YYYY-MM" so it is
+    // naturally case-stable.
     const byMonth: Record<string, { monthLabel: string; monthKey: string; fileCount: number; totalRows: number }> = {};
     for (const f of files) {
-      if (!byMonth[f.monthLabel]) {
-        byMonth[f.monthLabel] = { monthLabel: f.monthLabel, monthKey: f.monthKey, fileCount: 0, totalRows: 0 };
+      if (!byMonth[f.monthKey]) {
+        byMonth[f.monthKey] = { monthLabel: f.monthLabel, monthKey: f.monthKey, fileCount: 0, totalRows: 0 };
       }
-      byMonth[f.monthLabel].fileCount += 1;
-      byMonth[f.monthLabel].totalRows += f.rowCount;
+      byMonth[f.monthKey].fileCount += 1;
+      byMonth[f.monthKey].totalRows += f.rowCount;
     }
 
     return NextResponse.json({
@@ -100,6 +106,16 @@ export async function GET(req: NextRequest) {
 // ------------------------------------------------------------
 export async function DELETE(req: NextRequest) {
   try {
+    // FIX (DEEP-AUDIT-API-5): Rate limit destructive delete endpoint
+    const ip = getClientIP(req);
+    const rl = rateLimit(`data:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Penghapusan adalah operasi berat, tunggu beberapa menit.' },
+        { status: 429 }
+      );
+    }
+
     const url = new URL(req.url);
     const params = Object.fromEntries(url.searchParams.entries());
     const parsed = deleteQuerySchema.safeParse(params);
@@ -142,11 +158,35 @@ export async function DELETE(req: NextRequest) {
       ]);
 
       detail = 'Reset SEMUA data (nuclear)';
-    } else if (data.month) {
-      // Delete all SourceFiles for this monthLabel — cascade
+    } else if (data.monthKey || data.month) {
+      // Delete all SourceFiles for this month — cascade.
+      // FIX (DEEP-AUDIT-API-3, DEEP-AUDIT-FLOW-7): query by monthKey, NOT monthLabel.
+      // monthLabel is case-sensitive ("Juli 2026" vs "JULI 2026"); a mixed-case DB would
+      // only delete one case variant, leaving the other behind. monthKey is always
+      // "YYYY-MM" so case is irrelevant.
+      //
+      // Preferred path: caller passes `monthKey` directly (e.g., "2026-07").
+      // Legacy path: caller passes `month` (a monthLabel). We resolve it to monthKey
+      // via a case-insensitive lookup on SourceFile, then delete by monthKey.
+      let monthKeyToDelete = data.monthKey;
+      if (!monthKeyToDelete && data.month) {
+        const sample = await db.sourceFile.findFirst({
+          where: { monthLabel: { equals: data.month, mode: 'insensitive' } },
+          select: { monthKey: true },
+        });
+        if (!sample) {
+          return NextResponse.json({
+            success: true,
+            deleted: { sourceFiles: 0, records: 0, weeks: 0 },
+            message: `Tidak ada file untuk bulan ${data.month}`,
+          });
+        }
+        monthKeyToDelete = sample.monthKey;
+      }
+
       const files = await db.sourceFile.findMany({
-        where: { monthLabel: data.month },
-        select: { id: true },
+        where: { monthKey: monthKeyToDelete },
+        select: { id: true, monthLabel: true },
       });
       const fileIds = files.map((f) => f.id);
 
@@ -154,7 +194,7 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({
           success: true,
           deleted: { sourceFiles: 0, records: 0, weeks: 0 },
-          message: `Tidak ada file untuk bulan ${data.month}`,
+          message: `Tidak ada file untuk monthKey ${monthKeyToDelete}`,
         });
       }
 
@@ -169,7 +209,10 @@ export async function DELETE(req: NextRequest) {
       ]);
       deletedFiles = fileIds.length;
 
-      detail = `Hapus bulan ${data.month} (${deletedFiles} file, ${deletedRecords} record, ${deletedWeeks} week)`;
+      // Use the first file's monthLabel (canonical) for the audit detail; if multiple case variants
+      // existed, they are now all deleted — pick any one for display.
+      const displayLabel = files[0]?.monthLabel ?? monthKeyToDelete;
+      detail = `Hapus bulan ${displayLabel} [${monthKeyToDelete}] (${deletedFiles} file, ${deletedRecords} record, ${deletedWeeks} week)`;
     } else if (data.fileId) {
       // Delete a single SourceFile by ID — cascade
       const file = await db.sourceFile.findUnique({
@@ -197,7 +240,7 @@ export async function DELETE(req: NextRequest) {
       detail = `Hapus file ID ${file.id} (${file.fileName}, ${file.monthLabel}) — ${deletedRecords} record, ${deletedWeeks} week`;
     } else {
       return NextResponse.json(
-        { success: false, error: 'Parameter diperlukan: month, fileId, atau all' },
+        { success: false, error: 'Parameter diperlukan: monthKey, month, fileId, atau all' },
         { status: 400 }
       );
     }
@@ -205,6 +248,12 @@ export async function DELETE(req: NextRequest) {
     // Clear caches so subsequent reads see fresh state
     analysisCache.clear();
     statusCache.clear();
+    // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the
+    // updated SourceFile set. Without this, getMonthResolver() would keep
+    // returning a resolver that includes the now-deleted monthLabel, and
+    // resolveMonthLabel might map a future re-import of the same month to
+    // the old (now-deleted) DB-case label.
+    clearMonthResolverCache();
 
     await db.auditLog.create({
       data: {

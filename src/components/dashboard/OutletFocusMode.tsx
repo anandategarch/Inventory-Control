@@ -1251,6 +1251,11 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
 
   const outletName = ranking.find((r) => r.outletCode === focusOutlet)?.outletName || focusOutlet || 'Outlet';
 
+  // FIX (FIX-DEEP-4A): Guard outlet access — when API returns {success:false},
+  // focusQuery.data.outlet is undefined and accessing .code/.area crashes.
+  // Derive a safe `outlet` reference here so badges don't reach into undefined.
+  const outlet = focusQuery.data?.success ? focusQuery.data.outlet : null;
+
   // No outlet selected — show selector prompt
   if (!focusOutlet) {
     return (
@@ -1298,12 +1303,12 @@ export function OutletFocusMode({ data }: { data: AnalysisData | undefined }) {
             buttonClassName="w-full"
           />
         </div>
-        {focusQuery.data && (
+        {outlet && (
           <Badge variant="outline" className="text-xs">
-            {focusQuery.data.outlet.code} · {focusQuery.data.outlet.area}
+            {outlet.code} · {outlet.area}
           </Badge>
         )}
-        {focusQuery.data && (
+        {focusQuery.data?.success && (
           <Badge variant="outline" className="text-xs">
             {focusQuery.data.durationMs}ms{focusQuery.data.cached ? ' (cache)' : ''}
           </Badge>

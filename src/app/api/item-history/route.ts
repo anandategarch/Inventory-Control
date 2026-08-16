@@ -21,6 +21,7 @@ import {
   type HistoricalInput,
   type PriorityInput,
 } from '@/lib/metrics';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -43,12 +44,21 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const outletCode = url.searchParams.get('outletCode');
     const itemName = url.searchParams.get('itemName');
-    const currentMonth = url.searchParams.get('month');
+    // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
+    let currentMonth = url.searchParams.get('month');
     const currentWeek = url.searchParams.get('week');
 
     if (!outletCode || !itemName) {
       return NextResponse.json({ success: false, error: 'outletCode and itemName required' }, { status: 400 });
     }
+
+    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Without this, the `isCurrent: r.monthLabel === currentMonth` comparison at
+    // line ~126 fails on case mismatch → 404 "No record for X at Y in Mei 2026 WEEK 1"
+    // even though the item exists in DB with a different monthLabel case.
+    const monthResolver = await getMonthResolver();
+    if (currentMonth) currentMonth = resolveMonthLabel(currentMonth, monthResolver) || currentMonth;
 
     // ============================================================
     //  Load runtime thresholds (Settings-driven)

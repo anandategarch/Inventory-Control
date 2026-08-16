@@ -209,11 +209,11 @@ export function computeVarianceAnalysis(
   }> = [];
 
   for (const curr of current) {
-    if (curr.absNominalDeviasi == null || curr.absNominalDeviasi === 0) continue;
+    if (curr.absNominalDeviasi == null) continue;
     // FIX (BUG 4): Include akunPenyesuaian in key — matches analysis route's prevByOutletItem
     const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
     const prev = prevByOutletItem.get(key);
-    if (!prev || prev.absNominalDeviasi == null || prev.absNominalDeviasi === 0) continue;
+    if (!prev || prev.absNominalDeviasi == null) continue;
     const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;
     // Rev 6: selisih = signed difference (current nominalDeviasi - previous nominalDeviasi)
     const currentNominal = curr.nominalDeviasi ?? 0;
@@ -237,7 +237,11 @@ export function computeVarianceAnalysis(
 
   // BUG FIX (AUDIT-EXPORT-AI-3): topImproved should be MOST IMPROVED (most negative selisih),
   // not smallest-magnitude changes. Sort ascending by signed selisih → most negative first.
-  const topWorsened = [...deltas].sort((a, b) => Math.abs(b.selisih) - Math.abs(a.selisih)).slice(0, 5);
+  // FIX (FIX-DEEP-3A / DEEP-AUDIT-ENGINE-1): topWorsened must sort by SIGNED selisih
+  // descending (most positive = most worsened first). The previous abs-desc sort
+  // surfaced the biggest MAGNITUDE changes, mixing worsened and improved items.
+  // topImproved already sorts ascending by signed selisih (most negative first).
+  const topWorsened = [...deltas].sort((a, b) => b.selisih - a.selisih).slice(0, 5);
   const topImproved = [...deltas].sort((a, b) => a.selisih - b.selisih).slice(0, 5);
   return { topWorsened, topImproved };
 }

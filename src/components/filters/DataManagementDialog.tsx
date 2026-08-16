@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb, ChevronDown, ChevronRight, Bug } from 'lucide-react';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
 // DQ issue code explanations + recommended actions
@@ -361,8 +361,8 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                     </TableHeader>
                     <TableBody>
                       {files.map((f) => (
-                        <>
-                          <TableRow key={f.id}>
+                        <React.Fragment key={f.id}>
+                          <TableRow>
                             <TableCell className="text-[11px] py-2 max-w-[220px]">
                               <div className="truncate" title={f.fileName}>{f.fileName}</div>
                             </TableCell>
@@ -465,7 +465,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                               </TableCell>
                             </TableRow>
                           )}
-                        </>
+                        </React.Fragment>
                       ))}
                     </TableBody>
                   </Table>

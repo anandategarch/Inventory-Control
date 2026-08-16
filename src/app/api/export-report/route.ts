@@ -39,6 +39,7 @@ import {
   queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 
@@ -287,18 +288,14 @@ export async function GET(req: NextRequest) {
     // Previously trendAggRows used monthLabelByKey.get(r.monthLabel) which always returned
     // undefined (map is keyed by monthKey, not monthLabel) → sortKey collapsed → sort broken.
     const monthKeyByLabel = new Map(fileMonthKeys.map(f => [f.monthLabel, f.monthKey]));
-    // BUG FIX (BUG-NORECORDS-4/5): Case-insensitive monthLabel resolution.
-    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
-    // Resolve user-sent month to actual DB case to avoid "No records found".
-    const monthLabelLowerToActual = new Map(fileMonthKeys.map(f => [f.monthLabel.toLowerCase(), f.monthLabel]));
-    const resolveMonthLabel = (label: string | null): string | null => {
-      if (!label) return null;
-      if (monthKeyByLabel.has(label)) return label;
-      return monthLabelLowerToActual.get(label.toLowerCase()) || label;
-    };
+    // BUG FIX (BUG-NORECORDS-4/5 / FIX-DEEP-1): Case-insensitive monthLabel resolution
+    // via shared util `@/lib/month-resolver`. DB may have "AGUSTUS 2026" (upload-data.ts)
+    // or "Agustus 2026" (dashboard import). Resolve user-sent month to actual DB case
+    // to avoid "No records found".
+    const monthResolver = await getMonthResolver();
     // Resolve current + compare month labels to actual DB case
-    month = resolveMonthLabel(month) || month;
-    const resolvedCompareMonth = userCompareMonth ? resolveMonthLabel(userCompareMonth) : null;
+    month = resolveMonthLabel(month, monthResolver) || month;
+    const resolvedCompareMonth = userCompareMonth ? resolveMonthLabel(userCompareMonth, monthResolver) : null;
     const allPeriods = weeksRaw.map(w => ({
       monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
       weekLabel: w.weekLabel,

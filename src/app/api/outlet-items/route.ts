@@ -30,6 +30,7 @@ import {
   calcGrowthAbs,
   computeGrowthResult,
 } from '@/lib/metrics';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -51,14 +52,23 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const outletCode = url.searchParams.get('outletCode');
-    const month = url.searchParams.get('month');
+    // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
+    let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const compareWeek = url.searchParams.get('compareWeek');
-    const compareMonth = url.searchParams.get('compareMonth');
+    const compareMonthRaw = url.searchParams.get('compareMonth');
 
     if (!outletCode || !month || !week) {
       return NextResponse.json({ success: false, error: 'outletCode, month, week required' }, { status: 400 });
     }
+
+    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+    // Without this, raw SQL `WHERE ir."monthLabel" = ${month}` returns 0 rows on
+    // case mismatch → empty Resto Profile + empty item breakdown.
+    const monthResolver = await getMonthResolver();
+    month = resolveMonthLabel(month, monthResolver) || month;
+    const compareMonth = compareMonthRaw ? (resolveMonthLabel(compareMonthRaw, monthResolver) || compareMonthRaw) : null;
 
     // ============================================================
     //  Load runtime thresholds (Settings-driven, no hardcoding)
@@ -435,8 +445,14 @@ export async function GET(req: NextRequest) {
       const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
 
       // Over-explained check (inline; same logic as computeResidual)
+      // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-5): use abs-each-then-sum so the
+      // explained magnitude is correct for mixed-sign inputs. Was
+      // `Math.abs((w) + (s) + (t))` which undercounts explained magnitude when
+      // components have mixed signs (e.g. w=+5, s=-3, t=-2 → wrong = |0| = 0,
+      // correct = 5+3+2 = 10), suppressing valid isOverExplained flags. Mirrors
+      // the fix applied to computeResidual (transform.ts).
       const isOverExplained = (() => {
-        const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
+        const explained = Math.abs(toNum(r.qtyWaste) ?? 0) + Math.abs(toNum(r.qtySusut) ?? 0) + Math.abs(toNum(r.qtyTrial) ?? 0);
         const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
         return absDev > 0 && explained > absDev;
       })();
