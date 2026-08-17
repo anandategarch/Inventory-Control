@@ -12,15 +12,11 @@ import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import {
-  buildWorklistFromFlags,
-  computePrioritiesFromFlags,
   buildRuleContext,
   computeVarianceAnalysis,
-  computeOutletHealthRanking,
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
-import { buildRecommendations } from '@/engine/narrative/narrative';
 import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
@@ -30,12 +26,9 @@ import {
   queryTopItemsByCategory,
   queryTopItemsByDeviasiRank,
   queryHistoricalCategoryAvg,
-  queryTopOutlets,
   queryTopOutletsBySales,
   queryDeviationBreakdown,
-  queryLossVsSurplus,
   queryAreaAnalysis,
-  queryCostImpact,
   queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
@@ -366,15 +359,11 @@ export async function GET(req: NextRequest) {
       prevByOutletItem.set(`${r.outletId}|${r.itemId}|${r.akunPenyesuaian ?? ''}`, r);
     }
 
-    let normal = 0, warning = 0, abnormal = 0;
-    const ruleCategoryCounts = new Map<string, number>();
-    const ruleCodeCounts = new Map<string, number>();
     const recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }> = [];
-    const zeroDevByOutlet = new Map<number, number>();
 
     for (const curr of currentRecs) {
       if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
-        normal++; zeroDevByOutlet.set(curr.outletId, (zeroDevByOutlet.get(curr.outletId) ?? 0) + 1); continue;
+        continue;
       }
       const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
       const prev = prevByOutletItem.get(key) ?? null;
@@ -382,19 +371,7 @@ export async function GET(req: NextRequest) {
       const ctx = buildRuleContext(curr, prev, historicalStats, thresholds);
       const flags = evaluateRules(ctx);
       recsWithFlags.push({ curr, flags });
-      if (flags.length === 0) { normal++; }
-      else {
-        const top = flags[0];
-        if (top.severity === 'ABNORMAL') abnormal++;
-        else if (top.severity === 'WARNING') warning++;
-        else normal++;
-        ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
-        ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
-      }
     }
-
-    const ruleBreakdown = { byCategory: Object.fromEntries(ruleCategoryCounts), byRule: Object.fromEntries(ruleCodeCounts) };
-
     // SQL queries
     const [currSummary, prevSummary] = await Promise.all([
       queryExecSummary(week, month, filterOpts),
@@ -403,11 +380,10 @@ export async function GET(req: NextRequest) {
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month, week, prevWeek);
 
     const topNItems = thresholds.TOP_N_ITEMS || 10;
-    const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
 
     // Rev 2: Fetch previous period + historical category data for comparison
     const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
-    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, breakdown, lvs, trendAggRows, costImpactSql, consistencyItems, dqIssuesRaw,
+    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, breakdown, trendAggRows, consistencyItems,
       // Previous period category data (Rev 2)
       prevWasteRows, prevSusutRows, prevTrialRows, prevLossSurplusRows,
       // Historical category averages (Rev 2)
@@ -422,13 +398,9 @@ export async function GET(req: NextRequest) {
       queryTopItemsByCategory(week, month, filterOpts, 'trial', topNItems),
       queryTopItemsByCategory(week, month, filterOpts, 'lossSurplus', topNItems),
       queryAreaAnalysis(week, month, filterOpts),
-      queryTopOutlets(week, month, filterOpts, topNOutlets),
       queryDeviationBreakdown(week, month, filterOpts),
-      queryLossVsSurplus(week, month, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
-      queryCostImpact(week, month, execSummary.sales.current, filterOpts),
       queryItemConsistency(week, month, filterOpts),
-      db.dQIssue.groupBy({ by: ['code', 'severity', 'message'], where: { sourceFile: { monthLabel: month } }, _count: { _all: true } }),
       // Rev 2: Previous period category data
       prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'waste', 100) : Promise.resolve([]),
       prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'susut', 100) : Promise.resolve([]),
@@ -482,12 +454,6 @@ export async function GET(req: NextRequest) {
     const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);
     const breakdownEnriched = { ...breakdown, explained: explainedTotal, explainedPct: breakdown.total > 0 ? explainedTotal / breakdown.total : null, netPct: breakdown.total > 0 ? (breakdown.residual ?? 0) / breakdown.total : null };
 
-    const areaAvgMap = new Map(areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0]));
-    const topOut = topOutletsRaw.map(o => ({ outletCode: o.outletCode, outletName: o.outletName, area: o.area, absNominal: o.absNominal, devBom: o.devBom, areaAvg: areaAvgMap.get(o.area) ?? 0, sales: o.sales, lossAmount: o.lossAmount, surplusAmount: o.surplusAmount, direction: o.direction }));
-
-    const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
-    const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
-
     // Growth metrics
     const nominalDeviasiGrowthMagnitude = computeNominalDeviationGrowth(execSummary.nominalDeviasi.current, execSummary.nominalDeviasi.previous ?? null);
     const growthMetrics = {
@@ -509,10 +475,7 @@ export async function GET(req: NextRequest) {
       return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
-    const recommendations = buildRecommendations(worklist);
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
-    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet);
-    const costImpact = { totalCost: costImpactSql.totalCost, pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null, lossNominal: lvs.lossNominal, surplusNominal: lvs.surplusNominal, wasteCost: costImpactSql.wasteCost, susutCost: costImpactSql.susutCost, trialCost: costImpactSql.trialCost, residualCost: costImpactSql.residualCost, wastePct: costImpactSql.wastePct, susutPct: costImpactSql.susutPct, trialPct: costImpactSql.trialPct, residualPct: costImpactSql.residualPct };
     const itemConsistencyAnalysis = { systemic: consistencyItems.filter(i => i.consistency === 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', occurrences: i.outletCount, avgDevBom: i.avgDevBom, absNominal: i.totalAbsNominal })), episodic: consistencyItems.filter(i => i.consistency !== 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', absNominal: i.totalAbsNominal, devBom: i.avgDevBom })), items: consistencyItems.map(i => ({ itemName: i.itemName, outletCount: i.outletCount, lossOutlets: i.lossOutlets, surplusOutlets: i.surplusOutlets, totalAbsNominal: i.totalAbsNominal, avgDevBom: i.avgDevBom, consistency: i.consistency })) };
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
@@ -521,25 +484,15 @@ export async function GET(req: NextRequest) {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
       filters: { area, outletCode, itemName },
       executiveSummary: execSummary,
-      healthStatus: { normal, warning, abnormal, breakdown: ruleBreakdown },
       growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,
       topItemsByWaste: topWaste, topItemsBySusut: topSusut, topItemsByTrial: topTrial, topItemsByLossSurplus: topLossSurplus,
-      topOutlets: topOut,
       deviationBreakdown: breakdownEnriched,
-      lossVsSurplus: lvs,
       areaAnalysis: areaAnalysisRaw.map(a => ({ area: a.area, outletCount: a.outletCount, totalSales: a.totalSales, totalAbsNominal: a.totalAbsNominal, avgDevBom: a.avgDevBom, lossToSales: a.lossToSales })),
-      outletHealthRanking,
-      costImpact,
       varianceAnalysis,
-      investigationWorklist: worklist,
       itemConsistencyAnalysis,
       topDeviasiRank,
       trend,
-      // NEW: expose dqIssues for Section 18
-      dqIssues: dqIssuesRaw.map(d => ({ code: d.code, severity: d.severity, count: d._count._all, message: d.message })),
-      recommendation: recommendations,
-      priorities,
       durationMs: Date.now() - startedAt,
     };
 
@@ -605,17 +558,6 @@ export async function GET(req: NextRequest) {
     ]));
 
     }
-    if (hasSection('health')) {
-    const hs = data.healthStatus;
-    const total = (hs.normal || 0) + (hs.warning || 0) + (hs.abnormal || 0);
-    children.push(heading('2. STATUS KESEHATAN INVENTORY'));
-    children.push(paragraph('Jumlah item normal, perlu perhatian, dan bermasalah. Sertakan aturan deteksi anomali yang terpicu.'));
-    children.push(paragraph(`Total: ${total.toLocaleString('id-ID')} | Normal: ${hs.normal} | Warning: ${hs.warning} | Abnormal: ${hs.abnormal} (${total > 0 ? ((hs.abnormal / total) * 100).toFixed(1) : 0}%)`));
-    const rules = Object.entries(hs.breakdown?.byRule || {}).map(([k, v]: [string, any]) => `${k} (${v})`).join(', ');
-    children.push(paragraph(`Rules: ${rules || 'None'}`));
-    children.push(divider());
-
-    }
     if (hasSection('growth')) {
     const g = data.growthComparison || {};
     children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
@@ -667,46 +609,12 @@ export async function GET(req: NextRequest) {
     children.push(divider());
 
     }
-    if (hasSection('lossSurplus')) {
-    const lvsData = data.lossVsSurplus || {};
-    children.push(heading('6. LOSS VS SURPLUS'));
-    children.push(paragraph('LOSS = pemakaian aktual melebihi standar (SOC). SURPLUS = pemakaian aktual di bawah standar.'));
-    children.push(makeTable(['Category', 'Count', 'Nominal Deviasi'], [['LOSS', String(lvsData.loss || 0), fmtIDR(lvsData.lossNominal)], ['SURPLUS', String(lvsData.surplus || 0), fmtIDR(lvsData.surplusNominal)]]));
-    children.push(divider());
-
-    }
     if (hasSection('area')) {
     if (data.areaAnalysis && data.areaAnalysis.length > 0) {
       children.push(heading('7. PERBANDINGAN ANTAR AREA'));
     children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
       children.push(makeTable(['Area', 'Resto', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
         data.areaAnalysis.map((a: any) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
-      children.push(divider());
-    }
-
-    }
-    if (hasSection('ranking')) {
-    if (data.outletHealthRanking && data.outletHealthRanking.length > 0) {
-      children.push(heading('8. RANKING KONDISI RESTO'));
-      children.push(makeTable(['#', 'Resto', 'Area', 'Health Score', '% Deviasi To BOM', 'Abnormal', 'Abs Nominal Deviasi', 'Penjualan'],
-        data.outletHealthRanking.slice(0, 30).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, String(o.healthScore ?? '—'), fmtPct(o.devBom, false), String(o.abnormal || 0), fmtIDR(o.absNominal), fmtIDR(o.sales)])));
-      children.push(divider());
-    }
-
-    }
-    if (hasSection('cost')) {
-    const ci = data.costImpact || {};
-    if (ci.totalCost) {
-      children.push(heading('9. DAMPAK BIAYA (Cost Impact)'));
-    children.push(paragraph('Rincian biaya selisih: Nominal Waste + Nominal Susut + Nominal Trial + Loss/Surplus Nominal. % of Sales = seberapa besar selisih dibanding Penjualan.'));
-      children.push(makeTable(['Component', 'Nominal', '% of Cost'], [
-        ['Nominal Waste', fmtIDR(ci.wasteCost), ci.wastePct != null ? fmtPct(ci.wastePct, false) : '—'],
-        ['Nominal Susut', fmtIDR(ci.susutCost), ci.susutPct != null ? fmtPct(ci.susutPct, false) : '—'],
-        ['Nominal Trial', fmtIDR(ci.trialCost), ci.trialPct != null ? fmtPct(ci.trialPct, false) : '—'],
-        ['Loss/Surplus Nominal', fmtIDR(ci.residualCost), ci.residualPct != null ? fmtPct(ci.residualPct, false) : '—'],
-        ['TOTAL', fmtIDR(ci.totalCost), '100%'],
-        ['% of Sales', fmtPct(ci.pctOfSales, false), '—'],
-      ]));
       children.push(divider());
     }
 
@@ -726,24 +634,6 @@ export async function GET(req: NextRequest) {
       if ((va.topImproved || []).length > 0) {
         children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
         children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
-      }
-      children.push(divider());
-    }
-
-    }
-    if (hasSection('worklist')) {
-    if (data.investigationWorklist && data.investigationWorklist.length > 0) {
-      const wl = data.investigationWorklist;
-      const p1 = wl.filter((w: any) => w.priority === 'P1');
-      children.push(heading('12. DAFTAR PRIORITAS INVESTIGASI'));
-    children.push(paragraph('P1 = prioritas tertinggi (investigasi segera). P2 = menengah. P3 = rendah. Setiap item ada issue, Nominal Deviasi, dan rekomendasi tindakan.'));
-      children.push(paragraph(`P1: ${p1.length} | P2: ${wl.filter((w: any) => w.priority === 'P2').length} | P3: ${wl.filter((w: any) => w.priority === 'P3').length} | Total: ${wl.length}`));
-      children.push(makeTable(['Pri', 'Resto', 'Item', 'Issue', 'Nominal Deviasi', '% Deviasi To BOM'],
-        wl.slice(0, 50).map((w: any) => [w.priority, w.outletCode, w.itemName, w.issue, fmtIDR(w.absNominalDeviasi), w.deviationToBom != null ? fmtPct(w.deviationToBom, false) : '—'])));
-      if (p1.length > 0) {
-        children.push(paragraph(''));
-        children.push(paragraph('Rekomendasi Tindakan (P1):', true));
-        p1.slice(0, 10).forEach((w: any) => { if (w.recommendedAction) children.push(paragraph(`• [${w.outletCode}] ${w.itemName}: ${w.recommendedAction}`)); });
       }
       children.push(divider());
     }
@@ -789,49 +679,10 @@ export async function GET(req: NextRequest) {
     }
 
     }
-    if (hasSection('recommendations')) {
-    if (data.recommendation && data.recommendation.length > 0) {
-      children.push(heading('16. REKOMENDASI TINDAK LANJUT'));
-    children.push(paragraph('Rekomendasi terstruktur berdasarkan temuan analisis.'));
-      data.recommendation.forEach((rec: any, i: number) => {
-        children.push(new Paragraph({ children: [new TextRun({ text: `${i + 1}. ${rec.why}`, bold: true, size: 22 })], spacing: { before: 120, after: 40 } }));
-        if (rec.what) for (const action of rec.what) children.push(new Paragraph({ children: [new TextRun({ text: `   • ${action}`, size: 20 })], spacing: { after: 30 } }));
-      });
-      children.push(divider());
-    }
-
-    }
 
     // ============================================================
     // NEW SECTIONS — additional analyses
     // ============================================================
-
-    // 17. Top Resto by Sales — highest revenue outlets (already computed: topOutlets)
-    if (hasSection('topOutlets')) {
-      if (data.topOutlets && data.topOutlets.length > 0) {
-        children.push(heading('17. TOP RESTO BY SALES'));
-        children.push(paragraph('Resto dengan Penjualan tertinggi. Loss/Surplus menunjukkan net direction. Area Avg = rata-rata Dev/BOM area resto tersebut.'));
-        children.push(makeTable(['#', 'Resto', 'Area', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Area Avg', 'Loss', 'Surplus'],
-          data.topOutlets.slice(0, 15).map((o: any, i: number) => [String(i + 1), `${o.outletName} (${o.outletCode})`, o.area, fmtIDR(o.sales), fmtIDR(o.absNominal), fmtPct(o.devBom, false), fmtPct(o.areaAvg, false), fmtIDR(o.lossAmount), fmtIDR(o.surplusAmount)])));
-        children.push(divider());
-      }
-    }
-
-    // 18. Data Quality Issues — DQ validation summary (already fetched: dqIssuesRaw)
-    if (hasSection('dqIssues')) {
-      const dq = (data as any).dqIssues || [];
-      if (dq.length > 0) {
-        children.push(heading('18. DATA QUALITY ISSUES'));
-        children.push(paragraph('Ringkasan issue kualitas data yang terdeteksi saat import. Severity: ERROR (block), WARNING (review), INFO (informational).'));
-        children.push(makeTable(['Code', 'Severity', 'Count', 'Message'],
-          dq.slice(0, 30).map((d: any) => [d.code || d.key, d.severity, String(d.count), (d.message || '').slice(0, 80)])));
-        children.push(divider());
-      } else {
-        children.push(heading('18. DATA QUALITY ISSUES'));
-        children.push(paragraph('✅ Tidak ada issue kualitas data terdeteksi pada periode ini.'));
-        children.push(divider());
-      }
-    }
 
     // 19. Historical Anomaly Analysis — items with z-score > threshold (already computed: historicalAnalysis)
     if (hasSection('historical')) {

@@ -16,21 +16,13 @@ interface SectionOption {
 
 const SECTIONS: SectionOption[] = [
   { key: 'exec', label: '1. Executive Summary', description: '14 KPI: Sales, Deviasi, BOM, Waste, Susut, Trial, Loss/Surplus, Dev/BOM, Loss/Surplus', default: true },
-  { key: 'health', label: '2. Health Status', description: 'Normal/Warning/Abnormal counts + rule violations', default: true },
   { key: 'growth', label: '3. Analisis Pertumbuhan', description: '4 growth metrics + multi-period comparison', default: true },
   { key: 'topItems', label: '4. Top Items', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
   { key: 'breakdown', label: '5. Deviation Breakdown', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },
-  { key: 'lossSurplus', label: '6. Loss vs Surplus', description: 'Count + nominal per direction', default: true },
   { key: 'area', label: '7. Perbandingan Area', description: 'Per-area: outlets, sales, nominal, Dev/BOM, Loss/Sales', default: true },
-  { key: 'ranking', label: '8. Resto Health Ranking', description: 'Top 30 resto dengan skor + metrics', default: true },
-  { key: 'cost', label: '9. Cost Impact', description: 'Waste/Susut/Trial/Loss-Surplus cost + % of sales', default: true },
   { key: 'variance', label: '11. Variance Analysis', description: 'Items memburuk + membaik (selisih vs previous)', default: true },
-  { key: 'worklist', label: '12. Investigation Worklist', description: 'P1/P2/P3 dengan issue, nominal, rules, recommended actions', default: true },
   { key: 'consistency', label: '13. Ranking Item Nasional', description: 'Ranking item per resto: Rank Nasional, Rank BOM, QTY Deviasi/Waste/LS, %LS to BOM, AVG Deviasi By BOM, Nominal Deviasi', default: true },
   { key: 'trend', label: '14. Trend Multi-Periode', description: 'Same-weekLabel across months', default: true },
-  { key: 'recommendations', label: '16. Rekomendasi', description: 'Structured recommendations with priority + actions', default: true },
-  { key: 'topOutlets', label: '17. Top Resto by Sales', description: '15 resto dengan Penjualan tertinggi + deviasi, direction, area avg', default: true },
-  { key: 'dqIssues', label: '18. Data Quality Issues', description: 'Ringkasan issue kualitas data (ERROR/WARNING/INFO) dari proses import', default: false },
   { key: 'historical', label: '19. Historical Anomaly', description: 'Item dengan z-score > 1.0 vs periode sama di bulan sebelumnya', default: true },
 ];
 

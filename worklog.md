@@ -5090,3 +5090,38 @@ Stage Summary:
 - src/components/dashboard/Charts.tsx — 1 chartData entry removed (Price bar in GrowthComparison)
 - src/types/inventory.ts — 1 field removed from GrowthMetrics interface (priceGrowth)
 - Total: ~470 lines removed across 14 files. lint + tsc both pass with 0 errors. KEPT: growthMetrics object itself, Section 3 Growth (4 rows), calcGrowth/calcGrowthAbs/computeNominalDeviationGrowth/computeGrowthResult/calcAvgPrice/safeRatio (all used elsewhere), Historical Anomaly section, Google Drive Import.
+
+---
+Task ID: REMOVE-8-SECTIONS
+Agent: Export Sections Remover
+Task: Remove 8 sections from Word export
+
+Work Log:
+- Read worklog.md (last 30 lines) for context on prior pareto removal task.
+- Read src/components/dashboard/ExportDialog.tsx (139 lines) and src/app/api/export-report/route.ts (882 lines) end-to-end before editing.
+- Grep'd analysis route to confirm which functions/queries are still used there (all 8 query/engine functions are still used by analysis route — kept the source files intact, only removed from export-report's imports).
+- Edit 1 (ExportDialog.tsx): Removed 8 SECTIONS array entries: health (2), lossSurplus (6), ranking (8), cost (9), worklist (12), recommendations (16), topOutlets (17), dqIssues (18). Final SECTIONS array has 9 entries (exec, growth, topItems, breakdown, area, variance, consistency, trend, historical).
+- Edit 2 (export-report/route.ts imports):
+  - From '@/engine/analysis/analysis' removed: buildWorklistFromFlags, computePrioritiesFromFlags, computeOutletHealthRanking. KEPT: buildRuleContext (still used by for-loop), computeVarianceAnalysis, computeHistoricalAnalysis.
+  - Removed entire line: `import { buildRecommendations } from '@/engine/narrative/narrative';`
+  - From '@/lib/queries' removed: queryTopOutlets, queryLossVsSurplus, queryCostImpact. KEPT: queryTopOutletsBySales (was already unused before this task — left as-is to stay minimal).
+- Edit 3 (route.ts rule counting loop): Removed `let normal = 0, warning = 0, abnormal = 0;`, `const ruleCategoryCounts = new Map()`, `const ruleCodeCounts = new Map()`, `const zeroDevByOutlet = new Map()`. Updated for-loop to drop normal/warning/abnormal/ruleCategoryCounts/ruleCodeCounts/zeroDevByOutlet updates but kept `continue;` early-return + `recsWithFlags.push({ curr, flags });`. Removed `const ruleBreakdown = ...` line. KEEP: recsWithFlags (used by variance/consistency/historical), evaluateRules, buildRuleContext.
+- Edit 4 (route.ts Promise.all): Removed 4 destructuring vars (topOutletsRaw, lvs, costImpactSql, dqIssuesRaw) + 4 query calls (queryTopOutlets, queryLossVsSurplus, queryCostImpact, db.dQIssue.groupBy). Also removed `topNOutlets` const (was only used by queryTopOutlets).
+- Edit 5 (route.ts computed variables): Removed `areaAvgMap` + `topOut` (topOutlets), `worklist` + `priorities` (worklist), `recommendations` (recommendations), `outletHealthRanking` (ranking), `costImpact` (cost). KEPT: varianceAnalysis, itemConsistencyAnalysis, historicalAnalysis.
+- Edit 6 (route.ts data object): Removed 9 fields: healthStatus, topOutlets, lossVsSurplus, outletHealthRanking, costImpact, investigationWorklist, dqIssues, recommendation, priorities. KEPT 9 fields: executiveSummary, growthComparison, topItems*, deviationBreakdown, areaAnalysis, varianceAnalysis, itemConsistencyAnalysis, topDeviasiRank, trend.
+- Edit 7 (route.ts render blocks): Removed 8 `if (hasSection('KEY')) { ... }` blocks for health, lossSurplus, ranking, cost, worklist, recommendations, topOutlets, dqIssues. KEPT 9 blocks: exec (1), growth (3), topItems (4), breakdown (5), area (7), variance (11), consistency (13), trend (14), historical (19).
+- Verified zero dangling references: grep for `health|lossSurplus|ranking|cost|worklist|recommendations|topOutlets|dqIssues|outletHealthRanking|costImpact|investigationWorklist|healthStatus|ruleBreakdown|zeroDevByOutlet|buildWorklistFromFlags|computePrioritiesFromFlags|buildRecommendations|computeOutletHealthRanking|queryTopOutlets|queryLossVsSurplus|queryCostImpact|topOutletsRaw|dqIssuesRaw|lvs|costImpactSql|areaAvgMap|topOut|priorities|worklist` returns only legitimate string occurrences (Loss/Surplus as a category name in topItems query, "ranking"/"warning"/"abnormal" as plain comment text).
+- Final verification: `bun run lint` → 0 errors (clean output, just `$ eslint .`); `npx tsc --noEmit --skipLibCheck` → 0 errors. Both pass cleanly.
+- Verified analysis route (`src/app/api/analysis/route.ts`) still uses ALL removed functions: buildWorklistFromFlags (line 483), computePrioritiesFromFlags (line 585), buildRuleContext (line 384), computeOutletHealthRanking (line 613), evaluateRules (line 385), buildRecommendations (line 584), queryTopOutlets (line 440), queryLossVsSurplus (line 443), queryCostImpact (line 445). Source functions in src/lib/queries/*.ts and src/engine/*/*.ts are untouched.
+- Verified KEPT items intact: 9 sections in SECTIONS array, 9 hasSection() render blocks (1, 3, 4, 5, 7, 11, 13, 14, 19), recsWithFlags loop, evaluateRules import, buildRuleContext import, varianceAnalysis/itemConsistencyAnalysis/historicalAnalysis computations, growthMetrics with 4 metrics + multiPeriodComparison.
+
+Stage Summary:
+- src/components/dashboard/ExportDialog.tsx — 17 SECTIONS entries → 9 entries (8 lines removed: health, lossSurplus, ranking, cost, worklist, recommendations, topOutlets, dqIssues)
+- src/app/api/export-report/route.ts — 882 lines → 734 lines (~148 lines removed):
+  - Imports: removed buildWorklistFromFlags, computePrioritiesFromFlags, computeOutletHealthRanking (analysis import); removed entire buildRecommendations import line; removed queryTopOutlets, queryLossVsSurplus, queryCostImpact (queries import)
+  - Rule counting: removed normal/warning/abnormal/ruleCategoryCounts/ruleCodeCounts/zeroDevByOutlet declarations + their updates in for-loop + ruleBreakdown computation (~30 lines)
+  - Promise.all: removed 4 destructuring vars + 4 query calls + topNOutlets const (~7 lines)
+  - Computed variables: removed areaAvgMap, topOut, worklist, priorities, recommendations, outletHealthRanking, costImpact (7 lines)
+  - Data object: removed 9 fields (~10 lines)
+  - Render blocks: removed 8 `if (hasSection('KEY')) { ... }` blocks for health, lossSurplus, ranking, cost, worklist, recommendations, topOutlets, dqIssues (~95 lines)
+- Total: ~156 lines removed across 2 files. lint + tsc both pass with 0 errors. KEPT: 9 sections in SECTIONS array (exec, growth, topItems, breakdown, area, variance, consistency, trend, historical), recsWithFlags + evaluateRules + buildRuleContext (used by variance/consistency/historical), all query/engine functions in source files (still used by analysis route). Source files (src/lib/queries/*.ts, src/engine/*/*.ts) untouched.
