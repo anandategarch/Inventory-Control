@@ -6,7 +6,7 @@ import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
-import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist } from '@/components/dashboard/TopItems';
+import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist, TopDeviasiRank } from '@/components/dashboard/TopItems';
 import { RecommendationPanel } from '@/components/dashboard/Narrative';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
@@ -403,6 +403,16 @@ export default function DashboardPage() {
               <section className="grid lg:grid-cols-2 gap-4">
                 <VarianceAnalysis data={analysis.data} />
                 <OutletHealthRanking data={analysis.data} />
+              </section>
+
+              {/* Ranking Item Nasional (Deviasi) */}
+              <section>
+                <SectionHeader
+                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
+                  title="Ranking Item Nasional (Deviasi)"
+                  badge={`${analysis.data.topDeviasiRank?.length || 0} item`}
+                />
+                <TopDeviasiRank data={analysis.data} />
               </section>
 
               {/* Info card about Outlet Scorecard */}

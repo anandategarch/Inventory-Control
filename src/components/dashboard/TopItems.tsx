@@ -335,3 +335,75 @@ export function InvestigationWorklist({ data }: { data: AnalysisData }) {
     </Card>
   );
 }
+
+// ============================================================
+//  Top Deviasi Rank — National item ranking (Section 13)
+//  Per (item, resto) with dual ranking + all deviasi metrics
+// ============================================================
+export function TopDeviasiRank({ data }: { data: AnalysisData }) {
+  const items = data.topDeviasiRank || [];
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-1.5">
+          Ranking Item Nasional (Deviasi)
+          <FormulaInfo
+            formula="Rank Nasional = sort by |Nominal Deviasi| DESC. Rank BOM = sort by |Qty BOM| DESC."
+            description="Ranking item per resto. Semua nilai signed (negatif = SURPLUS, hijau). %LS to BOM = Qty Loss/Surplus / Qty BOM. AVG Deviasi By BOM = rata-rata |% Deviasi To BOM| item di semua resto."
+            example="Rank 1 = |Nominal Deviasi| terbesar di seluruh jaringan"
+            side="bottom"
+          />
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">Top 20 item per resto — ranking nasional</p>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ScrollArea className="h-96">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8 text-center">Rank Nas</TableHead>
+                <TableHead className="w-8 text-center">Rank BOM</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead>Resto</TableHead>
+                <TableHead>PIC</TableHead>
+                <TableHead className="text-right">QTY Deviasi</TableHead>
+                <TableHead className="text-right">QTY Waste</TableHead>
+                <TableHead className="text-right">QTY LS</TableHead>
+                <TableHead className="text-right">%LS to BOM</TableHead>
+                <TableHead className="text-right">QTY BOM</TableHead>
+                <TableHead className="text-right">AVG Dev By BOM</TableHead>
+                <TableHead className="text-right">Nominal Deviasi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.length === 0 ? (
+                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+              ) : items.map((it, i) => (
+                <TableRow key={`${it.itemName}-${it.outletCode}-${i}`}>
+                  <TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom}</TableCell>
+                  <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyDeviasi < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyWaste < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyWaste)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyLossSurplus < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-emerald-600' : ''}`}>
+                    {it.pctLossSurplusToBom != null ? fmtPctAbs(it.pctLossSurplusToBom) : '—'}
+                  </TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyBom < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyBom)}</TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    {it.avgDeviasiByBom != null ? fmtPctAbs(it.avgDeviasiByBom) : '—'}
+                  </TableCell>
+                  <TableCell className={`text-right font-semibold text-xs ${it.nominalDeviasi < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {fmtIDR(it.nominalDeviasi)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}

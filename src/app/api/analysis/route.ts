@@ -31,6 +31,7 @@ import {
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
   queryTopItemsByCategory,
+  queryTopItemsByDeviasiRank,
   queryTopOutlets,
   queryTopOutletsBySales,
   queryDeviationBreakdown,
@@ -429,6 +430,7 @@ export async function GET(req: NextRequest) {
       costImpactSql,
       consistencyItems,
       dqIssuesRaw,
+      topDeviasiRank,
     ] = await Promise.all([
       queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
       queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
@@ -449,6 +451,7 @@ export async function GET(req: NextRequest) {
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
+      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 20),
     ]);
 
     // Map results (same as before, just from parallel results)
@@ -689,6 +692,7 @@ export async function GET(req: NextRequest) {
       topItemsBySusut: topSusut,
       topItemsByTrial: topTrial,
       topItemsByLossSurplus: topLossSurplus,
+      topDeviasiRank,
       deviationBreakdown: breakdownEnriched,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,

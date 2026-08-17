@@ -94,6 +94,7 @@ export interface AnalysisData {
   topItemsBySusut: any[];
   topItemsByTrial: any[];
   topItemsByLossSurplus: any[];
+  topDeviasiRank?: any[];
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   investigationWorklist: any[];
