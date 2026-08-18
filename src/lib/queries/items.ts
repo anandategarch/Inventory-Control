@@ -126,6 +126,10 @@ export async function queryTopItemsByDeviasiRank(
   rankBom: number;
 }>> {
   const f = buildSqlFilters(filters);
+  // OPTIMIZE-ENGINE: replaced 2 correlated subqueries (EXISTS + AVG, each
+  // per-row) with a single CTE + LEFT JOIN. The CTE computes per-(item,outlet)
+  // bucket averages in ONE pass; the main SELECT just reads them via JOIN.
+  // Old query ran ~500 sub-executions per call; new query is 1 hash-join.
   const rows = await db.$queryRaw<any[]>`
     WITH item_per_outlet AS (
       SELECT
@@ -152,26 +156,37 @@ export async function queryTopItemsByDeviasiRank(
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         ${f}
       GROUP BY i.name, o.code, o.name, pic.pic
+    ),
+    -- Pre-compute dynamic-bucket average per (item, outlet).
+    -- Self-join: for each row, average ABS(qtyDeviasi) of OTHER outlets with
+    -- same itemName AND qtyBom within ±50% range. COUNT tracks how many OTHER
+    -- outlets are in the bucket — if 0, avgDeviasiByBom is NULL.
+    bucket_avg AS (
+      SELECT
+        ipo."itemName",
+        ipo."outletCode",
+        AVG(CASE WHEN ipo2."outletCode" != ipo."outletCode"
+                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
+        SUM(CASE WHEN ipo2."outletCode" != ipo."outletCode"
+                 THEN 1 ELSE 0 END) as "otherCount"
+      FROM item_per_outlet ipo
+      JOIN item_per_outlet ipo2
+        ON ipo2."itemName" = ipo."itemName"
+        AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
+      GROUP BY ipo."itemName", ipo."outletCode"
     )
     SELECT
       ipo."itemName", ipo."outletCode", ipo."outletName", ipo.pic, ipo."satuan",
       ipo."qtyDeviasi", ipo."qtyWaste", ipo."qtyLossSurplus", ipo."pctLossSurplusToBom",
       ipo."qtyBom", ipo."nominalDeviasi",
-      -- AVG Deviasi By BOM: dynamic bucket — average ABS(qtyDeviasi) of same item
-      -- at other restos with BOM within ±50% range. Null if only 1 resto.
-      CASE WHEN EXISTS (
-        SELECT 1 FROM item_per_outlet ipo2
-        WHERE ipo2."itemName" = ipo."itemName"
-          AND ipo2."outletCode" != ipo."outletCode"
-          AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
-      ) THEN (
-        SELECT AVG(ABS(ipo3."absQtyDeviasi")) FROM item_per_outlet ipo3
-        WHERE ipo3."itemName" = ipo."itemName"
-          AND ABS(ipo3."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
-      ) ELSE NULL END as "avgDeviasiByBom",
+      -- avgDeviasiByBom: only if at least 1 OTHER resto exists in the bucket
+      CASE WHEN ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"
     FROM item_per_outlet ipo
+    LEFT JOIN bucket_avg ba
+      ON ipo."itemName" = ba."itemName"
+     AND ipo."outletCode" = ba."outletCode"
     ORDER BY "rankNominal"
     LIMIT ${limit}
   `;

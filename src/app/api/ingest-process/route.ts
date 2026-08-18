@@ -7,7 +7,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { analysisCache, statusCache, focusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
@@ -484,6 +484,7 @@ export async function POST(req: NextRequest) {
       // this, the dashboard month dropdown stays stale for up to 5 min after upload.
       analysisCache.clear();
       statusCache.clear();
+      focusCache.clear();
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this import. Without this, getMonthResolver() would
       // keep returning the pre-import resolver and the new month's case might

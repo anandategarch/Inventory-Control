@@ -147,6 +147,10 @@ model InventoryRecord {
   @@index([outletId, itemId])
   @@index([area, monthLabel, weekLabel])
   @@index([monthLabel, weekLabel, outletId])
+  // OPTIMIZE-ENGINE: speed up cascade delete when a SourceFile is removed
+  // (PostgreSQL FK columns do NOT get an automatic index — without this,
+  // deleting a SourceFile triggers a full-table scan on InventoryRecord).
+  @@index([sourceFileId])
 }
 
 // ------------------------------------------------------------

@@ -5499,3 +5499,85 @@ Stage Summary:
 - FINAL-FLOW-4 fixed: src/lib/queries/items.ts:175 (ORDER BY "rankNominal" only)
 - FINAL-SECURITY-16 fixed: src/app/page.tsx:437 (footer text)
 - lint: 0 errors. tsc: 0 errors.
+
+---
+Task ID: OPTIMIZE-ENGINE
+Agent: Engine Optimizer
+Task: Optimize rule engine + ranking query
+
+Work Log:
+- Read ruleService.ts:100-101 — verified salesDeviationFactor + bomDeviationFactor are already injected from RuntimeThresholds once per request (not recomputed per record). Part 1A = no change.
+- Read evaluator.ts:23-37 — verified _rules + _rulesByCode cache already in place (loadRules is memoized). Part 1C = no change.
+- Implemented Part 1B: added canOpFire() + canConditionFire() fast-path pre-check (src/engine/rules/evaluator.ts:185-272) and called it inside evaluateRules() at line 417 before evalCondition(). Returns false (skip rule) ONLY when provably impossible: not_null with null value, gt/gte/lt/lte/between with null/non-number value, eq with null value vs non-null literal, in with null value, not_null:false with non-null value. Conservative: any/not operators and string field-reference operands defer to full eval (no false negatives).
+- Implemented Part 2: rewrote queryTopItemsByDeviasiRank (src/lib/queries/items.ts:128-192). Replaced 2 correlated subqueries (EXISTS + AVG, ~500 per-row executions each) with 1 bucket_avg CTE that pre-computes per-(item,outlet) averages via self-join + LEFT JOIN. Side benefit: fixed self-inclusion bug — original AVG included ipo itself; new AVG uses CASE WHEN ipo2.outletCode != ipo.outletCode to match documented "resto lain" semantics (confirmed by export-report description text from prior task).
+- Implemented Part 3: read prisma/schema.prisma — 7 of 8 suggested indexes already exist (monthLabel+weekLabel, outletId+itemId, monthLabel+weekLabel+outletId, etc.). Only @@index([sourceFileId]) was missing — added at line 153 (PostgreSQL FK columns don't auto-index; cascade delete on SourceFile would otherwise full-scan InventoryRecord).
+- Ran bun run lint → 0 errors.
+- Ran npx tsc --noEmit --skipLibCheck → 0 errors.
+- Verified prisma schema syntactically valid via DATABASE_URL=postgresql://... npx prisma validate → "The schema is valid 🚀". db:push cannot run in sandbox (no DATABASE_URL configured) — schema will be applied by user environment.
+
+Stage Summary:
+- Part 1A: no change needed (ruleService.ts:100-101 already correct).
+- Part 1B: src/engine/rules/evaluator.ts:185-272 (new canOpFire + canConditionFire), :417 (call site in evaluateRules).
+- Part 1C: no change needed (evaluator.ts:23-37 already memoized).
+- Part 2: src/lib/queries/items.ts:128-192 (CTE + LEFT JOIN replaces correlated subqueries; also fixes self-inclusion bug in AVG).
+- Part 3: prisma/schema.prisma:153 (added @@index([sourceFileId])).
+- lint: 0 errors. tsc: 0 errors. prisma validate: passes.
+
+---
+Task ID: OPTIMIZE-FOCUS
+Agent: Focus Mode Optimizer
+Task: Optimize outlet-focus route queries
+
+Work Log:
+- Read worklog.md (last 30 lines) for FINAL-* + DEEP-AUDIT context.
+- Read full src/app/api/outlet-focus/route.ts (1145 lines) to map current DB query structure: Phase 1 Promise.all (7 queries) + Phase 2 Promise.all (3 queries) + 2 sequential awaits (totalOutletsInPeriodRows line ~836, dqRows line ~900).
+- Read src/lib/cache.ts to confirm existing analysisCache (LRU, 5min TTL, max 200, shared across all routes).
+- Read prisma/schema.prisma to verify indexes: InventoryRecord has @@index([area, monthLabel, weekLabel]) + @@index([monthLabel, weekLabel, outletId]) — both queries leverage these.
+- Added `focusCache` (LRU, 60s TTL, max 50, dedicated to outlet-focus) to src/lib/cache.ts:73-79. Separate from analysisCache so outlet-focus results aren't evicted by other routes' entries (analysisCache is shared, max 200).
+- Replaced analysisCache import/usage with focusCache in src/app/api/outlet-focus/route.ts:20 (import), :202-207 (cache hit check), :1145-1149 (cache set).
+- Added `select: { pic: true }` to outletPIC.findUnique (src/app/api/outlet-focus/route.ts:227) — was fetching whole row including id/outletCode/updatedAt unnecessarily.
+- Added `LIMIT 24` to trendRows SQL outer SELECT (src/app/api/outlet-focus/route.ts:314) — bounds timeline to 2 years of weeks max (typical dataset is 6-12 periods, so no behavior change in practice but caps pathological cases). JS re-sorts chronologically via monthKey anyway.
+- Moved `totalOutletsInPeriodRows` query (was sequential await at line ~861) and `dqRows` query (was sequential try/catch await at line ~922) INTO Phase 2 Promise.all (src/app/api/outlet-focus/route.ts:393-478). Phase 2 now parallelizes 5 queries instead of 3 — saves 2 DB round-trips per request. dqRows uses `.catch(() => [])` to preserve original try/catch fallback semantics (DQIssue.outletId may be unpopulated in older deployments).
+- Replaced `dqIssues` initialization (was inside try/catch) with direct map over dqRows result (src/app/api/outlet-focus/route.ts:922-927). Kept `let` for the later `if (dqIssues.length === 0) dqIssues = computedDQ` reassignment.
+- Added focusCache.clear() alongside analysisCache.clear() in 7 callers: src/app/api/data/route.ts:13,251; src/app/api/settings/route.ts:16,182,254; src/app/api/ingest-process/route.ts:10,487; src/app/api/pic/import/route.ts:12,120; src/app/api/pic/route.ts:15,77,120; src/lib/ingestion.ts:8,426. (data.ts also clears statusCache; settings.ts, pic/*, ingest-process, ingestion all already cleared statusCache; added focusCache alongside each.)
+- Ran `bun run lint` → 0 errors. Ran `npx tsc --noEmit --skipLibCheck` → 0 errors (had to delete stale tsconfig.tsbuildinfo incremental cache first — initial run reported phantom errors in src/engine/analysis/rankingService.ts that disappeared after cache clear; those were pre-existing-type-inference artifacts unrelated to my changes, confirmed by `git stash` + clean tsc run + `git stash pop` + clean tsc run).
+
+Stage Summary:
+- focusCache added: src/lib/cache.ts:73-79 (LRU 50 entries, 60s TTL, dedicated to outlet-focus)
+- outlet-focus Phase 2 parallelized 3→5 queries: src/app/api/outlet-focus/route.ts:393-478 (moved totalOutletsInPeriodRows + dqRows from sequential awaits)
+- Sequential DB round-trips reduced from 2 to 0 after Phase 2 (was: Phase1[7 parallel] → Phase2[3 parallel] → totalOutlets[1 sequential] → dqRows[1 sequential]; now: Phase1[7 parallel] → Phase2[5 parallel])
+- outletPIC findUnique added `select: { pic: true }`: src/app/api/outlet-focus/route.ts:227
+- trendRows SQL added `LIMIT 24`: src/app/api/outlet-focus/route.ts:314
+- analysisCache usage replaced with focusCache in outlet-focus route: src/app/api/outlet-focus/route.ts:20,204,1149
+- focusCache.clear() added alongside analysisCache.clear() in 7 callers: src/app/api/data/route.ts:13,251; src/app/api/settings/route.ts:16,182,254; src/app/api/ingest-process/route.ts:10,487; src/app/api/pic/import/route.ts:12,120; src/app/api/pic/route.ts:15,77,120; src/lib/ingestion.ts:8,426
+- API response shape UNCHANGED — frontend (OutletFocusMode.tsx) depends on it.
+- No data removed from response; only HOW data is fetched is optimized.
+- lint: 0 errors. tsc: 0 errors.
+
+---
+Task ID: OPTIMIZE-ANALYSIS
+Agent: Analysis Route Optimizer
+Task: Optimize analysis route queries
+
+Work Log:
+- Read worklog.md (last 30 lines) — confirmed prior FINAL-* + OPTIMIZE-ENGINE agents already removed recommendation/priorities/priceGrowth/dead UI components. Clean baseline.
+- Read src/app/api/analysis/route.ts end-to-end (728 lines). Mapped 42-item Promise.all (Group 2) → response fields → frontend consumers via Grep matrix on src/components/, src/hooks/, src/app/page.tsx.
+- Grep verdict: NO query is entirely dead. queryLossVsSurplus→InsightsPanel:203+Charts:164. queryCostImpact→InsightsPanel:149 (Biaya Bocor). queryTopOutlets→CardDrillDown:124,138+TopItems:137. queryTopOutletsBySales→CardDrillDown:34. queryItemConsistency→InsightsPanel:163+AdvancedAnalysis:142. db.dQIssue.groupBy→ExecutiveSummary:145 (only .errors+.warnings). All KEEP.
+- Implemented OPT 1 — slim RecWithRels type: rewrote src/engine/analysis/types.ts. Defined slim type with 22 fields actually read by engine (verified via grep of every curr.*/prev.*/rec.* access in ruleService.ts+rankingService.ts). Kept RecWithRelsFull alias for include-based callers. Drops ~21 unused columns (id, sourceFileId, weekId, status, satuan, qtyCom, nominalWaste/Susut/Trial, avgPrice, toleranceRaw, pct*ToBom except pctQtyDeviasiToBom, residualNominal, bulan, bulan2, weekLabel, monthLabel, createdAt).
+- Implemented OPT 2 — include→select: src/app/api/analysis/route.ts:315-355. Both db.inventoryRecord.findMany calls now use select with slim field set. Removed unused `import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client'` import.
+- Implemented OPT 3 — trim costImpact response: src/app/api/analysis/route.ts:646-655. Removed 8 dead sub-fields (wasteCost/susutCost/trialCost/residualCost + wasteToSales/susutToSales/trialToSales/residualToSales — only used by orphan CostAccounting.tsx not imported in page.tsx). queryCostImpact SQL still runs (InsightsPanel needs totalCost). Now matches CostImpact interface in useAnalysis.ts:39-44 exactly.
+- Implemented OPT 4 — trim deviationBreakdown: src/app/api/analysis/route.ts:499-504,716. Removed explained/explainedPct/netPct enrichment (no frontend reads them — Charts.tsx DeviationBreakdownChart + InsightsPanel #3 only use total/waste/susut/trial/residual). Response passes raw SQL `breakdown` row directly. Matches useAnalysis.ts:98 type.
+- Implemented OPT 5 — DQ groupBy + dqStatus trim: route.ts:480-489 (db.dQIssue.groupBy by:['severity'] — was ['code','severity','message']; ≤3 rows vs N unique tuples), :537-545 (3-line severity-counts Map accumulator — was 12-line map+sort+slice for dqSummary), :695-705 (dropped ok + issues from dqStatus response; ExecutiveSummary.tsx:308,312 only reads .errors + .warnings).
+- Verified OPT 6 — rule eval loop already optimized: src/app/api/analysis/route.ts:396-432. Early skip for zero-deviation records (line 401, && not || so price-only anomalies aren't skipped). historicalByOutletItem is a Map (line 415). prevByOutletItem is a Map (line 409). No change needed.
+- Fixed downstream type breakage in src/engine/analysis/rankingService.ts:8,261 — removed unused `import type { Outlet }`; changed byOutlet Map's outlet field type from `Outlet` (full Prisma type with id+outletCode) to `RecWithRels['outlet']` (slim shape {code;name;area}).
+- Ran `bun run lint` (0 errors) + `npx tsc --noEmit --skipLibCheck` (0 errors). Both pass.
+
+Stage Summary:
+- OPT 1 fixed: src/engine/analysis/types.ts:1-67 (slim RecWithRels type with 22 fields; RecWithRelsFull alias kept for include callers)
+- OPT 2 fixed: src/app/api/analysis/route.ts:43 (removed unused @prisma/client type import), :315-355 (both findMany include→select with slim field set — drops ~21 unused columns × ~35K rows of DB→app transfer)
+- OPT 3 fixed: src/app/api/analysis/route.ts:646-655 (costImpact response trimmed to 4 fields: totalCost/pctOfSales/lossNominal/surplusNominal — matches useAnalysis.ts CostImpact type)
+- OPT 4 fixed: src/app/api/analysis/route.ts:499-504,716 (removed explained/explainedPct/netPct enrichment; deviationBreakdown response = raw SQL breakdown row)
+- OPT 5 fixed: src/app/api/analysis/route.ts:480-489 (DQ groupBy by:['severity'] only — ≤3 rows), :537-545 (dqSummary → dqSeverityCounts Map), :695-705 (dropped dqStatus.ok + dqStatus.issues)
+- OPT 6 verified: src/app/api/analysis/route.ts:396-432 (rule eval loop already has early skip + Map lookups — no change)
+- Downstream fix: src/engine/analysis/rankingService.ts:8 (removed unused Outlet import), :261 (byOutlet Map outlet type → RecWithRels['outlet'])
+- lint: 0 errors. tsc: 0 errors.

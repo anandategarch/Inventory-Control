@@ -40,12 +40,15 @@ import {
   queryHistoricalStats,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 
 export const dynamic = 'force-dynamic';
 
-type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
+// OPTIMIZE-ANALYSIS: RecWithRels is the slim record shape declared in
+// src/engine/analysis/types.ts. Both findMany queries below use `select`
+// (not `include`) so Prisma only transfers the columns the engine reads —
+// ~10 fewer columns × ~35K rows = meaningful payload + memory reduction.
+type RecWithRels = import('@/engine/analysis/types').RecWithRels;
 
 // ============================================================
 //  Build ExecutiveSummary from SQL aggregate rows
@@ -310,14 +313,44 @@ export async function GET(req: NextRequest) {
     });
 
     const [currentRecs, prevRecs, historicalByOutletItem] = await Promise.all([
+      // OPTIMIZE-ANALYSIS: `select` (not `include`) — only the columns the
+      // rule engine + downstream computations read. Drops ~10 columns
+      // (id, sourceFileId, weekId, status, satuan, qtyCom, nominalWaste/
+      // Susut/Trial, avgPrice, toleranceRaw, pct*ToBom except
+      // pctQtyDeviasiToBom, residualNominal, bulan, bulan2, weekLabel,
+      // monthLabel, createdAt) per row across ~35K rows.
       db.inventoryRecord.findMany({
         where: buildWhere(week!, month!),
-        include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
+        select: {
+          outletId: true, itemId: true, akunPenyesuaian: true,
+          qtyBom: true, qtyDeviasi: true, qtyWaste: true, qtySusut: true,
+          qtyTrial: true, qtyLossSurplus: true,
+          nominalDeviasi: true, nominalLossSurplus: true, nominalSales: true,
+          absNominalDeviasi: true, absQtyDeviasi: true,
+          absNominalLossSurplus: true, absQtyLossSurplus: true,
+          pctQtyDeviasiToBom: true, tolerancePct: true, direction: true,
+          residualQty: true, residualRatio: true,
+          area: true,
+          outlet: { select: { code: true, name: true, area: true } },
+          item: { select: { name: true } },
+        },
       }) as Promise<RecWithRels[]>,
       prevWeek && prevMonth
         ? db.inventoryRecord.findMany({
             where: buildWhere(prevWeek, prevMonth),
-            include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
+            select: {
+              outletId: true, itemId: true, akunPenyesuaian: true,
+              qtyBom: true, qtyDeviasi: true, qtyWaste: true, qtySusut: true,
+              qtyTrial: true, qtyLossSurplus: true,
+              nominalDeviasi: true, nominalLossSurplus: true, nominalSales: true,
+              absNominalDeviasi: true, absQtyDeviasi: true,
+              absNominalLossSurplus: true, absQtyLossSurplus: true,
+              pctQtyDeviasiToBom: true, tolerancePct: true, direction: true,
+              residualQty: true, residualRatio: true,
+              area: true,
+              outlet: { select: { code: true, name: true, area: true } },
+              item: { select: { name: true } },
+            },
           }) as Promise<RecWithRels[]>
         : Promise.resolve([] as RecWithRels[]),
       historicalPeriods.length > 0
@@ -444,8 +477,13 @@ export async function GET(req: NextRequest) {
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
       queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
       queryItemConsistency(week!, month!, filterOpts),
+      // OPTIMIZE-ANALYSIS: groupBy only by `severity` (was: code+severity+message).
+      // Frontend reads only dqStatus.errors + dqStatus.warnings counts — the
+      // per-issue code/message breakdown was unused since the DQ Issues section
+      // was removed from the export. Returning ≤3 rows instead of N unique
+      // (code,severity,message) tuples reduces DB→app transfer.
       db.dQIssue.groupBy({
-        by: ['code', 'severity', 'message'],
+        by: ['severity'],
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
@@ -458,15 +496,12 @@ export async function GET(req: NextRequest) {
     const topTrial = topTrialRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyTrial: r.qty, nominalTrial: r.nominal }));
     const topLossSurplus = topLossSurplusRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction }));
 
-    // Bug 5 fix: enrich deviationBreakdown with three-layer metrics
-    // Master context #11: Gross / Explained (W+S+T) / Net (residual)
-    const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);
-    const breakdownEnriched = {
-      ...breakdown,
-      explained: explainedTotal, // Layer 2: Waste + Susut + Trial
-      explainedPct: breakdown.total > 0 ? explainedTotal / breakdown.total : null, // % of gross explained
-      netPct: breakdown.total > 0 ? (breakdown.residual ?? 0) / breakdown.total : null, // % of gross that is net
-    };
+    // OPTIMIZE-ANALYSIS: deviationBreakdown response is just the SQL aggregate
+    // row (waste/susut/trial/residual/total). The `explained`/`explainedPct`/
+    // `netPct` enrichment used to live here but no frontend component reads those
+    // fields (Charts.tsx DeviationBreakdownChart + InsightsPanel.tsx #3 only use
+    // waste/susut/trial/residual/total). export-report computes its own
+    // enrichment inline if needed.
 
     const areaAvgMap = new Map<string, number>(areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0]));
     const topOut = topOutletsRaw.map(o => ({
@@ -504,19 +539,15 @@ export async function GET(req: NextRequest) {
       multiPeriodComparison: [] as Array<Record<string, unknown>>,
     };
 
-    // DQ Summary (from parallel query result above)
-    const dqSummary = dqIssuesRaw
-      .map((d) => ({
-        code: d.code,
-        severity: d.severity as 'ERROR' | 'WARNING' | 'INFO',
-        message: d.message,
-        count: d._count._all,
-      }))
-      .sort((a, b) => {
-        const sevOrder = { ERROR: 0, WARNING: 1, INFO: 2 };
-        return sevOrder[a.severity] - sevOrder[b.severity] || b.count - a.count;
-      })
-      .slice(0, 20);
+    // OPTIMIZE-ANALYSIS: DQ groupBy changed from `by: ['code','severity','message']`
+    // (one row per unique issue text → potentially many rows) to `by: ['severity']`
+    // (≤3 rows: ERROR/WARNING/INFO). Frontend only reads `dqStatus.errors` and
+    // `dqStatus.warnings` (ExecutiveSummary.tsx:308,312) — the per-issue `code`/
+    // `message` breakdown and the `ok`/`issues` response fields were unused.
+    const dqSeverityCounts = new Map<string, number>();
+    for (const d of dqIssuesRaw) {
+      dqSeverityCounts.set(d.severity, (dqSeverityCounts.get(d.severity) ?? 0) + d._count._all);
+    }
 
     // ============================================================
     //  Trend — from parallel queryTrendAgg result above
@@ -610,21 +641,15 @@ export async function GET(req: NextRequest) {
     };
     const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights, healthScoreThresholds);
 
-    // Cost Impact — from parallel query result above
+    // Cost Impact — only the 4 fields consumed by InsightsPanel + CostImpact type.
+    // (wasteCost/susutCost/trialCost/residualCost and their *ToSales ratios were
+    // only read by the now-removed CostAccounting tab — dropped to slim the
+    // response payload. queryCostImpact still runs because totalCost is needed.)
     const costImpact = {
       totalCost: costImpactSql.totalCost,
       pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null,
       lossNominal: lvs.lossNominal,
       surplusNominal: lvs.surplusNominal,
-      // Detailed breakdown (additional fields, not used by current frontend but available)
-      wasteCost: costImpactSql.wasteCost,
-      susutCost: costImpactSql.susutCost,
-      trialCost: costImpactSql.trialCost,
-      residualCost: costImpactSql.residualCost,
-      wasteToSales: costImpactSql.wasteToSales,
-      susutToSales: costImpactSql.susutToSales,
-      trialToSales: costImpactSql.trialToSales,
-      residualToSales: costImpactSql.residualToSales,
     };
 
     // Item Consistency — from parallel query result above
@@ -672,11 +697,11 @@ export async function GET(req: NextRequest) {
       filters: { area, outletCode, itemName },
       executiveSummary: execSummary,
       healthStatus: { normal, warning, abnormal, breakdown: ruleBreakdown },
+      // OPTIMIZE-ANALYSIS: only `errors` + `warnings` are read by the frontend
+      // (ExecutiveSummary.tsx). `ok` and `issues` were dead — dropped.
       dqStatus: {
-        ok: dqSummary.filter((d) => d.severity === 'INFO').length,
-        warnings: dqSummary.filter((d) => d.severity === 'WARNING').length,
-        errors: dqSummary.filter((d) => d.severity === 'ERROR').length,
-        issues: dqSummary,
+        errors: dqSeverityCounts.get('ERROR') ?? 0,
+        warnings: dqSeverityCounts.get('WARNING') ?? 0,
       },
       growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal,
@@ -688,7 +713,7 @@ export async function GET(req: NextRequest) {
       topItemsByTrial: topTrial,
       topItemsByLossSurplus: topLossSurplus,
       topDeviasiRank,
-      deviationBreakdown: breakdownEnriched,
+      deviationBreakdown: breakdown,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,
       trend,

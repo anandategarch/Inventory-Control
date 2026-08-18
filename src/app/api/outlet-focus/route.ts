@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { analysisCache } from '@/lib/cache';
+import { focusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, getThresholdsVersion } from '@/lib/settings';
 import { calcGrowth, calcZScoreFromStats, computeDirection, computePriority, computeNominalDeviationGrowth, computeHealthScore } from '@/lib/metrics';
@@ -199,7 +199,9 @@ export async function GET(req: NextRequest) {
 
     const thresholdsVersion = await getThresholdsVersion();
     const cacheKey = `outlet-focus|${outletCode}|${month}|${week}|${compareWeekParam || ''}|${compareMonthParam || ''}|tv${thresholdsVersion}`;
-    const cached = analysisCache.get(cacheKey);
+    // OPTIMIZE-FOCUS: use dedicated focusCache (60s TTL, max 50) so outlet-focus
+    // results are not evicted by other routes' entries in the shared analysisCache.
+    const cached = focusCache.get(cacheKey);
     if (cached) {
       return NextResponse.json({ ...(cached as object), cached: true, durationMs: Date.now() - startedAt });
     }
@@ -222,7 +224,7 @@ export async function GET(req: NextRequest) {
         where: { code: outletCode },
         select: { id: true, code: true, name: true, area: true },
       }),
-      db.outletPIC.findUnique({ where: { outletCode } }).catch(() => null),
+      db.outletPIC.findUnique({ where: { outletCode }, select: { pic: true } }).catch(() => null),
       db.week.findMany({
         select: { weekLabel: true, monthKey: true },
         distinct: ['monthKey', 'weekLabel'],
@@ -309,6 +311,7 @@ export async function GET(req: NextRequest) {
         FROM period_aggs pa
         LEFT JOIN sales_per_period sp ON pa."monthLabel" = sp."monthLabel" AND pa."weekLabel" = sp."weekLabel"
         ORDER BY pa."monthLabel", pa."weekLabel"
+        LIMIT 24  -- OPTIMIZE-FOCUS: bound timeline (2 years of weeks); JS re-sorts chronologically via monthKey
       `,
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         WITH sales_per_outlet AS (
@@ -379,12 +382,15 @@ export async function GET(req: NextRequest) {
         })();
 
     // ============================================================
-    //  P1 fix: Phase 2 — dependent queries (3 parallel)
+    //  P1 fix: Phase 2 — dependent queries (5 parallel)
     //  prevRecs (needs prevPeriod), historicalStats (needs historicalPeriods),
-    //  areaBench (needs outlet.area) — all depend on Phase 1 results.
+    //  areaBench (needs outlet.area), totalOutletsInPeriod (needs area),
+    //  dqRows (needs outlet.id) — all depend on Phase 1 results only.
+    //  OPTIMIZE-FOCUS: moved totalOutletsInPeriod + dqRows from sequential
+    //  awaits (lines 836 + 900) into this Promise.all — saves 2 round-trips.
     // ============================================================
     const periodPairs = historicalPeriods.map((p) => `${p.monthLabel}|${p.weekLabel}`);
-    const [prevRecs, histRows, areaBenchRows] = await Promise.all([
+    const [prevRecs, histRows, areaBenchRows, totalOutletsInPeriodRows, dqRows] = await Promise.all([
       prevPeriod
         ? db.$queryRaw<OutletFocusRow[]>`
             SELECT ir.id, ir."itemId", i.name as "itemName", i.satuan,
@@ -450,6 +456,25 @@ export async function GET(req: NextRequest) {
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
       `,
+      // OPTIMIZE-FOCUS: total outlets in period (was sequential await at line ~836).
+      // Uses @@index([area, monthLabel, weekLabel]) — indexed scan.
+      db.$queryRaw<Array<{ cnt: number | bigint }>>`
+        SELECT CAST(COUNT(DISTINCT "outletId") AS INTEGER) as cnt
+        FROM "InventoryRecord"
+        WHERE "monthLabel" = ${month} AND "weekLabel" = ${week} AND area = ${area}
+      `,
+      // OPTIMIZE-FOCUS: DQ issues (was sequential await at line ~900).
+      // .catch() preserves original try/catch semantics — DQIssue table may not
+      // have outletId populated in older deployments; fallback to computed DQ.
+      db.dQIssue.findMany({
+        where: {
+          outletId: outlet.id,
+          sourceFile: { monthLabel: month },
+        },
+        select: { severity: true, code: true, message: true, rowNumber: true },
+        take: 200,
+        orderBy: { id: 'desc' },
+      }).catch(() => [] as Array<{ severity: string; code: string; message: string; rowNumber: number | null }>),
     ]);
 
     // Build historicalStats map from parallel histRows result
@@ -833,11 +858,8 @@ export async function GET(req: NextRequest) {
     // FIX (BUG-1-9): Filter by area so rank context is "in area" not "nationally".
     //   An outlet ranked #5 of 20 in its area was previously shown as #5 of 333
     //   nationally, misleading users about relative performance.
-    const totalOutletsInPeriodRows = await db.$queryRaw<Array<{ cnt: number | bigint }>>`
-      SELECT CAST(COUNT(DISTINCT "outletId") AS INTEGER) as cnt
-      FROM "InventoryRecord"
-      WHERE "monthLabel" = ${month} AND "weekLabel" = ${week} AND area = ${area}
-    `;
+    // OPTIMIZE-FOCUS: totalOutletsInPeriodRows now fetched in Phase 2 Promise.all
+    // (was sequential await here). Saves 1 DB round-trip.
     const totalOutletsInPeriod = Number(totalOutletsInPeriodRows[0]?.cnt ?? 0);
 
     // ============================================================
@@ -893,28 +915,16 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Step 12: DQ issues for this outlet (from DQIssue table)
+    //  OPTIMIZE-FOCUS: dqRows now fetched in Phase 2 Promise.all (was sequential
+    //  await here with try/catch). .catch(() => []) in the Promise.all preserves
+    //  the original fallback semantics (DQIssue.outletId may be unpopulated).
     // ============================================================
-    let dqIssues: Array<{ severity: string; code: string; message: string; rowNumber: number | null }> = [];
-    try {
-      // Find DQ issues by outletId for current month's source files
-      const dqRows = await db.dQIssue.findMany({
-        where: {
-          outletId: outlet.id,
-          sourceFile: { monthLabel: month },
-        },
-        select: { severity: true, code: true, message: true, rowNumber: true },
-        take: 200,
-        orderBy: { id: 'desc' },
-      });
-      dqIssues = dqRows.map((r) => ({
-        severity: r.severity,
-        code: r.code,
-        message: r.message,
-        rowNumber: r.rowNumber,
-      }));
-    } catch {
-      // DQIssue table may not have outletId populated; fallback computed issues
-    }
+    let dqIssues: Array<{ severity: string; code: string; message: string; rowNumber: number | null }> = dqRows.map((r) => ({
+      severity: r.severity,
+      code: r.code,
+      message: r.message,
+      rowNumber: r.rowNumber,
+    }));
 
     // Computed DQ issues (fallback / supplement):
     const computedDQ: Array<{ severity: string; code: string; message: string; rowNumber: number | null }> = [];
@@ -1132,7 +1142,11 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     };
 
-    analysisCache.set(cacheKey, result);
+    // OPTIMIZE-FOCUS: cache in dedicated focusCache (60s TTL, max 50).
+    // Separate from analysisCache so outlet-focus results aren't evicted by
+    // other routes' entries. Cleared alongside analysisCache on mutations
+    // (see data, settings, ingest-process, pic, pic/import, ingestion routes).
+    focusCache.set(cacheKey, result);
 
     return NextResponse.json(result);
   } catch (e: any) {

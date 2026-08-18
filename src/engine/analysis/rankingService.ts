@@ -5,7 +5,6 @@
 //  All metric computations go through computeHealthScore, computeDevBomAggregate,
 //  computeResidualPctAggregate, computeLossToSales, calcZScoreFromStats.
 // ============================================================
-import type { Outlet } from '@prisma/client';
 import type { PriorityScore, InvestigationItem } from '@/types/inventory';
 import type { RuntimeThresholds } from '@/lib/settings';
 import { CFG_THRESHOLDS } from '@/config/thresholds';
@@ -259,7 +258,7 @@ export function computeOutletHealthRanking(
   const salesByOutletMode = dedupSalesByOutlet(recsWithFlags.map((r) => r.curr));
 
   const byOutlet = new Map<number, {
-    outlet: Outlet;
+    outlet: RecWithRels['outlet'];
     area: string;
     normal: number;
     warning: number;
