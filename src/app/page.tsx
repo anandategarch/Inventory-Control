@@ -15,7 +15,6 @@ import {
   MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
-import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
@@ -30,9 +29,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Activity, Boxes, BarChart3, ShieldAlert, Lightbulb,
+  Activity, Boxes, BarChart3, ShieldAlert,
   MapPin,
-  Calendar, Loader2, Target, Store,
+  Calendar, Loader2, Store,
   FileDown,
 } from 'lucide-react';
 
@@ -272,21 +271,12 @@ export default function DashboardPage() {
               <TabsTrigger value="dashboard" className="text-xs">
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>
-              <TabsTrigger value="insight" className="text-xs">
-                <Lightbulb className="h-3.5 w-3.5" /> Insight
-              </TabsTrigger>
-              <TabsTrigger value="area" className="text-xs">
-                <MapPin className="h-3.5 w-3.5" /> Area
-              </TabsTrigger>
-              <TabsTrigger value="focus" className="text-xs">
-                <Target className="h-3.5 w-3.5" /> Focus Mode
-              </TabsTrigger>
               <TabsTrigger value="resto" className="text-xs">
                 <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
             </TabsList>
 
-            {/* ====== DASHBOARD TAB ====== */}
+            {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
             <TabsContent value="dashboard" className="space-y-4 mt-2">
               {/* Section: Executive Summary */}
               <section>
@@ -314,17 +304,44 @@ export default function DashboardPage() {
                 <MultiPeriodComparisonCard data={analysis.data} />
               </section>
 
-              {/* Section: Top Items */}
+              {/* Section: Top Items + Top Outlets */}
               <section>
                 <SectionHeader
                   icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Item Prioritas"
+                  title="Item Prioritas & Top Resto"
                 />
                 <div className="grid lg:grid-cols-3 gap-4">
                   <TopItemsByNominal data={analysis.data} />
                   <TopItemsByDevBom data={analysis.data} />
                   <TopOutlets data={analysis.data} />
                 </div>
+              </section>
+
+              {/* Section: Area Comparison + Outlet Health Ranking */}
+              <section className="grid lg:grid-cols-2 gap-4">
+                <div>
+                  <SectionHeader
+                    icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
+                    title="Perbandingan Area"
+                  />
+                  <AreaComparison data={analysis.data} />
+                </div>
+                <div>
+                  <SectionHeader
+                    icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                    title="Ranking Kondisi Resto"
+                  />
+                  <OutletHealthRanking data={analysis.data} />
+                </div>
+              </section>
+
+              {/* Section: Item Consistency */}
+              <section>
+                <SectionHeader
+                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+                  title="Pola Item (Systemic / Widespread / Isolated)"
+                />
+                <ItemConsistencyAnalysis data={analysis.data} />
               </section>
 
               {/* Section: Loss/Surplus + Trend */}
@@ -334,51 +351,7 @@ export default function DashboardPage() {
               </section>
             </TabsContent>
 
-            {/* ====== INSIGHT TAB ====== */}
-            <TabsContent value="insight" className="space-y-4 mt-2">
-              <InsightsPanel data={analysis.data} />
-            </TabsContent>
-
-            {/* ====== AREA TAB ====== */}
-            <TabsContent value="area" className="space-y-4 mt-2">
-              {/* Area Comparison */}
-              <section>
-                <SectionHeader
-                  icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
-                  title="Perbandingan Area"
-                />
-                <AreaComparison data={analysis.data} />
-              </section>
-
-              {/* Outlet Health Ranking */}
-              <section className="grid lg:grid-cols-2 gap-4">
-                <OutletHealthRanking data={analysis.data} />
-              </section>
-
-              {/* Item Consistency Analysis */}
-              <section>
-                <SectionHeader
-                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Pola Item (Systemic / Widespread / Isolated)"
-                />
-                <ItemConsistencyAnalysis data={analysis.data} />
-              </section>
-
-              <section>
-                <SectionHeader
-                  icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-                  title="Top Outlet"
-                />
-                <TopOutlets data={analysis.data} />
-              </section>
-            </TabsContent>
-
-            {/* ====== FOCUS MODE TAB ====== */}
-            <TabsContent value="focus" className="space-y-4 mt-2">
-              <OutletFocusMode data={analysis.data} />
-            </TabsContent>
-
-            {/* ====== RESTO ANALYSIS TAB ====== */}
+            {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
             <TabsContent value="resto" className="space-y-4 mt-2">
               <RestoAnalysis analysisData={analysis.data} />
             </TabsContent>
