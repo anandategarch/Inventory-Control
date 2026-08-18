@@ -306,3 +306,196 @@ export async function queryPeerComparison(
 
   return { targetSales, peers };
 }
+
+// ============================================================
+//  Peer Item Comparison — for the top N items in the target
+//  outlet, return the same items' metrics across all peer
+//  outlets (±10% sales). Enables item-level comparison:
+//  "Item Ayam di Resto A vs Item Ayam di Resto B, C, D".
+//  mode: 'week' = filter by weekLabel, 'month' = MAX(weekLabel)
+//  (same cumulative-week fix as queryPeerComparison, see
+//  schema comment lines 35-39: weeks are CUMULATIVE so
+//  summing across weeks multi-counts).
+// ============================================================
+export interface PeerItemRow {
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  qtyDeviasi: number;
+  qtyBom: number;
+  nominalDeviasi: number;
+  devBom: number;
+  direction: string;
+  isTarget: boolean;
+}
+
+export async function queryPeerItemComparison(
+  outletCode: string,
+  month: string,
+  week: string | null,
+  mode: 'week' | 'month',
+  topItems: number = 5,
+  peerLimit: number = 10
+): Promise<PeerItemRow[]> {
+  // CRITICAL FIX (PEER-BACKEND-5): Same cumulative-week fix as
+  // queryPeerComparison. In month mode, MAX(weekLabel) gives the
+  // latest cumulative week (= whole-month aggregate) — summing all
+  // 4 weeks would quadruple-count metrics because each week already
+  // INCLUDES all previous weeks (schema lines 35-39).
+  const weekFilter = mode === 'week' && week
+    ? Prisma.sql`AND ir."weekLabel" = ${week}`
+    : Prisma.sql`AND ir."weekLabel" = (
+        SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
+        WHERE ir2."monthLabel" = ${month}
+      )`;
+
+  const rows = await db.$queryRaw<any[]>`
+    WITH sales_counts AS (
+      SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
+      FROM "InventoryRecord" ir
+      WHERE ir."monthLabel" = ${month}
+        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+        ${weekFilter}
+      GROUP BY ir."outletId", ir."nominalSales"
+    ),
+    ranked_sales AS (
+      SELECT "outletId", "nominalSales",
+        ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
+      FROM sales_counts
+    ),
+    sales_mode AS (
+      SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
+    ),
+    target AS (
+      SELECT sm.sales, o.id as "outletId"
+      FROM sales_mode sm
+      JOIN "Outlet" o ON sm."outletId" = o.id
+      WHERE o.code = ${outletCode}
+    ),
+    target_items AS (
+      SELECT ir."itemId", i.name as "itemName",
+        ROW_NUMBER() OVER (ORDER BY ABS(ir."nominalDeviasi") DESC) as item_rank
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE o.code = ${outletCode}
+        AND ir."monthLabel" = ${month}
+        ${weekFilter}
+        AND ir."absNominalDeviasi" IS NOT NULL
+        AND ir."absNominalDeviasi" > 0
+    ),
+    peer_outlets AS (
+      SELECT o.id, o.code, o.name, sm.sales
+      FROM sales_mode sm
+      JOIN "Outlet" o ON sm."outletId" = o.id
+      CROSS JOIN target t
+      WHERE ABS(sm.sales - t.sales) <= t.sales * 0.1
+      ORDER BY CASE WHEN o.code = ${outletCode} THEN 0 ELSE 1 END,
+               ABS(sm.sales - t.sales)
+      LIMIT ${peerLimit + 1}
+    )
+    SELECT
+      ti."itemName",
+      o.code as "outletCode",
+      o.name as "outletName",
+      COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasi",
+      COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
+      COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+        ELSE 0 END as "devBom",
+      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
+           ELSE 'NEUTRAL' END as "direction",
+      CASE WHEN o.code = ${outletCode} THEN true ELSE false END as "isTarget",
+      ti.item_rank as "itemRank"
+    FROM target_items ti
+    CROSS JOIN peer_outlets po
+    LEFT JOIN "InventoryRecord" ir
+      ON ir."outletId" = po.id
+      AND ir."itemId" = ti."itemId"
+      AND ir."monthLabel" = ${month}
+      ${weekFilter}
+    JOIN "Outlet" o ON po.id = o.id
+    WHERE ti.item_rank <= ${topItems}
+    GROUP BY ti."itemName", ti."itemId", ti.item_rank, o.code, o.name
+    ORDER BY ti.item_rank, o.code
+  `;
+
+  return rows.map((r: any) => ({
+    itemName: r.itemName,
+    outletCode: r.outletCode,
+    outletName: r.outletName,
+    qtyDeviasi: Number(r.qtyDeviasi),
+    qtyBom: Number(r.qtyBom),
+    nominalDeviasi: Number(r.nominalDeviasi),
+    devBom: Number(r.devBom),
+    direction: r.direction,
+    isTarget: Boolean(r.isTarget),
+  }));
+}
+
+// ============================================================
+//  Peer Trend — multi-period trend comparison: target vs
+//  peer average across all weekLabels in the current month.
+//  peerOutletCodes comes from queryPeerComparison result.
+//  NOTE: Unlike queryPeerComparison / queryPeerItemComparison,
+//  this query does NOT apply the MAX(weekLabel) cumulative fix
+//  because the goal is to show the per-week breakdown itself
+//  (each week is one data point on the trend chart). The
+//  cumulative nature of weeks (schema lines 35-39) means each
+//  successive week already includes prior weeks, so the trend
+//  shows how the cumulative ratio evolves across the month.
+// ============================================================
+export interface PeerTrendRow {
+  weekLabel: string;
+  targetDevBom: number;
+  peerAvgDevBom: number;
+  targetNominal: number;
+  peerAvgNominal: number;
+}
+
+export async function queryPeerTrend(
+  outletCode: string,
+  month: string,
+  week: string,
+  peerOutletCodes: string[]
+): Promise<PeerTrendRow[]> {
+  // Prisma.join requires ≥1 element; outletCode is always present,
+  // so allCodes always has at least one entry.
+  const allCodes = [outletCode, ...peerOutletCodes];
+
+  const rows = await db.$queryRaw<any[]>`
+    WITH outlet_weekly AS (
+      SELECT
+        ir."weekLabel",
+        o.code as "outletCode",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBom",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      FROM "InventoryRecord" ir
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."monthLabel" = ${month}
+        AND o.code IN (${Prisma.join(allCodes)})
+      GROUP BY ir."weekLabel", o.code
+    )
+    SELECT
+      ow."weekLabel",
+      COALESCE(MAX(CASE WHEN ow."outletCode" = ${outletCode} THEN ow."devBom" END), 0) as "targetDevBom",
+      COALESCE(AVG(CASE WHEN ow."outletCode" != ${outletCode} THEN ow."devBom" END), 0) as "peerAvgDevBom",
+      COALESCE(MAX(CASE WHEN ow."outletCode" = ${outletCode} THEN ow."nominalDeviasi" END), 0) as "targetNominal",
+      COALESCE(AVG(CASE WHEN ow."outletCode" != ${outletCode} THEN ow."nominalDeviasi" END), 0) as "peerAvgNominal"
+    FROM outlet_weekly ow
+    GROUP BY ow."weekLabel"
+    ORDER BY ow."weekLabel"
+  `;
+
+  return rows.map((r: any) => ({
+    weekLabel: r.weekLabel,
+    targetDevBom: Number(r.targetDevBom),
+    peerAvgDevBom: Number(r.peerAvgDevBom),
+    targetNominal: Number(r.targetNominal),
+    peerAvgNominal: Number(r.peerAvgNominal),
+  }));
+}

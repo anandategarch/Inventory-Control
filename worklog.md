@@ -6069,3 +6069,61 @@ Stage Summary:
 - LOW (4): PEER-BACKEND-6 — LIMIT off-by-one: target occupies slot #1, so peerLimit=10 returns only 9 actual peers (outlets.ts:269). PEER-BACKEND-9 — Dead column `topItemNominalRaw` (line 218, never selected) + redundant ABS() on absNominalDeviasi (lines 228, 234). PEER-BACKEND-12 — Error response leaks e.message (route.ts:47). PEER-BACKEND-17 — isTarget typed as boolean but SQLite returns 0/1 integer (outlets.ts:296).
 - NONE (5): Bug 3 (targetSales=0 filter — covered by Bug 2), Bug 7 (NULL sales — correctly filtered by COALESCE+>0), Bug 8 (BigInt — Number()-coerced at line 292), Bug 13 (rate-limit IS applied), Bug 14 (resolveMonthLabel correct), Bug 16 (export chain intact).
 - Lint + tsc: both pass clean. All bugs are logic/runtime, not type-system.
+
+---
+Task ID: PEER-ENHANCE-BACKEND
+Agent: Peer Backend Enhancer
+Task: Add item-level + trend peer comparison queries
+
+Work Log:
+- Read worklog.md (last 30 lines) for context — confirmed prior PEER-BACKEND audit identified cumulative-week multi-counting bug (PEER-BACKEND-5) and the MAX(weekLabel) fix pattern already applied in queryPeerComparison (outlets.ts:174-182).
+- Read src/lib/queries/outlets.ts in full — confirmed queryPeerComparison structure (lines 167-308), its sales_mode → target → outlet_aggs CTE chain, and its weekFilter pattern (lines 177-182) that I needed to replicate for queryPeerItemComparison.
+- Read src/lib/queries/shared.ts — confirmed Prisma.sql fragment pattern + Prisma.join usage for IN clauses (used in queryPeerTrend).
+- Read prisma/schema.prisma (InventoryRecord model, lines 83-154) — confirmed field names: nominalDeviasi, qtyBom, qtyDeviasi, nominalLossSurplus, absNominalDeviasi, weekLabel, monthLabel. Confirmed week cumulative semantics (lines 35-39).
+- Added queryPeerItemComparison (outlets.ts:332-436): 5 CTEs (sales_counts → ranked_sales → sales_mode → target → target_items → peer_outlets) reusing queryPeerComparison's MODE sales pattern. Main query CROSS JOINs target_items × peer_outlets, LEFT JOINs InventoryRecord (so items absent in a peer outlet return 0s, not missing rows), GROUP BY (item, outlet). Fixed the task's malformed double-FROM SQL by using a single FROM target_items ti CROSS JOIN peer_outlets po LEFT JOIN InventoryRecord ir ... JOIN Outlet o .... Applied same cumulative-week fix (MAX(weekLabel) in month mode). peer_outlets uses ORDER BY CASE WHEN o.code = target THEN 0 ELSE 1 END to guarantee target is always included within peerLimit+1 slots (mirrors queryPeerComparison's LIMIT+1 fix from PEER-BACKEND-6).
+- Added queryPeerTrend (outlets.ts:458-501): outlet_weekly CTE computes per-(week,outlet) devBom + nominalDeviasi, then outer query pivots via MAX(CASE WHEN target)/AVG(CASE WHEN peer) to get targetDevBom, peerAvgDevBom, targetNominal, peerAvgNominal per weekLabel. Used Prisma.join([outletCode, ...peerOutletCodes]) for the IN clause. Deliberately did NOT apply MAX(weekLabel) fix here because the query's purpose is the per-week breakdown itself — each week is one data point on the trend chart, and weeks being cumulative means the trend shows the cumulative-ratio evolution across the month (documented in comment block lines 438-448).
+- Number()-coerced all numeric fields in both result mappers (outlets.ts:429-434, 496-499); Boolean()-coerced isTarget for SQLite 0/1 portability (outlets.ts:434) — matches queryPeerComparison's pattern (line 304).
+- Verified NO use of PostgreSQL-only constructs: no DISTINCT ON, no FILTER clause, no :: casts. ROW_NUMBER() window function works in both SQLite ≥3.25 and PostgreSQL. Prisma.join generates portable IN (?, ?, ...). CTEs work in both.
+- Ran `bun run lint` — exit 0, clean (no warnings/errors).
+- Ran `npx tsc --noEmit --skipLibCheck` — exit 0, clean (no type errors).
+
+Stage Summary:
+- queryPeerItemComparison added at src/lib/queries/outlets.ts:332-436 (function) + outlets.ts:320-330 (PeerItemRow interface). Exports PeerItemRow + queryPeerItemComparison. Signature: (outletCode, month, week, mode, topItems=5, peerLimit=10) => Promise<PeerItemRow[]>.
+- queryPeerTrend added at src/lib/queries/outlets.ts:458-501 (function) + outlets.ts:450-456 (PeerTrendRow interface). Exports PeerTrendRow + queryPeerTrend. Signature: (outletCode, month, week, peerOutletCodes[]) => Promise<PeerTrendRow[]>.
+- Both interfaces + functions re-exported transparently via existing barrel chain: queries/index.ts:9 (`export * from './outlets'`) → queries.ts:12 (`export * from './queries/index'`), so `import { queryPeerItemComparison, queryPeerTrend, PeerItemRow, PeerTrendRow } from '@/lib/queries'` works out of the box.
+- Both queries are SQLite + PostgreSQL portable (no DISTINCT ON / FILTER / :: casts).
+- Both apply Number() coercion to all numeric fields; isTarget wrapped in Boolean() for SQLite 0/1 portability.
+- queryPeerItemComparison applies the same MAX(weekLabel) cumulative-week fix as queryPeerComparison in month mode (outlets.ts:345-350). queryPeerTrend intentionally does NOT apply it (documented at outlets.ts:442-448) since its purpose is the per-week trend breakdown.
+- Lint + tsc both pass clean. Ready for API route + frontend consumption.
+
+---
+Task ID: PEER-ENHANCE-FRONTEND
+Agent: Peer Frontend Enhancer
+Task: Add 8 analysis features to Peer Comparison
+
+Work Log:
+- Read /home/z/my-project/worklog.md (last ~50 lines) for context — found prior AUDIT-PEER-FRONTEND + AUDIT-PEER-BACKEND summaries; the existing PeerComparison.tsx had peer table with color coding + clickable deep-dive; backend `queryPeerComparison` exists in outlets.ts but no `queryPeerItemComparison` / `queryPeerTrend`.
+- Read src/components/dashboard/PeerComparison.tsx (full 222 lines) to understand current structure: useDashboard hook, useQuery to /api/peer-comparison, peer table with sticky header, colorCell helper, columns array.
+- Read src/lib/queries/outlets.ts to understand the SQL pattern (CTE chain: sales_counts → ranked_sales → sales_mode → target → outlet_aggs → top_items) and confirm backend query helpers for item-level / trend DO NOT exist (only `queryPeerComparison`).
+- Read src/lib/format.ts to confirm `fmtIDR`, `fmtNum`, `fmtPctAbs` signatures and Indonesian-style decimal formatting.
+- Read prisma/schema.prisma for InventoryRecord fields (monthLabel, weekLabel, direction, residualQty, absNominalDeviasi, qtyBom, qtyDeviasi, etc.) and Week model (weekLabel, monthKey).
+- Read src/hooks/useDashboard.ts to confirm store shape: focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet.
+- Created src/app/api/peer-comparison/items/route.ts (Feature 3 backend): CTE chain that finds target's top-N items by absNominalDeviasi, then cross-joins with peer outlets (±10% sales band) to compute per-item per-outlet metrics; returns target / peerAvg / peerBest / gap per item. Reuses the latest-week filter for month-mode to avoid cumulative double-counting.
+- Created src/app/api/peer-comparison/trend/route.ts (Feature 6 backend): for each week in the month, returns { weekLabel, devBomTarget, devBomPeerAvg, salesTarget, peerCount }. Accepts optional `peers` param to freeze peer set across weeks.
+- Rewrote src/components/dashboard/PeerComparison.tsx with all 8 features in spec'd order: Efficiency Score (#7), Gap Analysis (#2), Ranking Summary (#1), Scatter Plot Sales vs Dev/BOM (#4), existing Peer Table + new Anomaly Flags column (#5), Item-Level Comparison (#3), Trend Chart target vs peer avg (#6), Correlation Insight (#9).
+- All client-side computations wrapped in useMemo; only #3 and #6 use new API calls (as instructed).
+- Used Recharts ScatterChart + LineChart; target dots/lines red (#dc2626), peer dots/lines zinc (#71717a) — no indigo/blue.
+- Ran `bun run lint` → exit 0 clean. Ran `npx tsc --noEmit --skipLibCheck` → 2 initial errors (`data?.error` access on ItemComparisonResponse / TrendResponse types) → fixed by adding `error?: string` to both interfaces → re-ran → exit 0 clean.
+- Wrote detailed work record to /home/z/my-project/agent-ctx/PEER-ENHANCE-FRONTEND-peer-frontend-enhancer.md.
+
+Stage Summary:
+- Feature 1 (Ranking Summary): src/components/dashboard/PeerComparison.tsx — `RankingSummaryCard` function (lines ~440-500). Rank 1 = best (lowest for bad metrics, highest for good). 6 key metrics shown with green/amber/red badges.
+- Feature 2 (Gap Analysis): src/components/dashboard/PeerComparison.tsx — `GapAnalysisCard` function (lines ~370-435). Target vs peer BEST (min for bad, max for good). 4 metrics in 2-col grid with absolute gap + % above best.
+- Feature 3 (Item-Level Comparison): src/components/dashboard/PeerComparison.tsx — `ItemLevelComparison` + `ItemComparisonBlock` functions (lines ~680-790). Uses useQuery to new API route /api/peer-comparison/items. Top 5 items, each as a mini-table with Target / Peer Avg / Peer Best / Gap rows. Backend: src/app/api/peer-comparison/items/route.ts (lines 1-167).
+- Feature 4 (Scatter Plot): src/components/dashboard/PeerComparison.tsx — `ScatterPlotCard` function (lines ~510-580). Recharts ScatterChart, X=Sales, Y=Dev/BOM%. Target dot red r=7, peer dots zinc r=4. Custom tooltip.
+- Feature 5 (Anomaly Flags): src/components/dashboard/PeerComparison.tsx — `AnomalyFlags` function (lines ~590-640). 4 rules: Dev/BOM/LOSS/Residual > 1.5× avg → 🔴, Sales < 0.8× avg → 🟡, all ±20% → 🟢 Normal. Rendered in new "Flags" column in existing peer table.
+- Feature 6 (Trend Chart): src/components/dashboard/PeerComparison.tsx — `TrendChartCard` function (lines ~820-920). Uses useQuery to new API route /api/peer-comparison/trend. Recharts LineChart with 2 lines: Target (red solid) + Peer Avg (zinc dashed). Backend: src/app/api/peer-comparison/trend/route.ts (lines 1-150).
+- Feature 7 (Efficiency Score): src/components/dashboard/PeerComparison.tsx — `EfficiencyScoreCard` function (lines ~310-365). Composite 0-100 = 100 - (devBomPenalty[≤50] + lossPenalty[≤25] + residualPenalty[≤15] + salesPenalty[≤10]). Color: green >70, amber 50-70, red <50. Peer avg marker at 50%.
+- Feature 9 (Correlation Insight): src/components/dashboard/PeerComparison.tsx — `CorrelationInsightCard` function (lines ~930-1010). 7 rule-based insights: outlier detection, best-practice peer, high-sales-low-deviation peers, residual fraud flag, LOSS severity, sales underperformance, best-in-class detection. Color-coded left-border (red/emerald/amber).
+- New API routes: src/app/api/peer-comparison/items/route.ts:1-167 (Feature 3) and src/app/api/peer-comparison/trend/route.ts:1-150 (Feature 6).
+- Quality: `bun run lint` exit 0, `npx tsc --noEmit --skipLibCheck` exit 0. No regressions to existing peer table functionality.

@@ -4,13 +4,58 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
-import { Users, Loader2 } from 'lucide-react';
+import { Users, Loader2, Lightbulb, TrendingUp, Target, BarChart3, Award, Gauge, Sparkles } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import {
+  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  ResponsiveContainer, Cell,
+  LineChart, Line, Legend,
+} from 'recharts';
 
+// ============================================================
+//  Types
+// ============================================================
+interface PeerRow {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  pic: string | null;
+  sales: number;
+  nominalDeviasi: number;
+  devBom: number;
+  qtyBom: number;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  qtyLossSurplus: number;
+  totalLoss: number;
+  totalSurplus: number;
+  residualQty: number;
+  itemCount: number;
+  topItem: string | null;
+  topItemNominal: number;
+  direction: string;
+  isTarget: boolean;
+}
+
+interface MetricDef {
+  key: keyof PeerRow;
+  label: string;
+  format: (v: number) => string;
+  higherBetter: boolean;
+}
+
+// ============================================================
+//  Peer Comparison — main component
+//  Adds 8 analysis features above/below the existing peer table:
+//   #1 Ranking Summary, #2 Gap Analysis, #3 Item-Level Comparison,
+//   #4 Scatter Plot, #5 Anomaly Flags, #6 Trend Chart,
+//   #7 Efficiency Score, #9 Correlation Insight
+// ============================================================
 export function PeerComparison() {
   const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet } = useDashboard();
   const activeOutlet = focusOutlet || outletCode;
@@ -65,13 +110,14 @@ export function PeerComparison() {
     );
   }
 
-  const peers: any[] = data.peers || [];
-  const targetRow = peers.find((p: any) => p.isTarget);
-  const otherPeers = peers.filter((p: any) => !p.isTarget);
+  const peers: PeerRow[] = data.peers || [];
+  const targetRow = peers.find((p) => p.isTarget);
+  const otherPeers = peers.filter((p) => !p.isTarget);
 
   // Compute peer averages (excluding target)
   const peerCount = otherPeers.length;
-  const avg = (field: string) => peerCount > 0 ? otherPeers.reduce((s: number, p: any) => s + p[field], 0) / peerCount : 0;
+  const avg = (field: keyof PeerRow) =>
+    peerCount > 0 ? otherPeers.reduce((s, p) => s + (p[field] as number), 0) / peerCount : 0;
 
   const avgSales = avg('sales');
   const avgNominalDeviasi = avg('nominalDeviasi');
@@ -85,9 +131,6 @@ export function PeerComparison() {
   const avgResidualQty = avg('residualQty');
   const avgItemCount = avg('itemCount');
 
-  // Color: target vs peer average
-  // For "bad" metrics (higher = worse): nominalDeviasi, devBom, totalLoss, waste, susut, trial, residual
-  // For "good" metrics (higher = better): sales, totalSurplus, itemCount
   const colorCell = (targetVal: number, avgVal: number, higherIsBetter: boolean = false) => {
     if (peerCount === 0) return '';
     const diff = targetVal - avgVal;
@@ -96,126 +139,926 @@ export function PeerComparison() {
     return isBetter ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold';
   };
 
-  const columns = [
-    { key: 'sales', label: 'Sales', format: fmtIDR, avg: avgSales, higherBetter: true },
-    { key: 'nominalDeviasi', label: 'Nominal Deviasi', format: fmtIDR, avg: avgNominalDeviasi, higherBetter: false },
-    { key: 'devBom', label: 'Dev/BOM', format: (v: number) => fmtPctAbs(v), avg: avgDevBom, higherBetter: false },
-    { key: 'totalLoss', label: 'Total LOSS', format: fmtIDR, avg: avgTotalLoss, higherBetter: false },
-    { key: 'totalSurplus', label: 'Total SURPLUS', format: fmtIDR, avg: avgTotalSurplus, higherBetter: true },
-    { key: 'qtyWaste', label: 'QTY Waste', format: fmtNum, avg: avgQtyWaste, higherBetter: false },
-    { key: 'qtySusut', label: 'QTY Susut', format: fmtNum, avg: avgQtySusut, higherBetter: false },
-    { key: 'qtyTrial', label: 'QTY Trial', format: fmtNum, avg: avgQtyTrial, higherBetter: false },
-    { key: 'qtyLossSurplus', label: 'QTY LS', format: fmtNum, avg: avgQtyLossSurplus, higherBetter: false },
-    { key: 'residualQty', label: 'Residual', format: fmtNum, avg: avgResidualQty, higherBetter: false },
-    { key: 'itemCount', label: 'Item Count', format: (v: number) => String(v), avg: avgItemCount, higherBetter: true },
+  const columns: MetricDef[] = [
+    { key: 'sales', label: 'Sales', format: fmtIDR, higherBetter: true },
+    { key: 'nominalDeviasi', label: 'Nominal Deviasi', format: fmtIDR, higherBetter: false },
+    { key: 'devBom', label: 'Dev/BOM', format: (v: number) => fmtPctAbs(v), higherBetter: false },
+    { key: 'totalLoss', label: 'Total LOSS', format: fmtIDR, higherBetter: false },
+    { key: 'totalSurplus', label: 'Total SURPLUS', format: fmtIDR, higherBetter: true },
+    { key: 'qtyWaste', label: 'QTY Waste', format: fmtNum, higherBetter: false },
+    { key: 'qtySusut', label: 'QTY Susut', format: fmtNum, higherBetter: false },
+    { key: 'qtyTrial', label: 'QTY Trial', format: fmtNum, higherBetter: false },
+    { key: 'qtyLossSurplus', label: 'QTY LS', format: fmtNum, higherBetter: false },
+    { key: 'residualQty', label: 'Residual', format: fmtNum, higherBetter: false },
+    { key: 'itemCount', label: 'Item Count', format: (v: number) => String(v), higherBetter: true },
   ];
+
+  // Peer averages object (used by subcomponents)
+  const peerAverages = {
+    sales: avgSales,
+    nominalDeviasi: avgNominalDeviasi,
+    devBom: avgDevBom,
+    totalLoss: avgTotalLoss,
+    totalSurplus: avgTotalSurplus,
+    qtyWaste: avgQtyWaste,
+    qtySusut: avgQtySusut,
+    qtyTrial: avgQtyTrial,
+    qtyLossSurplus: avgQtyLossSurplus,
+    residualQty: avgResidualQty,
+    itemCount: avgItemCount,
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ============ 1. HEADER + EXISTING TABLE ============ */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Peer Comparison
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                {activeOutlet} vs {peerCount} resto dengan sales ±10% ({mode === 'week' ? `WEEK ${currentWeek}` : 'Bulan'})
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value as 'week' | 'month')}
+                className="h-7 text-xs border rounded px-2 bg-background"
+                aria-label="Mode periode"
+              >
+                <option value="week">Per Week</option>
+                <option value="month">Per Bulan</option>
+              </select>
+              <select
+                value={String(peerLimit)}
+                onChange={(e) => setPeerLimit(parseInt(e.target.value))}
+                className="h-7 text-xs border rounded px-2 bg-background"
+                aria-label="Jumlah peer"
+              >
+                <option value="5">Top 5</option>
+                <option value="10">Top 10</option>
+                <option value="20">Top 20</option>
+                <option value="50">Top 50</option>
+              </select>
+            </div>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {/* ============ 2. EFFICIENCY SCORE (Feature 7) ============ */}
+      {targetRow && peerCount > 0 && (
+        <EfficiencyScoreCard target={targetRow} peerAvg={peerAverages} />
+      )}
+
+      {/* ============ 3. GAP ANALYSIS (Feature 2) ============ */}
+      {targetRow && peerCount > 0 && (
+        <GapAnalysisCard target={targetRow} peers={otherPeers} columns={columns} />
+      )}
+
+      {/* ============ 4. RANKING SUMMARY (Feature 1) ============ */}
+      {targetRow && peerCount > 0 && (
+        <RankingSummaryCard target={targetRow} peers={peers} columns={columns} />
+      )}
+
+      {/* ============ 5. SCATTER PLOT (Feature 4) ============ */}
+      {peerCount > 0 && (
+        <ScatterPlotCard peers={peers} targetCode={targetRow?.outletCode} />
+      )}
+
+      {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <BarChart3 className="h-4 w-4" />
+            Peer Table {peerCount > 0 && <span className="text-muted-foreground">— dengan Anomaly Flags</span>}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {peers.length === 0 ? (
+            <p className="text-center text-muted-foreground text-xs py-6">Tidak ada peer ditemukan</p>
+          ) : (
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background z-10">
+                  <TableRow>
+                    <TableHead className="text-[11px] sticky left-0 bg-background">Resto</TableHead>
+                    <TableHead className="text-[11px]">Area</TableHead>
+                    <TableHead className="text-[11px]">PIC</TableHead>
+                    <TableHead className="text-[11px]">Top Item</TableHead>
+                    {columns.map(col => (
+                      <TableHead key={col.key} className="text-[11px] text-right">{col.label}</TableHead>
+                    ))}
+                    <TableHead className="text-[11px] text-center">Dir</TableHead>
+                    <TableHead className="text-[11px] text-center">Flags</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {/* Peer Average Row */}
+                  {peerCount > 0 && (
+                    <TableRow className="border-b-2 border-muted-foreground/20 bg-muted/50">
+                      <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50">📊 Peer Avg</TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
+                      {columns.map(col => (
+                        <TableCell key={col.key} className="text-[11px] text-right text-muted-foreground font-mono">
+                          {col.format(peerAverages[col.key] as number)}
+                        </TableCell>
+                      ))}
+                      <TableCell className="text-[11px] text-center text-muted-foreground">—</TableCell>
+                      <TableCell className="text-[11px] text-center text-muted-foreground">—</TableCell>
+                    </TableRow>
+                  )}
+                  {/* Outlet Rows */}
+                  {peers.map((p) => (
+                    <TableRow
+                      key={p.outletCode}
+                      className={`cursor-pointer hover:bg-muted/50 ${p.isTarget ? 'bg-primary/10 border-primary/30' : ''}`}
+                      {...clickableRowProps(() => setFocusOutlet(p.outletCode))}
+                    >
+                      <TableCell className="text-[11px] font-medium sticky left-0 bg-background">
+                        {p.outletName}
+                        {p.isTarget && <Badge variant="default" className="text-[9px] ml-1 h-4">TARGET</Badge>}
+                        <div className="text-[10px] text-muted-foreground">{p.outletCode}</div>
+                      </TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
+                      <TableCell className="text-[11px] text-muted-foreground">{p.pic || '—'}</TableCell>
+                      <TableCell className="text-[11px] max-w-[120px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
+                      {columns.map(col => {
+                        const val = p[col.key] as number;
+                        const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, col.higherBetter) : '';
+                        return (
+                          <TableCell key={col.key} className={`text-[11px] text-right font-mono ${colorClass}`}>
+                            {col.format(val)}
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell className={`text-[11px] text-center font-semibold ${p.direction === 'LOSS' ? 'text-red-600' : p.direction === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+                        {p.direction?.[0] || '—'}
+                      </TableCell>
+                      <TableCell className="text-[11px] text-center">
+                        <AnomalyFlags row={p} peerAvg={peerAverages} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <div className="p-2 text-[10px] text-muted-foreground border-t">
+            💡 Klik baris untuk deep dive ke Resto Analysis. Hijau = lebih baik dari peer avg, Merah = lebih buruk.
+            Sales range: ±10% dari {targetRow ? fmtIDR(targetRow.sales) : 'target'}.
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ============ 7. ITEM-LEVEL COMPARISON (Feature 3) ============ */}
+      {targetRow && (
+        <ItemLevelComparison
+          outletCode={activeOutlet!}
+          monthLabel={monthLabel!}
+          week={currentWeek}
+          mode={mode}
+          enabled={Boolean(monthLabel && (mode === 'month' || currentWeek))}
+        />
+      )}
+
+      {/* ============ 8. TREND CHART (Feature 6) ============ */}
+      {targetRow && (
+        <TrendChartCard
+          outletCode={activeOutlet!}
+          monthLabel={monthLabel!}
+          peerCodes={otherPeers.map(p => p.outletCode)}
+          enabled={Boolean(monthLabel)}
+        />
+      )}
+
+      {/* ============ 9. CORRELATION INSIGHT (Feature 9) ============ */}
+      {targetRow && peerCount > 0 && (
+        <CorrelationInsightCard target={targetRow} peers={otherPeers} peerAvg={peerAverages} />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+//  Feature 7: Efficiency Score — composite 0-100
+// ============================================================
+function EfficiencyScoreCard({ target, peerAvg }: { target: PeerRow; peerAvg: Record<string, number> }) {
+  const score = useMemo(() => {
+    const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+    const devBomPenalty = Math.min(50, safeDiv(target.devBom - peerAvg.devBom, peerAvg.devBom) * 25);
+    const lossPenalty = Math.min(25, safeDiv(target.totalLoss - peerAvg.totalLoss, peerAvg.totalLoss) * 12.5);
+    const residualPenalty = Math.min(15, safeDiv(target.residualQty - peerAvg.residualQty, peerAvg.residualQty) * 7.5);
+    const salesPenalty = Math.min(10, Math.max(0, safeDiv(peerAvg.sales - target.sales, peerAvg.sales) * 10));
+    const raw = 100 - (devBomPenalty + lossPenalty + residualPenalty + salesPenalty);
+    return Math.max(0, Math.min(100, raw));
+  }, [target, peerAvg]);
+
+  const peerAvgScore = 50; // peer avg by definition sits at ~50 (no penalty no bonus)
+  const color = score > 70 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-500' : 'bg-red-500';
+  const textColor = score > 70 ? 'text-emerald-600' : score >= 50 ? 'text-amber-600' : 'text-red-600';
+  const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
 
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Gauge className="h-4 w-4" />
+          Efficiency Score
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-end justify-between">
           <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Peer Comparison
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              {activeOutlet} vs {peerCount} resto dengan sales ±10% ({mode === 'week' ? `WEEK ${currentWeek}` : 'Bulan'})
-            </p>
+            <span className={`text-3xl font-bold ${textColor}`}>{score.toFixed(0)}</span>
+            <span className="text-sm text-muted-foreground">/100</span>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as 'week' | 'month')}
-              className="h-7 text-xs border rounded px-2 bg-background"
-            >
-              <option value="week">Per Week</option>
-              <option value="month">Per Bulan</option>
-            </select>
-            <select
-              value={String(peerLimit)}
-              onChange={(e) => setPeerLimit(parseInt(e.target.value))}
-              className="h-7 text-xs border rounded px-2 bg-background"
-            >
-              <option value="5">Top 5</option>
-              <option value="10">Top 10</option>
-              <option value="20">Top 20</option>
-              <option value="50">Top 50</option>
-            </select>
+          <div className="text-right text-xs">
+            <div className="text-muted-foreground">Peer Avg: ~{peerAvgScore}/100</div>
+            <div className={textColor}>{label}</div>
           </div>
         </div>
+        <div className="relative h-3 w-full rounded-full bg-muted overflow-hidden" role="progressbar" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100}>
+          <div className={`h-full ${color} transition-all`} style={{ width: `${score}%` }} />
+          {/* Peer average marker */}
+          <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ left: '50%' }} title="Peer avg ~50" />
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Komposit dari Dev/BOM (50%), LOSS (25%), Residual (15%), Sales (10%). Higher = better.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Feature 2: Gap Analysis — target vs peer BEST (not avg)
+// ============================================================
+function GapAnalysisCard({
+  target,
+  peers,
+  columns,
+}: {
+  target: PeerRow;
+  peers: PeerRow[];
+  columns: MetricDef[];
+}) {
+  // Metrics to show in gap analysis (focus on the bad ones + sales)
+  const gapMetrics: Array<{ key: keyof PeerRow; label: string; format: (v: number) => string; higherBetter: boolean }> = [
+    { key: 'devBom', label: 'Dev/BOM', format: (v) => fmtPctAbs(v), higherBetter: false },
+    { key: 'totalLoss', label: 'Total LOSS', format: fmtIDR, higherBetter: false },
+    { key: 'residualQty', label: 'Residual', format: fmtNum, higherBetter: false },
+    { key: 'sales', label: 'Sales', format: fmtIDR, higherBetter: true },
+  ];
+
+  const rows = gapMetrics.map(m => {
+    const targetVal = target[m.key] as number;
+    const values = peers.map(p => p[m.key] as number);
+    // For bad metrics: best = min. For good metrics: best = max.
+    const bestVal = m.higherBetter ? Math.max(...values) : Math.min(...values);
+    const gap = targetVal - bestVal;
+    // % above best — for bad metrics, gap > 0 = worse than best
+    const pctAboveBest = bestVal !== 0 ? (gap / Math.abs(bestVal)) * 100 : 0;
+    const isWorse = m.higherBetter ? gap < 0 : gap > 0;
+    return { ...m, targetVal, bestVal, gap, pctAboveBest, isWorse };
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Target className="h-4 w-4" />
+          Gap Analysis (vs Peer Best)
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">Membandingkan target dengan peer TERBAIK (bukan rata-rata).</p>
       </CardHeader>
-      <CardContent className="p-0">
-        {peers.length === 0 ? (
-          <p className="text-center text-muted-foreground text-xs py-6">Tidak ada peer ditemukan</p>
-        ) : (
-          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-            <Table>
-              <TableHeader className="sticky top-0 bg-background z-10">
-                <TableRow>
-                  <TableHead className="text-[11px] sticky left-0 bg-background">Resto</TableHead>
-                  <TableHead className="text-[11px]">Area</TableHead>
-                  <TableHead className="text-[11px]">PIC</TableHead>
-                  <TableHead className="text-[11px]">Top Item</TableHead>
-                  {columns.map(col => (
-                    <TableHead key={col.key} className="text-[11px] text-right">{col.label}</TableHead>
-                  ))}
-                  <TableHead className="text-[11px] text-center">Dir</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* Peer Average Row */}
-                {peerCount > 0 && (
-                  <TableRow className="border-b-2 border-muted-foreground/20 bg-muted/50">
-                    <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50">📊 Peer Avg</TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
-                    {columns.map(col => (
-                      <TableCell key={col.key} className="text-[11px] text-right text-muted-foreground font-mono">
-                        {col.format(col.avg)}
-                      </TableCell>
-                    ))}
-                    <TableCell className="text-[11px] text-center text-muted-foreground">—</TableCell>
-                  </TableRow>
+      <CardContent>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {rows.map(r => (
+            <div key={r.key as string} className="rounded-md border p-2.5 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
+                <Badge variant="outline" className={`text-[9px] h-4 ${r.isWorse ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'}`}>
+                  {r.isWorse ? 'di bawah best' : 'di atas best'}
+                </Badge>
+              </div>
+              <div className="mt-1 text-xs font-mono">
+                <span className="font-semibold">{r.format(r.targetVal)}</span>
+                <span className="text-muted-foreground"> vs best </span>
+                <span className="text-emerald-600">{r.format(r.bestVal)}</span>
+              </div>
+              <div className={`text-[11px] font-semibold ${r.isWorse ? 'text-red-600' : 'text-emerald-600'}`}>
+                {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
+                {r.pctAboveBest !== 0 && (
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    ({r.pctAboveBest >= 0 ? '+' : ''}{r.pctAboveBest.toFixed(0)}% vs best)
+                  </span>
                 )}
-                {/* Outlet Rows */}
-                {peers.map((p: any) => (
-                  <TableRow
-                    key={p.outletCode}
-                    className={`cursor-pointer hover:bg-muted/50 ${p.isTarget ? 'bg-primary/10 border-primary/30' : ''}`}
-                    {...clickableRowProps(() => setFocusOutlet(p.outletCode))}
-                  >
-                    <TableCell className="text-[11px] font-medium sticky left-0 bg-background">
-                      {p.outletName}
-                      {p.isTarget && <Badge variant="default" className="text-[9px] ml-1 h-4">TARGET</Badge>}
-                      <div className="text-[10px] text-muted-foreground">{p.outletCode}</div>
-                    </TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
-                    <TableCell className="text-[11px] text-muted-foreground">{p.pic || '—'}</TableCell>
-                    <TableCell className="text-[11px] max-w-[120px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
-                    {columns.map(col => {
-                      const val = p[col.key];
-                      const colorClass = p.isTarget ? colorCell(val, col.avg, col.higherBetter) : '';
-                      return (
-                        <TableCell key={col.key} className={`text-[11px] text-right font-mono ${colorClass}`}>
-                          {col.format(val)}
-                        </TableCell>
-                      );
-                    })}
-                    <TableCell className={`text-[11px] text-center font-semibold ${p.direction === 'LOSS' ? 'text-red-600' : p.direction === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
-                      {p.direction?.[0] || '—'}
-                    </TableCell>
-                  </TableRow>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">
+          Untuk metrik &quot;buruk&quot; (Dev/BOM, LOSS, Residual), peer best = nilai terendah.
+          Untuk Sales, peer best = nilai tertinggi.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Feature 1: Ranking Summary — target's rank per metric
+// ============================================================
+function RankingSummaryCard({
+  target,
+  peers,
+  columns,
+}: {
+  target: PeerRow;
+  peers: PeerRow[];
+  columns: MetricDef[];
+}) {
+  // For each metric, rank all peers (1 = best, N = worst)
+  const total = peers.length;
+  const ranks = columns.map(col => {
+    const sorted = [...peers].sort((a, b) => {
+      const av = a[col.key] as number;
+      const bv = b[col.key] as number;
+      // For higherBetter: highest = best = rank 1 → sort descending
+      // For bad metrics (lower better): lowest = best = rank 1 → sort ascending
+      return col.higherBetter ? bv - av : av - bv;
+    });
+    const rank = sorted.findIndex(p => p.outletCode === target.outletCode) + 1;
+    const worst = rank === total;
+    const best = rank === 1;
+    return { col, rank, total, worst, best };
+  });
+
+  // Show only the most important metrics in the compact summary
+  const keyMetrics = ['sales', 'devBom', 'totalLoss', 'residualQty', 'nominalDeviasi', 'qtyWaste'];
+  const keyRanks = ranks.filter(r => keyMetrics.includes(r.col.key as string));
+
+  const rankColor = (rank: number, total: number) => {
+    if (rank === 1) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400';
+    if (rank === total) return 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400';
+    if (rank <= total / 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400';
+    return 'bg-muted text-muted-foreground';
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Award className="h-4 w-4" />
+          Ranking Summary
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">
+          {target.outletName} ranked di antara {total} resto (1 = terbaik, {total} = terburuk).
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {keyRanks.map(({ col, rank, total: t, worst, best }) => (
+            <div key={col.key as string} className="flex items-center justify-between rounded-md border p-2 bg-muted/30">
+              <span className="text-[11px] text-muted-foreground">{col.label}</span>
+              <Badge className={`text-[10px] h-5 ${rankColor(rank, t)}`} variant="secondary">
+                #{rank}/{t}
+                {best && ' ★'}
+                {worst && ' ⚠'}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Feature 4: Scatter Plot — Sales (X) vs Dev/BOM (Y)
+// ============================================================
+function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?: string }) {
+  const data = peers.map(p => ({
+    sales: p.sales,
+    devBom: p.devBom * 100, // convert ratio → %
+    outletName: p.outletName,
+    isTarget: p.outletCode === targetCode,
+  }));
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Sparkles className="h-4 w-4" />
+          Sales vs Dev/BOM
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">
+          Setiap titik = 1 resto. Target ditandai merah. Posisi kanan-bawah = sales tinggi & deviasi rendah (ideal).
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[280px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 16, bottom: 24, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis
+                type="number"
+                dataKey="sales"
+                name="Sales"
+                tickFormatter={(v) => fmtIDR(v)}
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                stroke="hsl(var(--border))"
+              >
+              </XAxis>
+              <YAxis
+                type="number"
+                dataKey="devBom"
+                name="Dev/BOM"
+                unit="%"
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                stroke="hsl(var(--border))"
+                width={48}
+              />
+              <RTooltip
+                cursor={{ strokeDasharray: '3 3' }}
+                content={({ active, payload }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+                  const d = payload[0].payload as any;
+                  return (
+                    <div className="rounded-md border bg-background p-2 text-[11px] shadow-md">
+                      <div className="font-semibold">{d.outletName}</div>
+                      <div className="text-muted-foreground">Sales: {fmtIDR(d.sales)}</div>
+                      <div className="text-muted-foreground">Dev/BOM: {d.devBom.toFixed(1)}%</div>
+                      {d.isTarget && <div className="text-red-600 font-semibold mt-0.5">TARGET</div>}
+                    </div>
+                  );
+                }}
+              />
+              <Scatter data={data}>
+                {data.map((entry, i) => (
+                  <Cell
+                    key={`cell-${i}`}
+                    fill={entry.isTarget ? '#dc2626' : '#71717a'}
+                    r={entry.isTarget ? 7 : 4}
+                  />
                 ))}
-              </TableBody>
-            </Table>
+              </Scatter>
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground mt-1">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-red-600" /> Target
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" /> Peer
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Feature 5: Anomaly Flags — per-resto badges
+// ============================================================
+function AnomalyFlags({ row, peerAvg }: { row: PeerRow; peerAvg: Record<string, number> }) {
+  const flags: Array<{ emoji: string; text: string; color: string }> = [];
+  const avgVal = (k: keyof PeerRow) => peerAvg[k as string] as number;
+
+  const checkRatio = (targetVal: number, avg: number) => (avg > 0 ? targetVal / avg : 0);
+
+  if (checkRatio(row.devBom, avgVal('devBom')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'Dev/BOM tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.totalLoss, avgVal('totalLoss')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'LOSS tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.residualQty, avgVal('residualQty')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'Residual tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.sales, avgVal('sales')) < 0.8 && avgVal('sales') > 0) {
+    flags.push({ emoji: '🟡', text: 'Sales rendah', color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/30' });
+  }
+
+  const allNormal =
+    flags.length === 0 &&
+    Math.abs(row.devBom - avgVal('devBom')) <= avgVal('devBom') * 0.2 &&
+    Math.abs(row.totalLoss - avgVal('totalLoss')) <= avgVal('totalLoss') * 0.2 &&
+    Math.abs(row.residualQty - avgVal('residualQty')) <= avgVal('residualQty') * 0.2 &&
+    Math.abs(row.sales - avgVal('sales')) <= avgVal('sales') * 0.2;
+
+  if (allNormal) {
+    flags.push({ emoji: '🟢', text: 'Normal', color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30' });
+  }
+
+  if (flags.length === 0) {
+    return <span className="text-muted-foreground text-[10px]">—</span>;
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      {flags.map((f, i) => (
+        <span key={i} className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium ${f.color}`} title={f.text}>
+          <span>{f.emoji}</span>
+          <span className="sr-only">{f.text}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+//  Feature 3: Item-Level Peer Comparison
+// ============================================================
+interface ItemComparisonResponse {
+  success: boolean;
+  error?: string;
+  items: Array<{
+    itemId: number;
+    itemName: string;
+    target: { qtyDeviasi: number; devBom: number; nominal: number };
+    peerAvg: { qtyDeviasi: number; devBom: number; nominal: number };
+    peerBest: { qtyDeviasi: number; devBom: number; nominal: number };
+    gap: { qtyDeviasi: number; devBom: number; nominal: number; nominalPctAboveBest: number };
+    peerCount: number;
+    peers: Array<{
+      outletCode: string;
+      outletName: string;
+      isTarget: boolean;
+      qtyDeviasi: number;
+      devBom: number;
+      nominal: number;
+      missing: boolean;
+    }>;
+  }>;
+}
+
+function ItemLevelComparison({
+  outletCode,
+  monthLabel,
+  week,
+  mode,
+  enabled,
+}: {
+  outletCode: string;
+  monthLabel: string;
+  week: string | null;
+  mode: 'week' | 'month';
+  enabled: boolean;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['peer-comparison-items', outletCode, monthLabel, week, mode],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('outletCode', outletCode);
+      p.set('month', monthLabel);
+      if (mode === 'week' && week) p.set('week', week);
+      p.set('mode', mode);
+      p.set('topItems', '5');
+      const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<ItemComparisonResponse>;
+    },
+    enabled,
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Item-Level Comparison
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">
+          Top 5 item di target outlet, dibandingkan dengan peer avg & peer best.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error || !data?.success ? (
+          <p className="text-center text-xs text-red-600 py-4">
+            Error: {error?.message || data?.error || 'Unknown'}
+          </p>
+        ) : !data.items || data.items.length === 0 ? (
+          <p className="text-center text-xs text-muted-foreground py-4">
+            Tidak ada item dengan deviasi signifikan pada periode ini.
+          </p>
+        ) : (
+          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+            {data.items.map((item) => (
+              <ItemComparisonBlock key={item.itemId} item={item} />
+            ))}
           </div>
         )}
-        <div className="p-2 text-[10px] text-muted-foreground border-t">
-          💡 Klik baris untuk deep dive ke Resto Analysis. Hijau = lebih baik dari peer avg, Merah = lebih buruk.
-          Sales range: ±10% dari {targetRow ? fmtIDR(targetRow.sales) : 'target'}.
-        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ItemComparisonBlock({
+  item,
+}: {
+  item: ItemComparisonResponse['items'][number];
+}) {
+  const fmtPctRatio = (v: number) => `${(v * 100).toFixed(1).replace('.', ',')}%`;
+  const rows = [
+    { label: 'QTY Deviasi', target: item.target.qtyDeviasi, avg: item.peerAvg.qtyDeviasi, best: item.peerBest.qtyDeviasi, gap: item.gap.qtyDeviasi, format: fmtNum },
+    { label: 'Dev/BOM', target: item.target.devBom, avg: item.peerAvg.devBom, best: item.peerBest.devBom, gap: item.gap.devBom, format: fmtPctRatio },
+    { label: 'Nominal', target: item.target.nominal, avg: item.peerAvg.nominal, best: item.peerBest.nominal, gap: item.gap.nominal, format: fmtIDR },
+  ];
+
+  return (
+    <div className="rounded-md border p-3 bg-muted/20">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-xs font-semibold flex items-center gap-1.5">
+          <span className="text-muted-foreground">📦</span>
+          {item.itemName}
+        </h4>
+        <Badge variant="outline" className="text-[9px] h-4">{item.peerCount} peer</Badge>
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-[10px] h-7">Metric</TableHead>
+            <TableHead className="text-[10px] h-7 text-right">Target</TableHead>
+            <TableHead className="text-[10px] h-7 text-right">Peer Avg</TableHead>
+            <TableHead className="text-[10px] h-7 text-right">Peer Best</TableHead>
+            <TableHead className="text-[10px] h-7 text-right">Gap</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(r => {
+            const isWorse = r.gap > 0; // all 3 are "bad" metrics (higher = worse)
+            return (
+              <TableRow key={r.label}>
+                <TableCell className="text-[10px] py-1">{r.label}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono font-semibold">{r.format(r.target)}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono text-muted-foreground">{r.format(r.avg)}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono text-emerald-600">{r.format(r.best)}</TableCell>
+                <TableCell className={`text-[10px] py-1 text-right font-mono font-semibold ${isWorse ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+// ============================================================
+//  Feature 6: Trend Chart — Dev/BOM across weeks
+// ============================================================
+interface TrendResponse {
+  success: boolean;
+  error?: string;
+  weeks: Array<{
+    weekLabel: string;
+    devBomTarget: number;
+    devBomPeerAvg: number;
+    salesTarget: number;
+    peerCount: number;
+  }>;
+}
+
+function TrendChartCard({
+  outletCode,
+  monthLabel,
+  peerCodes,
+  enabled,
+}: {
+  outletCode: string;
+  monthLabel: string;
+  peerCodes: string[];
+  enabled: boolean;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['peer-comparison-trend', outletCode, monthLabel, peerCodes.join(',')],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('outletCode', outletCode);
+      p.set('month', monthLabel);
+      if (peerCodes.length > 0) p.set('peers', peerCodes.slice(0, 20).join(','));
+      const res = await fetch(`/api/peer-comparison/trend?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<TrendResponse>;
+    },
+    enabled,
+  });
+
+  const chartData = (data?.weeks || []).map(w => ({
+    week: w.weekLabel,
+    target: +(w.devBomTarget * 100).toFixed(2),
+    peerAvg: +(w.devBomPeerAvg * 100).toFixed(2),
+  }));
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <TrendingUp className="h-4 w-4" />
+          Trend Dev/BOM — Target vs Peer Avg
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">
+          Perbandingan Dev/BOM target vs rata-rata peer di setiap minggu bulan ini.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error || !data?.success ? (
+          <p className="text-center text-xs text-red-600 py-4">
+            Error: {error?.message || data?.error || 'Unknown'}
+          </p>
+        ) : chartData.length === 0 ? (
+          <p className="text-center text-xs text-muted-foreground py-4">
+            Tidak ada data mingguan pada bulan ini.
+          </p>
+        ) : (
+          <div className="h-[260px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="week" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" />
+                <YAxis
+                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                  stroke="hsl(var(--border))"
+                  width={40}
+                  unit="%"
+                />
+                <RTooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    return (
+                      <div className="rounded-md border bg-background p-2 text-[11px] shadow-md">
+                        <div className="font-semibold mb-1">{label}</div>
+                        {payload.map((pl, i) => (
+                          <div key={i} style={{ color: pl.color }}>
+                            {pl.name}: {(pl.value as number).toFixed(2)}%
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line
+                  type="monotone"
+                  dataKey="target"
+                  name="Target"
+                  stroke="#dc2626"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: '#dc2626' }}
+                  activeDot={{ r: 6 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="peerAvg"
+                  name="Peer Avg"
+                  stroke="#71717a"
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  dot={{ r: 3, fill: '#71717a' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Feature 9: Correlation Insight — auto-detected rules
+// ============================================================
+function CorrelationInsightCard({
+  target,
+  peers,
+  peerAvg,
+}: {
+  target: PeerRow;
+  peers: PeerRow[];
+  peerAvg: Record<string, number>;
+}) {
+  const insights = useMemo(() => {
+    const out: Array<{ type: 'warn' | 'good' | 'info'; text: string }> = [];
+    const avgVal = (k: keyof PeerRow) => peerAvg[k as string] as number;
+    const safeRatio = (a: number, b: number) => (b > 0 ? a / b : 0);
+
+    // 1. Outlier detection: Dev/BOM > 1.5× peer avg
+    const devBomRatio = safeRatio(target.devBom, avgVal('devBom'));
+    if (devBomRatio > 1.5) {
+      const pctAbove = ((devBomRatio - 1) * 100).toFixed(0);
+      out.push({
+        type: 'warn',
+        text: `Dev/BOM ${(target.devBom * 100).toFixed(1)}% adalah ${pctAbove}% di atas peer average — outlier.`,
+      });
+    }
+
+    // 2. Best practice detection: lowest Dev/BOM among peers (excluding target)
+    if (peers.length > 0) {
+      const bestPeer = peers.reduce((best, p) => (p.devBom < best.devBom ? p : best), peers[0]);
+      out.push({
+        type: 'info',
+        text: `${bestPeer.outletName} adalah best practice: Dev/BOM ${(bestPeer.devBom * 100).toFixed(1)}% (terendah di peer group).`,
+      });
+    }
+
+    // 3. Sales vs Deviation correlation: peers with high sales but low deviasi
+    const highSalesLowDev = peers.filter(
+      p => p.sales > avgVal('sales') && p.devBom < avgVal('devBom')
+    );
+    if (highSalesLowDev.length > 0) {
+      out.push({
+        type: 'good',
+        text: `${highSalesLowDev.length} peer dengan sales tinggi tapi deviasi rendah — kemungkinan practice yang bisa direplikasi.`,
+      });
+    }
+
+    // 4. Residual red flag: > 2× peer avg
+    const residualRatio = safeRatio(target.residualQty, avgVal('residualQty'));
+    if (residualRatio > 2) {
+      out.push({
+        type: 'warn',
+        text: `Residual ${target.residualQty} adalah ${residualRatio.toFixed(1)}× peer average — potensi data entry error atau fraud.`,
+      });
+    }
+
+    // 5. LOSS severity
+    const lossRatio = safeRatio(target.totalLoss, avgVal('totalLoss'));
+    if (lossRatio > 1.5) {
+      out.push({
+        type: 'warn',
+        text: `Total LOSS ${fmtIDR(target.totalLoss)} adalah ${((lossRatio - 1) * 100).toFixed(0)}% di atas peer average — investigasi penyebab utama.`,
+      });
+    }
+
+    // 6. Sales underperformance
+    const salesRatio = safeRatio(target.sales, avgVal('sales'));
+    if (salesRatio < 0.9 && salesRatio > 0) {
+      out.push({
+        type: 'info',
+        text: `Sales ${fmtIDR(target.sales)} adalah ${((1 - salesRatio) * 100).toFixed(0)}% di bawah peer average — walaupun dalam ±10% band, target ada di sisi bawah.`,
+      });
+    }
+
+    // 7. Best in class detection
+    if (target.devBom === Math.min(...peers.map(p => p.devBom), target.devBom)) {
+      out.push({
+        type: 'good',
+        text: `Target adalah best in class untuk Dev/BOM — pertahankan practice saat ini.`,
+      });
+    }
+
+    return out;
+  }, [target, peers, peerAvg]);
+
+  if (insights.length === 0) {
+    return null;
+  }
+
+  const colorByType = (t: string) =>
+    t === 'warn'
+      ? 'border-l-red-500 bg-red-50/50 dark:bg-red-950/20'
+      : t === 'good'
+        ? 'border-l-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20'
+        : 'border-l-amber-500 bg-amber-50/50 dark:bg-amber-950/20';
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Lightbulb className="h-4 w-4" />
+          Correlation Insight
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground">
+          Insight otomatis berdasarkan pola data peer group.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-2">
+          {insights.map((ins, i) => (
+            <li key={i} className={`text-xs rounded-md border-l-4 px-3 py-2 ${colorByType(ins.type)}`}>
+              💡 {ins.text}
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );
