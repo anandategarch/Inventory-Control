@@ -470,7 +470,9 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       queryClient.invalidateQueries({ queryKey: ['status'] });
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-      queryClient.invalidateQueries({ queryKey: ['item-history'] });
+      queryClient.invalidateQueries({ queryKey: ["item-history"] });
+        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
 
       toast({
         title: '✅ Import berhasil',

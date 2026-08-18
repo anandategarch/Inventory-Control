@@ -134,7 +134,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         // FIX (BUG 3): Invalidate ALL threshold-dependent queries, not just analysis
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ['item-history'] });
+        queryClient.invalidateQueries({ queryKey: ["item-history"] });
+        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
       } else {
         toast({
           title: '❌ Gagal menyimpan',
@@ -167,7 +169,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       // FIX (BUG 3): Invalidate ALL threshold-dependent queries
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-      queryClient.invalidateQueries({ queryKey: ['item-history'] });
+      queryClient.invalidateQueries({ queryKey: ["item-history"] });
+        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
     },
   });
 

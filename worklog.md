@@ -6127,3 +6127,247 @@ Stage Summary:
 - Feature 9 (Correlation Insight): src/components/dashboard/PeerComparison.tsx — `CorrelationInsightCard` function (lines ~930-1010). 7 rule-based insights: outlier detection, best-practice peer, high-sales-low-deviation peers, residual fraud flag, LOSS severity, sales underperformance, best-in-class detection. Color-coded left-border (red/emerald/amber).
 - New API routes: src/app/api/peer-comparison/items/route.ts:1-167 (Feature 3) and src/app/api/peer-comparison/trend/route.ts:1-150 (Feature 6).
 - Quality: `bun run lint` exit 0, `npx tsc --noEmit --skipLibCheck` exit 0. No regressions to existing peer table functionality.
+
+---
+Task ID: PEER-AUDIT-FRONTEND
+Agent: Peer Frontend Auditor
+Task: Audit enhanced peer comparison frontend
+
+Work Log:
+- Read worklog.md (last 80 lines, 6050-6129) for context — confirmed prior PEER-ENHANCE-FRONTEND added 8 features (Ranking, Gap, Items, Scatter, Anomaly, Trend, Efficiency, Correlation) to PeerComparison.tsx, plus 2 new API routes (items + trend). Lint+tsc were clean at handoff.
+- Read src/components/dashboard/PeerComparison.tsx in full (1065 lines, all 9 functions: PeerComparison + EfficiencyScoreCard + GapAnalysisCard + RankingSummaryCard + ScatterPlotCard + AnomalyFlags + ItemLevelComparison + ItemComparisonBlock + TrendChartCard + CorrelationInsightCard).
+- Read src/app/api/peer-comparison/items/route.ts (216 lines) and src/app/api/peer-comparison/trend/route.ts (164 lines) to verify query keys, refetch behavior, and data shape consumed by frontend.
+- Read src/hooks/useDashboard.ts (74 lines) to verify setFocusOutlet still switches activeTab='resto' (line 68-71) — confirmed integration intact.
+- Read src/app/page.tsx lines 260-365 to verify PeerComparison is rendered inside TabsContent value="peer" (line 364) and that tab switching via setFocusOutlet('resto') still works with new layout.
+- Read src/lib/a11y.ts (clickableRowProps) and src/lib/format.ts (fmtIDR/fmtNum/fmtPctAbs) to confirm imports + helpers used correctly.
+- Ran `bun run lint` — exit 0, clean (no warnings/errors). All bugs below are runtime/logic, not type-system.
+- Cross-checked each computation rule (Efficiency Score formula, Gap best logic, Ranking ties, Anomaly thresholds, Correlation rules) by reading source — noted peerAvg=0 edge case affecting Rules 1, 4, 5 in CorrelationInsightCard and all 4 checks in AnomalyFlags + EfficiencyScore.
+- Verified ItemComparisonResponse interface declares `missing: boolean` (line 698) but ItemComparisonBlock (lines 769-819) NEVER reads it — always shows `r.format(0)` for items absent in peer outlets, masking the "doesn't carry this item" signal as "0 deviation".
+- Verified 3 useQuery calls: main (line 65, unconditional), items (line 716, inside ItemLevelComparison mounted only when targetRow truthy at line 320), trend (line 847, inside TrendChartCard mounted only when targetRow truthy at line 331). Confirmed waterfall: main → (items ∥ trend).
+
+Stage Summary:
+- MEDIUM (4):
+  - PEER-FE-3 (Race/Waterfall): Subcomponent queries (items at line 716, trend at line 847) only mount when `targetRow` truthy (lines 320, 331), i.e. AFTER main query resolves. Total perceived latency = main_time + max(items_time, trend_time). Both subqueries only need activeOutlet+monthLabel+week+mode (which are already known before main resolves), so they could fire in parallel. Proposed fix: lift `enabled` flag to `Boolean(activeOutlet && monthLabel && (mode==='month' || currentWeek))` and pass targetRow as `undefined`-tolerant prop instead of gating mount.
+  - PEER-FE-6 (Efficiency Score, peerAvg=0): `safeDiv = (a,b) => (b>0 ? a/b : 0)` (line 353) returns 0 penalty when peerAvg.devBom/totalLoss/residualQty = 0. If all peers are perfectly compliant (devBom=0) and target has devBom=5%, target gets score 100 (no penalty) — masking the outlier. Proposed fix: when peerAvg=0 and target>0, apply MAX penalty (50/25/15) instead of 0.
+  - PEER-FE-12 (Missing item rendered as 0): Backend marks missing items `missing: true` (items route.ts:165), interface declares field (PeerComparison.tsx:698), but ItemComparisonBlock (lines 769-819) ignores it → shows `r.format(0)` = "0" / "Rp 0" / "0,0%" for items peer doesn't carry, indistinguishable from a peer that genuinely has 0 deviation. Proposed fix: `r.format(r.missing ? NaN : r.target)` or render `—` when missing.
+  - PEER-FE-13 (Trend Chart semantics): Trend route deliberately does NOT apply MAX(weekLabel) cumulative-week fix (documented at outlets.ts:442-448 + trend route.ts:12-15). Since weeks are CUMULATIVE per schema (WEEK 2 = days 1-14, not days 8-14), the trend chart shows cumulative-ratio evolution across the month, NOT per-week performance. Chart title "Trend Dev/BOM — Target vs Peer Avg" (line 873) is misleading. Proposed fix: either rename to "Cumulative Dev/BOM Evolution" OR apply MAX(weekLabel) fix to get true per-week deltas. Also: single-week month renders 1 dot (no line) — minor UX.
+
+- LOW (6):
+  - PEER-FE-2 (useMemo deps ineffective): `peerAverages` object literal (lines 157-169) is recreated every parent render → `EfficiencyScoreCard`'s `useMemo([target, peerAvg])` (line 360) and `CorrelationInsightCard`'s `useMemo([target, peers, peerAvg])` (line 1030) always recompute. Same for `otherPeers` array (line 115) passed to subcomponents. Not a correctness bug; memoization provides no benefit. Proposed fix: wrap peerAverages in parent useMemo, or accept recomputation cost (cheap).
+  - PEER-FE-8 (Ranking ties): `RankingSummaryCard` (line 497) uses `sorted.findIndex(p => p.outletCode === target.outletCode) + 1`. Two outlets with identical Dev/BOM get DIFFERENT ranks (whichever sorts first wins #1, other gets #2) — no shared rank. Proposed fix: assign shared rank by value (e.g. count of strictly-better peers + 1).
+  - PEER-FE-9 (Anomaly Flags, peerAvg=0): `checkRatio = (v,avg) => avg>0 ? v/avg : 0` (line 635). When peerAvg=0 (all peers perfect on that metric) and target has non-zero value, ratio=0 → no 🔴 flag fires. Target IS an outlier but shows no flag. Same issue affects `allNormal` check (lines 650-655) — `Math.abs(row.devBom - 0) <= 0` is false unless target also 0, so 🟢 Normal also doesn't fire → row shows "—" (no flags). Proposed fix: when peerAvg=0 && target>threshold, force 🔴 flag.
+  - PEER-FE-10 (Correlation Rule 2 always fires + Rule 2/7 contradiction): Rule 2 (lines 975-981) unconditionally picks lowest-devBom peer and labels them "best practice" — even if that peer's devBom is 100% (all peers terrible). When target itself is best-in-class, Rule 7 (lines 1021-1027) fires AND Rule 2 still fires → user sees both "Peer X is best practice" and "Target is best in class" — contradictory. Also Rules 1, 4, 5 inherit the same peerAvg=0 silent-miss bug as PEER-FE-9. Proposed fix: gate Rule 2 on `bestPeer.devBom < avgVal('devBom')` (only highlight if actually below avg); skip Rule 2 when Rule 7 fires.
+  - PEER-FE-11 (Scatter, degenerate domain): ScatterPlotCard (lines 546-625) passes raw `sales` and `devBom*100` to Recharts without NaN/Infinity filter. If all peers have identical sales (or identical devBom), Recharts auto-domain becomes degenerate (min===max) → chart may render all dots stacked at center or show empty axis. No explicit guard. Proposed fix: filter `data.filter(d => isFinite(d.sales) && isFinite(d.devBom))`; if domain min===max, pad by ±5%.
+  - PEER-FE-15 (ItemComparison table overflow on mobile): `ItemComparisonBlock`'s inner `<Table>` (lines 790-816) has no `overflow-x-auto` wrapper. On narrow viewports the 5-column table (Metric/Target/Peer Avg/Peer Best/Gap) overflows the Card horizontally. The outer `<div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">` (line 758) only handles vertical scroll of the item list. Proposed fix: wrap each `<Table>` in `<div className="overflow-x-auto">`.
+
+- NONE / Confirmed OK (9):
+  - Rules of Hooks (check 1): All hooks unconditional. Main `useQuery` (line 65) called before any early return (lines 82, 93, 103). Subcomponent useQuery (lines 716, 847) are first-hook-in-function. `useMemo` in EfficiencyScoreCard (352) and CorrelationInsightCard (959) are single hooks. ✓
+  - Error handling (check 5): All 3 useQuery calls destructure `error` and render fallback UI (lines 103-111, 749-752, 884-887). ✓
+  - Gap Analysis math (check 7): `bestVal = m.higherBetter ? Math.max(...values) : Math.min(...values)` (line 423) — correct for both directions. `pctAboveBest` guards `bestVal !== 0` (line 426). ✓
+  - Color consistency (check 14): red=target/bad, emerald=good/best, amber=middle/warn, zinc=peer — consistent across all 8 features (lines 363-365, 446, 507-511, 607-608, 638-658, 808-810, 924-933, 1036-1041). ✓
+  - Click peer row → Resto tab (check 17): `clickableRowProps(() => setFocusOutlet(p.outletCode))` (line 281) → useDashboard.ts:68-71 sets `activeTab='resto'` → page.tsx:269 `<Tabs value={activeTab}>` switches tab. Still works with new layout. ✓
+  - Imports (check 18): All 11 Recharts components used (ScatterChart/Scatter/XAxis/YAxis/CartesianGrid/RTooltip/ResponsiveContainer/Cell/LineChart/Line/Legend). All 9 lucide icons used. fmtIDR/fmtNum/fmtPctAbs all used. ✓
+  - Lint: `bun run lint` exit 0, clean. ✓
+  - Query key correctness (check 16, partial): Main refetches on outlet/month/week/mode/peerLimit (line 66). Items refetches on outlet/month/week/mode (line 717, NOT peerLimit — intentional since topItems=5 fixed). Trend refetches on outlet/month/peerCodes (line 848). All refetch on outlet change. ✓
+  - mode/peerLimit persistence (check 4): useState at lines 62-63 persists across outlet changes (component doesn't unmount). Intentional UX (preserves user prefs). ✓
+
+- Total: 10 bugs (4 MEDIUM, 6 LOW). No CRITICAL/HIGH. Lint clean. Component is functionally correct for the common case (non-zero peer averages, distinct metric values, full-week data). All bugs are edge-case logic/data-display issues, not architectural.
+
+---
+Task ID: PEER-AUDIT-BACKEND
+Agent: Peer Backend Auditor
+Task: Audit enhanced peer comparison backend
+
+Work Log:
+- Read /home/z/my-project/worklog.md (last ~50 lines, 6079-6130) for context — confirmed prior PEER-BACKEND agent added queryPeerItemComparison (outlets.ts:332-436) + queryPeerTrend (outlets.ts:458-501), and prior PEER-ENHANCE-FRONTEND agent added /api/peer-comparison/items/route.ts and /api/peer-comparison/trend/route.ts as standalone SQL reimplementations (NOT calling the helper functions).
+- Read src/lib/queries/outlets.ts (lines 1-502) in full — confirmed queryPeerComparison's weekFilter pattern (lines 177-182), the new queryPeerItemComparison CTE chain (sales_counts → ranked_sales → sales_mode → target → target_items → peer_outlets → CROSS JOIN + LEFT JOIN main query), and queryPeerTrend's outlet_weekly pivot (MAX(CASE WHEN target)/AVG(CASE WHEN peer)).
+- Read src/app/api/peer-comparison/route.ts (50 lines) — main route, calls queryPeerComparison directly.
+- Read src/app/api/peer-comparison/items/route.ts (217 lines) — re-implements the SQL CTE chain inline (lines 61-137), does NOT call queryPeerItemComparison. Has explicit missing-item handling (lines 157-177) with missing: true flag.
+- Read src/app/api/peer-comparison/trend/route.ts (165 lines) — runs N+1 queries (one per week, lines 81-152), does NOT call queryPeerTrend. Builds peerListClause helper that is ALSO injected at line 136, creating a double-filter that excludes the target outlet.
+- Read src/lib/queries/index.ts + src/lib/queries.ts — confirmed both new functions + interfaces are transparently re-exported via barrel chain (`export * from './outlets'` → `export * from './queries/index'`). Imports from '@/lib/queries' work.
+- Read src/lib/queries/shared.ts (41 lines) — confirmed Prisma.join pattern for IN clauses + empty-fragment fallback (Prisma.empty). Confirmed trend route's Prisma.join usage is syntactically correct.
+- Read prisma/schema.prisma (lines 1-160) — confirmed all referenced InventoryRecord fields exist (qtyBom, qtyDeviasi, nominalDeviasi, nominalLossSurplus, absNominalDeviasi, weekLabel, monthLabel, direction). All numeric fields are Float? (nullable), validating the COALESCE wrapping.
+- Read eslint.config.mjs — confirmed `@typescript-eslint/no-unused-vars` and `no-unused-vars` are both set to "off", which explains why the unused `buildSqlFilters` import in items/route.ts does not trigger a lint error.
+- Ran `bun run lint` → exit 0, clean (no warnings/errors).
+- Ran `npx tsc --noEmit --skipLibCheck` → exit 0, clean (no type errors).
+- Ran grep for `queryPeerItemComparison|queryPeerTrend` across entire codebase — confirmed both functions are EXPORTED but NEVER CALLED anywhere (only declared in outlets.ts + referenced in worklog.md). This confirms ARCH-1: API routes duplicate the SQL instead of consuming the helpers.
+- Did NOT fix any of the findings below (audit-only task per spec).
+
+Stage Summary:
+
+BUGS FOUND:
+
+- BUG-1 (HIGH) — src/app/api/peer-comparison/trend/route.ts:75-77, 132-136 — `peerListClause` double-filters and silently excludes the target outlet when `peers` query param is provided.
+  - When `peers=A,B` is passed, the WHERE clause becomes:
+    `WHERE COALESCE(sm.sales,0) > 0 AND (o.code IN (outletCode, A, B)) AND o.code IN (A, B)`
+  - The second `AND o.code IN (A, B)` (from peerListClause at line 136) excludes outletCode entirely.
+  - Effect: `rows.find(r => r.isTarget)` returns undefined → `devBomTarget=0`, `salesTarget=0` for every week. The trend chart's target line renders as a flat zero. The peer-only filter is also redundant with the first IN clause.
+  - Proposed fix: Delete `peerListClause` declaration (lines 75-77) AND its usage at line 136. The branch at lines 132-134 already correctly restricts to `o.code IN (outletCode, ...explicitPeerCodes)` so the second clause is both redundant AND wrong.
+
+- BUG-2 (MEDIUM) — src/app/api/peer-comparison/items/route.ts:20 — Unused import: `import { buildSqlFilters } from '@/lib/queries/shared';` is never referenced in the route body. Lint passes only because `@typescript-eslint/no-unused-vars` is disabled in eslint.config.mjs:13,33. Dead code; confusing for future maintainers.
+  - Proposed fix: Delete line 20.
+
+- BUG-3 (MEDIUM) — src/app/api/peer-comparison/items/route.ts:84-93 — `peer_outlets` CTE has NO LIMIT clause, unlike `queryPeerItemComparison`'s peer_outlets CTE (outlets.ts:387-396) which uses `LIMIT ${peerLimit + 1}` to cap peer count. With many similar-sales outlets (e.g. 30-50 outlets within ±10%), the CROSS JOIN with top N items produces N×50 rows = 250+ rows for topItems=5. Returns unbounded peer entries per item.
+  - Proposed fix: Add `ORDER BY CASE WHEN o.code = ${outletCode} THEN 0 ELSE 1 END, ABS(sm.sales - t.sales) LIMIT ${peerLimit + 1}` to the CTE (with peerLimit as query param, default 10, capped at 50).
+
+- BUG-4 (LOW-MEDIUM) — src/app/api/peer-comparison/trend/route.ts:81-152 — N+1 query pattern: loops over `weeks` array running a separate `$queryRaw` per week (4-5 round-trips per request). The unused `queryPeerTrend` helper (outlets.ts:458-501) accomplishes the same in ONE query via MAX/AVG pivot.
+  - Proposed fix: Replace the per-week loop with a single call to `queryPeerTrend(outletCode, month, week, peerOutletCodes)`. If per-week peer-set auto-discovery is desired, document why the helper (which takes a frozen peer list) is insufficient.
+
+- BUG-5 (LOW) — src/lib/queries/outlets.ts:419 — Redundant `JOIN "Outlet" o ON po.id = o.id` in queryPeerItemComparison's main query. The `peer_outlets` CTE already selects `o.id, o.code, o.name` (line 388), so `po.code`/`po.name` are directly available. The extra JOIN adds an index lookup per row.
+  - Proposed fix: Drop the JOIN; change SELECT to `po.code as "outletCode", po.name as "outletName"` (lines 399-400).
+
+- BUG-6 (LOW) — src/lib/queries/outlets.ts:332-436 — queryPeerItemComparison's PeerItemRow has no `missing` flag. The LEFT JOIN + COALESCE collapses "item genuinely has 0 deviation" and "item doesn't exist in peer outlet" into the same 0-valued row. The duplicate route implementation in items/route.ts:157-166 correctly distinguishes them via `missing: true`, but the helper does not surface this signal.
+  - Proposed fix: Add `missing: boolean` to PeerItemRow; compute via `CASE WHEN SUM(ir."itemId") IS NULL THEN true ELSE false END` (or `COUNT(ir."itemId") = 0`) in the SELECT.
+
+- BUG-7 (LOW) — src/lib/queries/outlets.ts:458-463 — queryPeerTrend's `week: string` parameter is declared in the signature but never referenced in the function body. Dead parameter; either forward-compat placeholder or oversight.
+  - Proposed fix: Remove the `week` parameter, or document why it's intentionally retained.
+
+- BUG-8 (LOW) — src/app/api/peer-comparison/route.ts:26-27 — Input validation gaps:
+  (a) `mode` is cast as `'week' | 'month'` without enum validation; any string is accepted and silently falls through to month-mode branch.
+  (b) `limit = parseInt(... || '10')` has no upper bound; a caller passing `?limit=1000000` would force the DB to materialize a huge result set (DoS vector).
+  - Proposed fix: Validate `mode` against `['week','month']` (return 400 otherwise). Clamp `limit` to `Math.min(Math.max(parseInt(...)||10, 1), 50)`.
+
+- ARCH-1 (MEDIUM) — Architectural DRY violation: src/app/api/peer-comparison/items/route.ts:61-137 duplicates ~75 lines of CTE SQL from queryPeerItemComparison (outlets.ts:352-423); src/app/api/peer-comparison/trend/route.ts:81-152 reimplements queryPeerTrend's pivot logic with a different (per-week loop) approach. Both helper functions are exported and verified UNUSED anywhere in the codebase (grep confirmed). Two implementations of the same business logic WILL drift; the route versions already diverge (items route has no peerLimit, exposes `missing` flag; trend route uses per-week auto-discovery instead of frozen peer set).
+  - Proposed fix: Either (a) refactor both routes to call the query helpers and post-process the rows in TS (preferred — single source of truth), or (b) delete the unused helpers from outlets.ts. Option (a) requires extending PeerItemRow with `missing` flag (see BUG-6) and possibly extending queryPeerTrend to support per-week peer auto-discovery.
+
+PORTABILITY CHECK (PASS):
+- No `DISTINCT ON` (PostgreSQL-only) — confirmed absent.
+- No `FILTER (WHERE ...)` aggregate syntax (PG-only) — confirmed absent; uses portable `MAX(CASE WHEN ... END)` / `AVG(CASE WHEN ... END)` pivots instead.
+- No `::type` casts (PG-only) — confirmed absent.
+- `ROW_NUMBER() OVER (...)` window function works in both SQLite ≥3.25 and PostgreSQL.
+- `Prisma.join(...)` generates portable `IN (?, ?, ...)` syntax.
+- `WITH ... AS (...)` CTEs work in both engines.
+- `COALESCE`, `CASE WHEN`, `ABS`, `MAX`, `AVG`, `SUM`, `CROSS JOIN`, `LEFT JOIN` all standard SQL.
+
+VERIFIED PASS:
+- Cumulative-week MAX(weekLabel) fix is applied in queryPeerItemComparison (outlets.ts:345-350) AND in items/route.ts (lines 48-53). It is intentionally NOT applied in queryPeerTrend (documented at outlets.ts:442-448).
+- Number() coercion on all numeric fields: queryPeerItemComparison (outlets.ts:429-432), queryPeerTrend (outlets.ts:496-499), items/route.ts (lines 148-174), trend/route.ts (lines 142, 147, 149).
+- Boolean() coercion on isTarget: queryPeerItemComparison (outlets.ts:434), items/route.ts (161, 171). Trend route uses isTarget only internally (line 140) for filtering; not echoed in response.
+- Null handling for "item not in peer outlet": items/route.ts uses LEFT JOIN + explicit `missing: true` flag (lines 156-177). queryPeerItemComparison uses LEFT JOIN + COALESCE → 0s (no missing flag — see BUG-6).
+- Null handling for "peer has no data for a week": queryPeerTrend's outer query naturally excludes missing (outlet, week) pairs from AVG — peer simply doesn't appear in outlet_weekly for that weekLabel.
+- Prisma.join usage: queryPeerTrend (line 480) builds `allCodes = [outletCode, ...peerOutletCodes]` ensuring ≥1 element. trend/route.ts (lines 76, 133) also guards `explicitPeerCodes.length > 0` before calling Prisma.join.
+- Error handling: all 3 routes wrap GET in try/catch, return JSON `{ success: false, error: e.message }` with status 500 on uncaught throw.
+- Rate limiting: all 3 routes apply `rateLimit(...)` with distinct keys (`peer-comparison:${ip}`, `peer-comparison-items:${ip}`, `peer-comparison-trend:${ip}`) using shared `RATE_LIMITS.analysis` bucket (60 req/min).
+- Exports: queryPeerItemComparison + queryPeerTrend + PeerItemRow + PeerTrendRow re-exported via barrel chain `queries/index.ts:9` → `queries.ts:12`. `import { ... } from '@/lib/queries'` works.
+- Lint + tsc both pass clean (exit 0).
+
+NEXT ACTIONS (priority order):
+1. Fix BUG-1 (trend route peerListClause double-filter) — silent data corruption when `peers` param is used.
+2. Decide ARCH-1 strategy — refactor routes to use helpers OR delete unused helpers. Either way eliminates drift.
+3. Fix BUG-3 (items route unbounded peer_outlets) — add LIMIT clause.
+4. Fix BUG-2 (unused buildSqlFilters import) + BUG-7 (unused week param) — trivial cleanups.
+5. Fix BUG-8 (input validation) — bound `limit`, validate `mode`.
+6. Fix BUG-5 (redundant JOIN) + BUG-6 (missing flag) — code-quality improvements.
+7. Fix BUG-4 (N+1 queries in trend route) — performance optimization (likely subsumed by ARCH-1 refactor).
+
+---
+Task ID: PEER-AUDIT-FLOW
+Agent: Peer Flow Auditor
+Task: Audit peer comparison data flow + integration
+
+Work Log:
+- Read /home/z/my-project/worklog.md (lines 6079-6130) for prior context — found PEER-QUERIES + PEER-ENHANCE-FRONTEND records. Two new query helpers (queryPeerItemComparison, queryPeerTrend) were added to outlets.ts and exported through barrel chain. Three API routes exist: /api/peer-comparison (uses queryPeerComparison), /api/peer-comparison/items (inline SQL), /api/peer-comparison/trend (inline SQL).
+- Read src/hooks/useDashboard.ts (full 75 lines) — confirmed `focusOutlet` + `outletCode` store shape, `setFocusOutlet(code)` switches activeTab to 'resto' on non-null code (lines 68-71). NOTABLE: `setOutlet` (line 53) does NOT clear focusOutlet; only `setArea` (line 52) and `setPic` (line 55) do. `reset` (line 56) does NOT clear focusOutlet either.
+- Read src/components/dashboard/PeerComparison.tsx (full 1066 lines) — confirmed 3 useQuery hooks: main ['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit] (line 66); items ['peer-comparison-items', outletCode, monthLabel, week, mode] (line 717); trend ['peer-comparison-trend', outletCode, monthLabel, peerCodes.join(',')] (line 848, NO mode in key). All 3 use activeOutlet = focusOutlet || outletCode (line 61). Default mode='week' (line 62).
+- Read src/app/api/peer-comparison/route.ts (50 lines) — uses queryPeerComparison from barrel, applies rateLimit + month-resolver. ✓
+- Read src/app/api/peer-comparison/items/route.ts (217 lines) — has its OWN inline SQL (NOT calling queryPeerItemComparison). peer_outlets CTE has NO LIMIT (returns all peers within ±10%, unlike the unused queryPeerItemComparison which caps at peerLimit+1). Uses target_top_items CTE with LIMIT ${topItems}.
+- Read src/app/api/peer-comparison/trend/route.ts (165 lines) — has its OWN inline SQL (NOT calling queryPeerTrend). Loops through weeks in JS (N+1 pattern, one SQL query per week). Auto-computes peer set per-week OR uses explicit peerCodes param. Returns {weekLabel, devBomTarget, devBomPeerAvg, salesTarget, peerCount} — different shape from queryPeerTrend's {weekLabel, targetDevBom, peerAvgDevBom, targetNominal, peerAvgNominal}.
+- Read src/lib/queries/outlets.ts (full 502 lines) — confirmed queryPeerComparison (167-308), queryPeerItemComparison (332-436), queryPeerTrend (458-501). All apply cumulative-week MAX(weekLabel) fix except queryPeerTrend (intentional, documented at lines 442-448).
+- Verified barrel chain: queries/index.ts:9 (`export * from './outlets'`) → queries.ts:12 (`export * from './queries/index'`). All 3 peer functions + PeerComparisonRow / PeerItemRow / PeerTrendRow interfaces are exported.
+- Grep for queryPeerItemComparison / queryPeerTrend usage → only found in worklog.md and outlets.ts itself. Both functions are DEAD CODE — API routes use their own inline SQL.
+- Read src/app/page.tsx (lines 260-380) — confirmed Tabs structure. PeerComparison is rendered in TabsContent value="peer" (line 364) WITHOUT forceMount → unmounts when inactive. On remount, react-query serves cached data and refetches if stale (default staleTime=0).
+- Read src/components/dashboard/RestoAnalysis.tsx (lines 80-110) — confirmed RestoAnalysis uses same `activeOutlet = focusOutlet || outletCode` pattern. No "back" / "clear focusOutlet" button found in RestoAnalysis.
+- Grep invalidateQueries across mutation handlers — confirmed FileUploadDialog.tsx:470-473, DataManagementDialog.tsx:187-193, PicManagementDialog.tsx:195-200, SettingsDialog.tsx:133-137 + 166-170, QuickSettings.tsx:123-129, FilterBar.tsx:123-127 + 184-188 — NONE invalidate ['peer-comparison'], ['peer-comparison-items'], or ['peer-comparison-trend'].
+- Grep peer/Peer in src/app/api/export-report/route.ts (732 lines) + src/components/dashboard/ExportDialog.tsx → no matches. Word export correctly excludes peer data. ✓
+- Read src/lib/rate-limit.ts (94 lines) — confirmed all 3 peer routes use RATE_LIMITS.analysis = 60 req/min per IP, with separate keys per endpoint. ✓
+- Read src/lib/a11y.ts — confirmed clickableRowProps spreads tabIndex/role/onClick/onKeyDown. Used at PeerComparison.tsx:281 for peer row click.
+
+Stage Summary:
+
+BUGS FOUND (severity: HIGH/MEDIUM/LOW):
+
+- BUG PEER-FLOW-1 (HIGH) — Import / data-mgmt / settings mutations don't invalidate peer query caches.
+  Files: src/components/filters/FileUploadDialog.tsx:470-473, src/components/filters/DataManagementDialog.tsx:187-193, src/components/filters/PicManagementDialog.tsx:195-200, src/components/filters/SettingsDialog.tsx:133-137 + 166-170, src/components/dashboard/QuickSettings.tsx:123-129, src/components/filters/FilterBar.tsx:123-127 + 184-188.
+  Effect: After import / delete-data / save-settings / save-pic, react-query caches for ['peer-comparison'], ['peer-comparison-items'], ['peer-comparison-trend'] stay stale for up to 5 min (default gcTime). User sees old peer rankings / item gaps / trend lines after data changes.
+  Proposed fix (do NOT apply — audit only): add `queryClient.invalidateQueries({ queryKey: ['peer-comparison'] })`, `['peer-comparison-items']`, `['peer-comparison-trend']` to each of the 7 mutation handlers above. Alternatively, use `queryClient.invalidateQueries({ queryKey: ['peer-comparison'], prefix: true })` (invalidates all 3 sub-keys via prefix) — but note that @tanstack/react-query v5 uses `queryKey` partial matching, not `prefix`, so use exact keys or predicate: `queryClient.invalidateQueries({ predicate: (q) => Array.isArray(q.queryKey) && typeof q.queryKey[0] === 'string' && q.queryKey[0].startsWith('peer-comparison') })`.
+
+- BUG PEER-FLOW-2 (HIGH) — setOutlet doesn't clear focusOutlet → "stuck outlet" UX.
+  File: src/hooks/useDashboard.ts:53 (`setOutlet: (v) => set({ outletCode: v })`).
+  Effect: Flow: (1) user selects outlet A in FilterBar (outletCode=A, focusOutlet=null, activeOutlet=A); (2) goes to Peer tab, clicks peer row B (setFocusOutlet(B) → focusOutlet=B, activeTab='resto'); (3) returns to Peer tab → activeOutlet=B, comparison shows B as target instead of A; (4) user goes to FilterBar and re-selects A in dropdown → outletCode=A but focusOutlet STILL=B → activeOutlet=B (Peer tab still shows B). User has no obvious way to restore A as the target.
+  Proposed fix: change `setOutlet: (v) => set({ outletCode: v, focusOutlet: null })` (mirror the pattern used by setArea / setPic which already clear focusOutlet). Same applies to `reset` (line 56) which should also clear focusOutlet.
+
+- BUG PEER-FLOW-3 (MEDIUM) — queryPeerItemComparison + queryPeerTrend are dead code (duplicated by inline SQL in API routes).
+  Files: src/lib/queries/outlets.ts:332-436 (queryPeerItemComparison), outlets.ts:458-501 (queryPeerTrend); API routes src/app/api/peer-comparison/items/route.ts:61-137 and src/app/api/peer-comparison/trend/route.ts:86-137 use their OWN inline SQL instead.
+  Effect: Two divergent SQL implementations exist for the same logical operation. Behavioral differences: (a) API items route has NO peerLimit cap on peer_outlets (returns all peers in ±10% band, could be 50+ rows × 5 items = 250+ rows); queryPeerItemComparison caps at peerLimit+1. (b) API trend route loops weeks in JS (N+1 queries); queryPeerTrend does single SQL pass. (c) Return shapes differ (devBomTarget vs targetDevBom; salesTarget/peerCount vs targetNominal/peerAvgNominal). Frontend depends on the API route's shape, NOT the query helper's shape — so the query helper would require a non-trivial adapter to be usable.
+  Proposed fix: EITHER (a) refactor API routes to call the query helpers (requires renaming return fields in query helpers OR adding a thin mapping layer in the route); OR (b) delete queryPeerItemComparison / queryPeerTrend from outlets.ts to remove the dead code and prevent future drift.
+
+- BUG PEER-FLOW-4 (MEDIUM) — Item-level peer set is NOT bounded by peerLimit (inconsistency with main peer table).
+  File: src/app/api/peer-comparison/items/route.ts:84-93 (peer_outlets CTE has no LIMIT).
+  Effect: User selects "Top 5" in peerLimit dropdown → main peer table shows 5 peers; but item-level comparison averages over ALL peers in ±10% band (could be 30+). User comparing numbers across the two cards will see inconsistent peer counts.
+  Proposed fix: add `LIMIT ${peerLimit + 1}` to peer_outlets CTE in items/route.ts (read peerLimit from URL param, default 10), mirroring queryPeerItemComparison:395. Frontend ItemLevelComparison would need to pass peerLimit through (currently doesn't — line 724 only sets topItems).
+
+- BUG PEER-FLOW-5 (MEDIUM) — Trend chart shows ALL weeks even in 'week' mode (no mode param in trend queryKey or API).
+  File: src/components/dashboard/PeerComparison.tsx:847-860 (queryKey + URLSearchParams omit mode).
+  Effect: User in 'week' mode viewing WEEK 1 sees main + items for WEEK 1, but trend chart shows W1+W2+W3+W4. Toggling to 'month' mode does NOT refetch trend (same queryKey) — but trend API ignores mode anyway, so behavior is identical. The trend chart is essentially "always month-level" regardless of mode toggle, which is inconsistent with the rest of the dashboard.
+  Proposed fix (design decision, not strictly a bug): EITHER (a) document this as intentional (trend is by-design a per-month view, not a per-week view — add explanatory text under the chart); OR (b) in 'week' mode, hide the TrendChartCard entirely (only show it when mode==='month'); OR (c) add mode to queryKey + filter trend API to just the selected week when mode==='week' (would defeat the purpose of a trend chart, not recommended).
+
+- BUG PEER-FLOW-6 (LOW) — Default mode='week' + no week selected → "Error: Unknown" instead of helpful empty state.
+  File: src/components/dashboard/PeerComparison.tsx:62 (default 'week') + lines 79 + 93-110.
+  Effect: If user selects outlet + month but no week (e.g., just landed on a fresh month that has weeks but FilterBar hasn't auto-selected one yet), `enabled` returns false (line 79), useQuery returns `isLoading: false` + `data: undefined`, code falls through to the error branch (line 103) showing "Error: Unknown". Confusing because there's no actual error.
+  Proposed fix: add an `isPending` check (or `!data && !isLoading` branch) before the error branch, e.g.:
+  ```
+  if (!data && !error && (mode === 'week' && !currentWeek)) {
+    return <Card><CardContent className="py-12 text-center text-muted-foreground">Pilih WEEK di FilterBar untuk mode Per Week.</CardContent></Card>;
+  }
+  ```
+
+- BUG PEER-FLOW-7 (LOW) — Trend chart peer set capped at 20 (silent truncation when peerLimit=50).
+  File: src/components/dashboard/PeerComparison.tsx:853 (`peerCodes.slice(0, 20).join(',')`).
+  Effect: User selects "Top 50" peers in dropdown → main peer table shows 50 peers; trend chart only uses first 20 for peerAvgDevBom calculation. The "20 peer avg" line in the chart is labeled "Peer Avg" without indicating the subset.
+  Proposed fix: either (a) raise the cap to match peerLimit (e.g., `slice(0, peerLimit)`); (b) display the actual peer count used in the chart subtitle (e.g., "Peer Avg (dari 20 peer terdekat)"); or (c) drop the explicit peers param entirely and let the trend API auto-compute per-week (which already handles full peer set, but peer set may vary week-to-week — see API route line 134 fallback).
+
+- BUG PEER-FLOW-8 (LOW) — Clicking peer row shifts Peer Comparison's "target" silently.
+  File: src/components/dashboard/PeerComparison.tsx:281 (`{...clickableRowProps(() => setFocusOutlet(p.outletCode))}`).
+  Effect: When user clicks peer row B for deep-dive, focusOutlet becomes B and activeTab switches to 'resto'. On returning to Peer tab, the comparison now has B as target (not the original A). This is by design (focusOutlet = "currently focused outlet"), but there's no UI affordance showing this state change. User may be confused why the Peer tab now shows a different target.
+  Proposed fix: (a) show a "🎯 Fokus: {outletCode}" badge in the Peer Comparison header when focusOutlet is set, with a "✕ Hapus fokus" button to clear it; (b) OR add a "Kembali ke outlet {outletCode}" button somewhere visible. Pairs with BUG PEER-FLOW-2 fix.
+
+- BUG PEER-FLOW-9 (LOW) — Gap Analysis shows misleading gap when peer set has 0 matching items.
+  File: src/app/api/peer-comparison/items/route.ts:191-200 (peerBest = Math.min(...[]) → 0 when otherPeers is empty).
+  Effect: If target outlet has top-5 items but NONE of the peers carry any of those items (rare edge case — usually only happens with very small peer group or unique SKUs), `otherPeers.length === 0` → peerBest = 0 for all metrics → gap = target value → "% above best" = Infinity (because `safeDiv(target - 0, 0)` returns 0 actually, but the displayed "+Rp X.000 (+0% vs best)" still misleadingly implies the target is "X above 0"). The frontend doesn't currently distinguish "peer has 0 of this item" from "no peer has this item at all".
+  Proposed fix: when `peerCount === 0` for an item (all peers missing), display "N/A — item tidak ditemukan di peer" instead of gap=0.
+
+- BUG PEER-FLOW-10 (LOW) — Trend route's per-week loop creates N+1 SQL queries.
+  File: src/app/api/peer-comparison/trend/route.ts:81 (`for (const w of weeks) { ... await db.$queryRaw ... }`).
+  Effect: For a month with 4 weeks, the API issues 4 sequential SQL queries (each with 4 CTEs). Could be done in one pass with a `GROUP BY weekLabel` (as queryPeerTrend does). Performance impact: ~4× latency vs single-pass. Not critical at 4 weeks but worsens if "weeks" become more granular.
+  Proposed fix: replace the JS loop with a single SQL query using `GROUP BY weekLabel` + `MAX(CASE WHEN ...)` pivots (i.e., adopt the queryPeerTrend pattern in outlets.ts:468-492).
+
+- INFO PEER-FLOW-11 — Word export correctly excludes peer data.
+  Files: src/app/api/export-report/route.ts (732 lines, no peer references), src/components/dashboard/ExportDialog.tsx (no peer references). ✓
+
+- INFO PEER-FLOW-12 — Rate limiting applied to all 3 peer routes.
+  Files: src/app/api/peer-comparison/route.ts:17, items/route.ts:28, trend/route.ts:29 — all use `RATE_LIMITS.analysis` (60 req/min per IP) with distinct keys (`peer-comparison:${ip}`, `peer-comparison-items:${ip}`, `peer-comparison-trend:${ip}`). ✓
+
+- INFO PEER-FLOW-13 — Peer Comparison not area-filtered (correct per spec).
+  Files: queryPeerComparison / queryPeerItemComparison / queryPeerTrend in outlets.ts do NOT call buildSqlFilters. Frontend doesn't pass area to API. Peer band is ±10% sales only, regardless of area. ✓
+
+- INFO PEER-FLOW-14 — Cumulative-week MAX(weekLabel) fix correctly applied to main + items queries in month mode (outlets.ts:177-182, items/route.ts:48-53). Trend query intentionally omits it (per-week breakdown is the chart's purpose, documented at outlets.ts:442-448). ✓
+
+EDGE CASE VERIFICATION:
+- (18) Target 0 sales → targetRow undefined → 6 of 8 features hidden, peer table shows "Tidak ada peer ditemukan" (line 242). Acceptable degradation. ✓
+- (19) Only 1 peer → ranking shows #1/#2, Gap Analysis shows 1 comparison. Works. ✓
+- (20) Peer outlet has no items matching target's top 5 → LEFT JOIN returns NULL → marked `missing: true` → peerAvg/peerBest exclude missing. If ALL peers missing → see BUG PEER-FLOW-9. Partial-missing case handled correctly. ✓
+- (21) 0 trend rows → trend API returns `weeks: []` → frontend shows "Tidak ada data mingguan pada bulan ini." (line 890). ✓
+- (22) 50+ peers → main query LIMIT 51, table has `max-h-[600px] overflow-y-auto` (line 244). Items API has NO cap (BUG PEER-FLOW-4). Trend caps at 20 (BUG PEER-FLOW-7). Performance: items query 5 items × 50 peers × LEFT JOIN InventoryRecord could be slow on large datasets — no EXPLAIN analyzed but the SQL pattern is similar to queryPeerComparison which has been verified at ~6s on 54K records.
+
+INTEGRATION CHECK:
+- (23) Word export: ✓ excludes peer data.
+- (24) Import trigger: ✗ does NOT refetch peer queries — see BUG PEER-FLOW-1.
+- (25) Rate-limit: ✓ all 3 routes have 60 req/min per IP.
+- (26) Barrel chain: ✓ exports are correct, but queryPeerItemComparison + queryPeerTrend are dead code (BUG PEER-FLOW-3).
+
+NEXT ACTIONS (recommended priority order, do NOT apply in this audit):
+1. Fix BUG PEER-FLOW-1 + PEER-FLOW-2 (HIGH) — straightforward 1-line changes per file, biggest user-visible impact.
+2. Decide BUG PEER-FLOW-3 (MEDIUM) — either delete dead code or refactor API routes to use shared helpers (eliminates drift risk).
+3. Fix BUG PEER-FLOW-4 (MEDIUM) — add LIMIT to items API peer_outlets CTE + pass peerLimit from frontend.
+4. Address BUG PEER-FLOW-5 + PEER-FLOW-6 (MEDIUM/LOW) — UX polish for mode + missing-week states.
+5. BUG PEER-FLOW-7/8/9/10 (LOW) — polish, not blockers.

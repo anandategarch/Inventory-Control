@@ -197,7 +197,9 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     // FIX: Invalidate ALL data-dependent queries — PIC change affects filters
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ["item-history"] });
+        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
   }
 
   // ---------- Handlers ----------

@@ -190,7 +190,9 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     // FIX: Invalidate ALL data-dependent queries, not just analysis
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ["item-history"] });
+        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
   }
 
   // Wrap mutations to invalidate after settle

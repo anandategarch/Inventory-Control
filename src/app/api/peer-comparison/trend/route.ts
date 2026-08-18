@@ -71,10 +71,10 @@ export async function GET(req: NextRequest) {
     //   - peer average Dev/BOM
     // We do it in one SQL pass per week — simpler than a single CTE.
 
-    // Build a SQL filter for the explicit peer list (if any).
-    const peerListClause = explicitPeerCodes && explicitPeerCodes.length > 0
-      ? Prisma.sql`AND o.code IN (${Prisma.join(explicitPeerCodes)})`
-      : Prisma.empty;
+    // FIX (PEER-AUDIT-BACKEND BUG-1): Removed peerListClause — it was injected
+    // twice, causing the target outlet to be excluded from results when explicit
+    // peer codes were provided. The WHERE clause at line 130-134 already handles
+    // the peer filtering correctly.
 
     const weekResults: any[] = [];
 
@@ -128,12 +128,10 @@ export async function GET(req: NextRequest) {
         CROSS JOIN target t
         WHERE COALESCE(sm.sales, 0) > 0
           AND (
-            -- If explicit peer list provided, restrict to target + those codes
             ${explicitPeerCodes && explicitPeerCodes.length > 0
               ? Prisma.sql`o.code IN (${Prisma.join([outletCode, ...explicitPeerCodes])})`
               : Prisma.sql`ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1`}
           )
-          ${peerListClause}
       `;
 
       const targetRow = rows.find((r: any) => r.isTarget);
