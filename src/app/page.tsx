@@ -15,6 +15,7 @@ import {
   MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
+import { PeerComparison } from '@/components/dashboard/PeerComparison';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 // CostAccounting components removed — tab Cost Accounting dihapus
@@ -273,6 +274,9 @@ export default function DashboardPage() {
               <TabsTrigger value="resto" className="text-xs">
                 <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
+              <TabsTrigger value="peer" className="text-xs">
+                <Activity className="h-3.5 w-3.5" /> Peer Comparison
+              </TabsTrigger>
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
@@ -353,6 +357,11 @@ export default function DashboardPage() {
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
             <TabsContent value="resto" className="space-y-4 mt-2">
               <RestoAnalysis analysisData={analysis.data} />
+            </TabsContent>
+
+            {/* ====== PEER COMPARISON TAB ====== */}
+            <TabsContent value="peer" className="space-y-4 mt-2">
+              <PeerComparison />
             </TabsContent>
           </Tabs>
         ) : null}

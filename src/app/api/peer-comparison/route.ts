@@ -1,0 +1,49 @@
+// ============================================================
+//  /api/peer-comparison — Peer Comparison per outlet
+//  Returns outlets with similar sales (±10%) for side-by-side comparison.
+//  GET: ?outletCode=X&month=Y&week=Z&mode=week|month&limit=N
+// ============================================================
+import { NextRequest, NextResponse } from 'next/server';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { queryPeerComparison } from '@/lib/queries';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+export async function GET(req: NextRequest) {
+  try {
+    const ip = getClientIP(req);
+    const rl = rateLimit(`peer-comparison:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
+    const url = new URL(req.url);
+    let outletCode = url.searchParams.get('outletCode');
+    let month = url.searchParams.get('month');
+    const week = url.searchParams.get('week');
+    const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
+    const limit = parseInt(url.searchParams.get('limit') || '10');
+
+    if (!outletCode || !month) {
+      return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
+    }
+
+    const resolver = await getMonthResolver();
+    month = resolveMonthLabel(month, resolver) || month;
+
+    const { targetSales, peers } = await queryPeerComparison(outletCode, month, week, mode, limit);
+
+    return NextResponse.json({
+      success: true,
+      targetOutlet: outletCode,
+      targetSales,
+      mode,
+      peers,
+    });
+  } catch (e: any) {
+    console.error('[peer-comparison] error:', e);
+    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  }
+}
