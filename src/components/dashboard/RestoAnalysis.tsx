@@ -77,15 +77,17 @@ function directionColor(d: string): string {
 }
 
 export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
-  const { focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard();
+  // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
+  const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['outlet-items', focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+    queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const p = new URLSearchParams();
-      p.set('outletCode', focusOutlet!);
+      p.set('outletCode', activeOutlet!);
       p.set('month', monthLabel!);
       p.set('week', currentWeek!);
       if (comparisonWeek) p.set('compareWeek', comparisonWeek);
@@ -99,10 +101,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    enabled: Boolean(focusOutlet && monthLabel && currentWeek),
+    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
   });
 
-  if (!focusOutlet) {
+  if (!activeOutlet) {
     return (
       <Card>
         <CardContent className="py-12 text-center text-muted-foreground">
@@ -265,8 +267,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       </div>
 
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
-      {focusOutlet && (
-        <MenuAnalysis outletCode={focusOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} allItemsData={data} />
+      {activeOutlet && (
+        <MenuAnalysis outletCode={activeOutlet} monthLabel={monthLabel || ''} currentWeek={currentWeek || ''} onSelectItem={setSelectedItem} allItemsData={data} />
       )}
 
       {/* Bahan Analysis — 3 Rankings */}
@@ -309,7 +311,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
                   </TableHeader>
                   <TableBody>
                     {currentRanking.map((r) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} {...clickableRowProps(() => setSelectedItem({ outletCode: focusOutlet!, itemName: r.itemName }))}>
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-[11px] py-1.5 font-mono">{r.rank}</TableCell>
                         <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(r.qtyBom)}</TableCell>
@@ -344,8 +346,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       </Card>
 
       {/* Ranking Item Nasional — new section */}
-      {focusOutlet && (
-        <RankingNasionalCard key={focusOutlet} focusOutlet={focusOutlet} analysisData={analysisData} />
+      {activeOutlet && (
+        <RankingNasionalCard key={activeOutlet} focusOutlet={activeOutlet} analysisData={analysisData} />
       )}
 
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}
