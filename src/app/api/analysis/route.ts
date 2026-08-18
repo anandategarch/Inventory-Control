@@ -451,7 +451,7 @@ export async function GET(req: NextRequest) {
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
-      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 20),
+      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 500),
     ]);
 
     // Map results (same as before, just from parallel results)

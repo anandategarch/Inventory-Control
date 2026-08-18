@@ -412,7 +412,7 @@ export async function GET(req: NextRequest) {
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
       // Section 13: Top Items by Deviasi Rank (national ranking)
-      queryTopItemsByDeviasiRank(week, month, filterOpts, 20),
+      queryTopItemsByDeviasiRank(week, month, filterOpts, 500),
     ]);
 
     // Build prev + historical lookup maps keyed by "itemName|outletCode"

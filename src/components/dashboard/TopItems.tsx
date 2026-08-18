@@ -202,9 +202,29 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
 // ============================================================
 //  Top Deviasi Rank — National item ranking (Section 13)
 //  Per (item, resto) with dual ranking + all deviasi metrics
+//  Sort: alphabetical by item name, then by rank nasional
+//  Filter: PIC + Resto
+//  Colors: negatif=merah (rugi), positif=hijau (untung)
 // ============================================================
 export function TopDeviasiRank({ data }: { data: AnalysisData }) {
-  const items = data.topDeviasiRank || [];
+  const allItems = data.topDeviasiRank || [];
+  const [filterPic, setFilterPic] = useState<string>('all');
+  const [filterResto, setFilterResto] = useState<string>('all');
+
+  // Build filter options from data
+  const picOptions = [...new Set(allItems.map((it: any) => it.pic).filter(Boolean))].sort();
+  const restoOptions = [...new Set(allItems.map((it: any) => it.outletCode))].sort();
+
+  // Apply filters + sort by item name (alphabetical), then by rank nasional
+  const items = allItems
+    .filter((it: any) => filterPic === 'all' || it.pic === filterPic)
+    .filter((it: any) => filterResto === 'all' || it.outletCode === filterResto)
+    .sort((a: any, b: any) => {
+      const nameCmp = (a.itemName || '').localeCompare(b.itemName || '');
+      if (nameCmp !== 0) return nameCmp;
+      return (a.rankNominal || 0) - (b.rankNominal || 0);
+    });
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -212,15 +232,45 @@ export function TopDeviasiRank({ data }: { data: AnalysisData }) {
           Ranking Item Nasional (Deviasi)
           <FormulaInfo
             formula="Rank Nasional = sort by |Nominal Deviasi| DESC. Rank BOM = sort by |Qty BOM| DESC."
-            description="Ranking item per resto. Semua nilai signed (negatif = SURPLUS, hijau). %LS to BOM = Qty Loss/Surplus / Qty BOM. AVG Deviasi By BOM = rata-rata |% Deviasi To BOM| item di semua resto."
+            description="Ranking item per resto. Negatif (merah) = rugi/SURPLUS. Positif (hijau) = untung/LOSS hemat. %LS to BOM = Qty Loss/Surplus / Qty BOM. AVG Deviasi By BOM = rata-rata |% Deviasi To BOM| item di semua resto."
             example="Rank 1 = |Nominal Deviasi| terbesar di seluruh jaringan"
             side="bottom"
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">Top 20 item per resto — ranking nasional</p>
+        <p className="text-xs text-muted-foreground">Semua item per resto — ranking nasional ({items.length} item)</p>
+        {/* Filters */}
+        <div className="flex items-center gap-2 pt-2">
+          <Select value={filterPic} onValueChange={setFilterPic}>
+            <SelectTrigger className="h-7 w-[140px] text-xs">
+              <SelectValue placeholder="PIC" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">Semua PIC</SelectItem>
+              {picOptions.map((pic: string) => (
+                <SelectItem key={pic} value={pic} className="text-xs">{pic}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filterResto} onValueChange={setFilterResto}>
+            <SelectTrigger className="h-7 w-[160px] text-xs">
+              <SelectValue placeholder="Resto" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">Semua Resto</SelectItem>
+              {restoOptions.map((resto: string) => (
+                <SelectItem key={resto} value={resto} className="text-xs">{resto}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {(filterPic !== 'all' || filterResto !== 'all') && (
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setFilterPic('all'); setFilterResto('all'); }}>
+              Reset Filter
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-96">
+        <ScrollArea className="h-[600px]">
           <Table>
             <TableHeader>
               <TableRow>
@@ -241,24 +291,24 @@ export function TopDeviasiRank({ data }: { data: AnalysisData }) {
             <TableBody>
               {items.length === 0 ? (
                 <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
-              ) : items.map((it, i) => (
+              ) : items.map((it: any, i: number) => (
                 <TableRow key={`${it.itemName}-${it.outletCode}-${i}`}>
                   <TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>
                   <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyDeviasi < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyWaste < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyWaste)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyLossSurplus < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-emerald-600' : ''}`}>
+                  <TableCell className={`text-right text-xs ${it.qtyDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyWaste < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyWaste)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyLossSurplus < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                     {it.pctLossSurplusToBom != null ? fmtPctAbs(it.pctLossSurplusToBom) : '—'}
                   </TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyBom < 0 ? 'text-emerald-600' : ''}`}>{fmtNum(it.qtyBom)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyBom)}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">
                     {it.avgDeviasiByBom != null ? fmtPctAbs(it.avgDeviasiByBom) : '—'}
                   </TableCell>
-                  <TableCell className={`text-right font-semibold text-xs ${it.nominalDeviasi < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  <TableCell className={`text-right font-semibold text-xs ${it.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                     {fmtIDR(it.nominalDeviasi)}
                   </TableCell>
                 </TableRow>
