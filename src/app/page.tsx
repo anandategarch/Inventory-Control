@@ -6,8 +6,7 @@ import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
-import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist, TopDeviasiRank } from '@/components/dashboard/TopItems';
-import { RecommendationPanel } from '@/components/dashboard/Narrative';
+import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, TopDeviasiRank } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
@@ -339,21 +338,6 @@ export default function DashboardPage() {
                 <TrendChart data={analysis.data} />
               </section>
 
-              {/* Section: Daftar Investigasi */}
-              <section>
-                <SectionHeader
-                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
-                  title="Daftar Investigasi"
-                  badge={`${analysis.data.investigationWorklist.length} item`}
-                />
-                <InvestigationWorklist data={analysis.data} />
-              </section>
-
-              {/* Section: Recommendation */}
-              <section className="grid lg:grid-cols-2 gap-4">
-                <RecommendationPanel data={analysis.data} />
-              </section>
-
               {/* Section: Ranking Item Nasional (Deviasi) */}
               <section>
                 <SectionHeader
@@ -368,10 +352,6 @@ export default function DashboardPage() {
             {/* ====== INSIGHT TAB ====== */}
             <TabsContent value="insight" className="space-y-4 mt-2">
               <InsightsPanel data={analysis.data} />
-
-              <section className="grid lg:grid-cols-2 gap-4">
-                <RecommendationPanel data={analysis.data} />
-              </section>
             </TabsContent>
 
             {/* ====== AREA TAB ====== */}
