@@ -10,12 +10,11 @@ import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, InvestigationWorklist,
 import { RecommendationPanel } from '@/components/dashboard/Narrative';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
-  VarianceAnalysis, OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
+  OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
 import {
-  HistoricalAnalysisCard, MultiPeriodComparisonCard, MenuAnalysisCard,
+  MultiPeriodComparisonCard, MenuAnalysisCard,
 } from '@/components/dashboard/AnalysisCards';
-import { AlertPanel } from '@/components/dashboard/AlertPanel';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
 import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
@@ -36,7 +35,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Lightbulb,
   MapPin, Coins,
-  History, Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
+  Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
   FileDown,
 } from 'lucide-react';
 
@@ -279,9 +278,6 @@ export default function DashboardPage() {
               <TabsTrigger value="insight" className="text-xs">
                 <Lightbulb className="h-3.5 w-3.5" /> Insight
               </TabsTrigger>
-              <TabsTrigger value="investigasi" className="text-xs">
-                <FileSearch className="h-3.5 w-3.5" /> Investigasi
-              </TabsTrigger>
               <TabsTrigger value="area" className="text-xs">
                 <MapPin className="h-3.5 w-3.5" /> Area
               </TabsTrigger>
@@ -357,55 +353,8 @@ export default function DashboardPage() {
               <section className="grid lg:grid-cols-2 gap-4">
                 <RecommendationPanel data={analysis.data} />
               </section>
-            </TabsContent>
 
-            {/* ====== INSIGHT TAB ====== */}
-            <TabsContent value="insight" className="space-y-4 mt-2">
-              <InsightsPanel data={analysis.data} />
-
-              <section className="grid lg:grid-cols-2 gap-4">
-                <RecommendationPanel data={analysis.data} />
-              </section>
-            </TabsContent>
-
-            {/* ====== INVESTIGATION TAB ====== */}
-            <TabsContent value="investigasi" className="space-y-4 mt-2">
-              {/* Alert Panel */}
-              <section>
-                <SectionHeader
-                  icon={<ShieldAlert className="h-4 w-4 text-muted-foreground" />}
-                  title="Sistem Peringatan"
-                  badge={`${analysis.data.investigationWorklist.length} alert`}
-                />
-                <AlertPanel data={analysis.data} />
-              </section>
-
-              {/* Historical Z-Score */}
-              <section>
-                <SectionHeader
-                  icon={<History className="h-4 w-4 text-muted-foreground" />}
-                  title="Anomali Historical"
-                />
-                <HistoricalAnalysisCard data={analysis.data} />
-              </section>
-
-              {/* Investigation Worklist */}
-              <section>
-                <SectionHeader
-                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
-                  title="Daftar Investigasi"
-                  badge={`${analysis.data.investigationWorklist.length} item`}
-                />
-                <InvestigationWorklist data={analysis.data} />
-              </section>
-
-              {/* Variance + Outlet Health Ranking */}
-              <section className="grid lg:grid-cols-2 gap-4">
-                <VarianceAnalysis data={analysis.data} />
-                <OutletHealthRanking data={analysis.data} />
-              </section>
-
-              {/* Ranking Item Nasional (Deviasi) */}
+              {/* Section: Ranking Item Nasional (Deviasi) */}
               <section>
                 <SectionHeader
                   icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
@@ -414,22 +363,14 @@ export default function DashboardPage() {
                 />
                 <TopDeviasiRank data={analysis.data} />
               </section>
+            </TabsContent>
 
-              {/* Info card about Outlet Scorecard */}
-              <section>
-                <Card className="border-primary/30 bg-primary/5">
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground flex items-center gap-2">
-                      <FileSearch className="h-3.5 w-3.5 text-primary" />
-                      <span>Klik baris outlet pada tabel <span className="font-medium text-foreground">Ranking Kondisi Outlet</span> di atas untuk membuka <span className="font-medium text-foreground">Outlet Scorecard</span> lengkap (health score, ranking, 4-metric grid, top item, recommended actions).</span>
-                    </p>
-                  </CardContent>
-                </Card>
-              </section>
+            {/* ====== INSIGHT TAB ====== */}
+            <TabsContent value="insight" className="space-y-4 mt-2">
+              <InsightsPanel data={analysis.data} />
 
               <section className="grid lg:grid-cols-2 gap-4">
-                <TopItemsByNominal data={analysis.data} />
-                <TopItemsByDevBom data={analysis.data} />
+                <RecommendationPanel data={analysis.data} />
               </section>
             </TabsContent>
 

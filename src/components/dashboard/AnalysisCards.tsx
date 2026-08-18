@@ -2,17 +2,14 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
-import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
-import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
-  History, Calendar, Utensils,
+  Calendar, Utensils,
 } from 'lucide-react';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer,
@@ -20,89 +17,6 @@ import {
 
 // Shared tooltip payload type (any required by Recharts typing)
 type TipPayload = Array<{ payload?: any; value?: any; name?: any; label?: any }> | undefined;
-
-// ============================================================
-//  2.1 HistoricalAnalysisCard
-//  Z-Score anomaly vs historical pattern
-// ============================================================
-function zScoreColor(z: number | null | undefined): string {
-  if (z == null) return '';
-  if (z > 3) return 'text-red-600 font-bold';
-  if (z > 2) return 'text-amber-600';
-  return '';
-}
-
-export function HistoricalAnalysisCard({ data }: { data: AnalysisData }) {
-  const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
-  const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
-
-  const hist = data.growthComparison?.historicalAnalysis;
-  const items = (hist?.criticalItems || []).slice().sort((a, b) => b.zScore - a.zScore);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <History className="h-4 w-4 text-violet-600" />
-          Analisis Historical (Z-Score)
-          <FormulaInfo
-            formula="Z-Score = (Current − Historical Avg) / Std Dev"
-            description={'UNTUK APA: Mengidentifikasi outlet/item yang menyimpang dari pola historical (z-score > threshold).\nCARA BACA: Z-Score > 3 = ekstrem (merah). > 2 = signifikan (kuning). Menunjukkan anomali vs perilaku normal outlet.\nCONTOH: Outlet A current dev 49% vs historical avg 10% (z-score 3.5) → ekstrem.\nACTION: Investigasi perubahan operasional di outlet dengan z-score > 3.'}
-            example="Current 18% vs Historical 8% ± 3% → Z = (18-8)/3 = 3.33 (outlier)"
-            side="bottom"
-          />
-          <QuickSettings
-            settings={[
-              { key: 'HISTORICAL_ZSCORE_WARN', label: 'Z-Score Peringatan', dataType: 'number', min: 0, max: 5, step: 0.5 },
-              { key: 'HISTORICAL_ZSCORE_HIGH', label: 'Z-Score Kritis', dataType: 'number', min: 0, max: 5, step: 0.5 },
-              { key: 'HISTORICAL_MIN_WEEKS', label: 'Min. Minggu Historical', dataType: 'number', min: 1, max: 20, step: 1 },
-            ]}
-          />
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">{items.length} item dengan anomali historical</p>
-      </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-80">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Dev/BOM Kini</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Rata-rata Hist.</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Z-Score</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL|</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada anomali historical</TableCell></TableRow>
-              ) : items.map((it, i) => (
-                <TableRow
-                  key={`${it.outletCode}-${it.itemName}-${i}`}
-                  className="cursor-pointer hover:bg-muted/50"
-                  {...clickableRowProps(() => {
-                    setScorecardOutlet(it.outletCode);
-                    setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
-                    setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
-                  })}
-                >
-                  <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-red-600 font-semibold">{fmtPctAbs(it.currentDevBom)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{fmtPctAbs(it.historicalAvg)}</TableCell>
-                  <TableCell className={`text-[11px] px-2 py-1 text-right ${zScoreColor(it.zScore)}`}>{it.zScore != null ? it.zScore.toFixed(2) : '—'}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
 
 // ============================================================
 //  2.3 MultiPeriodComparisonCard

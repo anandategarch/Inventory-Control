@@ -5125,3 +5125,41 @@ Stage Summary:
   - Data object: removed 9 fields (~10 lines)
   - Render blocks: removed 8 `if (hasSection('KEY')) { ... }` blocks for health, lossSurplus, ranking, cost, worklist, recommendations, topOutlets, dqIssues (~95 lines)
 - Total: ~156 lines removed across 2 files. lint + tsc both pass with 0 errors. KEPT: 9 sections in SECTIONS array (exec, growth, topItems, breakdown, area, variance, consistency, trend, historical), recsWithFlags + evaluateRules + buildRuleContext (used by variance/consistency/historical), all query/engine functions in source files (still used by analysis route). Source files (src/lib/queries/*.ts, src/engine/*/*.ts) untouched.
+
+---
+Task ID: REMOVE-INVESTIGASI
+Agent: Investigasi Tab Remover
+Task: Remove Investigasi tab + dead code
+
+Work Log:
+- Read worklog.md (last 50 lines) for context on prior pareto + export-section removal tasks.
+- Read src/app/page.tsx (560 lines), src/components/dashboard/AdvancedAnalysis.tsx (419 lines), src/components/dashboard/AnalysisCards.tsx (271 lines), src/components/dashboard/AlertPanel.tsx (150 lines), src/hooks/useDashboard.ts (74 lines) end-to-end before editing.
+- Grep'd each candidate component across src/ to verify usage scope:
+  - AlertPanel → only used in page.tsx Investigasi tab → DELETE file + remove import.
+  - VarianceAnalysis (React component) → only used in page.tsx Investigasi tab. Note: engine function `computeVarianceAnalysis` is separate and still used by analysis + export-report routes — KEPT intact.
+  - HistoricalAnalysisCard → only used in page.tsx Investigasi tab → remove export function from AnalysisCards.tsx + remove import.
+  - InvestigationWorklist → used in Dashboard tab (line 353) AND Investigasi tab (line 399) → KEEP (still used in Dashboard tab).
+  - OutletHealthRanking → used in Investigasi tab (line 405) AND Area tab (line 449) → KEEP (still used in Area tab).
+  - TopDeviasiRank → only used in Investigasi tab → MOVE to end of Dashboard tab per task spec (KEEP component, MOVE usage).
+- Grep'd lucide-react icons:
+  - ShieldAlert → used in Investigasi tab (line 376) AND footer (line 525) → KEEP in page.tsx import.
+  - History → used in Investigasi tab (line 386) only in page.tsx → REMOVE from page.tsx import. (History icon also used by AnalysisCards.tsx HistoricalAnalysisCard — removed in that file too.)
+  - FileSearch → used in Dashboard tab (line 349) AND Investigasi tab → KEEP in page.tsx import (still used in Dashboard tab).
+- useDashboard.ts verified: no `'investigasi'` string anywhere; setFocusOutlet only sets activeTab to 'focus'; no auto-switch to 'investigasi' → no changes needed.
+- Edit 1 (page.tsx imports): Removed `VarianceAnalysis` from AdvancedAnalysis import; removed `HistoricalAnalysisCard` from AnalysisCards import; removed entire `import { AlertPanel } from '@/components/dashboard/AlertPanel';` line; removed `History` from lucide-react import.
+- Edit 2 (page.tsx TabsTrigger): Removed `<TabsTrigger value="investigasi">...Investigasi...</TabsTrigger>` block (3 lines). Tab order now: Dashboard → Insight → Area → Cost → Focus → Resto.
+- Edit 3 (page.tsx Dashboard tab): Added new `{/* Section: Ranking Item Nasional (Deviasi) */}` section at end of Dashboard TabsContent (before closing `</TabsContent>`), with SectionHeader wrapper (FileSearch icon, badge `${analysis.data.topDeviasiRank?.length || 0} item`) + `<TopDeviasiRank data={analysis.data} />`.
+- Edit 4 (page.tsx Investigasi TabsContent): Removed entire `{/* ====== INVESTIGATION TAB ====== */}` block (~63 lines: AlertPanel section, HistoricalAnalysisCard section, InvestigationWorklist section, VarianceAnalysis + OutletHealthRanking grid, TopDeviasiRank section, Info card section, TopItemsByNominal + TopItemsByDevBom grid, closing `</TabsContent>`).
+- Edit 5 (AdvancedAnalysis.tsx): Removed `TrendingDown` from lucide-react import (only used by VarianceAnalysis). Removed entire VarianceAnalysis export function block including section comment header `// 1.1 VarianceAnalysis` (~95 lines: function body, renderSection helper inside, FormulaInfo + ScrollArea + Table JSX). KEPT: OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison + shared helpers (healthScoreColor, healthScoreBg, lossToSalesColor, consistencyBadge) + all other imports (Card, Badge, Table*, ScrollArea, Progress, FormulaInfo, QuickSettings, useDashboard, fmtIDR, fmtPct, fmtPctAbs, clickableRowProps, Heart, Link2, MapPin). Pre-existing unused import `directionColor` left untouched (was dead code before this task, out of scope).
+- Edit 6 (AnalysisCards.tsx): Removed from imports — `Table, TableBody, TableCell, TableHead, TableHeader, TableRow` (Table import line), `QuickSettings` import line, `clickableRowProps` import line, `History` from lucide-react. Removed `zScoreColor` helper function + entire HistoricalAnalysisCard export function (~82 lines total). KEPT: MultiPeriodComparisonCard, MenuAnalysisCard + shared TipPayload type + all still-used imports (Card, Badge, ScrollArea, Accordion*, FormulaInfo, useDashboard, fmtIDR, fmtPct, fmtPctAbs, Calendar, Utensils, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer).
+- Edit 7: Deleted src/components/dashboard/AlertPanel.tsx file entirely (150 lines removed).
+- Verification: `bun run lint` → 0 errors (clean output, just `$ eslint .`); `npx tsc --noEmit --skipLibCheck` → 0 errors (only npm notice). Both pass cleanly.
+- Verified grep for `AlertPanel`, `VarianceAnalysis` (React component), `HistoricalAnalysisCard` across src/ returns 0 matches in any .ts/.tsx file (only `computeVarianceAnalysis` engine function references remain in api routes + engine — those are correctly retained as a separate concern).
+- Verified KEPT items intact: InvestigationWorklist (Dashboard tab line 349), OutletHealthRanking (Area tab line 389), MultiPeriodComparisonCard + MenuAnalysisCard (AnalysisCards.tsx), ItemConsistencyAnalysis + AreaComparison (AdvancedAnalysis.tsx), TopDeviasiRank component definition (TopItems.tsx) + new usage in Dashboard tab.
+
+Stage Summary:
+- src/app/page.tsx — 560 lines → 500 lines (~60 lines removed): 4 import cleanups (VarianceAnalysis, HistoricalAnalysisCard, AlertPanel, History), Investigasi TabsTrigger removed, entire Investigasi TabsContent block removed (~63 lines), TopDeviasiRank section added at end of Dashboard tab (~9 lines).
+- src/components/dashboard/AdvancedAnalysis.tsx — 419 lines → 324 lines (~95 lines removed): TrendingDown import removed, VarianceAnalysis export function + section comment removed.
+- src/components/dashboard/AnalysisCards.tsx — 271 lines → 185 lines (~86 lines removed): 4 import lines cleaned (History, Table*, QuickSettings, clickableRowProps), zScoreColor helper + HistoricalAnalysisCard export function + section comment removed.
+- src/components/dashboard/AlertPanel.tsx — DELETED (150 lines removed).
+- Total: ~391 lines removed across 3 modified files + 1 deleted file. lint + tsc both pass with 0 errors. KEPT: TopDeviasiRank (moved to Dashboard tab), InvestigationWorklist (Dashboard tab), OutletHealthRanking (Area tab), AdvancedAnalysis.tsx file (OutletHealthRanking/ItemConsistencyAnalysis/AreaComparison exports), AnalysisCards.tsx file (MultiPeriodComparisonCard/MenuAnalysisCard exports), all other tabs (Dashboard/Insight/Area/Cost/Focus/Resto), ShieldAlert + FileSearch icons (still used in footer/Dashboard tab). Engine function `computeVarianceAnalysis` in src/engine/analysis/rankingService.ts untouched — still used by analysis + export-report API routes (separate from React component VarianceAnalysis that was removed).

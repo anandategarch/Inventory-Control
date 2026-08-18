@@ -12,7 +12,7 @@ import { fmtIDR, fmtPct, fmtPctAbs, directionColor } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
-  TrendingDown, Heart, Link2, MapPin,
+  Heart, Link2, MapPin,
 } from 'lucide-react';
 
 // ============================================================
@@ -37,100 +37,6 @@ function lossToSalesColor(r: number | null | undefined): string {
   if (r > 0.10) return 'text-red-600';
   if (r > 0.05) return 'text-amber-600';
   return 'text-emerald-600';
-}
-
-// ============================================================
-//  1.1 VarianceAnalysis
-//  Perubahan period-over-period (Memburuk vs Membaik)
-// ============================================================
-export function VarianceAnalysis({ data }: { data: AnalysisData }) {
-  const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
-
-  const variance = data.varianceAnalysis || { topWorsened: [], topImproved: [] };
-  const worsened = (variance.topWorsened || []).slice(0, 10);
-  const improved = (variance.topImproved || []).slice(0, 10);
-  const empty = worsened.length === 0 && improved.length === 0;
-
-  const onClick = (it: any) => {
-    setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
-    setDeepDiveItem({ itemName: it.itemName, outletCode: it.outletCode });
-  };
-
-  const renderSection = (title: string, items: any[], color: 'red' | 'emerald') => {
-    const colorCls = color === 'red' ? 'text-red-600' : 'text-emerald-600';
-    return (
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <p className={`text-xs font-semibold ${colorCls}`}>{title}</p>
-          <Badge variant="outline" className={`text-[11px] ${colorCls}`}>{items.length} item</Badge>
-        </div>
-        <ScrollArea className="h-48 rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">RESTO</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Perubahan</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">%</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-4">—</TableCell></TableRow>
-              ) : items.map((it, i) => {
-                const pct = it.previousAbsNominal !== 0
-                  ? (it.delta / Math.abs(it.previousAbsNominal)) * 100
-                  : 0;
-                return (
-                  <TableRow
-                    key={`${it.itemName}-${it.outletCode}-${i}`}
-                    className="cursor-pointer hover:bg-muted/50"
-                    {...clickableRowProps(() => onClick(it))}
-                  >
-                    <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[180px]" title={it.itemName}>{it.itemName}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{it.outletCode}</TableCell>
-                    <TableCell className={`text-[11px] px-2 py-1 text-right font-semibold ${colorCls}`}>{fmtIDR(it.delta)}</TableCell>
-                    <TableCell className={`text-[11px] px-2 py-1 text-right ${colorCls}`}>{fmtPct(pct / 100, true, 0)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      </div>
-    );
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <TrendingDown className="h-4 w-4 text-red-600" />
-          Analisis Perubahan
-          <FormulaInfo
-            formula="Perubahan = NOMINAL DEVIASI Kini − NOMINAL DEVIASI Sebelumnya"
-            description={'UNTUK APA: Mengidentifikasi item dengan perubahan NOMINAL DEVIASI terbesar antar periode.\nCARA BACA: Memburuk (merah) = deviasi naik. Membaik (hijau) = deviasi turun. Hanya perubahan > Rp 1M ditampilkan.\nCONTOH: Kini Rp 50M - Sebelumnya Rp 30M = +Rp 20M (Memburuk).\nACTION: Investigasi penyebab perubahan drastis → cek perubahan resep, harga, atau volume.'}
-            example="Kini 80M − Sebelumnya 50M = +30M (Memburuk)"
-            side="bottom"
-          />
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">Top item dengan perubahan deviation terbesar</p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {empty ? (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            Tidak ada perubahan signifikan vs periode sebelumnya
-          </p>
-        ) : (
-          <>
-            {renderSection('Memburuk', worsened, 'red')}
-            {renderSection('Membaik', improved, 'emerald')}
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 // ============================================================
