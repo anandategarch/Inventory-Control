@@ -6,7 +6,7 @@ import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
-import { TopItemsByNominal, TopItemsByDevBom, TopOutlets, TopDeviasiRank } from '@/components/dashboard/TopItems';
+import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
@@ -336,16 +336,6 @@ export default function DashboardPage() {
               <section className="grid lg:grid-cols-2 gap-4">
                 <LossVsSurplusChart data={analysis.data} />
                 <TrendChart data={analysis.data} />
-              </section>
-
-              {/* Section: Ranking Item Nasional (Deviasi) */}
-              <section>
-                <SectionHeader
-                  icon={<FileSearch className="h-4 w-4 text-muted-foreground" />}
-                  title="Ranking Item Nasional (Deviasi)"
-                  badge={`${analysis.data.topDeviasiRank?.length || 0} item`}
-                />
-                <TopDeviasiRank data={analysis.data} />
               </section>
             </TabsContent>
 

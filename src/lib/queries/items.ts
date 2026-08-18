@@ -141,7 +141,9 @@ export async function queryTopItemsByDeviasiRank(
           THEN SUM(ir."qtyLossSurplus") / SUM(ir."qtyBom")
           ELSE NULL END as "pctLossSurplusToBom",
         SUM(ir."qtyBom") as "qtyBom",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi"
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        -- Store ABS qtyDeviasi for dynamic bucket average
+        ABS(SUM(ir."qtyDeviasi")) as "absQtyDeviasi"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       JOIN "Outlet" o ON ir."outletId" = o.id
@@ -150,26 +152,27 @@ export async function queryTopItemsByDeviasiRank(
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         ${f}
       GROUP BY i.name, o.code, o.name, pic.pic
-    ),
-    item_network_avg AS (
-      -- AVG Deviasi By BOM: network average of ABS(pctQtyDeviasiToBom) per item
-      SELECT
-        i.name as "itemName",
-        AVG(ABS(ir."pctQtyDeviasiToBom")) as "avgDeviasiByBom"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."pctQtyDeviasiToBom" IS NOT NULL
-      GROUP BY i.name
     )
     SELECT
-      ipo.*,
-      ina."avgDeviasiByBom",
+      ipo."itemName", ipo."outletCode", ipo."outletName", ipo.pic, ipo."satuan",
+      ipo."qtyDeviasi", ipo."qtyWaste", ipo."qtyLossSurplus", ipo."pctLossSurplusToBom",
+      ipo."qtyBom", ipo."nominalDeviasi",
+      -- AVG Deviasi By BOM: dynamic bucket — average ABS(qtyDeviasi) of same item
+      -- at other restos with BOM within ±50% range. Null if only 1 resto.
+      CASE WHEN EXISTS (
+        SELECT 1 FROM item_per_outlet ipo2
+        WHERE ipo2."itemName" = ipo."itemName"
+          AND ipo2."outletCode" != ipo."outletCode"
+          AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
+      ) THEN (
+        SELECT AVG(ABS(ipo3."absQtyDeviasi")) FROM item_per_outlet ipo3
+        WHERE ipo3."itemName" = ipo."itemName"
+          AND ABS(ipo3."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
+      ) ELSE NULL END as "avgDeviasiByBom",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"
     FROM item_per_outlet ipo
-    LEFT JOIN item_network_avg ina ON ipo."itemName" = ina."itemName"
-    ORDER BY ABS(ipo."nominalDeviasi") DESC
+    ORDER BY ipo."itemName", "rankNominal"
     LIMIT ${limit}
   `;
   // Coerce BigInt/Decimal to Number

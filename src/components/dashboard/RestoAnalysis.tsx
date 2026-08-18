@@ -345,6 +345,11 @@ export function RestoAnalysis() {
         </CardContent>
       </Card>
 
+      {/* Ranking Item Nasional — new section */}
+      {focusOutlet && (
+        <RankingNasionalCard focusOutlet={focusOutlet} />
+      )}
+
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}
       {selectedItem && (
         <ItemDetailModal
@@ -679,5 +684,139 @@ function Row({ label, value, growth, sub, growthColor: gc }: {
         {sub && <span className="text-[10px] text-muted-foreground">({sub})</span>}
       </div>
     </div>
+  );
+}
+
+// ============================================================
+//  Ranking Nasional Card — Top Items by Deviasi Rank
+//  Shows after resto is selected. Custom Top N selector.
+// ============================================================
+function RankingNasionalCard({ focusOutlet }: { focusOutlet: string }) {
+  const { monthLabel, currentWeek } = useDashboard();
+  const [topN, setTopN] = useState<string>('50');
+  const [filterPic, setFilterPic] = useState<string>('all');
+  const [filterResto, setFilterResto] = useState<string>('all');
+
+  // Fetch from analysis API (reuse same data)
+  const { data: analysisData } = useQuery({
+    queryKey: ['analysis', monthLabel, currentWeek],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      if (monthLabel) p.set('month', monthLabel);
+      if (currentWeek) p.set('week', currentWeek);
+      const res = await fetch(`/api/analysis?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json();
+    },
+    enabled: Boolean(monthLabel && currentWeek),
+  });
+
+  const allItems: any[] = analysisData?.topDeviasiRank || [];
+  const picOptions = [...new Set(allItems.map((it: any) => it.pic).filter(Boolean))].sort() as string[];
+  const restoOptions = [...new Set(allItems.map((it: any) => it.outletCode))].sort() as string[];
+
+  const items = allItems
+    .filter((it: any) => filterPic === 'all' || it.pic === filterPic)
+    .filter((it: any) => filterResto === 'all' || it.outletCode === filterResto)
+    .slice(0, topN === 'all' ? 9999 : parseInt(topN));
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Target className="h-4 w-4" />
+          Ranking Item Nasional (Deviasi)
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Ranking item per resto. Negatif (merah) = rugi. Positif (hijau) = untung.
+          AVG Dev By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.
+        </p>
+        {/* Top N + Filters */}
+        <div className="flex items-center gap-2 pt-2 flex-wrap">
+          <select
+            value={topN}
+            onChange={(e) => setTopN(e.target.value)}
+            className="h-7 text-xs border rounded px-2 bg-background"
+          >
+            <option value="10">Top 10</option>
+            <option value="20">Top 20</option>
+            <option value="50">Top 50</option>
+            <option value="100">Top 100</option>
+            <option value="all">Semua</option>
+          </select>
+          <select
+            value={filterPic}
+            onChange={(e) => setFilterPic(e.target.value)}
+            className="h-7 text-xs border rounded px-2 bg-background"
+          >
+            <option value="all">Semua PIC</option>
+            {picOptions.map((pic: string) => <option key={pic} value={pic}>{pic}</option>)}
+          </select>
+          <select
+            value={filterResto}
+            onChange={(e) => setFilterResto(e.target.value)}
+            className="h-7 text-xs border rounded px-2 bg-background"
+          >
+            <option value="all">Semua Resto</option>
+            {restoOptions.map((resto: string) => <option key={resto} value={resto}>{resto}</option>)}
+          </select>
+          {(filterPic !== 'all' || filterResto !== 'all') && (
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setFilterPic('all'); setFilterResto('all'); }}>
+              Reset
+            </Button>
+          )}
+          <Badge variant="secondary" className="text-[10px] ml-auto">{items.length} item</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="max-h-[600px] overflow-auto">
+          <Table>
+            <TableHeader className="sticky top-0 bg-background z-10">
+              <TableRow>
+                <TableHead className="w-8 text-center">Rank Nas</TableHead>
+                <TableHead className="w-8 text-center">Rank BOM</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead>Resto</TableHead>
+                <TableHead>PIC</TableHead>
+                <TableHead className="text-right">QTY Deviasi</TableHead>
+                <TableHead className="text-right">QTY Waste</TableHead>
+                <TableHead className="text-right">QTY LS</TableHead>
+                <TableHead className="text-right">%LS to BOM</TableHead>
+                <TableHead className="text-right">QTY BOM</TableHead>
+                <TableHead className="text-right">AVG Dev By BOM</TableHead>
+                <TableHead className="text-right">Nominal Deviasi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.length === 0 ? (
+                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+              ) : items.map((it: any, i: number) => (
+                <TableRow key={`${it.itemName}-${it.outletCode}-${i}`}>
+                  <TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom}</TableCell>
+                  <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyWaste < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyWaste)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyLossSurplus < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
+                  <TableCell className={`text-right text-xs ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {it.pctLossSurplusToBom != null ? `${Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` : '—'}
+                  </TableCell>
+                  <TableCell className={`text-right text-xs ${it.qtyBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyBom)}</TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    {it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—'}
+                  </TableCell>
+                  <TableCell className={`text-right font-semibold text-xs ${it.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {fmtIDR(it.nominalDeviasi)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
