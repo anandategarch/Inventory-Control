@@ -274,18 +274,16 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
-            Bahan Analysis — 3 Rankings
+            Bahan Analysis — Financial Impact
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Financial (dampak uang) · Operational (abnormal vs volume) · Unexplained (residual tinggi)
+            Financial Impact (dampak uang)
           </p>
         </CardHeader>
         <CardContent>
           <Tabs value={rankingTab} onValueChange={setRankingTab}>
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-1">
               <TabsTrigger value="financial" className="text-xs">A. Financial Impact</TabsTrigger>
-              <TabsTrigger value="operational" className="text-xs">B. Operational (Dev/BOM)</TabsTrigger>
-              <TabsTrigger value="unexplained" className="text-xs">C. Unexplained (Residual)</TabsTrigger>
             </TabsList>
 
             <TabsContent value={rankingTab} className="mt-3">
@@ -347,7 +345,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
       {/* Ranking Item Nasional — new section */}
       {focusOutlet && (
-        <RankingNasionalCard focusOutlet={focusOutlet} analysisData={analysisData} />
+        <RankingNasionalCard key={focusOutlet} focusOutlet={focusOutlet} analysisData={analysisData} />
       )}
 
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}
@@ -694,7 +692,10 @@ function Row({ label, value, growth, sub, growthColor: gc }: {
 function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: string; analysisData?: any }) {
   const [topN, setTopN] = useState<string>('50');
   const [filterPic, setFilterPic] = useState<string>('all');
-  const [filterResto, setFilterResto] = useState<string>('all');
+  // Auto-filter by focusOutlet — ranking hanya menampilkan item untuk resto yang dipilih
+  // User can still override via dropdown. Sync happens via key prop on component
+  // (component remounts when focusOutlet changes → initial state resets).
+  const [filterResto, setFilterResto] = useState<string>(focusOutlet || 'all');
 
   const allItems: any[] = analysisData?.topDeviasiRank || [];
   const picOptions = [...new Set(allItems.map((it: any) => it.pic).filter(Boolean))].sort() as string[];

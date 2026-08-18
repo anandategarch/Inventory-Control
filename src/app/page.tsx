@@ -19,9 +19,7 @@ import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
-import {
-  CostImpactDecomposition, OutletEfficiencyMatrix, CostPerThousandCard, NetCostTrendChart,
-} from '@/components/dashboard/CostAccounting';
+// CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
 import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
@@ -33,8 +31,8 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
   Activity, Boxes, BarChart3, ShieldAlert, Lightbulb,
-  MapPin, Coins,
-  Calendar, Calculator, Loader2, Target, Store,
+  MapPin,
+  Calendar, Loader2, Target, Store,
   FileDown,
 } from 'lucide-react';
 
@@ -280,9 +278,6 @@ export default function DashboardPage() {
               <TabsTrigger value="area" className="text-xs">
                 <MapPin className="h-3.5 w-3.5" /> Area
               </TabsTrigger>
-              <TabsTrigger value="cost" className="text-xs">
-                <Coins className="h-3.5 w-3.5" /> Cost Accounting
-              </TabsTrigger>
               <TabsTrigger value="focus" className="text-xs">
                 <Target className="h-3.5 w-3.5" /> Focus Mode
               </TabsTrigger>
@@ -355,19 +350,9 @@ export default function DashboardPage() {
                 <AreaComparison data={analysis.data} />
               </section>
 
-              {/* Outlet Health Ranking + Efficiency Matrix */}
+              {/* Outlet Health Ranking */}
               <section className="grid lg:grid-cols-2 gap-4">
                 <OutletHealthRanking data={analysis.data} />
-                <OutletEfficiencyMatrix data={analysis.data} />
-              </section>
-
-              {/* Cost Per Thousand */}
-              <section>
-                <SectionHeader
-                  icon={<Calculator className="h-4 w-4 text-muted-foreground" />}
-                  title="Biaya per Rp 1.000 Penjualan per Outlet"
-                />
-                <CostPerThousandCard data={analysis.data} />
               </section>
 
               {/* Item Consistency Analysis */}
@@ -385,33 +370,6 @@ export default function DashboardPage() {
                   title="Top Outlet"
                 />
                 <TopOutlets data={analysis.data} />
-              </section>
-            </TabsContent>
-
-            {/* ====== COST TAB ====== */}
-            <TabsContent value="cost" className="space-y-4 mt-2">
-              <section>
-                <SectionHeader
-                  icon={<Coins className="h-4 w-4 text-muted-foreground" />}
-                  title="Analisis Cost Accounting"
-                />
-                <div className="grid lg:grid-cols-1 gap-4">
-                  <CostImpactDecomposition data={analysis.data} />
-                </div>
-              </section>
-
-              {/* Net Cost Trend */}
-              <section>
-                <SectionHeader
-                  icon={<Activity className="h-4 w-4 text-muted-foreground" />}
-                  title="Tren Biaya Bersih"
-                />
-                <NetCostTrendChart data={analysis.data} />
-              </section>
-
-              <section className="grid lg:grid-cols-2 gap-4">
-                <LossVsSurplusChart data={analysis.data} />
-                <TrendChart data={analysis.data} />
               </section>
             </TabsContent>
 
