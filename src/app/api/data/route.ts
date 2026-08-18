@@ -10,7 +10,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache, focusCache } from '@/lib/cache';
+import { analysisCache, statusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { z } from 'zod';
@@ -248,7 +248,6 @@ export async function DELETE(req: NextRequest) {
     // Clear caches so subsequent reads see fresh state
     analysisCache.clear();
     statusCache.clear();
-    focusCache.clear();
     // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the
     // updated SourceFile set. Without this, getMonthResolver() would keep
     // returning a resolver that includes the now-deleted monthLabel, and

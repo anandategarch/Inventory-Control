@@ -13,7 +13,7 @@ import {
   invalidateSettingsCache,
   type SettingDefinition,
 } from '@/lib/settings';
-import { analysisCache, focusCache } from '@/lib/cache';
+import { analysisCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -177,9 +177,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
-    // OPTIMIZE-FOCUS: also clear focusCache (outlet-focus results depend on settings)
     analysisCache.clear();
-    focusCache.clear();
 
     return NextResponse.json({
       success: true,
@@ -249,9 +247,7 @@ export async function DELETE(req: NextRequest) {
     invalidateSettingsCache();
 
     // Bug 4 fix: clear analysis cache on settings reset
-    // OPTIMIZE-FOCUS: also clear focusCache (outlet-focus results depend on settings)
     analysisCache.clear();
-    focusCache.clear();
 
     await db.auditLog.create({
       data: {

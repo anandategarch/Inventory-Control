@@ -12,7 +12,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache, focusCache } from '@/lib/cache';
+import { analysisCache, statusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
 
@@ -74,7 +74,6 @@ export async function POST(req: NextRequest) {
     // Clear caches — PIC affects /api/status response and analysis filters
     analysisCache.clear();
     statusCache.clear();
-    focusCache.clear();
 
     await db.auditLog.create({
       data: {
@@ -117,7 +116,6 @@ export async function DELETE(req: NextRequest) {
 
     analysisCache.clear();
     statusCache.clear();
-    focusCache.clear();
 
     await db.auditLog.create({
       data: {

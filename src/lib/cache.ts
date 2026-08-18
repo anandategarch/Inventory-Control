@@ -70,10 +70,3 @@ export const analysisCache = new LRUCache<string, unknown>(200, 5 * 60 * 1000);
 // that affect the status response (e.g., deleting SourceFiles, updating PIC assignments).
 export const statusCache = new LRUCache<string, unknown>(1, 5 * 60 * 1000);
 
-// Dedicated cache for /api/outlet-focus results.
-// OPTIMIZE-FOCUS: separate from analysisCache so outlet-focus results are not
-// evicted by other routes' entries (analysisCache is shared, max 200). 60s TTL
-// keeps data fresh — focus mode is interactive and users expect recent data.
-// All callers that clear analysisCache.clear() MUST also clear focusCache.clear()
-// (see data, settings, ingest-process, pic, pic/import, ingestion routes).
-export const focusCache = new LRUCache<string, unknown>(50, 60 * 1000);

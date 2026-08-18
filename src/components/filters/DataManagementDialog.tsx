@@ -190,7 +190,6 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     // FIX: Invalidate ALL data-dependent queries, not just analysis
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
     queryClient.invalidateQueries({ queryKey: ['item-history'] });
   }
 

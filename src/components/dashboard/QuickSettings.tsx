@@ -124,7 +124,6 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
         // Force refetch analysis (removes stale data even within staleTime window)
         queryClient.invalidateQueries({ queryKey: ['analysis'], refetchType: 'active' });
         // Also invalidate outlet-focus (thresholds affect anomaly detection there too)
-        queryClient.invalidateQueries({ queryKey: ['outlet-focus'], refetchType: 'active' });
         // Thresholds also affect anomaly detection in these routes
         queryClient.invalidateQueries({ queryKey: ['outlet-items'], refetchType: 'active' });
         queryClient.invalidateQueries({ queryKey: ['item-history'], refetchType: 'active' });

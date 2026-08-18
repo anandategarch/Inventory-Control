@@ -5581,3 +5581,224 @@ Stage Summary:
 - OPT 6 verified: src/app/api/analysis/route.ts:396-432 (rule eval loop already has early skip + Map lookups — no change)
 - Downstream fix: src/engine/analysis/rankingService.ts:8 (removed unused Outlet import), :261 (byOutlet Map outlet type → RecWithRels['outlet'])
 - lint: 0 errors. tsc: 0 errors.
+
+---
+Task ID: FINAL2-FRONTEND
+Agent: Frontend Auditor
+Task: Deep audit frontend after restructure (2-tab Dashboard + Resto; Focus/Insight/Area/Cost tabs removed)
+
+Work Log:
+- Read worklog.md (last 80 lines) for context — confirmed prior OPTIMIZE-ENGINE + OPTIMIZE-FOCUS + OPTIMIZE-ANALYSIS agents already cleaned up dead UI in API response (costImpact trim, deviationBreakdown trim, dqStatus.ok + dqStatus.issues dropped, etc.).
+- Read src/app/page.tsx end-to-end (401 lines). Mapped imports → render sites. Confirmed 2-tab structure: `dashboard` + `resto`. FilterBar rendered unconditionally; Tabs content gated by analysis.data presence. Footer + DrillDownDrawer + SourceDataModal + CardDrillDown + OutletScorecard + ItemDeepDive + ExportDialog all rendered outside Tabs (always-mounted overlays).
+- Grep matrix across src/ for: OutletFocusMode, CostAccounting, FormulaInfo, QuickSettings, RankingNasionalCard, OutletScorecard, setFocusOutlet, setOutlet, setScorecardOutlet, setCardDrillDown, setDeepDiveItem, scorecardOutlet, focusOutlet, focusMode, varianceAnalysis, investigationWorklist, topOutletsBySales, topDeviasiRank, netCostTrend, dqStatus.
+- Read end-to-end: src/components/dashboard/RestoAnalysis.tsx (809 lines, incl. RankingNasionalCard + MenuAnalysis + ItemDetailModal), TopItems.tsx (197), AdvancedAnalysis.tsx (325), Charts.tsx (267), ExecutiveSummary.tsx (320), InsightsPanel.tsx (357), AnalysisCards.tsx (77), OutletScorecard.tsx (231), ItemDeepDive.tsx (239), CardDrillDown.tsx (214), QuickSettings.tsx (343), FormulaInfo.tsx (76), ExportDialog.tsx (131), FilterBar.tsx (relevant 260-409 slice), drilldown/DrillDownDrawer.tsx (122), drilldown/SourceDataModal.tsx (213), useDashboard.ts (75), useAnalysis.ts (225).
+- Cross-referenced API response shape (src/app/api/analysis/route.ts:694-754) vs AnalysisData type (useAnalysis.ts:73-112) vs frontend readers (Grep matrix).
+- Ran `bun run lint` → 0 errors. Ran `npx tsc --noEmit --skipLibCheck` → 0 errors.
+- Verified OutletFocusMode.tsx (1424 lines) + CostAccounting.tsx (389 lines) are NOT imported anywhere — pure dead code.
+- Verified OutletScorecard.tsx Dialog never opens: `scorecardOutlet` is set to non-null only at InsightsPanel.tsx:270 inside `else if (type === 'outlet')` branch — but buildInsights (InsightsPanel.tsx:67-242) never produces any insight with `actionTarget.type === 'outlet'` (only 'area' at :144 and 'item' at :173, :237). All other setScorecardOutlet call sites reset to null. OutletFocusMode.tsx:1324 is the only non-null setter outside InsightsPanel, but OutletFocusMode itself is dead code.
+- Verified RankingNasionalCard correctly filters by activeOutlet via `key={activeOutlet}` remount + `useState<string>(focusOutlet || 'all')` initial state (RestoAnalysis.tsx:350, 694-708).
+- Verified setFocusOutlet auto-switches tab (useDashboard.ts:67-71: `code ? { focusOutlet: code, activeTab: 'resto' } : { focusOutlet: null }`). setOutlet does NOT switch tab (useDashboard.ts:53: `set({ outletCode: v })`).
+- Verified dqStatus response shape: API returns only `{ errors, warnings }` (analysis/route.ts:702-705) — but useAnalysis.ts:87 declares type as `{ ok: number; warnings: number; errors: number; issues: any[] }`. Type is stale; no runtime bug because frontend only reads `.errors` + `.warnings` (ExecutiveSummary.tsx:308,312).
+
+Stage Summary:
+- **Bug FINAL2-FRONTEND-1** | HIGH | src/components/dashboard/OutletFocusMode.tsx (entire file, 1424 lines) | DEAD CODE — file never imported by any reachable module (grep `import.*OutletFocusMode|from.*OutletFocusMode` returns 0 matches). | Impact: 1424 lines of dead code shipped to client bundle; confuses maintainers; references setFocusOutlet/setScorecardOutlet/setDeepDiveItem in ways that suggest prior architecture that no longer exists. | Proposed fix: delete the file.
+- **Bug FINAL2-FRONTEND-2** | HIGH | src/components/dashboard/CostAccounting.tsx (entire file, 389 lines) | DEAD CODE — file never imported (grep `import.*CostAccounting|from.*CostAccounting` returns 0 matches outside a comment in page.tsx:21 and a comment in analysis/route.ts:646). | Impact: 389 lines dead code; imports FormulaInfo + QuickSettings but only used internally; CostAccounting is the sole reader of `data.netCostTrend` line 324 alongside live InsightsPanel.tsx:178 — but since CostAccounting is dead, the field's only live reader is InsightsPanel. | Proposed fix: delete the file.
+- **Bug FINAL2-FRONTEND-3** | MEDIUM | src/components/dashboard/OutletScorecard.tsx (whole component, 231 lines) + src/app/page.tsx:17,391 | Rendered but Dialog never opens. `scorecardOutlet` is set to non-null ONLY at InsightsPanel.tsx:270 inside `else if (type === 'outlet')` branch — but buildInsights (InsightsPanel.tsx:67-242) never emits an insight with `actionTarget.type === 'outlet'` (only 'area' at :144, 'item' at :173 and :237). All other setScorecardOutlet call sites reset to null. OutletFocusMode.tsx:1324 (dead code) is the only other non-null setter. | Impact: OutletScorecard Dialog always closed → "Focus Mode" button (line 78) which calls `setFocusOutlet(scorecardOutlet)` is never clickable. Dead UI. 231 lines shipped for nothing. | Proposed fix: either (a) delete OutletScorecard + remove import at page.tsx:17 + remove render at page.tsx:391; OR (b) wire it up to a reachable trigger — e.g., add an "Investigate" button to OutletHealthRanking rows that calls `setScorecardOutlet(o.outletCode)`, or make InsightsPanel emit an outlet-type insight.
+- **Bug FINAL2-FRONTEND-4** | MEDIUM | src/components/dashboard/TopItems.tsx:179 | TopOutlets row click behavior inconsistent with OutletHealthRanking. TopOutlets calls `setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null })` — stays on Dashboard tab + filters dashboard + opens DrillDownDrawer. OutletHealthRanking (AdvancedAnalysis.tsx:97) calls `setFocusOutlet(o.outletCode)` which auto-switches to Resto tab. | Impact: user clicking "Top Outlets" row expects same UX as clicking "Ranking Kondisi Outlet" row but gets different behavior — Dashboard stays filtered + drawer opens instead of jumping to Resto Analysis. UX inconsistency. | Proposed fix: change TopOutlets onClick to `setFocusOutlet(o.outletCode)` (drop setOutlet + setDrilldown). Both outlet rankings then jump to Resto Analysis consistently.
+- **Bug FINAL2-FRONTEND-5** | MEDIUM | src/components/filters/FilterBar.tsx:295 | Selecting outlet from FilterBar dropdown calls `setOutlet` which only sets `outletCode` filter (useDashboard.ts:53) — does NOT auto-activate Resto Analysis tab. User must manually click Resto tab. | Impact: FilterBar outlet filter narrows Dashboard data (analysis API is filtered by outletCode), but Resto Analysis tab does not auto-activate. Users may not realize Resto tab now has the selected outlet's deep-dive ready. | Proposed fix: either document as intentional (filter narrows ALL data, user chooses when to deep-dive) OR change FilterBar outlet `onValueChange` to also call `setFocusOutlet(v)` when v is non-null. Note: RestoAnalysis.tsx:82 already does `focusOutlet || outletCode` so Resto tab WILL show the selected outlet's data when navigated to — the issue is only that the tab doesn't auto-switch.
+- **Bug FINAL2-FRONTEND-6** | LOW | src/hooks/useAnalysis.ts:87 | Stale dqStatus type. Declared as `{ ok: number; warnings: number; errors: number; issues: any[] }` but API response (analysis/route.ts:702-705) only returns `{ errors, warnings }` (per OPT 5 from OPTIMIZE-ANALYSIS agent — `ok` and `issues` were dropped as dead). | Impact: no runtime bug — frontend only reads `dq.errors` + `dq.warnings` (ExecutiveSummary.tsx:308,312). But type lies about response shape; if anyone writes `dq.ok` they get `undefined`. | Proposed fix: update useAnalysis.ts:87 to `dqStatus: { errors: number; warnings: number }`.
+- **Bug FINAL2-FRONTEND-7** | LOW | src/app/api/analysis/route.ts:722 | `varianceAnalysis` field is dead in frontend. Included in API response but no frontend component reads `data.varianceAnalysis` (grep shows only export-report/route.ts:477 reads it, and that route RECOMPUTES it locally — doesn't read from API response). | Impact: ~500-2000 bytes wasted per response (varianceAnalysis is `{ topWorsened: VarianceItem[]; topImproved: VarianceItem[] }` × N items). | Proposed fix: drop `varianceAnalysis` from analysis API response (analysis/route.ts:722). Export route recomputes independently so no downstream break.
+- **Bug FINAL2-FRONTEND-8** | LOW | src/hooks/useAnalysis.ts:100 + src/app/api/analysis/route.ts:718 | `investigationWorklist` field is read ONLY by OutletScorecard.tsx:52 — which is itself dead UI per Bug 3. If OutletScorecard is removed per Bug 3's fix, investigationWorklist becomes frontend-dead too (still computed server-side + consumed by export-report/route.ts:489). | Impact: cascading dead weight — once OutletScorecard is removed, this field becomes dead in frontend. | Proposed fix: after fixing Bug 3, audit `investigationWorklist` usage; if no remaining frontend reader, drop from API response.
+- **Bug FINAL2-FRONTEND-9** | LOW | src/components/dashboard/ItemDeepDive.tsx:170, 202 | React key antipattern — uses array index `key={i}` for list rows (`topOutlets.map((it, i) => <TableRow key={i}>)` and `records.slice(0, 8).map((r, i) => <TableRow key={i}>)`). | Impact: no current runtime bug (read-only display, list doesn't reorder), but React antipattern — if data reshuffles, reconciliation may misbehave. Records have `r.id` available (used in SourceDataModal.tsx:159). | Proposed fix: use `r.id` for records (line 202); for topOutlets use composite `${it.outletCode}-${it.itemName}` like CardDrillDown + TopItems do.
+
+Verification:
+- `bun run lint` → 0 errors.
+- `npx tsc --noEmit --skipLibCheck` → 0 errors.
+- No broken imports (all imports in page.tsx resolve to live, used components).
+- No missing useEffect deps in page.tsx (4 useEffects at lines 91, 97, 110, 140 — all have correct dep arrays; zustand setters are stable refs).
+- RankingNasionalCard correctly filters by activeOutlet (key-remount + initial state pattern).
+- All other dashboard components (Charts, ExecutiveSummary, InsightsPanel, AnalysisCards, AdvancedAnalysis, CardDrillDown, FormulaInfo, QuickSettings, ExportDialog, DrillDownDrawer, SourceDataModal) read live API fields and render correctly.
+
+---
+Task ID: FINAL2-FLOW
+Agent: Data Flow + Dead Code Auditor
+Task: Deep audit data flow + dead code after restructure
+
+Work Log:
+- Read worklog.md last 80 lines (OPTIMIZE-ENGINE, OPTIMIZE-FOCUS, OPTIMIZE-ANALYSIS summaries) for baseline context. Confirmed prior agents already trimmed costImpact/deviationBreakdown/dqStatus response fields + dropped unused @prisma/client type imports. Starting baseline = clean.
+- Grep matrix across src/ for every suspect symbol: OutletFocusMode, CostAccounting, OutletScorecard, outlet-focus (route + queryKey), focusCache, buildRecommendations, computeOutletHealthRanking, computeVarianceAnalysis, computeHistoricalAnalysis, computePrioritiesFromFlags, buildWorklistFromFlags. Cross-referenced each against importers and call sites.
+- Verified every field in /api/analysis response object (route.ts:694-728) against frontend consumers via Grep of `data.<field>` in src/components/ + src/app/page.tsx.
+- Verified every interface in src/types/inventory.ts against `from '@/types/inventory'` imports across src/.
+- Audited data flow: FilterBar→setOutlet, TopOutlets→setDrilldown+setOutlet, OutletHealthRanking→setFocusOutlet, page.tsx→RestoAnalysis→RankingNasionalCard+MenuAnalysis prop chain, FileUploadDialog invalidations, /api/export-report self-sufficient data fetching.
+- Audited package.json deps against actual `from 'pkg'` imports across src/.
+
+Stage Summary:
+
+=== DEAD CODE (HIGH PRIORITY) ===
+
+- **Bug ID: FINAL2-FLOW-1**
+  - Severity: HIGH
+  - File:Line: src/components/dashboard/OutletFocusMode.tsx (entire file, 1424 lines)
+  - Description: OutletFocusMode component is no longer imported anywhere. Only references to "OutletFocusMode" outside the file itself are in worklog.md and agent-ctx/*.md (docs). Focus tab was removed but component file left behind.
+  - Impact: 1424 LOC of dead UI code; also the sole consumer of `/api/outlet-focus` route + `['outlet-focus', ...]` query key, so its death cascades.
+  - Proposed Fix: DELETE the file.
+
+- **Bug ID: FINAL2-FLOW-2**
+  - Severity: HIGH
+  - File:Line: src/components/dashboard/CostAccounting.tsx (entire file, 389 lines)
+  - Description: CostAccounting component is no longer imported. Only references are comments in src/app/page.tsx:21 and src/app/api/analysis/route.ts:646 noting its removal.
+  - Impact: 389 LOC dead; also reads `data.costImpact` + `data.outletHealthRanking` + `data.netCostTrend` + `data.deviationBreakdown` — but those response fields are still consumed by live components (InsightsPanel, AdvancedAnalysis, OutletScorecard), so deletion is safe.
+  - Proposed Fix: DELETE the file.
+
+- **Bug ID: FINAL2-FLOW-3**
+  - Severity: HIGH
+  - File:Line: src/app/api/outlet-focus/route.ts (entire file, 1145 lines) + vercel.json:11-13 (functions config)
+  - Description: /api/outlet-focus route is only called by OutletFocusMode.tsx:1237 via fetch. With OutletFocusMode dead, the route is unreachable. vercel.json still grants it maxDuration: 60.
+  - Impact: 1145 LOC dead API code + stale vercel config entry.
+  - Proposed Fix: DELETE the file. Remove the `"src/app/api/outlet-focus": { "maxDuration": 60 }` block from vercel.json.
+
+- **Bug ID: FINAL2-FLOW-4**
+  - Severity: MEDIUM
+  - File:Line: src/lib/cache.ts:73-79 (focusCache declaration) + 9 `focusCache.clear()` calls in src/app/api/{data,settings,ingest-process,pic,pic/import}/route.ts + src/lib/ingestion.ts + 1 `focusCache.get/set` pair in src/app/api/outlet-focus/route.ts:204,1149 (dies with FINAL2-FLOW-3)
+  - Description: focusCache LRU (max 50, 60s TTL) is only WRITTEN/READ by /api/outlet-focus route (which is dead per FINAL2-FLOW-3). The 9 `focusCache.clear()` calls in mutation routes are no-ops because the cache is never populated.
+  - Impact: Dead cache instance + 9 dead `focusCache.clear()` calls + dead `focusCache` imports in 7 files. ~25 LOC of dead code spread across 8 files.
+  - Proposed Fix: Remove focusCache declaration from src/lib/cache.ts:73-79. Remove `focusCache` from all imports. Remove all 9 `focusCache.clear()` calls. (Only safe to do AFTER FINAL2-FLOW-3 is done.)
+
+- **Bug ID: FINAL2-FLOW-5**
+  - Severity: MEDIUM
+  - File:Line: 8 `invalidateQueries({ queryKey: ['outlet-focus'] })` calls — DataManagementDialog.tsx:193; FilterBar.tsx:127,189; SettingsDialog.tsx:137,171; FileUploadDialog.tsx:473; QuickSettings.tsx:127; PicManagementDialog.tsx:200
+  - Description: These invalidations target the `['outlet-focus', ...]` query key, but the ONLY subscriber (OutletFocusMode.tsx:1229 useQuery) is dead per FINAL2-FLOW-1. All 8 invalidations are no-ops.
+  - Impact: 8 dead invalidation calls across 6 files (clutter; no runtime cost since no subscriber).
+  - Proposed Fix: Remove all 8 `invalidateQueries({ queryKey: ['outlet-focus'] })` lines.
+
+- **Bug ID: FINAL2-FLOW-6**
+  - Severity: MEDIUM
+  - File:Line: src/engine/narrative/narrative.ts (entire file, 74 lines) — `buildRecommendations` function
+  - Description: `buildRecommendations` is never imported anywhere in src/. Grep `buildRecommendations` returns only the function declaration (line 8) + a comment (line 4). The narrative/ directory contains only this one file.
+  - Impact: 74 LOC dead + empty directory after deletion. (Note: comment at line 3-4 says "Kept buildRecommendations since it is rule-based, not AI" — but nothing actually uses it.)
+  - Proposed Fix: DELETE the file + DELETE the empty src/engine/narrative/ directory.
+
+- **Bug ID: FINAL2-FLOW-7**
+  - Severity: MEDIUM
+  - File:Line: src/engine/analysis/rankingService.ts:126-185 (computePrioritiesFromFlags function, ~60 LOC) + src/engine/analysis/index.ts:14 (barrel re-export)
+  - Description: `computePrioritiesFromFlags` is exported from rankingService.ts and re-exported via index.ts:14, but never actually called anywhere in src/ (the other 4 exported functions — computeOutletHealthRanking, computeVarianceAnalysis, computeHistoricalAnalysis, buildWorklistFromFlags — ARE called by /api/analysis + /api/export-report routes).
+  - Impact: 60 LOC dead function + dead barrel export line.
+  - Proposed Fix: Remove function definition (rankingService.ts:126-185) + remove from index.ts:14 barrel export.
+
+- **Bug ID: FINAL2-FLOW-8**
+  - Severity: LOW (depends on FINAL2-FLOW-7)
+  - File:Line: src/types/inventory.ts:111-123 (PriorityScore interface) + src/engine/analysis/rankingService.ts:8 (import)
+  - Description: `PriorityScore` type is only used by `computePrioritiesFromFlags` (dead per FINAL2-FLOW-7). If that function is removed, PriorityScore becomes orphan.
+  - Impact: ~13 LOC dead type after FINAL2-FLOW-7 applied.
+  - Proposed Fix: Remove PriorityScore interface + remove from rankingService.ts:8 import.
+
+- **Bug ID: FINAL2-FLOW-9**
+  - Severity: LOW
+  - File:Line: src/types/inventory.ts:9-11 (RawInventoryRow), :70-77 (GrowthMetrics), :79-84 (HistoricalStats), :86-95 (BenchmarkResult), :159-173 (DashboardData), :182-191 (FilterState)
+  - Description: 6 interfaces in types/inventory.ts are never imported anywhere in src/:
+    - `RawInventoryRow` (lines 9-11) — never imported.
+    - `GrowthMetrics` (lines 70-77) — only referenced by dead `DashboardData`.
+    - `HistoricalStats` (lines 79-84) — superseded by src/lib/metrics/historical.ts:17 (separate interface with same name).
+    - `BenchmarkResult` (lines 86-95) — superseded by src/lib/metrics/benchmark.ts:30 (separate interface with same name + `status` field).
+    - `DashboardData` (lines 159-173) — never imported; also STALE shape (declares `dqStatus: { ok: number; warnings; errors; issues: DQIssueSummary[] }` but actual /api/analysis response only returns `{ errors, warnings }` per OPTIMIZE-ANALYSIS).
+    - `FilterState` (lines 182-191) — never imported (useDashboard.ts has its own inline DashboardStore interface).
+  - Impact: ~60 LOC of dead type declarations. BenchmarkResult/HistoricalStats duplication is a footgun (two interfaces with same name in different files).
+  - Proposed Fix: Remove all 6 interfaces. (Direction, Severity, DQSeverity, NormalizedRecord, DerivedRecord, RuleEvidence, AnomalyFlagResult, InvestigationItem, ExecutiveSummary, DQIssueSummary — all still LIVE, do NOT remove.)
+
+- **Bug ID: FINAL2-FLOW-10**
+  - Severity: LOW
+  - File:Line: src/engine/analysis/analysis.ts (entire file, 11 LOC) + src/app/api/analysis/route.ts:21 + src/app/api/export-report/route.ts:18
+  - Description: analysis.ts is a backward-compat shim that just re-exports from `./index` (line 10: `export * from './index'`). The comment at lines 1-9 says "kept for backward compat with existing imports" — but only 2 routes still import via the shim path `@/engine/analysis/analysis`. They should import from `@/engine/analysis` (which resolves to index.ts).
+  - Impact: 11 LOC of indirection with no value.
+  - Proposed Fix: Update the 2 imports in analysis/route.ts:21 and export-report/route.ts:18 from `@/engine/analysis/analysis` to `@/engine/analysis`. DELETE src/engine/analysis/analysis.ts.
+
+=== DEAD RESPONSE FIELDS (LOW PRIORITY) ===
+
+- **Bug ID: FINAL2-FLOW-11**
+  - Severity: LOW
+  - File:Line: src/app/api/analysis/route.ts:697 (response field) + src/hooks/useAnalysis.ts:76 (type declaration)
+  - Description: Response field `filters: { area, outletCode, itemName }` is returned by /api/analysis but NEVER read by any frontend component. Grep `data.filters` in src/components/ + src/app/page.tsx returns 0 matches.
+  - Impact: 3-string-field echo per response (tiny).
+  - Proposed Fix: Remove `filters: { area, outletCode, itemName }` from route.ts:697 response. Remove `filters` field from AnalysisData type in useAnalysis.ts:76.
+
+- **Bug ID: FINAL2-FLOW-12**
+  - Severity: LOW
+  - File:Line: src/app/api/analysis/route.ts:722 (response field) + useAnalysis.ts:104 (type declaration)
+  - Description: Response field `varianceAnalysis: { topWorsened, topImproved }` is returned by /api/analysis but NEVER read by any frontend component. Grep `data.varianceAnalysis` in src/components/ returns 0 matches. The export-report route computes its OWN varianceAnalysis via `computeVarianceAnalysis(...)` (export-report/route.ts:477) — it does NOT proxy to /api/analysis.
+  - Impact: ~10 items (topWorsened[5] + topImproved[5]) computed + serialized per response, never consumed on client.
+  - Proposed Fix: Remove `varianceAnalysis` from route.ts:722 response. Remove from AnalysisData type. The computeVarianceAnalysis call at route.ts:628 becomes unused — also remove. (export-report keeps its own call.)
+
+- **Bug ID: FINAL2-FLOW-13**
+  - Severity: LOW
+  - File:Line: src/app/api/analysis/route.ts:534-536 (response) + useAnalysis.ts:88 (type)
+  - Description: growthComparison sub-fields `deviationToSalesRatio` and `deviationToBomRatio` are returned in the response but never read by any frontend component. Grep `deviationToSalesRatio|deviationToBomRatio` in src/components/ returns 0 matches. (They ARE used internally by ruleService.ts:73-74 as rule context fields — but those come from RecWithRels, not from the API response.) The useAnalysis.ts:88 type declares them but no `.growthComparison.deviationToSalesRatio` access exists in any component.
+  - Impact: 2 fields per response.
+  - Proposed Fix: Remove `deviationToSalesRatio` + `deviationToBomRatio` from growthMetrics object (route.ts:534-536). Remove from useAnalysis.ts:88 growthComparison type. (GrowthMetrics interface in types/inventory.ts:70-77 is already dead per FINAL2-FLOW-9.)
+
+=== UNUSED NPM DEPENDENCIES (MEDIUM PRIORITY) ===
+
+- **Bug ID: FINAL2-FLOW-14**
+  - Severity: MEDIUM
+  - File:Line: package.json:16-87 (multiple lines)
+  - Description: 18 npm dependencies are unused (never imported in src/, OR only imported by dead shadcn UI wrappers that are themselves unused):
+    - `@dnd-kit/core` (line 16), `@dnd-kit/sortable` (line 17), `@dnd-kit/utilities` (line 18) — never imported.
+    - `embla-carousel-react` (line 61) — only imported by dead carousel.tsx.
+    - `react-syntax-highlighter` (line 76) — never imported.
+    - `next-intl` (line 67) — never imported.
+    - `@mdxeditor/editor` (line 21) — never imported.
+    - `@reactuses/core` (line 51) — never imported.
+    - `react-markdown` (line 74) — never imported.
+    - `react-day-picker` (line 71) — only imported by dead calendar.tsx.
+    - `input-otp` (line 64) — only imported by dead input-otp.tsx.
+    - `react-resizable-panels` (line 75) — only imported by dead resizable.tsx.
+    - `react-hook-form` (line 73) — only imported by dead form.tsx.
+    - `@hookform/resolvers` (line 19) — never imported.
+    - `z-ai-web-dev-sdk` (line 85) — never imported (AI features removed in earlier task REMOVE-AI per narrative.ts comment).
+    - `framer-motion` (line 63) — never imported.
+    - `sonner` (line 79) — only imported by dead sonner.tsx (live toast() comes from use-toast.ts + @radix-ui/react-toast).
+    - `next-themes` (line 68) — only imported by dead sonner.tsx.
+    - `vaul` (line 83) — only imported by dead drawer.tsx.
+    - `uuid` (line 82) — never imported.
+    - `@tanstack/react-table` (line 53) — never imported.
+  - Impact: ~18 unused deps inflating node_modules (~50-100MB) + slowing `bun install`. Also 7 dead shadcn UI wrappers (input-otp.tsx, calendar.tsx, resizable.tsx, carousel.tsx, form.tsx, sonner.tsx, drawer.tsx) tied to these deps.
+  - Proposed Fix: Remove all 18 deps from package.json. Delete the 7 dead shadcn UI wrapper files. Run `bun install` to regenerate lockfile. (Note: `sharp` line 78 is auto-used by Next.js for image optimization — KEEP. `zod` is used in src/lib/validation.ts + 3 route files — KEEP.)
+
+=== DATA FLOW FINDINGS ===
+
+- **Bug ID: FINAL2-FLOW-15**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/TopItems.tsx:179
+  - Description: Clicking an outlet row in TopOutlets calls BOTH `setOutlet(o.outletCode)` AND `setDrilldown({ outletCode: o.outletCode, itemName: null })`. `setOutlet` (useDashboard.ts:53) only sets `outletCode` — does NOT switch activeTab. So clicking opens DrillDownDrawer + sets outlet filter, but user stays on Dashboard tab. Compare to OutletHealthRanking (AdvancedAnalysis.tsx:97) which calls `setFocusOutlet` (useDashboard.ts:68-71) which DOES switch activeTab to 'resto' AND sets focusOutlet.
+  - Impact: UX inconsistency. Clicking outlet in TopOutlets (on Dashboard tab) does not deep-dive into Resto Analysis; clicking outlet in OutletHealthRanking (also on Dashboard tab) does. Both are table-row clicks on outlet rows — users likely expect same behavior.
+  - Proposed Fix: Change TopItems.tsx:179 to `setFocusOutlet(o.outletCode)` instead of `setOutlet(o.outletCode) + setDrilldown(...)`. (setFocusOutlet switches tab to 'resto'; user can still see drilldown by clicking back. Or call all three: `setOutlet + setDrilldown + setFocusOutlet` — but that double-sets the outlet, since activeOutlet = focusOutlet || outletCode.)
+  - Note: This is a behavioral design choice — flagging for product decision, not strictly a bug.
+
+- **Data Flow Item 12 (FilterBar → outletCode → RestoAnalysis)**: VERIFIED CORRECT. FilterBar.tsx:295 calls `setOutlet` which sets `outletCode` only (no tab switch — by design, filter is global). When user manually navigates to Resto tab, RestoAnalysis.tsx:82 reads `activeOutlet = focusOutlet || outletCode` so it picks up the filter selection. NOT A BUG.
+
+- **Data Flow Item 14 (OutletHealthRanking → setFocusOutlet → RestoAnalysis)**: VERIFIED CORRECT. AdvancedAnalysis.tsx:97 → useDashboard.ts:68-71 sets `focusOutlet + activeTab: 'resto'` → RestoAnalysis.tsx:82 picks up focusOutlet → fetches /api/outlet-items. Full chain works.
+
+- **Data Flow Item 15 (RankingNasionalCard analysisData prop)**: VERIFIED CORRECT. page.tsx:356 passes `analysisData={analysis.data}` → RestoAnalysis.tsx:350 passes `analysisData={analysisData}` to RankingNasionalCard → RankingNasionalCard.tsx:702 reads `analysisData?.topDeviasiRank`. Prop chain intact.
+
+- **Data Flow Item 16 (MenuAnalysis outletCode)**: VERIFIED CORRECT. RestoAnalysis.tsx:271 passes `outletCode={activeOutlet}` where `activeOutlet = focusOutlet || outletCode` (line 82). MenuAnalysis receives correct outlet code.
+
+- **Data Flow Item 17 (Resto Analysis refresh after import)**: VERIFIED CORRECT. FileUploadDialog.tsx:472 calls `queryClient.invalidateQueries({ queryKey: ['outlet-items'] })` after successful import. RestoAnalysis.tsx:87 uses `queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth]` — invalidation matches (TanStack prefix match). Also invalidates `['status']` + `['analysis']` (lines 470-471). All three query keys invalidated.
+
+- **Data Flow Item 18 (Export Word)**: VERIFIED CORRECT. /api/export-report route is self-sufficient — does NOT proxy to /api/analysis. It directly imports all query functions (queryTrendAgg, queryExecSummary, queryTopItemsByNominal/DevBom/Category, queryTopItemsByDeviasiRank, queryHistoricalCategoryAvg, queryDeviationBreakdown, queryAreaAnalysis, queryItemConsistency, queryHistoricalStats) and engine functions (computeVarianceAnalysis, computeHistoricalAnalysis, buildRuleContext, evaluateRules). Builds its own `data` object (route.ts:482-496) with all fields needed by the docx renderer. Loss/Surplus values come from execSummary.totalLoss/totalSurplus (lines 553-554) — no separate query needed.
+
+=== SUMMARY ===
+
+Dead code blocks identified:
+- 3 large dead files: OutletFocusMode.tsx (1424) + CostAccounting.tsx (389) + outlet-focus/route.ts (1145) = 2958 LOC
+- 1 small dead file: narrative.ts (74 LOC) + empty directory
+- 1 dead function: computePrioritiesFromFlags (60 LOC) + barrel export line
+- 1 dead compat shim: analysis.ts (11 LOC)
+- 6 dead type declarations in types/inventory.ts (~60 LOC)
+- 1 dead cache instance (focusCache) + 9 dead clear() calls + 1 dead get/set pair
+- 8 dead query invalidations (['outlet-focus'])
+- 3 dead response fields (filters, varianceAnalysis, deviationToSalesRatio/BomRatio)
+- 18 unused npm deps + 7 dead shadcn UI wrappers (~250 LOC)
+- Total dead code: ~3500 LOC + 18 unused deps
+
+Data flow: ALL 7 data flow items (12-18) verified correct EXCEPT Item 13 (TopOutlets click behavior inconsistency vs OutletHealthRanking — LOW severity, design decision).
+
+NO critical bugs found in data flow. The restructure (removing Focus tab + Cost tab) left orphan files/code but did NOT break any live data path.

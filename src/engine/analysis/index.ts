@@ -11,7 +11,6 @@ export {
   computeOutletHealthRanking,
   computeVarianceAnalysis,
   computeHistoricalAnalysis,
-  computePrioritiesFromFlags,
   buildWorklistFromFlags,
 } from './rankingService';
 export type { RecWithRels } from './types';

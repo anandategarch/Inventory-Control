@@ -470,7 +470,6 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       queryClient.invalidateQueries({ queryKey: ['status'] });
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-      queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
       queryClient.invalidateQueries({ queryKey: ['item-history'] });
 
       toast({

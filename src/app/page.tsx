@@ -14,7 +14,6 @@ import {
 import {
   MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
-import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
@@ -388,7 +387,6 @@ export default function DashboardPage() {
       <DrillDownDrawer />
       <SourceDataModal />
       <CardDrillDown data={analysis.data} />
-      <OutletScorecard data={analysis.data} />
       <ItemDeepDive data={analysis.data} />
       <ExportDialog
         open={exportDialogOpen}

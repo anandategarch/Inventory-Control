@@ -133,7 +133,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
 
 export function TopOutlets({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setOutlet = useDashboard((s) => s.setOutlet);
+  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
   return (
     <Card>
@@ -176,7 +176,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
                   <TableRow
                     key={o.outletCode}
                     className="cursor-pointer hover:bg-muted/50"
-                    {...clickableRowProps(() => { setOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); })}
+                    {...clickableRowProps(() => { setFocusOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); })}
                   >
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>

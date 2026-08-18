@@ -124,7 +124,6 @@ export function FilterBar() {
         // FIX: Invalidate ALL data-dependent queries after ingest
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
         queryClient.invalidateQueries({ queryKey: ['item-history'] });
       } else {
         setIngestMsg(`Failed: ${d.message || d.error}`);
@@ -186,7 +185,6 @@ export function FilterBar() {
         // FIX: Invalidate ALL data-dependent queries after import-drive
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-focus'] });
         queryClient.invalidateQueries({ queryKey: ['item-history'] });
       }
     } catch (e: any) {
