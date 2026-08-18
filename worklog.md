@@ -5802,3 +5802,270 @@ Dead code blocks identified:
 Data flow: ALL 7 data flow items (12-18) verified correct EXCEPT Item 13 (TopOutlets click behavior inconsistency vs OutletHealthRanking — LOW severity, design decision).
 
 NO critical bugs found in data flow. The restructure (removing Focus tab + Cost tab) left orphan files/code but did NOT break any live data path.
+
+---
+Task ID: AUDIT-PEER-FLOW
+Agent: Peer Flow Auditor
+Task: Audit peer comparison data flow
+
+Work Log:
+- Read worklog.md (last 50 lines) for context — prior audit (Task FINAL2) verified 7 data flow items in RestoAnalysis/Export chain but did NOT audit Peer Comparison flow.
+- Traced Flow 1 (outlet → peer): page.tsx:269-280 tabs ('dashboard'|'resto'|'peer'), useDashboard.ts:68-71 setFocusOutlet hardcodes activeTab='resto'. TopOutlets click (TopItems.tsx:179) and peer-row click (PeerComparison.tsx:187) both invoke setFocusOutlet → both land on 'resto' tab, never 'peer' tab.
+- Traced Flow 2 (week vs month mode): PeerComparison.tsx:26 conditionally sends week param; outlets.ts:174-176 `weekFilter = mode==='week' && week ? sql : Prisma.empty`. In 'month' mode, weekFilter=empty → SQL aggregates ALL weeks for the month.
+- Cross-referenced schema.prisma:36-39 (Week model comment): weeks are CUMULATIVE ("WEEK 1=1-7, WEEK 2=1-14, WEEK 3=1-21, WEEK 4=1-25. Each week INCLUDES all previous weeks"). Confirmed via worklog line 22 (54K records: W1=8.7K, W2=10.5K, W4=35K — W4 superset of W1+W2).
+- Verified sales metric is unaffected: outlets.ts:179-194 uses ROW_NUMBER() MODE dedup (sales_mode CTE), so nominalSales is the same value regardless of how many weeks are aggregated. But ALL SUM aggregations (nominalDeviasi, qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial, qtyLossSurplus, totalLoss, totalSurplus, residualQty, devBom) are inflated 2-3x in month mode. itemCount (COUNT DISTINCT) and topItemNominal (MAX) are unaffected.
+- Traced Flow 3 (click peer → deep dive): PeerComparison.tsx:187 clickableRowProps(setFocusOutlet) → useDashboard.ts:69 activeTab='resto' → RestoAnalysis.tsx:82 activeOutlet picks up focusOutlet → useQuery key includes activeOutlet (line 87) → refetches. RestoAnalysis.tsx:350 RankingNasionalCard has key={activeOutlet} → remounts on outlet change. Confirmed refetch chain works.
+- Traced Flow 4 (export): grep "peer" in src/app/api/export-report/route.ts → 0 matches. queryPeerComparison is NOT imported. Peer data absent from .docx export.
+- Verified edge cases: (a) target with 0 sales → outlets.ts:266 `COALESCE(sm.sales,0) > 0` filters target out → target CTE empty → CROSS JOIN returns 0 rows → peers=[]. (b) mode='week' but currentWeek=null → PeerComparison.tsx:26 guard skips p.set('week') → API receives week=null → outlets.ts:174 `mode==='week' && week` evaluates false → weekFilter=Prisma.empty → silent fallback to month-style aggregation (PEER-FLOW-1 bug).
+- Confirmed page.tsx:97-105 auto-sets currentWeek to last available week when monthLabel selected (mitigates but doesn't eliminate PEER-FLOW-2 — transient window + Bug 8 reset (line 147) can leave currentWeek=null).
+- Confirmed Radix Tabs unmounts inactive TabsContent → PeerComparison remounts on tab return → TanStack default staleTime=0 → refetch on mount. Tab switch DOES trigger refetch (not a bug).
+- Confirmed queryKey (PeerComparison.tsx:21) includes currentWeek unconditionally → in 'month' mode, changing currentWeek triggers unnecessary refetch (cosmetic).
+
+Stage Summary:
+
+- **Bug ID: PEER-FLOW-1**
+  - Severity: CRITICAL
+  - File:Line: src/lib/queries/outlets.ts:174-176 (and propagated to lines 182, 221, 232 — all WHERE clauses using ${weekFilter})
+  - Description: In 'month' mode (mode==='month' OR mode==='week' with null week), `weekFilter = Prisma.empty`. The query then aggregates ALL weekLabel rows for the month. Per schema.prisma:36-39, weeks are CUMULATIVE (W4 includes W1+W2+W3 data). Summing W1+W2+W3+W4 triple-counts days 1-7, double-counts days 8-14, and single-counts days 15-25. The correct month-total equals WEEK 4's value alone (since W4 is the cumulative superset).
+  - Impact: 11 of 12 metrics in the Peer Comparison table are inflated 2-3x in 'month' mode: nominalDeviasi, devBom, qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial, qtyLossSurplus, totalLoss, totalSurplus, residualQty. Only `sales` (MODE-deduped via sales_mode CTE), `itemCount` (COUNT DISTINCT), and `topItemNominal` (MAX) are correct. Peer Avg row (PeerComparison.tsx:168-181) shows inflated averages → color comparison (colorCell at line 91) misclassifies target as "better" or "worse" than peers. Users see nonsense numbers (e.g., nominalDeviasi Rp 750M instead of true Rp 300M).
+  - Proposed Fix: In 'month' mode, restrict to the LATEST cumulative week. Replace `Prisma.empty` with: `Prisma.sql\`AND ir."weekLabel" = (SELECT w."weekLabel" FROM "Week" w JOIN "SourceFile" sf ON w."sourceFileId" = sf.id WHERE sf."monthLabel" = ${month} ORDER BY w."periodEnd" DESC LIMIT 1)\``. Apply same logic to all 3 WHERE clauses (sales_counts CTE line 182, outlet_aggs CTE line 221, top_items CTE line 232). Alternative: add a server-side guard that overrides mode to 'week' and auto-selects the latest week when month mode is requested.
+
+- **Bug ID: PEER-FLOW-2**
+  - Severity: HIGH
+  - File:Line: src/components/dashboard/PeerComparison.tsx:26 (client guard) + src/app/api/peer-comparison/route.ts:25-27 (API accepts null week) + src/lib/queries/outlets.ts:174 (silent fallback)
+  - Description: When mode='week' but currentWeek is null, PeerComparison.tsx:26 (`if (mode === 'week' && currentWeek) p.set('week', currentWeek)`) skips the week param. API route.ts:25 receives week=null, passes it through. queryPeerComparison evaluates `mode === 'week' && week` as false (week is null) → weekFilter becomes Prisma.empty → query silently runs in aggregate-all-weeks mode (triggers PEER-FLOW-1 inflation). UI header (PeerComparison.tsx:123) displays "WEEK null" — visible artifact but no error.
+  - Impact: Silent data corruption. User believes they are viewing weekly data, but actually viewing quadruple-counted month-aggregate data. The auto-set effect in page.tsx:97-105 mitigates this in normal flow (auto-selects last week after status loads), but a transient window exists during initial load, and the Bug 8 reset (page.tsx:147) can set currentWeek=null when weeks array is empty. Also triggers if status API fails (network error) — currentWeek stays null indefinitely.
+  - Proposed Fix: (a) Add `currentWeek` to PeerComparison.tsx:34 enabled check: `enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek))`. (b) AND/OR return HTTP 400 from API when mode='week' but week param is missing/null. (c) Auto-switch UI mode to 'month' (with PEER-FLOW-1 fix applied) when currentWeek is null. Recommend (a)+(b) together.
+
+- **Bug ID: PEER-FLOW-3**
+  - Severity: MEDIUM
+  - File:Line: src/hooks/useDashboard.ts:68-71
+  - Description: `setFocusOutlet` hardcodes `activeTab: 'resto'` for any non-null code. When user clicks a peer row in PeerComparison.tsx:187 to "deep dive" into a peer outlet, they are switched to the 'resto' tab — losing the Peer Comparison context. Same behavior when clicking a row in TopOutlets (TopItems.tsx:179, noted in prior Task FINAL2-FLOW-15). There is no separate action for "switch focus outlet but stay on current tab."
+  - Impact: User exploring peer comparison must repeatedly click 'peer' tab after each peer-row click. Workflow: see peer → click → land on Resto tab → click 'peer' tab → see new peer list → click → land on Resto tab again. Friction breaks exploratory analysis. Also affects reverse flow (Resto → Peer): no way to send current outlet TO Peer tab via click.
+  - Proposed Fix: Extend setFocusOutlet signature: `setFocusOutlet: (code: string | null, tab?: 'resto' | 'peer') => void` defaulting to 'resto'. PeerComparison.tsx:187 calls `setFocusOutlet(p.outletCode, 'peer')` to stay on Peer tab. Or add a separate action `setFocusOutletPeer(code)` that sets focusOutlet without changing activeTab. Or simplest: PeerComparison.tsx:187 calls `useDashboard.setState({ focusOutlet: p.outletCode })` directly (bypass setFocusOutlet) to avoid tab switch — but this leaks store internals into component.
+
+- **Bug ID: PEER-FLOW-4**
+  - Severity: MEDIUM
+  - File:Line: src/components/dashboard/RestoAnalysis.tsx:104 (enabled gate) vs src/components/dashboard/PeerComparison.tsx:34 (enabled gate)
+  - Description: Mismatched `enabled` predicates. PeerComparison.tsx:34 enables fetch with `Boolean(activeOutlet && monthLabel)` — does NOT require currentWeek. RestoAnalysis.tsx:104 requires `Boolean(activeOutlet && monthLabel && currentWeek)`. User in 'Per Bulan' mode (month set, week not set, or week auto-set failed) clicks a peer row → setFocusOutlet → switches to 'resto' tab → RestoAnalysis useQuery is disabled (currentWeek null) → component falls through to RestoAnalysis.tsx:119-128 which shows "Pilih bulan dan minggu untuk melihat Resto Analysis" empty state.
+  - Impact: User clicks peer expecting Resto Analysis deep dive → lands on Resto tab showing "select week" message. Confusing because the user came FROM Peer Comparison (which worked fine without a week). User may interpret as broken link.
+  - Proposed Fix: (a) Tighten PeerComparison.tsx:34 to also require currentWeek (consistent with RestoAnalysis): `enabled: Boolean(activeOutlet && monthLabel && currentWeek)`. This forces user to set week before peer comparison works — slight UX cost but eliminates the inconsistency. OR (b) loosen RestoAnalysis.tsx:104 to allow null currentWeek (but RestoAnalysis genuinely needs week for comparison logic — not feasible). Recommend (a).
+
+- **Bug ID: PEER-FLOW-5**
+  - Severity: LOW
+  - File:Line: src/app/api/export-report/route.ts (entire file — no peer references)
+  - Description: Peer Comparison data is NOT included in the Word (.docx) export. Grep "peer" in route.ts returns 0 matches. queryPeerComparison is not imported (only queryTrendAgg, queryExecSummary, queryTopItemsByNominal/DevBom/Category/DeviasiRank, queryHistoricalCategoryAvg, queryDeviationBreakdown, queryAreaAnalysis, queryItemConsistency, queryHistoricalStats — line 21-33). No Peer section in the docx renderer.
+  - Impact: Users who rely on Word exports for stakeholder reporting miss peer comparison insights. Must manually screenshot or copy-paste from UI. Not a regression — peer data was never in export. Feature gap, not a strict bug.
+  - Proposed Fix: If product wants peer data in export: (a) Import queryPeerComparison. (b) Add a "Peer Comparison" section to the docx that lists the focused outlet (or top-N outlets) with their peer lists. (c) Decide scope: peer data is per-outlet, so export must either iterate over all outlets (expensive) or use the focused outlet only (requires focusOutlet to be in the export request params — currently export-report doesn't accept outletCode). Recommend deferring until PEER-FLOW-1 is fixed (otherwise exported numbers are wrong).
+
+- **Bug ID: PEER-FLOW-6**
+  - Severity: LOW
+  - File:Line: src/lib/queries/outlets.ts:266 (WHERE clause `COALESCE(sm.sales, 0) > 0`)
+  - Description: When target outlet has 0 sales (no records, or all nominalSales=null/0): (1) sales_mode CTE excludes the target (because `ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0` at line 183), (2) `target` CTE returns 0 rows (line 195-200 JOIN to sales_mode finds nothing), (3) CROSS JOIN target (line 265) yields 0 rows, (4) final result is empty array → peers=[]. PeerComparison.tsx:149-150 shows generic "Tidak ada peer ditemukan" with no explanation. Also targetSales=0 (outlets.ts:273, targetRow is undefined).
+  - Impact: User selecting a 0-sales outlet sees "no peers found" — could be misinterpreted as "this outlet has no comparable peers" (which is technically true but the reason is "no sales data"). No diagnostic distinguishing "0 sales" vs "no peers in ±10% band."
+  - Proposed Fix: In API route.ts, after calling queryPeerComparison, check if targetSales===0 and add a `reason` field to response: `{ success: true, targetSales: 0, reason: 'NO_SALES_DATA', peers: [] }`. PeerComparison.tsx:149-150 displays reason-specific message: "Target outlet tidak memiliki data sales — peer comparison tidak tersedia."
+
+- **Bug ID: PEER-FLOW-7**
+  - Severity: LOW
+  - File:Line: src/lib/queries/outlets.ts:268-269 (LIMIT applied before peer avg computation) + src/components/dashboard/PeerComparison.tsx:74 (avg computed client-side on returned peers only)
+  - Description: SQL applies `LIMIT ${limit}` (line 269) BEFORE returning to client. PeerComparison.tsx:74 computes peer averages over the returned (limited) set only. If many outlets fall within ±10% of target sales (e.g., 50+ outlets for a large target), only the top-N (closest to target by sales) are returned. Peer Avg row reflects only these top-N, not the true peer-group average.
+  - Impact: Peer Avg row misleads user about the "average peer." For a target with Rp 1B sales (±10% = ±Rp 100M, potentially 100+ matching outlets), Peer Avg is computed over only 10 closest peers (default limit) → biased toward target's sales band. User may draw wrong conclusions ("my peers average Rp 990M" when true peer-group avg is Rp 950M).
+  - Proposed Fix: (a) Compute peer avg server-side via a separate aggregate query WITHOUT LIMIT (only SUM/COUNT/AVG across all matching outlets). Return both `peers` (top-N for display) and `peerStats` (full-set averages). PeerComparison.tsx:74 uses peerStats instead of client-side avg. OR (b) display "menampilkan 10 dari N peer" with total count, so user knows the avg is over a subset. Recommend (a) for correctness.
+
+- **Bug ID: PEER-FLOW-8**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:21 (queryKey includes currentWeek unconditionally)
+  - Description: queryKey is `['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit]`. In 'month' mode, currentWeek is not sent to the API (line 26 only sends week when mode==='week'), but currentWeek is still in the queryKey. When user changes currentWeek while in 'month' mode, queryKey changes → TanStack refetches → API returns the same data (since week param isn't sent).
+  - Impact: Wasted API call + brief loading spinner flicker when user changes week in 'month' mode. No data corruption. Minor perf/UX issue.
+  - Proposed Fix: Make queryKey mode-aware: `queryKey: ['peer-comparison', activeOutlet, monthLabel, mode === 'week' ? currentWeek : null, mode, peerLimit]`. Or simpler: `queryKey: ['peer-comparison', activeOutlet, monthLabel, mode, mode === 'week' ? currentWeek : null, peerLimit]`. Either way, currentWeek only affects cache key when it's actually used.
+
+
+---
+Task ID: AUDIT-PEER-FRONTEND
+Agent: Peer Frontend Auditor
+Task: Audit peer comparison component
+
+Work Log:
+- Read worklog.md tail (lines 5755-5804) for prior audit context (FINAL2 audit found TopOutlets click inconsistency as LOW)
+- Read PeerComparison.tsx (223 lines) — component structure, hooks, columns, colorCell logic
+- Read page.tsx (408 lines) — tab integration at lines 277-279, 362-365
+- Read useDashboard.ts (75 lines) — setFocusOutlet flow at lines 67-71 (sets focusOutlet + activeTab:'resto')
+- Read format.ts (95 lines) — fmtIDR, fmtNum, fmtPctAbs, directionColor semantics
+- Read a11y.ts (32 lines) — clickableRowProps helper (Enter/Space activation, role=button)
+- Read /api/peer-comparison/route.ts (50 lines) — params: outletCode, month, week, mode, limit; returns {success, targetSales, peers}
+- Read queryPeerComparison in src/lib/queries/outlets.ts (lines 167-300) — SQL CTEs, devBom uses ABS(qtyDeviasi)/ABS(qtyBom), direction derived from totalLoss vs totalSurplus
+- Ran `bun run lint` — exit 0 (eslint .), NO lint errors
+- Cross-checked colorCell logic against SQL field definitions for all 11 columns
+- Cross-checked enabled condition against queryFn week-param behavior
+- Cross-checked queryKey against refetch triggers in week vs month mode
+
+Stage Summary:
+
+=== REACT/HOOKS ===
+
+- **Bug ID: PEER-FRONTEND-2**
+  - Severity: HIGH
+  - File:Line: src/components/dashboard/PeerComparison.tsx:34, 26, 123
+  - Description: `enabled: Boolean(activeOutlet && monthLabel)` does NOT verify `currentWeek` is non-null when `mode === 'week'`. The queryFn (line 26) only sends the `week` param via `if (mode === 'week' && currentWeek) p.set('week', currentWeek)` — so when mode=week and currentWeek is null (e.g., right after `setMonth` in useDashboard.ts:49 resets currentWeek to null, before page.tsx:97-105 useEffect re-selects it), the request goes out with `mode=week` but no `week` param. Backend (src/lib/queries/outlets.ts:174-176) treats this as `weekFilter = Prisma.empty` and aggregates ALL weeks for the month. The header (line 123) renders "WEEK null" while the table actually shows month-aggregated data.
+  - Impact: Brief but real window of mismatched data vs. label after every month change while on Peer tab in week mode. User sees "WEEK null" header with month-aggregated numbers underneath — misleading.
+  - Proposed Fix: Tighten `enabled` to `Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek))` so the query only fires when week is resolvable in week mode. Alternatively, gate the header rendering: `mode === 'week' && currentWeek ? \`WEEK ${currentWeek}\` : 'Bulan'`.
+
+- **Bug ID: PEER-FRONTEND-1**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:21
+  - Description: `queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit]` includes `currentWeek` unconditionally. In `month` mode the queryFn never sends `week` (line 26 conditional), so changing `currentWeek` while in month mode produces a different cache key but identical network response — wasted refetch + cache fragmentation.
+  - Impact: Unnecessary refetch when user changes week filter while on month mode. Cache stores duplicate responses keyed by currentWeek.
+  - Proposed Fix: Make key conditional: `queryKey: ['peer-comparison', activeOutlet, monthLabel, mode === 'week' ? currentWeek : null, mode, peerLimit]`. Same change applies to the same issue surfaced as audit point 20.
+
+- **Bug ID: PEER-FRONTEND-3**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:17-18; src/app/page.tsx:362-365
+  - Description: `mode` and `peerLimit` are local `useState`. Because shadcn `<TabsContent>` only mounts the active tab's children, PeerComparison unmounts when the user navigates away (e.g., clicking a row triggers `setFocusOutlet` → useDashboard.ts:69 switches `activeTab` to 'resto'). On return to Peer tab, state resets to defaults (`'week'`, `10`).
+  - Impact: User preferences (Per Week vs Per Bulan, Top N) lost on every deep-dive roundtrip. Annoying UX but not a data bug.
+  - Proposed Fix: Lift `mode`/`peerLimit` into the `useDashboard` Zustand store, or set `forceMount` on TabsContent + CSS-hide inactive panels.
+
+- **Bug ID: PEER-FRONTEND-27**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:20, 48-56
+  - Description: `useQuery` destructures only `{ data, isLoading, error }`. No `isFetching` indicator. When the user changes `mode`/`peerLimit`/outlet while cached data exists, React Query returns previous `data` with `isFetching=true`, but UI shows the stale table silently — no spinner, no "Memperbarui..." badge (unlike page.tsx:225-230 header pattern).
+  - Impact: User has no visual feedback that refetch is in progress after toggling filters.
+  - Proposed Fix: Destructure `isFetching` and show a small Loader2 overlay or badge when `isFetching && !isLoading`. Also consider `placeholderData: keepPreviousData` for smoother transitions.
+
+- **Bug ID: PEER-FRONTEND-29**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:20-35
+  - Description: No `staleTime` / `gcTime` configured. Defaults: staleTime=0 (immediately stale), gcTime=5min. Combined with TabsContent unmount/remount, every tab switch triggers a fresh fetch even if the same outlet/month/week was just viewed.
+  - Impact: Wasted network roundtrips on tab roundtrips; small but noticeable latency for users toggling between Dashboard/Resto/Peer.
+  - Proposed Fix: Add `staleTime: 60_000` (1 min) — peer data changes only on data reload, so 1-min staleness is acceptable.
+
+=== COLOR CODING LOGIC ===
+
+- **Bug ID: PEER-FRONTEND-7** (verified correct, no bug)
+  - File:Line: src/components/dashboard/PeerComparison.tsx:91-97
+  - Description: `colorCell` logic verified correct. `diff = targetVal - avgVal`; for higherIsBetter=true, `diff > 0` → green (target beats avg); for higherIsBetter=false, `diff < 0` → green (target below avg = less bad). Both branches are logically sound. Peer average correctly excludes target (line 70 `filter(!p.isTarget)`).
+  - NO FIX NEEDED.
+
+- **Bug ID: PEER-FRONTEND-10** (verified correct, no bug)
+  - File:Line: src/components/dashboard/PeerComparison.tsx:99-111
+  - Description: All 11 column `higherBetter` flags cross-checked against SQL field semantics in src/lib/queries/outlets.ts:201-223:
+    - sales (true): higher sales = better ✅
+    - nominalDeviasi (false): SUM(nominalDeviasi), higher = more deviation = worse ✅
+    - devBom (false): |qtyDeviasi|/|qtyBom| ratio, higher = worse ✅
+    - totalLoss (false): SUM(nominalLossSurplus>0), higher = more loss = worse ✅
+    - totalSurplus (true): SUM(|nominalLossSurplus<0|), higher = more surplus = better (per app convention) ✅
+    - qtyWaste (false): SUM(|qtyWaste|), higher = worse ✅
+    - qtySusut (false): SUM(|qtySusut|), higher = worse ✅
+    - qtyTrial (false): SUM(|qtyTrial|), higher = worse ✅
+    - qtyLossSurplus (false): SUM(absQtyLossSurplus), higher = worse ✅
+    - residualQty (false): SUM(residualQty when direction=LOSS), higher = worse ✅
+    - itemCount (true): COUNT(DISTINCT itemId), higher = broader menu = better (per app convention) ✅
+  - NO FIX NEEDED.
+
+- **Bug ID: PEER-FRONTEND-8**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:94
+  - Description: `if (Math.abs(diff) < 0.001) return 'text-muted-foreground'` — fixed absolute threshold of 0.001. For IDR values in millions (sales, nominalDeviasi, totalLoss, totalSurplus), 0.001 IDR is effectively zero, so ANY non-equal IDR value gets colored. For qty values (could be hundreds-thousands), same issue. For devBom (fraction 0-1) and itemCount (integer), 0.001 is reasonable.
+  - Impact: For large-magnitude fields, "essentially equal to peer avg" never triggers — even a 1-Rp difference on a 50M sales figure is colored red/green. Misleads user into thinking tiny gaps are meaningful deviations.
+  - Proposed Fix: Use a relative threshold: `Math.abs(diff) < Math.max(Math.abs(avgVal) * 0.005, 0.001)` (within 0.5% of avg, with floor for zero-avg case). Or per-column threshold metadata.
+
+=== DATA DISPLAY ===
+
+- **Bug ID: PEER-FRONTEND-11** (info, no current bug)
+  - File:Line: src/components/dashboard/PeerComparison.tsx:102; src/lib/format.ts:47-50
+  - Description: Audit concern was that `fmtPctAbs` for devBom hides the sign. Verified against SQL: `devBom = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` (src/lib/queries/outlets.ts:205-207) — both numerator and denominator are wrapped in ABS, so devBom is ALWAYS non-negative. fmtPctAbs is consistent with this — there is no sign to hide. The "devBom can be negative (SURPLUS)" premise in the audit is incorrect for current SQL.
+  - However: This is a design coupling risk. If someone later changes the SQL to use signed `SUM(qtyDeviasi)`, fmtPctAbs would silently mask the direction (loss vs surplus). Consider switching to `fmtPct` (signed) IF the SQL is changed to signed.
+  - NO CURRENT FIX NEEDED; document the coupling.
+
+- **Bug ID: PEER-FRONTEND-14**
+  - Severity: MEDIUM
+  - File:Line: src/components/dashboard/PeerComparison.tsx:186, 189
+  - Description: Sticky left column uses semi-transparent / inherited backgrounds:
+    - Non-target rows: `<TableCell className="... sticky left-0 bg-inherit">` — row has no explicit bg (transparent), so `bg-inherit` resolves to transparent. During horizontal scroll, cells scrolling under the sticky column show through.
+    - Target row: `bg-primary/10` on row (line 186) → `bg-inherit` on sticky cell = `bg-primary/10` (10% opacity). Also semi-transparent → bleed-through.
+    - Peer Avg row: `bg-muted/30` (30% opacity) on sticky cell (line 170) — also semi-transparent.
+    - Header corner cell: `bg-background` (line 156) ✅ opaque.
+  - Impact: When the table has many columns and user scrolls horizontally, content from non-sticky columns bleeds through the sticky "Resto" column. Visually noisy and reduces readability of the outlet name column.
+  - Proposed Fix: Use opaque backgrounds on all sticky cells. For non-target rows: `sticky left-0 bg-background`. For target row: `sticky left-0 bg-primary/10` won't work (still transparent) — use `bg-primary/20` or a solid color like `bg-blue-50 dark:bg-blue-950/40`. For peer avg: `bg-muted` (solid) instead of `bg-muted/30`.
+
+- **Bug ID: PEER-FRONTEND-12**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:196
+  - Description: Top Item cell uses `title={p.topItem || ''}` for hover tooltip. Native HTML `title` attribute: (a) not shown on touch devices / mobile, (b) inconsistent screen-reader support, (c) appears with ~1-2s delay, (d) cannot be styled.
+  - Impact: Mobile users (and accessibility-tool users) cannot see full item name when truncated.
+  - Proposed Fix: Replace with a Radix Tooltip (`<Tooltip>`/`<TooltipTrigger>`/`<TooltipContent>` from `@/components/ui/tooltip`) — instant, styled, accessible, works on touch.
+
+- **Bug ID: PEER-FRONTEND-13**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:163, 207
+  - Description: Direction column header is "Dir" and cell shows `p.direction?.[0]` → "L" / "S" / "N". Cryptic single letters. Mitigated by color (red/emerald/muted) but still requires legend lookup.
+  - Impact: New users won't intuit "L" = LOSS, "S" = SURPLUS, "N" = NEUTRAL. Footer hint (line 216) only mentions color, not letters.
+  - Proposed Fix: Show full word "LOSS"/"SURPLUS"/"FLAT" (or "L"/"S" with `title` tooltip), or use icons (TrendingDown / TrendingUp / Minus from lucide-react). At minimum, expand header to "Direction".
+
+=== UX FLOW ===
+
+- **Bug ID: PEER-FRONTEND-17** (verified correct, no bug)
+  - File:Line: src/components/dashboard/PeerComparison.tsx:187; src/hooks/useDashboard.ts:68-71
+  - Description: Click flow verified correct. `clickableRowProps(() => setFocusOutlet(p.outletCode))` calls Zustand `setFocusOutlet` which atomically sets `{ focusOutlet: code, activeTab: 'resto' }`. The Resto tab mounts, RestoAnalysis.tsx reads `activeOutlet = focusOutlet || outletCode`, fetches `/api/outlet-items`. Full chain works.
+  - NO FIX NEEDED. (Side effect: PeerComparison unmounts → state loss per PEER-FRONTEND-3.)
+
+- **Bug ID: PEER-FRONTEND-18**
+  - Severity: LOW
+  - File:Line: src/components/dashboard/PeerComparison.tsx:37-46
+  - Description: When no outlet is selected, shows "Pilih outlet untuk melihat Peer Comparison" with a faded Users icon. No call-to-action button. FilterBar (with outlet selector) is rendered above tabs at page.tsx:258, but a first-time user on the Peer tab might not realize the outlet selector is in the top filter bar.
+  - Impact: Minor friction — user has to discover the FilterBar themselves.
+  - Proposed Fix: Add a small Button "Pilih Outlet di Filter Bar" that scrolls to / highlights the FilterBar, or re-renders an inline outlet selector.
+
+- **Bug ID: PEER-FRONTEND-19**
+  - Severity: MEDIUM
+  - File:Line: src/components/dashboard/PeerComparison.tsx:149-150, 217; src/lib/queries/outlets.ts:195-200, 266-267
+  - Description: When target outlet has 0 sales (or no records for the month/week), the SQL `target` CTE (outlets.ts:195-200) is empty. The `CROSS JOIN target` (line 265) then yields zero rows. Result: empty `peers` array, `targetRow` is undefined (PeerComparison.tsx:69). UI shows generic "Tidak ada peer ditemukan" (line 150) and footer renders "Sales range: ±10% dari target" (line 217 — `targetRow` falsy → fallback string 'target').
+  - Edge case per audit point 19: ±10% of 0 = 0, so all outlets with 0 sales "match". But SQL line 183 (`nominalSales > 0`) and line 266 (`COALESCE(sm.sales,0) > 0`) exclude zero-sales outlets, so the peer set is correctly empty. The issue is that the user gets an unhelpful generic message with no explanation that THEIR outlet has no sales data.
+  - Impact: User on a 0-sales outlet (e.g., newly opened, or closed for the period) sees "Tidak ada peer ditemukan" — sounds like a bug rather than a data condition.
+  - Proposed Fix: Backend should return `{ success: true, targetSales: 0, peers: [], reason: 'target_no_sales' }` when target has no sales. Frontend then shows a targeted message: "Outlet ini tidak memiliki sales pada periode yang dipilih — peer comparison tidak tersedia."
+
+- **Bug ID: PEER-FRONTEND-20** (verified correct on the queryFn side; same root cause as PEER-FRONTEND-1)
+  - File:Line: src/components/dashboard/PeerComparison.tsx:26
+  - Description: In month mode, `currentWeek` is correctly NOT sent to the API (line 26 conditional `if (mode === 'week' && currentWeek) p.set('week', currentWeek)`). Backend (outlets.ts:174-176) correctly applies `weekFilter = Prisma.empty` when mode≠'week' OR week is null. ✅ Functionally correct.
+  - HOWEVER: queryKey still includes currentWeek (line 21) — see PEER-FRONTEND-1 for the wasted-refetch consequence.
+  - NO DATA BUG; only the cache-key duplication issue (PEER-FRONTEND-1).
+
+=== LINT ===
+- `bun run lint` → `$ eslint .` → EXIT_CODE=0. No lint errors or warnings.
+
+=== SUMMARY ===
+Total findings: 14 (excluding 6 verified-correct items)
+- CRITICAL: 0
+- HIGH: 1 (PEER-FRONTEND-2 — week null in week mode shows month-aggregated data with "WEEK null" header)
+- MEDIUM: 2 (PEER-FRONTEND-14 sticky column bleed-through; PEER-FRONTEND-19 unhelpful empty-peers message for 0-sales target)
+- LOW: 6 (PEER-FRONTEND-1/20 cache-key duplication; PEER-FRONTEND-3 state loss on tab switch; PEER-FRONTEND-27 no isFetching indicator; PEER-FRONTEND-29 no staleTime; PEER-FRONTEND-8 threshold; PEER-FRONTEND-12 title attr; PEER-FRONTEND-13 cryptic direction; PEER-FRONTEND-18 no CTA)
+- INFO/verified-correct: 6 (PEER-FRONTEND-7 colorCell; PEER-FRONTEND-9 peer avg; PEER-FRONTEND-10 column flags; PEER-FRONTEND-11 devBom abs; PEER-FRONTEND-17 click flow; PEER-FRONTEND-20 month-mode week param)
+
+Top 3 to fix first:
+1. PEER-FRONTEND-2 (HIGH) — gate `enabled` on currentWeek in week mode
+2. PEER-FRONTEND-14 (MEDIUM) — opaque sticky column backgrounds
+3. PEER-FRONTEND-19 (MEDIUM) — distinguish "no peers in range" from "target has no sales"
+
+
+---
+Task ID: AUDIT-PEER-BACKEND
+Agent: Peer Backend Auditor
+Task: Audit peer comparison query + API
+
+Work Log:
+- Read worklog.md (last 100 lines) for context — confirmed production DB is PostgreSQL (Supabase), local dev may use SQLite (db.ts:55-63 permits file:// in non-prod).
+- Read src/lib/queries/outlets.ts:137-300 (queryPeerComparison) — identified DISTINCT ON (PostgreSQL-only) usage at line 225.
+- Read src/app/api/peer-comparison/route.ts — found no Zod validation (raw searchParams), no mode enum check, no limit bounds.
+- Read src/lib/queries/index.ts + src/lib/queries.ts — confirmed barrel re-export chain intact (`export * from './outlets'` → queryPeerComparison available via `@/lib/queries`).
+- Read src/lib/queries/shared.ts (buildSqlFilters) + src/lib/rate-limit.ts + src/lib/month-resolver.ts — confirmed rate-limit applied (route.ts:17) and resolveMonthLabel applied correctly (route.ts:33-34).
+- Read prisma/schema.prisma lines 32-37 — CRITICAL: weeks are CUMULATIVE ("WEEK 1 = day 1-7, WEEK 2 = day 1-14, WEEK 3 = day 1-21, WEEK 4 = day 1-25"). Month-mode aggregation in queryPeerComparison SUMS across all weeks → multi-counting.
+- Read PeerComparison.tsx (frontend consumer) — confirmed it expects target + N peers, filters target client-side, uses isTarget as truthy check (works with both boolean and 0/1).
+- Ran `bun run lint` (exit 0, clean) and `npx tsc --noEmit --skipLibCheck` (exit 0, clean) — no compile/lint errors. All bugs are runtime/logic, not type-system.
+- Cross-checked Bug 4 (MODE dedup) against schema: weeks cumulative means nominalSales values differ across weeks → ROW_NUMBER tie-break by nominalSales ASC picks the LOWEST weekly sales (typically WEEK 1), not the monthly total.
+
+Stage Summary:
+- CRITICAL (1): PEER-BACKEND-5 — Month mode sums cumulative weeks → quadruple-counts metrics (outlets.ts:201-222, confirmed by schema comment lines 33-37).
+- HIGH (2): PEER-BACKEND-1 — DISTINCT ON is PostgreSQL-only, breaks local dev with SQLite DATABASE_URL (outlets.ts:225). PEER-BACKEND-4 — MODE sales dedup in month mode picks lowest weekly cumulative sales, not monthly total (outlets.ts:187-193).
+- MEDIUM (4): PEER-BACKEND-2 — CROSS JOIN target returns 0 rows silently when target outlet has no sales (outlets.ts:265). PEER-BACKEND-11 — No Zod validation on outletCode/month/week/mode/limit (route.ts:23-27). PEER-BACKEND-15 — mode not enum-validated, 'year' silently treated as 'month' (route.ts:26). PEER-BACKEND-18 — parseInt(limit) returns NaN for non-numeric input → SQL syntax error (route.ts:27).
+- LOW (4): PEER-BACKEND-6 — LIMIT off-by-one: target occupies slot #1, so peerLimit=10 returns only 9 actual peers (outlets.ts:269). PEER-BACKEND-9 — Dead column `topItemNominalRaw` (line 218, never selected) + redundant ABS() on absNominalDeviasi (lines 228, 234). PEER-BACKEND-12 — Error response leaks e.message (route.ts:47). PEER-BACKEND-17 — isTarget typed as boolean but SQLite returns 0/1 integer (outlets.ts:296).
+- NONE (5): Bug 3 (targetSales=0 filter — covered by Bug 2), Bug 7 (NULL sales — correctly filtered by COALESCE+>0), Bug 8 (BigInt — Number()-coerced at line 292), Bug 13 (rate-limit IS applied), Bug 14 (resolveMonthLabel correct), Bug 16 (export chain intact).
+- Lint + tsc: both pass clean. All bugs are logic/runtime, not type-system.

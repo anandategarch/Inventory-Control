@@ -31,7 +31,7 @@ export function PeerComparison() {
       if (!ct.includes('application/json')) throw new Error('Server error');
       return res.json();
     },
-    enabled: Boolean(activeOutlet && monthLabel),
+    enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek)),
   });
 
   if (!activeOutlet) {
@@ -166,8 +166,8 @@ export function PeerComparison() {
               <TableBody>
                 {/* Peer Average Row */}
                 {peerCount > 0 && (
-                  <TableRow className="border-b-2 border-muted-foreground/20 bg-muted/30">
-                    <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/30">📊 Peer Avg</TableCell>
+                  <TableRow className="border-b-2 border-muted-foreground/20 bg-muted/50">
+                    <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50">📊 Peer Avg</TableCell>
                     <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
                     <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
                     <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
@@ -186,7 +186,7 @@ export function PeerComparison() {
                     className={`cursor-pointer hover:bg-muted/50 ${p.isTarget ? 'bg-primary/10 border-primary/30' : ''}`}
                     {...clickableRowProps(() => setFocusOutlet(p.outletCode))}
                   >
-                    <TableCell className="text-[11px] font-medium sticky left-0 bg-inherit">
+                    <TableCell className="text-[11px] font-medium sticky left-0 bg-background">
                       {p.outletName}
                       {p.isTarget && <Badge variant="default" className="text-[9px] ml-1 h-4">TARGET</Badge>}
                       <div className="text-[10px] text-muted-foreground">{p.outletCode}</div>

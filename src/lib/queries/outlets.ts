@@ -171,9 +171,15 @@ export async function queryPeerComparison(
   mode: 'week' | 'month',
   limit: number = 10
 ): Promise<{ targetSales: number; peers: PeerComparisonRow[] }> {
+  // CRITICAL FIX (PEER-BACKEND-5): In month mode, weeks are CUMULATIVE
+  // (W1=1-7, W2=1-14, W3=1-21, W4=1-25). Summing all weeks multi-counts.
+  // Fix: in month mode, use only the LATEST week (MAX weekLabel) for the month.
   const weekFilter = mode === 'week' && week
     ? Prisma.sql`AND ir."weekLabel" = ${week}`
-    : Prisma.empty;
+    : Prisma.sql`AND ir."weekLabel" = (
+        SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
+        WHERE ir2."monthLabel" = ${month}
+      )`;
 
   const rows = await db.$queryRaw<any[]>`
     WITH sales_counts AS (
@@ -222,16 +228,18 @@ export async function queryPeerComparison(
       GROUP BY ir."outletId"
     ),
     top_items AS (
-      SELECT DISTINCT ON (ir."outletId")
-        ir."outletId",
-        i.name as "topItem",
-        ABS(ir."absNominalDeviasi") as "topItemNominal"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE ir."monthLabel" = ${month}
-        ${weekFilter}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ORDER BY ir."outletId", ABS(ir."absNominalDeviasi") DESC
+      SELECT "outletId", "topItem", "topItemNominal" FROM (
+        SELECT
+          ir."outletId",
+          i.name as "topItem",
+          ir."absNominalDeviasi" as "topItemNominal",
+          ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY ir."absNominalDeviasi" DESC) as rn
+        FROM "InventoryRecord" ir
+        JOIN "Item" i ON ir."itemId" = i.id
+        WHERE ir."monthLabel" = ${month}
+          ${weekFilter}
+          AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      ) ranked WHERE rn = 1
     )
     SELECT
       o.code as "outletCode",
@@ -266,7 +274,7 @@ export async function queryPeerComparison(
     WHERE COALESCE(sm.sales, 0) > 0
       AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1
     ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
-    LIMIT ${limit}
+    LIMIT ${limit + 1}
   `;
 
   const targetRow = rows.find((r: any) => r.isTarget);
@@ -293,7 +301,7 @@ export async function queryPeerComparison(
     topItem: r.topItem,
     topItemNominal: Number(r.topItemNominal),
     direction: r.direction,
-    isTarget: r.isTarget,
+    isTarget: Boolean(r.isTarget),
   }));
 
   return { targetSales, peers };
