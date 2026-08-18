@@ -168,7 +168,6 @@ export interface DashboardData {
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   investigationWorklist: InvestigationItem[];
   narrative: string;
-  recommendation: Array<{ why: string; what: string[]; priority: 'P1' | 'P2' | 'P3' }>;
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
   drilldownPath: string[];
 }

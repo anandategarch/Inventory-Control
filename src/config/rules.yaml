@@ -11,7 +11,7 @@
 #    - Arithmetic: { mul: [a, b] }, { add: [...] }, { sub: [a, b] }, { div: [a, b] }, { abs: a }
 #
 #  Field yang tersedia (dari PeriodComparison + InventoryRecord):
-#    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth
+#    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth
 #    deviationToSalesRatio, deviationToBomRatio, benchmarkFlag, zScore
 #    qtyDeviasi, nominalDeviasi, qtyWaste, qtySusut, qtyTrial, qtyLossSurplus
 #    residualQty, residualRatio, tolerancePct, pctQtyDeviasiToBom

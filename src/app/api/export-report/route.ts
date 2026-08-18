@@ -26,7 +26,6 @@ import {
   queryTopItemsByCategory,
   queryTopItemsByDeviasiRank,
   queryHistoricalCategoryAvg,
-  queryTopOutletsBySales,
   queryDeviationBreakdown,
   queryAreaAnalysis,
   queryItemConsistency,
@@ -644,7 +643,7 @@ export async function GET(req: NextRequest) {
     const dr = data.topDeviasiRank || [];
     if (dr.length > 0) {
       children.push(heading('13. RANKING ITEM NASIONAL (Deviasi)'));
-      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = SURPLUS, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata ABS(% Deviasi To BOM) item tersebut di semua resto (network average).'));
+      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = SURPLUS, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.'));
       children.push(makeTable([
         'Item', 'Rank Nasional', 'Rank BOM', 'Resto', 'PIC', 'Satuan',
         'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',
@@ -662,7 +661,7 @@ export async function GET(req: NextRequest) {
           fmtNum(it.qtyLossSurplus),
           it.pctLossSurplusToBom != null ? fmtPct(it.pctLossSurplusToBom, false) : '—',
           fmtNum(it.qtyBom),
-          it.avgDeviasiByBom != null ? fmtPct(it.avgDeviasiByBom, false) : '—',
+          it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—',
           fmtIDR(it.nominalDeviasi),
         ])));
       children.push(divider());

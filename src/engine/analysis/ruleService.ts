@@ -12,7 +12,6 @@ import {
   calcGrowthAbs,
   computeNominalDeviationGrowth,
   safeRatio,
-  calcAvgPrice,
   calcZScoreFromStats,
 } from '@/lib/metrics';
 import type { RecWithRels } from './types';
@@ -37,9 +36,6 @@ export function buildRuleContext(
   // is misleading when sign flips (-10M→-20M gives -100% but magnitude grew 100%).
   const nominalDeviasiGrowth = computeNominalDeviationGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
   const salesGrowth = calcGrowth(curr.nominalSales, prev?.nominalSales ?? null);
-  const currPrice = calcAvgPrice(curr.nominalDeviasi, curr.qtyDeviasi);
-  const prevPrice = calcAvgPrice(prev?.nominalDeviasi ?? null, prev?.qtyDeviasi ?? null);
-  const priceGrowth = calcGrowth(currPrice, prevPrice);
 
   // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
   // LOGIC-03 fix: enforce HISTORICAL_MIN_WEEKS — skip zScore if sample size too small
@@ -73,7 +69,7 @@ export function buildRuleContext(
     prevDirection !== curr.direction;
 
   return {
-    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth, priceGrowth,
+    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth,
     deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
     deviationToBomRatio: safeRatio(curr.absQtyDeviasi, curr.qtyBom != null ? Math.abs(curr.qtyBom) : null),
     benchmarkFlag, zScore,

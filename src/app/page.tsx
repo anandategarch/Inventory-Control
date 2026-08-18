@@ -12,7 +12,7 @@ import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
 import {
-  MultiPeriodComparisonCard, MenuAnalysisCard,
+  MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
 import { OutletScorecard } from '@/components/dashboard/OutletScorecard';
 import { OutletFocusMode } from '@/components/dashboard/OutletFocusMode';
@@ -32,9 +32,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Activity, Boxes, BarChart3, ShieldAlert, FileSearch, Lightbulb,
+  Activity, Boxes, BarChart3, ShieldAlert, Lightbulb,
   MapPin, Coins,
-  Calendar, Utensils, Grid3x3, Calculator, Loader2, Target, Store,
+  Calendar, Calculator, Loader2, Target, Store,
   FileDown,
 } from 'lucide-react';
 
@@ -422,7 +422,7 @@ export default function DashboardPage() {
 
             {/* ====== RESTO ANALYSIS TAB ====== */}
             <TabsContent value="resto" className="space-y-4 mt-2">
-              <RestoAnalysis />
+              <RestoAnalysis analysisData={analysis.data} />
             </TabsContent>
           </Tabs>
         ) : null}
@@ -434,7 +434,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <ShieldAlert className="h-3 w-3" />
-              Mesin Deterministik + Narasi AI
+              Inventory Control Intelligence
             </span>
             {status?.stats && (
               <span className="hidden sm:inline">

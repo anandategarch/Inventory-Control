@@ -5,7 +5,7 @@
 import type { DQIssueSummary } from '@/types/inventory';
 import type { DQIssue } from '@prisma/client';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
-import { toNum } from '@/engine/transform';
+import { toNum, type NumberLocale } from '@/engine/transform';
 
 export interface DQResult {
   issues: DQIssueRow[];
@@ -29,7 +29,8 @@ export function validateRow(
   row: Record<string, unknown>,
   rowNumber: number,
   seenKeys: Set<string>,
-  sheetName?: string // P1-9 fix: pass sheet name for multi-sheet audit
+  sheetName?: string, // P1-9 fix: pass sheet name for multi-sheet audit
+  locale: NumberLocale = 'auto',
 ): DQIssueRow[] {
   const issues: DQIssueRow[] = [];
   const resto = String(row.resto ?? '').trim();
@@ -91,7 +92,7 @@ export function validateRow(
   for (const col of criticalNums) {
     const raw = row[col];
     if (raw !== null && raw !== undefined && raw !== '') {
-      const n = toNum(raw);
+      const n = toNum(raw, locale);
       if (n === null) {
         issues.push({
           severity: 'ERROR',
@@ -105,8 +106,8 @@ export function validateRow(
   }
 
   // WARNING: missing BOM (cannot compute dev/bom ratio)
-  const qtyBom = toNum(row.qtyBom);
-  const qtyDeviasi = toNum(row.qtyDeviasi);
+  const qtyBom = toNum(row.qtyBom, locale);
+  const qtyDeviasi = toNum(row.qtyDeviasi, locale);
   if (qtyBom === null || qtyBom === 0) {
     issues.push({
       severity: 'WARNING',
@@ -170,9 +171,9 @@ export function validateRow(
   // WARNING: OVER_EXPLAINED — WASTE+SUSUT+TRIAL > |DEVIASI| (fraud indicator)
   // If the explained components exceed the total deviation, this is suspicious:
   // either fraud, wrong SPV input, or double-counting of waste.
-  const qtyWaste = toNum(row.qtyWaste);
-  const qtySusut = toNum(row.qtySusut);
-  const qtyTrial = toNum(row.qtyTrial);
+  const qtyWaste = toNum(row.qtyWaste, locale);
+  const qtySusut = toNum(row.qtySusut, locale);
+  const qtyTrial = toNum(row.qtyTrial, locale);
   if (qtyDeviasi !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
     // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-3): use abs-each-then-sum so the
     // explained magnitude is correct for mixed-sign inputs. Was
@@ -197,7 +198,7 @@ export function validateRow(
   // Bug 1 fix: Validate Net Deviation formula
   // Master context #8: Gross Deviation - Waste - Susut - Trial = Net Deviation (QTY LOSS/SURPLUS)
   // If Excel's qtyLossSurplus ≠ computed net, flag as DQ issue
-  const qtyLossSurplus = toNum(row.qtyLossSurplus);
+  const qtyLossSurplus = toNum(row.qtyLossSurplus, locale);
   if (qtyDeviasi !== null && qtyLossSurplus !== null && qtyWaste !== null && qtySusut !== null && qtyTrial !== null) {
     // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-4): use abs-each-then-sum so the
     // explained magnitude is correct for mixed-sign inputs. Was

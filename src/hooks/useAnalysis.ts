@@ -98,9 +98,7 @@ export interface AnalysisData {
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   investigationWorklist: any[];
-  recommendation: Array<{ why: string; what: string[]; priority: string }>;
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
-  priorities: any[];
   // Extended analytical fields (computed server-side, optional for backward compat)
   areaAnalysis?: AreaAnalysis[];
   varianceAnalysis?: { topWorsened: VarianceItem[]; topImproved: VarianceItem[] };

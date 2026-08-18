@@ -172,7 +172,7 @@ export async function queryTopItemsByDeviasiRank(
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"
     FROM item_per_outlet ipo
-    ORDER BY ipo."itemName", "rankNominal"
+    ORDER BY "rankNominal"
     LIMIT ${limit}
   `;
   // Coerce BigInt/Decimal to Number

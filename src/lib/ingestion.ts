@@ -266,7 +266,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 
         if (!fastMode) {
           // Validate
-          const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName);
+          const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName, body.numberLocale || 'auto');
           allIssues.push(...issues);
 
           const hasError = issues.some((i) => i.severity === 'ERROR');
@@ -506,7 +506,7 @@ export async function processRowsForImport(
     // Validation can be run separately later via /api/dq-check (or similar).
     // ~3-5x faster because validateRow() is the bottleneck for large files.
     if (!fastMode) {
-      const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName);
+      const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName, numberLocale || 'auto');
       allIssues.push(...issues);
 
       const hasError = issues.some((iss) => iss.severity === 'ERROR');

@@ -5163,3 +5163,339 @@ Stage Summary:
 - src/components/dashboard/AnalysisCards.tsx — 271 lines → 185 lines (~86 lines removed): 4 import lines cleaned (History, Table*, QuickSettings, clickableRowProps), zScoreColor helper + HistoricalAnalysisCard export function + section comment removed.
 - src/components/dashboard/AlertPanel.tsx — DELETED (150 lines removed).
 - Total: ~391 lines removed across 3 modified files + 1 deleted file. lint + tsc both pass with 0 errors. KEPT: TopDeviasiRank (moved to Dashboard tab), InvestigationWorklist (Dashboard tab), OutletHealthRanking (Area tab), AdvancedAnalysis.tsx file (OutletHealthRanking/ItemConsistencyAnalysis/AreaComparison exports), AnalysisCards.tsx file (MultiPeriodComparisonCard/MenuAnalysisCard exports), all other tabs (Dashboard/Insight/Area/Cost/Focus/Resto), ShieldAlert + FileSearch icons (still used in footer/Dashboard tab). Engine function `computeVarianceAnalysis` in src/engine/analysis/rankingService.ts untouched — still used by analysis + export-report API routes (separate from React component VarianceAnalysis that was removed).
+
+---
+Task ID: DEEP-AUDIT-FINAL-FLOW
+Agent: Data Flow Auditor
+Task: Deep audit end-to-end data flow
+
+Work Log:
+- Read worklog.md (last 100 lines) for context on prior pareto/export-section/investigasi removal tasks.
+- Traced Flow 1 (Import → DB → Analysis → Dashboard): read /api/ingest-process/route.ts (537 lines), /lib/ingestion.ts (600 lines, processIngestion + processRowsForImport), /lib/excel.ts (parseExcelFile + parseMonthFromFilename), /engine/transform.ts (normalizeRow), /api/analysis/route.ts (736 lines), /app/page.tsx (470 lines).
+- Traced Flow 2 (Filter → Query → Display): read /hooks/useDashboard.ts (74 lines Zustand store), /hooks/useAnalysis.ts (227 lines, useAnalysis + useStatus hooks), /components/filters/FilterBar.tsx (671 lines, both upload + drive import paths).
+- Traced Flow 3 (Resto → Ranking Nasional): read /components/dashboard/RestoAnalysis.tsx (823 lines, including RankingNasionalCard sub-component at lines 694-822), /components/dashboard/OutletFocusMode.tsx (1425 lines, sub-tab 'investigasi' is internal Tab6Investigasi — NOT page-level tab).
+- Traced Flow 4 (Export → Word): read /api/export-report/route.ts (734 lines), /components/dashboard/ExportDialog.tsx (131 lines, 9 SECTIONS entries: exec/growth/topItems/breakdown/area/variance/consistency/trend/historical).
+- Verified recent changes:
+  - TopDeviasiRank component (TopItems.tsx:209-322) is DEAD CODE — never imported/used anywhere in src/. Worklog claimed it was moved to end of Dashboard tab, but current page.tsx (lines 9, 295-340) does NOT import or render it. The Dashboard tab ends with Loss/Surplus + Trend section (line 335-339) — no TopDeviasiRank.
+  - RankingNasionalCard (RestoAnalysis.tsx:694) uses its own useQuery with key `['analysis', monthLabel, currentWeek]` — separate from page.tsx main useAnalysis key `['analysis', paramsObject]` → DUPLICATE FETCH confirmed.
+  - Multiple export sections removed (8 sections: health/lossSurplus/ranking/cost/worklist/recommendations/topOutlets/dqIssues) — verified no leftover render blocks; export data object at line 483-497 cleanly omits those 9 fields.
+  - InvestigationWorklist + RecommendationPanel removed from Dashboard — grep returns 0 matches in src/.
+  - Section 13 = Ranking Item Nasional (replaced Consistency) — verified at export-report route line 642-670 (hasSection('consistency') renders data.topDeviasiRank).
+- Verified edge cases:
+  - Empty data: analysis route returns 404 with `success:false, message:"No records found..."`; useAnalysis throws Error with the message; page.tsx ErrorState component renders it.
+  - Single resto for AVG Dev By BOM: SQL CASE WHEN EXISTS subquery returns NULL when no other resto has BOM within ±50% range → frontend RankingNasionalCard shows '—' (RestoAnalysis.tsx:808-810). ✓
+  - Negative nominalDeviasi growth: computeNominalDeviationGrowth uses calcGrowthAbs (|curr| - |prev|) / |prev| — handles sign flips correctly. ✓
+  - >500 items: queryTopItemsByDeviasiRank SQL has `ORDER BY ipo."itemName", "rankNominal" LIMIT 500` (items.ts:172-176) — alphabetical sort means high-rank items alphabetically late may be EXCLUDED from results. Frontend `slice(0, 9999)` (RestoAnalysis.tsx:722) assumes all items are available but only 500 are returned.
+- Cross-checked field name consistency:
+  - Backend returns `topDeviasiRank` (analysis route line 695, export-report line 494) — frontend expects `topDeviasiRank` (useAnalysis.ts:97, RestoAnalysis.tsx:715, TopItems.tsx:210). ✓
+  - `avgDeviasiByBom` field: SQL returns QTY (items.ts:167-171: AVG of ABS(SUM(qtyDeviasi))). Frontend RankingNasionalCard uses fmtNum (QTY display) ✓. Export-report route at line 665 uses fmtPct (PERCENT display) ✗ — multiplies QTY by 100 and adds '%'. TopDeviasiRank component (dead code) at TopItems.tsx:309 uses fmtPctAbs — same wrong unit.
+
+Stage Summary:
+
+- **Bug FINAL-FLOW-1** — HIGH — `src/components/dashboard/RestoAnalysis.tsx:701-713`
+  - Description: RankingNasionalCard uses its own `useQuery({ queryKey: ['analysis', monthLabel, currentWeek] })`, separate from page.tsx's main `useAnalysis({...params})` which uses key `['analysis', paramsObject]`. Different queryKeys = separate TanStack Query cache entries = DUPLICATE /api/analysis fetch when Resto tab is active.
+  - Impact: 2x API calls + 2x DB query load on every Resto tab visit. The analysis route runs ~15 SQL queries (Promise.all at line 424-455) + rule evaluation loop over 35K+ records (~6-8s per call). 2x = ~12-16s wasted server time. Also, RankingNasionalCard fetches WITHOUT filters (no area/outlet/pic/compareWeek) — semantically intentional ("national ranking") but inconsistent with main view.
+  - Proposed Fix: Either (a) pass `analysis.data` from page.tsx → RestoAnalysis → RankingNasionalCard as a prop (since page.tsx already has the data), or (b) lift the analysis query into a React Context provider so all consumers share one cache entry. Option (a) is simpler — change RankingNasionalCard signature to accept `data: AnalysisData` prop and remove its internal useQuery.
+
+- **Bug FINAL-FLOW-2** — HIGH — `src/app/api/export-report/route.ts:665`
+  - Description: `it.avgDeviasiByBom != null ? fmtPct(it.avgDeviasiByBom, false) : '—'` formats a QTY value as a percentage. The SQL query (items.ts:167-171) computes `avgDeviasiByBom = AVG(ABS(SUM(qtyDeviasi)))` for items at other restos with BOM within ±50% range — this is a QTY (e.g., 5.2 = avg |qty deviasi| is 5.2 units), NOT a percentage. fmtPct multiplies by 100 and adds '%', so 5.2 units becomes "520.00%".
+  - Impact: Exported Word document Section 13 ("Ranking Item Nasional") shows wrong values in the "AVG Deviasi By BOM" column. Users misinterpret 5.2 units as 520%. Financial/business decisions based on this number would be incorrect.
+  - Proposed Fix: Change line 665 to `it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—'` (use fmtNum, not fmtPct). Also update line 647 description from "AVG Deviasi By BOM = rata-rata ABS(% Deviasi To BOM)..." to "AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan QTY BOM ±50%".
+
+- **Bug FINAL-FLOW-3** — MEDIUM — `src/app/api/export-report/route.ts:647`
+  - Description: Heading description says "AVG Deviasi By BOM = rata-rata ABS(% Deviasi To BOM) item tersebut di semua resto (network average)." But the SQL (items.ts:160-171) computes `AVG(ABS(SUM(qtyDeviasi)))` filtered by BOM within ±50% — this is average of |QTY Deviasi| at similar-BOM restos, NOT average of |% Deviasi To BOM| across all restos. Two errors: (a) wrong unit (QTY vs %), (b) wrong scope (similar-BOM restos vs all restos).
+  - Impact: Users misinterpret the metric semantics. Combined with Bug FINAL-FLOW-2, the column shows wrong numbers AND the description explains a different (also wrong) metric.
+  - Proposed Fix: Update description to: "AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan QTY BOM dalam rentang ±50% (network average for similar-volume outlets)."
+
+- **Bug FINAL-FLOW-4** — MEDIUM — `src/lib/queries/items.ts:172-176`
+  - Description: SQL `ORDER BY ipo."itemName", "rankNominal" LIMIT 500` orders alphabetically by item name FIRST, then by rank nominal. With LIMIT 500, items alphabetically late (e.g., "Z..." items) are excluded entirely even if their rank is #1. The frontend `slice(0, topN === 'all' ? 9999 : parseInt(topN))` (RestoAnalysis.tsx:722) assumes all items are available but only 500 are returned.
+  - Impact: "Top 100" / "Semua" dropdown shows misleading counts. High-rank items with alphabetically-late names are silently excluded from the national ranking. Users can't see the actual top-N by rank.
+  - Proposed Fix: Change ORDER BY to `"rankNominal"` only (so top 500 by rank are returned — semantically correct for "Top N" UI). If user genuinely needs alphabetical browsing of all items, add pagination or remove LIMIT (memory trade-off).
+
+- **Bug FINAL-FLOW-5** — MEDIUM — `src/hooks/useDashboard.ts:68-71`
+  - Description: `setFocusOutlet(code)` sets `activeTab: 'focus'` (Focus Mode tab). RestoAnalysis (containing RankingNasionalCard) lives on the 'resto' tab (page.tsx:423-426). When user clicks an outlet from a dashboard card (TopOutlets at TopItems.tsx:183, OutletHealthRanking at AdvancedAnalysis.tsx:97, CostAccounting at lines 211/299), they're taken to Focus Mode, NOT Resto Analysis. They must manually click "Resto Analysis" tab to see the new analysis.
+  - Impact: Two-click flow to reach Resto Analysis from dashboard cards. RankingNasionalCard is invisible by default after outlet selection — user may not discover it exists.
+  - Proposed Fix: Either (a) change `setFocusOutlet` to switch to 'resto' tab (breaks Focus Mode UX), (b) split into two setters: `setFocusOutlet` (stays in Focus tab) + `setRestoOutlet` (switches to Resto tab), or (c) add a "Lihat Resto Analysis →" button in Focus Mode header that switches tab. Option (b) is cleanest.
+
+- **Bug FINAL-FLOW-6** — LOW — `src/components/dashboard/TopItems.tsx:202-322`
+  - Description: TopDeviasiRank component (118 lines including section comment header) is exported but NEVER imported/used anywhere in src/. Grep for `TopDeviasiRank` returns only the export declaration (line 209) — no consumers. Worklog (line 5151) claimed it was moved to end of Dashboard tab in page.tsx, but current page.tsx imports only `TopItemsByNominal, TopItemsByDevBom, TopOutlets` (line 9) — no TopDeviasiRank. The component also has a latent bug at line 309: `{it.avgDeviasiByBom != null ? fmtPctAbs(it.avgDeviasiByBom) : '—'}` — uses fmtPctAbs (percent format) for a QTY value (same class of bug as FINAL-FLOW-2).
+  - Impact: Dead code (118 lines). If re-introduced, the avgDeviasiByBom column would display wrong values (5.2 units → "520.0%").
+  - Proposed Fix: Delete TopDeviasiRank function from TopItems.tsx (lines 202-322, including the section comment header at 202-208). The canonical implementation lives in RankingNasionalCard (RestoAnalysis.tsx:694-822) which correctly uses fmtNum.
+
+- **Bug FINAL-FLOW-7** — LOW — `src/components/dashboard/RestoAnalysis.tsx:694, 349-351`
+  - Description: RankingNasionalCard accepts `focusOutlet: string` prop but never references it inside the function body. The useQuery doesn't filter by outlet (`p.set('outlet', ...)` is never called). The `filterResto` state defaults to 'all' (not to focusOutlet).
+  - Impact: Misleading API — callers may believe filtering by outlet. Wasted prop. The card always shows national ranking regardless of which outlet is selected.
+  - Proposed Fix: Either (a) remove `focusOutlet` prop from signature + simplify the `{focusOutlet && <RankingNasionalCard />}` guard at line 349 to always render, or (b) pre-set `filterResto` initial state to `focusOutlet` via `useState(focusOutlet)` so the card auto-filters to the selected resto on mount (more useful behavior — user sees their resto's items first).
+
+- **Bug FINAL-FLOW-8** — LOW — `src/app/api/export-report/route.ts:29`
+  - Description: `queryTopOutletsBySales` is imported but never called. The worklog (line 5107) noted it was "already unused before this task — left as-is to stay minimal". Verified: grep for `queryTopOutletsBySales` in export-report returns only the import line.
+  - Impact: Dead import. May not trigger eslint error (depends on config), but is misleading.
+  - Proposed Fix: Remove `queryTopOutletsBySales` from the import statement at line 21-34.
+
+- **Bug FINAL-FLOW-9** — LOW — `src/app/api/analysis/route.ts:674-710` + `src/app/page.tsx:237, 448`
+  - Description: page.tsx uses `analysis.data.cached ? 'cache' : 'langsung'` (line 237) and `analysis.data.cached ? 'cache' : 'segar'` (line 448). The analysis route NEVER sets the `cached` field in the response object (grep for `cached` in analysis route returns 0 matches). Route comment at line 712-713 confirms: "DISABLED: analysisCache.set — in-memory cache unreliable in serverless". So `cached` is always undefined → falsy → indicator permanently stuck on 'langsung'/'segar'.
+  - Impact: Cosmetic only — "cache" indicator never lights up. Users see "langsung" (live) even when TanStack Query returns client-cached data within the 60s staleTime window.
+  - Proposed Fix: Either (a) remove the `cached` checks in page.tsx (since server cache is disabled), or (b) re-enable server-side analysisCache with a short TTL (e.g., 30s) and set `cached: true` when serving from cache (similar to /api/outlet-focus pattern at outlet-focus/route.ts:202-204). Option (a) is simpler.
+
+Total: 9 bugs found. 2 HIGH (FINAL-FLOW-1, FINAL-FLOW-2), 3 MEDIUM (FINAL-FLOW-3, FINAL-FLOW-4, FINAL-FLOW-5), 4 LOW (FINAL-FLOW-6, FINAL-FLOW-7, FINAL-FLOW-8, FINAL-FLOW-9). No CRITICAL bugs. All recent refactors (pareto removal, export section removal, investigasi tab removal) are intact with no regression. Import → DB → Analysis → Dashboard flow is functionally correct. Filter → Query → Display flow is correct. Export → Word flow has 2 data-correctness bugs (FINAL-FLOW-2 + FINAL-FLOW-3) that produce wrong numbers in the exported document.
+
+---
+Task ID: DEEP-AUDIT-FINAL-ENGINE
+Agent: Engine Auditor
+Task: Deep audit metric engine + rule engine + narrative
+
+Work Log:
+- Read worklog.md (last 100 lines) for context on prior pareto/section/AI-removal tasks.
+- Read all files in audit scope end-to-end:
+  - src/lib/metrics/{definitions,deviation,growth,historical,benchmark,sales,index}.ts
+  - src/engine/rules/evaluator.ts (351 lines)
+  - src/config/rules.yaml (241 lines, 17 rules)
+  - src/engine/analysis/{rankingService,ruleService,analysis}.ts
+  - src/engine/narrative/narrative.ts (75 lines — only buildRecommendations)
+  - src/engine/{transform,validator}.ts
+  - src/lib/{settings,excel,filename,cache}.ts
+- Cross-checked dead code:
+  - `withTimeout` / `LLM_TIMEOUT_MS`: grep returned 0 matches in src/ → already fully removed. ✓
+  - `generateNarrative` / `generateAIExecutiveSummary` / `generateAIPatternInsight`: grep returned 0 matches → fully removed. ✓
+  - `calcAvgPrice`: still called by ruleService.ts (lines 40-41) but only to compute `priceGrowth` which NO rule references.
+  - `safeRatio`: still called by ruleService.ts (lines 77-78) for deviationToSalesRatio/deviationToBomRatio — also not referenced by any rule.
+  - `computeGrowthResult`: still called by outlet-items/route.ts (line 328) for devGrowthResult trend. ✓
+  - `computeNominalDeviationGrowth`: used by analysis + export-report + outlet-focus + outlet-items routes. ✓
+  - `computeResidual` (deviation.ts): exported but NEVER imported — dead code (transform.ts has its own local computeResidual).
+  - `computeDevBomPerRow`, `computeExplainedPct`, `computeResidualRatio` (deviation.ts): exported but never imported — dead code.
+- Verified recent changes:
+  - narrative.ts: only buildRecommendations remains (75 lines). ✓
+  - computePriceEffect deleted from growth.ts. ✓
+  - computeNominalDeviationGrowth uses calcGrowthAbs (magnitude). ✓
+  - topWorsened sort by signed selisih DESC (line 244), topImproved by signed selisih ASC (line 245). ✓
+  - |w|+|s|+|t| formula applied to all 4 call-sites: transform.ts computeResidual (lines 258, 271), transform.ts deriveRecord (line 305), validator.ts OVER_EXPLAINED (line 183), validator.ts NET_DEVIATION_MISMATCH (line 208). ✓
+  - rules.yaml: all names + narratives in Indonesian. ✓
+  - HIGH_LOSS_NOMINAL severity ABNORMAL (line 161). ✓
+  - HISTORICAL_ABNORMAL_SURPLUS uses `gt` (line 226), not `lt`. ✓
+- Verified cache invalidation:
+  - analysisCache: cleared by data, ingest-process, pic/import, pic/route, settings, ingestion.ts. Read by outlet-focus (line 202). Analysis route has SET disabled (line 712 comment). ✓
+  - statusCache: cleared by all mutation routes (data, ingest-process, pic/import, pic/route, ingestion.ts). ✓
+  - month-resolver cache: cleared by data, ingest-process, ingestion.ts. Not cleared by pic/settings (correct — those don't affect monthLabels). ✓
+- Ran `bun run lint` → 0 errors. Ran `npx tsc --noEmit --skipLibCheck` → 0 errors. Both pass cleanly.
+
+Stage Summary:
+
+- **FINAL-ENGINE-1** — LOW — `src/lib/metrics/deviation.ts:54,63,83,92`
+  Dead code: `computeDevBomPerRow`, `computeResidual`, `computeResidualRatio`, `computeExplainedPct` are exported via index.ts but never imported by any consumer. `computeResidual` in deviation.ts returns ABSOLUTE residualQty, while transform.ts has its own local `computeResidual` (line 239) that returns SIGNED residualQty — naming collision risks future maintainer confusion.
+  Impact: No runtime impact. ~80 lines of dead code + confusing duplicate API surface.
+  Proposed Fix: Remove the 4 dead functions from deviation.ts and their exports from index.ts. If a future consumer needs per-row residual, reuse transform.ts's computeResidual or rename the deviation.ts one to `computeResidualMagnitude`.
+
+- **FINAL-ENGINE-2** — LOW — `src/engine/analysis/ruleService.ts:40-42,76`
+  `priceGrowth` is dead computation. `calcAvgPrice` is called twice per record (lines 40-41) to compute currPrice/prevPrice, then `priceGrowth = calcGrowth(currPrice, prevPrice)` (line 42). The `priceGrowth` field is added to RuleContext (line 76) and listed in PERCENT_KEYS (evaluator.ts:233), but NO rule in rules.yaml references `priceGrowth` in any condition or narrative template. This is leftover from the deleted `computePriceEffect` (price effect decomposition removed in prior task).
+  Impact: Wastes ~3 math operations × 35K records per analysis request (~105K ops). No functional impact.
+  Proposed Fix: Remove lines 40-42 (calcAvgPrice calls + priceGrowth), remove `priceGrowth` from the returned context (line 76), remove `priceGrowth` from RuleContext interface (evaluator.ts:280) and PERCENT_KEYS (evaluator.ts:233). Update rules.yaml comment block (line 14) to drop priceGrowth from available fields. Optionally remove `calcAvgPrice` from growth.ts if no other consumer (confirmed: only ruleService.ts uses it).
+
+- **FINAL-ENGINE-3** — LOW — `src/engine/analysis/ruleService.ts:95-98`
+  Unused threshold fields in RuleContext: `stdSusutPct`, `stdWastePct`, `stdTrialPct`, `fallbackTolerancePct` are injected into RuleContext (lines 95-98) but NO rule in rules.yaml references them as operands. Only `stdDeviasiBomPct` is used (TOLERANCE_NOT_SET_HIGH_DEV line 115). The other 4 were likely intended for future SUSUT/WASTE/TRIAL-breach rules that were never added.
+  Impact: 4 extra fields × 35K records in evidence object (memory bloat in flags). No functional impact.
+  Proposed Fix: Either remove the 4 unused threshold injections from ruleService.ts (and from RuleContext interface in evaluator.ts:305-308), OR add the corresponding rules to rules.yaml (e.g., WASTE_HIGH: `pctQtyWasteToBom > stdWastePct`).
+
+- **FINAL-ENGINE-4** — MEDIUM — `src/engine/validator.ts:28-33,94,108-109,173-175,200`
+  `validateRow` does NOT accept a `locale` parameter. All `toNum()` calls inside validator.ts use the default 'auto' locale, while `normalizeRow` (transform.ts:185-229) uses the user-supplied `body.numberLocale` (e.g., 'id' or 'us'). When a user imports an Indonesian-locale file with values like "123.456" (meaning 123456 in 'id' locale), the validator's 'auto' heuristic parses it as 123.456 (decimal), causing:
+  - False BOM_POSITIVE warnings (qtyBom parsed as small positive instead of large negative)
+  - Incorrect OVER_EXPLAINED comparisons (explainedAbs magnitude miscomputed)
+  - Incorrect NET_DEVIATION_MISMATCH comparisons (expectedNet magnitude wrong)
+  The actual stored data uses the correct locale (via normalizeRow), but DQ flags may be wrong.
+  Impact: DQ issues (WARNING/INFO level) may be incorrectly raised or suppressed when non-'auto' locale is selected. ERROR-level INVALID_NUMBER is NOT affected (both locales return non-null for valid number strings).
+  Proposed Fix: Add `locale: NumberLocale = 'auto'` param to `validateRow` signature. Thread it through all `toNum()` calls (lines 94, 108, 109, 173, 174, 175, 200). Update callers in ingestion.ts (lines 269, 509) to pass `body.numberLocale || 'auto'`.
+
+- **FINAL-ENGINE-5** — LOW — `src/engine/analysis/rankingService.ts:222,244-245`
+  Semantic inconsistency between `varianceDirection` field and `topWorsened`/`topImproved` sort. `varianceDirection` (line 222) uses abs-based `delta` (magnitude change: WORSENED if |deviasi| grew). The sorts (lines 244-245) use signed `selisih` (direction change: topWorsened = most positive selisih = LOSS grew OR SURPLUS shrank). An item can have `varianceDirection='IMPROVED'` but appear in `topWorsened`. Example: prev=-20M (SURPLUS), curr=-10M (SURPLUS) → delta=-10M (IMPROVED, abs shrank) but selisih=+10M (topWorsened, signed moved toward LOSS).
+  Impact: Dashboard may show an item in "topWorsened" with varianceDirection='IMPROVED', which is confusing. No crash.
+  Proposed Fix: Either (a) align varianceDirection with the signed-selisih interpretation: `varianceDirection = selisih > 0 ? 'WORSENED' : selisih < 0 ? 'IMPROVED' : 'STABLE'`, OR (b) keep abs-based varianceDirection but document that topWorsened/topImproved use a different (signed) semantics. Option (a) is more consistent.
+
+- **FINAL-ENGINE-6** — LOW — `src/engine/analysis/rankingService.ts:196`
+  Stale comment. Line 196 says "Sort still by abs(selisih) to surface biggest changes (regardless of direction)." but the actual sort (lines 244-245) uses SIGNED selisih per the FIX-DEEP-3A comment (lines 240-243). The "Rev 6" comment was not updated when the sort was changed.
+  Impact: Documentation misleads future maintainers.
+  Proposed Fix: Update line 196 comment to: "Sort by SIGNED selisih (per FIX-DEEP-3A): topWorsened = most positive selisih (LOSS grew / SURPLUS shrank), topImproved = most negative selisih (LOSS shrank / SURPLUS grew)."
+
+- **FINAL-ENGINE-7** — LOW — `src/config/rules.yaml:174-192,206-240`
+  Rule overlap: `BENCHMARK_ABOVE_AREA` (line 174) and `HISTORICAL_WARNING` (line 230) fire for the same condition (zScore between warn and high). Similarly, `BENCHMARK_ABOVE_NETWORK` (line 184) + `HISTORICAL_ABNORMAL` (line 206) / `HISTORICAL_ABNORMAL_SURPLUS` (line 218) fire for zScore > high. Both rules emit flags for the same record, inflating flag counts. The `top` flag selection (`flags[0]` after priority sort) picks BENCHMARK_ABOVE_NETWORK (priority 72) over HISTORICAL_ABNORMAL (priority 78) — wait, 78 > 72, so HISTORICAL_ABNORMAL sorts first. OK priority ordering is fine. But the duplicate flag still appears in the flags array.
+  Impact: Redundant flags in evidence; `ruleCodeCounts` may double-count the same underlying anomaly. No crash.
+  Proposed Fix: Either (a) remove BENCHMARK_ABOVE_AREA/ABOVE_NETWORK rules (the HISTORICAL_* rules already cover zScore-based anomalies), OR (b) repurpose BENCHMARK_* rules to use the actual area/network pooled comparison (computeBenchmark from benchmark.ts) instead of the historical zScore flag. Option (b) aligns with the original intent (area/network benchmark is a DIFFERENT comparison from historical).
+
+- **FINAL-ENGINE-8** — LOW — `src/engine/rules/evaluator.ts:244`
+  Latent format bug in `formatEvidenceValue`. The function checks PERCENT_KEYS first (line 240), then falls through to `key.toLowerCase().includes('nominal') || key.toLowerCase().includes('sales')` (line 244) → formats as IDR. The key `salesDeviationFactor` contains 'sales' → would be formatted as IDR (e.g., "Rp 2,0Rb") if ever referenced in a narrative template. Currently no template references it, so this is latent.
+  Impact: No current impact (no narrative template references salesDeviationFactor). Would produce confusing output if a future template adds `{{salesDeviationFactor}}`.
+  Proposed Fix: Add `salesDeviationFactor`, `bomDeviationFactor` to PERCENT_KEYS (they're multipliers, not percentages, but formatting as "200,00%" is less confusing than "Rp 2Rb"). OR add a new "factor" category that formats as plain number with 2 decimals.
+
+Verification:
+- `bun run lint` → 0 errors (LINT_EXIT=0)
+- `npx tsc --noEmit --skipLibCheck` → 0 errors (TSC_EXIT=0)
+- All "Recent changes to verify" items confirmed present and correct.
+- No CRITICAL or HIGH severity bugs found in audit scope.
+- 1 MEDIUM (FINAL-ENGINE-4: validator locale mismatch) + 7 LOW findings.
+- Out-of-scope observation: analysis/route.ts execSummary uses signed calcGrowth for qtyBom/qtyDeviasi/qtyWaste/qtySusut/qtyTrial/qtyLossSurplus (lines 91-96) — same issue as audit issue #11 (nominalDeviasi) but for other signed fields. This is for DISPLAY only (not rule evaluation), so signed growth may be intentional to show direction of change. Flagging for awareness but not a formal finding since it's out of scope.
+
+---
+Task ID: DEEP-AUDIT-FRONTEND
+Agent: Frontend Auditor
+Task: Deep audit React components + hooks
+
+Work Log:
+- Read worklog.md (last 100 lines) for context on prior tasks (Pareto removal, 8-section export removal, Investigasi tab removal).
+- Verified file structure: 15 dashboard components, 6 filter components, 2 drilldown components, 4 hooks, 2 lib files (format.ts, a11y.ts) all present. AlertPanel.tsx confirmed deleted.
+- Read end-to-end: src/app/page.tsx (470 lines), src/components/dashboard/RestoAnalysis.tsx (823 lines incl. RankingNasionalCard), TopItems.tsx (323 lines incl. TopDeviasiRank dead code), useAnalysis.ts, useDashboard.ts, use-toast.ts, use-mobile.ts, lib/format.ts, lib/a11y.ts, ExecutiveSummary.tsx, Charts.tsx, AdvancedAnalysis.tsx, AnalysisCards.tsx, InsightsPanel.tsx, CostAccounting.tsx, OutletFocusMode.tsx (1425 lines), OutletScorecard.tsx, ItemDeepDive.tsx, CardDrillDown.tsx, QuickSettings.tsx, FormulaInfo.tsx, FilterBar.tsx (300+ lines), DrillDownDrawer.tsx, SourceDataModal.tsx.
+- Grep'd for dead references to removed features (AlertPanel, VarianceAnalysis React, HistoricalAnalysisCard, InvestigationWorklist, RecommendationPanel, ExtraCharts, RestoBahanMatrix, ParetoAnalysis, TrendDecompositionCard, priceGrowth). Confirmed: zero dangling references in src/ except engine-level computeVarianceAnalysis (correctly retained, separate from removed React component) and priceGrowth in ruleService.ts/evaluator.ts (engine internal, frontend interface cleaned).
+- Ran `bun run lint` → 0 errors (clean). Ran `npx tsc --noEmit --skipLibCheck` → 0 errors. Inspected eslint.config.mjs and confirmed `@typescript-eslint/no-unused-vars: off`, `react-hooks/exhaustive-deps: off`, `no-unused-vars: off` — explains why dead imports + missing deps pass lint silently.
+- Verified useDashboard.ts: no `'investigasi'` string; `setFocusOutlet` sets tab to `'focus'`. Confirmed clean.
+- Verified RankingNasionalCard gating: only renders when `focusOutlet` is set (RestoAnalysis.tsx:349-351). Spec #21 satisfied.
+- Cross-referenced sign convention for pctLossSurplusToBom + qtyLossSurplus against LossVsSurplusChart comment (Charts.tsx:178: "qtyLossSurplus = +50 → LOSS | qtyLossSurplus = -30 → SURPLUS") and SQL in lib/queries/items.ts:141 (signed, no ABS). Confirmed current RankingNasionalCard coloring is inverted vs convention.
+- Verified AVG Dev By BOM uses fmtNum (not fmtPct) — spec #18 satisfied (RestoAnalysis.tsx:809).
+- Verified internal 'investigasi' tab in OutletFocusMode.tsx:1391 is a LOCAL subtab (separate from removed main app tab) — informational, not a bug.
+
+Stage Summary:
+- FINAL-FRONTEND-1 [HIGH] — src/components/dashboard/RestoAnalysis.tsx:701-713 — RankingNasionalCard uses separate useQuery with key `['analysis', monthLabel, currentWeek]` that doesn't match main `useAnalysis` key `['analysis', params]` (which includes area, outlet, item, pic, compareWeek, compareMonth). Causes 2x API calls to /api/analysis AND RankingNasionalCard ignores user's area/PIC/outlet/item dashboard filters (sends only month+week params). Impact: doubled server load; ranking shows ALL items regardless of active dashboard filter (silent UX bug — user thinks filter is applied but ranking ignores it). Proposed fix: pass `analysis.data` from DashboardPage to `<RestoAnalysis data={analysis.data} />` (currently called with no props at page.tsx:425); read topDeviasiRank from props in RankingNasionalCard; remove the duplicate useQuery entirely.
+
+- FINAL-FRONTEND-2 [HIGH] — src/components/dashboard/RestoAnalysis.tsx:804-806 — %LS to BOM cell: (a) Color inverted per spec #19 (`pctLossSurplusToBom < 0 ? red : emerald` but spec says negative=SURPLUS=green, positive=LOSS=red); (b) Display uses `Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` which hides the sign — user cannot distinguish LOSS from SURPLUS from number alone. SQL at lib/queries/items.ts:141 confirms pctLossSurplusToBom is SIGNED. Impact: SURPLUS rows colored red (LOSS color); sign information lost. Proposed fix: use `fmtPct(it.pctLossSurplusToBom, true, 2)` for signed display; invert color to `${pctLossSurplusToBom != null && pctLossSurplusToBom > 0 ? 'text-red-600' : 'text-emerald-600'}`.
+
+- FINAL-FRONTEND-3 [HIGH] — src/components/dashboard/RestoAnalysis.tsx:803 — QTY LS cell color inverted: `${it.qtyLossSurplus < 0 ? 'text-red-600' : 'text-emerald-600'}` but per LossVsSurplusChart comment (Charts.tsx:178) and SQL convention, qtyLossSurplus<0=SURPLUS (good, green); qtyLossSurplus>0=LOSS (bad, red). Impact: SURPLUS rows colored red — inconsistent with LossVsSurplus chart. Proposed fix: invert to `${it.qtyLossSurplus > 0 ? 'text-red-600' : 'text-emerald-600'}`.
+
+- FINAL-FRONTEND-4 [MEDIUM] — src/components/dashboard/TopItems.tsx:209-322 — TopDeviasiRank component still exported but never imported anywhere (grep confirmed: only the export site matches, zero import sites). Worklog claims it was "moved" to RestoAnalysis as RankingNasionalCard — but actually a separate copy was created; original is dead code. Impact: 113 lines dead; logic duplication risks drift between two implementations (TopDeviasiRank uses fmtPctAbs for AVG Dev By BOM; RankingNasionalCard uses fmtNum — already diverged per spec #18). Proposed fix: delete TopDeviasiRank function (lines 209-322) from TopItems.tsx.
+
+- FINAL-FRONTEND-5 [MEDIUM] — src/app/page.tsx:15, 22-39 — Dead imports: (a) `MenuAnalysisCard` imported from AnalysisCards (line 15) but never rendered (only MultiPeriodComparisonCard used at line 319); (b) `FileSearch`, `Utensils`, `Grid3x3` imported from lucide-react but never used in page.tsx (were used by removed Investigasi tab + TopDeviasiRank section header). Impact: dead imports increase bundle; ESLint doesn't catch (rule disabled). Proposed fix: remove `MenuAnalysisCard` from import line 15; remove `FileSearch, Utensils, Grid3x3` from import lines 35-37.
+
+- FINAL-FRONTEND-6 [MEDIUM] — src/components/dashboard/OutletFocusMode.tsx:22 — `TrendingDown` imported from lucide-react but never used (only TrendingUp is used at line 294). Impact: dead import. Proposed fix: remove `TrendingDown` from import line 22.
+
+- FINAL-FRONTEND-7 [MEDIUM] — src/components/dashboard/AdvancedAnalysis.tsx:11 — `directionColor` imported from `@/lib/format` but never used in file (pre-existing per worklog line 5153, still dead). Impact: dead import. Proposed fix: remove `directionColor` from import line 11.
+
+- FINAL-FRONTEND-8 [MEDIUM] — src/components/dashboard/InsightsPanel.tsx:82 — Health-critical insight pushes `action: 'Buka Investigation Worklist'` but no `actionTarget`. JSX (line 336) only renders Button if BOTH `action && actionTarget` — so the action string is silently never displayed. InvestigationWorklist section was removed from main Dashboard tab per worklog (now only in OutletFocusMode local tab). Impact: user sees critical health insight with no actionable button (UX gap); dead data field. Proposed fix: either remove the `action` field entirely, OR add an `actionTarget` that opens a useful view (e.g., switch to Focus Mode tab on worst outlet: `{ type: 'outlet', value: worstOutletCode }` — but that requires computing worstOutletCode).
+
+- FINAL-FRONTEND-9 [LOW] — src/components/dashboard/RestoAnalysis.tsx:807 — QTY BOM cell uses `${it.qtyBom < 0 ? 'text-red-600' : 'text-emerald-600'}` but QTY BOM is always positive (bill of materials standard qty). The `< 0` branch never fires; always shows emerald. Impact: misleading code; BOM (a cost baseline) styled as "good" (emerald) is semantically wrong. Proposed fix: remove color logic — `<TableCell className="text-right text-xs text-muted-foreground">{fmtNum(it.qtyBom)}</TableCell>`.
+
+- FINAL-FRONTEND-10 [LOW] — src/components/dashboard/RestoAnalysis.tsx:802 — QTY Waste cell uses `${it.qtyWaste < 0 ? 'text-red-600' : 'text-emerald-600'}` but waste is always positive (recorded quantity). Always shows emerald (good) — semantically wrong (waste is never good). Impact: misleading. Proposed fix: remove color logic OR use neutral/warning color for waste.
+
+- FINAL-FRONTEND-11 [LOW] — src/components/dashboard/RestoAnalysis.tsx:795; src/components/dashboard/TopItems.tsx:295 (dead code); src/components/dashboard/AdvancedAnalysis.tsx:227 — React key includes array index: `key={\`${it.itemName}-${it.outletCode}-${i}\`}`. While not pure `key={i}`, including the index weakens reconciliation if list reorders (filter/sort changes). Impact: subtle UI bugs if list reorders. Proposed fix: drop `-${i}` from key; if duplicates possible, append `it.rankNominal` instead.
+
+- FINAL-FRONTEND-12 [LOW/informational] — src/components/dashboard/OutletFocusMode.tsx:1391 — Local TabsTrigger `value="investigasi"` exists inside Focus Mode (separate from the removed main app "Investigasi" tab). Not a bug — local subtab showing worklist. But name overlap with removed main tab is confusing. Audit checklist #22 asked about 'investigasi' tab references — this is one but it's a different concept. Proposed fix (optional): rename to "Worklist" to disambiguate.
+
+- Lint/tsc status: `bun run lint` → 0 errors; `npx tsc --noEmit --skipLibCheck` → 0 errors. Both pass cleanly. NOTE: ESLint config has `@typescript-eslint/no-unused-vars: off`, `react-hooks/exhaustive-deps: off`, `no-unused-vars: off` — so dead imports + missing deps + unused vars are NOT flagged by lint. Recommend re-enabling at least `@typescript-eslint/no-unused-vars` and `react-hooks/exhaustive-deps` (warn level) to catch this class of bugs automatically.
+
+---
+Task ID: DEEP-AUDIT-FINAL-SECURITY
+Agent: Security + Dead Code Auditor
+Task: Deep audit security + config + dead code
+
+Work Log:
+- Read /home/z/my-project/worklog.md (last 100 lines) for context on prior removals (pareto, price effect, AI, AlertPanel, VarianceAnalysis React component, HistoricalAnalysisCard, RecommendationPanel, export sections, Investigasi tab).
+- Read all in-scope files end-to-end: src/middleware.ts, src/lib/rate-limit.ts, src/lib/db.ts, src/lib/cache.ts, src/lib/validation.ts, src/lib/filename.ts, src/lib/month-resolver.ts, src/instrumentation.ts, next.config.ts, .env, .env.example, package.json, prisma/schema.prisma, Caddyfile, tsconfig.json, eslint.config.mjs.
+- Verified `bun run lint` → 0 errors (LINT_EXIT=0); `npx tsc --noEmit --skipLibCheck` → 0 errors (TSC_EXIT=0). Both pass — but ESLint has `@typescript-eslint/no-unused-vars: off` so dead code is NOT flagged by lint.
+- Cross-referenced every export in src/components/dashboard/*.tsx against imports in src/app/page.tsx — found TopDeviasiRank (TopItems.tsx:209) + MenuAnalysisCard (AnalysisCards.tsx:88) are dead.
+- Grep'd src/ for every removed-feature symbol (TrendDecomposition, AlertPanel, VarianceAnalysis React component, HistoricalAnalysisCard, RecommendationPanel, ParetoAnalysis, ParetoResult) — only `computeVarianceAnalysis` (engine function) remains, which is correct (still used by analysis + export-report routes).
+- Verified `withTimeout` + `LLM_TIMEOUT_MS` were already removed from narrative.ts during the prior AI removal task (only historical mentions remain in worklog.md).
+- Verified queryLossVsSurplus, queryCostImpact, queryTopOutlets, queryTopOutletsBySales are all still used by /api/analysis route (lines 442-447, 690-706) and consumed by frontend (CardDrillDown.tsx, CostAccounting.tsx, Charts.tsx, InsightsPanel.tsx, TopItems.tsx).
+- Verified calcAvgPrice, safeRatio, computeGrowthResult, calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth are all still used (ruleService.ts, analysis/export-report/outlet-items routes).
+- Found `priceGrowth` metric is still computed in ruleService.ts:42 (calcGrowth + calcAvgPrice per record) and injected into RuleContext (ruleService.ts:76) — but no rule in rules.yaml references it (only doc comment line 14 mentions it). Dead CPU.
+- Found `recommendation` + `priorities` fields are still computed in /api/analysis route (lines 587-588, 699-701) but NEVER consumed by any frontend component (RecommendationPanel was deleted). Wasted CPU per request.
+- Audited middleware: PROTECTED_METHODS = ['POST','PUT','DELETE','PATCH'] — GET is NOT protected. /api/ingest has a GET handler that triggers BULK ingestion (line 44-69 of ingest/route.ts). Anyone can call `GET /api/ingest?fast=true` and trigger heavy bulk ingestion. CRITICAL.
+- Audited middleware ADMIN_TOKEN fallback: line 57-60 of middleware.ts allows access when ADMIN_TOKEN is unset regardless of NODE_ENV — contradicts .env.example (line 13-15) which claims "production fails-closed (403)". CRITICAL discrepancy.
+- Audited db.ts dev-mode SQLite allowance: schema.prisma is locked to `provider = "postgresql"` (line 11). PrismaClient generated for postgresql CANNOT connect to SQLite `file:` URLs. The dev-mode allowance in db.ts:55-63 is misleading dead code. Current .env has `DATABASE_URL=file:/home/z/my-project/db/custom.db` → dev mode is broken unless dev switches to a real PostgreSQL URL. CRITICAL.
+- Audited validation.ts: 4 of 6 Zod schemas are dead code (analysisQuerySchema, drilldownQuerySchema, settingsPostBodySchema, settingsDeleteQuerySchema) — defined but never imported by any route. /api/analysis + /api/drilldown read URL params raw with no validation. /api/settings does manual validation (less rigorous than Zod `.strict()`).
+- Audited Caddyfile SSRF: port allowlist contains ONLY 3003 (line 10). Reverse_proxy to localhost:{query.XTransformPort} is now safe. Default route proxies localhost:3000 (Next.js). OK.
+- Audited filename.ts sanitizeFileName: strips `<>:"/\\|?*` + control chars + leading dots. Robust against path traversal. Note: doesn't filter Windows reserved names (CON, PRN, AUX, NUL) — LOW severity since target FS is Linux.
+- Audited audit log: records DATA_DELETE, SETTINGS_UPDATE, SETTINGS_RESET, PIC_UPDATE, PIC_DELETE, PIC_IMPORT, ANALYSIS actions with appropriate detail (counts + outlet codes, no PII beyond PIC names which are stored in OutletPIC table anyway). Audit log is NOT recorded for /api/setup GET — endpoint is read-only-ish (just verifies DB connectivity), low priority.
+- Audited error responses: all API routes return `e?.message || String(e)` (no stack traces). console.error logs full Error (with stack) to server logs — standard practice. /api/setup and /api/status include raw DB error messages in response body — could leak DB connection details. MEDIUM severity.
+- Audited package.json deps: 8 unused dependencies identified (z-ai-web-dev-sdk, @dnd-kit/*, @mdxeditor/editor, react-syntax-highlighter, @reactuses/core, @libsql/client, @prisma/adapter-libsql). Together ~30+ MB of dead node_modules weight.
+- Audited config files: tsconfig strict=true ✓. next.config.ts has security headers ✓. ESLint has many safety rules disabled (no-unreachable, no-fallthrough, no-debugger, no-unused-vars, etc.) — explains why lint passes despite dead code.
+- Verified .env contains ONLY `DATABASE_URL=file:...` (no secrets, no ADMIN_TOKEN, no GOOGLE_DRIVE_API_KEY) — safe to commit but not useful. .env.example is correct.
+- Found page.tsx footer line 437 shows stale "Mesin Deterministik + Narasi AI" text — AI was removed.
+- Found dead imports in page.tsx: FileSearch, Grid3x3, Utensils (line 35, 37).
+- Found `DashboardData` interface in types/inventory.ts:159-174 is fully dead (no usage anywhere). Contains stale `narrative: string` field (AI removed).
+- Found dead config exports: CFG_STATUS_LABELS (settings.ts:5-24), BENCHMARK_AREA_ZSCORE/SALES_DEV_RATIO_FLAG/ENABLE_UOM_CONVERSION/WEEK_RANGES (thresholds.ts:16,48,56,59).
+- Found dead cache variables in settings.ts:319-320, 397-398 (_settingsCache, _thresholdsVersionCache, _thresholdsVersionAt — all only ever assigned null/0).
+
+Stage Summary:
+
+CRITICAL:
+- FINAL-SECURITY-1 (src/middleware.ts:40,52,95-101): PROTECTED_METHODS = ['POST','PUT','DELETE','PATCH'] — GET bypasses auth. /api/ingest has GET handler (src/app/api/ingest/route.ts:44-69) that triggers BULK ingestion. Anyone can call `GET /api/ingest?fast=true` without ADMIN_TOKEN. DoS + unauthorized data injection. Fix: add 'GET' to PROTECTED_METHODS, OR special-case /api/ingest GET in middleware to require auth.
+- FINAL-SECURITY-2 (src/middleware.ts:57-60): When ADMIN_TOKEN is unset, middleware returns NextResponse.next() regardless of NODE_ENV. .env.example (line 13-15) claims "destructive endpoints fail-closed (403) in production" but code does NOT implement this. Production deploy without ADMIN_TOKEN = all destructive endpoints PUBLIC. Fix: in production, return 403 when ADMIN_TOKEN unset; only allow dev bypass when NODE_ENV !== 'production'.
+- FINAL-SECURITY-3 (src/lib/db.ts:55-63 + prisma/schema.prisma:11): db.ts allows `file:`/`libsql://` URLs in dev mode, but schema.prisma is locked to `provider = "postgresql"`. PrismaClient generated for postgresql CANNOT connect to SQLite. Current .env has `DATABASE_URL=file:...` → dev mode broken on first DB query. Fix: either (a) drop the SQLite allowance from db.ts (force dev to use real PostgreSQL), or (b) use a separate `prisma/dev-sqlite.schema.prisma` + `prisma generate --schema=...` for dev. Recommend (a) — keep production/dev consistent.
+
+HIGH:
+- FINAL-SECURITY-4 (src/app/api/analysis/route.ts:124-131): /api/analysis reads month/week/compareWeek/area/outlet/item/pic from URL with NO validation. `analysisQuerySchema` exists in src/lib/validation.ts:52 but is never imported. Long strings could cause perf issues. Fix: import + apply safeParse(analysisQuerySchema, params).
+- FINAL-SECURITY-5 (src/app/api/drilldown/route.ts:23-29): same issue — `drilldownQuerySchema` (validation.ts:65) exists but unused. Manual `parseInt(limit)` + Math.min cap exists but no max-length on outletCode/itemName/weekLabel/monthLabel. Fix: import + apply drilldownQuerySchema.
+- FINAL-SECURITY-6 (src/app/api/settings/route.ts:84-87, 199): POST reads `body.values`/`body.updatedBy` raw (manual validation only); DELETE reads `key` raw. `settingsPostBodySchema` + `settingsDeleteQuerySchema` (validation.ts:37,45) exist but unused. Manual validation does NOT enforce `.strict()` (extra unknown keys silently ignored). Fix: apply Zod schemas.
+- FINAL-SECURITY-7 (src/components/dashboard/TopItems.tsx:209-323): `TopDeviasiRank` component exported (~115 lines) but NEVER imported anywhere. worklog claimed it was moved to page.tsx Dashboard tab but the move was not actually applied (page.tsx imports only TopItemsByNominal/TopItemsByDevBom/TopOutlets). Fix: delete the component, OR add `<TopDeviasiRank data={analysis.data} />` to page.tsx Dashboard tab.
+- FINAL-SECURITY-8 (src/components/dashboard/AnalysisCards.tsx:88-185 + src/app/page.tsx:15): `MenuAnalysisCard` component (98 lines) is imported in page.tsx:15 but never rendered in JSX. Component also reads `data.menuAnalysis` which is NOT in AnalysisData type and NOT returned by /api/analysis route (only /api/outlet-focus returns it). Would always show empty state. Fix: delete the import from page.tsx + delete the component from AnalysisCards.tsx.
+- FINAL-SECURITY-9 (src/app/api/analysis/route.ts:587-588, 699-701 + src/hooks/useAnalysis.ts:101,103 + src/types/inventory.ts:171): `recommendation` + `priorities` fields are computed per request (buildRecommendations + computePrioritiesFromFlags.slice(0,20)) and returned in response. RecommendationPanel was deleted — no frontend component reads `data.recommendation` or `data.priorities`. Wasted CPU per request + dead type fields. Fix: remove the computation + response fields + type fields, OR re-add a consumer.
+- FINAL-SECURITY-10 (src/engine/analysis/ruleService.ts:40-42, 76 + src/engine/rules/evaluator.ts:233,280 + src/config/rules.yaml:14): `priceGrowth` metric is still computed (`calcAvgPrice` + `calcGrowth` per record) and injected into RuleContext, but NO rule in rules.yaml uses it as a condition (only the deleted price-effect rule did). Wasted CPU on every record. Fix: remove priceGrowth computation from ruleService.ts:42,76; remove from RuleContext interface (evaluator.ts:280); remove from PERCENT_KEYS (evaluator.ts:233); update rules.yaml doc comment (line 14); drop calcAvgPrice import from ruleService.ts (only consumer).
+
+MEDIUM:
+- FINAL-SECURITY-11 (src/lib/validation.ts:37,45,52,65): 4 Zod schemas are dead code (settingsPostBodySchema, settingsDeleteQuerySchema, analysisQuerySchema, drilldownQuerySchema). Fix: apply them in the respective routes (see FINAL-SECURITY-4/5/6) OR delete the unused schemas.
+- FINAL-SECURITY-12 (src/types/inventory.ts:159-174): `DashboardData` interface is fully dead (no usage in src/). Contains stale `narrative: string` field (AI removed). Fix: delete the interface.
+- FINAL-SECURITY-13 (package.json:16,20-22,51,76,85): Unused dependencies: `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`, `@mdxeditor/editor`, `react-syntax-highlighter`, `@reactuses/core`, `z-ai-web-dev-sdk`, `@libsql/client`, `@prisma/adapter-libsql`. Fix: `bun remove` each.
+- FINAL-SECURITY-14 (src/config/settings.ts:5-24): `CFG_STATUS_LABELS` exported but never imported. Fix: delete.
+- FINAL-SECURITY-15 (src/config/thresholds.ts:16,48-53,56,59): `BENCHMARK_AREA_ZSCORE`, `WEEK_RANGES`, `SALES_DEV_RATIO_FLAG`, `ENABLE_UOM_CONVERSION` are dead (CFG_RECON_SETTINGS.WEEK_PERIODS is used instead). Fix: delete the dead keys.
+- FINAL-SECURITY-16 (src/app/page.tsx:437): Footer text "Mesin Deterministik + Narasi AI" — AI was removed. Fix: change to "Mesin Deterministik + Rule-Based Recommendations".
+- FINAL-SECURITY-17 (src/app/api/setup/route.ts:26-27): GET /api/setup returns raw `e.message` in response body — may leak DB connection string/hostname if DATABASE_URL malformed. Fix: log full error server-side; return generic "Database connection failed. Check server logs." to client.
+- FINAL-SECURITY-18 (src/app/api/status/route.ts:125): error response includes raw error + hint to /api/setup. Fix: same as above — return generic message.
+- FINAL-SECURITY-19 (src/app/page.tsx:35,37): dead imports `FileSearch`, `Grid3x3`, `Utensils` (imported but never used in JSX). Fix: remove from import statement.
+
+LOW:
+- FINAL-SECURITY-20 (src/lib/settings.ts:319-320, 397-398): `_settingsCache`, `_thresholdsVersionCache`, `_thresholdsVersionAt` are declared but only ever assigned null/0 (CACHE_TTL_MS=0 disables caching). invalidateSettingsCache() at line 389-392 is a no-op (only sets already-null values). Fix: delete the dead state vars + the invalidate function body.
+- FINAL-SECURITY-21 (eslint.config.mjs:11-44): Many safety rules disabled — `@typescript-eslint/no-unused-vars: off`, `no-unreachable: off`, `no-fallthrough: off`, `no-debugger: off`, `no-irregular-whitespace: off`, `no-case-declarations: off`, `react-hooks/exhaustive-deps: off`. This is why dead code/imports pass lint. Fix: re-enable at least `no-unused-vars`, `no-unreachable`, `no-fallthrough`, `no-debugger` to catch dead code automatically.
+- FINAL-SECURITY-22 (prisma/schema.prisma:165): `PeriodComparison.priceGrowth Float?` column is dead (no engine/rule uses priceGrowth — see FINAL-SECURITY-10). Fix: drop column via prisma migration after removing priceGrowth from ruleService.ts.
+- FINAL-SECURITY-23 (src/lib/queries.ts:1-12 + src/engine/analysis/analysis.ts:1-10): deprecated barrel shims `export * from './queries/index'` and `export * from './index'`. Still imported by /api/analysis + /api/export-report routes. Refactoring debt — update the 2 route imports to point at `@/lib/queries` (the directory barrel) + `@/engine/analysis` (the directory barrel) and delete the shim files.
+- FINAL-SECURITY-24 (src/lib/rate-limit.ts:12-23): `buckets` Map has no max-size cap. cleanup() runs every 60s but only removes expired entries. If requests bypass Caddy and arrive directly at port 3000 with spoofed XFF, Map could grow. Fix: add `if (buckets.size > 10_000) buckets.clear()` guard in cleanup().
+- FINAL-SECURITY-25 (src/config/rules.yaml:14): doc comment lists `priceGrowth` as available field — misleading. Fix: remove `priceGrowth` from the comment after removing the metric from ruleService.ts.
+- FINAL-SECURITY-26 (src/components/dashboard/AnalysisCards.tsx:11-13): imports `Calendar, Utensils` from lucide-react — `Utensils` only used by dead MenuAnalysisCard. If MenuAnalysisCard is deleted, also remove `Utensils` from import.
+
+Verified KEPT + correct:
+- Caddyfile SSRF fix: port allowlist contains ONLY 3003 (line 10). ✓
+- Rate limiting: applied to /api/data, /api/settings (POST only — DELETE missing), /api/pic, /api/pic/import, /api/ingest, /api/ingest-upload, /api/ingest-process, /api/import-drive, /api/analysis, /api/drilldown, /api/outlet-focus, /api/outlet-items, /api/item-history, /api/export-report. NOT applied to /api/status, /api/setup, /api (root hello-world). /api/settings DELETE missing rate limit (only POST has it) — minor.
+- middleware constant-time token comparison (lines 20-27, 81): correct XOR-based implementation. ✓
+- getClientIP (rate-limit.ts:62-75): prefers x-vercel-forwarded-for (trusted edge) → x-real-ip (Caddy) → last IP in XFF. ✓
+- filename.ts sanitizeFileName: strips path traversal chars + control chars + leading dots. ✓
+- validation.ts ingestBodySchema + importDriveBodySchema: correctly include manualFileName + numberLocale fields. Both ARE used by /api/ingest + /api/import-drive. ✓
+- .env: contains only DATABASE_URL (no secrets committed). ✓
+- .env.example: documents all env vars, no real secrets. ✓
+- next.config.ts: security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, HSTS) configured. ✓
+- tsconfig.json: strict=true. ✓
+- prisma/schema.prisma: no obviously orphaned models (all 10 models — SourceFile, Week, Outlet, Item, InventoryRecord, PeriodComparison, DQIssue, AnomalyRule, AnomalyFlag, AuditLog, AggregationCache, Setting, OutletPIC, FileChunk — are referenced in code). `PeriodComparison.priceGrowth` field is dead (see FINAL-SECURITY-22).
+- Audit log: records DATA_DELETE, SETTINGS_UPDATE/RESET, PIC_UPDATE/DELETE/IMPORT, ANALYSIS actions. ✓ (missing for /api/setup — low priority since endpoint is read-only DB connectivity check)
+- queryLossVsSurplus, queryCostImpact, queryTopOutlets, queryTopOutletsBySales: ALL still used by /api/analysis route. NOT dead code. ✓
+- calcAvgPrice, safeRatio, computeGrowthResult: still used (ruleService.ts, outlet-items route, metrics/growth.ts internal). NOT dead. (calcAvgPrice's only consumer is the dead priceGrowth computation — see FINAL-SECURITY-10 — so it would become dead if priceGrowth is removed.)
+- withTimeout + LLM_TIMEOUT_MS: already removed from narrative.ts in prior task. ✓
+- lint + tsc: both pass with 0 errors (but lint config disables no-unused-vars, so dead code is invisible to lint).
+
+---
+Task ID: FIX-FINAL-CRITICAL
+Agent: Critical Bug Fixer
+Task: Fix CRITICAL + HIGH bugs from final audit
+
+Work Log:
+- Read worklog.md (last 50 lines) for full context on FINAL-* bug list.
+- CRITICAL 1 (FINAL-SECURITY-1): Patched src/middleware.ts:50-57 — added `(pathname === '/api/ingest' && method === 'GET')` to isProtectedMethod so GET /api/ingest now requires ADMIN_TOKEN. Other GET reads (/api/settings, /api/data, /api/pic) remain public.
+- CRITICAL 2 (FINAL-SECURITY-2): Patched src/middleware.ts:59-72 — when ADMIN_TOKEN unset in production, returns HTTP 500 "Server misconfigured: ADMIN_TOKEN not set. Destructive endpoints are blocked in production." Dev mode still allows the previous warn-and-pass-through for backward compat.
+- HIGH 1 (FINAL-FLOW-1, FINAL-FRONTEND-1): Removed duplicate useQuery in src/components/dashboard/RestoAnalysis.tsx RankingNasionalCard (was fetching /api/analysis a 2nd time, ignoring dashboard filters). RestoAnalysis now accepts `analysisData?: any` prop (line 79) and threads it to RankingNasionalCard (line 350, 694, 699). page.tsx passes `analysisData={analysis.data}` (line 425).
+- HIGH 2 (FINAL-FLOW-2,3): Fixed src/app/api/export-report/route.ts:647,665 — changed `fmtPct(it.avgDeviasiByBom, false)` → `fmtNum(it.avgDeviasiByBom)` (avgDeviasiByBom is a QTY, not a percentage). Updated description text to "rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%".
+- HIGH 3 (FINAL-SECURITY-7,8, FINAL-FLOW-6,8): Deleted dead TopDeviasiRank function (~115 lines) from src/components/dashboard/TopItems.tsx (lines 202-322) + removed unused imports (Input, Select, Button, useState, priorityColor). Deleted dead MenuAnalysisCard function (~98 lines) from src/components/dashboard/AnalysisCards.tsx + removed unused imports (Badge, ScrollArea, Accordion, FormulaInfo, useDashboard, fmtPct, fmtPctAbs, Utensils). Removed dead MenuAnalysisCard + FileSearch, Utensils, Grid3x3 imports from src/app/page.tsx. Removed dead queryTopOutletsBySales import from src/app/api/export-report/route.ts.
+- HIGH 4 (FINAL-ENGINE-2, FINAL-SECURITY-10): Removed dead priceGrowth computation from src/engine/analysis/ruleService.ts (calcAvgPrice import, currPrice/prevPrice/priceGrowth lines, priceGrowth in returned context). Removed `priceGrowth` from RuleContext interface (src/engine/rules/evaluator.ts:280) and PERCENT_KEYS set (line 233). Updated rules.yaml doc comment (line 14) to drop priceGrowth.
+- HIGH 5 (FINAL-SECURITY-9): Removed dead recommendation/priorities computation from src/app/api/analysis/route.ts (buildRecommendations + computePrioritiesFromFlags imports, recommendations/priorities variables, response fields). Removed `recommendation` + `priorities` fields from AnalysisData type (src/hooks/useAnalysis.ts:101,103) and DashboardData interface (src/types/inventory.ts:171). buildRecommendations function kept in narrative.ts in case future consumer needs it.
+- MEDIUM 1 (FINAL-ENGINE-4): Added `locale: NumberLocale = 'auto'` parameter to validateRow in src/engine/validator.ts (line 33). Threaded locale to all 7 toNum() calls inside (lines 95, 109, 110, 174, 175, 176, 201). Updated both callers in src/lib/ingestion.ts (line 269, 509) to pass `body.numberLocale || 'auto'` / `numberLocale || 'auto'`.
+- MEDIUM 2 (FINAL-FLOW-4): Fixed SQL ORDER BY in src/lib/queries/items.ts:175 — changed `ORDER BY ipo."itemName", "rankNominal"` → `ORDER BY "rankNominal"`. Alphabetical sort no longer skews which 500 rows are returned; high-rank items with late-alphabet names now included. Client component already does its own sort.
+- MEDIUM 3 (FINAL-SECURITY-16): Changed footer text in src/app/page.tsx:437 from "Mesin Deterministik + Narasi AI" → "Inventory Control Intelligence" (AI removed).
+- Ran `bun run lint` (0 errors) + `npx tsc --noEmit --skipLibCheck` (0 errors). Both pass.
+
+Stage Summary:
+- FINAL-SECURITY-1 fixed: src/middleware.ts:50-57 (GET /api/ingest now auth-protected)
+- FINAL-SECURITY-2 fixed: src/middleware.ts:59-72 (ADMIN_TOKEN fail-closed in production)
+- FINAL-FLOW-1 fixed: src/components/dashboard/RestoAnalysis.tsx:79,350,694,699 (analysisData prop chain)
+- FINAL-FRONTEND-1 fixed: src/app/page.tsx:425 (passes analysisData prop)
+- FINAL-FLOW-2 fixed: src/app/api/export-report/route.ts:665 (fmtPct → fmtNum)
+- FINAL-FLOW-3 fixed: src/app/api/export-report/route.ts:647 (description text)
+- FINAL-SECURITY-7 fixed: src/components/dashboard/TopItems.tsx (deleted TopDeviasiRank + unused imports)
+- FINAL-SECURITY-8 fixed: src/components/dashboard/AnalysisCards.tsx (deleted MenuAnalysisCard + unused imports); src/app/page.tsx:14-16,34-39 (removed MenuAnalysisCard, FileSearch, Utensils, Grid3x3 imports)
+- FINAL-SECURITY-9 fixed: src/app/api/analysis/route.ts:15-23,581-587,693-695 (removed recommendation + priorities); src/hooks/useAnalysis.ts:100-101; src/types/inventory.ts:169-172
+- FINAL-FLOW-6 fixed: removed queryTopOutletsBySales from src/app/api/export-report/route.ts:21-34
+- FINAL-ENGINE-2 fixed: src/engine/analysis/ruleService.ts:10-16,38,71 (removed priceGrowth computation)
+- FINAL-SECURITY-10 fixed: src/engine/rules/evaluator.ts:231-236,275-281 (removed priceGrowth from RuleContext + PERCENT_KEYS); src/config/rules.yaml:13-15 (doc comment); src/engine/analysis/ruleService.ts:15 (removed calcAvgPrice import)
+- FINAL-ENGINE-4 fixed: src/engine/validator.ts:5-8,28-34,95,109-110,174-176,201 (locale param + threading); src/lib/ingestion.ts:269,509 (callers updated)
+- FINAL-FLOW-4 fixed: src/lib/queries/items.ts:175 (ORDER BY "rankNominal" only)
+- FINAL-SECURITY-16 fixed: src/app/page.tsx:437 (footer text)
+- lint: 0 errors. tsc: 0 errors.

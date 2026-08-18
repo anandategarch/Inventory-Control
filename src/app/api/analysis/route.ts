@@ -14,14 +14,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
   buildWorklistFromFlags,
-  computePrioritiesFromFlags,
   buildRuleContext,
   computeVarianceAnalysis,
   computeOutletHealthRanking,
   computeHistoricalAnalysis,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
-import { buildRecommendations } from '@/engine/narrative/narrative';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
@@ -582,10 +580,7 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  CPU computations (LLM narrative removed — Task REMOVE-AI).
-    //  Recommendations remain rule-based.
     // ============================================================
-    const recommendations = buildRecommendations(worklist);
-    const priorities = computePrioritiesFromFlags(recsWithFlags, thresholds).slice(0, 20);
 
     // ============================================================
     //  Extended analytics (SQL aggregate result mapping + CPU)
@@ -696,9 +691,7 @@ export async function GET(req: NextRequest) {
       deviationBreakdown: breakdownEnriched,
       lossVsSurplus: lvs,
       investigationWorklist: worklist,
-      recommendation: recommendations,
       trend,
-      priorities,
       // Extended analytics (Task 5)
       areaAnalysis,
       varianceAnalysis,

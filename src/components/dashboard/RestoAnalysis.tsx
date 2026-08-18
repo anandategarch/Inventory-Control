@@ -76,7 +76,7 @@ function directionColor(d: string): string {
   return d === 'LOSS' ? 'text-red-600' : d === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground';
 }
 
-export function RestoAnalysis() {
+export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   const { focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard();
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
@@ -347,7 +347,7 @@ export function RestoAnalysis() {
 
       {/* Ranking Item Nasional — new section */}
       {focusOutlet && (
-        <RankingNasionalCard focusOutlet={focusOutlet} />
+        <RankingNasionalCard focusOutlet={focusOutlet} analysisData={analysisData} />
       )}
 
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}
@@ -691,26 +691,10 @@ function Row({ label, value, growth, sub, growthColor: gc }: {
 //  Ranking Nasional Card — Top Items by Deviasi Rank
 //  Shows after resto is selected. Custom Top N selector.
 // ============================================================
-function RankingNasionalCard({ focusOutlet }: { focusOutlet: string }) {
-  const { monthLabel, currentWeek } = useDashboard();
+function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: string; analysisData?: any }) {
   const [topN, setTopN] = useState<string>('50');
   const [filterPic, setFilterPic] = useState<string>('all');
   const [filterResto, setFilterResto] = useState<string>('all');
-
-  // Fetch from analysis API (reuse same data)
-  const { data: analysisData } = useQuery({
-    queryKey: ['analysis', monthLabel, currentWeek],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      if (monthLabel) p.set('month', monthLabel);
-      if (currentWeek) p.set('week', currentWeek);
-      const res = await fetch(`/api/analysis?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error');
-      return res.json();
-    },
-    enabled: Boolean(monthLabel && currentWeek),
-  });
 
   const allItems: any[] = analysisData?.topDeviasiRank || [];
   const picOptions = [...new Set(allItems.map((it: any) => it.pic).filter(Boolean))].sort() as string[];
