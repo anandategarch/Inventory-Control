@@ -24,6 +24,13 @@ interface RestoRecommendation {
     directionFlip: boolean;
     trendDeteriorating: boolean;
     itemConcentration: number;
+    toleranceBreachCount: number;
+    toleranceBreachHighCount: number;
+    zScoreAbnormalCount: number;
+    overExplainedCount: number;
+    highLossItemCount: number;
+    noToleranceItems: number;
+    benchmarkHighCount: number;
   };
   metrics: {
     sales: number;
@@ -41,10 +48,10 @@ interface RestoRecommendation {
 }
 
 export function RestoRecommendationCard() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, setFocusOutlet } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setFocusOutlet } = useDashboard();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+    queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel!);
@@ -52,6 +59,9 @@ export function RestoRecommendationCard() {
       if (comparisonWeek) p.set('prevWeek', comparisonWeek);
       if (comparisonMonth) p.set('prevMonth', comparisonMonth);
       p.set('limit', '5');
+      if (area && area !== 'all') p.set('area', area);
+      if (outletCode && outletCode !== 'all') p.set('outletCode', outletCode);
+      if (pic) p.set('pic', pic);
       const res = await fetch(`/api/recommendations?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
@@ -151,7 +161,7 @@ export function RestoRecommendationCard() {
             </div>
 
             {/* Direction + trend indicators */}
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t">
+            <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t">
               <Badge variant="outline" className={`text-[9px] ${
                 r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200' :
                 r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200' : ''
@@ -160,17 +170,42 @@ export function RestoRecommendationCard() {
               </Badge>
               {r.signals.directionFlip && (
                 <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
-                  <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Direction Flip
+                  <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
                 </Badge>
               )}
               {r.signals.trendDeteriorating && (
                 <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
-                  <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Tren Memburuk
+                  <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
                 </Badge>
               )}
               {r.signals.residualRatio > 0.4 && (
                 <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
                   Residual {(r.signals.residualRatio * 100).toFixed(0)}%
+                </Badge>
+              )}
+              {r.signals.toleranceBreachHighCount > 0 && (
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                  Tol Breach High: {r.signals.toleranceBreachHighCount}
+                </Badge>
+              )}
+              {r.signals.overExplainedCount > 0 && (
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                  Fraud: {r.signals.overExplainedCount}
+                </Badge>
+              )}
+              {r.signals.highLossItemCount > 0 && (
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                  High Loss: {r.signals.highLossItemCount}
+                </Badge>
+              )}
+              {r.signals.noToleranceItems > 0 && (
+                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
+                  No Tol: {r.signals.noToleranceItems}
+                </Badge>
+              )}
+              {r.signals.benchmarkHighCount > 0 && (
+                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
+                  Bench High: {r.signals.benchmarkHighCount}
                 </Badge>
               )}
             </div>
