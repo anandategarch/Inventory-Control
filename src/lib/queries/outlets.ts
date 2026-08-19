@@ -527,14 +527,21 @@ export interface RestoRecommendation {
   priorityScore: number;
   priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH';
   signals: {
-    devBomRatio: number;        // outlet devBom / network avg devBom
-    deviasiGrowth: number | null; // magnitude growth vs prev
-    abnormalCount: number;       // items with z-score > 2
-    residualRatio: number;       // residual / total deviation
-    lossToSales: number;         // total loss / sales
-    directionFlip: boolean;      // LOSS<->SURPLUS flip
-    trendDeteriorating: boolean; // W1→W4 makin buruk
-    itemConcentration: number;   // top item / total deviation
+    devBomRatio: number;
+    deviasiGrowth: number | null;
+    abnormalCount: number;
+    residualRatio: number;
+    lossToSales: number;
+    directionFlip: boolean;
+    trendDeteriorating: boolean;
+    itemConcentration: number;
+    toleranceBreachCount: number;
+    toleranceBreachHighCount: number;
+    zScoreAbnormalCount: number;
+    overExplainedCount: number;
+    highLossItemCount: number;
+    noToleranceItems: number;
+    benchmarkHighCount: number;
   };
   metrics: {
     sales: number;
@@ -601,8 +608,18 @@ export async function queryRestoRecommendations(
           SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalLoss",
           SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalSurplus",
           SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
+          SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
           COUNT(DISTINCT ir."itemId") as "itemCount",
           COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" THEN 1 END) as "toleranceBreachCount",
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" * 2 THEN 1 END) as "toleranceBreachHighCount",
+          COUNT(CASE WHEN ir."zScore" IS NOT NULL AND ir."zScore" > 2 THEN 1 END) as "zScoreAbnormalCount",
+          COUNT(CASE WHEN ir."zScore" IS NOT NULL AND ir."zScore" > 1 THEN 1 END) as "zScoreWarningCount",
+          COUNT(CASE WHEN ir."benchmarkFlag" = 'HISTORICAL_HIGH' THEN 1 END) as "benchmarkHighCount",
+          COUNT(CASE WHEN ir."benchmarkFlag" = 'HISTORICAL_WARNING' THEN 1 END) as "benchmarkWarningCount",
+          COUNT(CASE WHEN ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
+          MAX(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 ELSE 0 END) as "hasNoTolerance",
+          SUM(CASE WHEN ir."nominalLossSurplus" > 10000000 THEN 1 ELSE 0 END) as "highLossItem",
           ir.direction as "outletDirection"
         FROM "InventoryRecord" ir
         WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -635,6 +652,16 @@ export async function queryRestoRecommendations(
         COALESCE(oa."itemCount", 0) as "itemCount",
         COALESCE(oa."deviatingItems", 0) as "deviatingItems",
         COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
+        COALESCE(oa."residualNominal", 0) as "residualNominal",
+        COALESCE(oa."toleranceBreachCount", 0) as "toleranceBreachCount",
+        COALESCE(oa."toleranceBreachHighCount", 0) as "toleranceBreachHighCount",
+        COALESCE(oa."zScoreAbnormalCount", 0) as "zScoreAbnormalCount",
+        COALESCE(oa."zScoreWarningCount", 0) as "zScoreWarningCount",
+        COALESCE(oa."benchmarkHighCount", 0) as "benchmarkHighCount",
+        COALESCE(oa."benchmarkWarningCount", 0) as "benchmarkWarningCount",
+        COALESCE(oa."overExplainedCount", 0) as "overExplainedCount",
+        COALESCE(oa."hasNoTolerance", 0) as "hasNoTolerance",
+        COALESCE(oa."highLossItem", 0) as "highLossItem",
         oa."outletDirection" as "direction",
         ti."topItem",
         COALESCE(ti."topItemNominal", 0) as "topItemNominal"
@@ -688,39 +715,47 @@ export async function queryRestoRecommendations(
     const itemCount = Number(r.itemCount);
     const deviatingItems = Number(r.deviatingItems);
     const totalQtyDeviasi = Number(r.totalQtyDeviasi);
+    const residualNominal = Number(r.residualNominal || 0);
+    const toleranceBreachCount = Number(r.toleranceBreachCount || 0);
+    const toleranceBreachHighCount = Number(r.toleranceBreachHighCount || 0);
+    const zScoreAbnormalCount = Number(r.zScoreAbnormalCount || 0);
+    const overExplainedCount = Number(r.overExplainedCount || 0);
+    const hasNoTolerance = Number(r.hasNoTolerance || 0);
+    const highLossItem = Number(r.highLossItem || 0);
+    const benchmarkHighCount = Number(r.benchmarkHighCount || 0);
     const direction = r.direction || 'NEUTRAL';
     const topItem = r.topItem;
     const topItemNominal = Number(r.topItemNominal);
 
-    // Signal 1: Dev/BOM vs Peer (20%)
+    // Signal 1: Dev/BOM vs Peer (12%)
     const devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0;
     const s1Score = Math.min(100, devBomRatio * 33);
 
-    // Signal 2: Deviasi Growth (15%)
+    // Signal 2: Deviasi Growth (10%)
     const prevNominal = prev ? Number(prev.prevNominalDeviasi) : null;
     const deviasiGrowth = prevNominal != null && Math.abs(prevNominal) > 0
       ? (Math.abs(nominalDeviasi) - Math.abs(prevNominal)) / Math.abs(prevNominal)
       : null;
     const s2Score = deviasiGrowth != null ? Math.min(100, Math.max(0, deviasiGrowth * 100)) : 0;
 
-    // Signal 3: Abnormal Item Count (15%) — approximate with deviatingItems
-    const abnormalCount = deviatingItems;
-    const s3Score = Math.min(100, abnormalCount * 10);
+    // Signal 3: Z-Score Abnormal Count (10%) — items with z-score > 2
+    const abnormalCount = zScoreAbnormalCount;
+    const s3Score = Math.min(100, zScoreAbnormalCount * 20);
 
-    // Signal 4: Residual Ratio (15%)
+    // Signal 4: Residual Ratio (10%)
     const residualRatio = totalQtyDeviasi > 0 ? Math.abs(residualQty) / totalQtyDeviasi : 0;
     const s4Score = Math.min(100, residualRatio * 100);
 
-    // Signal 5: Loss/Sales Ratio (10%)
+    // Signal 5: Loss/Sales Ratio (8%)
     const lossToSales = sales > 0 ? totalLoss / sales : 0;
     const s5Score = Math.min(100, lossToSales * 1000);
 
-    // Signal 6: Direction Flip (10%)
+    // Signal 6: Direction Flip (8%)
     const prevDirection = prev?.prevDirection || null;
     const directionFlip = prevDirection != null && direction !== prevDirection && direction !== 'NEUTRAL' && prevDirection !== 'NEUTRAL';
     const s6Score = directionFlip ? 100 : 0;
 
-    // Signal 7: Trend (10%) — can't compute without weekly breakdown, use growth as proxy
+    // Signal 7: Trend (8%)
     const trendDeteriorating = deviasiGrowth != null && deviasiGrowth > 0.2;
     const s7Score = trendDeteriorating ? 100 : 0;
 
@@ -730,24 +765,53 @@ export async function queryRestoRecommendations(
       : 0;
     const s8Score = Math.min(100, itemConcentration * 100);
 
-    // Weighted Priority Score
+    // Signal 9: Tolerance Breach High (8%) — TOLERANCE_BREACH_HIGH rule
+    const s9Score = Math.min(100, toleranceBreachHighCount * 25);
+
+    // Signal 10: Over-Explained / Fraud Indicator (7%) — OVER_EXPLAINED rule
+    const s10Score = Math.min(100, overExplainedCount * 50);
+
+    // Signal 11: High Loss Nominal Items (5%) — HIGH_LOSS_NOMINAL rule (>10M per item)
+    const s11Score = Math.min(100, highLossItem * 20);
+
+    // Signal 12: No Tolerance Set (3%) — TOLERANCE_NOT_SET rule
+    const s12Score = hasNoTolerance > 0 ? 50 : 0;
+
+    // Signal 13: Benchmark High (3%) — HISTORICAL_HIGH / BENCHMARK_ABOVE_NETWORK
+    const s13Score = Math.min(100, benchmarkHighCount * 25);
+
+    // Signal 14: Residual Nominal Impact (2%) — financial impact of unexplained
+    const s14Score = Math.min(100, (residualNominal / 1_000_000) * 5);
+
+    // Signal 15: Tolerance Breach (regular) (1%) — TOLERANCE_BREACH rule
+    const s15Score = Math.min(100, toleranceBreachCount * 5);
+
+    // Weighted Priority Score (15 signals, total 100%)
     const priorityScore = Math.round(
-      s1Score * 0.20 + s2Score * 0.15 + s3Score * 0.15 + s4Score * 0.15 +
-      s5Score * 0.10 + s6Score * 0.10 + s7Score * 0.10 + s8Score * 0.05
+      s1Score * 0.12 + s2Score * 0.10 + s3Score * 0.10 + s4Score * 0.10 +
+      s5Score * 0.08 + s6Score * 0.08 + s7Score * 0.08 + s8Score * 0.05 +
+      s9Score * 0.08 + s10Score * 0.07 + s11Score * 0.05 +
+      s12Score * 0.03 + s13Score * 0.03 + s14Score * 0.02 + s15Score * 0.01
     );
 
     const priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH' =
-      priorityScore >= 60 ? 'TINGGI' : priorityScore >= 35 ? 'SEDANG' : 'RENDAH';
+      priorityScore >= 55 ? 'TINGGI' : priorityScore >= 30 ? 'SEDANG' : 'RENDAH';
 
     // Auto-generate analysis bullets
     const analysis: string[] = [];
     if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
     if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
-    if (abnormalCount > 3) analysis.push(`${abnormalCount} item dengan deviasi signifikan`);
+    if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item sangat abnormal (z-score > 2.0) vs perilaku historis`);
     if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${totalQtyDeviasi.toLocaleString('id-ID')} total deviasi tidak terjelaskan`);
     if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
     if (directionFlip) analysis.push(`Arah deviasi berubah: ${prevDirection} → ${direction}`);
     if (itemConcentration > 0.3 && topItem) analysis.push(`Item "${topItem}" kontribusi ${(itemConcentration * 100).toFixed(0)}% dari total deviasi`);
+    if (toleranceBreachHighCount > 0) analysis.push(`${toleranceBreachHighCount} item melebihi toleransi > 2× (TOLERANCE_BREACH_HIGH)`);
+    if (overExplainedCount > 0) analysis.push(`${overExplainedCount} item Waste+Susut+Trial melebihi total deviasi — indikasi salah input atau fraud`);
+    if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp 10Jt (HIGH_LOSS_NOMINAL)`);
+    if (hasNoTolerance > 0) analysis.push(`${hasNoTolerance} item belum diset toleransinya — tidak bisa deteksi breach`);
+    if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item jauh di atas rata-rata historis (HISTORICAL_HIGH)`);
+    if (toleranceBreachCount > 0 && toleranceBreachHighCount === 0) analysis.push(`${toleranceBreachCount} item melebihi toleransi (TOLERANCE_BREACH)`);
     if (analysis.length === 0) analysis.push('Tidak ada anomaly signifikan terdeteksi');
 
     return {
@@ -765,6 +829,13 @@ export async function queryRestoRecommendations(
         directionFlip,
         trendDeteriorating,
         itemConcentration,
+        toleranceBreachCount,
+        toleranceBreachHighCount,
+        zScoreAbnormalCount,
+        overExplainedCount,
+        highLossItemCount: highLossItem,
+        noToleranceItems: hasNoTolerance,
+        benchmarkHighCount,
       },
       metrics: {
         sales,
