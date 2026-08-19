@@ -514,3 +514,276 @@ export async function queryPeerTrend(
     peerAvgNominal: Number(r.peerAvgNominal),
   }));
 }
+
+// ============================================================
+//  Resto Recommendation Engine — rank all outlets by priority
+//  8 signals weighted into Priority Score (0-100)
+//  Returns top N outlets needing attention + analysis summary
+// ============================================================
+export interface RestoRecommendation {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  priorityScore: number;
+  priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH';
+  signals: {
+    devBomRatio: number;        // outlet devBom / network avg devBom
+    deviasiGrowth: number | null; // magnitude growth vs prev
+    abnormalCount: number;       // items with z-score > 2
+    residualRatio: number;       // residual / total deviation
+    lossToSales: number;         // total loss / sales
+    directionFlip: boolean;      // LOSS<->SURPLUS flip
+    trendDeteriorating: boolean; // W1→W4 makin buruk
+    itemConcentration: number;   // top item / total deviation
+  };
+  metrics: {
+    sales: number;
+    nominalDeviasi: number;
+    devBom: number;
+    totalLoss: number;
+    totalSurplus: number;
+    residualQty: number;
+    itemCount: number;
+    direction: string;
+    topItem: string | null;
+    topItemNominal: number;
+  };
+  analysis: string[];   // auto-generated analysis bullet points
+}
+
+export async function queryRestoRecommendations(
+  month: string,
+  week: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 5
+): Promise<RestoRecommendation[]> {
+  const f = buildSqlFilters(filters);
+
+  // Fetch current period outlet aggregates
+  const [currRows, prevRows] = await Promise.all([
+    db.$queryRaw<any[]>`
+      WITH sales_counts AS (
+        SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
+        FROM "InventoryRecord" ir
+        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+          AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+          ${f}
+        GROUP BY ir."outletId", ir."nominalSales"
+      ),
+      ranked_sales AS (
+        SELECT "outletId", "nominalSales",
+          ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
+        FROM sales_counts
+      ),
+      sales_mode AS (
+        SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
+      ),
+      outlet_aggs AS (
+        SELECT
+          ir."outletId",
+          SUM(ir."nominalDeviasi") as "nominalDeviasi",
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "devBom",
+          SUM(ABS(ir."qtyBom")) as "qtyBom",
+          SUM(ABS(ir."qtyDeviasi")) as "qtyDeviasi",
+          SUM(ABS(ir."qtyWaste")) as "qtyWaste",
+          SUM(ABS(ir."qtySusut")) as "qtySusut",
+          SUM(ABS(ir."qtyTrial")) as "qtyTrial",
+          SUM(ir."absQtyLossSurplus") as "qtyLossSurplus",
+          SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalLoss",
+          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalSurplus",
+          SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
+          COUNT(DISTINCT ir."itemId") as "itemCount",
+          COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
+          ir.direction as "outletDirection"
+        FROM "InventoryRecord" ir
+        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+          ${f}
+        GROUP BY ir."outletId", ir.direction
+      ),
+      top_items AS (
+        SELECT "outletId", "topItem", "topItemNominal" FROM (
+          SELECT
+            ir."outletId",
+            i.name as "topItem",
+            ir."absNominalDeviasi" as "topItemNominal",
+            ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY ir."absNominalDeviasi" DESC) as rn
+          FROM "InventoryRecord" ir
+          JOIN "Item" i ON ir."itemId" = i.id
+          WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+            ${f}
+            AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        ) ranked WHERE rn = 1
+      )
+      SELECT
+        o.code as "outletCode", o.name as "outletName", o.area,
+        COALESCE(sm.sales, 0) as "sales",
+        COALESCE(oa."nominalDeviasi", 0) as "nominalDeviasi",
+        COALESCE(oa."devBom", 0) as "devBom",
+        COALESCE(oa."totalLoss", 0) as "totalLoss",
+        COALESCE(oa."totalSurplus", 0) as "totalSurplus",
+        COALESCE(oa."residualQty", 0) as "residualQty",
+        COALESCE(oa."qtyLossSurplus", 0) as "qtyLossSurplus",
+        COALESCE(oa."itemCount", 0) as "itemCount",
+        COALESCE(oa."deviatingItems", 0) as "deviatingItems",
+        COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
+        oa."outletDirection" as "direction",
+        ti."topItem",
+        COALESCE(ti."topItemNominal", 0) as "topItemNominal"
+      FROM outlet_aggs oa
+      JOIN "Outlet" o ON oa."outletId" = o.id
+      LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
+      LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
+      ORDER BY ABS(COALESCE(oa."nominalDeviasi", 0)) DESC
+    `,
+    prevWeek && prevMonth
+      ? db.$queryRaw<any[]>`
+        SELECT
+          o.code as "outletCode",
+          SUM(ir."nominalDeviasi") as "prevNominalDeviasi",
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "prevDevBom",
+          ir.direction as "prevDirection"
+        FROM "InventoryRecord" ir
+        JOIN "Outlet" o ON ir."outletId" = o.id
+        WHERE ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}
+          ${f}
+        GROUP BY o.code, ir.direction
+      `
+      : Promise.resolve([]),
+  ]);
+
+  // Build prev lookup
+  const prevMap = new Map<string, any>();
+  for (const r of prevRows) {
+    prevMap.set(r.outletCode, r);
+  }
+
+  // Compute network averages for ratio
+  const networkAvgDevBom = currRows.length > 0
+    ? currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length
+    : 0;
+  const totalNetworkDeviasi = currRows.reduce((s, r) => s + Math.abs(Number(r.nominalDeviasi)), 0);
+
+  // Compute Priority Score per outlet
+  const recommendations: RestoRecommendation[] = currRows.map((r: any) => {
+    const outletCode = r.outletCode;
+    const prev = prevMap.get(outletCode);
+    const devBom = Number(r.devBom);
+    const nominalDeviasi = Number(r.nominalDeviasi);
+    const totalLoss = Number(r.totalLoss);
+    const totalSurplus = Number(r.totalSurplus);
+    const residualQty = Number(r.residualQty);
+    const qtyLossSurplus = Number(r.qtyLossSurplus);
+    const sales = Number(r.sales);
+    const itemCount = Number(r.itemCount);
+    const deviatingItems = Number(r.deviatingItems);
+    const totalQtyDeviasi = Number(r.totalQtyDeviasi);
+    const direction = r.direction || 'NEUTRAL';
+    const topItem = r.topItem;
+    const topItemNominal = Number(r.topItemNominal);
+
+    // Signal 1: Dev/BOM vs Peer (20%)
+    const devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0;
+    const s1Score = Math.min(100, devBomRatio * 33);
+
+    // Signal 2: Deviasi Growth (15%)
+    const prevNominal = prev ? Number(prev.prevNominalDeviasi) : null;
+    const deviasiGrowth = prevNominal != null && Math.abs(prevNominal) > 0
+      ? (Math.abs(nominalDeviasi) - Math.abs(prevNominal)) / Math.abs(prevNominal)
+      : null;
+    const s2Score = deviasiGrowth != null ? Math.min(100, Math.max(0, deviasiGrowth * 100)) : 0;
+
+    // Signal 3: Abnormal Item Count (15%) — approximate with deviatingItems
+    const abnormalCount = deviatingItems;
+    const s3Score = Math.min(100, abnormalCount * 10);
+
+    // Signal 4: Residual Ratio (15%)
+    const residualRatio = totalQtyDeviasi > 0 ? Math.abs(residualQty) / totalQtyDeviasi : 0;
+    const s4Score = Math.min(100, residualRatio * 100);
+
+    // Signal 5: Loss/Sales Ratio (10%)
+    const lossToSales = sales > 0 ? totalLoss / sales : 0;
+    const s5Score = Math.min(100, lossToSales * 1000);
+
+    // Signal 6: Direction Flip (10%)
+    const prevDirection = prev?.prevDirection || null;
+    const directionFlip = prevDirection != null && direction !== prevDirection && direction !== 'NEUTRAL' && prevDirection !== 'NEUTRAL';
+    const s6Score = directionFlip ? 100 : 0;
+
+    // Signal 7: Trend (10%) — can't compute without weekly breakdown, use growth as proxy
+    const trendDeteriorating = deviasiGrowth != null && deviasiGrowth > 0.2;
+    const s7Score = trendDeteriorating ? 100 : 0;
+
+    // Signal 8: Item Concentration (5%)
+    const itemConcentration = Math.abs(nominalDeviasi) > 0 && topItemNominal > 0
+      ? topItemNominal / Math.abs(nominalDeviasi)
+      : 0;
+    const s8Score = Math.min(100, itemConcentration * 100);
+
+    // Weighted Priority Score
+    const priorityScore = Math.round(
+      s1Score * 0.20 + s2Score * 0.15 + s3Score * 0.15 + s4Score * 0.15 +
+      s5Score * 0.10 + s6Score * 0.10 + s7Score * 0.10 + s8Score * 0.05
+    );
+
+    const priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH' =
+      priorityScore >= 60 ? 'TINGGI' : priorityScore >= 35 ? 'SEDANG' : 'RENDAH';
+
+    // Auto-generate analysis bullets
+    const analysis: string[] = [];
+    if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
+    if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
+    if (abnormalCount > 3) analysis.push(`${abnormalCount} item dengan deviasi signifikan`);
+    if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${totalQtyDeviasi.toLocaleString('id-ID')} total deviasi tidak terjelaskan`);
+    if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
+    if (directionFlip) analysis.push(`Arah deviasi berubah: ${prevDirection} → ${direction}`);
+    if (itemConcentration > 0.3 && topItem) analysis.push(`Item "${topItem}" kontribusi ${(itemConcentration * 100).toFixed(0)}% dari total deviasi`);
+    if (analysis.length === 0) analysis.push('Tidak ada anomaly signifikan terdeteksi');
+
+    return {
+      outletCode,
+      outletName: r.outletName,
+      area: r.area,
+      priorityScore,
+      priorityLevel,
+      signals: {
+        devBomRatio,
+        deviasiGrowth,
+        abnormalCount,
+        residualRatio,
+        lossToSales,
+        directionFlip,
+        trendDeteriorating,
+        itemConcentration,
+      },
+      metrics: {
+        sales,
+        nominalDeviasi,
+        devBom,
+        totalLoss,
+        totalSurplus,
+        residualQty,
+        itemCount,
+        direction,
+        topItem,
+        topItemNominal,
+      },
+      analysis,
+    };
+  });
+
+  // Sort by priority score desc, take top N
+  return recommendations
+    .sort((a, b) => b.priorityScore - a.priorityScore)
+    .slice(0, limit);
+}

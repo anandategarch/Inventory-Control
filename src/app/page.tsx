@@ -15,6 +15,7 @@ import {
   MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
+import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PeerComparison } from '@/components/dashboard/PeerComparison';
 import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
@@ -285,6 +286,9 @@ export default function DashboardPage() {
               <section>
                 <ExecutiveSummary data={analysis.data} />
               </section>
+
+              {/* Section: Resto Recommendation Engine */}
+              <RestoRecommendationCard />
 
               {/* Section: Insights Panel */}
               <section>
