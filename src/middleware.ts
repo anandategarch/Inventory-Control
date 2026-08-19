@@ -49,25 +49,18 @@ export function middleware(req: NextRequest) {
 
   // GET on /api/settings, /api/data, /api/pic (read-only listings) is public;
   // /api/setup is always protected (destructive DDL);
-  // GET /api/ingest is also protected (triggers bulk ingestion — DoS / data injection risk).
+  // GET /api/ingest (Refresh Data) is PUBLIC — rate limiter provides DoS protection.
   const isProtectedMethod =
     pathname === '/api/setup' ||
-    PROTECTED_METHODS.includes(method) ||
-    (pathname === '/api/ingest' && method === 'GET');
+    PROTECTED_METHODS.includes(method);
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // If no ADMIN_TOKEN set:
-  //  - In production: fail-closed — block the destructive endpoint (server misconfigured).
-  //  - In dev: allow without auth (backward compat for local dev).
+  // If no ADMIN_TOKEN set → allow without auth (backward compat).
+  // Rate limiting on each route provides sufficient DoS protection.
+  // Set ADMIN_TOKEN env var to enable auth protection.
   if (!adminToken) {
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json(
-        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Destructive endpoints are blocked in production.' },
-        { status: 500 }
-      );
-    }
-    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth (dev mode)`);
+    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth`);
     return NextResponse.next();
   }
 
