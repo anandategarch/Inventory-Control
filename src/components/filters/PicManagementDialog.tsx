@@ -198,7 +198,6 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
     queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
   }
 

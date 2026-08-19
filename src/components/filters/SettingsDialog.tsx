@@ -135,7 +135,6 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
       } else {
         toast({
@@ -170,7 +169,6 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ["peer-comparison"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
     },
   });

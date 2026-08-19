@@ -6435,3 +6435,213 @@ Stage Summary:
 - P1 (parallel queries): src/components/dashboard/PeerComparison.tsx:65-135 (3 useQuery at top), :271-282 (inline loading/error in table card), :358-374 (sub-components always mounted), :739-747 (ItemLevelComparison new props signature), :849-857 (TrendChartCard new props signature), :839-847 (TrendResponse interface slimmed). Waterfall reduced from 3 stages → 2 stages (main+items parallel, then trend).
 - P2 (N+1 → single GROUP BY): src/app/api/peer-comparison/trend/route.ts:1-91 (full rewrite). Removed inline week-loop + per-week CTE chain (was 81-150 in old file). Now calls `queryPeerTrend` (outlets.ts:458-501) — single SQL pass. DB round-trips: 4→1 (for a 4-week month; was O(weeks), now O(1)). Auto-compute peer-set fallback delegates to `queryPeerComparison` (outlets.ts:167-308) for ±10% band consistency with the main table.
 - No behavior change for end users: same peer set, same Dev/BOM values, same chart shape. Only timing improves.
+
+---
+Task ID: FINAL3-BACKEND
+Agent: Backend + Security Auditor
+Task: Deep audit backend after all refactors
+
+Work Log:
+- Read worklog.md tail (lines 6357-6437) for OPT-P3-P5 + OPT-P1-P2 context.
+- Read all 13 target files: middleware.ts (108 lines), analysis/route.ts (753 lines), export-report/route.ts (728 lines), peer-comparison/route.ts (49 lines), peer-comparison/items/route.ts (216 lines), peer-comparison/trend/route.ts (91 lines), outlets.ts (501 lines), items.ts (372 lines), ingestion.ts (600 lines), cache.ts (72 lines), db.ts (78 lines), evaluator.ts (442 lines), ruleService.ts (145 lines).
+- Ran `bun run lint` → clean (exit 0, 0 errors/warnings).
+- Ran `npx tsc --noEmit --skipLibCheck` → clean (exit 0, 0 errors).
+- Grep'd `focusCache` across src/ → 0 matches (clean removal, no dangling refs).
+- Grep'd `priceGrowth` across src/ → 0 matches (clean removal, no dangling refs).
+- Grep'd `queryItemConsistency|itemConsistencyAnalysis|consistencyItems` → confirmed: STILL used in analysis/route.ts (lines 39, 462, 479, 656-688, 725) for InsightsPanel + AdvancedAnalysis consumption; REMOVED from export-report/route.ts (only import + destructure + call + local def + data field — all 5 references gone, verified by reading lines 14-32 imports + 379-413 Promise.all + 479-492 data object).
+- Grep'd `queryPeerItemComparison` → defined in outlets.ts:332 but NOT called by any route (items/route.ts uses inline SQL with identical logic). Dead code (BUG PEER-FLOW-3 from prior audit, still present).
+- Grep'd `queryPeerTrend|queryPeerComparison` → both used by trend/route.ts; queryPeerComparison also used by main route. Verified queryPeerTrend (outlets.ts:458-501) handles explicit peer codes correctly via `allCodes = [outletCode, ...peerOutletCodes]` + `Prisma.join(allCodes)` for safe IN clause (line 480). Empty peerOutletCodes → allCodes=[outletCode] → returns target-only rows with peerAvgDevBom=0 (COALESCE AVG of empty set). No crash.
+- Verified queryPeerItemComparison (outlets.ts:332-436) HAS cumulative week fix (lines 345-350: MAX(weekLabel) subquery in month mode, identical to queryPeerComparison). NOTE: this helper is dead code (not called by items/route.ts), but the inline SQL in items/route.ts (lines 47-53) ALSO has the same cumulative week fix — so the actual behavior is correct either way.
+- Verified queryTopItemsByDeviasiRank (items.ts:102-206) with bucket_avg CTE: self-join on item_per_outlet + LEFT JOIN back, CASE WHEN otherCount > 0 protects against NULL avg when no other outlets in bucket. BigInt/Decimal coerced via Number() at lines 194-205. Correct.
+- Verified all peer-comparison routes (3 routes) have rate limiting: main route line 17, items route line 28, trend route line 36 — all use `RATE_LIMITS.analysis.maxRequests` (60 req/min per IP). ✓
+- Verified SQL injection safety: all 3 peer routes use Prisma.sql`` tagged templates with ${} parameterization for outletCode, month, week, topItems, peerCodes (Prisma.join). No string concatenation into SQL. ✓
+- Verified BigInt/Number coercion in all new queries: queryPeerComparison (outlets.ts:283-305), queryPeerItemComparison (425-435), queryPeerTrend (494-499), queryTopItemsByDeviasiRank (items.ts:194-205), items/route.ts inline (lines 142, 148-150, 172-174) — all use Number() to coerce. ✓
+- Verified middleware.ts fix: GET /api/ingest now PUBLIC (line 52-53 comment + line 53-55 logic: isProtectedMethod = pathname === '/api/setup' || PROTECTED_METHODS.includes(method); GET is not in PROTECTED_METHODS so falls through to NextResponse.next()). POST /api/ingest still requires ADMIN_TOKEN. Fail-open behavior when ADMIN_TOKEN unset (line 62-65: console.warn + next()) — dev mode backward compat.
+- Verified GET /api/ingest has its own rate limiter (ingest/route.ts:55, 5 req/min per IP) — DoS protection is in place even without middleware auth.
+- Verified ingestion.ts still references analysisCache + statusCache (both still exist in cache.ts:66,71) — clear() calls at lines 420-423 work correctly. No focusCache references remain.
+- Verified db.ts SQLite dev mode (lines 55-63): allows file:// / libsql:// / http URLs only when NODE_ENV !== 'production'. Production hard-requires postgresql://. Correct.
+- Verified evaluator.ts canOpFire optimization (lines 199-272): conservative fail-fast pre-check. Returns false ONLY when provably cannot fire (null value with numeric op, null with not_null:true, etc.). Returns true (defer to evalCondition) for uncertain cases (any, not, field-ref operands). Correct — no false negatives.
+- Verified ruleService.ts has no priceGrowth references (grep returned 0). buildRuleContext + recommendAction both clean.
+- Verified analysis/route.ts response shape UNCHANGED: queryItemConsistency is NOT removed from analysis route (only from export-report). result object (lines 694-728) still includes itemConsistencyAnalysis. Frontend InsightsPanel.tsx:163 + AdvancedAnalysis.tsx:142 still consume data.itemConsistencyAnalysis. ✓
+- Verified export-report/route.ts works after queryItemConsistency removal: no broken references (grep confirmed 0 matches in that file). Promise.all (lines 384-413) has 18 items (was 19). data object (lines 479-492) no longer includes itemConsistencyAnalysis — frontend never rendered it in export anyway (worklog OPT-P3-P5 confirmed hasSection('consistency') uses topDeviasiRank instead).
+
+Stage Summary:
+- BUG FINAL3-1 (LOW) — src/lib/queries/outlets.ts:461 `queryPeerTrend(outletCode, month, week, peerOutletCodes)` — `week` parameter declared but NEVER used in function body (SQL filters only by monthLabel + groups by weekLabel). trend/route.ts:75 passes `''` as week arg. Not a bug (no incorrect behavior) but dead parameter; cleanup opportunity. Proposed fix: remove `week` param from signature + update trend/route.ts call site.
+- BUG FINAL3-2 (LOW) — src/lib/queries/outlets.ts:332-436 `queryPeerItemComparison` is DEAD CODE. Defined but not called by any route. items/route.ts uses inline SQL (lines 61-137) with identical logic instead. Drift risk: if queryPeerItemComparison is updated (e.g., new filter, new column), the inline copy won't inherit the fix. Proposed fix: either (a) delete queryPeerItemComparison since it's unused, OR (b) refactor items/route.ts to call queryPeerItemComparison (eliminates ~75 lines of duplicated SQL).
+- BUG FINAL3-3 (MEDIUM) — src/app/api/peer-comparison/items/route.ts:84-93 `peer_outlets` CTE has NO LIMIT clause. If 50+ outlets fall within ±10% sales band, ALL are joined to target_top_items (5 items × 50+ peers × LEFT JOIN InventoryRecord). Confirmed still present (BUG PEER-FLOW-4 from prior audit, not yet fixed). Proposed fix: add `LIMIT ${peerLimit + 1}` to peer_outlets CTE + accept `peerLimit` query param from frontend (default 20).
+- BUG FINAL3-4 (LOW, security hardening) — src/middleware.ts:62-65 fail-OPEN when ADMIN_TOKEN env var is unset (`console.warn` + `NextResponse.next()`). Intentional dev-mode backward compat, but in production if ADMIN_TOKEN is accidentally unset, all admin endpoints (POST /api/ingest, /api/setup, /api/settings, /api/data, /api/pic) become public. Only rate limiting protects them. Proposed fix: in production (NODE_ENV === 'production'), fail-CLOSED (return 401) if ADMIN_TOKEN unset; in dev, keep fail-open. Trade-off: stricter production safety vs dev convenience.
+- INFO FINAL3-5 (NO BUG) — Middleware fix is CORRECT for its stated goal. GET /api/ingest is now public (Refresh Data button works without auth header). POST /api/ingest still requires ADMIN_TOKEN. Rate limiter (5 req/min per IP) on GET /api/ingest provides DoS protection. No security regression for the specific GET endpoint — the operation appends SourceFiles (non-destructive to existing data). Only concern is BUG FINAL3-4 (fail-open on missing ADMIN_TOKEN) which affects ALL protected paths, not just GET /api/ingest.
+- INFO FINAL3-6 (NO BUG) — analysis/route.ts response shape is UNCHANGED. queryItemConsistency is still called (line 479) and itemConsistencyAnalysis is still in the response (line 725). The "dead query removal" only applied to export-report/route.ts (duplicate that was never rendered). Frontend InsightsPanel + AdvancedAnalysis continue to receive itemConsistencyAnalysis. ✓
+- INFO FINAL3-7 (NO BUG) — export-report/route.ts has no broken references after queryItemConsistency removal. Promise.all has 18 items (was 19). data object no longer includes itemConsistencyAnalysis. Lint + tsc clean. ✓
+- INFO FINAL3-8 (NO BUG) — queryPeerTrend handles explicit peer codes correctly. trend/route.ts:57-69 splits peersParam by comma, filters empty, and if empty auto-computes via queryPeerComparison (month mode, limit 20). allCodes = [outletCode, ...peerCodes] always has ≥1 element (outletCode validated non-empty at line 46-48). Prisma.join handles array safely. ✓
+- INFO FINAL3-9 (NO BUG) — queryPeerItemComparison HAS the cumulative week fix (outlets.ts:345-350, MAX(weekLabel) subquery in month mode). The inline SQL in items/route.ts (lines 47-53) ALSO has the same fix. Both paths are correct. ✓
+- INFO FINAL3-10 (NO BUG) — No SQL injection risks in any peer-comparison route. All user inputs (outletCode, month, week, topItems, peers) passed via Prisma.sql`` tagged template literals with ${} parameterization. Prisma.join used for IN clauses. No string concatenation. ✓
+- INFO FINAL3-11 (NO BUG) — All 3 peer-comparison routes are rate-limited at 60 req/min per IP (RATE_LIMITS.analysis). main route line 17, items route line 28, trend route line 36. ✓
+- INFO FINAL3-12 (NO BUG) — No BigInt/Number coercion issues. All new queries (queryPeerComparison, queryPeerItemComparison, queryPeerTrend, queryTopItemsByDeviasiRank, items/route.ts inline) wrap numeric results in Number() at the mapping layer. PostgreSQL Decimal/BigInt returns are safely coerced before JSON serialization. ✓
+- INFO FINAL3-13 (NO BUG) — canOpFire optimization in evaluator.ts is correct. Conservative fail-fast: returns false ONLY when provably cannot fire (null + numeric op, null + not_null:true, null + in). Returns true (defer) for uncertain cases (any/not/field-ref). No false negatives possible — worst case is no speedup, never wrong skip. ✓
+- INFO FINAL3-14 (NO BUG) — focusCache + priceGrowth both fully removed. Grep across src/ returns 0 matches for either. No dangling references. ✓
+- INFO FINAL3-15 (NO BUG) — ingestion.ts still works: analysisCache.clear() + statusCache.clear() at lines 420-423 reference caches that still exist (cache.ts:66,71). No focusCache references. ✓
+- INFO FINAL3-16 (NO BUG) — db.ts SQLite dev mode (lines 55-63) works: allows file:///libsql:// in non-production, hard-rejects in production. Lazy Proxy getter (lines 70-78) defers client creation to first use. ✓
+
+NEXT ACTIONS (recommended priority order, do NOT apply per task constraints):
+1. BUG FINAL3-3 (MEDIUM) — add LIMIT to peer_outlets CTE in items/route.ts. Biggest perf risk on large datasets.
+2. BUG FINAL3-4 (LOW, security) — fail-closed in production when ADMIN_TOKEN unset.
+3. BUG FINAL3-2 (LOW) — delete queryPeerItemComparison OR refactor items/route.ts to use it (eliminates drift risk).
+4. BUG FINAL3-1 (LOW) — remove unused `week` param from queryPeerTrend signature.
+
+OVERALL VERDICT: Backend is in a healthy state. All lint/tsc checks pass. No critical bugs. The 4 issues found are all LOW/MEDIUM severity (perf edge case, dev-mode security trade-off, dead code, unused param). The middleware fix, queryItemConsistency removal from export-report, peer-comparison refactor (P1 parallel + P2 N+1→single query), and focusCache/priceGrowth deletions are all correct and complete.
+
+---
+Task ID: FINAL3-FRONTEND
+Agent: Frontend + UI Auditor
+Task: Deep audit frontend after all refactors
+
+Work Log:
+- Read worklog.md tail (lines 6357-6437) for context: PEER-FLOW audit complete, OPT-P3-P5 (skip 0-deviation + dead query cleanup + staleTime) verified, OPT-P1-P2 (parallel queries + N+1→GROUP BY trend) complete.
+- Read src/app/page.tsx (408 lines) — 3-tab structure (Dashboard/Resto/Peer). All imports used. EmptyState/LoadingState/ErrorState/SectionHeader helpers wired correctly. Tabs value=activeTab (controlled from useDashboard). FilterBar always rendered. Tabs gated by statusLoaded + hasData + isLoading + analysis.error + analysis.data chain.
+- Read src/components/dashboard/PeerComparison.tsx (1058 lines, full):
+  * Lines 59-135: 3 useQuery hooks at top of parent (P1 confirmed). main+items fire in parallel (both have `enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek))`). trend waits for `peerCodes.length > 0` (gated by main query result). ✓
+  * Line 244: `<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">` — 4 analysis cards (EfficiencyScore, GapAnalysis, RankingSummary, ScatterPlot) in 2-col grid on desktop. ✓
+  * Lines 279-345: Peer table. `min-w-[1400px]` + `overflow-x-auto max-h-[600px] overflow-y-auto` + sticky header (`sticky top-0 bg-background z-10`) + sticky left column (`sticky left-0 bg-background`). ✓
+  * Line 165-171 colorCell: green=better, red=worse, consistent across 11 columns via `col.higherBetter` flag. ✓
+  * Lines 384-392 EfficiencyScore: `safeDiv = (a,b) => b > 0 ? a/b : 0`. Handles peerAvg=0 without NaN, but produces misleading 100 score when peerAvg.devBom=0 && target.devBom>0 (no penalty applied). BUG-AUDIT-1.
+  * Lines 451-461 GapAnalysis: handles all peers same value via `bestVal !== 0 ? (gap/Math.abs(bestVal))*100 : 0`. If all peers have same value, gap=0, pctAboveBest=0, isWorse=false. OK. ✓
+  * Lines 578-658 ScatterPlot: `data = peers.map(p => ({sales, devBom: devBom*100, ...}))`. No NaN/Infinity filter, but DB aggregation should never produce these. Fixed height container `h-[280px] w-full`. ✓ (minor: no defensive filter)
+  * Lines 735-830 ItemLevelComparison + ItemComparisonBlock: receives `{data, isLoading, error}` props from parent (P1 refactor). Missing items: items API marks `peer.missing:true` and excludes them from peerAvg/peerBest, but when `peerCount=0` for an item, API returns `peerAvg:{...0}, peerBest:{...0}` and frontend renders `fmtIDR(0)="Rp 0"`, `fmtNum(0)="0"`, `fmtPctRatio(0)="0,0%"` — does NOT show '—'. BUG-AUDIT-2.
+  * Lines 845-937 TrendChartCard: receives `{data, isLoading, error}` props (P1 refactor). `chartData.length === 0` shows "Tidak ada data mingguan". Fixed height `h-[260px] w-full`. ✓ BUT: when `enabled: false` (peerCodes.length=0 — happens when main query returns 0 peers OR while main is loading), `isLoading=false, error=null, data=undefined` → `!data?.success = true` → shows "Error: Unknown" instead of "Loading..." or "No peers". BUG-AUDIT-3.
+  * Lines 942-1057 CorrelationInsight: 7 auto-detected insights. Best-practice (info) always emits when peers>0. highSalesLowDev filter uses `peers` (excludes target). Best-in-class check `target.devBom === Math.min(...peers.map(p=>p.devBom), target.devBom)` — true iff target is min, technically correct (no false positive, but message omits ties). ✓
+- Read src/components/dashboard/RestoAnalysis.tsx (810 lines, full):
+  * Line 80-82: `const { focusOutlet, outletCode, ... } = useDashboard(); const activeOutlet = focusOutlet || outletCode;` — activeOutlet fix confirmed. ✓
+  * Line 86-105 useQuery: enabled when `activeOutlet && monthLabel && currentWeek`. Shows "Pilih outlet" / "Pilih bulan dan minggu" / loading / error states. ✓
+  * Line 350: `<RankingNasionalCard key={activeOutlet} focusOutlet={activeOutlet} ...>` — key forces remount when activeOutlet changes → filterResto state syncs. ✓
+  * Line 761: `<Table className="min-w-[1200px]">` inside `<div className="max-h-[600px] overflow-auto">`. Horizontal scroll works. ✓
+  * Line 287-289: Bahan Analysis Tabs — `<TabsList className="grid w-full grid-cols-1">` with single trigger "A. Financial Impact". Operational & Unexplained tabs were removed. Component still references `rankingTab` state and TabsContent value={rankingTab} (line 291) — works but only ever shows 'financial' content. Minor: dead state for non-financial rankingTab values (impossible via UI). ✓
+  * Line 261-263: P1/P2/P3 badges use `data.allItems.filter(r => r.priority === 'P1').length` — recomputed on every render (3 filters × full array). MINOR PERF (negligible).
+- Read src/components/dashboard/TopItems.tsx (197 lines):
+  * Line 134-196 TopOutlets: line 136 `const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);`. Line 179 `clickableRowProps(() => { setFocusOutlet(o.outletCode); setDrilldown({ outletCode: o.outletCode, itemName: null }); })` — switches to 'resto' tab AND opens DrillDownDrawer. ✓ (confirms Q2 answer YES, but drawer covers Resto Analysis — UX concern).
+- Read src/components/dashboard/AdvancedAnalysis.tsx (325 lines):
+  * Line 47: `const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);`
+  * Line 97: `{...clickableRowProps(() => setFocusOutlet(o.outletCode))}` — switches to 'resto' tab, no drawer. ✓ (confirms Q3 answer YES, clean UX).
+  * Line 78: `<ScrollArea className="h-80">` with `<TableHeader className="sticky top-0 bg-background z-10">`. ScrollArea (radix) may interact awkwardly with sticky positioning (transform creates stacking context). POTENTIAL ISSUE-AUDIT-4 — but pre-existing pattern, probably tested OK.
+- Read src/components/filters/FilterBar.tsx (675 lines):
+  * Line 213: `<div className="flex flex-wrap items-end gap-2">` — main filter row, wraps on mobile. ✓
+  * Line 308-361: `<div className="flex flex-wrap items-center gap-2 w-full md:w-auto">` — buttons row, wraps on mobile. ✓
+  * Line 297: `onValueChange={setOutlet}` — FilterBar outlet dropdown calls setOutlet (NOT setFocusOutlet). useDashboard.setOutlet sets outletCode + clears focusOutlet, but does NOT switch activeTab. (Q4 answer: data shows when user manually navigates to Resto tab; NOT auto-switched.)
+  * Lines 126-129: handleIngest invalidates `['status']`, `['analysis']`, `['outlet-items']`, `['item-history']`, `['peer-comparison']` (twice — line 128 double-quoted + line 129 single-quoted are duplicate dead code, functionally harmless). ✓ (PEER-FLOW-1 from prior audit IS fixed.)
+  * Lines 188-192: handleDriveImport same invalidations. ✓
+- Read src/hooks/useDashboard.ts (75 lines):
+  * Line 53: `setOutlet: (v) => set({ outletCode: v, focusOutlet: null })` — clears focusOutlet, no tab switch. ✓
+  * Line 56: `reset: () => set({ area: null, outletCode: null, itemName: null, pic: null, focusOutlet: null })` — clears focusOutlet. ✓ Does NOT clear drilldown/deepDiveItem/cardDrillDown/scorecardOutlet/activeTab.
+  * Line 68-71: `setFocusOutlet: (code) => set(state => code ? { focusOutlet: code, activeTab: 'resto' } : { focusOutlet: null })` — switches to 'resto' tab when code is truthy. ✓
+  * Line 31-32, 65-66: `scorecardOutlet`/`setScorecardOutlet` defined; set in InsightsPanel.tsx:270 on insight-outlet action; NEVER READ by any component. DEAD STATE.
+- Read src/hooks/useAnalysis.ts (225 lines):
+  * Line 159: `staleTime: 60_000` — confirmed (P5 verified previously). ✓
+  * Line 100: `investigationWorklist: any[]` — type field declared; populated in analysis/route.ts:718; NEVER CONSUMED by any frontend component (grep `data.investigationWorklist` = 0 matches). DEAD FIELD.
+  * Line 91: `topOutletsBySales` — consumed by CardDrillDown.tsx:34. ✓
+  * Line 93-96: `topItemsByWaste/Susut/Trial/LossSurplus` — consumed by CardDrillDown.tsx:78-112 + export-report:578-581. ✓
+  * Line 106: `costImpact` — consumed by InsightsPanel.tsx:149. ✓
+  * Line 108: `netCostTrend` — consumed by InsightsPanel.tsx:178. ✓
+  * Line 104: `varianceAnalysis` — consumed ONLY by export-report:618 (not in UI dashboard). NOT dead (export still uses it).
+- Ran `bun run lint` → EXIT_CODE=0 (clean, 0 errors/warnings).
+
+Stage Summary:
+- BUG-AUDIT-1 (MEDIUM) — Efficiency Score misleading when peerAvg=0. File: src/components/dashboard/PeerComparison.tsx:385-389. `safeDiv(a, 0) = 0` silently produces 0 penalty, so if peerAvg.devBom=0 (peers perfect) but target.devBom>0, score=100 (claiming "Di atas peer average" when target is actually worst). Proposed fix: when peerAvg[field]=0 AND target[field]>0, apply max penalty (50/25/15/10) instead of 0.
+- BUG-AUDIT-2 (LOW-MEDIUM) — Item-Level Comparison shows "0" instead of "—" when peerCount=0. File: src/components/dashboard/PeerComparison.tsx:786-790 (rows array) + items API src/app/api/peer-comparison/items/route.ts:185-195. When all peers missing for an item, API returns `peerAvg:{...0}, peerBest:{...0}`. Frontend formats 0 as "Rp 0" / "0" / "0,0%" instead of "—". Proposed fix: in ItemComparisonBlock, check `item.peerCount === 0` → render '—' for avg/best/gap cells.
+- BUG-AUDIT-3 (LOW) — TrendChartCard shows "Error: Unknown" when trend query is disabled (peerCodes.length=0). File: src/components/dashboard/PeerComparison.tsx:872-879. When `enabled: false`, React Query returns `isLoading=false, data=undefined, error=null`. The check `!data?.success` evaluates true → error branch fires. Proposed fix: add `isPending` (or `!data && !isLoading`) branch before the error check, showing "Memuat..." or "Tidak ada peer tersedia" instead.
+- ISSUE-AUDIT-4 (LOW) — AdvancedAnalysis tables use `<ScrollArea>` + `sticky top-0` (AdvancedAnalysis.tsx:78, 209, 284). Radix ScrollArea's viewport uses `transform` which can break sticky positioning. RestoAnalysis.tsx + PeerComparison.tsx use native `overflow-auto` divs (more reliable). Pre-existing pattern — may work but inconsistent. Proposed fix: migrate AdvancedAnalysis tables to native `overflow-auto` div for consistency, OR test sticky behavior in ScrollArea across browsers.
+- ISSUE-AUDIT-5 (LOW UX) — TopOutlets click handler does BOTH `setFocusOutlet` (switches to Resto tab) AND `setDrilldown` (opens DrillDownDrawer covering Resto Analysis). File: src/components/dashboard/TopItems.tsx:179. User clicks outlet → switches tab → drawer covers what they switched to. Proposed fix: drop `setDrilldown` from TopOutlets click (just `setFocusOutlet(o.outletCode)`), OR drop `setFocusOutlet` and just open the drawer on Dashboard tab.
+- ISSUE-AUDIT-6 (LOW UX) — FilterBar outlet dropdown does NOT auto-switch to Resto tab. File: src/hooks/useDashboard.ts:53 (`setOutlet` doesn't touch activeTab). User selects outlet on Dashboard, must manually click Resto tab to see Resto Analysis. Probably intentional (Dashboard still filters by outlet), but may confuse users who expect auto-switch. No fix needed — documented behavior.
+- DEAD-1 (LOW) — `investigationWorklist` field in AnalysisData type. File: src/hooks/useAnalysis.ts:100 + src/app/api/analysis/route.ts:718. Computed server-side, sent to client, NEVER consumed by any component. Proposed fix: remove from type + remove computation (saves ~5ms per analysis).
+- DEAD-2 (LOW) — `scorecardOutlet`/`setScorecardOutlet` state in useDashboard. File: src/hooks/useDashboard.ts:31-32, 65-66. Set by InsightsPanel.tsx:270 but NEVER READ. Also cleared by setArea/setPic (line 52, 55). Proposed fix: remove scorecardOutlet from store + remove setScorecardOutlet call from InsightsPanel.
+- DEAD-3 (TRIVIAL) — Duplicate `invalidateQueries({ queryKey: ['peer-comparison'] })` call. File: src/components/filters/FilterBar.tsx:128-129 (and 191-192). Same key invalidated twice in a row. Functionally harmless (idempotent). Proposed fix: delete one of the two lines.
+- DEAD-4 (TRIVIAL) — Bahan Analysis Tabs has single trigger "A. Financial Impact" but uses `rankingTab` state + `<TabsContent value={rankingTab}>`. File: src/components/dashboard/RestoAnalysis.tsx:286-291. TabsList grid-cols-1 with 1 trigger. No bug, but UI suggests there should be B/C tabs that were removed. Cosmetic.
+- VERIFIED ✓ (no issues):
+  * 3-tab structure renders correctly (Dashboard/Resto/Peer). No empty tab. (Q1)
+  * TopOutlets click → switches to Resto tab (via setFocusOutlet). (Q2)
+  * OutletHealthRanking click → switches to Resto tab (via setFocusOutlet). (Q3)
+  * FilterBar outlet select → Resto shows data when user navigates there. (Q4)
+  * PeerComparison auto-filters by activeOutlet = focusOutlet || outletCode. (Q5)
+  * All imports used in page.tsx, PeerComparison.tsx, RestoAnalysis.tsx, TopItems.tsx, AdvancedAnalysis.tsx. (Q6)
+  * Tables scroll horizontally (min-w + overflow-auto). FilterBar buttons flex-wrap. (Q7)
+  * No React key warnings — all .map() have key props (verified in PeerComparison peers.map, columns.map, items.map, rows.map, etc.). (Q8)
+  * Export button shows icon-only on mobile via `<span className="hidden sm:inline">` wrapping the text label. (Q9)
+  * No console errors from missing data fields — all access uses optional chaining or `|| []` defaults. (Q10)
+  * `bun run lint` clean (0 errors, 0 warnings).
+  * P1 parallel queries confirmed at PeerComparison.tsx:77-135 — main + items fire in parallel, trend gated by peerCodes.
+  * Grid layout `lg:grid-cols-2` works (PeerComparison.tsx:244).
+  * Sticky header + sticky left column on peer table (PeerComparison.tsx:281, 283, 298, 318).
+  * Color coding consistent across all 11 columns via `col.higherBetter` flag.
+  * Trend chart handles 0 weeks (empty message line 882) + fixed height h-[260px].
+  * Correlation insight no false positives (best-in-class check is technically correct).
+  * useDashboard.setOutlet clears focusOutlet ✓. setFocusOutlet switches to 'resto' ✓. reset() clears focusOutlet ✓.
+  * useAnalysis staleTime 60s ✓ (line 159).
+  * Middleware (src/middleware.ts) — ADMIN_TOKEN protection on destructive endpoints, constant-time token compare, public read-only. No issues.
+
+---
+Task ID: FINAL3-FLOW
+Agent: Data Flow + Dead Code Auditor
+Task: Deep audit data flow + dead code
+
+Work Log:
+- Read worklog tail (last 120 lines) for context — prior audits PEER-FLOW + OPT-P1-P2 + OPT-P3-P5 established baseline; this audit confirms what was fixed and what remains.
+- Verified items 1-6 (deleted files): `OutletFocusMode.tsx`, `CostAccounting.tsx`, `AlertPanel.tsx`, `OutletScorecard.tsx`, `/api/outlet-focus/route.ts`, `src/engine/narrative/narrative.ts` — NONE on disk. Stale reference COMMENTS remain in 5 files (QuickSettings.tsx:126, metrics/definitions.ts:223, outlet-items/route.ts:293, month-resolver.ts:7, analysis/route.ts:646, page.tsx:21, rankingService.ts:78) — benign historical context, not actionable.
+- Verified items 7-8 (shims): `src/engine/analysis/analysis.ts` (10 lines) and `src/lib/queries.ts` (12 lines) are pure re-export shims. Still imported by 2 + 3 routes respectively via `@/engine/analysis/analysis` and `@/lib/queries` paths.
+- Audited `src/types/inventory.ts` (item 9): `DashboardData` (lines 159-173), `GrowthMetrics` (lines 70-77), `HistoricalStats` (lines 79-84) — none imported anywhere; HistoricalStats is shadowed by `metrics/historical.ts:17`. All 3 DEAD.
+- Audited `src/hooks/useAnalysis.ts` AnalysisData type (item 10): `recommendation`/`priorities` already removed. `investigationWorklist` (line 100) declared + emitted by server (analysis/route.ts:718) but NO frontend consumer. `dqStatus` type declares `{ ok, warnings, errors, issues }` but server emits only `{ errors, warnings }` — TYPE DRIFT (frontend only reads errors/warnings so no runtime bug).
+- Audited `package.json` (item 11): 11 direct unused deps (no src/ imports): `@dnd-kit/{core,sortable,utilities}`, `@mdxeditor/editor`, `@reactuses/core`, `framer-motion`, `next-intl`, `react-markdown`, `react-syntax-highlighter`, `uuid`, `z-ai-web-dev-sdk`, `@libsql/client`, `@prisma/adapter-libsql`. Plus 7 deps only used by unused ui/ scaffold components (embla-carousel-react, react-day-picker, input-otp, react-hook-form, @hookform/resolvers, react-resizable-panels, vaul, next-themes).
+- Audited `queries/outlets.ts` (item 12): `queryPeerItemComparison` (lines 332-436, ~105 lines) — DEAD. Items route uses inline SQL (items/route.ts:61-137) instead. `queryPeerTrend` (lines 458-501) — USED by trend/route.ts:75 (post OPT-P1-P2). LIVE.
+- Audited `queries/items.ts` (item 13): `queryItemConsistency` (line 317) — USED by analysis/route.ts:479 (emits itemConsistencyAnalysis consumed by InsightsPanel + AdvancedAnalysis). LIVE.
+- Audited `metrics/growth.ts` (item 14): `calcAvgPrice` (lines 120-123) — DEAD (no callers). `safeRatio` (lines 111-114) — USED by ruleService.ts:14,73,74. LIVE. `computeGrowthResult` (lines 80-106) — USED by outlet-items/route.ts:31,328. LIVE. Note: PeerComparison.tsx:954 + items/route.ts:184 each declare a LOCAL `safeRatio`/`safeDiv` (different signature) — not consuming the metrics/ version.
+- Audited `rankingService.ts` (item 15): `computePrioritiesFromFlags` (lines 126-185, ~60 lines) — DEAD. NOT in index.ts barrel export, NOT imported anywhere.
+- Bonus: `analysisCache` (cache.ts:66) — only `.clear()` is called (8 sites); `.get()`/`.set()` NEVER called (set was disabled per analysis/route.ts:730 comment). Effectively dead — all 8 `.clear()` calls are no-ops on empty cache.
+- Data flow items 16-18: confirmed `useDashboard` store wiring — `setOutlet(v)` sets `outletCode=v, focusOutlet=null`; `setFocusOutlet(code)` sets `focusOutlet=code, activeTab='resto'`. Both RestoAnalysis (line 82) and PeerComparison (line 61) compute `activeOutlet = focusOutlet || outletCode` and use it in useQuery keys → all 3 click paths (FilterBar dropdown, TopOutlets row, PeerComparison peer row) correctly trigger refetch.
+- Data flow item 19: traced invalidations in 5 mutation handlers (FilterBar handleIngest + handleDriveImport, FileUploadDialog, PicManagementDialog, SettingsDialog×2, DataManagementDialog). Each handler invalidates ['status'], ['analysis'], ['outlet-items'], ['item-history'], ['peer-comparison'] — but the last is duplicated (same key, single vs double quotes) on adjacent lines, AND ['peer-comparison-items'] + ['peer-comparison-trend'] are MISSING. React Query prefix-match means ['peer-comparison'] matches the main query (key `['peer-comparison', outlet, ...]`) but NOT items (`['peer-comparison-items', ...]`) or trend (`['peer-comparison-trend', ...]`) — different first element.
+- Data flow items 20-22: trend route delegates to `queryPeerTrend` (single GROUP BY, 91 lines total). Items route has MAX(weekLabel) cumulative-week fix (lines 48-53). Export-report uses `topDeviasiRank` for section 13 (no queryItemConsistency call) — works after OPT-P3-P5 removal.
+- Data flow item 23: analysis route emits all frontend-consumed fields. Type drift only on `dqStatus.ok`/`dqStatus.issues` (declared required, never emitted, never read). `cached` field declared optional, never emitted (cache disabled), frontend reads as undefined → displays 'langsung' (correct since cache is off).
+- Data flow item 24: identified 2 orphaned query keys with NO mutation invalidation — `['peer-comparison-items']` (PeerComparison.tsx:104) and `['peer-comparison-trend']` (PeerComparison.tsx:123). Plus `['drilldown']` (useAnalysis.ts:208) — not invalidated but acceptable (on-demand fetch). `['dq-issues']` (DataManagementDialog.tsx:115) — not invalidated but keyed by expandedFileId which resets on file delete.
+- Integration items 25-27: middleware protects POST/PUT/DELETE/PATCH on 8 path prefixes; GET /api/ingest public (intentional); GET on settings/data/pic public (read-only). All 3 peer-comparison routes have rate limit (`peer-comparison:${ip}`, `peer-comparison-items:${ip}`, `peer-comparison-trend:${ip}`) + resolveMonthLabel.
+- Integration items 28-29: `statusCache.clear()` called by all 7 mutation paths (data DELETE, ingest POST, ingest-process import, pic POST/DELETE, pic/import POST, settings POST/PUT, drive-import via processIngestion). `clearMonthResolverCache()` called by 4 paths that affect month labels (ingest, ingest-process, drive-import, data DELETE); NOT called by pic mutations — acceptable since PIC changes don't add/remove months.
+
+Stage Summary:
+
+DEAD CODE (already removed — confirmed):
+- `OutletFocusMode.tsx`, `CostAccounting.tsx`, `AlertPanel.tsx`, `OutletScorecard.tsx` — files not on disk.
+- `/api/outlet-focus/route.ts` — file not on disk.
+- `src/engine/narrative/narrative.ts` — directory does not exist; `buildRecommendations` not in codebase.
+
+DEAD CODE (still present — proposed delete):
+- BUG FINAL3-1 (LOW) — `src/engine/analysis/analysis.ts:1-10` (10-line shim). Re-exports `./index`. Used by analysis/route.ts:21 + export-report/route.ts:18 via `@/engine/analysis/analysis` path. Proposed fix: update those 2 imports to `@/engine/analysis` (barrel), delete shim.
+- BUG FINAL3-2 (LOW) — `src/lib/queries.ts:1-12` (12-line shim). Re-exports `./queries/index`. Used by 3 routes (analysis:41, export-report:32, peer-comparison:9) via `@/lib/queries`. Proposed fix: update imports to `@/lib/queries/index` or keep alias, delete shim.
+- BUG FINAL3-3 (LOW) — `src/types/inventory.ts:159-173` `DashboardData` interface. Never imported anywhere. 15 lines. Proposed: delete.
+- BUG FINAL3-4 (LOW) — `src/types/inventory.ts:70-77` `GrowthMetrics` interface. Only used by dead `DashboardData.growthComparison`. 8 lines. Proposed: delete.
+- BUG FINAL3-5 (LOW) — `src/types/inventory.ts:79-84` `HistoricalStats` interface. Shadowed by `metrics/historical.ts:17` (the one actually imported). 6 lines. Proposed: delete.
+- BUG FINAL3-6 (LOW) — `src/hooks/useAnalysis.ts:100` `investigationWorklist: any[]` field in AnalysisData type. Server emits (analysis/route.ts:718, 100-item slice) but NO frontend consumer. Wasted payload (~5-50KB JSON per response depending on data). Proposed fix: remove field from AnalysisData type + remove emission from analysis/route.ts:519,718 (also remove buildWorklistFromFlags call at line 519 if no other consumer — verified none). Saves ~50-200ms compute + payload per request.
+- BUG FINAL3-7 (LOW) — `src/lib/queries/outlets.ts:332-436` `queryPeerItemComparison` function (~105 lines). No callers. Items route uses inline SQL (items/route.ts:61-137) instead. Drift risk. Proposed fix: DELETE. (Alternative: refactor items route to use this helper — eliminates drift.)
+- BUG FINAL3-8 (LOW) — `src/lib/metrics/growth.ts:120-123` `calcAvgPrice` function. No callers. 4 lines. Proposed: delete + remove from index.ts:67 export.
+- BUG FINAL3-9 (LOW) — `src/engine/analysis/rankingService.ts:126-185` `computePrioritiesFromFlags` function (~60 lines). Not in barrel export, not imported. Proposed: delete.
+- BUG FINAL3-10 (LOW) — `src/lib/cache.ts:66` `analysisCache` export + 8 `analysisCache.clear()` call sites (data/route.ts:249, ingest-process/route.ts:485, ingestion.ts:420, pic/route.ts:75,117, pic/import/route.ts:118, settings/route.ts:180,250). `analysisCache.set` was disabled per analysis/route.ts:730 comment ("in-memory cache unreliable in serverless"). All `.clear()` calls are no-ops on empty cache. Proposed: delete the export + remove all 8 `.clear()` calls (or document that cache is intentionally disabled and `.clear()` is belt-and-suspenders).
+- BUG FINAL3-11 (LOW) — 11 unused npm deps in package.json (no src/ imports): `@dnd-kit/{core,sortable,utilities}` (lines 16-18), `@mdxeditor/editor` (21), `@reactuses/core` (51), `framer-motion` (63), `next-intl` (67), `react-markdown` (74), `react-syntax-highlighter` (76), `uuid` (82), `z-ai-web-dev-sdk` (85), `@libsql/client` (20), `@prisma/adapter-libsql` (22). Prior audits (worklog lines 5403, 5431, 5744-5757) identified these but they were never removed. Proposed: `bun remove` each. ~30+ MB node_modules weight reduction.
+- BUG FINAL3-12 (LOW) — 7 conditional unused deps (only used by unused ui/ scaffold components): `embla-carousel-react`, `react-day-picker`, `input-otp`, `react-hook-form` + `@hookform/resolvers`, `react-resizable-panels`, `vaul`, `next-themes`. Proposed: `bun remove` + delete the unused ui/{carousel,calendar,input-otp,form,resizable,drawer,sonner}.tsx files. (Lower priority — these are scaffolded shadcn/ui components kept for future use; deletion is a UX decision.)
+
+DATA FLOW BUGS:
+- BUG FINAL3-13 (HIGH) — Peer-comparison items + trend queries NOT invalidated after mutations. Files: FilterBar.tsx:128-129 (handleIngest), :191-192 (handleDriveImport); FileUploadDialog.tsx:474-475; PicManagementDialog.tsx:201-202; SettingsDialog.tsx:138-139 + 173-174; DataManagementDialog.tsx:194-195. Effect: After import/drive-upload/PIC-mutation/settings-change/data-delete, the main peer table refetches but the Item-Level Comparison table + Trend chart display STALE data until the user manually switches outlet or refreshes the page. The 2nd invalidation line in each pair is a duplicate of the 1st (same `['peer-comparison']` key, different quote style) — copy-paste error: likely intended to be `['peer-comparison-items']` + `['peer-comparison-trend']`. Proposed fix: replace the duplicate `['peer-comparison']` line with `['peer-comparison-items']` and add `['peer-comparison-trend']` in all 6 handler sites. (Same issue was flagged as BUG PEER-FLOW-1 in prior audit — STILL UNFIXED; the "fix" attempted was to add a duplicate `['peer-comparison']` line which is ineffective because React Query prefix-match does not span different first-element keys.)
+
+INTEGRATION:
+- INFO FINAL3-14 — Middleware (src/middleware.ts) protects POST/PUT/DELETE/PATCH on 8 path prefixes (setup, ingest, ingest-upload, ingest-process, import-drive, settings, data, pic). GET /api/ingest is public (intentional — "Refresh Data" endpoint, rate-limited). GET on /api/settings, /api/data, /api/pic is public (read-only). ✓
+- INFO FINAL3-15 — Rate limiting applied to all 3 peer-comparison routes with distinct keys (`peer-comparison:${ip}`, `peer-comparison-items:${ip}`, `peer-comparison-trend:${ip}`), each at `RATE_LIMITS.analysis` (60 req/min per IP). ✓
+- INFO FINAL3-16 — resolveMonthLabel applied in all 3 peer-comparison routes (route.ts:34, trend/route.ts:51, items/route.ts:45). ✓
+- INFO FINAL3-17 — statusCache.clear() called after ALL mutations (data DELETE, ingest POST, ingest-process import, pic POST/DELETE, pic/import POST, settings POST/PUT, drive-import via processIngestion). ✓
+- INFO FINAL3-18 — clearMonthResolverCache() called after mutations that affect month labels (ingest, ingest-process, drive-import, data DELETE). NOT called for /api/pic mutations — acceptable since PIC changes don't add/remove month labels. ✓
+- INFO FINAL3-19 — Data flow for outlet selection (items 16-18) works correctly. FilterBar dropdown → setOutlet → outletCode set, focusOutlet cleared → both RestoAnalysis (line 82) and PeerComparison (line 61) use `focusOutlet || outletCode` as activeOutlet → useQuery key changes → refetch fires. TopOutlets row click + PeerComparison peer row click → setFocusOutlet(code) → focusOutlet set, activeTab='resto' → RestoAnalysis mounts with focusOutlet as activeOutlet → refetch fires. ✓
+- INFO FINAL3-20 — Trend route uses queryPeerTrend (single GROUP BY, 1 DB round-trip regardless of week count). Items route has cumulative-week MAX(weekLabel) fix (lines 48-53). Export-report uses topDeviasiRank (not queryItemConsistency) for section 13 — works after OPT-P3-P5 removal. ✓
+- INFO FINAL3-21 — Analysis route emits all frontend-consumed fields. Type drift only on `dqStatus.ok`/`dqStatus.issues` (declared required in useAnalysis.ts:87, never emitted by server, never read by frontend). `cached` declared optional, never emitted (cache disabled) — frontend reads as undefined → displays 'langsung' (correct). `message` emitted only on error (404) responses — frontend reads via thrown Error in fetchAnalysis. ✓
+
+NEXT ACTIONS (priority order, do NOT apply in this audit):
+1. BUG FINAL3-13 (HIGH) — Fix peer-comparison items + trend invalidation. 6 handler sites, replace duplicate `['peer-comparison']` line with `['peer-comparison-items']` + add `['peer-comparison-trend']`. Biggest user-visible impact (stale charts after import).
+2. BUG FINAL3-6 (LOW) — Remove `investigationWorklist` from AnalysisData type + analysis route emission. Saves payload + ~50-200ms compute per request.
+3. BUG FINAL3-7 (LOW) — Delete `queryPeerItemComparison` (105 lines) OR refactor items route to use it (eliminates SQL drift risk between the two implementations).
+4. BUG FINAL3-9 (LOW) — Delete `computePrioritiesFromFlags` (60 lines).
+5. BUG FINAL3-3/4/5 (LOW) — Delete dead interfaces in types/inventory.ts (29 lines).
+6. BUG FINAL3-1/2 (LOW) — Delete 2 shim files + update 5 import paths.
+7. BUG FINAL3-8/10 (LOW) — Delete `calcAvgPrice` + `analysisCache` (export + 8 clear calls).
+8. BUG FINAL3-11/12 (LOW) — `bun remove` 11+7 unused npm deps + delete 7 unused ui/ scaffold components.

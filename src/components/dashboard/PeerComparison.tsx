@@ -101,7 +101,7 @@ export function PeerComparison() {
 
   // Items query — independent inputs, fires in parallel with main.
   const { data: itemsData, isLoading: itemsLoading, error: itemsError } = useQuery({
-    queryKey: ['peer-comparison-items', activeOutlet, monthLabel, currentWeek, mode],
+    queryKey: ['peer-comparison', 'items', activeOutlet, monthLabel, currentWeek, mode],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
@@ -120,7 +120,7 @@ export function PeerComparison() {
   // Trend query — depends on peerCodes from main for stable peer
   // set across weeks. `enabled` waits for peerCodes.
   const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
-    queryKey: ['peer-comparison-trend', activeOutlet, monthLabel, peerCodes.join(',')],
+    queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodes.join(',')],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
@@ -873,6 +873,10 @@ function TrendChartCard({
           <div className="flex items-center justify-center py-6">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
+        ) : !data ? (
+          <p className="text-center text-xs text-muted-foreground py-4">
+            Menunggu peer data...
+          </p>
         ) : error || !data?.success ? (
           <p className="text-center text-xs text-red-600 py-4">
             Error: {error?.message || data?.error || 'Unknown'}
