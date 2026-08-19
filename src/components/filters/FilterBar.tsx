@@ -303,8 +303,9 @@ export function FilterBar() {
               />
             </div>
 
-            <div className="flex-1" />
+            <div className="flex-1 hidden md:block" />
 
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             <Button variant="outline" size="sm" className="h-9" onClick={reset} disabled={!hasActiveFilter}>
               <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
             </Button>
@@ -357,6 +358,7 @@ export function FilterBar() {
               <RefreshCw className={`h-3.5 w-3.5 mr-1 ${ingesting ? 'animate-spin' : ''}`} />
               {ingesting ? 'Memproses...' : 'Refresh Data'}
             </Button>
+            </div>
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">

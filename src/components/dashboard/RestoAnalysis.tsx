@@ -758,7 +758,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
       </CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[600px] overflow-auto">
-          <Table>
+          <Table className="min-w-[1200px]">
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
                 <TableHead className="w-8 text-center">Rank Nas</TableHead>

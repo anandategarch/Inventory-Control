@@ -240,25 +240,21 @@ export function PeerComparison() {
         </CardHeader>
       </Card>
 
-      {/* ============ 2. EFFICIENCY SCORE (Feature 7) ============ */}
-      {targetRow && peerCount > 0 && (
-        <EfficiencyScoreCard target={targetRow} peerAvg={peerAverages} />
-      )}
-
-      {/* ============ 3. GAP ANALYSIS (Feature 2) ============ */}
-      {targetRow && peerCount > 0 && (
-        <GapAnalysisCard target={targetRow} peers={otherPeers} columns={columns} />
-      )}
-
-      {/* ============ 4. RANKING SUMMARY (Feature 1) ============ */}
-      {targetRow && peerCount > 0 && (
-        <RankingSummaryCard target={targetRow} peers={peers} columns={columns} />
-      )}
-
-      {/* ============ 5. SCATTER PLOT (Feature 4) ============ */}
-      {peerCount > 0 && (
-        <ScatterPlotCard peers={peers} targetCode={targetRow?.outletCode} />
-      )}
+      {/* ============ 2-5. ANALYSIS CARDS (grid 2 cols on desktop) ============ */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {targetRow && peerCount > 0 && (
+          <EfficiencyScoreCard target={targetRow} peerAvg={peerAverages} />
+        )}
+        {targetRow && peerCount > 0 && (
+          <GapAnalysisCard target={targetRow} peers={otherPeers} columns={columns} />
+        )}
+        {targetRow && peerCount > 0 && (
+          <RankingSummaryCard target={targetRow} peers={peers} columns={columns} />
+        )}
+        {peerCount > 0 && (
+          <ScatterPlotCard peers={peers} targetCode={targetRow?.outletCode} />
+        )}
+      </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
       <Card>
@@ -281,7 +277,7 @@ export function PeerComparison() {
             <p className="text-center text-muted-foreground text-xs py-6">Tidak ada peer ditemukan</p>
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-              <Table>
+              <Table className="min-w-[1400px]">
                 <TableHeader className="sticky top-0 bg-background z-10">
                   <TableRow>
                     <TableHead className="text-[11px] sticky left-0 bg-background">Resto</TableHead>

@@ -243,9 +243,9 @@ export default function DashboardPage() {
                 onClick={() => setExportDialogOpen(true)}
               >
                 {isExporting ? (
-                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Exporting...</>
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="hidden sm:inline">Exporting...</span></>
                 ) : (
-                  <><FileDown className="h-3.5 w-3.5" /> Export Word</>
+                  <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export Word</span></>
                 )}
               </Button>
             )}
