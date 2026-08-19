@@ -204,6 +204,21 @@ export async function queryPeerComparison(
       JOIN "Outlet" o ON sm."outletId" = o.id
       WHERE o.code = ${outletCode}
     ),
+    -- FIX: If target has no sales (nominalSales null/0), target CTE is empty.
+    -- CROSS JOIN with empty target = 0 rows = 'Tidak ada peer'.
+    -- Fallback: if target has InventoryRecords but no sales, use 0 as targetSales
+    -- and find peers by outlet_aggs instead of sales_mode.
+    target_fallback AS (
+      SELECT 0 as sales, o.id as "outletId"
+      FROM "Outlet" o
+      WHERE o.code = ${outletCode}
+        AND NOT EXISTS (SELECT 1 FROM target)
+    ),
+    target_combined AS (
+      SELECT * FROM target
+      UNION ALL
+      SELECT * FROM target_fallback
+    ),
     outlet_aggs AS (
       SELECT
         ir."outletId",
@@ -270,9 +285,9 @@ export async function queryPeerComparison(
     LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
     LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
     LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
-    CROSS JOIN target t
+    CROSS JOIN target_combined t
     WHERE COALESCE(sm.sales, 0) > 0
-      AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1
+      AND ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END
     ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
     LIMIT ${limit + 1}
   `;

@@ -274,7 +274,10 @@ export function PeerComparison() {
               Error: {mainError?.message || mainData?.error || 'Unknown'}
             </p>
           ) : peers.length === 0 ? (
-            <p className="text-center text-muted-foreground text-xs py-6">Tidak ada peer ditemukan</p>
+            <div className="text-center text-muted-foreground text-xs py-6 space-y-2">
+              <p>Tidak ada peer ditemukan untuk outlet ini.</p>
+              <p className="text-[10px]">Kemungkinan outlet tidak memiliki data sales (PENJUALAN) pada periode ini, atau tidak ada resto lain dengan sales ±10%.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <Table className="min-w-[1400px]">
