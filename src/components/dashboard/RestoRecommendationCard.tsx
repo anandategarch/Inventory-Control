@@ -150,11 +150,11 @@ export function RestoRecommendationCard() {
               )}
             </div>
 
-            {/* Analysis bullets */}
+            {/* Analysis bullets — show all signals (1-15), compact text */}
             <div className="space-y-0.5">
-              {r.analysis.slice(0, 4).map((a, j) => (
-                <p key={j} className="text-[11px] text-muted-foreground flex items-start gap-1">
-                  <span className="text-primary mt-0.5">•</span>
+              {r.analysis.map((a, j) => (
+                <p key={j} className="text-[10px] text-muted-foreground flex items-start gap-1 leading-tight">
+                  <span className="text-primary mt-0.5 shrink-0">•</span>
                   <span>{a}</span>
                 </p>
               ))}

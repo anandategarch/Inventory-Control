@@ -6645,3 +6645,33 @@ NEXT ACTIONS (priority order, do NOT apply in this audit):
 6. BUG FINAL3-1/2 (LOW) — Delete 2 shim files + update 5 import paths.
 7. BUG FINAL3-8/10 (LOW) — Delete `calcAvgPrice` + `analysisCache` (export + 8 clear calls).
 8. BUG FINAL3-11/12 (LOW) — `bun remove` 11+7 unused npm deps + delete 7 unused ui/ scaffold components.
+
+---
+Task ID: FIX-SIGNALS-PIC
+Agent: Main (Z.ai Code)
+Task: Fix two bugs: (1) Signals 9-15 not appearing in Resto Prioritas dashboard analysis bullets; (2) PIC filter not applied to Resto Prioritas recommendations.
+
+Work Log:
+- Read worklog.md tail for context — prior work established recommendation engine with 15 signals, RestoRecommendationCard renders on Dashboard tab.
+- Read src/components/dashboard/RestoRecommendationCard.tsx (217 lines) — found `r.analysis.slice(0, 4)` at line 155 truncating analysis bullets to first 4 only. User's GGPDAA outlet had 8+ bullets generated but only 4 shown (signals 3, 4, 5, 6 = z-score, residual, loss/sales, direction flip). Signals 9-15 (tolerance breach high, over-explained, high loss, no tolerance, benchmark high, residual nominal, tolerance breach) were generated but cut off.
+- Read src/lib/queries/outlets.ts:561-863 (queryRestoRecommendations) — verified analysis array generation includes bullets for signals 1-13, 15. Missing: Signal 14 (Residual Nominal financial impact) and Signal 7 (Trend deteriorating, distinct from Signal 2 deviasiGrowth).
+- Fix 1a: Added bullet for Signal 14 (Residual Nominal) — `if (residualNominal > 0) analysis.push("Dampak residual Rp X — tidak terjelaskan secara finansial (RESIDUAL_NOMINAL)")`.
+- Fix 1b: Added bullet for Signal 7 (Trend deteriorating) — `if (trendDeteriorating && (deviasiGrowth == null || deviasiGrowth <= 0.2)) analysis.push("Tren deviasi memburuk...")`. Condition excludes cases already covered by Signal 2 bullet (deviasiGrowth > 0.2).
+- Fix 1c: Removed `slice(0, 4)` limit in RestoRecommendationCard.tsx — now shows ALL analysis bullets. Changed text size from `text-[11px]` to `text-[10px] leading-tight` for compactness since more bullets are shown.
+- Read src/app/api/recommendations/route.ts — found PIC filter bug: `db.outletPIC.findMany({ where: { pic } })` is case-sensitive (Prisma default). If user picks "BUDI" but DB has "Budi", returns []. Then `picOutletCodes = []` passed to buildSqlFilters, which checks `length > 0` → skips filter → shows ALL outlets (wrong).
+- Fix 2a: Replaced Prisma findMany with raw SQL `SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})` — works on BOTH PostgreSQL and SQLite (Prisma's `mode: 'insensitive'` is PostgreSQL-only).
+- Fix 2b: Added sentinel `'__NO_MATCH__'` when picOutletCodes is empty — ensures buildSqlFilters applies `IN ('__NO_MATCH__')` which returns 0 outlets (correct: PIC has no outlets), instead of skipping filter (wrong: shows all outlets).
+- Bonus fix: src/lib/settings.ts:347 — `db.setting.createMany({ data, skipDuplicates: true })` fails on SQLite (skipDuplicates is PostgreSQL-only). Added try/catch fallback to per-row upsert. Production (PostgreSQL) still uses skipDuplicates (try succeeds).
+- Set up local SQLite test environment (temporarily changed schema to sqlite, ran db:push, wrote scripts/seed-test.ts with 5 outlets + 5 items + 42 records + 5 PIC assignments with case variations).
+- Verified recommendations API: GGPDAA outlet returns 8 analysis bullets including signals 9, 10, 12, 13, 14 (previously truncated).
+- Verified PIC filter: 'Budi' → GGPDAA+OUT002 ✓; 'BUDI' → GGPDAA+OUT002 ✓ (case-insensitive); 'budi' → GGPDAA+OUT002 ✓; 'ANDI' (DB has 'andi') → OUT003 ✓; 'Nobody' → [] ✓ (sentinel works).
+- Restored schema.prisma to postgresql (production). Regenerated Prisma client. Cleaned up temp files (schema.bak, schema.sqlite, seed-test.ts).
+- Ran `bun run lint` → EXIT_CODE=0 (clean, 0 errors/warnings).
+
+Stage Summary:
+- BUG FIXED (Signals 9-15): RestoRecommendationCard now displays ALL analysis bullets (was slice(0,4)). Added 2 new bullets: Signal 14 (Residual Nominal financial impact) and Signal 7 (Trend deteriorating). All 15 signals now have corresponding bullets when conditions are met.
+- BUG FIXED (PIC filter): /api/recommendations now uses raw SQL with LOWER() for case-insensitive PIC matching (works on PostgreSQL + SQLite). Empty PIC results use sentinel '__NO_MATCH__' to return 0 outlets instead of showing all.
+- BONUS FIX: settings.ts skipDuplicates now has SQLite fallback (try/catch → per-row upsert).
+- Files changed: src/components/dashboard/RestoRecommendationCard.tsx, src/lib/queries/outlets.ts, src/app/api/recommendations/route.ts, src/lib/settings.ts.
+- Verified via direct API testing: recommendations endpoint returns 8 bullets for GGPDAA (signals 1, 3, 4, 9, 10, 12, 13, 14). PIC filter case-insensitive matching confirmed with 5 test cases.
+- Lint clean. Page loads HTTP 200.

@@ -344,7 +344,20 @@ export async function ensureDefaultSettings(): Promise<void> {
     dataType: d.dataType,
   }));
 
-  await db.setting.createMany({ data, skipDuplicates: true });
+  // FIX: `skipDuplicates: true` is PostgreSQL-only (not supported in SQLite).
+  // Use try/catch to handle both providers — on SQLite, fallback to per-row upsert.
+  try {
+    await db.setting.createMany({ data, skipDuplicates: true });
+  } catch {
+    // SQLite fallback — upsert each setting individually
+    for (const d of data) {
+      await db.setting.upsert({
+        where: { key: d.key },
+        update: {},
+        create: d,
+      }).catch(() => {});
+    }
+  }
   _settingsCache = null; // force reload
 }
 

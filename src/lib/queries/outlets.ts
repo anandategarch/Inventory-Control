@@ -815,6 +815,8 @@ export async function queryRestoRecommendations(
     if (hasNoTolerance > 0) analysis.push(`${hasNoTolerance} item belum diset toleransinya — tidak bisa deteksi breach`);
     if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item jauh di atas rata-rata historis (HISTORICAL_HIGH)`);
     if (toleranceBreachCount > 0 && toleranceBreachHighCount === 0) analysis.push(`${toleranceBreachCount} item melebihi toleransi (TOLERANCE_BREACH)`);
+    if (residualNominal > 0) analysis.push(`Dampak residual Rp ${Math.round(residualNominal).toLocaleString('id-ID')} — tidak terjelaskan secara finansial (RESIDUAL_NOMINAL)`);
+    if (trendDeteriorating && (deviasiGrowth == null || deviasiGrowth <= 0.2)) analysis.push(`Tren deviasi memburuk — naik signifikan dari periode sebelumnya`);
     if (analysis.length === 0) analysis.push('Tidak ada anomaly signifikan terdeteksi');
 
     return {
