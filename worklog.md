@@ -6371,3 +6371,67 @@ NEXT ACTIONS (recommended priority order, do NOT apply in this audit):
 3. Fix BUG PEER-FLOW-4 (MEDIUM) — add LIMIT to items API peer_outlets CTE + pass peerLimit from frontend.
 4. Address BUG PEER-FLOW-5 + PEER-FLOW-6 (MEDIUM/LOW) — UX polish for mode + missing-week states.
 5. BUG PEER-FLOW-7/8/9/10 (LOW) — polish, not blockers.
+
+---
+Task ID: OPT-P3-P5
+Agent: Core Optimizer
+Task: Skip 0-deviation records + remove dead export queries + add staleTime
+
+Work Log:
+- Read worklog.md tail for context (PEER-FLOW audit complete).
+- Read src/app/api/analysis/route.ts:380-439 — verified P3 early skip is in place at line 401: `if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0))` — uses `&&` (correct AND), comment at lines 397-400 confirms it was an intentional bug-fix to keep price-only anomalies (qtyDeviasi=0 but absNominalDeviasi>0). Skip is correct. No change needed.
+- Read src/app/api/export-report/route.ts:355-373 — verified P3 early skip is also in place at line 364 with identical `&&` check (both qtyDeviasi AND absNominalDeviasi must be 0/null to skip). No change needed.
+- For P4: grep'd `hasSection(` and traced every Promise.all query (19 items) to its render block. Found:
+  * queryTopItemsByNominal/DevBom/Category x4 → sections 4.1-4.6 (topItems) ✓
+  * queryAreaAnalysis → section 7 (area) ✓
+  * queryDeviationBreakdown → section 5 (breakdown) ✓
+  * queryTrendAgg → section 14 (trend) + growth.multiPeriodComparison ✓
+  * prevWaste/Susut/Trial/LossSurplusRows → used in 4.3-4.6 prevQty column ✓
+  * histWaste/Susut/Trial/LossSurplusMap → used in 4.3-4.6 histAvgQty column ✓
+  * queryTopItemsByDeviasiRank → section 13 (consistency, replaced old itemConsistency) ✓
+  * queryItemConsistency → DEAD (was used for old section 13, replaced by topDeviasiRank; result fed itemConsistencyAnalysis at line 478 which was added to data at line 492 but NEVER rendered — the hasSection('consistency') block at line 641 uses data.topDeviasiRank instead).
+  * Other dead queries mentioned in task spec (queryLossVsSurplus, queryCostImpact, queryTopOutlets, db.dQIssue.groupBy) — already removed in prior work; Promise.all currently has 19 items (not 34).
+- Removed dead `queryItemConsistency` chain from export-report:
+  * import: src/app/api/export-report/route.ts:31 — removed `queryItemConsistency,` from `@/lib/queries` import
+  * destructure: line 385 — removed `consistencyItems,` from Promise.all destructuring
+  * Promise.all: line 402 — removed `queryItemConsistency(week, month, filterOpts),` call
+  * line 478 — removed `const itemConsistencyAnalysis = {...}` definition (4-line equivalent)
+  * line 492 — removed `itemConsistencyAnalysis,` from data object
+- Verified P5: read src/hooks/useAnalysis.ts — `staleTime: 60_000` is already present at line 159 (added previously). No change needed.
+- Verified cross-file: `itemConsistencyAnalysis` is still computed in analysis/route.ts:675 (used by InsightsPanel.tsx + AdvancedAnalysis.tsx) — only removed the dead duplicate in export-report route. Safe.
+- Ran `bun run lint` → clean (no errors). Ran `npx tsc --noEmit --skipLibCheck` → clean (no errors).
+
+Stage Summary:
+- P3 (skip 0-deviation): VERIFIED already correct in both routes. src/app/api/analysis/route.ts:401 (uses `&&` between qtyDeviasi and absNominalDeviasi checks, with zeroDevByOutlet tracking). src/app/api/export-report/route.ts:364 (identical `&&` check). No code changes needed.
+- P4 (dead export queries): Removed 1 dead query chain (queryItemConsistency) from export-report route — 5 references removed across import (line 31), destructure (line 385), Promise.all call (line 402), local definition (line 478), and data object (line 492). The other 8+ dead queries mentioned in the spec (queryLossVsSurplus, queryCostImpact, queryTopOutlets, db.dQIssue.groupBy, etc.) were already removed in prior audits — Promise.all is now down to 18 items (was 34 originally). Net effect: one fewer SQL round-trip per export, ~50ms saved on large datasets.
+- P5 (staleTime): VERIFIED already present in src/hooks/useAnalysis.ts:159 — `staleTime: 60_000` prevents refetch on Dashboard→Resto→Peer tab switches. No code change needed.
+
+---
+Task ID: OPT-P1-P2
+Agent: Peer Optimizer
+Task: Parallelize PeerComparison queries + replace N+1 trend
+
+Work Log:
+- Read worklog.md (last 30 lines) for PEER-FLOW audit context + read PeerComparison.tsx (1065 lines), trend/route.ts (162 lines), outlets.ts (502 lines), items/route.ts (217 lines).
+- P1: Refactored PeerComparison component — moved all 3 useQuery calls (main + items + trend) to the top of the parent component so they fire on mount instead of being gated by `targetRow` (which only became truthy after the main query resolved, creating a 3-stage waterfall: main → items → trend).
+  - Removed the `if (isLoading) return ...` and `if (error || !data?.success) return ...` early returns that blocked sub-component mounting. Inlined loading/error/empty branches into the main Peer Table card instead.
+  - Removed `{targetRow && (` gating around `<ItemLevelComparison>` and `<TrendChartCard>` — both now always mount and render their own loading/error states.
+  - Refactored `ItemLevelComparison` sub-component: removed internal `useQuery`, now accepts `{ data, isLoading, error }` props from parent.
+  - Refactored `TrendChartCard` sub-component: removed internal `useQuery`, now accepts `{ data, isLoading, error }` props from parent.
+  - Trend query `enabled` now requires `peerCodes.length > 0` (waits for main query) — keeps the stable-peer-set-across-weeks behavior and avoids a wasted first fetch with empty peers that would auto-compute per-week then immediately refetch.
+  - Items query fires fully in parallel with main (independent inputs: outlet/month/week/mode).
+  - Net effect: 3-stage waterfall → 2-stage pipeline (main + items parallel, then trend). User sees Item-Level Comparison loading state immediately on outlet select instead of waiting for the main query.
+  - Dropped unused `salesTarget` and `peerCount` fields from `TrendResponse` interface (frontend never read them — only `weekLabel`/`devBomTarget`/`devBomPeerAvg` were consumed by the chart).
+- P2: Rewrote `/api/peer-comparison/trend/route.ts` (162 lines → 91 lines) to delegate to `queryPeerTrend` (outlets.ts:458-501) instead of the inline N+1 loop.
+  - Previous: looped over weeks, executing 1 SQL query per week (4 weeks = 4 DB round-trips). Each query re-derived sales_mode, target, peer band, and outlet_aggs CTEs.
+  - New: single GROUP BY weekLabel query via `queryPeerTrend` — 1 DB round-trip regardless of week count. The shared helper already exists and was verified correct per INFO PEER-FLOW-13/14 in the audit log.
+  - Peer set handling preserved: if `peers` param is provided (frontend passes main query's peer list), use it; if omitted, auto-compute via `queryPeerComparison(outlet, month, null, 'month', 20)` so the ±10% sales band matches the main peer table (single source of truth — same MAX(weekLabel) month-aggregate derivation).
+  - Response shape: `{ success, targetOutlet, month, weeks: [{ weekLabel, devBomTarget, devBomPeerAvg }] }`. Mapped from `queryPeerTrend`'s `{ weekLabel, targetDevBom, peerAvgDevBom, targetNominal, peerAvgNominal }` — only the Dev/BOM fields are used by the chart, so targetNominal/peerAvgNominal are dropped.
+  - Removed now-unused `Prisma` and `db` imports from the route (delegation to shared helper makes them unnecessary).
+  - No changes needed to `queryPeerTrend` itself — it already handles explicit peer codes via the `peerOutletCodes` param (the route passes the explicit list or the auto-computed list, both work).
+- Verified: `bun run lint` clean (0 errors/warnings), `npx tsc --noEmit --skipLibCheck` clean.
+
+Stage Summary:
+- P1 (parallel queries): src/components/dashboard/PeerComparison.tsx:65-135 (3 useQuery at top), :271-282 (inline loading/error in table card), :358-374 (sub-components always mounted), :739-747 (ItemLevelComparison new props signature), :849-857 (TrendChartCard new props signature), :839-847 (TrendResponse interface slimmed). Waterfall reduced from 3 stages → 2 stages (main+items parallel, then trend).
+- P2 (N+1 → single GROUP BY): src/app/api/peer-comparison/trend/route.ts:1-91 (full rewrite). Removed inline week-loop + per-week CTE chain (was 81-150 in old file). Now calls `queryPeerTrend` (outlets.ts:458-501) — single SQL pass. DB round-trips: 4→1 (for a 4-week month; was O(weeks), now O(1)). Auto-compute peer-set fallback delegates to `queryPeerComparison` (outlets.ts:167-308) for ±10% band consistency with the main table.
+- No behavior change for end users: same peer set, same Dev/BOM values, same chart shape. Only timing improves.

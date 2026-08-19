@@ -62,7 +62,19 @@ export function PeerComparison() {
   const [mode, setMode] = useState<'week' | 'month'>('week');
   const [peerLimit, setPeerLimit] = useState(10);
 
-  const { data, isLoading, error } = useQuery({
+  // ============================================================
+  //  P1 PARALLEL QUERIES — all 3 useQuery hooks fire on mount.
+  //  Previously the items + trend sub-components were gated by
+  //  `targetRow &&` (only mounted AFTER the main query resolved),
+  //  creating a 3-stage waterfall: main → items → trend.
+  //  Now: main + items fire in parallel (independent inputs:
+  //  outlet/month/week/mode); trend waits for peerCodes from main
+  //  (stable peer set across weeks requires the main query's peer
+  //  list — `enabled` waits for peerCodes to avoid a wasted first
+  //  fetch with empty peers that would auto-compute per-week and
+  //  then immediately refetch).
+  // ============================================================
+  const { data: mainData, isLoading: mainLoading, error: mainError } = useQuery({
     queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -79,6 +91,49 @@ export function PeerComparison() {
     enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek)),
   });
 
+  // Derive peer set from main query result (empty while loading).
+  // `peerCodes` is consumed by the trend query below for a stable
+  // peer set across weeks (avoids per-week auto-compute drift).
+  const peers: PeerRow[] = mainData?.peers || [];
+  const targetRow = peers.find((p) => p.isTarget);
+  const otherPeers = peers.filter((p) => !p.isTarget);
+  const peerCodes = otherPeers.map((p) => p.outletCode);
+
+  // Items query — independent inputs, fires in parallel with main.
+  const { data: itemsData, isLoading: itemsLoading, error: itemsError } = useQuery({
+    queryKey: ['peer-comparison-items', activeOutlet, monthLabel, currentWeek, mode],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('outletCode', activeOutlet!);
+      p.set('month', monthLabel!);
+      if (mode === 'week' && currentWeek) p.set('week', currentWeek);
+      p.set('mode', mode);
+      p.set('topItems', '5');
+      const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<ItemComparisonResponse>;
+    },
+    enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek)),
+  });
+
+  // Trend query — depends on peerCodes from main for stable peer
+  // set across weeks. `enabled` waits for peerCodes.
+  const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
+    queryKey: ['peer-comparison-trend', activeOutlet, monthLabel, peerCodes.join(',')],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('outletCode', activeOutlet!);
+      p.set('month', monthLabel!);
+      if (peerCodes.length > 0) p.set('peers', peerCodes.slice(0, 20).join(','));
+      const res = await fetch(`/api/peer-comparison/trend?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<TrendResponse>;
+    },
+    enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0),
+  });
+
   if (!activeOutlet) {
     return (
       <Card>
@@ -89,30 +144,6 @@ export function PeerComparison() {
       </Card>
     );
   }
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="py-12 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (error || !data?.success) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center text-red-600">
-          <p>Error: {error?.message || data?.error || 'Unknown'}</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const peers: PeerRow[] = data.peers || [];
-  const targetRow = peers.find((p) => p.isTarget);
-  const otherPeers = peers.filter((p) => !p.isTarget);
 
   // Compute peer averages (excluding target)
   const peerCount = otherPeers.length;
@@ -238,7 +269,15 @@ export function PeerComparison() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {peers.length === 0 ? (
+          {mainLoading ? (
+            <div className="py-12 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : mainError || !mainData?.success ? (
+            <p className="text-center text-red-600 py-12">
+              Error: {mainError?.message || mainData?.error || 'Unknown'}
+            </p>
+          ) : peers.length === 0 ? (
             <p className="text-center text-muted-foreground text-xs py-6">Tidak ada peer ditemukan</p>
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
@@ -317,25 +356,22 @@ export function PeerComparison() {
       </Card>
 
       {/* ============ 7. ITEM-LEVEL COMPARISON (Feature 3) ============ */}
-      {targetRow && (
-        <ItemLevelComparison
-          outletCode={activeOutlet!}
-          monthLabel={monthLabel!}
-          week={currentWeek}
-          mode={mode}
-          enabled={Boolean(monthLabel && (mode === 'month' || currentWeek))}
-        />
-      )}
+      {/* Always mounted (P1) — fires its query in parallel with the
+          main query. Own loading/error states inside. */}
+      <ItemLevelComparison
+        data={itemsData}
+        isLoading={itemsLoading}
+        error={itemsError}
+      />
 
       {/* ============ 8. TREND CHART (Feature 6) ============ */}
-      {targetRow && (
-        <TrendChartCard
-          outletCode={activeOutlet!}
-          monthLabel={monthLabel!}
-          peerCodes={otherPeers.map(p => p.outletCode)}
-          enabled={Boolean(monthLabel)}
-        />
-      )}
+      {/* Always mounted (P1) — fires once peerCodes from main are
+          available (stable peer set across weeks). Own loading/error. */}
+      <TrendChartCard
+        data={trendData}
+        isLoading={trendLoading}
+        error={trendError}
+      />
 
       {/* ============ 9. CORRELATION INSIGHT (Feature 9) ============ */}
       {targetRow && peerCount > 0 && (
@@ -701,35 +737,14 @@ interface ItemComparisonResponse {
 }
 
 function ItemLevelComparison({
-  outletCode,
-  monthLabel,
-  week,
-  mode,
-  enabled,
+  data,
+  isLoading,
+  error,
 }: {
-  outletCode: string;
-  monthLabel: string;
-  week: string | null;
-  mode: 'week' | 'month';
-  enabled: boolean;
+  data: ItemComparisonResponse | undefined;
+  isLoading: boolean;
+  error: Error | null;
 }) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['peer-comparison-items', outletCode, monthLabel, week, mode],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      p.set('outletCode', outletCode);
-      p.set('month', monthLabel);
-      if (mode === 'week' && week) p.set('week', week);
-      p.set('mode', mode);
-      p.set('topItems', '5');
-      const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error');
-      return res.json() as Promise<ItemComparisonResponse>;
-    },
-    enabled,
-  });
-
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -828,37 +843,18 @@ interface TrendResponse {
     weekLabel: string;
     devBomTarget: number;
     devBomPeerAvg: number;
-    salesTarget: number;
-    peerCount: number;
   }>;
 }
 
 function TrendChartCard({
-  outletCode,
-  monthLabel,
-  peerCodes,
-  enabled,
+  data,
+  isLoading,
+  error,
 }: {
-  outletCode: string;
-  monthLabel: string;
-  peerCodes: string[];
-  enabled: boolean;
+  data: TrendResponse | undefined;
+  isLoading: boolean;
+  error: Error | null;
 }) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['peer-comparison-trend', outletCode, monthLabel, peerCodes.join(',')],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      p.set('outletCode', outletCode);
-      p.set('month', monthLabel);
-      if (peerCodes.length > 0) p.set('peers', peerCodes.slice(0, 20).join(','));
-      const res = await fetch(`/api/peer-comparison/trend?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error');
-      return res.json() as Promise<TrendResponse>;
-    },
-    enabled,
-  });
-
   const chartData = (data?.weeks || []).map(w => ({
     week: w.weekLabel,
     target: +(w.devBomTarget * 100).toFixed(2),

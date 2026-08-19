@@ -28,7 +28,6 @@ import {
   queryHistoricalCategoryAvg,
   queryDeviationBreakdown,
   queryAreaAnalysis,
-  queryItemConsistency,
   queryHistoricalStats,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -382,7 +381,7 @@ export async function GET(req: NextRequest) {
 
     // Rev 2: Fetch previous period + historical category data for comparison
     const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
-    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, breakdown, trendAggRows, consistencyItems,
+    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, breakdown, trendAggRows,
       // Previous period category data (Rev 2)
       prevWasteRows, prevSusutRows, prevTrialRows, prevLossSurplusRows,
       // Historical category averages (Rev 2)
@@ -399,7 +398,6 @@ export async function GET(req: NextRequest) {
       queryAreaAnalysis(week, month, filterOpts),
       queryDeviationBreakdown(week, month, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
-      queryItemConsistency(week, month, filterOpts),
       // Rev 2: Previous period category data
       prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'waste', 100) : Promise.resolve([]),
       prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'susut', 100) : Promise.resolve([]),
@@ -475,7 +473,6 @@ export async function GET(req: NextRequest) {
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
-    const itemConsistencyAnalysis = { systemic: consistencyItems.filter(i => i.consistency === 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', occurrences: i.outletCount, avgDevBom: i.avgDevBom, absNominal: i.totalAbsNominal })), episodic: consistencyItems.filter(i => i.consistency !== 'SYSTEMIC').map(i => ({ itemName: i.itemName, outletCode: '', area: '', absNominal: i.totalAbsNominal, devBom: i.avgDevBom })), items: consistencyItems.map(i => ({ itemName: i.itemName, outletCount: i.outletCount, lossOutlets: i.lossOutlets, surplusOutlets: i.surplusOutlets, totalAbsNominal: i.totalAbsNominal, avgDevBom: i.avgDevBom, consistency: i.consistency })) };
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
     // Build data object for document
@@ -489,7 +486,6 @@ export async function GET(req: NextRequest) {
       deviationBreakdown: breakdownEnriched,
       areaAnalysis: areaAnalysisRaw.map(a => ({ area: a.area, outletCount: a.outletCount, totalSales: a.totalSales, totalAbsNominal: a.totalAbsNominal, avgDevBom: a.avgDevBom, lossToSales: a.lossToSales })),
       varianceAnalysis,
-      itemConsistencyAnalysis,
       topDeviasiRank,
       trend,
       durationMs: Date.now() - startedAt,
