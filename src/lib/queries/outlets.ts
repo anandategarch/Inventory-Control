@@ -611,13 +611,16 @@ export async function queryRestoRecommendations(
           SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
           COUNT(DISTINCT ir."itemId") as "itemCount",
           COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" THEN 1 END) as "toleranceBreachCount",
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" * 2 THEN 1 END) as "toleranceBreachHighCount",
-          COUNT(CASE WHEN ir."zScore" IS NOT NULL AND ir."zScore" > 2 THEN 1 END) as "zScoreAbnormalCount",
-          COUNT(CASE WHEN ir."zScore" IS NOT NULL AND ir."zScore" > 1 THEN 1 END) as "zScoreWarningCount",
-          COUNT(CASE WHEN ir."benchmarkFlag" = 'HISTORICAL_HIGH' THEN 1 END) as "benchmarkHighCount",
-          COUNT(CASE WHEN ir."benchmarkFlag" = 'HISTORICAL_WARNING' THEN 1 END) as "benchmarkWarningCount",
-          COUNT(CASE WHEN ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" THEN 1 END) as "toleranceBreachCount",
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" * 2 THEN 1 END) as "toleranceBreachHighCount",
+          -- zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison.
+          -- Use pctQtyDeviasiToBom > 0.20 as proxy for "abnormal" (high deviation ratio)
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.20 THEN 1 END) as "zScoreAbnormalCount",
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.10 THEN 1 END) as "zScoreWarningCount",
+          -- benchmarkFlag not available — use high devBom as proxy
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.30 THEN 1 END) as "benchmarkHighCount",
+          0 as "benchmarkWarningCount",
+          COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
           MAX(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 ELSE 0 END) as "hasNoTolerance",
           SUM(CASE WHEN ir."nominalLossSurplus" > 10000000 THEN 1 ELSE 0 END) as "highLossItem",
           ir.direction as "outletDirection"
