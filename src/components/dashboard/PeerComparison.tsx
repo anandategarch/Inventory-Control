@@ -269,6 +269,12 @@ export function PeerComparison() {
             <div className="py-12 flex items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
+          ) : !mainData && !mainError ? (
+            // FIX FE-1: When query is disabled (e.g., no outlet selected), show
+            // "waiting" state instead of "Error: Unknown" (!mainData?.success = true)
+            <p className="text-center text-muted-foreground py-12 text-sm">
+              Pilih outlet untuk melihat peer comparison
+            </p>
           ) : mainError || !mainData?.success ? (
             <p className="text-center text-red-600 py-12">
               Error: {mainError?.message || mainData?.error || 'Unknown'}
@@ -760,6 +766,12 @@ function ItemLevelComparison({
           <div className="flex items-center justify-center py-6">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
+        ) : !data && !error ? (
+          // FIX FE-2: When query is disabled (no outlet selected), show waiting state
+          // instead of "Error: Unknown" (!data?.success = true when data=undefined)
+          <p className="text-center text-xs text-muted-foreground py-4">
+            Pilih outlet untuk melihat item-level comparison
+          </p>
         ) : error || !data?.success ? (
           <p className="text-center text-xs text-red-600 py-4">
             Error: {error?.message || data?.error || 'Unknown'}

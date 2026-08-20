@@ -615,6 +615,8 @@ export async function queryRestoRecommendations(
           -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
           SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
           SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
+          -- FIX CALC2-2: qtyDeviasiLoss = SUM(ABS(qtyDeviasi) WHERE LOSS) — for correct residualRatio (LOSS/LOSS)
+          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."absQtyDeviasi" ELSE 0 END) as "qtyDeviasiLoss",
           COUNT(DISTINCT ir."itemId") as "itemCount",
           COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
           -- FIX CALC-2: use ABS() on both sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
@@ -671,6 +673,7 @@ export async function queryRestoRecommendations(
         COALESCE(oa."itemCount", 0) as "itemCount",
         COALESCE(oa."deviatingItems", 0) as "deviatingItems",
         COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
+        COALESCE(oa."qtyDeviasiLoss", 0) as "qtyDeviasiLoss",
         COALESCE(oa."residualNominal", 0) as "residualNominal",
         COALESCE(oa."toleranceBreachCount", 0) as "toleranceBreachCount",
         COALESCE(oa."toleranceBreachHighCount", 0) as "toleranceBreachHighCount",
@@ -767,7 +770,10 @@ export async function queryRestoRecommendations(
     const s3Score = Math.min(100, zScoreAbnormalCount * 20);
 
     // Signal 4: Residual Ratio (10%)
-    const residualRatio = totalQtyDeviasi > 0 ? Math.abs(residualQty) / totalQtyDeviasi : 0;
+    // FIX CALC2-2: use qtyDeviasiLoss (LOSS-only) as denominator, not totalQtyDeviasi (ALL items).
+    // residualQty is LOSS-only, so ratio should be LOSS/LOSS for correct proportion.
+    const qtyDeviasiLoss = Number(r.qtyDeviasiLoss || 0);
+    const residualRatio = qtyDeviasiLoss > 0 ? Math.abs(residualQty) / qtyDeviasiLoss : 0;
     const s4Score = Math.min(100, residualRatio * 100);
 
     // Signal 5: Loss/Sales Ratio (8%)
@@ -827,7 +833,7 @@ export async function queryRestoRecommendations(
     if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
     if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
     if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 20% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
-    if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${totalQtyDeviasi.toLocaleString('id-ID')} total deviasi tidak terjelaskan`);
+    if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
     if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
     if (directionFlip) analysis.push(`Arah deviasi berubah: ${prevDirection} → ${direction}`);
     if (itemConcentration > 0.3 && topItem) analysis.push(`Item "${topItem}" kontribusi ${(itemConcentration * 100).toFixed(0)}% dari total deviasi`);

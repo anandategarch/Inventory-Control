@@ -7664,3 +7664,1197 @@ Stage Summary:
 - Migration script: scripts/migrate-direction.ts (run once to fix existing DB data)
 - Lint clean. Page loads HTTP 200.
 - Pushed to GitHub: 0d41e49
+
+---
+Task ID: AUDIT-API2
+Agent: API & Backend Auditor v2
+Task: Deep audit of all API routes, error handling, security, performance, migration endpoint
+
+Work Log:
+- Read /home/z/my-project/worklog.md (tail) for prior context (FIX-CALC-SIGN, sign-convention fixes, migrate-direction script).
+- Read core lib files: db.ts, cache.ts, rate-limit.ts, month-resolver.ts, settings.ts, validation.ts, ingestion.ts (600 lines), excel.ts, csv-parser.ts, drive-import.ts.
+- Read middleware.ts (new migrate-direction protection verified).
+- Read migrate-direction/route.ts (POST + GET dry-run) and scripts/migrate-direction.ts (idempotent CLI version).
+- Read all API routes: analysis (772 lines), recommendations, peer-comparison (3 routes), outlet-items (562 lines), item-history (300 lines), drilldown, export-report (751 lines), status, ingest, ingest-upload, ingest-process (538 lines), import-drive, settings, data, pic, pic/import, setup.
+- Read queries/shared.ts (buildSqlFilters) and queries/outlets.ts (queryRestoRecommendations, queryPeerComparison).
+- Verified instrumentation.ts (BigInt.prototype.toJSON polyfill — safe for our magnitudes).
+- Cross-checked validation.ts schema exports vs actual usage in routes.
+- Cross-checked analysisCache.clear() call sites vs analysisCache.set() usages.
+- Verified migrate-direction route: idempotency, NULL handling, NEUTRAL handling, rate limiting, middleware protection, cache invalidation.
+
+Stage Summary:
+
+================== HIGH (security / broken behavior) ==================
+
+- **BUG API2-1 (HIGH, peer-comparison route `limit` param uncapped + NaN crash)** — `src/app/api/peer-comparison/route.ts:27`.
+  - Description: `const limit = parseInt(url.searchParams.get('limit') || '10');` — NO upper bound, NO NaN fallback. Recommendations route was already fixed to cap at 50 (line 22), drilldown caps at 500 (line 29), peer-comparison/items caps at 20 (line 38) — but the main peer-comparison route was MISSED. Two problems:
+    1. `?limit=abc` → `parseInt('abc')` = `NaN`. Passed to `queryPeerComparison` → `LIMIT ${NaN + 1}` → `LIMIT NaN`. Prisma's `pg` driver rejects NaN parameter → route crashes with HTTP 500 instead of graceful 400.
+    2. `?limit=999999999` → no cap. SQL `LIMIT 1000000000` returns at most the natural peer count (~50 outlets), so not a true DoS vector, but inconsistent with sibling routes and could amplify bandwidth if peer set is large.
+  - Impact: Unauthenticated GET (peer-comparison is read-only, no middleware protection) — attacker can crash the route by sending `?limit=abc`. Affects availability.
+  - Proposed fix:
+    ```ts
+    const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '10', 10) || 10), 100);
+    ```
+
+- **BUG API2-2 (HIGH, validation.ts schemas are dead code — 6 routes bypass input validation)** — `src/lib/validation.ts:37,45,52,65`.
+  - Description: `analysisQuerySchema`, `drilldownQuerySchema`, `settingsPostBodySchema`, `settingsDeleteQuerySchema` are EXPORTED but NEVER IMPORTED anywhere in the codebase. Verified via grep — only definition sites, no usage sites. The 6 affected routes manually parse `url.searchParams.get(...)` with NO length cap, NO format check, NO type coercion:
+    - `analysis/route.ts:125-132` — month/week/area/outlet/item/pic all raw strings, no max-length.
+    - `drilldown/route.ts:23-29` — same.
+    - `outlet-items/route.ts:54-60` — same.
+    - `item-history/route.ts:44-49` — same.
+    - `peer-comparison/route.ts:22-27` + `peer-comparison/items/route.ts:33-38` + `peer-comparison/trend/route.ts:41-44` — same.
+    - `settings/route.ts:84-86` — `body.values` parsed without schema.
+  - Impact: An attacker can send `?month=<10MB string>` — Prisma escapes (no SQL injection), but the DB query planner still receives a 10MB string parameter, slowing down parsing. More importantly, the routes can't gracefully reject malformed input (e.g., `?limit=abc` crashes peer-comparison per API2-1). The Zod schemas exist to fix exactly this — they're just not wired up.
+  - Proposed fix: Import the schemas and call `safeParse` in each route. Example for analysis:
+    ```ts
+    import { safeParse, analysisQuerySchema } from '@/lib/validation';
+    const { data, error } = safeParse(analysisQuerySchema, Object.fromEntries(url.searchParams.entries()));
+    if (error) return NextResponse.json({ success: false, error: `Invalid params: ${error}` }, { status: 400 });
+    const { month, week, ... } = data;
+    ```
+    Repeat for drilldown, outlet-items, item-history, peer-comparison (3 routes), and settings POST.
+
+- **BUG API2-3 (HIGH, migrate-direction POST & GET share rate-limit key — collision blocks legitimate migrations)** — `src/app/api/migrate-direction/route.ts:20,89`.
+  - Description: Both handlers use the SAME rate-limit key prefix:
+    - POST (line 20): `rateLimit('migrate-direction:' + ip, 5, 60_000)` — 5 req/min
+    - GET (line 89): `rateLimit('migrate-direction:' + ip, RATE_LIMITS.analysis.maxRequests, ...)` — 60 req/min
+    The `rate-limit.ts` Map is keyed by the raw string. Whichever call arrives FIRST sets the bucket with ITS maxRequests; the second call sees the existing bucket but applies ITS OWN maxRequests to determine `allowed`. Behavior:
+    - If GET fires first (60/min bucket): POST then sees count=N, applies maxRequests=5. If 5 GETs already happened, POST is REJECTED (count=5 > 5).
+    - If POST fires first (5/min bucket): GET then sees count=N, applies maxRequests=60. GET is allowed up to 60.
+    The bucket size depends on call ordering — non-deterministic.
+  - Impact: An attacker (or normal user doing GET dry-runs) can exhaust POST's 5/min budget by issuing GETs first, blocking the actual migration. Or vice versa — POSTs can starve GET dry-runs.
+  - Proposed fix: Use distinct keys per method:
+    ```ts
+    // POST
+    rateLimit(`migrate-direction:POST:${ip}`, 5, 60_000);
+    // GET
+    rateLimit(`migrate-direction:GET:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    ```
+    Also: define a dedicated `RATE_LIMITS.migrate` entry (e.g., `{ maxRequests: 5, windowMs: 60_000 }`) instead of hardcoding `5, 60_000` inline.
+
+================== MEDIUM (correctness / perf / dead code) ==================
+
+- **BUG API2-4 (MEDIUM, migrate-direction route skips rows with NULL nominalLossSurplus)** — `src/app/api/migrate-direction/route.ts:38,46,54`.
+  - Description: All three UPDATE statements guard with `WHERE "nominalLossSurplus" IS NOT NULL AND ...`. Rows with `nominalLossSurplus IS NULL` are NEVER migrated — their `direction` column stays whatever it was (possibly inverted from the old computeDirection bug).
+  - Impact: If any InventoryRecord has NULL nominalLossSurplus (rare — should always have a value), its `direction` remains inverted after migration. Downstream queries that read `ir.direction` directly (e.g., items.ts, outlet-items.ts:168 `MAX(ir.direction)`) would show the wrong direction for those rows.
+  - Mitigation: Most queries now recompute direction from `nominalLossSurplus` sign on-the-fly (CALC-1 fix), so the stored `direction` column is largely unused. But the stored value is still read in a few places.
+  - Proposed fix: Either (a) delete the `direction` column entirely (since it's recomputed everywhere), or (b) add a fourth UPDATE for NULL nominalLossSurplus:
+    ```sql
+    -- For NULL nominalLossSurplus, fall back to nominalDeviasi sign
+    UPDATE "InventoryRecord"
+    SET direction = CASE
+      WHEN "nominalDeviasi" < 0 THEN 'LOSS'
+      WHEN "nominalDeviasi" > 0 THEN 'SURPLUS'
+      ELSE 'NEUTRAL'
+    END
+    WHERE "nominalLossSurplus" IS NULL AND direction IS NULL;
+    ```
+
+- **BUG API2-5 (MEDIUM, migrate-direction route does NOT clear caches or write audit log)** — `src/app/api/migrate-direction/route.ts:17-83`.
+  - Description: After a successful POST migration, the route does NOT:
+    1. Call `analysisCache.clear()` — technically a no-op (see API2-9) but defensive hygiene.
+    2. Call `statusCache.clear()` — not strictly needed (status doesn't expose direction), but consistent with other mutation routes.
+    3. Call `clearMonthResolverCache()` — not needed (direction change doesn't affect monthLabel mapping).
+    4. Write an `auditLog` entry — INCONSISTENT with every other mutation route (settings POST/DELETE, pic POST/DELETE, data DELETE, ingest, ingest-process all write audit logs).
+  - Impact: Migration is a destructive, one-time operation that flips direction on potentially hundreds of thousands of rows. Without an audit log entry, there's no record of WHO ran it, WHEN, or what the before/after counts were (the response is lost after the HTTP request closes).
+  - Proposed fix:
+    ```ts
+    import { analysisCache, statusCache } from '@/lib/cache';
+    // ...after the 3 UPDATEs succeed:
+    analysisCache.clear();  // defensive — currently a no-op but future-proofs
+    statusCache.clear();    // defensive — status doesn't expose direction but cache is shared
+    await db.auditLog.create({
+      data: {
+        action: 'MIGRATE_DIRECTION',
+        detail: `Migrated ${total} records: LOSS ${beforeLoss}→${afterLoss}, SURPLUS ${beforeSurplus}→${afterSurplus}, updated=${lossUpdated + surplusUpdated + neutralUpdated}`,
+        duration: Date.now() - startedAt,
+      },
+    });
+    ```
+
+- **BUG API2-6 (MEDIUM, analysis route fire-and-forget audit log may not persist on Vercel)** — `src/app/api/analysis/route.ts:756-764`.
+  - Description: `db.auditLog.create({...}).catch((e) => {...});` is NOT awaited. On Vercel serverless, after `return NextResponse.json(result)` executes, the lambda is frozen within milliseconds. The pending DB write may not complete before the lambda is killed. The `.catch()` prevents unhandled rejection warnings, but the audit log entry is silently lost.
+  - Impact: Audit logs for ANALYSIS requests (the most frequently-called endpoint) are unreliable. If you need to track who viewed what data, this is a data-loss bug.
+  - Proposed fix: Use Next.js 16's `after()` API (from `next/server`) to run the audit log AFTER the response is sent, with Vercel's grace period guaranteeing completion:
+    ```ts
+    import { after } from 'next/server';
+    // ...after assembling result:
+    after(async () => {
+      await db.auditLog.create({
+        data: {
+          action: 'ANALYSIS',
+          detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} outlet=${outletCode || 'ALL'} | ${currentRecs.length} records`,
+          duration: Date.now() - startedAt,
+        },
+      }).catch((e) => console.error('[analysis] audit log failed:', e));
+    });
+    return NextResponse.json(result);
+    ```
+    Alternative: just `await db.auditLog.create({...})` before the return — adds ~50-100ms but guarantees persistence.
+
+- **BUG API2-7 (MEDIUM, settings.ts ensureDefaultSettings() runs createMany on EVERY analysis request)** — `src/lib/settings.ts:337-362,367-379,464-465`.
+  - Description: `getRuntimeThresholds()` → `getAllSettings()` → `await ensureDefaultSettings()` → `db.setting.createMany({ data, skipDuplicates: true })`. This means EVERY call to `/api/analysis`, `/api/outlet-items`, `/api/item-history`, `/api/export-report`, `/api/recommendations` triggers an INSERT attempt of ~33 setting rows (all skipped due to `skipDuplicates: true`). The `CACHE_TTL_MS = 0` comment says "always read from DB", but it doesn't mention the write attempt.
+  - Impact: Each analysis request does 1 extra DB write (attempted INSERT of 33 rows, all skipped). On PostgreSQL with skipDuplicates, this is ~5-10ms overhead per request. With 100 concurrent users, that's 100 redundant write attempts per second. Wasteful and could hit connection-pool limits on Supabase (connection_limit=3 per the db.ts config).
+  - Proposed fix: Add a module-level boolean flag `_defaultsEnsured` that's set to true after the first successful `ensureDefaultSettings()` call. Skip subsequent calls:
+    ```ts
+    let _defaultsEnsured = false;
+    export async function ensureDefaultSettings(force = false): Promise<void> {
+      if (_defaultsEnsured && !force) return;
+      // ... existing createMany logic ...
+      _defaultsEnsured = true;
+    }
+    ```
+    Caveat: on Vercel serverless, each lambda instance has its own module state, so the flag only persists within one warm instance. But warm instances serve many requests, so this still saves ~99% of the redundant writes. Cold starts still do one createMany.
+
+- **BUG API2-8 (MEDIUM, settings.ts getThresholdsVersion() + _thresholdsVersionCache are dead code)** — `src/lib/settings.ts:404,408-420`.
+  - Description: `getThresholdsVersion()` is exported but NEVER imported or called anywhere (grep confirms only the definition + a comment in analysis/route.ts:145 saying "Cache disabled — no need for thresholdsVersion in cache key"). The `_thresholdsVersionCache` and `_thresholdsVersionAt` variables are declared but never read. The `invalidateSettingsCache()` function sets `_thresholdsVersionCache = null` (line 404) — a no-op since the cache is never populated.
+  - Impact: Dead code — confusing for maintainers. ~30 lines of unused logic.
+  - Proposed fix: Delete `getThresholdsVersion`, `_thresholdsVersionCache`, `_thresholdsVersionAt`, `VERSION_CACHE_TTL_MS`, and the `_thresholdsVersionCache = null;` line in `invalidateSettingsCache()`.
+
+- **BUG API2-9 (MEDIUM, analysisCache.clear() is called in 8 places but analysisCache is never .set() — all calls are no-ops)** — `src/lib/cache.ts:66` + 8 call sites.
+  - Description: `analysisCache = new LRUCache<string, unknown>(200, 5 * 60 * 1000)` is exported. Grep for `analysisCache.set` finds ZERO call sites — only a comment in `analysis/route.ts:748` saying "DISABLED: analysisCache.set — in-memory cache unreliable in serverless". Yet `analysisCache.clear()` is called in 8 places (ingestion.ts:420, pic/route.ts:75,117, pic/import/route.ts:118, data/route.ts:249, settings/route.ts:180,250, ingest-process/route.ts:485). All 8 calls are no-ops because the cache is always empty.
+  - Impact: Dead code — misleading. Maintainers may think cache invalidation is working when it's not. Also, the `analysisCache` instance itself wastes ~1KB of memory (empty Map).
+  - Proposed fix: Either (a) delete `analysisCache` entirely and remove all 8 `.clear()` calls (recommended — the cache is intentionally disabled), OR (b) re-enable the cache with `analysisCache.set(cacheKey, result)` in the analysis route and keep the `.clear()` calls. Option (a) is safer; option (b) requires careful cache-key design (must include month/week/area/outlet/item/pic + thresholds version).
+
+- **BUG API2-10 (MEDIUM, ingest-upload vs ingest-process extension allowlist mismatch)** — `src/app/api/ingest-upload/route.ts:54` vs `src/app/api/ingest-process/route.ts:29`.
+  - Description: ingest-upload accepts only `.xlsx` and `.csv` (line 54). ingest-process's `SAFE_EXT_ALLOWLIST` includes `.xls` in addition (line 29). If a `.xls` file somehow reached ingest-process (e.g., via a future code path that bypasses upload validation), it would be accepted by process but rejected by upload. Currently safe because:
+    - ingest-upload is the only path that creates FileChunk rows.
+    - ingest-process reads chunks from DB (created by upload).
+    - import-drive filters to `.xlsx` only (drive-import.ts:131).
+  - Impact: No immediate bug, but the inconsistency is a maintenance trap. If someone adds a new upload path that allows `.xls`, ingest-process would accept it but `parseExcelFile` (excel.ts:124) calls `wb.xlsx.readFile()` which expects the OOXML format — `.xls` (BIFF8) would fail to parse.
+  - Proposed fix: Align both allowlists. Either remove `.xls` from ingest-process (recommended — ExcelJS doesn't support BIFF8 reliably), or add `.xls` to ingest-upload AND add BIFF8 parsing support. Recommended: remove `.xls` from `SAFE_EXT_ALLOWLIST` in ingest-process.
+
+- **BUG API2-11 (MEDIUM, processIngestion in-process lock is per-instance — TOCTOU on Vercel)** — `src/lib/ingestion.ts:58-66,127-136`.
+  - Description: `ingestionLocks = new Set<string>()` is module-level. On Vercel serverless, each lambda invocation has its own module instance, so the lock is per-instance. Two concurrent invocations processing the SAME file (same filePath) would both pass `acquireIngestionLock()` (different instances), both check `db.sourceFile.findUnique({ where: { fileHash } })` (both see no existing record), both proceed to create a SourceFile and insert rows.
+  - Mitigation: The `fileHash` unique constraint would cause one invocation to fail with P2002 on `db.sourceFile.create()` (line 233). But the failure happens AFTER parsing the entire Excel file (expensive — 5-15s for large files). Both invocations parse the same file in parallel, wasting CPU + memory.
+  - Further mitigation: `db.inventoryRecord.createMany({ skipDuplicates: true })` (line 371) silently drops duplicates at the DB level, so the second invocation's inserts are no-ops. But the SourceFile P2002 error would propagate up and fail the second invocation with HTTP 500.
+  - Impact: Wasted compute (parallel Excel parsing of same file) + confusing error for the second caller. Not a data-integrity issue (skipDuplicates + unique constraint prevent duplicates).
+  - Proposed fix: Use a database-level advisory lock (PostgreSQL `pg_advisory_xact_lock(hash))` wrapped around the fileHash check + create. Example:
+    ```sql
+    SELECT pg_advisory_xact_lock(hashtext($fileHash));
+    -- then check + create SourceFile
+    ```
+    This ensures only one invocation processes a given fileHash at a time, even across lambda instances. Alternative: use Vercel's durable storage (Redis/Upstash) for distributed locking.
+
+- **BUG API2-12 (MEDIUM, peer-comparison/items route has no LIMIT on peer_outlets CTE)** — `src/app/api/peer-comparison/items/route.ts:84-93`.
+  - Description: The `peer_outlets` CTE selects all outlets within ±10% sales of the target. There's no LIMIT on the CTE itself. The final query does `CROSS JOIN target_top_items × peer_outlets`, then `GROUP BY` per (item, outlet). For a target with many peers (e.g., 50 outlets within ±10% sales) and `topItems=20`, the result is up to 1000 rows. The route then groups these in JS (`itemMap`). No memory issue for typical data, but if the sales distribution is tight (many outlets with identical sales), peer count could spike.
+  - Impact: For an unusual sales distribution, the query could return many rows. Not a true DoS (peer count is bounded by total outlet count, typically <500), but could be slow.
+  - Proposed fix: Add `LIMIT 50` to the `peer_outlets` CTE (consistent with peer-comparison route's default limit of 10, max 100):
+    ```sql
+    peer_outlets AS (
+      SELECT ... FROM "Outlet" o
+      JOIN sales_mode sm ON o.id = sm."outletId"
+      CROSS JOIN target t
+      WHERE COALESCE(sm.sales, 0) > 0
+        AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1
+      LIMIT 50
+    )
+    ```
+
+================== LOW (minor / hygiene / edge cases) ==================
+
+- **BUG API2-13 (LOW, drilldown route returns full record + 4 relations for up to 500 records)** — `src/app/api/drilldown/route.ts:53-58`.
+  - Description: `db.inventoryRecord.findMany({ where, include: { outlet: true, item: true, week: true, sourceFile: true }, take: limit })` with `limit` capped at 500. Each record includes 4 full relation objects. For 500 records, the response payload could be ~2-5MB.
+  - Impact: Bandwidth + memory. The `outlet` and `item` objects are duplicated across records (same outlet appears N times). Could be normalized to a separate `outlets`/`items` array.
+  - Proposed fix: Use `select` instead of `include` to pick only the fields actually used in the response mapping (lines 63-104). Or normalize the response to avoid duplicate relation objects.
+
+- **BUG API2-14 (LOW, rate-limit.ts buckets Map grows unbounded between cleanup cycles)** — `src/lib/rate-limit.ts:15-23`.
+  - Description: `cleanup()` runs every 60s and deletes expired entries. Between cleanup cycles, new entries accumulate. Under high traffic (1000 unique IPs/min), the Map grows to ~1000 entries before cleanup. Each entry is ~50 bytes → ~50KB. Not a real memory leak, but the cleanup interval (60s) is hardcoded.
+  - Impact: Minor — ~50KB peak memory per 1000 unique IPs. Acceptable.
+  - Proposed fix: None needed. If concerned, reduce cleanup interval to 10s, or use an LRU eviction policy on the Map.
+
+- **BUG API2-15 (LOW, settings POST percent auto-normalization is surprising)** — `src/app/api/settings/route.ts:118-129`.
+  - Description: For `dataType: 'percent'`, if user enters `n > 1`, the code divides by 100: `n = n / 100; value = String(n);`. So `50` → `0.5` (correct), `5` → `0.05` (correct), `0.5` → `0.5` (already normalized, no change). BUT `1.5` → `0.015` (surprising — user likely meant 150%, got 1.5%). The threshold between "already normalized" and "needs division" is `> 1`, but legitimate percent values can be > 1 (e.g., 150% = 1.5 in ratio form).
+  - Impact: If a user sets "Batas Maksimal Deviasi/BOM" to `1.5` (meaning 150%), it's stored as `0.015` (1.5%), silently breaking anomaly detection (threshold too low → everything flagged as abnormal).
+  - Proposed fix: Document the convention clearly in the UI ("Enter as decimal: 0.05 = 5%"). OR reject values > 1 with an error: "Percent values must be between 0 and 1 (e.g., 0.05 for 5%). Use 1.0 for 100%." OR add a `dataType: 'percent0-100'` for 0-100 input and `dataType: 'percent0-1'` for 0-1 input.
+
+- **BUG API2-16 (LOW, migrate-direction uses inline rate-limit config instead of RATE_LIMITS)** — `src/app/api/migrate-direction/route.ts:20`.
+  - Description: POST uses `rateLimit('migrate-direction:' + ip, 5, 60_000)` — hardcoded `5, 60_000`. GET uses `RATE_LIMITS.analysis.maxRequests` (60/min). Inconsistent style — every other route uses `RATE_LIMITS.X`. The hardcoded `5` is also undocumented (why 5?).
+  - Impact: Minor — config is scattered. Hard to tune rate limits globally.
+  - Proposed fix: Add `migrate: { maxRequests: 5, windowMs: 60_000 }` to `RATE_LIMITS` in rate-limit.ts, and use it in both handlers (with distinct keys per API2-3).
+
+- **BUG API2-17 (LOW, ingest-process DELETE doesn't validate fileHash format)** — `src/app/api/ingest-process/route.ts:520-537`.
+  - Description: The DELETE handler accepts `fileHash` from the request body and passes it directly to `db.fileChunk.deleteMany({ where: { fileHash } })`. No format validation (unlike the POST handler at line 31-49 which uses `SAFE_FILEHASH_RE`). Prisma escapes the value (no SQL injection), but a malicious `fileHash` could be a very long string or contain special chars.
+  - Impact: Minor — Prisma parameterizes, so no injection. But inconsistent with POST validation. An attacker could send `fileHash: ""` (empty) → `deleteMany({ where: { fileHash: "" } })` → deletes 0 rows (no FileChunk has empty hash). Harmless but should be rejected at the validation layer.
+  - Proposed fix: Reuse `validateFileMetadata` (or a simpler `SAFE_FILEHASH_RE.test(fileHash)`) before the deleteMany.
+
+- **BUG API2-18 (LOW, import-drive manualFileName length not capped)** — `src/app/api/import-drive/route.ts:43-51`.
+  - Description: `resolveManualFileName(validatedBody.manualFileName)` validates format (sanitizes special chars, ensures extension) but doesn't cap length. The `importDriveBodySchema` in validation.ts:30 caps at `z.string().max(255)`, but import-drive route doesn't use that schema for `manualFileName` — it only validates `url` and `numberLocale` via the schema, then calls `resolveManualFileName` separately. Wait, actually re-reading: `safeParse(importDriveBodySchema, body)` IS called (line 36), and the schema includes `manualFileName: z.string().max(255).optional()`. So the length IS capped at 255.
+  - Actually — verified OK. The schema does cap manualFileName at 255 chars. No bug here. Removing this finding.
+  - (Self-correction: this was a false positive after re-reading the schema.)
+
+- **BUG API2-19 (LOW, settings POST handler doesn't use settingsPostBodySchema)** — `src/app/api/settings/route.ts:84-86`.
+  - Description: `const body = await req.json(); const values = body.values || {};` — manual parsing, no `safeParse(settingsPostBodySchema, body)`. The schema exists in validation.ts:37 but is unused. The handler does validate keys against `SETTING_DEFINITIONS` and values by `dataType`, so the actual security impact is low. But the schema would also enforce `.strict()` (reject unknown top-level keys) and `updatedBy: z.string().max(100)` (cap length).
+  - Impact: Minor — `updatedBy` could be an arbitrarily long string (no max-length check). Stored in DB as `updatedBy` field. Wasted storage + potential for very large audit log entries.
+  - Proposed fix: `const { data, error } = safeParse(settingsPostBodySchema, body); if (error) return 400;`
+
+- **BUG API2-20 (LOW, analysis route error log lacks request context)** — `src/app/api/analysis/route.ts:768`.
+  - Description: `console.error('Analysis error:', e);` — doesn't include month/week/area/outlet/item/pic. When an error occurs, the log shows only the error stack, not which request triggered it. Hard to reproduce.
+  - Impact: Minor — debugging is harder. Other routes (recommendations, peer-comparison, etc.) prefix with `[route-name]` but also lack request context.
+  - Proposed fix: Include filter context in the error log:
+    ```ts
+    console.error('[analysis] error:', e, { month, week, area, outletCode, itemName, pic });
+    ```
+
+- **BUG API2-21 (LOW, migrate-direction GET dry-run count query could be slow on large DBs)** — `src/app/api/migrate-direction/route.ts:100-108`.
+  - Description: The GET dry-run runs:
+    ```sql
+    SELECT COUNT(*) FROM "InventoryRecord"
+    WHERE "nominalLossSurplus" IS NOT NULL
+      AND (
+        ("nominalLossSurplus" < 0 AND direction != 'LOSS')
+        OR ("nominalLossSurplus" > 0 AND direction != 'SURPLUS')
+        OR ("nominalLossSurplus" = 0 AND direction != 'NEUTRAL')
+      )
+    ```
+    This is a full table scan with no index on `(nominalLossSurplus, direction)`. On 500K rows, this could take 1-3 seconds. Plus the two `COUNT` queries before/after (lines 112-113) add ~1s each.
+  - Impact: GET dry-run could take 3-5s on large DBs. Acceptable within the 60s maxDuration, but slow for a "preview" endpoint.
+  - Proposed fix: Add a composite index on `("nominalLossSurplus", direction)` to speed up the inverted-count query. Or cache the dry-run result for 60s (since it doesn't change between requests unless a migration runs).
+
+================== NO BUG (verified OK) ==================
+
+- **INFO API2-22** — `src/middleware.ts:20-27,62-72,93` — Constant-time token comparison implemented correctly (XOR + accumulate, length check returns false early which leaks length but not content — acceptable). Fail-closed in production when `ADMIN_TOKEN` unset. `/api/migrate-direction` added to `PROTECTED_PATHS` (line 38) and matcher (line 114). GET (dry-run) is also protected because the matcher covers all methods on protected paths, but middleware line 54-57 only blocks `PROTECTED_METHODS` (POST/PUT/DELETE/PATCH) — so GET on `/api/migrate-direction` is actually PUBLIC. This is fine (dry-run is read-only), but inconsistent with the checklist assumption that "migrate-direction POST — protected? (should be)". POST IS protected. ✓
+
+- **INFO API2-23** — `src/lib/queries/shared.ts:13-40` (buildSqlFilters) — All user inputs passed via `Prisma.sql\`...${var}...\`` tagged template literals → parameterized. `Prisma.join(opts.picOutletCodes)` is also parameterized. No string concatenation of user input. Safe from SQL injection. ✓
+
+- **INFO API2-24** — `src/app/api/migrate-direction/route.ts:35-57` — All three UPDATE statements use `db.$executeRaw\`...\`` tagged template literals. No user input is interpolated (the SQL is fully static). Safe from SQL injection. ✓
+
+- **INFO API2-25** — `src/lib/db.ts:70-78` — Prisma client is a singleton via Proxy lazy getter. Not created per request. ✓
+
+- **INFO API2-26** — `src/lib/cache.ts:11-64` — LRUCache has TTL (default 5min), `get()` checks expiry, `has()` refreshes recency. `clear()` empties the map. Implementation correct. ✓
+
+- **INFO API2-27** — `src/lib/rate-limit.ts:62-75` — `getClientIP` correctly prefers `x-vercel-forwarded-for` (trusted edge) over `x-forwarded-for` (spoofable). Falls back to last IP in XFF (closest to trusted proxy), not first. ✓
+
+- **INFO API2-28** — `src/lib/month-resolver.ts:41-53,76-78` — `_monthLabelCache` is module-level, invalidated by `clearMonthResolverCache()`. Called after every mutation that changes SourceFile set (ingestion.ts:429, data/route.ts:256, ingest-process/route.ts:492). `resolveMonthLabel` is case-insensitive (line 68: `label.toLowerCase()`). ✓
+
+- **INFO API2-29** — `src/lib/ingestion.ts:307-339` — Race-safe outlet/item creation via `db.outlet.upsert` / `db.item.upsert` (atomic, no P2002). ✓
+
+- **INFO API2-30** — `src/lib/ingestion.ts:369-381` — Batch insert via `db.inventoryRecord.createMany({ data, skipDuplicates: true })` with `BATCH_SIZE = 2000`. Uses actual `result.count` (not batch length) for total. ✓
+
+- **INFO API2-31** — `src/app/api/ingest-upload/route.ts:64-69,99-114` — Per-chunk size validation (5MB) BEFORE `arrayBuffer()` (avoids OOM). Total size validated server-side by summing actual chunk lengths (NOT trusting client `fileSize`). Cleanup on oversize. ✓
+
+- **INFO API2-32** — `src/app/api/ingest-process/route.ts:28-49,136-151` — `validateFileMetadata` rejects non-hex fileHash and non-allowlist extensions BEFORE `reassembleFile` (prevents path traversal via `../../etc/cron.d/evil` in fileHash). ✓
+
+- **INFO API2-33** — `src/app/api/import-drive/route.ts:58-71` — SSRF protection: allowlist of Google domains (`drive.google.com`, `docs.google.com`, `drive.usercontent.google.com`). Subdomain matching via `endsWith('.' + d)`. ✓
+
+- **INFO API2-34** — `src/lib/drive-import.ts:108,123,128,187` — Regex patterns bounded with `{0,500}`, `{1,200}`, `{1,300}` to prevent ReDoS catastrophic backtracking. ✓
+
+- **INFO API2-35** — `src/lib/excel.ts:74-83` — `hashFile` uses streaming `pipeline(createReadStream, hash)` — O(1) memory, no `fs.readFile`. ✓
+
+- **INFO API2-36** — `src/lib/excel.ts:137` — Column loop capped at `Math.min(ws.columnCount, 100)` to prevent performance issues with merged cells reporting columnCount=16384. ✓
+
+- **INFO API2-37** — `src/lib/csv-parser.ts:29-49` — Streaming CSV parser via `csv-parse` + `createReadStream`. Yields 1 row at a time. ~5MB total memory. ✓
+
+- **INFO API2-38** — `src/app/api/status/route.ts:30-33,115` — `statusCache` (TTL 5min, size 1) checked before DB queries. Cleared by ingestion.ts:423, data/route.ts:250, pic/route.ts:76,118, pic/import/route.ts:119 after mutations. ✓
+
+- **INFO API2-39** — `src/app/api/data/route.ts:152-158,204-209,232-237` — All cascade deletes wrapped in `db.$transaction([...])` for atomicity. Counts captured BEFORE delete (correct — can't count after rows are gone). ✓
+
+- **INFO API2-40** — `src/app/api/settings/route.ts:150-167,228-244` — Bulk upserts wrapped in `db.$transaction([...])`. Partial failures roll back. ✓
+
+- **INFO API2-41** — `src/app/api/pic/import/route.ts:88-107` — Bulk PIC import splits into `toCreate` (createMany with skipDuplicates) and `toUpdate` (transaction of updates). Uses actual `result.count` for created count (not picRecords.length). ✓
+
+- **INFO API2-42** — `src/instrumentation.ts:12-20` — `BigInt.prototype.toJSON` polyfill coerces BigInt to Number during JSON serialization. Safe for our magnitudes (all values < Number.MAX_SAFE_INTEGER). Prevents "Do not know how to serialize a BigInt" errors in API routes that return raw SQL aggregate results. ✓
+
+- **INFO API2-43** — `src/app/api/migrate-direction/route.ts:51-57` — NEUTRAL case handled: `"nominalLossSurplus" = 0 AND direction != 'NEUTRAL'` → sets to NEUTRAL. Idempotent (guarded by `direction != 'X'`). ✓
+
+- **INFO API2-44** — `src/app/api/migrate-direction/route.ts:34-57` — Uses 3 atomic UPDATE statements (not a JS loop with per-row updates). Single query per direction. Safe to run concurrently (idempotent guards prevent double-update). ✓
+
+- **INFO API2-45** — `src/app/api/analysis/route.ts:117-123,333-377,463-509` — Rate limiting applied BEFORE any DB query. Pre-SQL metadata queries run in parallel (`Promise.all`). SQL aggregate queries run in parallel (15 queries via `Promise.all`). Rule evaluation loop is single-pass O(n). ✓
+
+- **INFO API2-46** — `src/app/api/export-report/route.ts:736-745` — `Packer.toBuffer(doc)` generates the .docx in memory, then returns as `Uint8Array`. For typical reports (~50 pages, ~500KB), this is fine. Could OOM for very large reports (>1000 pages), but `topNItems` is capped at 10 and `topDeviasiRank` at 500, bounding the size. ✓
+
+- **INFO API2-47** — `src/lib/queries/outlets.ts:581-714` — `queryRestoRecommendations` runs 2 parallel queries (current + prev) via `Promise.all`. All aggregations pushed to SQL (no N+1). Single JS pass for priority scoring. ✓
+
+================== NEXT ACTIONS (priority order, do NOT apply per task constraints) ==================
+
+1. **BUG API2-1 (HIGH)** — Cap peer-comparison `limit` param at 100 + NaN fallback. One-line fix.
+2. **BUG API2-3 (HIGH)** — Use distinct rate-limit keys for migrate-direction POST vs GET. One-line fix per handler.
+3. **BUG API2-2 (HIGH)** — Wire up validation.ts schemas in 6 routes (analysis, drilldown, outlet-items, item-history, peer-comparison ×3, settings POST). Larger refactor — ~50 lines per route.
+4. **BUG API2-5 (MEDIUM)** — Add audit log + cache clear to migrate-direction POST. ~10 lines.
+5. **BUG API2-6 (MEDIUM)** — Use `after()` or `await` for analysis route audit log. ~5 lines.
+6. **BUG API2-7 (MEDIUM)** — Add `_defaultsEnsured` flag to skip redundant `ensureDefaultSettings` calls. ~5 lines.
+7. **BUG API2-4 (MEDIUM)** — Handle NULL nominalLossSurplus in migrate-direction (or delete the direction column). ~10 lines.
+8. **BUG API2-8 + API2-9 (MEDIUM)** — Delete dead code: `getThresholdsVersion`, `_thresholdsVersionCache`, `analysisCache` + 8 `.clear()` calls. ~50 lines removed.
+9. **BUG API2-10 (MEDIUM)** — Align ingest-upload and ingest-process extension allowlists. 1 line.
+10. **BUG API2-11 (MEDIUM)** — Add PostgreSQL advisory lock around fileHash check + SourceFile create in processIngestion. ~10 lines.
+11. **BUG API2-12 (MEDIUM)** — Add `LIMIT 50` to peer_outlets CTE in peer-comparison/items. 1 line.
+12. **BUG API2-13 through API2-21 (LOW)** — Address individually if time permits. Most are 1-5 line fixes.
+
+================== SUMMARY ==================
+
+Files audited: 25+ (all API routes, all lib files in audit scope, middleware, migrate-direction).
+Total findings: 21 bugs (3 HIGH, 9 MEDIUM, 9 LOW) + 26 verified-OK items.
+
+HIGH severity (3): API2-1 (peer-comparison uncapped limit + NaN crash), API2-2 (validation.ts schemas unused — 6 routes bypass validation), API2-3 (migrate-direction rate-limit key collision).
+
+MEDIUM severity (9): API2-4 (NULL nominalLossSurplus skipped in migration), API2-5 (migrate-direction no audit log / cache clear), API2-6 (analysis fire-and-forget audit log may not persist), API2-7 (ensureDefaultSettings runs on every request), API2-8 (getThresholdsVersion dead code), API2-9 (analysisCache.clear() called 8× but never .set() — all no-ops), API2-10 (ext allowlist mismatch), API2-11 (processIngestion lock per-instance — TOCTOU), API2-12 (peer_outlets CTE no LIMIT).
+
+LOW severity (9): API2-13 (drilldown payload size), API2-14 (rate-limit map growth), API2-15 (percent auto-normalization surprising), API2-16 (migrate-direction inline rate-limit config), API2-17 (ingest-process DELETE no fileHash validation), API2-19 (settings POST no schema), API2-20 (analysis error log lacks context), API2-21 (migrate-direction GET dry-run slow on large DBs).
+
+NO BUG verified: 26 items (middleware auth, SQL parameterization, Prisma singleton, cache TTL, rate-limit IP extraction, month-resolver invalidation, race-safe upserts, batch inserts, chunk size validation, path traversal protection, SSRF allowlist, ReDoS bounds, streaming hash, BigInt polyfill, migrate-direction idempotency + NEUTRAL handling + atomic UPDATEs, parallel SQL queries, etc.).
+
+Key positive findings:
+- migrate-direction route is correctly idempotent, parameterized, rate-limited, middleware-protected, handles NEUTRAL case.
+- All `$queryRaw` / `$executeRaw` use tagged template literals (no SQL injection).
+- Prisma client is a singleton (no per-request instantiation).
+- All cache invalidation calls are present after mutations (analysisCache.clear is a no-op but harmless).
+- BigInt globally polyfilled via instrumentation.ts.
+- Path traversal, SSRF, ReDoS, chunk-size OOM all defended.
+
+---
+Task ID: AUDIT-FE
+Agent: Frontend Components Auditor
+Task: Deep audit of all frontend components, UI/UX, a11y, state management, responsive
+
+Work Log:
+- Read worklog.md tail (last 250 lines) for context — CALC-1 sign convention fix already applied (LOSS = net < 0, SURPLUS = net > 0).
+- Read core foundation: src/app/layout.tsx, src/app/page.tsx, src/hooks/useDashboard.ts, src/hooks/useAnalysis.ts, src/lib/format.ts, src/lib/a11y.ts, src/components/providers.tsx, src/app/globals.css.
+- Read all 18 dashboard + filter components listed in audit scope (7350 total lines).
+- Cross-referenced prior audit findings: AUDIT-3 (Error: Unknown), UI-1 (KPICard keyboard), UI-2 (MenuAnalysis keyboard), UI-6 (badge dark mode).
+- Verified Zustand store actions (setPic/setOutlet/setArea/setFocusOutlet/setMonth/setWeek/reset) against audit checklist.
+- Searched for hydration risks (new Date, Date.now, Math.random, window, localStorage) in render paths.
+- Verified scorecardOutlet and comparisonMode usage across codebase (both dead state).
+
+Stage Summary:
+
+================== HIGH severity (user-facing broken behavior) ==================
+
+- **BUG FE-1 (HIGH, PeerComparison main table "Error: Unknown" when query disabled)** — `src/components/dashboard/PeerComparison.tsx:272-275`.
+  - Description: Prior AUDIT-3 fix was only applied to the trend sub-component (line 879 has `!data ?` guard showing "Menunggu peer data..."), NOT to the main peer table or the items table. When `activeOutlet` is set but `monthLabel` or `currentWeek` is missing, the main query is disabled (`enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek))`). In this state: `mainLoading=false`, `mainError=null`, `mainData=undefined`. The check `mainError || !mainData?.success` evaluates to `null || true` → shows `Error: Unknown`. The early-return at line 137 (`if (!activeOutlet)`) only catches the no-outlet case, not the no-month/week case.
+  - Impact: On first page load (before monthLabel auto-sets via useEffect in page.tsx), if user clicks Peer Comparison tab, they see "Error: Unknown" briefly. Also visible if month/week is somehow cleared.
+  - Proposed fix: Add `!mainData && !mainError` guard before the error check:
+    ```tsx
+    ) : !mainData && !mainError ? (
+      <p className="text-center text-muted-foreground py-12 text-xs">
+        Menunggu periode dipilih...
+      </p>
+    ) : mainError || !mainData?.success ? (
+      <p className="text-center text-red-600 py-12">
+        Error: {mainError?.message || mainData?.error || 'Unknown'}
+      </p>
+    ) : ...
+    ```
+
+- **BUG FE-2 (HIGH, PeerComparison items table "Error: Unknown" when query disabled)** — `src/components/dashboard/PeerComparison.tsx:763-766`.
+  - Description: Same root cause as FE-1, in `ItemLevelComparison`. The check `error || !data?.success` evaluates to `null || true` when query is disabled (data=undefined, error=null). Shows `Error: Unknown`.
+  - Impact: Same as FE-1 — visible during initial load edge case.
+  - Proposed fix: Mirror the trend table's pattern — add `!data ?` guard before the error check:
+    ```tsx
+    ) : !data ? (
+      <p className="text-center text-xs text-muted-foreground py-4">
+        Menunggu data item...
+      </p>
+    ) : error || !data?.success ? (
+      <p className="text-center text-xs text-red-600 py-4">
+        Error: {error?.message || data?.error || 'Unknown'}
+      </p>
+    ) : ...
+    ```
+
+- **BUG FE-3 (HIGH, ExecutiveSummary KPI cards lack keyboard support — UI-1 not fixed)** — `src/components/dashboard/ExecutiveSummary.tsx:54-57, 105, 113, 121, 129`.
+  - Description: `KPICard` (line 54-57) and 4 inline Cards (lines 105, 113, 121, 129) have `onClick={...}` and `cursor-pointer` class but NO `role="button"`, `tabIndex={0}`, or `onKeyDown` handler. Keyboard users cannot tab to these cards or activate them with Enter/Space. Screen readers announce them as static content, not interactive.
+  - Impact: 6 KPI cards + 4 summary cards (10 total) are mouse-only. Violates WCAG 2.1 Level A (SC 2.1.1 Keyboard).
+  - Proposed fix: Apply `clickableRowProps` from `@/lib/a11y` to each clickable Card:
+    ```tsx
+    <Card
+      className={`relative overflow-hidden transition-all ${drillDown ? 'cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md' : ''}`}
+      {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
+    >
+    ```
+    Or wrap the Card content in a `<button>` element. Same pattern for the 4 inline Cards at lines 105/113/121/129.
+
+- **BUG FE-4 (HIGH, RestoAnalysis MenuAnalysis item rows lack keyboard support — UI-2 not fixed)** — `src/components/dashboard/RestoAnalysis.tsx:636-658`.
+  - Description: `MenuAnalysis` renders each item as a `<div onClick={...} className="cursor-pointer hover:bg-muted/50">`. No `role="button"`, `tabIndex`, or `onKeyDown`. Keyboard users cannot navigate the menu items or trigger the drill-down. The sibling Bahan Analysis table (line 314) correctly uses `clickableRowProps`, but MenuAnalysis does not.
+  - Impact: Menu Analysis section (which can have 50+ item rows) is mouse-only. Violates WCAG 2.1 SC 2.1.1.
+  - Proposed fix: Apply `clickableRowProps`:
+    ```tsx
+    <div
+      key={item.itemName}
+      className={`flex items-center justify-between text-xs py-1 px-2 rounded cursor-pointer hover:bg-muted/50 ${item.isOutlier ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+      {...clickableRowProps(() => onSelectItem({ outletCode, itemName: item.itemName }))}
+    >
+    ```
+
+- **BUG FE-5 (HIGH, FileUploadDialog drop zone not keyboard accessible)** — `src/components/filters/FileUploadDialog.tsx:522-570`.
+  - Description: The file drop zone is a `<div>` with `onClick={() => fileInputRef.current?.click()}` and `onDrop`. The actual `<input type="file">` is `className="hidden"` (display:none), removing it from the tab order. The drop zone div has no `role`, `tabIndex`, or `onKeyDown`. Keyboard-only users CANNOT trigger file selection at all — the primary upload workflow is inaccessible.
+  - Impact: Complete keyboard lockout of the file upload feature. Violates WCAG 2.1 Level A (SC 2.1.1 Keyboard, SC 4.1.2 Name/Role/Value).
+  - Proposed fix: Two options:
+    1. (Preferred) Add a visible `<Button>` that triggers the input:
+       ```tsx
+       <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
+         <Upload className="h-4 w-4 mr-2" /> Pilih File
+       </Button>
+       <input ref={fileInputRef} type="file" accept=".xlsx,.csv" onChange={handleFileSelect} className="sr-only" />
+       ```
+       (`sr-only` keeps input focusable but visually hidden; `display:none` removes from a11y tree.)
+    2. Make the div keyboard-accessible:
+       ```tsx
+       <div
+         role="button"
+         tabIndex={0}
+         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+         aria-label="Pilih file Excel untuk upload"
+         ...
+       >
+       ```
+       AND change `className="hidden"` to `className="sr-only"` on the input.
+
+- **BUG FE-6 (HIGH, Charts LossVsSurplusChart has INVERTED LOSS/SURPLUS labels — post CALC-1 fix)** — `src/components/dashboard/Charts.tsx:178, 180`.
+  - Description: `FormulaInfo` formula reads `"LOSS: NET Deviation > 0 (actual > SOC)  |  SURPLUS: NET Deviation < 0 (actual < SOC)"`. After the CALC-1 sign convention fix (commit 0d41e49), LOSS = `nominalLossSurplus < 0` and SURPLUS = `nominalLossSurplus > 0`. The label is INVERTED. Similarly, the example at line 180 says `"qtyLossSurplus = +50 → LOSS  |  qtyLossSurplus = -30 → SURPLUS"` — also inverted (should be +50→SURPLUS, -30→LOSS).
+  - Impact: Users reading the formula tooltip see incorrect direction convention, contradicting the actual data. Confusing for analysts who rely on the formula to interpret the chart.
+  - Proposed fix: Flip both lines:
+    ```tsx
+    formula="LOSS: NET Deviation < 0 (actual > SOC, negative sign)  |  SURPLUS: NET Deviation > 0 (actual < SOC, positive sign)"
+    example="qtyLossSurplus = -50 → LOSS  |  qtyLossSurplus = +30 → SURPLUS"
+    ```
+
+================== MEDIUM severity (functional issues, dead code, dark mode gaps) ==================
+
+- **BUG FE-7 (MEDIUM, RestoRecommendationCard direction/flag badges lack dark mode — UI-6 not fixed)** — `src/components/dashboard/RestoRecommendationCard.tsx:165-210`.
+  - Description: 9 badges in the "Direction + trend indicators" section (lines 165-210) use light-mode-only classes like `text-red-600 border-red-200` and `text-amber-600 border-amber-200` with NO `dark:` variants. The `levelColor` function (line 92-96) and `scoreColor` (line 98-102) DO have dark variants, but the inline badges do not. In dark mode, these badges render with insufficient contrast (light red/amber text on dark background without proper dark palette).
+  - Impact: Poor contrast in dark mode for 9 badges per recommendation card (up to 5 cards = 45 badges). Readability suffers.
+  - Proposed fix: Add dark variants to each badge. For example, line 165-169:
+    ```tsx
+    <Badge variant="outline" className={`text-[9px] ${
+      r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' :
+      r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900' : ''
+    }`}>
+    ```
+    Apply same pattern to all 9 badges (Flip, Memburuk, Residual, Tol Breach High, Anomali, High Loss, No Tol, Bench High).
+
+- **BUG FE-8 (MEDIUM, useDashboard.setArea does NOT clear pic)** — `src/hooks/useDashboard.ts:52`.
+  - Description: `setArea: (v) => set({ area: v, outletCode: null, focusOutlet: null, scorecardOutlet: null })` clears outlet/focus/scorecard but NOT `pic`. Audit checklist item 13 explicitly requires "Selecting area — clears outlet + pic". After selecting area, the pic filter remains. The outlet dropdown (FilterBar line 77-81) filters by BOTH area AND pic — if pic doesn't belong to the new area, the outlet list shows empty results, confusing the user.
+  - Impact: After changing area, outlet dropdown may show no results if the retained pic isn't in that area. User must manually clear PIC to see outlets.
+  - Proposed fix: Add `pic: null` to setArea:
+    ```ts
+    setArea: (v) => set({ area: v, pic: null, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
+    ```
+
+- **BUG FE-9 (MEDIUM, scorecardOutlet is dead state — set but never read)** — `src/hooks/useDashboard.ts:31, 52, 55, 65-66` + `src/components/dashboard/InsightsPanel.tsx:250, 270`.
+  - Description: `scorecardOutlet` state is declared, initialized to null, has a setter `setScorecardOutlet`, is cleared by `setArea`/`setPic`, and is SET by `InsightsPanel.onAction` (line 270: `setScorecardOutlet(value)`). However, NO component ever READS `scorecardOutlet` — grep for `s.scorecardOutlet` or `.scorecardOutlet` (excluding declarations) returns zero matches. The state is written but never consumed.
+  - Impact: Dead code. `reset()` (line 56) doesn't clear scorecardOutlet, but it doesn't matter since nothing reads it. Adds confusion to the store interface.
+  - Proposed fix: Remove `scorecardOutlet` and `setScorecardOutlet` from the store. Remove the `setScorecardOutlet(value)` call in InsightsPanel line 270. Also remove `scorecardOutlet: null` from setArea (line 52) and setPic (line 55). OR, if a scorecard feature was planned, implement the consumer.
+
+- **BUG FE-10 (MEDIUM, comparisonMode is dead state — no setter, never read)** — `src/hooks/useDashboard.ts:14, 48`.
+  - Description: `comparisonMode: 'previous_week' | 'historical_average'` is declared in the interface and initialized to `'previous_week'`, but there is NO `setComparisonMode` action, and no component reads it. The `'historical_average'` mode was never implemented. Also declared in `src/types/inventory.ts:190` (also unused there).
+  - Impact: Dead code. Misleading — suggests a feature that doesn't exist.
+  - Proposed fix: Remove `comparisonMode` from both `useDashboard.ts` and `types/inventory.ts`. OR implement the historical_average mode if planned.
+
+- **BUG FE-11 (MEDIUM, RestoAnalysis Bahan Analysis has single-tab TabsList — dead state)** — `src/components/dashboard/RestoAnalysis.tsx:286-294`.
+  - Description: The Bahan Analysis section wraps a single `TabsTrigger value="financial"` in a `TabsList className="grid w-full grid-cols-1"`, with `TabsContent value={rankingTab}` (where rankingTab is initialized to 'financial'). A single-tab Tabs is functionally a label — the Tabs/TabsList/TabsTrigger/TabsContent machinery is unnecessary overhead. The `rankingTab` state and `setRankingTab` setter are also dead (only one option).
+  - Impact: Dead code. Confusing for future maintainers who might think more tabs were planned.
+  - Proposed fix: Remove the Tabs wrapper, render the table directly:
+    ```tsx
+    <CardContent>
+      <div className="overflow-x-auto max-h-[500px] overflow-y-auto border rounded-md">
+        <Table>...</Table>
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-2">...</p>
+    </CardContent>
+    ```
+    Remove `rankingTab`/`setRankingTab` state (line 83) and `rankings` multi-key structure if only 'financial' is used.
+
+- **BUG FE-12 (MEDIUM, InsightsPanel TrendingDown icon used for "Memburuk" — inverted semantics)** — `src/components/dashboard/InsightsPanel.tsx:184-189`.
+  - Description: The "Tren Biaya Neto Memburuk" (worsening) insight uses `<TrendingDown className="h-4 w-4" />` (line 186). The body text says "Net cost ratio naik dari X% → Y%" (cost going UP). TrendingDown visually indicates a downward trend, but the cost is going UP. The icon contradicts the message. Conversely, line 194 uses `<TrendingUp />` for "Membaik" (improving, cost going DOWN) — also inverted.
+  - Impact: Visual confusion — users glance at the icon and may misinterpret the trend direction.
+  - Proposed fix: Swap the icons:
+    - Line 186: Change `<TrendingDown />` to `<TrendingUp />` (cost rising = worsening)
+    - Line 194: Change `<TrendingUp />` to `<TrendingDown />` (cost falling = improving)
+    OR use `<AlertTriangle />` for worsening and `<CheckCircle2 />` for improving to avoid direction ambiguity.
+
+- **BUG FE-13 (MEDIUM, PeerComparison EfficiencyScoreCard doesn't handle peerAvg=0)** — `src/components/dashboard/PeerComparison.tsx:387-394`.
+  - Description: `safeDiv = (a, b) => (b > 0 ? a / b : 0)`. When `peerAvg.devBom === 0` (all peers have 0 deviation), `safeDiv(target.devBom - 0, 0)` returns 0 → `devBomPenalty = Math.min(50, 0 * 25) = 0`. So a target with devBom=0.2 (20%) vs peerAvg=0 gets NO penalty, scoring 100/100. Same issue for lossPenalty (peerAvg.totalLoss=0), residualPenalty, salesPenalty. The efficiency score is misleadingly high when peers have zero values.
+  - Impact: Target outlet appears "efficient" even with significant deviation, if peers happen to have zero values (e.g., new outlets with no data).
+  - Proposed fix: When peerAvg=0, use absolute target value for penalty instead of ratio:
+    ```ts
+    const devBomPenalty = peerAvg.devBom > 0
+      ? Math.min(50, safeDiv(target.devBom - peerAvg.devBom, peerAvg.devBom) * 25)
+      : Math.min(50, target.devBom * 100); // absolute penalty when no peer baseline
+    ```
+    Or display "N/A — peer baseline is zero" instead of a score.
+
+- **BUG FE-14 (MEDIUM, SettingsDialog fetchSettings/saveMutation/resetMutation don't check res.ok or content-type)** — `src/components/filters/SettingsDialog.tsx:51-54, 118-123, 158-160`.
+  - Description: `fetchSettings` (line 51-54) does `const res = await fetch('/api/settings'); return res.json();` — no `res.ok` check, no content-type check. If the server crashes and returns HTML, `res.json()` throws a parse error with an unhelpful message. Same for `saveMutation.mutationFn` (line 118-123) and `resetMutation.mutationFn` (line 158-160). Other hooks (useAnalysis, useDrilldown, FilterBar.handleIngest) all have the content-type guard pattern.
+  - Impact: If server crashes during settings save, user sees "Network error" or a JSON parse error instead of a helpful "Server error" message.
+  - Proposed fix: Apply the standard content-type guard:
+    ```ts
+    async function fetchSettings(): Promise<SettingsData> {
+      const res = await fetch('/api/settings');
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash.`);
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+    ```
+    Apply same pattern to saveMutation and resetMutation.
+
+- **BUG FE-15 (MEDIUM, SettingsDialog migrateMutation doesn't invalidate ['item-history'])** — `src/components/filters/SettingsDialog.tsx:213-216`.
+  - Description: The "Fix Direction Data" migration button invalidates `['analysis']`, `['outlet-items']`, `['recommendations']`, `['peer-comparison']` — but NOT `['item-history']`. The item-history API (`/api/item-history`) returns `direction` field in timeline records, which is affected by the migration. If a user has the ItemDetailModal open (which uses useDrilldown/item-history), the cached data shows stale direction values after migration.
+  - Impact: Stale direction labels in ItemDetailModal after running migration. User must close and reopen the modal to see corrected data.
+  - Proposed fix: Add `queryClient.invalidateQueries({ queryKey: ['item-history'] })` after line 215.
+
+- **BUG FE-16 (MEDIUM, CardDrillDown loss/surplus descriptions have INVERTED sign convention — post CALC-1)** — `src/components/dashboard/CardDrillDown.tsx:116-117, 130`.
+  - Description: `loss` config description (line 117): `"Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi > 0)"`. `surplus` config description (line 130): `"Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi < 0)"`. After CALC-1 fix, LOSS = `nominalLossSurplus < 0` (negative), SURPLUS = `nominalLossSurplus > 0` (positive). The descriptions use the OLD convention. The actual filter (line 125, 139) uses `o.direction === 'LOSS'` which is correct (direction is derived correctly post-fix), but the description text is wrong.
+  - Impact: Tooltip text contradicts actual data convention. Confusing for analysts.
+  - Proposed fix: Update descriptions:
+    ```ts
+    loss: { ... description: 'Outlet dengan total LOSS tertinggi (actual > SOC, nominalLossSurplus < 0)' }
+    surplus: { ... description: 'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalLossSurplus > 0)' }
+    ```
+
+- **BUG FE-17 (MEDIUM, RestoRecommendationCard uses text-[9px] for badges — too small for a11y)** — `src/components/dashboard/RestoRecommendationCard.tsx:165, 172, 177, 182, 187, 192, 197, 202, 207`.
+  - Description: 9 flag badges use `text-[9px]` (9px font size). WCAG 2.1 SC 1.4.4 recommends minimum 12px for readability; 9px is below most accessibility guidelines. On high-DPI displays this may be legible, but on standard displays it's difficult to read, especially for users with visual impairments.
+  - Impact: Poor readability for 9 badges per card (up to 5 cards = 45 badges). Affects users with low vision.
+  - Proposed fix: Increase to `text-[10px]` minimum (or `text-[11px]` for better readability). If space is tight, consider abbreviating badge labels instead of shrinking font.
+
+- **BUG FE-18 (MEDIUM, RestoRecommendationCard silently fails on error — return null)** — `src/components/dashboard/RestoRecommendationCard.tsx:84-86`.
+  - Description: `if (error || !data?.success) { return null; }` — the entire card disappears on error, with no console.log, no toast, no error boundary. The comment says "silently fail — don't block dashboard", which is a valid design choice (don't let a secondary card break the page). However, complete silence means: (1) developers can't debug failed recommendation fetches, (2) users don't know the feature exists but is broken, (3) no telemetry on failure rate.
+  - Impact: Recommendations may be silently broken for weeks without anyone noticing. Acceptable for non-critical features, but should at least log.
+  - Proposed fix: At minimum, log to console for debugging:
+    ```tsx
+    if (error || !data?.success) {
+      if (error) console.warn('[RestoRecommendationCard] fetch failed:', error.message);
+      return null;
+    }
+    ```
+    Optionally show a tiny "Recommendations unavailable" badge in the card's place, or surface a non-blocking toast on first failure.
+
+================== LOW severity (minor issues, edge cases) ==================
+
+- **BUG FE-19 (LOW, ExecutiveSummary progress bars missing role="progressbar" a11y attrs)** — `src/components/dashboard/ExecutiveSummary.tsx:254-258, 282-283`.
+  - Description: The stacked health-status progress bar (line 254-258) and the per-category progress bars (line 282-283) use `<div className="h-2 rounded-full ..."><div style={{ width: `${pct}%` }} /></div>` — no `role="progressbar"`, `aria-valuenow`, `aria-valuemin`, `aria-valuemax`. Screen readers don't announce these as progress indicators. Compare to PeerComparison.tsx:421 which correctly uses `role="progressbar" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100}`.
+  - Impact: Screen reader users don't hear progress percentages. Minor a11y gap.
+  - Proposed fix: Add ARIA attributes:
+    ```tsx
+    <div className="flex h-2 rounded-full overflow-hidden bg-muted" role="progressbar" aria-valuenow={total > 0 ? Math.round((normal/total)*100) : 0} aria-valuemin={0} aria-valuemax={100} aria-label="Health status distribution">
+    ```
+
+- **BUG FE-20 (LOW, RestoAnalysis RankingNasionalCard selects lack aria-label)** — `src/components/dashboard/RestoAnalysis.tsx:724-750`.
+  - Description: Three native `<select>` elements (topN, filterPic, filterResto) have no `aria-label` or associated `<label>`. Screen readers announce them as generic "combo box" without context. Compare to PeerComparison.tsx:222 which has `aria-label="Mode periode"`.
+  - Impact: Screen reader users can't tell which filter each select controls.
+  - Proposed fix: Add `aria-label` to each:
+    ```tsx
+    <select aria-label="Jumlah item ditampilkan" ...>
+    <select aria-label="Filter PIC" ...>
+    <select aria-label="Filter resto" ...>
+    ```
+
+- **BUG FE-21 (LOW, RestoAnalysis RankingNasionalCard rankNominal not null-guarded)** — `src/components/dashboard/RestoAnalysis.tsx:783`.
+  - Description: `<TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>` — if `it.rankNominal` is null/undefined (e.g., item excluded from ranking), React renders nothing (empty cell). The adjacent `rankBom` cell (line 784) correctly uses `it.rankBom != null ? it.rankBom : '—'`. Inconsistent.
+  - Impact: Empty cell with no visual indicator. Minor — rankNominal should always be set, but defensive coding is better.
+  - Proposed fix: `{it.rankNominal != null ? it.rankNominal : '—'}`
+
+- **BUG FE-22 (LOW, PeerComparison uses native <select> elements — inconsistent + small touch target)** — `src/components/dashboard/PeerComparison.tsx:218, 227`.
+  - Description: Mode and peerLimit selectors use native `<select>` with `className="h-7 text-xs border rounded px-2 bg-background"`. Height h-7 = 28px, below the 44px minimum touch target (WCAG 2.1 SC 2.5.5). Also inconsistent with the rest of the app which uses shadcn `<Select>` component.
+  - Impact: Minor — difficult to tap on mobile, visually inconsistent.
+  - Proposed fix: Use shadcn `<Select>` with `h-9` trigger, OR increase native select to `h-9`.
+
+- **BUG FE-23 (LOW, layout.tsx has suppressHydrationWarning but no theme provider)** — `src/app/layout.tsx:28`.
+  - Description: `<html lang="id" suppressHydrationWarning>` — `suppressHydrationWarning` is typically used with `next-themes` ThemeProvider to avoid hydration mismatch when the theme class is injected on the client. However, no ThemeProvider is installed (no `next-themes` import anywhere). The app relies on CSS `prefers-color-scheme` via `.dark` class (globals.css line 81), but there's no mechanism to toggle/add the `.dark` class. So dark mode styles in components are effectively dead (only apply if user manually adds `.dark` to `<html>`).
+  - Impact: Dead attribute. Dark mode is configured but inaccessible to users (no toggle).
+  - Proposed fix: Either (a) remove `suppressHydrationWarning` if dark mode isn't a priority, or (b) install `next-themes` and add a ThemeProvider + dark mode toggle button in the header.
+
+- **BUG FE-24 (LOW, FilterBar Reset button doesn't clear time period — ambiguous labeling)** — `src/hooks/useDashboard.ts:56`.
+  - Description: `reset: () => set({ area: null, outletCode: null, itemName: null, pic: null, focusOutlet: null })` — clears filter selections but NOT `monthLabel`, `currentWeek`, `comparisonWeek`, `comparisonMonth`. The button label is "Reset" (FilterBar line 308), which is ambiguous — users might expect it to clear everything including time period.
+  - Impact: User confusion — "Reset" may not meet expectations. Currently safe (time period is auto-managed by useEffects), but the label is misleading.
+  - Proposed fix: Rename button to "Reset Filter" for clarity, OR clear time period too (but then monthLabel auto-set useEffect will re-trigger, which may cause a brief loading flash).
+
+- **BUG FE-25 (LOW, QuickSettings fetchSettingsMap doesn't check content-type)** — `src/components/dashboard/QuickSettings.tsx:50-63`.
+  - Description: `fetchSettingsMap` checks `!res.ok` (line 52) but doesn't check content-type before `res.json()`. If server crashes and returns HTML, `res.json()` throws a parse error. The `onError` handler (line 139-145) catches it and shows "Network error", but the message is unhelpful.
+  - Impact: Minor — unhelpful error message on server crash.
+  - Proposed fix: Add content-type check:
+    ```ts
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      throw new Error(`Server error (HTTP ${res.status})`);
+    }
+    ```
+
+- **BUG FE-26 (LOW, DataManagementDialog fetchDataList doesn't check content-type)** — `src/components/filters/DataManagementDialog.tsx:76-79`.
+  - Description: `fetchDataList` does `const res = await fetch('/api/data'); return res.json();` — no `res.ok` check, no content-type check. Same issue as FE-14/FE-25.
+  - Impact: Minor — unhelpful error on server crash.
+  - Proposed fix: Add content-type + res.ok checks (same pattern as useAnalysis).
+
+================== INFO (verified OK — no action needed) ==================
+
+- **INFO FE-27** — `src/lib/format.ts` fmtIDR/fmtPct/fmtPctAbs/fmtNum all correctly guard null/undefined/NaN/Infinity (lines 16, 29, 41, 48). Negative values handled via `Math.abs` + sign prefix. Locale 'id-ID' used for non-compact format. ✓
+- **INFO FE-28** — `src/lib/a11y.ts` `clickableRowProps` correctly implements `tabIndex={0}`, `role="button"`, `onKeyDown` for Enter/Space (with `e.preventDefault()` for Space to avoid page scroll). ✓
+- **INFO FE-29** — `src/hooks/useAnalysis.ts` useAnalysis has `enabled: Boolean(params.month && params.week)` guard ✓, `staleTime: 60_000` ✓, `placeholderData: keepPreviousData` ✓, content-type + res.ok check in fetchAnalysis ✓. useDrilldown has `enabled` guard ✓. useStatus has no enabled guard (always-on, acceptable for top-level status) ✓.
+- **INFO FE-30** — `src/app/page.tsx` sticky footer pattern correct: `<div className="min-h-screen flex flex-col">` (line 210) + `<main className="flex-1">` (line 258) + `<footer className="mt-auto">` (line 375). ✓
+- **INFO FE-31** — `src/components/dashboard/RestoRecommendationCard.tsx` correctly shows ALL analysis bullets (line 155: `r.analysis.map(...)` — no slice). Click handler (line 124) uses `setFocusOutlet` which switches activeTab to 'resto' ✓. Badge label uses "Anomali" not "Fraud" (line 193) ✓.
+- **INFO FE-32** — `src/components/dashboard/RestoAnalysis.tsx` rankBom NULL → '—' display (line 784: `it.rankBom != null ? it.rankBom : '—'`) ✓. RankingNasionalCard remounts on outlet change via `key={activeOutlet}` (line 350) ✓. "Pilih outlet" / "Pilih bulan" prompts present (lines 107, 119) ✓.
+- **INFO FE-33** — `src/components/dashboard/PeerComparison.tsx` trend chart correctly handles disabled state (line 879: `!data ?` shows "Menunggu peer data..." before error check) ✓. Scatter plot has fixed height `h-[280px]` (line 601) ✓. Trend chart has fixed height `h-[260px]` (line 892) ✓. Peer table has `min-w-[1400px]` + `overflow-x-auto` (line 282-283) ✓. 4 analysis cards have `peerCount > 0` guards (lines 245-256) ✓.
+- **INFO FE-34** — `src/components/filters/FilterBar.tsx` outlet dropdown filters by BOTH area AND pic (line 77-81) ✓. Selecting PIC clears outlet via `setPic` (useDashboard line 55) ✓. `flex-wrap` on filter row (line 211) ✓. Reset button disabled when no active filter (line 307) ✓.
+- **INFO FE-35** — `src/components/dashboard/ExportDialog.tsx` has loading state (line 119-125), section selection, reset on close (line 57-63) ✓. Export handler in page.tsx (line 169-203) has try/catch, toast on success/failure ✓.
+- **INFO FE-36** — `src/components/dashboard/QuickSettings.tsx` has debounced autosave (500ms), beforeunload flush via sendBeacon (line 166-183), invalidates all dependent queries (line 123-130) ✓.
+- **INFO FE-37** — `src/components/filters/DataManagementDialog.tsx` uses AlertDialog for destructive "Reset All" (line 285-321) ✓, native confirm for per-file/per-month delete (line 199, 205) ✓, invalidates all queries via invalidateAll (line 187-195) ✓.
+- **INFO FE-38** — `src/components/filters/PicManagementDialog.tsx` inline edit with Enter/Escape keyboard support (line 390-393) ✓, CSV import with validation ✓, invalidates all queries (line 195-202) ✓.
+- **INFO FE-39** — `src/components/dashboard/InsightsPanel.tsx` has dark mode styles for all 4 severity levels (line 33-62) ✓, empty state (line 317) ✓, responsive grid `md:grid-cols-2` (line 322) ✓.
+- **INFO FE-40** — No hydration risks found: `new Date()` only in API route (server-side) and DataManagementDialog (client-only, inside Dialog). `window.` only in useEffect. No `Date.now()` or `Math.random()` in render. ✓
+- **INFO FE-41** — `src/components/dashboard/TopItems.tsx`, `AdvancedAnalysis.tsx`, `AnalysisCards.tsx` all correctly apply `clickableRowProps` to clickable rows, have empty states, fixed-height ScrollArea, and `whitespace-normal` + `title` attr for long item names. ✓
+
+================== NEXT ACTIONS (priority order, do NOT apply per task constraints) ==================
+
+1. **BUG FE-1 + FE-2 (HIGH)** — Add `!data && !error` guard before error check in PeerComparison main table (line 272) and items table (line 763). Mirror the trend table's pattern at line 879.
+2. **BUG FE-3 + FE-4 (HIGH)** — Apply `clickableRowProps` to ExecutiveSummary KPI cards (10 cards) and RestoAnalysis MenuAnalysis item rows.
+3. **BUG FE-5 (HIGH)** — Fix FileUploadDialog drop zone: change input `className="hidden"` to `className="sr-only"`, add `role="button"` + `tabIndex={0}` + `onKeyDown` to drop zone div, OR add a visible Button trigger.
+4. **BUG FE-6 (HIGH)** — Flip LOSS/SURPLUS labels in Charts.tsx LossVsSurplusChart FormulaInfo (line 178, 180) to match post-CALC-1 convention.
+5. **BUG FE-7 (MEDIUM)** — Add `dark:` variants to 9 badges in RestoRecommendationCard (lines 165-210).
+6. **BUG FE-8 (MEDIUM)** — Add `pic: null` to `setArea` in useDashboard.ts:52.
+7. **BUG FE-9 + FE-10 + FE-11 (MEDIUM)** — Remove dead state: `scorecardOutlet`, `comparisonMode`, single-tab TabsList in RestoAnalysis.
+8. **BUG FE-12 (MEDIUM)** — Swap TrendingDown/TrendingUp icons in InsightsPanel nct-worsening/nct-improving insights.
+9. **BUG FE-13 (MEDIUM)** — Handle peerAvg=0 in EfficiencyScoreCard (use absolute penalty when baseline is zero).
+10. **BUG FE-14 + FE-25 + FE-26 (MEDIUM/LOW)** — Add content-type + res.ok checks to SettingsDialog, QuickSettings, DataManagementDialog fetch functions.
+11. **BUG FE-15 (MEDIUM)** — Add `['item-history']` invalidation to SettingsDialog migrateMutation.
+12. **BUG FE-16 (MEDIUM)** — Update CardDrillDown loss/surplus descriptions to post-CALC-1 sign convention.
+13. **BUG FE-17 + FE-18 (MEDIUM)** — Increase text-[9px] badges to text-[10px]+; add console.warn for RestoRecommendationCard silent fail.
+14. **BUG FE-19 through FE-24 (LOW)** — Add ARIA attrs to progress bars, aria-labels to selects, null-guard rankNominal, fix suppressHydrationWarning, rename Reset button.
+
+
+---
+Task ID: AUDIT-DB2
+Agent: Database & Types Auditor v2
+Task: Deep audit of schema, Prisma portability, types, dead code, dependencies
+
+Work Log:
+- Read prisma/schema.prisma (305 lines), src/lib/db.ts, src/lib/queries/{outlets,items,areas,dashboard,historical,shared,index}.ts (1763 lines total)
+- Read src/lib/metrics/{benchmark,definitions,deviation,growth,historical,index,sales}.ts (1005 lines), src/lib/{cache,settings,month-resolver,format,a11y,ingestion,excel,csv-parser}.ts (1655 lines)
+- Read src/types/inventory.ts (191 lines), src/hooks/{useAnalysis,useDashboard}.ts (298 lines)
+- Read src/engine/{transform,validator}.ts + src/engine/analysis/{analysis,index,rankingService,ruleService,types}.ts + src/engine/rules/evaluator.ts (1694 lines)
+- Read src/app/api/migrate-direction/route.ts (130 lines) + scripts/migrate-direction.ts (99 lines)
+- Read package.json, src/middleware.ts, src/instrumentation.ts, src/app/api/{status,analysis,data,recommendations,pic,ingest-process}/route.ts (key sections)
+- Verified dependency usage via ripgrep: 0 imports = unused.
+- Verified dead code via ripgrep: queryPeerItemComparison, computePrioritiesFromFlags, calcAvgPrice, analysisCache operations, scorecardOutlet, investigationWorklist, DashboardData/GrowthMetrics/HistoricalStats (types), SALES_MODE_SQL_CTE/HISTORICAL_STATS_SQL/BENCHMARK_SQL, computeBenchmark — all confirmed dead.
+- Confirmed 4 dead Prisma models: PeriodComparison, AggregationCache, AnomalyRule, AnomalyFlag — no `db.<model>.*` calls anywhere.
+
+Stage Summary:
+
+==============================================================
+HIGH severity findings
+==============================================================
+
+**DB2-1 (HIGH)** — `src/lib/db.ts:51-63` — Schema/runtime provider mismatch: schema.prisma locks `provider = "postgresql"`, but db.ts allows `file:` / `libsql://` URLs in dev mode and instantiates a default `new PrismaClient({})`. The generated client is postgresql-only; calling any Prisma ORM method (findMany, create, update, etc.) against a SQLite database throws `PrismaClientInitializationError: Unknown provider sqlite`. The "dev mode SQLite fallback" is broken — it appears to work for `import { db }` but the first ORM call crashes.
+- Description: `// Dev mode — allow SQLite for local development` comment is misleading. The Prisma client cannot switch providers at runtime. Schema is hardcoded to postgresql; runtime URL pointing to SQLite will crash every ORM call.
+- Proposed fix: Remove the SQLite/Turso dev branch (lines 51-63) entirely. Dev must use a local PostgreSQL instance (e.g., `docker run -e POSTGRES_PASSWORD=... postgres:16`) or a Supabase dev project. Alternative: document that dev requires `DATABASE_URL=postgresql://...` and remove the SQLite branch. Either way, the current code creates a false sense of "SQLite works in dev".
+
+**DB2-2 (HIGH)** — `src/lib/ingestion.ts:371,379,588,595` + `scripts/upload-data.ts:297,304,332` — `createMany({ skipDuplicates: true })` is PostgreSQL-only (Prisma explicitly does not support `skipDuplicates` on SQLite). Since db.ts allows SQLite in dev (per DB2-1), every ingestion in dev mode crashes with `PrismaClientValidationError`. settings.ts has a proper try/catch + upsert fallback (lines 347-360) but ingestion.ts and upload-data.ts do NOT.
+- Proposed fix: Either (a) remove SQLite dev support entirely (per DB2-1) and document PostgreSQL-only, OR (b) wrap each `createMany({ skipDuplicates: true })` in a try/catch that falls back to `createMany` without `skipDuplicates` plus a pre-flight dedup query.
+
+**DB2-3 (HIGH)** — `src/app/api/{analysis,export-report,data}/route.ts` — Three call sites use `mode: 'insensitive'` (PostgreSQL-only Prisma feature):
+  - `src/app/api/analysis/route.ts:287` — `w.item = { name: { contains: itemName, mode: 'insensitive' as any } }`
+  - `src/app/api/export-report/route.ts:282` — same pattern, `as any` suppresses TS error
+  - `src/app/api/data/route.ts:174` — `{ monthLabel: { equals: data.month, mode: 'insensitive' } }`
+- The `as any` casts hide the type error and silently break SQLite compatibility. The shared `buildSqlFilters` in queries/shared.ts:34 correctly uses `LOWER(name) LIKE LOWER(...)` for raw SQL, but these Prisma ORM calls bypass that pattern.
+- Proposed fix: Replace `mode: 'insensitive'` with raw SQL subqueries that use `LOWER() LIKE LOWER()`, OR use the `getMonthResolver()` pattern (already used for monthLabel resolution) and a similar item-name resolver for the itemName case.
+
+**DB2-4 (HIGH)** — `prisma/schema.prisma:159-180, 207-238, 254-259` — 4 dead Prisma models bloat the schema, slow down `prisma db push`, and confuse new developers:
+  - `PeriodComparison` (159-180) — never queried via `db.periodComparison.*`. The `zScore` and `benchmarkFlag` columns exist but are NEVER populated or read. The recommendation engine uses `pctQtyDeviasiToBom > 0.20` as a PROXY (outlets.ts:627, comment line 624 explicitly admits "zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison"). Already flagged as BUG REC-4 in prior audits.
+  - `AnomalyRule` (207-217) — never queried. Rules are loaded from `src/config/rules.yaml` (evaluator.ts:28), not from DB.
+  - `AnomalyFlag` (222-238) — never queried. Anomaly flags are computed in-memory by `evaluateRules()` and returned in the API response; they are NEVER persisted to DB.
+  - `AggregationCache` (254-259) — never queried. Caching is done in-memory via `LRUCache` (cache.ts).
+- Confirmed by zero `db.periodComparison|db.anomalyRule|db.anomalyFlag|db.aggregationCache` matches in `src/`.
+- Proposed fix: Drop all 4 models from schema.prisma (after confirming no migration scripts reference them). Also drop `PeriodComparison.priceGrowth` (already flagged as FINAL-SECURITY-22). Reduces schema from 14 models to 10.
+
+**DB2-5 (HIGH)** — `src/lib/metrics/definitions.ts:45-52, 213-215` — Documentation contradicts the ACTUAL implementation:
+  - Line 46-47: "Gross Deviation: Signed: positive = LOSS, negative = SURPLUS" (OLD inverted convention)
+  - Line 213-215: "Net > 0 → LOSS (over-consumption) / Net < 0 → SURPLUS" (OLD inverted convention)
+  - But `deviation.ts:32-37` (the actual `computeDirection` implementation) correctly uses: "LOSS: qtyLossSurplus < 0 / SURPLUS: qtyLossSurplus > 0"
+- The definitions.ts file is described as "Single Source of Truth" but contains the OLD inverted convention. Future developers reading definitions.ts will write code with the wrong sign.
+- Proposed fix: Update definitions.ts lines 46-47 and 213-215 to match deviation.ts: "Net < 0 → LOSS / Net > 0 → SURPLUS / Excel convention: LOSS = negative nominalLossSurplus".
+
+==============================================================
+MEDIUM severity findings
+==============================================================
+
+**DB2-6 (MEDIUM)** — `src/hooks/useAnalysis.ts:77-100` — AnalysisData type declares 13 `any` types AND has type drift with the actual API response:
+  - Line 77: `executiveSummary: any`
+  - Line 87: `dqStatus: { ok: number; warnings: number; errors: number; issues: any[] }` — TYPE DRIFT: server emits only `{ errors, warnings }` (analysis route line 720-722, with comment "`ok` and `issues` were dead — dropped"). The type still declares `ok` and `issues`.
+  - Line 88: `growthComparison: ... & Record<string, any>`
+  - Lines 89-97: `topItemsByNominal: any[]`, `topItemsByDevBom: any[]`, `topOutlets: any[]`, `topOutletsBySales: any[]`, `topItemsByWaste/Susut/Trial/LossSurplus: any[]`, `topDeviasiRank?: any[]`
+  - Line 100: `investigationWorklist: any[]` — DEAD FIELD (see DB2-9)
+- Proposed fix: (a) Update `dqStatus` type to `{ errors: number; warnings: number }` to match server; (b) Replace `any[]` with the actual row interfaces (`TopItemRow`, `TopOutletRow`, etc. — already exported from queries/*); (c) Remove `investigationWorklist` field entirely (DB2-9).
+
+**DB2-7 (MEDIUM)** — `src/lib/queries/outlets.ts:350-455` (~105 lines) — `queryPeerItemComparison` is exported but NEVER imported or called anywhere in the codebase. Confirmed via `rg "queryPeerItemComparison"` — only self-references (definition + comment in queryPeerTrend at line 461). Dead code bloats the queries module and slows TS compilation.
+- Proposed fix: Delete the entire function + its `PeerItemRow` interface (lines 338-455). If needed for future use, recover from git history.
+
+**DB2-8 (MEDIUM)** — `src/engine/analysis/rankingService.ts:126-185` (~60 lines) — `computePrioritiesFromFlags` is exported but NEVER imported. Confirmed via `rg "computePrioritiesFromFlags"` — only the definition. It's also NOT re-exported from `engine/analysis/index.ts` (which exports `buildWorklistFromFlags` but not `computePrioritiesFromFlags`). Dead code.
+- Proposed fix: Delete lines 126-185 entirely. The replacement (`buildWorklistFromFlags`) is what's actually used.
+
+**DB2-9 (MEDIUM)** — `src/app/api/analysis/route.ts:736` — Server emits `investigationWorklist: worklist` in the API response, but NO frontend component consumes it. Confirmed via `rg "investigationWorklist"` in `src/components/` and `src/app/` — zero consumers (only the API emit + the type declaration). The worklist is computed by `buildWorklistFromFlags` (which evaluates rules per record) — wasted CPU cycles on every analysis request.
+- Proposed fix: Remove the `investigationWorklist: worklist` line from the API response. Also remove `buildWorklistFromFlags` call + the `worklist` variable if no longer needed. Also remove the type field from useAnalysis.ts:100.
+
+**DB2-10 (MEDIUM)** — `src/lib/metrics/{sales:95-110, historical:172-189, benchmark:91-102}.ts` — Three SQL template string constants are exported but NEVER imported:
+  - `SALES_MODE_SQL_CTE` (sales.ts:95) — 16 lines, never used. Queries inline their own CTEs.
+  - `HISTORICAL_STATS_SQL` (historical.ts:172) — 18 lines, explicitly marked "REFERENCE ONLY... NOT used" in its own docstring (line 163-166).
+  - `BENCHMARK_SQL` (benchmark.ts:91) — 12 lines, never used.
+- Total: ~46 lines of dead SQL templates. They were intended as reusable building blocks but each query module inlined its own version instead.
+- Proposed fix: Delete all three constants + their `export` lines from the metrics barrel (index.ts:38, 46, 55).
+
+**DB2-11 (MEDIUM)** — `src/lib/metrics/benchmark.ts:51-79` (~29 lines) — `computeBenchmark` function is exported but NEVER CALLED. Confirmed via `rg "computeBenchmark"` — only the definition + a single comment reference in `outlet-items/route.ts:376` (`// 4. Benchmark — Metric Engine: computeBenchmark`). The comment lies; the function is not invoked.
+- Also: there are TWO `BenchmarkResult` interfaces with DIFFERENT shapes — `types/inventory.ts:86-95` (`outletDevBom`, `areaAvgDevBom`, `benchmarkFlag`, `ratioVsArea`, `ratioVsNetwork`) vs `metrics/benchmark.ts:30-43` (`areaMultiplier`, `networkMultiplier`, `isAboveArea`, `isAboveNetwork`, `status`, `vsBestMultiple`). Type drift / confusion.
+- Proposed fix: Delete `computeBenchmark`, `BenchmarkInput`, `BenchmarkResult`, `BENCHMARK_SQL` from metrics/benchmark.ts. Delete the dead `BenchmarkResult` from types/inventory.ts:86-95 (confirmed unused via `rg "BenchmarkResult"` — only self-references). Or, if benchmarking is desired, actually invoke `computeBenchmark` from outlet-items/route.ts (which currently has only a TODO comment).
+
+**DB2-12 (MEDIUM)** — `src/lib/cache.ts:66` + 9 call sites — `analysisCache.set` is DISABLED (analysis route line 748: `// DISABLED: analysisCache.set — in-memory cache unreliable in serverless`). But `analysisCache.clear()` is still called in 9 places:
+  - `lib/ingestion.ts:420`, `app/api/ingest-process/route.ts:485`, `app/api/settings/route.ts:180,250`, `app/api/pic/import/route.ts:118`, `app/api/pic/route.ts:75,117`, `app/api/data/route.ts:249`
+- Since `.set` is never called, `.clear()` is a no-op (map is always empty). The 9 `.clear()` calls are dead operations that mislead readers into thinking caches are being invalidated.
+- Proposed fix: Either (a) fully remove `analysisCache` from cache.ts and delete all 9 `.clear()` call sites (recommended — client-side TanStack Query handles caching), OR (b) re-enable `.set` and document the per-instance caveat.
+
+**DB2-13 (MEDIUM)** — `src/hooks/useDashboard.ts:31-32, 65-66` — `scorecardOutlet`/`setScorecardOutlet` is set in 3 places (initial value + setArea reset + setPic reset + the setter itself) but NEVER READ. Confirmed via `rg "scorecardOutlet"` — 5 matches, all in useDashboard.ts itself. No component reads `scorecardOutlet` from the store.
+- Proposed fix: Remove `scorecardOutlet` field + `setScorecardOutlet` setter + the 2 reset references in `setArea` and `setPic`.
+
+**DB2-14 (MEDIUM)** — `src/types/inventory.ts:70-77, 79-84, 159-173` — Three dead interfaces:
+  - `GrowthMetrics` (70-77) — only referenced by `DashboardData.growthComparison` (which is itself dead).
+  - `HistoricalStats` (79-84) — never imported. Note: `metrics/historical.ts:17` has a DIFFERENT `HistoricalStats` interface (with `mean`, `stdDev`, `n` fields, not `avgDevBom`, `stdDev`, `zScore`, `sampleSize`) — that one IS used. The types/inventory.ts version is the old shape.
+  - `DashboardData` (159-173) — never imported anywhere.
+- Confirmed via `rg "\bDashboardData\b|\bGrowthMetrics\b|\bHistoricalStats\b"` — only self-references.
+- Proposed fix: Delete all three interfaces (~37 lines).
+
+**DB2-15 (MEDIUM)** — `src/components/dashboard/RestoRecommendationCard.tsx:12-48` vs `src/lib/queries/outlets.ts:527-563` — DUPLICATE `RestoRecommendation` interface definitions. The backend exports one from outlets.ts; the frontend component defines its own local copy. They are currently identical (15 signal fields + 10 metric fields), but will silently drift if either side is updated without the other.
+- Proposed fix: Export `RestoRecommendation` from `@/lib/queries` (already done) and import it in RestoRecommendationCard.tsx instead of redefining. Or move the interface to `@/types/inventory` and import from both sides.
+
+**DB2-16 (MEDIUM)** — `scripts/migrate-direction.ts:48-74` + `src/app/api/migrate-direction/route.ts:35-57` — Migration does NOT handle records where `nominalLossSurplus IS NULL` but `qtyLossSurplus IS NOT NULL`. The `computeDirection` function (deviation.ts:43) falls back to `qtyDeviasi` when `qtyLossSurplus` is null. But the migration ONLY checks `nominalLossSurplus` sign:
+  - LOSS: `WHERE nominalLossSurplus IS NOT NULL AND nominalLossSurplus < 0`
+  - SURPLUS: `WHERE nominalLossSurplus IS NOT NULL AND nominalLossSurplus > 0`
+  - NEUTRAL: `WHERE nominalLossSurplus IS NOT NULL AND nominalLossSurplus = 0`
+- Records with NULL `nominalLossSurplus` are skipped entirely → their `direction` column retains whatever value was set by the OLD (inverted) `computeDirection`. These records will display with wrong direction labels in the UI.
+- Proposed fix: Add a 4th UPDATE that handles the NULL case:
+  ```sql
+  UPDATE "InventoryRecord" SET direction = CASE
+    WHEN "qtyLossSurplus" < 0 THEN 'LOSS'
+    WHEN "qtyLossSurplus" > 0 THEN 'SURPLUS'
+    WHEN "qtyLossSurplus" = 0 THEN 'NEUTRAL'
+    WHEN "qtyDeviasi" < 0 THEN 'LOSS'
+    WHEN "qtyDeviasi" > 0 THEN 'SURPLUS'
+    ELSE 'NEUTRAL'
+  END
+  WHERE "nominalLossSurplus" IS NULL AND direction IS NOT NULL
+  ```
+  Or include this logic in the existing 3 UPDATEs by using `COALESCE("nominalLossSurplus", "qtyLossSurplus", "qtyDeviasi")`.
+
+**DB2-17 (MEDIUM)** — `src/app/api/migrate-direction/route.ts:35-57` — POST route does NOT wrap the 3 sequential UPDATEs in a transaction. If the second UPDATE fails (network blip, DB connection drop), the DB is left in a partial state: some rows updated to LOSS, others still have old direction. Idempotency holds on re-run, but data is inconsistent between runs.
+- Proposed fix: Wrap the 3 `db.$executeRaw` calls in `db.$transaction([...])`.
+
+==============================================================
+LOW severity findings
+==============================================================
+
+**DB2-18 (LOW)** — `src/lib/queries.ts` (12 lines, shim) + `src/engine/analysis/analysis.ts` (10 lines, shim) — Both shim files re-export from their respective `index.ts`. They ARE used (4 imports for queries.ts via `'@/lib/queries'`; 2 imports for analysis.ts). However, the shims add indirection — TypeScript resolves `'@/lib/queries'` to `queries.ts` (file) BEFORE `queries/index.ts` (directory), so the shim is silently intercepting all imports.
+- Proposed fix: Update the 4 + 2 import sites to point directly at `'@/lib/queries/index'` and `'@/engine/analysis/index'`, then delete the shims. Or leave as-is (low cost) but add a deprecation comment.
+
+**DB2-19 (LOW)** — `src/lib/settings.ts:319-321, 410-412` — `_settingsCache` and `_thresholdsVersionCache` are declared but always null (CACHE_TTL_MS = 0 and VERSION_CACHE_TTL_MS = 0 — both disabled). `invalidateSettingsCache()` (line 402-405) sets both to null, which is a no-op since they're already null. The cache infrastructure is dead but the invalidation function is still called from `app/api/settings/route.ts:169,247`.
+- Proposed fix: Either (a) remove the cache variables + `invalidateSettingsCache` function + the 2 call sites (recommended — settings table is tiny, always read from DB), OR (b) keep the infrastructure for future re-enablement but add a comment explaining it's currently a no-op.
+
+**DB2-20 (LOW)** — `src/lib/settings.ts:337-362` — `ensureDefaultSettings` has an overly broad try/catch. ANY error from `createMany` (network, schema mismatch, connection drop, validation error) is silently swallowed and falls back to per-row upsert. This hides real bugs. For example, if the Setting table doesn't exist (schema not pushed), the catch fires, then the per-row upsert ALSO fails, but is caught by `.catch(() => {})` at line 358 — completely silent.
+- Proposed fix: Narrow the catch to only `Prisma.PrismaClientValidationError` (the specific error for unsupported `skipDuplicates` on SQLite). Log other errors. Remove the `.catch(() => {})` silent swallow on the per-row upsert.
+
+**DB2-21 (LOW)** — `package.json` — 16 unused dependencies (confirmed via `rg -l "from ['\"]<pkg>['\"]"` returning 0 matches in src/scripts):
+  - **Unused (safe to remove)**: `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` (3 packages — drag-drop, never imported), `@mdxeditor/editor`, `framer-motion`, `next-intl`, `react-markdown`, `react-syntax-highlighter`, `uuid`, `z-ai-web-dev-sdk` (only used by skills, not by src), `@libsql/client`, `@prisma/adapter-libsql` (SQLite adapters — not needed since schema is postgresql-only per DB2-1), `date-fns`, `sharp`, `@reactuses/core`, `@tanstack/react-table`, `@hookform/resolvers`, `tailwindcss-animate` (used by tailwind.config.ts — KEEP, false positive in initial scan).
+  - **Conditional unused (only used by `src/components/ui/*.tsx` scaffold files that are themselves dead)**: `embla-carousel-react` (carousel.tsx — never imported), `react-day-picker` (calendar.tsx — never imported), `input-otp` (input-otp.tsx — never imported), `react-hook-form` (form.tsx — never imported), `react-resizable-panels` (resizable.tsx — never imported), `vaul` (drawer.tsx — never imported), `next-themes` (sonner.tsx — sonner.tsx itself is never imported), `cmdk` (command.tsx — only used by SearchableComboBox which IS used, so KEEP cmdk).
+- Proposed fix: Remove the 17 confirmed-unused packages. For the 7 conditional-unused ui scaffold files, audit if the ui components themselves are used; if not, delete the ui files AND their deps. Run `bun install` after to update lockfile. Expected bundle size reduction: ~5-10 MB.
+
+**DB2-22 (LOW)** — `prisma/schema.prisma:63` — `Outlet.outletCode` field is NOT indexed, but it's also NEVER used as a query filter (no `where: { outletCode: ... }` in code). The audit checklist asks "outletCode indexed?" — answer: no, and it doesn't need to be. False alarm. (The `Outlet.code` field IS `@unique` which auto-creates an index, and `code` is what's actually queried.)
+
+**DB2-23 (LOW)** — `src/lib/queries/items.ts:201-214` — `queryTopItemsByDeviasiRank` returns `rows.map((r: any) => ({ ...r, ... }))` with `any` cast. The function's return type is explicitly declared (lines 112-127), but the runtime mapping uses `any` to bypass TS. If the SQL query ever returns a column not in the declared type, TS won't catch it.
+- Proposed fix: Type the `rows` parameter as `Array<Record<string, unknown>>` and access fields with explicit casts, OR define an intermediate `RawRow` interface matching the SQL output.
+
+**DB2-24 (LOW)** — `prisma/` directory has NO `migrations/` subdirectory — project uses `prisma db push --accept-data-loss` (package.json:10) instead of proper migrations. This is fine for solo dev but means:
+  - No migration history (can't audit schema changes over time)
+  - `--accept-data-loss` flag can silently drop columns on schema changes (e.g., if you rename a column, `db push` drops+recreates it, losing data)
+  - Production deployments should use `prisma migrate deploy` with committed migration files
+- Proposed fix: For production safety, run `bunx prisma migrate dev --name init` once to capture the current schema as a baseline migration, then commit `prisma/migrations/` to the repo. Future schema changes go through `prisma migrate dev --name <change>`.
+
+**DB2-25 (LOW)** — `scripts/migrate-direction.ts` and `src/app/api/migrate-direction/route.ts` — Both correctly use raw SQL (portable between PostgreSQL and SQLite: standard `UPDATE ... SET ... WHERE ...` syntax, no provider-specific functions). Idempotent (`AND direction != 'LOSS'` ensures re-running produces 0 updates). Output is clear (before/after counts). The script logs `beforeNull` count (records with NULL direction) which is helpful. The only gap is DB2-16 (NULL nominalLossSurplus handling) and DB2-17 (no transaction).
+
+==============================================================
+Confirmed ALREADY-FIXED / NOT-A-BUG items (audit checklist)
+==============================================================
+
+- ✅ `prisma/schema.prisma:141-153` — InventoryRecord has 9 indexes including `(monthLabel, weekLabel, outletId)`, `(area, monthLabel, weekLabel)`, `(sourceFileId)` for cascade delete. Comprehensive.
+- ✅ `schema.prisma:174-175` — PeriodComparison has `zScore Float?` + `benchmarkFlag String?` (BUT model itself is dead — see DB2-4).
+- ✅ `schema.prisma:61` — `Outlet.code @unique` (auto-indexed).
+- ✅ `schema.prisma:73` — `Item.name @unique`.
+- ✅ `schema.prisma:283` — `OutletPIC.outletCode @unique` (one PIC per outlet — enforced).
+- ✅ `schema.prisma:44, 86, 88, 188` — Cascade deletes: `Week → InventoryRecord` (line 88, `onDelete: Cascade`), `SourceFile → Week` (line 44), `SourceFile → InventoryRecord` (line 86), `SourceFile → DQIssue` (line 188). `Outlet → InventoryRecord` and `Item → InventoryRecord` use `onDelete: Restrict` (correct — don't delete an outlet that still has records).
+- ✅ `schema.prisma:52` — `Week @@unique([sourceFileId, weekLabel])`.
+- ✅ `db.ts:35-44` — Supabase pooler auto-switch from session mode (5432) to transaction mode (6543), with `pgbouncer=true`, `connection_limit=3`, `pool_timeout=10`. Singleton via Proxy (lines 70-78) — lazy init, no per-request client.
+- ✅ `db.ts:25-27` — Connection pooling configured correctly for serverless (PgBouncer transaction mode).
+- ✅ `src/middleware.ts:38, 114` — `/api/migrate-direction` IS protected by ADMIN_TOKEN middleware (despite route file comment claiming otherwise — the middleware does enforce it).
+- ✅ `src/app/api/migrate-direction/route.ts:20, 89` — Rate limited (5 req/min for POST, analysis tier for GET).
+- ✅ `src/lib/queries/shared.ts:34` — itemName filter correctly uses `LOWER(name) LIKE LOWER(...)` (portable).
+- ✅ `src/lib/queries/historical.ts:66-72` — BigInt from COUNT/SUM explicitly coerced via `Number()`.
+- ✅ `src/instrumentation.ts:14-18` — `BigInt.prototype.toJSON` polyfill prevents JSON serialization errors.
+- ✅ `src/lib/queries/*` — All `$queryRaw` use `ROW_NUMBER() OVER (PARTITION BY ...)` pattern (portable, not `DISTINCT ON`), `LOWER() LIKE LOWER()` (portable, not `ILIKE`), standard SQL functions (`COALESCE`, `SUM`, `COUNT`, `AVG`, `ABS`, `MAX`, `MIN`, `CAST(... AS INTEGER)`). All portable.
+- ✅ `src/app/api/migrate-direction/route.ts` — GET dry-run correctly counts inverted rows; POST correctly updates with idempotency guard. SQL is portable.
+- ✅ `src/lib/month-resolver.ts:62-69` — `resolveMonthLabel` is case-insensitive (uses `lowerToActual` map).
+- ✅ Cache invalidation: `statusCache.clear()` + `clearMonthResolverCache()` called after ALL mutations (ingestion, ingest-process, pic, pic/import, data delete). migrate-direction doesn't need it (statusCache doesn't store direction, analysisCache is disabled).
+- ✅ `src/lib/cache.ts` — LRUCache correctly implements TTL (lines 22-28, 47-50), LRU recency refresh (lines 30-32, 52-53), eviction (lines 38-41).
+- ✅ `src/lib/csv-parser.ts:51-52` — `countCsvRows` already removed (comment notes it was dead).
+
+==============================================================
+Recommended action order (by impact)
+==============================================================
+1. DB2-1 + DB2-2: Decide on PostgreSQL-only OR fix SQLite dev path. Blocker for dev workflow.
+2. DB2-3: Replace `mode: 'insensitive'` with portable LOWER() pattern.
+3. DB2-4: Drop 4 dead Prisma models (PeriodComparison, AnomalyRule, AnomalyFlag, AggregationCache).
+4. DB2-16 + DB2-17: Fix migrate-direction to handle NULL nominalLossSurplus + wrap in transaction.
+5. DB2-6: Fix AnalysisData type drift (dqStatus shape) + replace `any` with concrete interfaces.
+6. DB2-7, DB2-8, DB2-9, DB2-10, DB2-11, DB2-13, DB2-14: Delete dead code (~350 lines total).
+7. DB2-12: Remove `analysisCache` entirely (or re-enable with documentation).
+8. DB2-15: Consolidate duplicate `RestoRecommendation` interface.
+9. DB2-21: Remove 17 unused npm dependencies.
+10. DB2-5: Fix definitions.ts documentation to match implementation.
+11. DB2-18, DB2-19, DB2-20, DB2-23, DB2-24: Low-priority cleanup.
+
+Total estimated removals: ~350 lines of dead code + 17 npm packages + 4 Prisma models + ~46 lines of dead SQL templates.
+
+
+---
+Task ID: AUDIT-SIGN
+Agent: Sign Convention Verification Auditor
+Task: Verify CALC-1 to CALC-11 fixes are complete, find missed spots
+
+Work Log:
+- Read worklog.md (lines 7300-7666) for context on FIX-CALC-SIGN.
+- Read all source files listed in audit scope:
+  * src/lib/metrics/deviation.ts, definitions.ts, historical.ts, growth.ts, benchmark.ts
+  * src/lib/queries/{outlets,items,dashboard,areas,historical,shared}.ts
+  * src/config/rules.yaml
+  * src/engine/rules/evaluator.ts
+  * src/engine/analysis/{ruleService,rankingService,analysis,types}.ts
+  * src/engine/transform.ts
+  * src/app/api/{analysis,outlet-items,drilldown,export-report,peer-comparison,peer-comparison/items,peer-comparison/trend,migrate-direction,item-history,recommendations}/route.ts
+  * src/components/dashboard/{ExecutiveSummary,CardDrillDown,InsightsPanel,RestoRecommendationCard,PeerComparison,RestoAnalysis,TopItems,AdvancedAnalysis}.tsx
+  * src/components/filters/SettingsDialog.tsx
+  * src/lib/format.ts, src/middleware.ts, src/types/inventory.ts
+  * scripts/migrate-direction.ts
+- Wrote reproduction test (/tmp test) to verify SIGN-1 hypothesis — CONFIRMED nominalLossSurplus missing from ctx at runtime; 5 rules fail to fire.
+- Grepped for: nominalLossSurplus > 0 / < 0 patterns, ir.direction = 'LOSS', direction: {eq: ...}, pctQtyDeviasiToBom > tolerancePct (without ABS), residualQty direction patterns.
+
+Stage Summary:
+
+═══════════════════════════════════════════════════════════════
+CRITICAL / HIGH FINDINGS (must fix)
+═══════════════════════════════════════════════════════════════
+
+**BUG SIGN-1 (CRITICAL — CALC-8 fix broken at runtime, 5 rules NEVER fire)**
+- File: `src/engine/analysis/ruleService.ts:71-102` (buildRuleContext return object)
+- File: `src/engine/rules/evaluator.ts:364-409` (RuleContext interface)
+- Description: CALC-8 fix changed 5 rules in `rules.yaml` from `direction: {eq: "LOSS"}` to `nominalLossSurplus: {lt: 0}`. However, `buildRuleContext()` does NOT add `nominalLossSurplus: curr.nominalLossSurplus` to the returned context object. The `RuleContext` interface also does not declare it. As a result, when `evaluateRules()` evaluates rules like `HIGH_LOSS_NOMINAL`, `evalOp()` looks up `ctx['nominalLossSurplus']`, gets `undefined`, and `canOpFire()` (line 209-212) returns false because `typeof value !== 'number'`. The rule is skipped before `evalOp` even runs.
+- Impact: FIVE rules are completely silent:
+  * `HIGH_LOSS_NOMINAL` (priority 80, ABNORMAL) — never fires
+  * `RESIDUAL_LOSS_HIGH` (priority 75, ABNORMAL) — never fires
+  * `RESIDUAL_LOSS_WARN` (priority 60, WARNING) — never fires
+  * `HISTORICAL_ABNORMAL` (priority 78, ABNORMAL) — never fires
+  * `HISTORICAL_ABNORMAL_SURPLUS` (priority 77, ABNORMAL) — never fires
+- Reproduction (verified):
+  ```
+  mockCurr.nominalLossSurplus = -60_000_000; absNominalLossSurplus = 60_000_000
+  ctx = buildRuleContext(mockCurr, null, null, thresholds)
+  'nominalLossSurplus' in ctx → false
+  ctx.nominalLossSurplus → undefined
+  flags = evaluateRules(ctx) → [TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH]
+  HIGH_LOSS_NOMINAL fired? → false ❌ (should be true)
+  RESIDUAL_LOSS_HIGH fired? → false ❌ (should be true)
+  ```
+- Proposed fix:
+  In `src/engine/analysis/ruleService.ts` `buildRuleContext()` return object, add:
+  ```typescript
+  nominalLossSurplus: curr.nominalLossSurplus,
+  ```
+  And in `src/engine/rules/evaluator.ts` `RuleContext` interface, add:
+  ```typescript
+  nominalLossSurplus?: number | null;
+  ```
+  Alternative: change rules.yaml from `nominalLossSurplus: {lt: 0}` to `qtyLossSurplus: {lt: 0}` (qtyLossSurplus IS in ctx, follows same sign convention). Less safe because qtyLossSurplus and nominalLossSurplus can diverge if Excel data is malformed (only one is null).
+
+**BUG SIGN-2 (HIGH — migrate-direction script doesn't handle NULL nominalLossSurplus)**
+- File: `scripts/migrate-direction.ts:48-74` and `src/app/api/migrate-direction/route.ts:35-57`
+- Description: Migration script only updates rows where `nominalLossSurplus IS NOT NULL`. Rows where `nominalLossSurplus IS NULL` (but `qtyDeviasi` is not null) keep their OLD (possibly inverted) `direction` value. The comment on line 67 of migrate-direction.ts says "(or qtyDeviasi = 0 as fallback)" but the SQL does NOT implement this fallback.
+- Impact: After migration, items with NULL nominalLossSurplus but non-NULL qtyDeviasi retain inverted direction. These rows will display wrong direction in UI components that read stored `direction` (RestoAnalysis, ItemDeepDive, PeerComparison, CardDrillDown).
+- Reproduction: An item with `nominalLossSurplus=NULL, qtyDeviasi=-50, direction='SURPLUS'` (old inverted) → migration skips it → direction stays 'SURPLUS' (wrong, should be 'LOSS').
+- Proposed fix: Add a 4th UPDATE block in migrate-direction that handles NULL nominalLossSurplus by falling back to qtyDeviasi sign:
+  ```sql
+  UPDATE "InventoryRecord"
+  SET direction = CASE
+    WHEN "qtyDeviasi" < 0 THEN 'LOSS'
+    WHEN "qtyDeviasi" > 0 THEN 'SURPLUS'
+    ELSE 'NEUTRAL'
+  END
+  WHERE "nominalLossSurplus" IS NULL
+    AND "qtyDeviasi" IS NOT NULL
+    AND direction != CASE
+      WHEN "qtyDeviasi" < 0 THEN 'LOSS'
+      WHEN "qtyDeviasi" > 0 THEN 'SURPLUS'
+      ELSE 'NEUTRAL'
+    END;
+  ```
+
+**BUG SIGN-3 (MEDIUM — outlet-items route displays stored direction without recomputing)**
+- File: `src/app/api/outlet-items/route.ts:168, 505`
+- Description: SQL query uses `MAX(ir.direction) as "direction"` (line 168) and the JS mapping uses `direction: r.direction || 'NEUTRAL'` (line 505). This relies on the stored `direction` field, which may be inverted if migrate-direction hasn't been run. The drilldown route (`src/app/api/drilldown/route.ts:88-91`) was fixed to compute direction on-the-fly from `nominalLossSurplus` sign — but outlet-items was NOT given the same treatment.
+- Impact: RestoAnalysis.tsx, CardDrillDown.tsx, and other UI components reading outlet-items direction show WRONG direction (inverted) if migration not yet run. The outlet-items route is called whenever a user clicks an outlet to deep-dive — so this is high-visibility.
+- Proposed fix: In `src/app/api/outlet-items/route.ts:505`, replace:
+  ```typescript
+  direction: r.direction || 'NEUTRAL',
+  ```
+  with:
+  ```typescript
+  direction: r.nominalLossSurplus != null
+    ? (r.nominalLossSurplus < 0 ? 'LOSS' : r.nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
+    : (r.qtyDeviasi != null
+        ? (r.qtyDeviasi < 0 ? 'LOSS' : r.qtyDeviasi > 0 ? 'SURPLUS' : 'NEUTRAL')
+        : r.direction || 'NEUTRAL'),
+  ```
+  Same for the per-item rows in `itemBreakdown` (line 505 covers the breakdown items too — already in the same map).
+
+**BUG SIGN-4 (MEDIUM — item-history route displays stored direction without recomputing)**
+- File: `src/app/api/item-history/route.ts:95, 132`
+- Description: SQL selects `ir.direction` (line 95) and the JS mapping uses `direction: r.direction || 'NEUTRAL'` (line 132). Same issue as SIGN-3 — depends on migration being run.
+- Impact: ItemDetailModal timeline in RestoAnalysis.tsx shows wrong direction per period if migration not run.
+- Proposed fix: Same as SIGN-3 — compute on-the-fly from `r.nominalLossSurplus` (which is selected at line 94).
+
+**BUG SIGN-5 (LOW — export-report Word doc has inverted label text in 3 places)**
+- File: `src/app/api/export-report/route.ts:593, 643, 664`
+- Description: Three paragraph descriptions in the Word export say "Angka negatif = SURPLUS" / "negatif = SURPLUS" / "negatif = SURPLUS, merah". This is the OLD convention (pre-CALC-1). With the new Excel convention, NEGATIVE = LOSS (rugi). The actual table cells color negative numbers red (correct via `isNegative` check in `tableCell`), but the descriptive paragraph text above the tables is wrong.
+- Impact: Users reading the Word export see contradicting labels — table cells show negative numbers in red (correct = LOSS), but the paragraph text says "negative = SURPLUS". Confusing.
+- Proposed fix:
+  - Line 593: change "Angka negatif = SURPLUS (ditandai merah)." → "Angka negatif = LOSS/rugi (ditandai merah)."
+  - Line 643: change "Angka negatif = SURPLUS (merah)." → "Angka negatif = LOSS/rugi (merah)."
+  - Line 664: change "Semua nilai signed (negatif = SURPLUS, merah)." → "Semua nilai signed (negatif = LOSS/rugi, merah)."
+
+**BUG SIGN-6 (LOW — CardDrillDown.tsx has inverted direction descriptions)**
+- File: `src/components/dashboard/CardDrillDown.tsx:116, 130`
+- Description: Two card descriptions in CARD_CONFIG use the OLD convention:
+  - Line 116: `'Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi > 0)'` — WRONG: LOSS = NEGATIVE nominalDeviasi per new convention.
+  - Line 130: `'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi < 0)'` — WRONG: SURPLUS = POSITIVE nominalDeviasi per new convention.
+- Impact: Tooltip/description text shown to users is misleading. The actual filter logic (`o.direction === 'LOSS'` / `'SURPLUS'`) is correct — only the descriptive text is wrong.
+- Proposed fix:
+  - Line 116: change to `'Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi < 0)'`
+  - Line 130: change to `'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi > 0)'`
+
+**BUG SIGN-7 (LOW — Stale comments describe OLD inverted convention)**
+- Files:
+  * `src/lib/metrics/definitions.ts:48, 57` — "Signed: positive = LOSS, negative = SURPLUS" (INVERTED — should be "negative = LOSS, positive = SURPLUS")
+  * `src/lib/metrics/definitions.ts:214-215` — "Net > 0 → LOSS" / "Net < 0 → SURPLUS" (INVERTED)
+  * `src/lib/metrics/growth.ts:56-57` — "Going from -10M (SURPLUS)" (INVERTED — -10M is LOSS)
+  * `src/lib/queries/items.ts:68` — "can be negative (SURPLUS) or positive (LOSS)" (INVERTED)
+  * `src/lib/queries/dashboard.ts:19-20` — "lossNominal = SUM(nominalDeviasi) WHERE > 0" / "surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0" (INVERTED + uses nominalDeviasi instead of nominalLossSurplus)
+  * `src/engine/transform.ts:233` — "Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS" (INVERTED)
+- Description: Documentation comments across 6 files still describe the old convention (positive=LOSS, negative=SURPLUS). These contradict the actual implementation (CALC-1 fixed: negative=LOSS, positive=SURPLUS) and the verified Excel data.
+- Impact: Future developers reading these comments will be misled and may re-introduce the bug. No runtime impact.
+- Proposed fix: Update each comment to match the new convention:
+  - "Signed: negative = LOSS (over-consumption), positive = SURPLUS (under-consumption)"
+  - "Net < 0 → LOSS, Net > 0 → SURPLUS"
+  - "Going from -10M (LOSS) to -20M (LOSS)..."
+  - "can be negative (LOSS) or positive (SURPLUS)"
+  - "lossNominal = SUM(ABS(nominalLossSurplus)) WHERE nominalLossSurplus < 0" / "surplusNominal = SUM(nominalLossSurplus) WHERE > 0"
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (no fix needed)
+═══════════════════════════════════════════════════════════════
+
+✓ **CALC-1 (computeDirection)**: `deviation.ts:39-48` correctly returns LOSS for `net < 0`, SURPLUS for `net > 0`. Comment block (lines 27-37) accurately describes Excel convention.
+
+✓ **CALC-2 (tolerance breach ABS)**: All SQL queries use `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)`:
+  - `outlets.ts:622-623` (toleranceBreachCount + toleranceBreachHighCount)
+  - `outlet-items/route.ts:274` (severityCount)
+  - `rules.yaml:94, 106, 118` (TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH, TOLERANCE_NOT_SET_HIGH_DEV use absPctQtyDeviasiToBom + absTolerancePct)
+  - `evaluator.ts:418-423` pre-computes absPctQtyDeviasiToBom + absTolerancePct correctly.
+  - `rankingService.ts:139-141` uses Math.abs() for tolBreach.
+  - `TopItems.tsx:111` uses Math.abs() for breach display.
+
+✓ **CALC-3 (residualQty/residualNominal use nominalLossSurplus sign)**: All SQL queries use `nominalLossSurplus < 0` for LOSS-side residual sums:
+  - `outlets.ts:240, 616, 617` (residualQty + residualNominal)
+  - `dashboard.ts:156, 157` (residualLossQty + residualLossNominal)
+  - `items.ts:358` (lossOutlets count)
+
+✓ **CALC-4 (totalLoss/totalSurplus swapped correctly)**: All 8 SQL queries now use:
+  - `nominalLossSurplus < 0 THEN ABS(nominalLossSurplus)` → totalLoss (positive number)
+  - `nominalLossSurplus > 0 THEN nominalLossSurplus` → totalSurplus (positive number)
+  - Verified in: `outlets.ts:62-63, 237-238, 613-614`; `dashboard.ts:74-75, 153-154, 220-223`; `areas.ts:67`; `outlet-items/route.ts:263-264` (JS-side).
+
+✓ **CALC-5 (outlet direction uses SUM(nominalLossSurplus) sign)**: `outlets.ts:282-284, 426-428, 639-642, 703-706` and `items.ts:39-41, 250-252` all use `SUM(nominalLossSurplus) < 0 → LOSS` consistently.
+
+✓ **CALC-6 (BOM=0 rankBom = NULL)**: `items.ts:192-194` uses `CASE WHEN ipo."qtyBom" != 0 THEN ROW_NUMBER() OVER (...) ELSE NULL END`. Frontend `RestoAnalysis.tsx:784` displays '—' for null rankBom.
+
+✓ **CALC-7 (BOM=0 bucket_avg degenerate)**: `items.ts:178-180` excludes BOM=0 from bucket join with `ABS(ipo."qtyBom") > 0` AND `ABS(ipo2."qtyBom") > 0`.
+
+✓ **CALC-9 (residualRatio uses correct residualQty)**: `outlets.ts:770` computes `residualRatio = totalQtyDeviasi > 0 ? Math.abs(residualQty) / totalQtyDeviasi : 0`. With CALC-3 fix, residualQty is now correctly the LOSS-side sum (positive via ABS).
+
+✓ **CALC-10 (zScore/benchmark proxies use ABS)**: `outlets.ts:627-630` uses `ABS(ir."pctQtyDeviasiToBom")` for zScoreAbnormalCount, zScoreWarningCount, benchmarkHighCount.
+
+✓ **CALC-11 (SUM(qtyBom) != 0 → SUM(ABS(qtyBom)) > 0)**: `items.ts:144-146` (pctLossSurplusToBom) and all Dev/BOM calculations use `SUM(ABS(qtyBom)) > 0` guard.
+
+✓ **Migration endpoint (`/api/migrate-direction`)**: 
+  - Idempotent (uses `AND direction != 'LOSS'` etc.).
+  - Handles NULL nominalLossSurplus (skips, but see SIGN-2 for limitation).
+  - Handles NEUTRAL case (nominalLossSurplus = 0).
+  - Protected by middleware (`PROTECTED_PATHS` includes `/api/migrate-direction`, line 38 of middleware.ts; matcher on line 114).
+  - GET (dry-run) is public, POST (actual migration) requires ADMIN_TOKEN.
+
+✓ **Middleware fail-closed**: `middleware.ts:62-72` blocks POST in production if ADMIN_TOKEN not set.
+
+✓ **Frontend direction badges**: `RestoRecommendationCard.tsx:146`, `RestoAnalysis.tsx:788, 790, 798` correctly use `value < 0 ? 'text-red-600' : 'text-emerald-600'` (negative = LOSS = red). `directionColor()` in `format.ts:70-76` returns red for LOSS, emerald for SURPLUS — correct.
+
+✓ **Drilldown route computes direction on-the-fly**: `drilldown/route.ts:88-91` uses `nominalLossSurplus` sign (with stored `r.direction` as fallback when nominalLossSurplus is null). Most defensive of all routes.
+
+✓ **Historical stats (z-score)**: `historical.ts:62-92` uses ABS values throughout — sign-convention-agnostic. SQL in `historical.ts` query uses `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` per week.
+
+✓ **Growth calculations**: `growth.ts:31-49` (calcGrowth + calcGrowthAbs) handle null/zero prev correctly. `computeNominalDeviationGrowth` (lines 67-72) uses magnitude (calcGrowthAbs) — handles sign flips correctly.
+
+✓ **Type safety**: `RestoRecommendation` interface in `RestoRecommendationCard.tsx:12-48` matches the `RestoRecommendation` interface in `outlets.ts:527-563` (both include same fields: priorityScore, priorityLevel, signals, metrics, analysis). `RuleContext` interface in `evaluator.ts:364-409` includes `absPctQtyDeviasiToBom` and `absTolerancePct` (CALC-2 fix) — but is MISSING `nominalLossSurplus` (see SIGN-1).
+
+✓ **Net cost trend**: `analysis/route.ts:621` computes `netCostRatio = (lossNominal - surplusNominal) / sales` — both lossNominal and surplusNominal are positive magnitudes, so the subtraction gives net cost direction correctly.
+
+═══════════════════════════════════════════════════════════════
+SUMMARY
+═══════════════════════════════════════════════════════════════
+
+7 findings total:
+- 1 CRITICAL: SIGN-1 (5 rules silently broken — `nominalLossSurplus` missing from RuleContext)
+- 1 HIGH: SIGN-2 (migration doesn't handle NULL nominalLossSurplus)
+- 2 MEDIUM: SIGN-3 (outlet-items stored direction), SIGN-4 (item-history stored direction)
+- 3 LOW: SIGN-5 (export-report label text), SIGN-6 (CardDrillDown descriptions), SIGN-7 (stale comments in 6 files)
+
+The CALC-1 to CALC-11 fixes are MOSTLY complete and correct at the SQL/data layer. The CRITICAL gap is at the rule engine runtime layer: the `buildRuleContext` function was not updated to populate `nominalLossSurplus` into the context, so 5 rules that depend on this field (per CALC-8 fix) never fire. This effectively negates the CALC-8 fix at runtime.
+
+Recommended fix priority:
+1. SIGN-1 — URGENT: 1-line addition to `buildRuleContext` + 1-line addition to `RuleContext` interface. Restores 5 rules.
+2. SIGN-2 — Recommended: Add qtyDeviasi-fallback UPDATE to migration script.
+3. SIGN-3, SIGN-4 — Recommended: Make direction read path consistent (compute on-the-fly like drilldown route does).
+4. SIGN-5, SIGN-6, SIGN-7 — Cleanup: Update stale label text and comments.
+
+
+---
+Task ID: AUDIT-CALC2
+Agent: Calculation Logic Auditor v2
+Task: Verify CALC fixes, find remaining calculation bugs
+
+Work Log:
+- Read worklog tail (lines 7216-7666) for context on CALC-1..CALC-11 fixes + prior audits.
+- Read all metric files: deviation.ts (290 lines), growth.ts (124), historical.ts (190), benchmark.ts (103), sales.ts (111), definitions.ts (241).
+- Read all query files: items.ts (383), outlets.ts (888), areas.ts (85), dashboard.ts (283), historical.ts (76), shared.ts (41).
+- Read engine files: rankingService.ts (399), analysis.ts (11, barrel), ruleService.ts (146), rules/evaluator.ts (456).
+- Read app/api/analysis/route.ts (771) — buildExecSummaryFromSql + parallel SQL aggregation.
+- Read app/api/outlet-items/route.ts (561), drilldown/route.ts (109), item-history/route.ts (300).
+- Read app/api/migrate-direction/route.ts (130) + scripts/migrate-direction.ts (100) — idempotent direction migration.
+- Read src/config/rules.yaml (249) — 17 anomaly rules.
+- Read src/engine/transform.ts (345) — computeResidual, deriveRecord.
+- Verified sign convention post-CALC-1: all SQL uses `nominalLossSurplus < 0 → LOSS` consistently across items/outlets/dashboard/areas. ✓
+- Verified tolerance breach: `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)` consistently. ✓
+- Verified BOM=0 handling: rankBom NULL when qtyBom=0; bucket_avg excludes BOM=0; pctLossSurplusToBom NULL when SUM(ABS(qtyBom))=0; RestoAnalysis.tsx renders '—' for NULL rankBom. ✓
+- Verified totalLoss/totalSurplus SQL pattern in 8 places (dashboard 2, outlets 3, areas 1, items consistency 1). ✓
+- Verified residualQty SQL uses nominalLossSurplus<0 filter (LOSS-only) + ABS(residualQty). ✓
+- Verified direction computation in items/outlets/dashboard — all use SUM(nominalLossSurplus) sign. ✓
+- Verified priority score weights sum to 100% (12+10+10+10+8+8+8+5+8+7+5+3+3+2+1). ✓
+- Verified all 17 rules in rules.yaml: NO rules use `direction: {eq: ...}`; all use nominalLossSurplus sign or precomputed flags. ✓
+- Verified computeHealthScore clamps to [0,100] and uses correct totalLossNominal. ✓
+- Verified calcGrowth/calcGrowthAbs guard against prev=0 and prev=null. ✓
+- Verified migration script is idempotent (only updates rows where direction doesn't match sign). ✓
+
+Stage Summary:
+- CALC-1..CALC-11 fixes are correctly applied in production code paths. All SQL aggregations, rule conditions, and JS computations consistently use the new Excel sign convention (LOSS = negative, SURPLUS = positive).
+- Found 7 remaining issues (1 HIGH, 1 MEDIUM, 5 LOW):
+
+**1. BUG CALC2-1 (HIGH)** — Variance analysis sort INVERTED post-CALC-1
+- File: src/engine/analysis/rankingService.ts:243-244
+- Description: `topWorsened = sort by selisih DESC` was correct under OLD convention (LOSS=positive) but is now WRONG under new Excel convention (LOSS=negative):
+  - LOSS growth (e.g. -5M → -10M, selisih=-5M) → ranks at BOTTOM of topWorsened, TOP of topImproved (should be WORSENED, not improved)
+  - Direction flip SURPLUS→LOSS (selisih=very negative, e.g. +5M → -5M, selisih=-10M) → ranks at TOP of topImproved (should be the WORST worsened case)
+  - The previous FIX-DEEP-3A fix (line 240-242 comment) explicitly reasoned "most positive selisih = most worsened" — this assumption is now inverted.
+  - Also: comment on line 195 says "Sort still by abs(selisih)" but the actual sort uses signed selisih — code contradicts its own comment.
+  - varianceDirection field (line 221) uses `delta` (abs magnitude growth) which IS correct post-CALC-1, but the sort still uses signed `selisih`.
+- Impact: Variance Analysis section in dashboard + export-report Word file show WRONG "Top 5 Worsened" / "Top 5 Improved" items. Loss-growing items are misclassified as improved; surplus→loss flips appear as "improved".
+- Proposed fix: Sort by `delta` (absNominalDeviasi magnitude change) instead of `selisih` (signed):
+  ```ts
+  const topWorsened = [...deltas].sort((a, b) => b.delta - a.delta).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  ```
+  This matches the existing `varianceDirection` semantic ("WORSENED" = magnitude grew). Alternative: use a "net loss change" metric (`Math.max(0, -curr) - Math.max(0, -prev)`) for financial-loss-focused ranking.
+
+**2. BUG CALC2-2 (MEDIUM)** — residualRatio uses LOSS-only numerator / ALL-items denominator
+- File: src/lib/queries/outlets.ts:770 (recommendations)
+- Description:
+  - SQL `residualQty` (line 616) = `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(residualQty) ELSE 0 END)` — LOSS items ONLY
+  - SQL `totalQtyDeviasi` (line 607) = `SUM(ABS(qtyDeviasi))` — ALL items (LOSS + SURPLUS)
+  - JS `residualRatio = Math.abs(residualQty) / totalQtyDeviasi` (line 770) — mixes LOSS-only numerator with ALL-items denominator
+  - For outlets with mixed LOSS+SURPLUS items, this UNDERSTATES residualRatio.
+  - Compare to dashboard.ts:108 which CORRECTLY uses LOSS/LOSS: `residualLossPct = residualLossQty / qtyDeviasiLoss` (Bug 6 fix on line 104-108 explicitly fixed this same pattern).
+- Impact:
+  - Signal 4 (s4Score, 10% weight) is understated → priority score is understated by up to ~5 points for mixed-direction outlets.
+  - Analysis bullet (line 830): "Residual X% — Y dari Z total deviasi tidak terjelaskan" is misleading — Y is LOSS-only residual but Z is ALL items' deviation. User sees "30% residual" when actual LOSS residual % is 60%.
+- Proposed fix (match dashboard.ts pattern): add `qtyDeviasiLoss` SUM(CASE WHEN nominalLossSurplus<0 THEN absQtyDeviasi ELSE 0 END) to the SQL, then compute `residualRatio = qtyDeviasiLoss > 0 ? residualQty / qtyDeviasiLoss : 0`.
+
+**3. BUG CALC2-3 (LOW)** — outlet-items/route.ts uses MAX(ir.direction) for grouped records
+- File: src/app/api/outlet-items/route.ts:168
+- Description: `MAX(ir.direction) as "direction"` in GROUP BY (outletId, itemId, akunPenyesuaian). If duplicate source-file rows for same (outlet,item,akun) have mixed directions (data quality issue), MAX picks "SURPLUS" alphabetically (S > L).
+- Currently latent: after migration, all rows for same tuple should have consistent direction. Becomes a bug if data has direction inconsistency post-migration.
+- Proposed fix: compute direction on-the-fly from SUM(nominalLossSurplus) sign (consistent with outlets.ts:638-642, items.ts:39-41):
+  ```sql
+  CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+       WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+       ELSE 'NEUTRAL' END as direction
+  ```
+
+**4. BUG CALC2-4 (LOW)** — Stale docstring in definitions.ts contradicts post-CALC-1 code
+- File: src/lib/metrics/definitions.ts:47-48, 56-58, 213-215
+- Description: Three docstrings still document the OLD WRONG sign convention:
+  - Line 47-48: `GROSS_DEVIATION = 'qtyDeviasi (signed, from Excel)'; Signed: positive = LOSS, negative = SURPLUS` — WRONG (Excel: negative = LOSS)
+  - Line 56-58: `NET_DEVIATION = 'qtyLossSurplus (signed, from Excel)'; Signed: positive = LOSS, negative = SURPLUS` — WRONG
+  - Line 213-215: `Net > 0 → LOSS, Net < 0 → SURPLUS` — WRONG
+- Actual code in deviation.ts:39-48 is CORRECT (CALC-1 fixed: net<0→LOSS).
+- Risk: future developers may revert CALC-1 fix based on stale docs.
+- Proposed fix: update all 3 docstrings to: "LOSS = negative, SURPLUS = positive" and "Net < 0 → LOSS, Net > 0 → SURPLUS".
+
+**5. BUG CALC2-5 (LOW)** — Stale comment in transform.ts:233
+- File: src/engine/transform.ts:233
+- Description: `// Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS.` — WRONG (old convention). The actual `computeDirection` import from @/lib/metrics is correct post-CALC-1.
+- Proposed fix: update to `// Direction logic: NET deviation (qtyLossSurplus) < 0 → LOSS, > 0 → SURPLUS.`
+
+**6. BUG CALC2-6 (LOW)** — Stale comment in dashboard.ts:19-20
+- File: src/lib/queries/dashboard.ts:19-20
+- Description:
+  - `//  - lossNominal = SUM(nominalDeviasi) WHERE > 0` — WRONG (actual SQL line 74 uses `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END)`)
+  - `//  - surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0` — WRONG (actual SQL line 75 uses `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus ELSE 0 END)`)
+- Both columns are wrong in the comment AND the sign condition is inverted.
+- Proposed fix:
+  - `//  - lossNominal = SUM(ABS(nominalLossSurplus)) WHERE nominalLossSurplus < 0`
+  - `//  - surplusNominal = SUM(nominalLossSurplus) WHERE nominalLossSurplus > 0`
+
+**7. BUG CALC2-7 (LOW)** — absDeviation field assigned SIGNED value (dead code, misleading name)
+- File: src/app/api/analysis/route.ts:597
+- Description: `absDeviation: r.nominal,` assigns SIGNED nominalDeviasi (r.nominal = SUM(nominalDeviasi), can be negative for LOSS) to a field named "absDeviation". Frontend (AnalysisCards.tsx MultiPeriodComparisonCard) only reads `deviation` key (also = r.nominal, signed) — `absDeviation` is dead code. This was noted as CALC-22 in prior audit but not yet fixed.
+- Proposed fix: either remove the dead field OR wrap in `Math.abs()`:
+  - `absDeviation: Math.abs(r.nominal),`
+
+NEXT ACTIONS (priority order):
+1. **BUG CALC2-1 (HIGH)** — Fix variance analysis sort in rankingService.ts:243-244. Sort by `delta` (abs magnitude change) instead of `selisih` (signed). Affects Top 5 Worsened/Improved in dashboard + Word export. Misclassifies LOSS-growing items as "improved".
+2. **BUG CALC2-2 (MEDIUM)** — Fix residualRatio in outlets.ts:770. Add `qtyDeviasiLoss` SQL column and divide LOSS residual by LOSS qtyDeviasi (matches dashboard.ts:108 pattern). Affects priority score (s4Score, 10% weight) and analysis bullets.
+3. **BUG CALC2-3 (LOW)** — Replace `MAX(ir.direction)` with on-the-fly direction computation in outlet-items/route.ts:168. Defensive against future data quality issues.
+4. **BUG CALC2-4..CALC2-6 (LOW)** — Update 3 stale docstrings/comments in definitions.ts, transform.ts, dashboard.ts to reflect new Excel sign convention. Prevents future revert of CALC-1 fix.
+5. **BUG CALC2-7 (LOW)** — Remove dead `absDeviation` field or wrap in Math.abs() in route.ts:597.
+
+Verification checklist results (all PASS post-CALC-1..CALC-11):
+- ✓ Sign convention: All SQL uses `nominalLossSurplus < 0 → LOSS` (8 places: dashboard 2, outlets 3, areas 1, items consistency 1, rankingService 1).
+- ✓ Tolerance breach: `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)` in outlets.ts SQL (lines 622-623), outlet-items JS (line 274), rules.yaml (lines 94, 106), evaluator precomputes absPctQtyDeviasiToBom/absTolerancePct (lines 418-423). No missed spots.
+- ✓ BOM=0: rankBom NULL (items.ts:192-194), bucket_avg excludes BOM=0 (items.ts:178-179), avgDeviasiByBom NULL when BOM=0 (items.ts:189), pctLossSurplusToBom NULL when SUM(ABS(qtyBom))=0 (items.ts:145-147), RestoAnalysis.tsx renders '—' (line 784).
+- ✓ totalLoss/totalSurplus: SQL pattern consistent across 8 queries.
+- ✓ Residual SQL: uses nominalLossSurplus<0 filter + ABS(residualQty).
+- ✓ Direction: items/outlets/dashboard SQL all use SUM(nominalLossSurplus) sign.
+- ✓ zScore proxies: ABS(pctQtyDeviasiToBom) > 0.20 / > 0.30 in outlets.ts.
+- ✓ highLossItem: nominalLossSurplus < -10000000 (correct: equivalent to ABS > 10M AND < 0).
+- ✓ Growth: calcGrowth guards prev=0/null; calcGrowthAbs for magnitude; nominalDeviasiGrowth uses magnitude.
+- ✓ Priority weights sum to 100%; all signals use Math.min(100, ...).
+- ✓ Health score: clamps [0,100], uses correct totalLossNominal.
+- ✓ Ranking: rankNominal uses ABS(nominalDeviasi) DESC; rankBom CASE WHEN qtyBom!=0.
+- ✓ Rules: 17 rules total; NO rule uses `direction: {eq: ...}`; all use nominalLossSurplus sign or precomputed flags.
+- ✓ NULL handling: qtyBom guarded by SUM(ABS(qtyBom))>0; tolerancePct by IS NOT NULL; COALESCE used throughout; toNum() helper handles null/undefined/NaN.
+- ✓ Division by zero: all divisions guarded.
+- ✓ Residual calculation: transform.ts computeResidual correct (abs-each-then-sum, clamp to 0, sign from qtyDeviasi).
+- ✓ Net deviation validation: expectedNet = qtyDeviasi - explainedMag*sign(qtyDeviasi); tolerance = max(1, 1% of |expected|).
+- ✓ MODE sales: ROW_NUMBER PARTITION BY outletId ORDER BY cnt DESC, nominalSales ASC; > 0 filter.
+- ✓ Migration script: idempotent, recomputes direction from nominalLossSurplus sign.
+
+Files changed: NONE (audit only — no code changes per task constraints).

@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { statusCache, analysisCache } from '@/lib/cache';
+import { clearMonthResolverCache } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // may take time on large DBs
@@ -17,7 +19,7 @@ export const maxDuration = 60; // may take time on large DBs
 export async function POST(req: NextRequest) {
   try {
     const ip = getClientIP(req);
-    const rl = rateLimit(`migrate-direction:${ip}`, 5, 60_000); // 5 req/min
+    const rl = rateLimit(`migrate-direction:POST:${ip}`, 5, 60_000); // 5 req/min POST
     if (!rl.allowed) {
       return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
     }
@@ -56,9 +58,34 @@ export async function POST(req: NextRequest) {
         AND direction != 'NEUTRAL'
     `;
 
+    // FIX SIGN-2: Fallback for rows with NULL nominalLossSurplus — use qtyDeviasi sign
+    // (computeDirection falls back to qtyDeviasi when nominalLossSurplus is null)
+    const lossFallback = await db.$executeRaw`
+      UPDATE "InventoryRecord"
+      SET direction = 'LOSS'
+      WHERE "nominalLossSurplus" IS NULL
+        AND "qtyDeviasi" IS NOT NULL
+        AND "qtyDeviasi" < 0
+        AND direction != 'LOSS'
+    `;
+
+    const surplusFallback = await db.$executeRaw`
+      UPDATE "InventoryRecord"
+      SET direction = 'SURPLUS'
+      WHERE "nominalLossSurplus" IS NULL
+        AND "qtyDeviasi" IS NOT NULL
+        AND "qtyDeviasi" > 0
+        AND direction != 'SURPLUS'
+    `;
+
     // Count after
     const afterLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });
     const afterSurplus = await db.inventoryRecord.count({ where: { direction: 'SURPLUS' } });
+
+    // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
+    statusCache.clear();
+    analysisCache.clear();
+    clearMonthResolverCache();
 
     return NextResponse.json({
       success: true,
@@ -70,7 +97,9 @@ export async function POST(req: NextRequest) {
         LOSS: lossUpdated,
         SURPLUS: surplusUpdated,
         NEUTRAL: neutralUpdated,
-        total: lossUpdated + surplusUpdated + neutralUpdated,
+        lossFallback,
+        surplusFallback,
+        total: lossUpdated + surplusUpdated + neutralUpdated + lossFallback + surplusFallback,
       },
     });
   } catch (e: any) {
@@ -86,7 +115,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const ip = getClientIP(req);
-    const rl = rateLimit(`migrate-direction:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    const rl = rateLimit(`migrate-direction:GET:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
     if (!rl.allowed) {
       return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
     }

@@ -163,48 +163,48 @@ export function RestoRecommendationCard() {
             {/* Direction + trend indicators */}
             <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t">
               <Badge variant="outline" className={`text-[9px] ${
-                r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200' :
-                r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200' : ''
+                r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' :
+                r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900' : ''
               }`}>
                 {r.metrics.direction}
               </Badge>
               {r.signals.directionFlip && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
+                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
                 </Badge>
               )}
               {r.signals.trendDeteriorating && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
                 </Badge>
               )}
               {r.signals.residualRatio > 0.4 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Residual {(r.signals.residualRatio * 100).toFixed(0)}%
                 </Badge>
               )}
               {r.signals.toleranceBreachHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Tol Breach High: {r.signals.toleranceBreachHighCount}
                 </Badge>
               )}
               {r.signals.overExplainedCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Anomali: {r.signals.overExplainedCount}
                 </Badge>
               )}
               {r.signals.highLossItemCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
+                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   High Loss: {r.signals.highLossItemCount}
                 </Badge>
               )}
               {r.signals.noToleranceItems > 0 && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
+                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   No Tol: {r.signals.noToleranceItems}
                 </Badge>
               )}
               {r.signals.benchmarkHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200">
+                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   Bench High: {r.signals.benchmarkHighCount}
                 </Badge>
               )}

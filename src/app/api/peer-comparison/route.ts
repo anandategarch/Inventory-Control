@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
     let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
-    const limit = parseInt(url.searchParams.get('limit') || '10');
+    // FIX API2-1: cap limit to prevent abuse + NaN guard
+    const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '10', 10) || 10), 100);
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });

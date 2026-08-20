@@ -76,6 +76,9 @@ export function buildRuleContext(
     qtyDeviasi: curr.qtyDeviasi, nominalDeviasi: curr.nominalDeviasi,
     qtyWaste: curr.qtyWaste, qtySusut: curr.qtySusut, qtyTrial: curr.qtyTrial,
     qtyLossSurplus: curr.qtyLossSurplus,
+    // FIX SIGN-1: Add nominalLossSurplus to context — 5 rules use it (HIGH_LOSS_NOMINAL,
+    // RESIDUAL_LOSS_HIGH/WARN, HISTORICAL_ABNORMAL_LOSS/SURPLUS). Without this, rules never fire.
+    nominalLossSurplus: curr.nominalLossSurplus,
     residualQty: curr.residualQty, residualRatio: curr.residualRatio,
     tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
     direction: curr.direction,

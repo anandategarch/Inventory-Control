@@ -8,6 +8,7 @@ import { fmtIDR, fmtNum, fmtPct, trendColor } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
+import { clickableRowProps } from '@/lib/a11y';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
@@ -53,7 +54,7 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
   return (
     <Card
       className={`relative overflow-hidden transition-all ${drillDown ? 'cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md' : ''}`}
-      onClick={drillDown ? () => setCardDrillDown(drillDown) : undefined}
+      {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
     >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-2">
@@ -102,7 +103,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('loss')}>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('loss'))}>
           <CardContent className="p-3">
             <p className="text-xs text-muted-foreground">Total LOSS</p>
             <p className="text-base font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
@@ -110,7 +111,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('surplus')}>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
           <CardContent className="p-3">
             <p className="text-xs text-muted-foreground">Total SURPLUS</p>
             <p className="text-base font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
@@ -118,7 +119,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('lossSurplus')}>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
           <CardContent className="p-3">
             <p className="text-xs text-muted-foreground">Residual Loss (QTY)</p>
             <p className="text-base font-semibold text-amber-600">{fmtNum(s.residualLossQty)}</p>
@@ -126,7 +127,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" onClick={() => setCardDrillDown('qtyDeviasi')}>
+        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
           <CardContent className="p-3">
             <p className="text-xs text-muted-foreground">Deviation/BOM</p>
             <p className="text-base font-semibold">{fmtPct(s.deviationToBom, false)}</p>

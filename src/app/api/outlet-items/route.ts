@@ -165,7 +165,13 @@ export async function GET(req: NextRequest) {
           SUM(ir."nominalDeviasi") as "nominalDeviasi", SUM(ir."nominalWaste") as "nominalWaste", SUM(ir."nominalSusut") as "nominalSusut",
           SUM(ir."nominalTrial") as "nominalTrial", SUM(ir."nominalLossSurplus") as "nominalLossSurplus", SUM(ir."nominalSales") as "nominalSales",
           AVG(ir."avgPrice") as "avgPrice", MAX(ir."tolerancePct") as "tolerancePct",
-          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom", MAX(ir.direction) as "direction",
+          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+          -- FIX SIGN-3: compute direction on-the-fly from nominalLossSurplus sign (not MAX(ir.direction) which depends on migration)
+          CASE
+            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            ELSE 'NEUTRAL'
+          END as "direction",
           SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal", MAX(ir."residualRatio") as "residualRatio",
           SUM(ir."absQtyDeviasi") as "absQtyDeviasi", SUM(ir."absNominalDeviasi") as "absNominalDeviasi",
           SUM(ir."absQtyLossSurplus") as "absQtyLossSurplus", SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus"

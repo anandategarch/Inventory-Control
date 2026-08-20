@@ -376,6 +376,8 @@ export interface RuleContext extends Record<string, unknown> {
   qtySusut?: number | null;
   qtyTrial?: number | null;
   qtyLossSurplus?: number | null;
+  // FIX SIGN-1: nominalLossSurplus used by 5 rules (HIGH_LOSS_NOMINAL, RESIDUAL_LOSS_*, HISTORICAL_*)
+  nominalLossSurplus?: number | null;
   residualQty?: number | null;
   residualRatio?: number | null;
   tolerancePct?: number | null;

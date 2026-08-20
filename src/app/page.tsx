@@ -242,6 +242,7 @@ export default function DashboardPage() {
                 className="h-8 gap-1.5 text-xs"
                 disabled={isExporting}
                 onClick={() => setExportDialogOpen(true)}
+                aria-label="Export laporan Word"
               >
                 {isExporting ? (
                   <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="hidden sm:inline">Exporting...</span></>

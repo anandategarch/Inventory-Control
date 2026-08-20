@@ -113,7 +113,7 @@ const CARD_CONFIG: Record<string, {
   },
   loss: {
     title: 'Top 10 Outlets by Loss',
-    description: 'Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi > 0)',
+    description: 'Outlet dengan total LOSS tertinggi (actual > SOC, nominalDeviasi < 0 = rugi)',
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
@@ -127,7 +127,7 @@ const CARD_CONFIG: Record<string, {
   },
   surplus: {
     title: 'Top 10 Outlets by Surplus',
-    description: 'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi < 0)',
+    description: 'Outlet dengan total SURPLUS tertinggi (actual < SOC, nominalDeviasi > 0 = untung)',
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },

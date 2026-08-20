@@ -92,7 +92,15 @@ export async function GET(req: NextRequest) {
         ir."qtyBom", ir."qtyDeviasi", ir."qtyCom",
         ir."qtyWaste", ir."qtySusut", ir."qtyTrial", ir."qtyLossSurplus",
         ir."nominalDeviasi", ir."nominalLossSurplus",
-        ir."pctQtyDeviasiToBom", ir.direction,
+        ir."pctQtyDeviasiToBom",
+        -- FIX SIGN-4: compute direction on-the-fly from nominalLossSurplus sign (not stored ir.direction)
+        CASE
+          WHEN ir."nominalLossSurplus" IS NOT NULL AND ir."nominalLossSurplus" < 0 THEN 'LOSS'
+          WHEN ir."nominalLossSurplus" IS NOT NULL AND ir."nominalLossSurplus" > 0 THEN 'SURPLUS'
+          WHEN ir."nominalLossSurplus" IS NULL AND ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" < 0 THEN 'LOSS'
+          WHEN ir."nominalLossSurplus" IS NULL AND ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" > 0 THEN 'SURPLUS'
+          ELSE 'NEUTRAL'
+        END as direction,
         ir."residualQty", ir."residualRatio",
         ir."absNominalLossSurplus",
         ir."tolerancePct",

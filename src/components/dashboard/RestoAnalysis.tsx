@@ -637,7 +637,7 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
                     <div
                       key={item.itemName}
                       className={`flex items-center justify-between text-xs py-1 px-2 rounded cursor-pointer hover:bg-muted/50 ${item.isOutlier ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
-                      onClick={() => onSelectItem({ outletCode, itemName: item.itemName })}
+                      {...clickableRowProps(() => onSelectItem({ outletCode, itemName: item.itemName }))}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         {item.isOutlier && <span className="text-red-600 font-bold text-[10px]">⚠</span>}

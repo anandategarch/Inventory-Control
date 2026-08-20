@@ -234,14 +234,13 @@ export function computeVarianceAnalysis(
     });
   }
 
-  // BUG FIX (AUDIT-EXPORT-AI-3): topImproved should be MOST IMPROVED (most negative selisih),
-  // not smallest-magnitude changes. Sort ascending by signed selisih → most negative first.
-  // FIX (FIX-DEEP-3A / DEEP-AUDIT-ENGINE-1): topWorsened must sort by SIGNED selisih
-  // descending (most positive = most worsened first). The previous abs-desc sort
-  // surfaced the biggest MAGNITUDE changes, mixing worsened and improved items.
-  // topImproved already sorts ascending by signed selisih (most negative first).
-  const topWorsened = [...deltas].sort((a, b) => b.selisih - a.selisih).slice(0, 5);
-  const topImproved = [...deltas].sort((a, b) => a.selisih - b.selisih).slice(0, 5);
+  // FIX CALC2-1: After CALC-1 sign convention fix (LOSS=negative), sorting by signed `selisih`
+  // is INVERTED — LOSS worsening (-5M→-10M) gives selisih=-5M (negative), which would rank
+  // as "improved" under ascending sort. Use `delta` (magnitude change) instead:
+  //   delta > 0 = magnitude grew = WORSENED (regardless of sign)
+  //   delta < 0 = magnitude shrank = IMPROVED
+  const topWorsened = [...deltas].sort((a, b) => b.delta - a.delta).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => a.delta - b.delta).slice(0, 5);
   return { topWorsened, topImproved };
 }
 
