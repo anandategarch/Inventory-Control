@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     const week = url.searchParams.get('week');
     let prevWeek = url.searchParams.get('prevWeek');
     let prevMonth = url.searchParams.get('prevMonth');
-    const limit = parseInt(url.searchParams.get('limit') || '5');
+    const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '5') || 5), 50);
     const area = url.searchParams.get('area');
     const outletCode = url.searchParams.get('outletCode');
     const pic = url.searchParams.get('pic');

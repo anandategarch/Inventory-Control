@@ -56,11 +56,17 @@ export function middleware(req: NextRequest) {
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // If no ADMIN_TOKEN set → allow without auth (backward compat).
-  // Rate limiting on each route provides sufficient DoS protection.
-  // Set ADMIN_TOKEN env var to enable auth protection.
+  // FIX API-5: In production, FAIL CLOSED if ADMIN_TOKEN not set (was: fail open → security risk).
+  // In dev mode, allow without auth (backward compat) but warn.
   if (!adminToken) {
-    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth`);
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`[middleware] ADMIN_TOKEN not set — ${pathname} BLOCKED in production (fail-closed)`);
+      return NextResponse.json(
+        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set ADMIN_TOKEN env var to enable auth.' },
+        { status: 500 }
+      );
+    }
+    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth (dev mode)`);
     return NextResponse.next();
   }
 

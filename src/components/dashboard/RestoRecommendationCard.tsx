@@ -190,7 +190,7 @@ export function RestoRecommendationCard() {
               )}
               {r.signals.overExplainedCount > 0 && (
                 <Badge variant="outline" className="text-[9px] text-red-600 border-red-200">
-                  Fraud: {r.signals.overExplainedCount}
+                  Anomali: {r.signals.overExplainedCount}
                 </Badge>
               )}
               {r.signals.highLossItemCount > 0 && (

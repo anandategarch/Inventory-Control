@@ -183,7 +183,7 @@ export async function GET(req: NextRequest) {
         select: { monthLabel: true, monthKey: true },
       }),
       pic
-        ? db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } })
+        ? db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`
             .then((r) => r.map((p) => p.outletCode))
             .catch((e) => {
               console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
@@ -284,16 +284,34 @@ export async function GET(req: NextRequest) {
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
-      if (outletCode && outletCode !== 'all') w.outlet = { code: outletCode };
       if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
-      if (picOutletCodes && picOutletCodes.length > 0) {
-        w.outlet = { ...(w.outlet || {}), code: { in: picOutletCodes } };
+      // FIX FILTER-2: PIC filter — case-insensitive (done in raw SQL above) + sentinel for empty list.
+      // Combine with outletCode: if both set, outlet must be in PIC list (intersection).
+      if (picOutletCodes !== null) {
+        // PIC selected — filter to PIC's outlets (or sentinel if empty → 0 rows)
+        let codes = picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'];
+        // If outletCode also selected, intersect (outletCode must be in PIC list)
+        if (outletCode && outletCode !== 'all') {
+          codes = codes.includes(outletCode) ? [outletCode] : ['__NO_MATCH__'];
+        }
+        w.outlet = { code: { in: codes } };
+      } else if (outletCode && outletCode !== 'all') {
+        // Only outletCode selected (no PIC)
+        w.outlet = { code: outletCode };
       }
       return w;
     };
 
     // Shared filter options for SQL aggregate queries
-    const filterOpts = { area, outletCode, itemName, picOutletCodes };
+    // FIX FILTER-2: apply sentinel for empty PIC list (buildSqlFilters skips empty arrays)
+    const filterOpts = {
+      area,
+      outletCode,
+      itemName,
+      picOutletCodes: picOutletCodes !== null
+        ? (picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'])
+        : null,
+    };
 
     // ============================================================
     //  P1 fix: RAW RECORD FETCH + HISTORICAL STATS — ALL PARALLEL

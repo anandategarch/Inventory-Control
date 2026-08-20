@@ -258,11 +258,20 @@ export async function GET(req: NextRequest) {
     // Load thresholds
     const thresholds = await getRuntimeThresholds();
 
-    // Resolve PIC outlets
+    // Resolve PIC outlets — FIX FILTER-3: case-insensitive via raw SQL LOWER()
     let picOutletCodes: string[] | null = null;
     if (pic) {
-      const pics = await db.outletPIC.findMany({ where: { pic }, select: { outletCode: true } }).catch(() => []);
-      picOutletCodes = pics.map(p => p.outletCode);
+      try {
+        const pics = await db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`;
+        picOutletCodes = pics.map(p => p.outletCode);
+      } catch (e) {
+        console.error('[export-report] OutletPIC query failed:', e instanceof Error ? e.message : String(e));
+        picOutletCodes = [];
+      }
+      // FIX FILTER-4: sentinel for empty list (was: skipped filter → showed ALL outlets)
+      if (picOutletCodes.length === 0) {
+        picOutletCodes = ['__NO_MATCH__'];
+      }
     }
 
     // Build where clause
@@ -270,13 +279,26 @@ export async function GET(req: NextRequest) {
     const buildWhere = (wk: string, mLabel: string) => {
       const w: any = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
-      if (outletCode && outletCode !== 'all') w.outlet = { code: outletCode };
       if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
-      if (picOutletCodes && picOutletCodes.length > 0) w.outlet = { ...(w.outlet || {}), code: { in: picOutletCodes } };
+      // FIX FILTER-4: PIC filter with sentinel + outletCode intersection
+      if (picOutletCodes !== null) {
+        let codes = picOutletCodes; // already has sentinel if empty
+        if (outletCode && outletCode !== 'all') {
+          codes = codes.includes(outletCode) ? [outletCode] : ['__NO_MATCH__'];
+        }
+        w.outlet = { code: { in: codes } };
+      } else if (outletCode && outletCode !== 'all') {
+        w.outlet = { code: outletCode };
+      }
       return w;
     };
 
-    const filterOpts = { area: area === 'all' ? null : area, outletCode: outletCode === 'all' ? null : outletCode, itemName, picOutletCodes };
+    const filterOpts = {
+      area: area === 'all' ? null : area,
+      outletCode: outletCode === 'all' ? null : outletCode,
+      itemName,
+      picOutletCodes, // already has sentinel applied
+    };
 
     // Fetch current + prev records
     const [weeksRaw, fileMonthKeys] = await Promise.all([
