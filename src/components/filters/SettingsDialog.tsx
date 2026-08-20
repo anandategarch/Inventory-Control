@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Save, RotateCcw, CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { Loader2, Save, RotateCcw, CheckCircle2, AlertCircle, Info, Database } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -194,6 +194,54 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     }
   }
 
+  // Migration: Fix inverted direction values in DB (CALC-1 fix)
+  const migrateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/migrate-direction', { method: 'POST' });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.success) {
+        const updated = data.updated?.total ?? 0;
+        toast({
+          title: '✓ Migration selesai',
+          description: updated > 0
+            ? `${updated} record diperbaiki. LOSS: ${data.before.LOSS} → ${data.after.LOSS}, SURPLUS: ${data.before.SURPLUS} → ${data.after.SURPLUS}`
+            : 'Data sudah benar — 0 record perlu diperbaiki.',
+        });
+        // Invalidate all queries that depend on direction
+        queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+      } else {
+        toast({
+          title: '✗ Migration gagal',
+          description: data.error || 'Unknown error',
+          variant: 'destructive',
+        });
+      }
+    },
+    onError: (e: any) => {
+      toast({
+        title: '✗ Migration gagal',
+        description: e?.message || 'Network error',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  function handleMigrateDirection() {
+    if (confirm(
+      'Fix data direction yang terbalik?\n\n' +
+      'Ini akan mengoreksi field direction (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus.\n' +
+      'Aman dijalankan berkali-kali (idempotent).\n\n' +
+      'Lanjutkan?'
+    )) {
+      migrateMutation.mutate();
+    }
+  }
+
   function handleResetOne(key: string, defaultValue: string) {
     // Just reset the edit value locally to default
     setEditValues((prev) => {
@@ -339,15 +387,29 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             </ScrollArea>
 
             <DialogFooter className="border-t pt-3">
-              <div className="flex items-center justify-between w-full">
-                <div className="text-xs text-muted-foreground">
+              <div className="flex items-center justify-between w-full flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400"
+                    onClick={handleMigrateDirection}
+                    disabled={migrateMutation.isPending}
+                    title="Fix data direction yang terbalik (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus. Aman dijalankan berkali-kali."
+                  >
+                    {migrateMutation.isPending ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Migrasi...</>
+                    ) : (
+                      <><Database className="h-3 w-3 mr-1" /> Fix Direction Data</>
+                    )}
+                  </Button>
                   {dirty ? (
-                    <span className="text-amber-600 flex items-center gap-1">
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" />
                       {changedCount} perubahan belum disimpan
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1 text-emerald-600">
+                    <span className="text-xs flex items-center gap-1 text-emerald-600">
                       <CheckCircle2 className="h-3 w-3" />
                       Semua perubahan tersimpan
                     </span>

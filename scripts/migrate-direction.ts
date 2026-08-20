@@ -3,14 +3,11 @@
 //  migrate-direction.ts — Fix inverted direction values in DB
 //
 //  Background: computeDirection was inverted (POSITIVE=LOSS instead of NEGATIVE=LOSS).
-//  This migration flips existing direction values:
-//    LOSS → SURPLUS
-//    SURPLUS → LOSS
-//    NEUTRAL → NEUTRAL (unchanged)
+//  Excel convention: nominalLossSurplus < 0 = LOSS, > 0 = SURPLUS.
 //
-//  Run AFTER deploying the computeDirection fix.
-//  Safe to run multiple times (idempotent — flips back and forth).
-//  Run ONCE after deploying the fix.
+//  IDEMPOTENT: This migration recomputes direction from nominalLossSurplus sign.
+//  Safe to run multiple times — after first run, direction already matches,
+//  so subsequent runs do nothing (0 rows updated).
 //
 //  Usage: DATABASE_URL=... bun run scripts/migrate-direction.ts
 // ============================================================
@@ -19,33 +16,63 @@ const db = new PrismaClient({ log: ['error', 'warn'] });
 
 async function main() {
   console.log('═══════════════════════════════════════════════');
-  console.log('  Migration: Fix inverted direction values');
+  console.log('  Migration: Fix direction from nominalLossSurplus sign');
+  console.log('  (idempotent — safe to run multiple times)');
   console.log('═══════════════════════════════════════════════');
 
   // Count before
+  const total = await db.inventoryRecord.count();
+  if (total === 0) {
+    console.log('✓ No records in DB — nothing to migrate.');
+    return;
+  }
+
   const beforeLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });
   const beforeSurplus = await db.inventoryRecord.count({ where: { direction: 'SURPLUS' } });
   const beforeNeutral = await db.inventoryRecord.count({ where: { direction: 'NEUTRAL' } });
   const beforeNull = await db.inventoryRecord.count({ where: { direction: null } });
 
-  console.log('Before migration:');
+  console.log(`\nTotal records: ${total}`);
+  console.log('\nBefore migration:');
   console.log(`  LOSS:    ${beforeLoss}`);
   console.log(`  SURPLUS: ${beforeSurplus}`);
   console.log(`  NEUTRAL: ${beforeNeutral}`);
   console.log(`  NULL:    ${beforeNull}`);
 
-  // Flip using raw SQL (works on both PostgreSQL and SQLite)
-  // Use a temp value to avoid flipping back immediately
-  console.log('\nFlipping direction values...');
+  // Recompute direction from nominalLossSurplus sign.
+  // IDEMPOTENT: only updates rows where direction doesn't match the sign.
+  // Uses raw SQL for both PostgreSQL and SQLite compatibility.
+  console.log('\nRecomputing direction from nominalLossSurplus sign...');
 
-  // Step 1: LOSS → __TEMP_LOSS__
-  await db.$executeRaw`UPDATE "InventoryRecord" SET direction = '__TEMP_LOSS__' WHERE direction = 'LOSS'`;
-  // Step 2: SURPLUS → LOSS
-  await db.$executeRaw`UPDATE "InventoryRecord" SET direction = 'LOSS' WHERE direction = 'SURPLUS'`;
-  // Step 3: __TEMP_LOSS__ → SURPLUS
-  await db.$executeRaw`UPDATE "InventoryRecord" SET direction = 'SURPLUS' WHERE direction = '__TEMP_LOSS__'`;
+  // LOSS: nominalLossSurplus < 0
+  const lossUpdated = await db.$executeRaw`
+    UPDATE "InventoryRecord"
+    SET direction = 'LOSS'
+    WHERE "nominalLossSurplus" IS NOT NULL
+      AND "nominalLossSurplus" < 0
+      AND direction != 'LOSS'
+  `;
+  console.log(`  Set LOSS:    ${lossUpdated} rows updated`);
 
-  console.log('Done!');
+  // SURPLUS: nominalLossSurplus > 0
+  const surplusUpdated = await db.$executeRaw`
+    UPDATE "InventoryRecord"
+    SET direction = 'SURPLUS'
+    WHERE "nominalLossSurplus" IS NOT NULL
+      AND "nominalLossSurplus" > 0
+      AND direction != 'SURPLUS'
+  `;
+  console.log(`  Set SURPLUS: ${surplusUpdated} rows updated`);
+
+  // NEUTRAL: nominalLossSurplus = 0 (or qtyDeviasi = 0 as fallback)
+  const neutralUpdated = await db.$executeRaw`
+    UPDATE "InventoryRecord"
+    SET direction = 'NEUTRAL'
+    WHERE "nominalLossSurplus" IS NOT NULL
+      AND "nominalLossSurplus" = 0
+      AND direction != 'NEUTRAL'
+  `;
+  console.log(`  Set NEUTRAL: ${neutralUpdated} rows updated`);
 
   // Count after
   const afterLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });
@@ -59,10 +86,12 @@ async function main() {
   console.log(`  NEUTRAL: ${afterNeutral} (was ${beforeNeutral})`);
   console.log(`  NULL:    ${afterNull} (was ${beforeNull})`);
 
-  console.log('\n✓ Migration complete!');
-  console.log('  Note: computeDirection is now fixed for future ingests.');
-  console.log('  This migration fixed existing data.');
-  console.log('  Safe to re-run (will flip back — do NOT run twice).');
+  const totalUpdated = lossUpdated + surplusUpdated + neutralUpdated;
+  if (totalUpdated === 0) {
+    console.log('\n✓ Already migrated — 0 rows updated. DB is in correct state.');
+  } else {
+    console.log(`\n✓ Migration complete! ${totalUpdated} rows updated.`);
+  }
 }
 
 main()

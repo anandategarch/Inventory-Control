@@ -35,6 +35,7 @@ const PROTECTED_PATHS = [
   '/api/settings',
   '/api/data',
   '/api/pic',
+  '/api/migrate-direction',
 ];
 
 const PROTECTED_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
@@ -110,5 +111,6 @@ export const config = {
     '/api/settings/:path*',
     '/api/data/:path*',
     '/api/pic/:path*',
+    '/api/migrate-direction/:path*',
   ],
 };
