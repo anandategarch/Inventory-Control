@@ -7605,3 +7605,62 @@ Stage Summary:
 14. **BUG CALC-17 (LOW)** — Change outlets.ts:628-632 to use nominalLossSurplus (not nominalDeviasi) for direction, after CALC-1 fix.
 15. **BUG CALC-22 (LOW)** — Rename `absDeviation` to `deviation` in route.ts:597, OR wrap in `Math.abs()`.
 
+
+---
+Task ID: FIX-CALC-SIGN
+Agent: Main (Z.ai Code)
+Task: Fix BOM=0 ranking + find and fix ALL calculation bugs (deep audit)
+
+Work Log:
+- User asked about BOM=0 ranking behavior in Ranking Item Nasional (Deviasi).
+- Deployed AUDIT-CALC agent to deep-audit ALL calculation logic.
+- Agent found CRITICAL systemic sign convention bug (CALC-1).
+- Verified against ACTUAL production Excel data (upload/17.MEI 2026.xlsx):
+  * LOSS items: qtyDeviasi=-51712, qtyLossSurplus=-45772, nominalDeviasi=-1608859, pctQtyDeviasiToBom=-0.117 (ALL NEGATIVE)
+  * SURPLUS items: qtyDeviasi=9171, qtyLossSurplus=9920, nominalDeviasi=133705, pctQtyDeviasiToBom=0.055 (ALL POSITIVE)
+  * Code assumed POSITIVE=LOSS — INVERTED from actual data!
+- Fixed CALC-1: computeDirection (deviation.ts) — net < 0 → LOSS, net > 0 → SURPLUS
+- Fixed CALC-2: tolerance breach SQL — ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)
+  * Was: -0.11 > -0.005 = FALSE (broken, never fired for LOSS items)
+  * Now: ABS(-0.11) > ABS(-0.005) = TRUE (correct)
+- Fixed CALC-3: residualQty/residualNominal SQL — use nominalLossSurplus < 0 instead of ir.direction
+- Fixed CALC-4: totalLoss/totalSurplus SQL — SWAPPED in 8 queries across 4 files
+  * Was: nominalLossSurplus > 0 → totalLoss (captured SURPLUS!)
+  * Now: nominalLossSurplus < 0 → totalLoss (correct: LOSS = negative)
+- Fixed CALC-5: outlet direction — SUM(nominalLossSurplus) < 0 → LOSS
+- Fixed CALC-6: BOM=0 rankBom — CASE WHEN qtyBom != 0 THEN ROW_NUMBER() ELSE NULL
+- Fixed CALC-7: BOM=0 bucket_avg — exclude BOM=0 from join (was BETWEEN 0 AND 0)
+- Fixed CALC-8: 5 rules in rules.yaml — direction={eq:LOSS} → nominalLossSurplus={lt:0}
+- Fixed CALC-9: residualRatio — now uses correctly-computed residualQty
+- Fixed CALC-10: zScore/benchmark proxies — ABS(pctQtyDeviasiToBom) in COUNT
+- Fixed CALC-11: SUM(qtyBom)!=0 → SUM(ABS(qtyBom))>0
+- Fixed rankingService.ts: nominalLossSurplus > 0 → < 0 for lossNominal
+- Fixed outlet-items/route.ts: totalLossNominal sign + tolerancePct ABS
+- Fixed drilldown/route.ts: compute direction on-the-fly (not stored, which may be inverted)
+- Added scripts/migrate-direction.ts: migration to flip existing DB direction values
+- Added absPctQtyDeviasiToBom + absTolerancePct to RuleContext (evaluator.ts)
+- Updated RestoAnalysis.tsx: rankBom NULL → display '—'
+- Verified with SQLite test (Excel sign convention):
+  * Direction: LOSS ✓ (was SURPLUS before fix)
+  * Total Loss: 1000000 ✓ (was 0 before fix)
+  * Tolerance Breach: 1 ✓ (was 0 before fix)
+  * Loss/Sales bullet: "rugi Rp 1.000.000" ✓ (was showing surplus amount)
+- Committed + pushed to GitHub (commit 0d41e49).
+
+Stage Summary:
+- 11 calculation bugs FIXED (2 CRITICAL, 4 HIGH, 5 MEDIUM):
+  * CALC-1 (CRITICAL): computeDirection sign convention — systemic inversion
+  * CALC-2 (CRITICAL): tolerance breach never fired for LOSS items
+  * CALC-3 (HIGH): residualQty/residualNominal for wrong direction
+  * CALC-4 (HIGH): totalLoss/totalSurplus SWAPPED in 8 SQL queries
+  * CALC-5 (HIGH): outlet direction inverted in 5 queries
+  * CALC-6 (HIGH): BOM=0 rankBom misleading (ranked last, should be NULL)
+  * CALC-7 (HIGH): BOM=0 bucket_avg degenerate
+  * CALC-8 (HIGH): 5 rules used inverted direction field
+  * CALC-9 (HIGH): residualRatio used inverted residualQty
+  * CALC-10 (MEDIUM): zScore/benchmark proxies used signed values
+  * CALC-11 (MEDIUM): SUM(qtyBom)!=0 vs SUM(ABS(qtyBom))>0
+- Files changed: 13 files, +477/-69 lines
+- Migration script: scripts/migrate-direction.ts (run once to fix existing DB data)
+- Lint clean. Page loads HTTP 200.
+- Pushed to GitHub: 0d41e49
