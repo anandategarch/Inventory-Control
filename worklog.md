@@ -7300,3 +7300,27 @@ Stage Summary:
   * API-2/3/4 — missing rate limiting on status/setup/settings DELETE
   * DB-2/3/4/5 — mode: 'insensitive' + skipDuplicates portability (ingestion.ts, pic/import)
   * Dead code cleanup (queryPeerItemComparison, computePrioritiesFromFlags, calcAvgPrice, analysisCache, scorecardOutlet, investigationWorklist, 3 dead interfaces, 2 shim files, 18 unused npm deps)
+
+---
+Task ID: PUSH-GITHUB
+Agent: Main (Z.ai Code)
+Task: Push all commits to GitHub origin/main
+
+Work Log:
+- Checked git status: 29 commits ahead of origin/main (including latest deep audit fixes).
+- Attempted `git push origin main` — failed: no credentials stored (PAT was removed in prior session for security).
+- User provided GitHub PAT (ghp_sqFQ...).
+- Pushed via inline URL: `git push https://<PAT>@github.com/anandategarch/Inventory-Control.git main`.
+- Push succeeded: output `43254fb..553d319  main -> main` (remote updated from 43254fb to 553d319).
+- Updated local `origin/main` ref to match (fetch failed due to no creds, but push confirmed success).
+- Security sweep: verified NO token stored in:
+  * .git/config (remote URL = https://github.com/anandategarch/Inventory-Control.git — no token)
+  * ~/.gitconfig (no credential helper, no token)
+  * git config --list (no credential/token entries)
+  * reflog shows [REDACTED:github_token] from prior session pulls (system auto-redacts)
+- Final status: `Your branch is up to date with 'origin/main'.` — 0 commits ahead, working tree clean.
+
+Stage Summary:
+- All 29 commits pushed to GitHub (origin/main now at 553d319).
+- Latest commit includes deep audit fixes: REC-1/2/3 (recommendation engine), FILTER-1/2/3/4 (PIC filter in analysis + export-report routes), API-5 (middleware fail-closed), REC-4/6/7/8/9 (medium/low fixes).
+- Token NOT stored anywhere in git config (used inline, not persisted). User should revoke the PAT at https://github.com/settings/tokens if no longer needed.
