@@ -7324,3 +7324,284 @@ Stage Summary:
 - All 29 commits pushed to GitHub (origin/main now at 553d319).
 - Latest commit includes deep audit fixes: REC-1/2/3 (recommendation engine), FILTER-1/2/3/4 (PIC filter in analysis + export-report routes), API-5 (middleware fail-closed), REC-4/6/7/8/9 (medium/low fixes).
 - Token NOT stored anywhere in git config (used inline, not persisted). User should revoke the PAT at https://github.com/settings/tokens if no longer needed.
+
+
+---
+Task ID: AUDIT-CALC
+Agent: Calculation Logic Auditor
+Task: Deep audit of ALL calculation logic — signs, division-by-zero, NULL handling, ranking, growth, z-score, residual, tolerance, priority score
+
+Work Log:
+- Read worklog tail (200 lines) for context — prior audits (REC-1..9, FILTER-1..4, API-5, UI-1..14) noted.
+- Read all metrics files: deviation.ts, growth.ts, historical.ts, benchmark.ts, sales.ts, definitions.ts (6 files).
+- Read all query files: items.ts (373 lines), outlets.ts (878 lines), areas.ts (85 lines), dashboard.ts (279 lines), historical.ts (76 lines), shared.ts (41 lines).
+- Read engine files: rankingService.ts (398 lines), analysis.ts (11 lines, barrel), ruleService.ts (146 lines), rules/evaluator.ts (443 lines).
+- Read app/api/analysis/route.ts (772 lines) — buildExecSummaryFromSql, parallel SQL aggregation.
+- Read prisma/schema.prisma (305 lines) — sign convention comment line 94 confirmed.
+- Read src/config/rules.yaml (241 lines) — 15 anomaly rules.
+- Inspected ACTUAL production Excel data `/home/z/my-project/upload/17.MEI 2026.xlsx` (54,208 rows × 30 cols):
+  * Row 2 (LOSS example): BOM=-442185, DEV=-51712, COM=BOM+DEV=-493897. Actual consumption (493,897) > BOM (442,185) → OVER-CONSUMPTION = LOSS. DEV is NEGATIVE.
+  * Row 5 (SURPLUS example): BOM=-166824, DEV=+9171, COM=BOM+DEV=-157653. Actual consumption (157,653) < BOM (166,824) → UNDER-CONSUMPTION = SURPLUS. DEV is POSITIVE.
+  * Distribution: 20,205 rows NEG deviasi (LOSS), 18,180 rows POS deviasi (SURPLUS), 15,822 zero.
+  * CONFIRMED: production data convention is **NEGATIVE qtyDeviasi = LOSS, POSITIVE = SURPLUS** (because BOM is negative consumption, adding more negative = more consumption = LOSS).
+- Cross-referenced production data convention against codebase:
+  * CORRECT (matches production data, negative=LOSS): outlets.ts:629-630 + 693-694 (REC-2 fix), RestoRecommendationCard.tsx:146, RestoAnalysis.tsx:790/798.
+  * INVERTED (uses positive=LOSS, contradicts production data): deviation.ts computeDirection, definitions.ts comments, items.ts:39-41 + 241-243, outlets.ts:61-62/235-236/279-281, dashboard.ts:73-74/151-152/216-219, CardDrillDown.tsx:116/130, Charts.tsx:180, all rules.yaml using `direction: eq "LOSS"` or `pctQtyDeviasiToBom: { gt: tolerancePct }`.
+- This is a SYSTEMIC convention mismatch — most of the codebase uses positive=LOSS but production data uses negative=LOSS. The REC-2 fix accidentally corrected this for the recommendations query ONLY, creating inconsistency with the rest of the codebase.
+
+Stage Summary:
+
+================== CRITICAL (production-breaking) ==================
+
+- **BUG CALC-1 (CRITICAL, systemic sign convention)** — `src/lib/metrics/deviation.ts:39-43` (computeDirection) + 12 downstream sites.
+  - Description: `computeDirection()` returns `'LOSS'` when `net > 0` and `'SURPLUS'` when `net < 0`. This follows the `definitions.ts:48-52` convention "positive qtyDeviasi = LOSS". HOWEVER, actual production Excel data has the OPPOSITE convention: BOM is stored as NEGATIVE consumption (e.g., BOM=-442185), and `QTY DEVIASI = COM - BOM` where COM = actual consumption (also negative). For an OVER-CONSUMPTION (LOSS) item: COM is more negative than BOM, so DEV is NEGATIVE. Verified with 54K-row production file: 20,205 rows have negative qtyDeviasi (LOSS items), 18,180 have positive (SURPLUS).
+  - Impact: `transform.ts:287` calls `computeDirection(qtyLossSurplus, qtyDeviasi)` and stores result in `ir.direction`. For production data, LOSS items get `ir.direction='SURPLUS'` and SURPLUS items get `ir.direction='LOSS'`. This propagates to:
+    * `queryTopOutlets` direction (outlets.ts:70-72) — INVERTED
+    * `queryPeerComparison` direction (outlets.ts:279-281) — INVERTED
+    * `queryItemConsistency` lossOutlets/surplusOutlets (items.ts:348-349) — INVERTED
+    * `queryRestoRecommendations` (outlets.ts:628-632) — CORRECT (REC-2 fix uses `nominalDeviasi < 0 → LOSS`), but now INCONSISTENT with the rest of the system.
+    * All rules in rules.yaml filtering by `direction: eq "LOSS"` (RESIDUAL_LOSS_HIGH, RESIDUAL_LOSS_WARN, HIGH_LOSS_NOMINAL, HISTORICAL_ABNORMAL) — NEVER fire for actual LOSS items, only for SURPLUS.
+    * All rules filtering by `direction: eq "SURPLUS"` (HISTORICAL_ABNORMAL_SURPLUS) — fires for LOSS items (false positives).
+    * `ExecutiveSummary.tsx:108` "Total LOSS" card (red) shows `s.totalLoss` which is computed as `SUM(nominalLossSurplus > 0)` (dashboard.ts:151) = actually SURPLUS total. The dashboard displays LOSS/SURPLUS labels SWAPPED.
+  - Proposed fix: Either (A) flip the convention in `computeDirection` to match production data (`net < 0 → LOSS`), update `definitions.ts` comments, and remove the REC-2 inversion in outlets.ts:628-632 (making everything consistently negative=LOSS); OR (B) normalize signs at ingestion (multiply qtyDeviasi, qtyLossSurplus, nominalDeviasi, nominalLossSurplus by -1 when storing) so the DB matches the codebase's positive=LOSS convention. Option A is less risky (no data migration). Concretely for Option A:
+    ```ts
+    // deviation.ts
+    export function computeDirection(qtyLossSurplus, qtyDeviasi = null) {
+      const net = qtyLossSurplus ?? qtyDeviasi;
+      if (net == null) return 'NEUTRAL';
+      if (net < 0) return 'LOSS';     // was: net > 0 → LOSS
+      if (net > 0) return 'SURPLUS';  // was: net < 0 → SURPLUS
+      return 'NEUTRAL';
+    }
+    ```
+    And invert ALL SQL `CASE WHEN nominalLossSurplus > 0 → LOSS` to `< 0 → LOSS` (and corresponding `< 0 → SURPLUS` to `> 0 → SURPLUS`) in: items.ts:39-41, items.ts:241-243, outlets.ts:61-62/235-236, dashboard.ts:73-74/151-152/216-219, outlet-items/route.ts:262-263. And revert outlets.ts:628-632 + 692-696 to use `nominalLossSurplus` (not `nominalDeviasi`) with `> 0 → LOSS` for consistency. And update CardDrillDown.tsx:116/130 + Charts.tsx:180 + definitions.ts:48-52,58-62 text.
+
+- **BUG CALC-2 (CRITICAL, tolerance rules never fire for LOSS items)** — `src/config/rules.yaml:88-117` (TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH, TOLERANCE_NOT_SET_HIGH_DEV) + `src/lib/queries/outlets.ts:614-615` (toleranceBreachCount/toleranceBreachHighCount) + `src/engine/analysis/ruleService.ts:80` (pctQtyDeviasiToBom in ctx).
+  - Description: All tolerance rules use `pctQtyDeviasiToBom: { gt: tolerancePct }` (SIGNED comparison). In production data, `pctQtyDeviasiToBom` is NEGATIVE for LOSS items (Excel column `% QTY DEVIASI TO BOM` row 2 = -0.117 for a LOSS item). Since tolerancePct is always positive (e.g., 0.05), the comparison `-0.117 > 0.05` is FALSE — the rule NEVER fires for LOSS items.
+  - Same issue in SQL: `outlets.ts:614`: `COUNT(CASE WHEN ir."pctQtyDeviasiToBom" > ir."tolerancePct" THEN 1 END)` — never counts LOSS items.
+  - Impact: TOLERANCE_BREACH, TOLERANCE_BREACH_HIGH, TOLERANCE_NOT_SET_HIGH_DEV rules never fire for actual LOSS items (where deviation exceeds tolerance). The "toleranceBreachCount" signal in recommendations is always 0 for pure-LOSS outlets. Worklist misses all tolerance breaches on LOSS items. The whole tolerance monitoring feature is broken for the dominant case (LOSS items).
+  - Proposed fix: Use `ABS()`:
+    ```yaml
+    # rules.yaml
+    - pctQtyDeviasiToBom: { gt: tolerancePct }            # OLD
+    - { abs: pctQtyDeviasiToBom }: { gt: tolerancePct }    # NEW (engine supports abs expression)
+    ```
+    OR add a derived field `absPctQtyDeviasiToBom` to ctx and use it. Same fix for `tolerancePct * 2` and `stdDeviasiBomPct`. And in outlets.ts:614-615: `COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ir."tolerancePct" THEN 1 END)`.
+
+- **BUG CALC-3 (HIGH, residual computed for wrong direction)** — `src/lib/queries/dashboard.ts:153-155` + `src/lib/queries/outlets.ts:610-611, 237` + `src/app/api/analysis/route.ts:108`.
+  - Description: All these filter `CASE WHEN ir.direction = 'LOSS'` to compute `residualLossQty` / `residualLossNominal` / `qtyDeviasiLoss`. Since `ir.direction` is INVERTED (per CALC-1), these actually filter for SURPLUS items. So:
+    * `residualLossQty` = SUM of ABS(residualQty) for items where `ir.direction='LOSS'` = SUM for SURPLUS items (per CALC-1 inversion).
+    * `residualLossNominal` = same, for SURPLUS.
+    * `qtyDeviasiLoss` = SUM of absQtyDeviasi for SURPLUS items.
+    * `residualLossPct = residualLossQty / qtyDeviasiLoss` = SURPLUS residual %, NOT LOSS residual %.
+  - Impact: `ExecutiveSummary.tsx:124` shows "Residual LOSS" card with the SURPLUS residual qty. The "X% of deviation" label is also SURPLUS residual %, not LOSS. Users see wrong residual numbers. Same in `queryRestoRecommendations` Signal 14 (`residualNominal` → `s14Score`) — score is based on SURPLUS residual.
+  - Proposed fix: Depends on CALC-1 fix. After fixing the direction convention, these filters will correctly select LOSS items. If CALC-1 is fixed by flipping computeDirection, NO changes needed here (the filter `direction='LOSS'` will then correctly match LOSS items). If CALC-1 is fixed by ingesting with sign flip, also no changes needed. DO NOT independently change these filters without fixing CALC-1 first.
+
+- **BUG CALC-4 (HIGH, totalLoss/totalSurplus swapped in executive summary)** — `src/lib/queries/dashboard.ts:73-74, 151-152, 216-219` + `src/lib/queries/outlets.ts:61-62, 235-236, 608-609` + `src/app/api/outlet-items/route.ts:262-263`.
+  - Description: All these compute `lossNominal`/`totalLoss` as `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus ELSE 0 END)` and `surplusNominal`/`totalSurplus` as `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END)`. With production data convention (negative=LOSS), the FIRST actually sums SURPLUS values, and the SECOND sums LOSS magnitudes. Labels are SWAPPED.
+  - Impact: `ExecutiveSummary.tsx:108,116` "Total LOSS" (red) shows the SURPLUS total; "Total SURPLUS" (emerald) shows the LOSS total. `LossVsSurplus` card (dashboard.ts:216-219) `loss` count = SURPLUS count, `surplus` count = LOSS count. `netCostTrend` (route.ts:621) `(r.lossNominal - r.surplusNominal) / r.sales` has the WRONG SIGN — net cost shows negative when LOSS > SURPLUS. `Signal 5` in recommendations (`lossToSales = totalLoss / sales`) uses SURPLUS total in numerator → lossToSales ratio is inverted.
+  - Proposed fix: Depends on CALC-1. After fixing convention (negative=LOSS), swap the CASE conditions: `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END) as lossNominal` and `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus ELSE 0 END) as surplusNominal`.
+
+- **BUG CALC-5 (HIGH, outlet direction in queryTopOutlets/queryPeerComparison inverted)** — `src/lib/queries/outlets.ts:70-72, 279-281` + `src/lib/queries/items.ts:39-41, 241-243`.
+  - Description: These compute `direction` from `lossAmount > surplusAmount` (outlets.ts) or `SUM(nominalLossSurplus) > 0 → LOSS` (items.ts). Because `lossAmount`/`surplusAmount` are computed wrong (per CALC-4) and `SUM(nominalLossSurplus) > 0` matches SURPLUS items in production data, the resulting `direction` field is INVERTED.
+  - Impact: `queryTopOutlets` returns outlets with `direction='LOSS'` for actual SURPLUS outlets and vice versa. UI TopOutlets table shows wrong direction labels. `queryTopItemsByNominal` and `queryTopItemsByCategory` show wrong direction per item. Note: `queryRestoRecommendations` (outlets.ts:628-632) was INADVERTENTLY CORRECTED by REC-2 fix (uses `nominalDeviasi < 0 → LOSS`), so it's now INCONSISTENT with these other queries.
+  - Proposed fix: Depends on CALC-1. After fixing convention: change `> 0 → LOSS` to `< 0 → LOSS` (and `< 0 → SURPLUS` to `> 0 → SURPLUS`) in items.ts:39-41, 241-243. In outlets.ts:61-62/235-236/608-609, swap the > 0 / < 0 conditions (per CALC-4 fix). Then the existing `CASE WHEN lossAmount > surplusAmount → LOSS` (outlets.ts:70-72, 279-281) will work correctly.
+
+================== HIGH (specific calc bugs) ==================
+
+- **BUG CALC-6 (HIGH, BOM=0 ranking misleading)** — `src/lib/queries/items.ts:184-185`.
+  - Description: `ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"` assigns a numeric rank to ALL items including those with `qtyBom=0` (or NULL). Items with BOM=0 get the LAST rank (highest number), which is misleading — they should be excluded from BOM ranking or marked NULL/"—". The pctLossSurplusToBom at line 144-146 correctly returns NULL when `SUM(qtyBom) = 0`, but rankBom doesn't follow the same logic.
+  - Impact: In the "Top Items by Deviasi Rank" table, items with no BOM (e.g., service items, items with BOM not yet set) appear at the bottom of the BOM ranking with a numeric rank, suggesting they have a "low BOM" when they actually have NO BOM. Users may misinterpret this as "small BOM" rather than "no BOM".
+  - Proposed fix: Exclude BOM=0 items from rankBom, OR return NULL rank:
+    ```sql
+    CASE WHEN SUM(ir."qtyBom") != 0
+      THEN ROW_NUMBER() OVER (ORDER BY CASE WHEN SUM(ir."qtyBom") != 0 THEN ABS(SUM(ir."qtyBom")) END DESC)
+      ELSE NULL END as "rankBom"
+    ```
+    Simpler: filter out BOM=0 items in the WHERE clause (`AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0`) so they don't appear in the result at all. UI shows "—" for NULL rank.
+
+- **BUG CALC-7 (HIGH, BOM=0 bucket_avg degenerate)** — `src/lib/queries/items.ts:175`.
+  - Description: `ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5`. When `ABS(ipo."qtyBom") = 0`, this becomes `BETWEEN 0 AND 0` (degenerate — only matches other items with ABS(qtyBom)=0). The `avgDeviasiByBom` is then the average ABS(qtyDeviasi) of other BOM=0 items, which is meaningless for benchmarking.
+  - Impact: For items with no BOM, the "Network Average" column shows a number derived from other no-BOM items, misleading users into thinking there's a meaningful peer comparison. Should show NULL/"—" instead.
+  - Proposed fix: Add guard `AND ABS(ipo."qtyBom") > 0` to the bucket_avg join, OR compute avgDeviasiByBom only for items with `ABS(qtyBom) > 0`:
+    ```sql
+    bucket_avg AS (
+      SELECT ipo."itemName", ipo."outletCode",
+        AVG(CASE WHEN ipo2."outletCode" != ipo."outletCode" AND ABS(ipo."qtyBom") > 0
+                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
+        SUM(CASE WHEN ipo2."outletCode" != ipo."outletCode" AND ABS(ipo."qtyBom") > 0
+                 THEN 1 ELSE 0 END) as "otherCount"
+      FROM item_per_outlet ipo
+      JOIN item_per_outlet ipo2
+        ON ipo2."itemName" = ipo."itemName"
+        AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
+      GROUP BY ipo."itemName", ipo."outletCode"
+    )
+    ```
+    When ABS(qtyBom)=0, otherCount=0 → avgDeviasiByBom=NULL (via the `CASE WHEN ba."otherCount" > 0` at line 183).
+
+- **BUG CALC-8 (HIGH, z-score rule never fires for SURPLUS items)** — `src/config/rules.yaml:206-228` (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS) + `src/engine/analysis/ruleService.ts:43-45` (zScore computation).
+  - Description: `zScore = calcZScoreFromStats(curr.pctQtyDeviasiToBom, mean, stdDev)` where `pctQtyDeviasiToBom` is SIGNED (negative for LOSS in production data). `calcZScoreFromStats` (historical.ts:151-158) uses `Math.abs(value)` internally, so the zScore itself is computed correctly (always non-negative). HOWEVER, the rule `HISTORICAL_ABNORMAL` filters `direction: eq "LOSS"` — which (per CALC-1) matches SURPLUS items. And `HISTORICAL_ABNORMAL_SURPLUS` filters `direction: eq "SURPLUS"` — matches LOSS items. So both rules fire on the WRONG direction.
+  - Impact: An item with abnormal LOSS (high z-score) gets flagged as `HISTORICAL_ABNORMAL_SURPLUS` (display label says "SURPLUS abnormal") — misleading. An item with abnormal SURPLUS gets flagged as `HISTORICAL_ABNORMAL` (display says "LOSS abnormal").
+  - Proposed fix: Depends on CALC-1. After fixing direction convention, these rules will fire correctly. No independent fix.
+
+- **BUG CALC-9 (HIGH, residualRatio in recommendations uses inverted residualQty)** — `src/lib/queries/outlets.ts:760`.
+  - Description: `const residualRatio = totalQtyDeviasi > 0 ? Math.abs(residualQty) / totalQtyDeviasi : 0;`. `residualQty` comes from `SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END)` (outlets.ts:610), which (per CALC-3) is actually the SURPLUS residual sum (because `ir.direction` is inverted). `totalQtyDeviasi` is `SUM(ABS(qtyDeviasi))` (outlets.ts:603) — all items, correct. So `residualRatio = SURPLUS_residual / total_qtyDeviasi` — undercounts the residual ratio for LOSS-dominant outlets and overcounts for SURPLUS-dominant outlets.
+  - Impact: Signal 4 (`s4Score = Math.min(100, residualRatio * 100)`) is wrong. The analysis bullet "Residual X% — Y dari Z total deviasi tidak terjelaskan" (outlets.ts:820) shows wrong numbers. Priority score is skewed.
+  - Proposed fix: Depends on CALC-1 + CALC-3. After fixing direction, residualQty will correctly sum LOSS residual. Alternatively, compute residualRatio over ALL items (not just LOSS): `SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi"))` — direction-agnostic.
+
+================== MEDIUM (correctness issues with limited blast radius) ==================
+
+- **BUG CALC-10 (MEDIUM, avgDevBom returns 0 instead of NULL when BOM=0)** — `src/lib/queries/items.ts:351-353` (queryItemConsistency) + `src/lib/queries/outlets.ts:58-60, 226-228, 488-490, 599-601, 688-690` + `src/lib/queries/areas.ts:63-65` + `src/lib/queries/dashboard.ts:70-72`.
+  - Description: All these compute `devBom`/`avgDevBom` as `CASE WHEN SUM(ABS(qtyBom)) > 0 THEN SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) ELSE 0 END`. When BOM=0 (or all NULL), returns 0. But 0 is misleading — it implies "0% deviation" when actually the Dev/BOM is UNDEFINED (no BOM to compare against). The downstream `COALESCE("avgDevBom", 0)` at items.ts:362 is then redundant.
+  - Impact: In Item Consistency table, items with no BOM show "Avg Dev/BOM: 0%" — looks healthy when actually it's undefined. Could mask items that need BOM setup.
+  - Proposed fix: Change `ELSE 0` to `ELSE NULL` in all 8 sites. UI should display NULL as "—" (most fmtPct helpers already handle null). Remove the redundant `COALESCE("avgDevBom", 0)` at items.ts:362.
+
+- **BUG CALC-11 (MEDIUM, items.ts pctLossSurplusToBom uses signed SUM(qtyBom) guard)** — `src/lib/queries/items.ts:144-146`.
+  - Description: `CASE WHEN SUM(ir."qtyBom") != 0 THEN SUM(ir."qtyLossSurplus") / SUM(ir."qtyBom") ELSE NULL END`. Uses `SUM(qtyBom) != 0` (signed sum) as the guard. The audit checklist #12 warns: "WRONG if qtyBom is negative (sum could be 0 with canceling values)". In production data, qtyBom is always negative (or zero), so the sum can only be 0 if ALL items have qtyBom=0 or NULL. The `!= 0` guard happens to work, but it's not robust — if data ever has mixed-sign BOM (e.g., positive BOM for returns/adjustments), the sum could cancel out.
+  - Impact: Low in current production data (BOM always negative). Could surface if data quality changes. Also: `SUM(qtyLossSurplus) / SUM(qtyBom)` is signed/signed — for a pure-LOSS item (both negative), result is positive (correct magnitude); for mixed LOSS+SURPLUS items in the same (item, outlet) group, the ratio could be misleading.
+  - Proposed fix: Use `SUM(ABS(qtyBom)) > 0` as guard (consistent with all other Dev/BOM computations in the codebase), and use ABS for the ratio:
+    ```sql
+    CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+      THEN SUM(ABS(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
+      ELSE NULL END as "pctLossSurplusToBom",
+    ```
+
+- **BUG CALC-12 (MEDIUM, historical variance formula numerically unstable)** — `src/lib/queries/historical.ts:70` + `src/lib/metrics/historical.ts:86` (computeZScore).
+  - Description: `variance = Math.max(0, (sumSq - n * mean * mean) / (n - 1))` uses the textbook shortcut formula `Var = (Σx² − n·x̄²) / (n−1)`. This suffers catastrophic cancellation when `sumSq ≈ n·mean²` (i.e., when values are tightly clustered). For example, weekly Dev/BOM values of [0.05, 0.05, 0.05, 0.06] would have sumSq=0.0151 and n·mean²=0.0150, differing by 0.0001 — float32 precision could lose all significant digits. The `Math.max(0, ...)` clamp hides negative variance from float error but doesn't fix the precision loss.
+  - Impact: For tightly-clustered historical data, stdDev could be artificially low → zScore artificially high → false HISTORICAL_ABNORMAL flags. Low probability in practice (most items have varied weekly Dev/BOM), but possible for stable items.
+  - Proposed fix: Use the two-pass formula `Σ(x - mean)²`:
+    ```ts
+    // In historical.ts query, fetch the values array OR compute variance in JS:
+    const variance = n > 1
+      ? absValues.reduce((acc, v) => acc + (v - mean) ** 2, 0) / (n - 1)
+      : 0;
+    ```
+    This requires fetching raw weekly values (not just sumSq), OR adding a second SQL pass. Alternatively, use Welford's online algorithm for numerical stability. The JS-side `computeZScore` in `historical.ts:86` already uses the stable two-pass formula, so the fix is to either (a) call `computeZScore` from the SQL path (passing raw values), or (b) keep SQL sumSq but document the precision caveat.
+
+- **BUG CALC-13 (MEDIUM, s2Score deviasiGrowth not bounded for direction flips)** — `src/lib/queries/outlets.ts:750-753`.
+  - Description: `deviasiGrowth = (Math.abs(nominalDeviasi) - Math.abs(prevNominal)) / Math.abs(prevNominal)`. When direction flips (LOSS→SURPLUS), the magnitude comparison is correct (uses ABS). But `s2Score = Math.min(100, Math.max(0, deviasiGrowth * 100))` — clamps to [0, 100]. If `prevNominal` was very small (e.g., 1000) and `nominalDeviasi` is large (e.g., 1,000,000), growth = 99900% → clamped to 100. This is OK (saturates). But if `deviasiGrowth` is negative (magnitude decreased), `Math.max(0, ...)` zeros it out — score=0 for improving outlets. This is by design (improving outlets get low priority), but it means a 99% improvement and a 1% improvement both score 0 (no differentiation).
+  - Impact: Signal 2 cannot distinguish "slightly improving" from "dramatically improving" outlets — both score 0. Not a calculation bug per se, but a design limitation.
+  - Proposed fix: If differentiation is desired, use a sigmoid or linear scale that gives negative growth a non-zero score: `s2Score = Math.min(100, Math.max(0, 50 + deviasiGrowth * 50))` — 50 = neutral, >50 = worsening, <50 = improving. OR keep current behavior if binary "worsening yes/no" is intended.
+
+- **BUG CALC-14 (MEDIUM, networkAvgDevBom arithmetic mean instead of weighted)** — `src/lib/queries/outlets.ts:713-715`.
+  - Description: `networkAvgDevBom = currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length`. This is the ARITHMETIC MEAN of per-outlet Dev/BOM ratios. But `devBom` per outlet is `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` (a weighted ratio). Averaging ratios is statistically incorrect — outlets with small BOM get equal weight to outlets with large BOM, skewing the network average.
+  - Impact: `devBomRatio = devBom / networkAvgDevBom` (Signal 1) compares outlet's ratio to the (incorrectly-averaged) network ratio. Small outlets with high Dev/BOM inflate the network average, making large outlets look better than they are.
+  - Proposed fix: Compute network AvgDevBom as `SUM(all_outlet_qtyDeviasi) / SUM(all_outlet_qtyBom)` (the proper aggregate ratio):
+    ```ts
+    const totalQtyDeviasi = currRows.reduce((s, r) => s + Number(r.totalQtyDeviasi || 0), 0);
+    const totalQtyBom = currRows.reduce((s, r) => s + Number(r.qtyBom || 0), 0);  // need to expose qtyBom in SELECT
+    const networkAvgDevBom = totalQtyBom > 0 ? totalQtyDeviasi / totalQtyBom : 0;
+    ```
+    Note: this requires adding `SUM(ABS(qtyBom)) as "qtyBom"` to the outlet_aggs SELECT (currently not exposed).
+
+- **BUG CALC-15 (MEDIUM, s5Score lossToSales uses inverted totalLoss)** — `src/lib/queries/outlets.ts:764-765`.
+  - Description: `lossToSales = sales > 0 ? totalLoss / sales : 0`. `totalLoss` comes from `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus ELSE 0 END)` (outlets.ts:608), which (per CALC-4) actually contains the SURPLUS total in production data. So `lossToSales = SURPLUS_total / sales` — inverted.
+  - Impact: Signal 5 (Loss/Sales ratio) is actually Surplus/Sales ratio. Outlets with high SURPLUS get high Signal 5 score, not outlets with high LOSS. The bullet "Loss/Sales X% — rugi Rp Y dari penjualan Rp Z" (outlets.ts:821) shows SURPLUS numbers labeled as LOSS.
+  - Proposed fix: Depends on CALC-1 + CALC-4. After fixing convention, `totalLoss` will correctly contain LOSS total.
+
+================== LOW (minor issues, edge cases) ==================
+
+- **BUG CALC-16 (LOW, residualQty sign inconsistency between transform.ts and deviation.ts)** — `src/engine/transform.ts:264-265` vs `src/lib/metrics/deviation.ts:75`.
+  - Description: `transform.ts` computes `residualQty = sign * absResidual` where `sign = qtyDeviasi >= 0 ? 1 : -1` — so `residualQty` is SIGNED (positive for LOSS items where qtyDeviasi > 0, negative for SURPLUS). But `deviation.ts` computeResidual returns `residualQty = Math.max(0, absDev - explained)` — always NON-NEGATIVE (magnitude). The DB column `residualQty` (from transform.ts) is signed; the metric library (deviation.ts) returns unsigned. SQL queries use `ABS(ir."residualQty")` which masks the difference, but any JS code calling `computeResidual()` gets a different sign than reading `ir.residualQty` from DB.
+  - Impact: Low — most consumers use ABS(). But `computeResidualRatio` in deviation.ts:83-86 divides `residualQty / Math.abs(qtyDeviasi)` — if residualQty is unsigned (from deviation.ts), this is correct; if signed (from DB), the ratio could be negative. Inconsistent API.
+  - Proposed fix: Pick one convention. Recommend: `deviation.ts` computeResidual should also return signed residualQty (matching transform.ts and the DB), so the metric library is consistent with the stored data:
+    ```ts
+    const sign = qtyDeviasi >= 0 ? 1 : -1;
+    const residualQty = sign * Math.max(0, absDev - explained);
+    ```
+
+- **BUG CALC-17 (LOW, REC-2 fix uses nominalDeviasi instead of nominalLossSurplus)** — `src/lib/queries/outlets.ts:628-632, 692-696`.
+  - Description: The REC-2 fix computes outlet direction from `SUM(nominalDeviasi)` (GROSS), but the rest of the codebase (items.ts:39-41, dashboard.ts, etc.) uses `nominalLossSurplus` (NET). While these usually have the same sign, they DIFFER when an item has explained deviation (Waste+Susut+Trial) that flips the net sign relative to gross. E.g., gross deviation = -100 (LOSS), but Waste+Susut+Trial = -120 (over-explained) → net = +20 (SURPLUS). Using gross would label it LOSS; using net would label it SURPLUS.
+  - Impact: Direction classification in recommendations may differ from direction in rules engine (which uses `ir.direction` from NET). Inconsistent direction labels across the UI.
+  - Proposed fix: Use `nominalLossSurplus` for consistency:
+    ```sql
+    CASE
+      WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'   -- after CALC-1 fix
+      WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+      ELSE 'NEUTRAL'
+    END as "outletDirection"
+    ```
+    (Assuming CALC-1 is fixed to use negative=LOSS convention.)
+
+- **BUG CALC-18 (LOW, historical n check uses week count not row count)** — `src/lib/queries/historical.ts:43-60` + `src/engine/analysis/ruleService.ts:43`.
+  - Description: `queryHistoricalStats` correctly groups by `(outletId, itemId, monthLabel, weekLabel)` so each week = 1 observation, and `n = COUNT(*)` over weeks. `ruleService.ts:43` checks `historicalStats.n >= HISTORICAL_MIN_WEEKS` (default 4). This is CORRECT. However, the SQL returns `n` as `CAST(COUNT(*) AS INTEGER)` over the `weekly_dev` CTE — if a week has `weeklyDevBom IS NULL` (BOM=0 that week), it's filtered out by `WHERE "weeklyDevBom" IS NOT NULL` (line 58), so `n` undercounts. An outlet-item with 6 historical weeks but 3 of them had BOM=0 would have n=3, below the min=4 threshold → zScore=null → no historical rule fires.
+  - Impact: Items with intermittent BOM=0 weeks lose z-score analysis. May or may not be desired (arguably correct — if BOM was 0, that week isn't comparable).
+  - Proposed fix: Document this behavior. If z-score should use ALL weeks (treating BOM=0 weeks as 0% deviation), remove the `WHERE "weeklyDevBom" IS NOT NULL` filter. Otherwise, no change.
+
+- **BUG CALC-19 (LOW, mode tiebreaker picks smaller value)** — `src/lib/queries/outlets.ts:49` + `src/lib/queries/areas.ts:50` + `src/lib/queries/dashboard.ts:56` + `src/lib/queries/outlets.ts:589` + `src/lib/queries/historical.ts` (none) + `src/lib/metrics/sales.ts:53, 87, 104`.
+  - Description: All MODE CTEs use `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY cnt DESC, "nominalSales" ASC)`. On tie (same count), the SMALLER nominalSales wins. This is documented in sales.ts:5-6 ("Tie-break: smaller value wins"). The choice is arbitrary but deterministic. However, it means if an outlet has two sales values with equal count (e.g., 50 records at Rp 100M and 50 records at Rp 110M due to mid-month price change), MODE picks Rp 100M (smaller). This UNDERSTATES the outlet's sales.
+  - Impact: Low — usually MODE has a clear winner. But for outlets with mid-month sales repricing, the MODE may understate.
+  - Proposed fix: If understating is concerning, use `MAX(nominalSales)` as tiebreaker (picks larger value). OR use `AVG(nominalSales)` for tied values. OR keep current behavior (smaller wins = conservative). Document the choice.
+
+- **BUG CALC-20 (LOW, items.ts:156 filter may exclude valid items)** — `src/lib/queries/items.ts:156`.
+  - Description: `WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0` filters out items with zero nominalDeviasi. This is intended (exclude no-deviation items from "Top by Deviasi Rank"). But it also excludes items with `qtyDeviasi != 0` but `nominalDeviasi = 0` (e.g., zero-price items). Such items have real quantity deviation but no financial impact — excluding them from a "Top by Deviasi Rank" (which sorts by ABS(nominalDeviasi)) is arguably correct, but the user may expect to see them.
+  - Impact: Low — zero-price items are rare. If present, they won't appear in the rank table.
+  - Proposed fix: None needed if financial rank is the intent. If quantity rank is also desired, add a separate `queryTopItemsByQtyDeviasi` function.
+
+- **BUG CALC-21 (LOW, SUM(qtyBom) in pctLossSurplusToBom could mask BOM=0 items)** — `src/lib/queries/items.ts:144-146`.
+  - Description: `CASE WHEN SUM(ir."qtyBom") != 0 THEN SUM(ir."qtyLossSurplus") / SUM(ir."qtyBom") ELSE NULL END`. If some rows in the group have `qtyBom=NULL` and others have `qtyBom=-100`, `SUM(qtyBom) = -100` (NULLs ignored) → ratio computed. But if ALL rows have `qtyBom=NULL`, `SUM(qtyBom) = NULL`, and `NULL != 0` is NULL (not TRUE) → falls to ELSE NULL. This is correct. However, if some rows have `qtyBom=0` (explicitly zero, not NULL) and others have `qtyBom=-100`, `SUM(qtyBom) = -100` → ratio computed using only the non-zero-BOM rows, but `qtyLossSurplus` includes ALL rows (including the BOM=0 ones). This could produce a misleading ratio.
+  - Impact: Low — rare in practice (BOM is usually set per item, not mixed).
+  - Proposed fix: Filter out BOM=0/NULL rows in the WHERE clause: `AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0`. OR use `SUM(CASE WHEN qtyBom != 0 THEN qtyLossSurplus ELSE 0 END) / SUM(ABS(qtyBom))` for a cleaner ratio.
+
+- **BUG CALC-22 (LOW, growth comparison uses ABS(deviation) for absDeviation field)** — `src/app/api/analysis/route.ts:597`.
+  - Description: `absDeviation: r.nominal` — `r.nominal` is `SUM(nominalDeviasi)` (SIGNED). Field is named `absDeviation` but contains the SIGNED value. This is a naming inconsistency — the value is signed, not absolute.
+  - Impact: Low — frontend may treat `absDeviation` as always-positive, but it can be negative. If used in a chart expecting positive values, could break.
+  - Proposed fix: Either rename to `deviation` (matching the signed value), or compute `Math.abs(r.nominal)` if truly meant to be absolute:
+    ```ts
+    absDeviation: Math.abs(r.nominal),
+    ```
+
+- **BUG CALC-23 (LOW, queryPeerTrend peerAvgNominal uses AVG of signed values)** — `src/lib/queries/outlets.ts:503`.
+  - Description: `COALESCE(AVG(CASE WHEN ow."outletCode" != ${outletCode} THEN ow."nominalDeviasi" END), 0) as "peerAvgNominal"`. Uses `AVG` of SIGNED `nominalDeviasi` values. If peer outlets have mixed LOSS (negative) and SURPLUS (positive) deviations, they cancel out → peerAvgNominal could be near zero, hiding the actual magnitude of peer deviations.
+  - Impact: Low — the trend chart shows "Peer Avg Nominal" as a signed average, which may oscillate around zero if peers flip directions. Could mislead users into thinking peers are stable when actually they're volatile.
+  - Proposed fix: If magnitude is desired, use `AVG(ABS(ow."nominalDeviasi"))`. If signed average is intended (to show net direction), document it. Current behavior is defensible if documented.
+
+================== NO BUG (verified OK) ==================
+
+- **INFO CALC-24** — `src/lib/metrics/growth.ts:31-35` (calcGrowth) correctly guards `prev === 0` (returns 0 if both 0, null if only prev=0). Handles null inputs. ✓
+- **INFO CALC-25** — `src/lib/metrics/growth.ts:43-49` (calcGrowthAbs) correctly uses ABS for both curr and prev, guards `ap === 0`. ✓
+- **INFO CALC-26** — `src/lib/metrics/historical.ts:57-93` (computeZScore) correctly uses ABS values, Bessel's correction (n-1), guards `n < minWeeks` and `stdDev === 0`. Returns null zScore when insufficient data. ✓
+- **INFO CALC-27** — `src/lib/metrics/benchmark.ts:51-79` (computeBenchmark) correctly guards div-by-zero (`areaAvgDevBom > 0`, `networkAvgDevBom > 0`, `bestDevBom > 0`). Uses `>` for threshold comparison (strict). ✓
+- **INFO CALC-28** — `src/lib/metrics/sales.ts:26-62` (computeSalesModePerOutlet) correctly filters `nominalSales > 0`, rounds to 2 decimals (avoids float comparison issues), uses Infinity as initial bestVal (line 49) so first entry always wins. ✓
+- **INFO CALC-29** — `src/lib/metrics/deviation.ts:54-57` (computeDevBomPerRow) correctly guards `qtyBom === 0` (returns null). Uses ABS for both. ✓
+- **INFO CALC-30** — `src/lib/metrics/deviation.ts:63-78` (computeResidual) correctly uses `Math.max(0, absDev - explained)` to clamp residual to non-negative, and `isOverExplained = absDev > 0 && explained > absDev` to flag over-explanation. ✓ (Note: sign convention issue with `deviation.ts` vs `transform.ts` is CALC-16, but the magnitude logic is correct.)
+- **INFO CALC-31** — `src/lib/metrics/deviation.ts:152-155` (computeLossToSales) correctly guards `totalSales <= 0` (returns null). ✓
+- **INFO CALC-32** — `src/lib/metrics/deviation.ts:183-240` (computeHealthScore) correctly clamps each component to [0, 100], handles `c.bad === c.good` (returns neutral 50), normalizes weights, clamps final score. Uses `lossToSales != null ? ... : neutralScore` for null handling. ✓
+- **INFO CALC-33** — `src/lib/metrics/deviation.ts:267-285` (computePriority) correctly uses OR logic for P1/P2 conditions, null-safe (`!= null` guards). ✓
+- **INFO CALC-34** — `src/lib/queries/dashboard.ts:265-277` (queryCostImpact safeDiv) correctly guards `den > 0`. ✓
+- **INFO CALC-35** — `src/lib/queries/dashboard.ts:188-197` (queryDeviationBreakdown) uses `SUM(ABS(...))` consistently — magnitudes only, no sign issues. ✓
+- **INFO CALC-36** — `src/lib/queries/outlets.ts:175-182` (queryPeerComparison cumulative-week fix) correctly uses `MAX(weekLabel)` in month mode to avoid multi-counting cumulative weeks. ✓
+- **INFO CALC-37** — `src/lib/queries/outlets.ts:355-365` (queryPeerItemComparison) same cumulative-week fix. ✓
+- **INFO CALC-38** — `src/lib/queries/historical.ts:32-35` (periodConditions) correctly uses OR of `(monthLabel, weekLabel)` pairs (not string concat) for index usage. ✓
+- **INFO CALC-39** — `src/lib/queries/areas.ts:76-78` (lossToSales) correctly guards `totalSales > 0`. ✓
+- **INFO CALC-40** — `src/app/api/analysis/route.ts:108` (residualLossPct) correctly guards `qtyDeviasiLoss > 0`. (The LOGIC is wrong per CALC-3 because direction filter is inverted, but the div-by-zero guard is correct.) ✓
+- **INFO CALC-41** — Priority score weight sum: 12+10+10+10+8+8+8+5+8+7+5+3+3+2+1 = 100 ✓ (verified in outlets.ts:806-810).
+- **INFO CALC-42** — All 15 signal scores use `Math.min(100, ...)` to cap at 100 ✓ (outlets.ts:746, 753, 757, 761, 765, 770, 774, 780, 783, 786, 789, 793, 796, 799, 802).
+- **INFO CALC-43** — `src/lib/queries/outlets.ts:799` (s14Score) correctly guards implicit div-by-1M (constant denominator, no zero risk). ✓
+- **INFO CALC-44** — `src/lib/queries/outlets.ts:290` (peer filter) uses `CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END` to handle target-sales=0 fallback (matches all peers). ✓
+- **INFO CALC-45** — `src/lib/queries/outlets.ts:623` (overExplainedCount) correctly uses `ABS(qtyWaste) + ABS(qtySusut) + ABS(qtyTrial) > ABS(qtyDeviasi)` (magnitudes) AND `qtyDeviasi != 0` guard. ✓
+- **INFO CALC-46** — `src/engine/rules/evaluator.ts:171-175` (div expression) correctly guards `(vals[1] as number) === 0` → returns null (avoids div-by-zero in rule arithmetic). ✓
+- **INFO CALC-47** — `src/engine/rules/evaluator.ts:113-122` (between op) correctly auto-swaps reversed bounds (`lo <= hi ? [lo, hi] : [hi, lo]`) so `{between: [0.5, 0.1]}` still works. ✓
+- **INFO CALC-48** — `src/lib/queries/outlets.ts:625` (hasNoTolerance) correctly counts items where `tolerancePct IS NULL AND pctQtyDeviasiToBom IS NOT NULL` (REC-1 fix uses COUNT not MAX). ✓
+
+================== NEXT ACTIONS (priority order, do NOT apply per task constraints) ==================
+
+1. **BUG CALC-1 (CRITICAL)** — Fix the systemic sign convention. Pick ONE of:
+   - Option A (recommended, no data migration): Flip `computeDirection` to `net < 0 → LOSS` (matching production data). Update ALL SQL `CASE WHEN nominalLossSurplus > 0 → LOSS` to `< 0 → LOSS` (12+ sites). Update `definitions.ts` comments. Revert REC-2 inversion in outlets.ts:628-632 (to use nominalLossSurplus, not nominalDeviasi, with the new convention). Update CardDrillDown.tsx + Charts.tsx text.
+   - Option B (data migration): At ingestion, multiply qtyDeviasi/qtyLossSurplus/nominalDeviasi/nominalLossSurplus by -1 when storing, so DB matches codebase's positive=LOSS convention. Requires re-ingesting all data. Riskier.
+2. **BUG CALC-2 (CRITICAL)** — Wrap `pctQtyDeviasiToBom` in `ABS()` in all 3 tolerance rules in rules.yaml + 2 SQL counts in outlets.ts:614-615. Without this fix, tolerance monitoring is completely non-functional for LOSS items.
+3. **BUG CALC-3 + CALC-4 + CALC-5 (HIGH)** — Automatic after CALC-1 fix. No independent changes needed.
+4. **BUG CALC-6 (HIGH)** — Exclude BOM=0 items from rankBom in items.ts:184-185.
+5. **BUG CALC-7 (HIGH)** — Add `ABS(qtyBom) > 0` guard to bucket_avg join in items.ts:175.
+6. **BUG CALC-8 (HIGH)** — Automatic after CALC-1 fix.
+7. **BUG CALC-9 (HIGH)** — Either fix via CALC-1, OR change residualRatio to use ALL items (direction-agnostic): `SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi"))`.
+8. **BUG CALC-10 (MEDIUM)** — Change `ELSE 0` to `ELSE NULL` in 8 Dev/BOM CASE expressions.
+9. **BUG CALC-11 (MEDIUM)** — Change `SUM(qtyBom) != 0` to `SUM(ABS(qtyBom)) > 0` in items.ts:144.
+10. **BUG CALC-12 (MEDIUM)** — Use two-pass variance formula in historical.ts (or accept the precision caveat).
+11. **BUG CALC-14 (MEDIUM)** — Compute networkAvgDevBom as weighted aggregate (SUM/SUM), not arithmetic mean of ratios.
+12. **BUG CALC-15 (HIGH)** — Automatic after CALC-1 + CALC-4 fix.
+13. **BUG CALC-16 (LOW)** — Make deviation.ts computeResidual return signed residualQty (matching transform.ts).
+14. **BUG CALC-17 (LOW)** — Change outlets.ts:628-632 to use nominalLossSurplus (not nominalDeviasi) for direction, after CALC-1 fix.
+15. **BUG CALC-22 (LOW)** — Rename `absDeviation` to `deviation` in route.ts:597, OR wrap in `Math.abs()`.
+

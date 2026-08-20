@@ -58,8 +58,9 @@ export async function queryTopOutlets(
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
-        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossAmount",
-        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "surplusAmount"
+        -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "lossAmount",
+        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "surplusAmount"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -232,9 +233,11 @@ export async function queryPeerComparison(
         SUM(ABS(ir."qtySusut")) as "qtySusut",
         SUM(ABS(ir."qtyTrial")) as "qtyTrial",
         SUM(ir."absQtyLossSurplus") as "qtyLossSurplus",
-        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalLoss",
-        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalSurplus",
-        SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
+        -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalLoss",
+        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalSurplus",
+        -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
         COUNT(DISTINCT ir."itemId") as "itemCount",
         MAX(ABS(ir."absNominalDeviasi")) as "topItemNominalRaw"
       FROM "InventoryRecord" ir
@@ -419,8 +422,9 @@ export async function queryPeerItemComparison(
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBom",
-      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
+      -- FIX CALC-5: Excel convention: LOSS = negative nominalLossSurplus
+      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as "direction",
       CASE WHEN o.code = ${outletCode} THEN true ELSE false END as "isTarget",
       ti.item_rank as "itemRank"
@@ -605,29 +609,35 @@ export async function queryRestoRecommendations(
           SUM(ABS(ir."qtySusut")) as "qtySusut",
           SUM(ABS(ir."qtyTrial")) as "qtyTrial",
           SUM(ir."absQtyLossSurplus") as "qtyLossSurplus",
-          SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalLoss",
-          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalSurplus",
-          SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
-          SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
+          -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalLoss",
+          SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalSurplus",
+          -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
+          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
+          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
           COUNT(DISTINCT ir."itemId") as "itemCount",
           COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" THEN 1 END) as "toleranceBreachCount",
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > ir."tolerancePct" * 2 THEN 1 END) as "toleranceBreachHighCount",
+          -- FIX CALC-2: use ABS() on both sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
+          -- (both negative for LOSS items). Without ABS, -0.11 > -0.005 is FALSE even though magnitude is larger.
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN 1 END) as "toleranceBreachCount",
+          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN 1 END) as "toleranceBreachHighCount",
           -- zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison.
-          -- Use pctQtyDeviasiToBom > 0.20 as proxy for "abnormal" (high deviation ratio vs BOM)
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.20 THEN 1 END) as "zScoreAbnormalCount",
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.10 THEN 1 END) as "zScoreWarningCount",
+          -- Use ABS(pctQtyDeviasiToBom) > 0.20 as proxy for "abnormal" (high deviation ratio vs BOM)
+          -- FIX CALC-2: ABS() needed because pctQtyDeviasiToBom is SIGNED (negative for LOSS)
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.20 THEN 1 END) as "zScoreAbnormalCount",
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.10 THEN 1 END) as "zScoreWarningCount",
           -- benchmarkFlag not available — use high devBom as proxy
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ir."pctQtyDeviasiToBom" > 0.30 THEN 1 END) as "benchmarkHighCount",
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.30 THEN 1 END) as "benchmarkHighCount",
           0 as "benchmarkWarningCount",
           COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
           -- FIX REC-1: was MAX() returning 0/1; now COUNT() returns actual number of items without tolerance
           COUNT(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 END) as "hasNoTolerance",
-          COUNT(CASE WHEN ir."nominalLossSurplus" > 10000000 THEN 1 END) as "highLossItem",
-          -- FIX REC-2: compute outlet direction from net nominalDeviasi (was grouping by direction → duplicate rows)
+          -- FIX CALC-4: LOSS = negative nominalLossSurplus. High loss = < -10jt
+          COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem",
+          -- FIX CALC-5: compute outlet direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
           CASE
-            WHEN SUM(ir."nominalDeviasi") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalDeviasi") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "outletDirection"
         FROM "InventoryRecord" ir
@@ -688,10 +698,10 @@ export async function queryRestoRecommendations(
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
             THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
             ELSE 0 END as "prevDevBom",
-          -- FIX REC-2: compute prev direction from net nominalDeviasi (was grouping by direction → duplicate rows)
+          -- FIX CALC-5: compute prev direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
           CASE
-            WHEN SUM(ir."nominalDeviasi") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalDeviasi") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "prevDirection"
         FROM "InventoryRecord" ir

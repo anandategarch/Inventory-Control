@@ -80,6 +80,9 @@ rules:
       QTY BOM turun {{bomGrowth}} namun QTY Deviasi naik {{qtyDeviasiGrowth}}.
 
   # ===== TOLERANSI =====
+  # FIX CALC-2: Use absPctQtyDeviasiToBom + absTolerancePct for magnitude comparison.
+  # Excel stores pctQtyDeviasiToBom and tolerancePct as SIGNED values (negative for LOSS).
+  # Without ABS, -0.11 > -0.005 is FALSE even though magnitude is larger.
   - code: TOLERANCE_BREACH_HIGH
     name: "Deviasi/BOM melebihi toleransi secara signifikan"
     category: TOLERANCE
@@ -88,7 +91,7 @@ rules:
     condition:
       all:
         - tolerancePct: { not_null: true }
-        - pctQtyDeviasiToBom: { gt: { mul: [tolerancePct, 2] } }
+        - absPctQtyDeviasiToBom: { gt: { mul: [absTolerancePct, 2] } }
     narrative_template: >
       Deviasi/BOM {{pctQtyDeviasiToBom}} melebihi toleransi {{tolerancePct}} lebih dari 2x.
 
@@ -100,7 +103,7 @@ rules:
     condition:
       all:
         - tolerancePct: { not_null: true }
-        - pctQtyDeviasiToBom: { gt: tolerancePct }
+        - absPctQtyDeviasiToBom: { gt: absTolerancePct }
     narrative_template: >
       Deviasi/BOM {{pctQtyDeviasiToBom}} melebihi toleransi {{tolerancePct}}.
 
@@ -112,7 +115,7 @@ rules:
     condition:
       all:
         - tolerancePct: { is_null: true }
-        - pctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
+        - absPctQtyDeviasiToBom: { gt: stdDeviasiBomPct }
     narrative_template: >
       Deviasi/BOM {{pctQtyDeviasiToBom}} tinggi namun toleransi belum diset (flag analitik).
 
@@ -135,7 +138,8 @@ rules:
     priority: 75
     condition:
       all:
-        - direction: { eq: "LOSS" }
+        # FIX CALC-1: use nominalLossSurplus < 0 (LOSS) instead of stored direction (inverted)
+        - nominalLossSurplus: { lt: 0 }
         - residualRatio: { gt: residualLossHighPct }
     narrative_template: >
       Sisa selisih LOSS {{residualRatio}} ({{residualQty}}) tinggi setelah dikurangi Waste/Susut/Trial.
@@ -147,7 +151,8 @@ rules:
     priority: 60
     condition:
       all:
-        - direction: { eq: "LOSS" }
+        # FIX CALC-1: use nominalLossSurplus < 0 (LOSS) instead of stored direction (inverted)
+        - nominalLossSurplus: { lt: 0 }
         - residualRatio: { gt: residualLossWarnPct }
         - residualRatio: { lte: residualLossHighPct }
     narrative_template: >
@@ -161,7 +166,8 @@ rules:
     priority: 80
     condition:
       all:
-        - direction: { eq: "LOSS" }
+        # FIX CALC-1: use nominalLossSurplus < 0 (LOSS) instead of stored direction (inverted)
+        - nominalLossSurplus: { lt: 0 }
         - absNominalLossSurplus: { gt: highLossNominalThreshold }
     narrative_template: >
       Nominal LOSS {{absNominalLossSurplus}} tinggi.
@@ -210,7 +216,8 @@ rules:
     priority: 78
     condition:
       all:
-        - direction: { eq: "LOSS" }
+        # FIX CALC-1: use nominalLossSurplus < 0 (LOSS) instead of stored direction (inverted)
+        - nominalLossSurplus: { lt: 0 }
         - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
       Sangat abnormal: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 2.0).
@@ -222,7 +229,8 @@ rules:
     priority: 77
     condition:
       all:
-        - direction: { eq: "SURPLUS" }
+        # FIX CALC-1: use nominalLossSurplus > 0 (SURPLUS) instead of stored direction (inverted)
+        - nominalLossSurplus: { gt: 0 }
         - zScore: { gt: historicalZscoreHigh }
     narrative_template: >
       Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (SURPLUS abnormal).

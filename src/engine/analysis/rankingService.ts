@@ -299,8 +299,9 @@ export function computeOutletHealthRanking(
     e.totalQtySusut += Math.abs(curr.qtySusut ?? 0);
     e.totalQtyTrial += Math.abs(curr.qtyTrial ?? 0);
     e.totalResidualQty += Math.abs(curr.residualQty ?? 0);
-    if (curr.nominalLossSurplus != null && curr.nominalLossSurplus > 0) {
-      e.lossNominal += curr.nominalLossSurplus;
+    // FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+    if (curr.nominalLossSurplus != null && curr.nominalLossSurplus < 0) {
+      e.lossNominal += Math.abs(curr.nominalLossSurplus);
     }
     if (flags.length === 0) {
       e.normal++;

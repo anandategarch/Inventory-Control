@@ -63,7 +63,8 @@ export async function queryAreaAnalysis(
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "avgDevBom",
-        SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "lossNominal"
+        -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "lossNominal"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}

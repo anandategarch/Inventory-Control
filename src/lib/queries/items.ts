@@ -36,8 +36,8 @@ export async function queryTopItemsByNominal(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ir."absNominalDeviasi") as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
+      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -141,8 +141,9 @@ export async function queryTopItemsByDeviasiRank(
         SUM(ir."qtyDeviasi") as "qtyDeviasi",
         SUM(ir."qtyWaste") as "qtyWaste",
         SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
-        CASE WHEN SUM(ir."qtyBom") != 0
-          THEN SUM(ir."qtyLossSurplus") / SUM(ir."qtyBom")
+        -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (not SUM(qtyBom) != 0 — can be 0 with canceling +/- values)
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ir."qtyLossSurplus") / SUM(ABS(ir."qtyBom"))
           ELSE NULL END as "pctLossSurplusToBom",
         SUM(ir."qtyBom") as "qtyBom",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -161,6 +162,8 @@ export async function queryTopItemsByDeviasiRank(
     -- Self-join: for each row, average ABS(qtyDeviasi) of OTHER outlets with
     -- same itemName AND qtyBom within ±50% range. COUNT tracks how many OTHER
     -- outlets are in the bucket — if 0, avgDeviasiByBom is NULL.
+    -- FIX CALC-7: Exclude BOM=0 items from bucket — the ±50% range becomes
+    -- degenerate (BETWEEN 0 AND 0) and the "Dev By BOM" concept doesn't apply.
     bucket_avg AS (
       SELECT
         ipo."itemName",
@@ -172,6 +175,8 @@ export async function queryTopItemsByDeviasiRank(
       FROM item_per_outlet ipo
       JOIN item_per_outlet ipo2
         ON ipo2."itemName" = ipo."itemName"
+        AND ABS(ipo."qtyBom") > 0  -- FIX CALC-7: skip BOM=0 items
+        AND ABS(ipo2."qtyBom") > 0
         AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
       GROUP BY ipo."itemName", ipo."outletCode"
     )
@@ -180,9 +185,13 @@ export async function queryTopItemsByDeviasiRank(
       ipo."qtyDeviasi", ipo."qtyWaste", ipo."qtyLossSurplus", ipo."pctLossSurplusToBom",
       ipo."qtyBom", ipo."nominalDeviasi",
       -- avgDeviasiByBom: only if at least 1 OTHER resto exists in the bucket
-      CASE WHEN ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
+      -- FIX CALC-7: BOM=0 items get NULL (bucket concept doesn't apply)
+      CASE WHEN ipo."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
       ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
-      ROW_NUMBER() OVER (ORDER BY ABS(ipo."qtyBom") DESC) as "rankBom"
+      -- FIX CALC-6: BOM=0 items get NULL rankBom (not ranked last — concept doesn't apply)
+      CASE WHEN ipo."qtyBom" != 0
+        THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
+        ELSE NULL END as "rankBom"
     FROM item_per_outlet ipo
     LEFT JOIN bucket_avg ba
       ON ipo."itemName" = ba."itemName"
@@ -238,8 +247,8 @@ export async function queryTopItemsByCategory(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ABS(${qtyRef})) as qty,
       SUM(ABS(${nomRef})) as nominal,
-      CASE WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'SURPLUS'
+      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -345,8 +354,9 @@ export async function queryItemConsistency(
     WITH item_outlets AS (
       SELECT i.name as "itemName",
         CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-        CAST(COUNT(DISTINCT CASE WHEN ir.direction = 'LOSS' THEN ir."outletId" END) AS INTEGER) as "lossOutlets",
-        CAST(COUNT(DISTINCT CASE WHEN ir.direction = 'SURPLUS' THEN ir."outletId" END) AS INTEGER) as "surplusOutlets",
+        -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
+        CAST(COUNT(DISTINCT CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."outletId" END) AS INTEGER) as "lossOutlets",
+        CAST(COUNT(DISTINCT CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."outletId" END) AS INTEGER) as "surplusOutlets",
         SUM(ir."absNominalLossSurplus") as "totalAbsNominal",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))

@@ -28,8 +28,12 @@ import type { Direction } from './definitions';
  * Compute direction from NET deviation (qtyLossSurplus).
  * Fallback to GROSS deviation (qtyDeviasi) if NET is null.
  *
- * Net > 0 → LOSS (over-consumption)
- * Net < 0 → SURPLUS (under-consumption)
+ * Excel sign convention (verified from production data):
+ *   LOSS (over-consumption):  qtyLossSurplus < 0, qtyDeviasi < 0, nominalDeviasi < 0
+ *   SURPLUS (under-consumption): qtyLossSurplus > 0, qtyDeviasi > 0, nominalDeviasi > 0
+ *
+ * Net < 0 → LOSS (over-consumption)
+ * Net > 0 → SURPLUS (under-consumption)
  * Net = 0 → NEUTRAL
  */
 export function computeDirection(
@@ -38,8 +42,8 @@ export function computeDirection(
 ): Direction {
   const net = qtyLossSurplus ?? qtyDeviasi;
   if (net == null) return 'NEUTRAL';
-  if (net > 0) return 'LOSS';
-  if (net < 0) return 'SURPLUS';
+  if (net < 0) return 'LOSS';
+  if (net > 0) return 'SURPLUS';
   return 'NEUTRAL';
 }
 
@@ -111,11 +115,11 @@ export interface AggregateInput {
   totalQtySusut: number;     // SUM(ABS(qtySusut))
   totalQtyTrial: number;     // SUM(ABS(qtyTrial))
   totalResidualQty: number;  // SUM(ABS(residualQty))
-  // FIX (audit issue #11): totalLossNominal = SUM(nominalLossSurplus WHERE > 0)
-  // = NET LOSS only (positive NET deviation items). NOT absolute total, NOT GROSS.
-  // This is the sum of all items where qtyLossSurplus > 0 (over-consumption / LOSS).
+  // FIX (CALC-1): totalLossNominal = SUM(ABS(nominalLossSurplus) WHERE nominalLossSurplus < 0)
+  // = NET LOSS only (negative NET deviation items = over-consumption / LOSS).
+  // Excel convention: LOSS items have NEGATIVE nominalLossSurplus.
   // Used by computeLossToSales() = totalLossNominal / totalSales.
-  totalLossNominal: number;  // SUM(nominalLossSurplus WHERE > 0) — NET LOSS only
+  totalLossNominal: number;  // SUM(ABS(nominalLossSurplus) WHERE < 0) — NET LOSS only
   totalSales: number;        // MODE(sales)
   normalCount: number;
   warningCount: number;

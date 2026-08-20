@@ -403,11 +403,24 @@ export interface RuleContext extends Record<string, unknown> {
   bomDeviationFactor?: number;
   // Bug 8 fix: fraud red flag — Waste+Susut+Trial exceeds total deviation
   isOverExplained?: boolean;
+  // FIX CALC-2: ABS values for signed percent fields (for correct magnitude comparison)
+  absPctQtyDeviasiToBom?: number | null;
+  absTolerancePct?: number | null;
 }
 
 export function evaluateRules(ctx: RuleContext): AnomalyFlagResult[] {
   const rules = loadRules();
   const flags: AnomalyFlagResult[] = [];
+
+  // FIX CALC-2: Pre-compute ABS values for signed percent fields.
+  // Excel convention: pctQtyDeviasiToBom and tolerancePct are SIGNED
+  // (negative for LOSS items). Rules need ABS comparison to work correctly.
+  if (ctx.pctQtyDeviasiToBom != null) {
+    ctx.absPctQtyDeviasiToBom = Math.abs(ctx.pctQtyDeviasiToBom);
+  }
+  if (ctx.tolerancePct != null) {
+    ctx.absTolerancePct = Math.abs(ctx.tolerancePct);
+  }
 
   for (const rule of rules) {
     try {

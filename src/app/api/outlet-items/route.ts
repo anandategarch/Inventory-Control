@@ -259,8 +259,9 @@ export async function GET(req: NextRequest) {
       totalAbsNominalLossSurplus += anls;
       totalResidualQty += Math.abs(toNum(r.residualQty) ?? 0);
 
-      if (nls > 0) totalLossNominal += nls;
-      else if (nls < 0) totalSurplusNominal += Math.abs(nls);
+      // FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+      if (nls < 0) totalLossNominal += Math.abs(nls);
+      else if (nls > 0) totalSurplusNominal += nls;
 
       // Count severity
       // FIX (BUG 5): Use AND-zero criterion (qtyDeviasi AND absNominalDeviasi both ~0)
@@ -268,7 +269,9 @@ export async function GET(req: NextRequest) {
       // variance items (qty=0 but nominal>0) were wrongly counted as normal.
       const isZeroDev = (qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01);
       if (isZeroDev) normalCount++;
-      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > (toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
+      // FIX CALC-2: ABS() on BOTH sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
+      // (both negative for LOSS items). Without ABS, any positive > any negative → always abnormal.
+      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
       else warningCount++;
     }
 

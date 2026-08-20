@@ -85,7 +85,10 @@ export async function GET(req: NextRequest) {
           sales: r.nominalSales,
         },
         derived: {
-          direction: r.direction,
+          // FIX CALC-1: compute direction from nominalLossSurplus sign (not stored direction, which may be inverted)
+          direction: r.nominalLossSurplus != null
+            ? (r.nominalLossSurplus < 0 ? 'LOSS' : r.nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
+            : r.direction,
           residualQty: r.residualQty,
           residualRatio: r.residualRatio,
           absQtyDeviasi: r.absQtyDeviasi,

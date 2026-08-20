@@ -70,8 +70,9 @@ export async function queryTrendAgg(filters: {
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
+        -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "lossNominal",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "surplusNominal"
       FROM "InventoryRecord" ir
       WHERE 1=1
         ${f}
@@ -148,11 +149,13 @@ export async function queryExecSummary(
         COALESCE(SUM(ABS(ir."qtySusut")), 0) as "qtySusut",
         COALESCE(SUM(ABS(ir."qtyTrial")), 0) as "qtyTrial",
         COALESCE(SUM(ir."absQtyLossSurplus"), 0) as "qtyLossSurplus",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalLoss",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalSurplus",
-        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualQty") ELSE 0 END), 0) as "residualLossQty",
-        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal",
-        COALESCE(SUM(CASE WHEN ir.direction = 'LOSS' THEN ir."absQtyDeviasi" ELSE 0 END), 0) as "qtyDeviasiLoss"
+        -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalLoss",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalSurplus",
+        -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END), 0) as "residualLossQty",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."absQtyDeviasi" ELSE 0 END), 0) as "qtyDeviasiLoss"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -213,10 +216,11 @@ export async function queryLossVsSurplus(
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
     SELECT
-      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" > 0 THEN 1 END) AS INTEGER) as loss,
-      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as surplus,
-      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "lossNominal",
-      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "surplusNominal"
+      -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
+      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as loss,
+      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" > 0 THEN 1 END) AS INTEGER) as surplus,
+      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "lossNominal",
+      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "surplusNominal"
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}

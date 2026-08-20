@@ -781,7 +781,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
               ) : items.map((it: any, i: number) => (
                 <TableRow key={`${it.itemName}-${it.outletCode}-${i}`}>
                   <TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>
-                  <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom}</TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom != null ? it.rankBom : '—'}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
