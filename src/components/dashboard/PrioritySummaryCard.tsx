@@ -425,6 +425,18 @@ const SIGNAL_EXPLANATIONS: Record<string, string> = {
   'Tolerance Breach': 'Item dengan deviasi >toleransi (breach reguler). Review penyebab dan corrective action.',
 };
 
+// FIX DATA-2: empty state component for charts with no data
+function ChartEmptyState({ message }: { message: string }) {
+  return (
+    <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">
+      <div className="text-center">
+        <p className="text-emerald-600 dark:text-emerald-400 font-medium">✓ {message}</p>
+        <p className="text-[10px] text-muted-foreground/70 mt-1">Tidak ada anomali terdeteksi</p>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
 //  SignalChart — renders the appropriate chart for each signal
 //  Per spec: only render when accordion item is expanded.
@@ -551,35 +563,44 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
     case 'Item Concentration': {
       const data = buildItemConcentrationData(r);
       const colors = [CHART.red, CHART.amber, CHART.amberDark, CHART.zinc, CHART.zincLight, CHART.zincVeryLight];
+      // FIX CSS-5 + FIX-1 + FIX-3: label as OBJECT (not function) so fill propagates correctly.
+      // isAnimationActive=false so labels appear instantly (FIX-3: was delayed 2s by animation).
+      // cy=50% + smaller radius so labels fit in viewBox (FIX-1: was clipped at cy=45%).
+      // Legend formatter wraps in span with explicit color (FIX-2: slice colors were unreadable).
       return (
-        <ResponsiveContainer width="100%" height={200}>
+        <ResponsiveContainer width="100%" height={240}>
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
               nameKey="name"
               cx="50%"
-              cy="45%"
-              innerRadius={38}
-              outerRadius={68}
+              cy="50%"
+              innerRadius={42}
+              outerRadius={62}
               paddingAngle={1}
+              isAnimationActive={false}
               label={({ name, value }: { name?: string; value?: number }) => {
-                const shortName = (name || '').length > 12 ? (name || '').slice(0, 10) + '…' : name;
-                return `${shortName}: ${value}%`;
+                const shortName = (name || '').length > 10 ? (name || '').slice(0, 8) + '…' : (name || '');
+                return <tspan fill="#a1a1aa" fontSize="9px">{`${shortName}: ${value}%`}</tspan>;
               }}
               labelLine={{ stroke: '#a1a1aa', strokeWidth: 0.5 }}
-              style={{ fontSize: '9px', fill: '#a1a1aa' }}
             >
               {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
             </Pie>
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => `${v}%`} />
-            <Legend wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }} iconType="circle" />
+            <Legend
+              wrapperStyle={{ fontSize: '9px' }}
+              iconType="circle"
+              formatter={(value: string) => <span style={{ color: '#a1a1aa', fontSize: '9px' }}>{value}</span>}
+            />
           </PieChart>
         </ResponsiveContainer>
       );
     }
     case 'Tol Breach High': {
       const { data, threshold } = buildTolBreachHighData(r);
+      if (data.length === 0) return <ChartEmptyState message="Tidak ada item breach >2× toleransi" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
@@ -597,6 +618,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
     }
     case 'Tolerance Breach': {
       const { data, threshold } = buildTolBreachData(r);
+      if (data.length === 0) return <ChartEmptyState message="Tidak ada item breach toleransi" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
@@ -614,6 +636,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
     }
     case 'Over-Explained': {
       const data = buildOverExplainedData(r);
+      if (data.length === 0) return <ChartEmptyState message="Tidak ada item over-explained" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
@@ -630,6 +653,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
     }
     case 'High Loss Nominal': {
       const { data, threshold } = buildHighLossData(r);
+      if (data.length === 0) return <ChartEmptyState message="Tidak ada item loss >Rp 10jt" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>

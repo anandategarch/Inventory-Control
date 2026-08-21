@@ -11672,3 +11672,313 @@ if (process.env.NODE_ENV !== 'production') {
 8. **CHART-10, CHART-11, CHART-13, CHART-14, CHART-16, CHART-17, CHART-18, CHART-19** (LOW) — Optional polish.
 
 **Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+---
+Task ID: AUDIT-CHART-DATA
+Agent: Data Availability Auditor
+Task: Verify chart data exists in API response, check topItem and signalScores
+
+Work Log:
+- Read worklog tail (CHART-1 through CHART-19) for prior context — note CHART-1 fix already returns `data: []` for count=0 in 4 builders.
+- Read `src/components/dashboard/PrioritySummaryCard.tsx` (1073 lines) — `Recommendation` interface (31-67), all 15 `build*Data` functions (203-403), `SignalChart` switch (433-723), main component (729-1073).
+- Read `src/lib/queries/outlets.ts` (927 lines) — `queryRestoRecommendations` (569-926), SQL `top_items` CTE (657-670), signalScores array literal (902-918), `RestoRecommendation` interface (530-567).
+- Read `src/app/api/recommendations/route.ts` (109 lines) — returns `{ success, recommendations }`, no field renaming.
+- Read `src/components/dashboard/RestoAnalysis.tsx` fetch path — `useQuery(['recommendations','single',...])` → `recommendations[0]` → `<PrioritySummaryCard recommendation={...} />` (lines 110-130, 251).
+- Cross-checked 15 signal names between `signalScores` literal (outlets.ts:903-917) and `SIGNAL_GROUPS` (PrioritySummaryCard.tsx:78-108) — ALL 15 EXACT MATCH, no typos, no case mismatch.
+- Cross-checked 15 signal value populations in outlets.ts (lines 768-832) — all populated, none missing. `deviasiGrowth` is legitimately `number | null` per interface.
+- Cross-checked API response shape vs PrioritySummaryCard `Recommendation` interface — exact match (only `area` is in API but unused in card; non-issue).
+- Verified `topItem` SQL flow: `top_items` CTE filters `absNominalDeviasi > 0` → NULL via LEFT JOIN when no deviating items → passed through `r.topItem` (line 764, no COALESCE) → JSON null.
+- Verified `buildItemConcentrationData` (290-304): fallback `r.metrics.topItem || 'Item #1'` (line 294) catches null/undefined/'' — chart will NEVER literally show "null" or "undefined" strings (user-reported concern is unfounded; real issue is misleading 'Item #1' fallback).
+- Verified 4 chart renderers (Tol Breach High 581, Tolerance Breach 598, Over-Explained 615, High Loss Nominal 631) — none has `data.length === 0` empty-state branch; only 'No Tolerance' (682) has one.
+- Verified Direction Flip `currentVal = current === 'LOSS' ? -1 : 1` (282) — 'NEUTRAL' direction treated as +1 (SURPLUS), and badge (860) treats non-LOSS as emerald.
+
+Stage Summary:
+
+### ✅ Confirmed (NOT bugs)
+1. **All 15 signalScores ARE populated** in the API response — none missing, all numerically typed. `deviasiGrowth` legitimately `number | null` when no prior period.
+2. **All 15 signal names match EXACTLY** between backend (`outlets.ts:903-917`) and frontend (`SIGNAL_GROUPS` lines 78-108). No typo, no case mismatch.
+3. **API response includes both `signalScores` and `metrics.topItem`** — no field renaming in `route.ts`.
+4. **`Recommendation` interface matches `RestoRecommendation`** exactly (minus unused `area` field).
+5. **Chart will NEVER show literal "null"/"undefined" string** for topItem — `|| 'Item #1'` fallback (line 294) catches all falsy values. User's reported concern is unfounded.
+
+### ❌ Bugs found
+
+**DATA-1 · HIGH · `PrioritySummaryCard.tsx:290-304`** — Item Concentration chart shows misleading 'Item #1' label + 0% slices when no top item exists.
+- When `r.metrics.topItem` is null (outlet has no items with `absNominalDeviasi > 0`), `itemConcentration` is also 0 (outlets.ts:807-809). Chart then renders 5 slices all labeled with fabricated names ('Item #1'..'Item #5') with 0% values, plus 'Lainnya: 100%'. Misleading — implies a real item exists.
+- Proposed fix: When `!r.metrics.topItem` OR `itemConcentration === 0`, return `[]` from `buildItemConcentrationData` and render empty state in `SignalChart` case 'Item Concentration': `<div>Tidak ada item dengan deviasi signifikan — tidak ada konsentrasi untuk dianalisis.</div>`.
+
+**DATA-2 · HIGH · `PrioritySummaryCard.tsx:581-647`** — 4 chart renderers show empty BarChart with no empty-state message after CHART-1 fix.
+- `buildTolBreachHighData`, `buildTolBreachData`, `buildOverExplainedData`, `buildHighLossData` all return `data: []` when count=0 (CHART-1 fix), but the corresponding cases in `SignalChart` still render `<BarChart data={[]}>` with axes/grid but no bars and no message. Compare 'No Tolerance' (line 682-690) which DOES have an empty state ("Semua item punya toleransi. ✓").
+- Proposed fix: For each of the 4 cases, add `if (data.length === 0) return <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">Tidak ada item breach. ✓</div>;` before the `<ResponsiveContainer>`.
+
+**DATA-3 · MEDIUM · `PrioritySummaryCard.tsx:282, 860`** — 'NEUTRAL' direction mishandled in Direction Flip chart and direction badge.
+- SQL can return `direction = 'NEUTRAL'` (outlets.ts:651) when total loss == total surplus. Line 282 `currentVal = current === 'LOSS' ? -1 : 1` treats NEUTRAL as +1 (SURPLUS) — chart shows "Current: SURP" for neutral outlets, which is wrong. Line 860 badge colors non-LOSS as emerald (green) — NEUTRAL gets positive color.
+- Proposed fix: `const currentVal = current === 'LOSS' ? -1 : current === 'SURPLUS' ? 1 : 0;` and badge: `direction === 'LOSS' ? red : direction === 'SURPLUS' ? emerald : muted`.
+
+**DATA-4 · MEDIUM · `PrioritySummaryCard.tsx:292`** — Item Concentration chart fabricates 35/25/18/12/10 weight distribution.
+- `weights = [0.35, 0.25, 0.18, 0.12, 0.10]` is hardcoded. Even when real `topItem` exists, the chart fabricates how concentration is distributed across 5 items. Only `topItem` (1 item) and `itemConcentration` (its share) are real — items #2-5 are made up. The chart's pie slices imply per-item breakdown that doesn't exist in the API payload.
+- Proposed fix (option A — minimal): Collapse to 2-slice pie: `{topItem}: itemConcentration%` + `Lainnya: (1-itemConcentration)%`. Only real data shown.
+- Proposed fix (option B — full): Thread `top5Items: Array<{name, nominal}>` from `queryRestoRecommendations` SQL (similar to existing `top_items` CTE but `LIMIT 5`), then use real per-item values in the pie.
+
+**DATA-5 · LOW · `outlets.ts:764`** — `topItem` undefined vs null inconsistency.
+- SQL `ti."topItem"` returns NULL → Prisma `$queryRaw` may serialize as `null` (PostgreSQL) or `undefined` (some SQLite drivers). Interface declares `topItem: string | null`. The fallback `|| 'Item #1'` handles both, but the type is slightly misleading.
+- Proposed fix: `topItem: r.topItem ?? null` (line 764) — normalizes undefined → null.
+
+**DATA-6 · LOW · `outlets.ts:779, 882`** — `abnormalCount` field duplicates `zScoreAbnormalCount`.
+- `abnormalCount = zScoreAbnormalCount` (line 779). Both fields exist in `signals` interface, both hold the same value. `abnormalCount` is never read by `PrioritySummaryCard` (only `zScoreAbnormalCount` is).
+- Proposed fix: Remove `abnormalCount` from interface and from return object (cleanup), or document as deprecated alias.
+
+### Recommended Next Actions (priority order)
+1. **DATA-1, DATA-2** (HIGH) — Add empty-state branches to Item Concentration + 4 count-based charts. ~25 lines total. Prevents misleading/empty renders.
+2. **DATA-3** (MEDIUM) — Handle 'NEUTRAL' direction in Direction Flip chart + badge. ~5 lines.
+3. **DATA-4** (MEDIUM) — Either collapse Item Concentration to 2-slice (option A, ~10 lines) or thread top5Items from API (option B, ~30 lines SQL + interface).
+4. **DATA-5, DATA-6** (LOW) — Cleanup. ~3 lines. Optional.
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+
+---
+Task ID: AUDIT-CSS-CHART
+Agent: CSS Override Auditor
+Task: Find CSS rules that override Recharts chart text colors in PrioritySummaryCard
+
+Work Log:
+- Read `/home/z/my-project/worklog.md` tail for context (prior CHART-* audit findings).
+- Read `/home/z/my-project/src/app/globals.css` end-to-end (122 lines). Searched for `.recharts-text`, `.recharts-default-tooltip`, `.recharts-polar-label`, `.recharts-cartesian-axis-tick`, `.recharts-label`, `.recharts-legend-item-text`, `svg text`, `* { color }`, `!important`. **Zero matches in globals.css.**
+- Read `/home/z/my-project/tailwind.config.ts`. Legacy v3-style config with `hsl(var(--*))` color wrappers. Verified it is dead code (Tailwind v4 uses `@theme inline` in globals.css instead).
+- Read `/home/z/my-project/postcss.config.mjs` — uses `@tailwindcss/postcss` (v4).
+- Read `/home/z/my-project/package.json` — confirmed Tailwind v4, Recharts 2.15.4, next-themes 0.4.6 (installed but not wired up).
+- Read `/home/z/my-project/src/app/layout.tsx` — `<html lang="id" suppressHydrationWarning>` (no `dark` class), body has `bg-background text-foreground`. No ThemeProvider.
+- Read `/home/z/my-project/src/components/providers.tsx` — only `QueryClientProvider`. No `ThemeProvider` from next-themes. `.dark` class is NEVER applied to `<html>`.
+- Read `/home/z/my-project/src/components/ui/chart.tsx` (shadcn chart wrapper). **Found CSS override at line 58**: `ChartContainer` applies arbitrary-variant class `[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground`. This generates a CSS rule targeting `.recharts-cartesian-axis-tick text` with `fill: var(--color-muted-foreground)`. CSS rules override SVG presentation attributes (which is how Recharts applies `tick={{ fill }}`).
+- Verified PrioritySummaryCard imports `ResponsiveContainer` directly from `recharts` (line 14), NOT `ChartContainer` from `@/components/ui/chart`. So the chart.tsx override does NOT currently affect PrioritySummaryCard charts.
+- Read `/home/z/my-project/node_modules/tailwindcss/preflight.css` — confirmed Tailwind v4 preflight only sets `display: block; vertical-align: middle` on `svg`. Does NOT set `fill`, `color`, or `currentColor` on SVG elements.
+- Read `/home/z/my-project/node_modules/recharts/lib/component/Text.js` (line 241-246) and `/home/z/my-project/node_modules/recharts/lib/cartesian/CartesianAxis.js` (line 252-277). Confirmed Recharts renders `tick={{ fill: '#a1a1aa' }}` as an SVG **presentation attribute** `fill="#a1a1aa"` on the `<text>` element, NOT as an inline `style`. Presentation attributes have LOWER specificity than any CSS rule.
+- Read `/home/z/my-project/src/components/ui/card.tsx` — Card uses `bg-card text-card-foreground` (sets CSS `color`, not `fill`). No overflow:hidden affecting chart text.
+- Read `/home/z/my-project/src/components/dashboard/PrioritySummaryCard.tsx` chart sections (lines 430-680) — confirmed all 15 charts use `tick={{ fontSize, fill: '#a1a1aa' }}` on XAxis/YAxis, `style={{ fill: '#a1a1aa' }}` on LabelList, `style={{ fill: '#a1a1aa' }}` on Pie, `wrapperStyle={{ color: '#a1a1aa' }}` on Legend. All inline fills are `#a1a1aa` (zinc-400, light gray).
+- Searched all CSS files in repo for `fill:`, `color:`, `!important` — zero `!important` declarations anywhere.
+
+Stage Summary:
+
+### Findings
+
+**CSS-1 · HIGH (latent, not currently active) — `src/components/ui/chart.tsx:58`**
+The shadcn `ChartContainer` wrapper applies the Tailwind arbitrary-variant class:
+```
+[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground
+```
+This compiles to a CSS rule:
+```css
+.[hash] .recharts-cartesian-axis-tick text { fill: var(--color-muted-foreground); }
+```
+Because Recharts applies `tick={{ fill: '#a1a1aa' }}` as an SVG **presentation attribute** (not inline `style`), ANY CSS rule targeting the `<text>` element wins. This means any chart wrapped in `ChartContainer` will have its inline `tick={{ fill }}` prop **silently overridden** by `muted-foreground` (oklch 0.556 light / 0.708 dark — gray, not black).
+- **Impact on PrioritySummaryCard:** NONE currently — it uses `ResponsiveContainer` directly (line 14, 438, 455, 472…), bypassing `ChartContainer`.
+- **Proposed fix:** If PrioritySummaryCard is ever migrated to `ChartContainer`, either (a) remove `[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground` from chart.tsx:58, or (b) keep it but accept that `tick={{ fill }}` props are decorative-only. Document this in chart.tsx.
+
+**CSS-2 · INFO — No CSS override found in globals.css**
+`globals.css` contains zero rules targeting `.recharts-*`, `svg text`, `* { fill/color }`, or any Recharts class. The only `@layer base` rule is `* { @apply border-border outline-ring/50; }` (sets `border-color` + `outline-color`, NOT `color` or `fill`) and `body { @apply bg-background text-foreground; }` (sets `color` on body — inherited by HTML text but NOT by SVG `<text>` unless `fill: currentColor` is set, which it isn't). No `!important` anywhere.
+
+**CSS-3 · INFO — Tailwind v4 preflight does not touch SVG `fill`**
+Verified `node_modules/tailwindcss/preflight.css`: only `display: block; vertical-align: middle` on `svg`. No `fill`, no `color`, no `currentColor` injection. Preflight is NOT the culprit.
+
+**CSS-4 · MEDIUM — Dark mode is not wired up (root cause of "dark background" perception)**
+`next-themes` is in `package.json` but `providers.tsx` only installs `QueryClientProvider` — no `ThemeProvider`. The `<html suppressHydrationWarning>` in `layout.tsx` is a leftover suggesting next-themes was intended. Without a ThemeProvider, the `.dark` class is never added to `<html>`, so ALL `dark:` Tailwind variants are inert. The app effectively runs in LIGHT mode only.
+- The user's "dark background" is most likely the **hardcoded tooltip style** in PrioritySummaryCard.tsx:150-158 (`backgroundColor: 'rgba(24, 24, 27, 0.96)'`) and/or the dark gradient backgrounds (`dark:from-amber-950/20`) that DON'T activate because `.dark` is missing.
+- **Proposed fix:** Wire up `next-themes` ThemeProvider in `providers.tsx` with `attribute="class"` and `defaultTheme="dark"` (or `"system"`). This will make `dark:` variants work and `bg-card` will correctly resolve to `oklch(0.205 0 0)` (dark).
+
+**CSS-5 · INFO — Recharts default fill is BLACK (SVG spec)**
+Per SVG spec, `<text>` elements default to `fill: black` when no `fill` attribute and no CSS `fill` rule is present. Recharts' own `DEFAULT_FILL = '#808080'` (Text.js:177) only kicks in for gradient `url(...)` fills. So any Recharts text element that does NOT receive an explicit `fill` prop (e.g., default Tooltip content rendered as SVG, Pie labels when `label` is a function returning a string and `style` on `<Pie>` doesn't propagate to the label `<Text>`) will render BLACK. The `tick={{ fill }}` and `LabelList style={{ fill }}` props in PrioritySummaryCard DO set fill, so axis ticks and LabelList values should be `#a1a1aa` (gray). The Pie chart at line 555-574 uses `style={{ fill: '#a1a1aa' }}` on `<Pie>` — this propagates to Pie sectors but may NOT propagate to the label `<Text>` elements (Recharts renders labels via a separate path). **This is the most likely source of "black text"**: Pie chart labels.
+- **Proposed fix:** Change `<Pie label={fn} style={{ fill: '#a1a1aa' }}>` to `<Pie label={{ fill: '#a1a1aa', fontSize: 9, position: 'outside' }}>` (pass `label` as an OBJECT so Recharts applies `fill` directly to each label `<Text>`).
+
+### Conclusion
+
+**No CSS override in `globals.css` (or any other audited file) is forcing Recharts text to black.** The previous fix (`tick={{ fill: '#a1a1aa' }}`) IS being applied correctly as a presentation attribute on axis ticks. The user's "black text on dark background" complaint is most likely caused by one of:
+
+1. **Pie chart labels** (PrioritySummaryCard.tsx:566-571) — `style` on `<Pie>` does not reliably propagate to label `<Text>` elements. Fix: pass `label` as an object with `fill` included (CSS-5 proposed fix).
+2. **Dark mode not wired up** (CSS-4) — the `.dark` class is never applied, so `dark:` variants don't fire. If the user expects dark mode, the app is actually rendering in light mode, making `#a1a1aa` text on white card background look low-contrast (grayish-dark). Fix: install `next-themes` ThemeProvider.
+3. **Perception** — `#a1a1aa` (zinc-400) on a near-black dark card (`oklch(0.205 0 0)`) is light gray with moderate contrast; on a white light-mode card it is medium gray with low contrast. Neither is "black" in the literal sense, but low contrast can be perceived as "black/hard to read".
+
+**Recommended next action:** Fix CSS-5 (Pie label `fill` propagation) and CSS-4 (wire up `next-themes`) before touching `globals.css`. The `globals.css` file is clean — no changes needed there.
+
+**Files changed by this audit:** none (read-only audit).
+
+---
+Task ID: AUDIT-CHART-FIX
+Agent: Chart Rendering Fix Auditor (Agent CHART-FIX)
+Task: Find why chart labels still show black on black despite previous fix commit 63ff8a5
+
+Work Log:
+- Read tail of worklog.md for context — found prior audits AUDIT-CHARTS (line 11416), AUDIT-CHART-DATA (11677), and most relevant AUDIT-CSS-CHART (11741) which hypothesized CSS-5: "`style` on `<Pie>` may NOT propagate to label `<Text>` elements". This audit was READ-ONLY (no empirical test).
+- Read full PrioritySummaryCard.tsx (1074 lines), focusing on SignalChart component (lines 433-723) and Item Concentration Pie chart (lines 551-580).
+- Verified git state: HEAD = origin/main = commit 63ff8a5 (the fix commit). Working tree clean. Fix IS pushed to remote.
+- Read Recharts 2.15.4 source code: `node_modules/recharts/lib/polar/Pie.js` (renderLabels at line 102-151, renderLabelItem at line 391-408), `node_modules/recharts/lib/component/Text.js` (line 241-246), `node_modules/recharts/lib/util/ReactUtils.js` (filterProps at line 197-224, isValidSpreadableProp at line 172-181), `node_modules/recharts/lib/util/types.js` (SVGElementPropKeys — confirmed `style` AND `fill` are both in the list at line 29).
+- Read `src/app/globals.css` (122 lines) — confirmed zero `.recharts-*`, `svg text`, or `* { fill }` rules.
+- Read `src/components/ui/chart.tsx` (shadcn ChartContainer) — found CSS override `[&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground` at line 58, BUT verified PrioritySummaryCard uses raw `ResponsiveContainer` directly (line 14), bypassing `ChartContainer`. Override does NOT apply.
+- Read `next.config.ts` — `reactStrictMode: true`.
+- **Empirical test**: created temporary route `/testpie` with mock Recommendation data (topItem='AYAM GORENG SPESIAL', itemConcentration=0.62) and rendered PrioritySummaryCard in browser via agent-browser. Clicked "Breakdown 15 Sinyal" → clicked "Item Concentration" row to expand. Waited 2.5s for animation.
+- **Inspected rendered DOM via JS eval**: 6 Pie label `<text>` elements found, ALL with `styleFill: rgb(161, 161, 170)` = `#a1a1aa` (gray). The `fill` attribute is the slice color (e.g., `#ef4444` red), but `style.fill` overrides it per SVG spec (inline style wins over presentation attribute).
+- **Inspected label Y positions**: Label "Item #2: 15.5%" is at y=-0.7 (NEGATIVE — outside SVG viewBox top "0 0 572 200", CLIPPED). Other 5 labels at y=29.5, 44.95, 95.58, 131.49, 165.94 (all inside viewBox).
+- **Inspected Legend**: 6 legend items, each `<span class="recharts-legend-item-text" style="color: <slice color>">`. Colors: red, amber, amberDark, **zinc `#71717a` (LOW CONTRAST on dark)**, zincLight, zincVeryLight. The `wrapperStyle.color: '#a1a1aa'` only sets wrapper color, NOT individual item text colors.
+- **VLM (vision model) screenshot analysis** confirmed: 5 of 6 Pie labels visible in light gray; the top-left label is "missing or cut off"; Legend visible with all 6 items.
+- Also tested with `topItem: null` — labels fall back to "Item #1" (verified working).
+- Also expanded Dev/BOM vs Peer bar chart — confirmed 3 LabelList values render ("1.4", "1.0", "0.6") in gray, and 8 axis ticks render in gray. Bar chart LabelList IS working.
+- Cleaned up: removed /testpie route, closed browser. Working tree clean except worklog.md.
+- Read prior AUDIT-CSS-CHART (line 11741) — its CSS-5 hypothesis ("`style` on Pie may NOT propagate to label Text") is **DISPROVEN** by empirical test. The `style` DOES propagate. Real issue is positioning, not color.
+
+Stage Summary:
+
+### ROOT CAUSE
+
+The previous fix (commit 63ff8a5) **DID work technically**. Pie chart labels render in `#a1a1aa` (gray, visible on dark background). However, **ONE label is positioned at y=-0.7 (outside SVG viewBox top), causing it to be CLIPPED/INVISIBLE**. Combined with the inherent 1.9-second animation delay before labels appear, the user likely perceives the chart as "labels missing/black on black". Possibility also exists that user is viewing a stale browser cache (pre-fix code with no `label` prop at all).
+
+### Findings
+
+---
+
+**FIX-1 · HIGH — Pie label "Item #2: 15.5%" is clipped at top of SVG (REAL BUG)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:555-574`
+**Description:** Verified empirically via DOM inspection. Pie chart has `height={200}`, `cy="45%"` (= 90px), `outerRadius={68}`, Recharts default `offsetRadius=20` → labels at radius 88 from center. Top label Y = 90 − 88 = 2, but actual computed Y for the "Item #2" slice label is **−0.7** (negative, outside viewBox `0 0 572 200`). SVG default `overflow:hidden` clips this label. VLM screenshot confirms: "the label for the top-left slice appears to be completely invisible or cut off, leaving only the thin pointer line visible". This is the slice with the **second-largest value** (15.5%) — user sees the most important slice has no name.
+**Proposed fix:** Three options (pick one):
+```tsx
+// Option A (preferred): increase height + center cy
+<ResponsiveContainer width="100%" height={240}>
+  <PieChart>
+    <Pie cy="50%" outerRadius={62} ...>
+
+// Option B: reduce outerRadius so labels fit
+<Pie outerRadius={55} ...>
+
+// Option C: pass explicit label offset
+<Pie label={{ offsetRadius: 12 }} ...>
+```
+
+---
+
+**FIX-2 · MEDIUM — Legend item text uses slice colors, not configured `#a1a1aa`**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:576`
+**Description:** Verified empirically. `<Legend wrapperStyle={{ color: '#a1a1aa' }}>` only sets the wrapper `<div>`'s color, NOT individual `<span class="recharts-legend-item-text">` colors. Recharts Legend component sets each item's text color to its slice's `fill` color. Result: "Item #4" legend text in `rgb(113, 113, 122)` (zinc) — **low contrast on dark background**, may be perceived as "barely visible". Other 5 items use red/amber/light-zinc which are visible.
+**Proposed fix:** Use custom `formatter` to force gray text:
+```tsx
+<Legend
+  wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }}
+  iconType="circle"
+  formatter={(value: string) => (
+    <span style={{ color: '#a1a1aa', fontSize: '9px' }}>{value}</span>
+  )}
+/>
+```
+
+---
+
+**FIX-3 · MEDIUM — Pie labels do not render until ~1.9s after expansion (animation delay)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:557-574`
+**Description:** Verified in Recharts source: `Pie.renderLabels` (line 102-107 of `node_modules/recharts/lib/polar/Pie.js`) returns `null` while `isAnimationActive && !isAnimationFinished`. Pie defaults: `animationBegin: 400ms` + `animationDuration: 1500ms` = ~1.9s before labels appear. If the user expands the accordion and looks at the chart within 2 seconds, they see colored pie slices with NO labels — could be interpreted as "labels black/invisible". Legend renders immediately (not tied to Pie animation), so it would be visible during this window.
+**Proposed fix:** Disable animation on Pie (labels render instantly):
+```tsx
+<Pie
+  ...
+  isAnimationActive={false}
+>
+```
+Alternatively, shorten animation: `animationBegin={0} animationDuration={400}`.
+
+---
+
+**FIX-4 · LOW — Pie chart height=200 is cramped (labels overlap with Legend)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:555`
+**Description:** Verified empirically: bottom label "Lainnya: 38%" at y=165.94, Legend wrapper at y=180+ (14px tall). Both fit within viewBox (200), but Legend is HTML (outside SVG, in `.recharts-wrapper` div) positioned `bottom: 5px`. Combined with FIX-1 (top label clipped), the chart is visually tight.
+**Proposed fix:** Increase `height` to 240 (consistent with FIX-1 Option A).
+
+---
+
+**FIX-5 · LOW — Top item name truncated to 10 chars ("AYAM GOREN…")**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:566-569`
+**Description:** Verified: label function truncates `name` to 10 chars + ellipsis. "AYAM GORENG SPESIAL" (21 chars) renders as "AYAM GOREN…" — user may not recognize the item. The full name IS shown in the Legend below, so this is cosmetic.
+**Proposed fix:** Increase to 14 chars OR remove labels entirely (rely on Legend for names, use Tooltip for values):
+```tsx
+label={({ value }: { value?: number }) => `${value}%`}
+```
+
+---
+
+**FIX-6 · INFO — User's "black on black" report doesn't match actual rendering**
+**Description:** Empirical VLM + DOM inspection confirms ALL 6 Pie labels render in `rgb(161, 161, 170)` = `#a1a1aa` (light gray, visible on dark background). NOT black. The actual rendering matches the fix's intent. The user's report likely stems from one of:
+1. **Stale browser cache** (MOST LIKELY) — pre-fix code (commit before 63ff8a5) had NO `label` prop on `<Pie>`, so labels were truly absent. User may be seeing cached JS bundle. Fix: hard refresh (Ctrl+Shift+R / Cmd+Shift+R).
+2. **Stale Vercel deployment** — commit was pushed 22 minutes ago (verified `git log origin/main`), but Vercel auto-deploy may not have completed. Fix: check Vercel dashboard for build status.
+3. **Misinterpretation of clipped label** (FIX-1) — user sees one slice with no label, concludes "labels are black/invisible".
+4. **Animation delay** (FIX-3) — user looks at chart within 1.9s of expansion, sees no labels yet.
+**Proposed action:** Tell user to hard-refresh. If still broken, check Vercel deployment. Implement FIX-1 and FIX-3 regardless to prevent future confusion.
+
+---
+
+**FIX-7 · INFO — Bar chart LabelList + axis ticks ARE working (verified)**
+**Description:** Empirical DOM inspection of Dev/BOM vs Peer bar chart confirms:
+- 3 LabelList values render above bars: "1.4", "1.0", "0.6" — all in `rgb(161, 161, 170)` = `#a1a1aa` (gray, visible).
+- 8 axis ticks render: "Outlet", "Peer Avg", "Peer Best", "0", "0.35", "0.7", "1.05", "1.4" — all in `#a1a1aa`.
+**No fix needed.** The previous commit's LabelList + `tick={{ fill }}` changes work as designed.
+
+---
+
+**FIX-8 · INFO — Disproves prior AUDIT-CSS-CHART hypothesis CSS-5**
+**Description:** Prior audit (line 11789-11791) hypothesized: "`style` on `<Pie>` may NOT propagate to label `<Text>` elements" and proposed `<Pie label={{ fill: '#a1a1aa', ... }}>` object form. **This is DISPROVEN** by empirical DOM inspection: `style={{ fill: '#a1a1aa' }}` on `<Pie>` DOES propagate to label `<text>` elements as inline `style="fill: rgb(161, 161, 170); font-size: 9px;"`. Per SVG/CSS spec, inline `style` wins over presentation attribute (`fill="..."`). The current `<Pie label={fn} style={{ fill: '#a1a1aa' }}>` approach IS correct and works. No need to switch to object form. The real issue was positioning (FIX-1), not fill propagation.
+
+---
+
+### Recommended Next Actions (priority order)
+
+1. **FIX-1** (HIGH) — Increase Pie `height` to 240 and `cy` to "50%" (or reduce `outerRadius`). ~3 lines. Fixes the clipped top label.
+2. **FIX-3** (MEDIUM) — Add `isAnimationActive={false}` to Pie. ~1 line. Fixes "labels missing for 1.9s" perception.
+3. **FIX-2** (MEDIUM) — Add custom `formatter` to Legend. ~5 lines. Fixes low-contrast "Item #4" legend text.
+4. **FIX-4** (LOW) — Same change as FIX-1 (height=240).
+5. **FIX-5** (LOW) — Optional: shorten label to just `${value}%` and rely on Legend for names.
+6. **FIX-6** (INFO) — User communication: ask user to hard-refresh browser. Verify Vercel deployment status.
+
+### Code change preview (apply together as one PR)
+
+```diff
+--- a/src/components/dashboard/PrioritySummaryCard.tsx
++++ b/src/components/dashboard/PrioritySummaryCard.tsx
+@@ case 'Item Concentration':
+       return (
+-        <ResponsiveContainer width="100%" height={200}>
++        <ResponsiveContainer width="100%" height={240}>
+           <PieChart>
+             <Pie
+               data={data}
+               dataKey="value"
+               nameKey="name"
+               cx="50%"
+-              cy="45%"
+-              innerRadius={38}
+-              outerRadius={68}
++              cy="50%"
++              innerRadius={42}
++              outerRadius={62}
+               paddingAngle={1}
++              isAnimationActive={false}
+               label={({ name, value }: { name?: string; value?: number }) => {
+                 const shortName = (name || '').length > 12 ? (name || '').slice(0, 10) + '…' : name;
+                 return `${shortName}: ${value}%`;
+               }}
+               labelLine={{ stroke: '#a1a1aa', strokeWidth: 0.5 }}
+               style={{ fontSize: '9px', fill: '#a1a1aa' }}
+             >
+               {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+             </Pie>
+             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => `${v}%`} />
+-            <Legend wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }} iconType="circle" />
++            <Legend
++              wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }}
++              iconType="circle"
++              formatter={(value: string) => (
++                <span style={{ color: '#a1a1aa', fontSize: '9px' }}>{value}</span>
++              )}
++            />
+           </PieChart>
+         </ResponsiveContainer>
+       );
+```
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+**Verification method:** Empirical browser test via agent-browser + VLM screenshot analysis + Recharts 2.15.4 source code trace. NOT just static analysis.
