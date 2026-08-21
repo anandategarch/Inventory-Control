@@ -74,7 +74,7 @@ export function PeerComparison() {
   //  fetch with empty peers that would auto-compute per-week and
   //  then immediately refetch).
   // ============================================================
-  const { data: mainData, isLoading: mainLoading, error: mainError } = useQuery({
+  const { data: mainData, isLoading: mainLoading, isFetching: mainFetching, error: mainError } = useQuery({
     queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -262,6 +262,9 @@ export function PeerComparison() {
           <CardTitle className="text-sm flex items-center gap-2">
             <BarChart3 className="h-4 w-4" />
             Peer Table {peerCount > 0 && <span className="text-muted-foreground">— dengan Anomaly Flags</span>}
+            {mainFetching && !mainLoading && (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">

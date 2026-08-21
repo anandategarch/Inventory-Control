@@ -208,6 +208,12 @@ export function FilterBar() {
     <>
       <Card className="mb-4">
         <CardContent className="p-3">
+          {isLoading && (
+            <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Memuat filter...</span>
+            </div>
+          )}
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1 min-w-[140px]">
               <label className="text-xs text-muted-foreground">Bulan</label>

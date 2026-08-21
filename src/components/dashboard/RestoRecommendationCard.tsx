@@ -50,7 +50,7 @@ interface RestoRecommendation {
 export function RestoRecommendationCard() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setFocusOutlet } = useDashboard();
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -74,8 +74,38 @@ export function RestoRecommendationCard() {
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="py-6 flex items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Target className="h-4 w-4" />
+            Resto Prioritas Analisa
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-lg border p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-muted-foreground">#{i + 1}</span>
+                  <div className="space-y-1">
+                    <div className="h-3 w-24 bg-muted rounded animate-pulse" />
+                    <div className="h-2 w-16 bg-muted rounded animate-pulse" />
+                  </div>
+                </div>
+                <div className="h-6 w-12 bg-muted rounded animate-pulse" />
+              </div>
+              <div className="flex gap-2">
+                <div className="h-2 flex-1 bg-muted rounded animate-pulse" />
+                <div className="h-2 flex-1 bg-muted rounded animate-pulse" />
+                <div className="h-2 flex-1 bg-muted rounded animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <div className="h-2 w-full bg-muted rounded animate-pulse" />
+                <div className="h-2 w-3/4 bg-muted rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+          <p className="text-center text-xs text-muted-foreground">Memuat rekomendasi...</p>
         </CardContent>
       </Card>
     );
@@ -107,6 +137,9 @@ export function RestoRecommendationCard() {
         <CardTitle className="text-base flex items-center gap-2">
           <Target className="h-4 w-4" />
           Resto Prioritas Analisa
+          {isFetching && !isLoading && (
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
+          )}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Top {recommendations.length} resto dengan Priority Score tertinggi — klik untuk deep dive

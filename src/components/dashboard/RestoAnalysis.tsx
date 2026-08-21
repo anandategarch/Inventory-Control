@@ -83,7 +83,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -164,6 +164,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
               <CardTitle className="text-lg flex items-center gap-2">
                 <Target className="h-5 w-5" />
                 {outlet.name} ({outlet.code})
+                {isFetching && !isLoading && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                )}
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 {outlet.area} {outlet.pic ? `· PIC: ${outlet.pic}` : ''} · {data.period.week} {data.period.month}

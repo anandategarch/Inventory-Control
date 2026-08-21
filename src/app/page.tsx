@@ -48,13 +48,27 @@ function EmptyState() {
   );
 }
 
-function LoadingState() {
+function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
   return (
     <div className="space-y-4">
+      {/* Loading header with spinner */}
+      <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>{text}</span>
+      </div>
+      {/* Skeleton grid — KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
       </div>
-      <Skeleton className="h-32" />
+      {/* Skeleton — recommendation card */}
+      <Skeleton className="h-48" />
+      {/* Skeleton — insights + health */}
+      <div className="grid lg:grid-cols-3 gap-4">
+        <Skeleton className="h-72" />
+        <Skeleton className="h-72" />
+        <Skeleton className="h-72" />
+      </div>
+      {/* Skeleton — top items tables */}
       <div className="grid lg:grid-cols-2 gap-4">
         <Skeleton className="h-72" />
         <Skeleton className="h-72" />
@@ -74,12 +88,35 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
+function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNode; title: string; badge?: string; isFetching?: boolean }) {
   return (
     <div className="flex items-center gap-2 mb-3">
       {icon}
       <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
       {badge && <Badge variant="outline" className="text-xs">{badge}</Badge>}
+      {isFetching && (
+        <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+          <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+          Memperbarui
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+// Wrapper that shows loading overlay when fetching
+function FetchAware({ isFetching, children }: { isFetching: boolean; children: React.ReactNode }) {
+  return (
+    <div className="relative">
+      {isFetching && (
+        <div className="absolute top-2 right-2 z-10">
+          <Badge variant="outline" className="text-[10px] text-primary border-primary/30 bg-background/80 backdrop-blur">
+            <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+            Memperbarui
+          </Badge>
+        </div>
+      )}
+      {children}
     </div>
   );
 }
@@ -284,32 +321,37 @@ export default function DashboardPage() {
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
             <TabsContent value="dashboard" className="space-y-4 mt-2">
               {/* Section: Executive Summary */}
-              <section>
+              <FetchAware isFetching={analysis.isFetching}>
                 <ExecutiveSummary data={analysis.data} />
-              </section>
+              </FetchAware>
 
               {/* Section: Resto Recommendation Engine */}
               <RestoRecommendationCard />
 
               {/* Section: Insights Panel */}
-              <section>
+              <FetchAware isFetching={analysis.isFetching}>
                 <InsightsPanel data={analysis.data} />
-              </section>
+              </FetchAware>
 
               {/* Section: Health + Growth */}
-              <section className="grid lg:grid-cols-3 gap-4">
-                <HealthAlert data={analysis.data} />
-                <GrowthComparison data={analysis.data} />
-                <DeviationBreakdownChart data={analysis.data} />
-              </section>
+              <FetchAware isFetching={analysis.isFetching}>
+                <section className="grid lg:grid-cols-3 gap-4">
+                  <HealthAlert data={analysis.data} />
+                  <GrowthComparison data={analysis.data} />
+                  <DeviationBreakdownChart data={analysis.data} />
+                </section>
+              </FetchAware>
 
               {/* Section: Multi-Period Comparison */}
               <section>
                 <SectionHeader
                   icon={<Calendar className="h-4 w-4 text-muted-foreground" />}
                   title="Perbandingan Multi-Periode"
+                  isFetching={analysis.isFetching}
                 />
-                <MultiPeriodComparisonCard data={analysis.data} />
+                <FetchAware isFetching={analysis.isFetching}>
+                  <MultiPeriodComparisonCard data={analysis.data} />
+                </FetchAware>
               </section>
 
               {/* Section: Top Items + Top Outlets */}
@@ -317,12 +359,15 @@ export default function DashboardPage() {
                 <SectionHeader
                   icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
                   title="Item Prioritas & Top Resto"
+                  isFetching={analysis.isFetching}
                 />
-                <div className="grid lg:grid-cols-3 gap-4">
-                  <TopItemsByNominal data={analysis.data} />
-                  <TopItemsByDevBom data={analysis.data} />
-                  <TopOutlets data={analysis.data} />
-                </div>
+                <FetchAware isFetching={analysis.isFetching}>
+                  <div className="grid lg:grid-cols-3 gap-4">
+                    <TopItemsByNominal data={analysis.data} />
+                    <TopItemsByDevBom data={analysis.data} />
+                    <TopOutlets data={analysis.data} />
+                  </div>
+                </FetchAware>
               </section>
 
               {/* Section: Area Comparison + Outlet Health Ranking */}
@@ -331,15 +376,21 @@ export default function DashboardPage() {
                   <SectionHeader
                     icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
                     title="Perbandingan Area"
+                    isFetching={analysis.isFetching}
                   />
-                  <AreaComparison data={analysis.data} />
+                  <FetchAware isFetching={analysis.isFetching}>
+                    <AreaComparison data={analysis.data} />
+                  </FetchAware>
                 </div>
                 <div>
                   <SectionHeader
                     icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
                     title="Ranking Kondisi Resto"
+                    isFetching={analysis.isFetching}
                   />
-                  <OutletHealthRanking data={analysis.data} />
+                  <FetchAware isFetching={analysis.isFetching}>
+                    <OutletHealthRanking data={analysis.data} />
+                  </FetchAware>
                 </div>
               </section>
 
@@ -348,15 +399,20 @@ export default function DashboardPage() {
                 <SectionHeader
                   icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
                   title="Pola Item (Systemic / Widespread / Isolated)"
+                  isFetching={analysis.isFetching}
                 />
-                <ItemConsistencyAnalysis data={analysis.data} />
+                <FetchAware isFetching={analysis.isFetching}>
+                  <ItemConsistencyAnalysis data={analysis.data} />
+                </FetchAware>
               </section>
 
               {/* Section: Loss/Surplus + Trend */}
-              <section className="grid lg:grid-cols-2 gap-4">
-                <LossVsSurplusChart data={analysis.data} />
-                <TrendChart data={analysis.data} />
-              </section>
+              <FetchAware isFetching={analysis.isFetching}>
+                <section className="grid lg:grid-cols-2 gap-4">
+                  <LossVsSurplusChart data={analysis.data} />
+                  <TrendChart data={analysis.data} />
+                </section>
+              </FetchAware>
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
