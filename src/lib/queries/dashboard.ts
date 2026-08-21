@@ -25,6 +25,7 @@ export interface TrendAggRow {
   sales: number;
   nominal: number;
   devBom: number;
+  qtyBom?: number; // FIX FLOW3-2: added for multiPeriodComparison.bom
   lossNominal: number;
   surplusNominal: number;
 }
