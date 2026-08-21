@@ -11,6 +11,7 @@ import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Utensi
 import { useDashboard } from '@/hooks/useDashboard';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
+import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
 import { useState, useMemo } from 'react';
 
 interface RestoProfile {
@@ -103,6 +104,27 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
   });
+
+  // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
+  const { data: recoData } = useQuery({
+    queryKey: ['recommendation', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('month', monthLabel!);
+      p.set('week', currentWeek!);
+      if (comparisonWeek) p.set('prevWeek', comparisonWeek);
+      if (comparisonMonth) p.set('prevMonth', comparisonMonth);
+      p.set('outletCode', activeOutlet!);
+      p.set('limit', '1');
+      const res = await fetch(`/api/recommendations?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) return { success: false, recommendations: [] };
+      return res.json();
+    },
+    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    staleTime: 60_000,
+  });
+  const recommendation = recoData?.success && recoData.recommendations?.length > 0 ? recoData.recommendations[0] : null;
 
   if (!activeOutlet) {
     return (
@@ -220,6 +242,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
           </div>
         </CardHeader>
       </Card>
+
+      {/* FIX DRILLDOWN: Priority Summary card — shows WHY this outlet is priority
+          (score, level, signals, analysis bullets, 15-signal breakdown) */}
+      <PrioritySummaryCard recommendation={recommendation} />
 
       {/* Resto Profile — 6 Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

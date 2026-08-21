@@ -563,6 +563,7 @@ export interface RestoRecommendation {
     topItemNominal: number;
   };
   analysis: string[];   // auto-generated analysis bullet points
+  signalScores?: Array<{ name: string; score: number; weight: number; value: string }>; // 15 signal breakdown
 }
 
 export async function queryRestoRecommendations(
@@ -893,6 +894,24 @@ export async function queryRestoRecommendations(
         topItemNominal,
       },
       analysis,
+      // FIX DRILLDOWN: expose signal scores + weights for Priority Summary breakdown
+      signalScores: [
+        { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.12, value: `${devBomRatio.toFixed(2)}×` },
+        { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: deviasiGrowth != null ? `${(deviasiGrowth * 100).toFixed(0)}%` : '—' },
+        { name: 'Z-Score Abnormal', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
+        { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
+        { name: 'Loss/Sales', score: Math.round(s5Score), weight: 0.08, value: `${(lossToSales * 100).toFixed(1)}%` },
+        { name: 'Direction Flip', score: Math.round(s6Score), weight: 0.08, value: directionFlip ? 'YA' : 'Tidak' },
+        { name: 'Trend Memburuk', score: Math.round(s7Score), weight: 0.08, value: trendDeteriorating ? 'YA' : 'Tidak' },
+        { name: 'Item Concentration', score: Math.round(s8Score), weight: 0.05, value: `${(itemConcentration * 100).toFixed(0)}%` },
+        { name: 'Tol Breach High', score: Math.round(s9Score), weight: 0.08, value: `${toleranceBreachHighCount} item` },
+        { name: 'Over-Explained', score: Math.round(s10Score), weight: 0.07, value: `${overExplainedCount} item` },
+        { name: 'High Loss Nominal', score: Math.round(s11Score), weight: 0.05, value: `${highLossItem} item` },
+        { name: 'No Tolerance', score: Math.round(s12Score), weight: 0.03, value: `${hasNoTolerance} item` },
+        { name: 'Benchmark High', score: Math.round(s13Score), weight: 0.03, value: `${benchmarkHighCount} item` },
+        { name: 'Residual Nominal', score: Math.round(s14Score), weight: 0.02, value: `Rp ${Math.round(residualNominal / 1000000)}jt` },
+        { name: 'Tolerance Breach', score: Math.round(s15Score), weight: 0.01, value: `${toleranceBreachCount} item` },
+      ],
     };
   });
 
