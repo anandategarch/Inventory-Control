@@ -9587,3 +9587,1150 @@ Stage Summary:
 - **Dark mode**: every new shadow class has `dark:shadow-black/20` or `dark:shadow-black/30` variant. Every colored bg has `dark:` variant.
 - **Micro-interactions**: `active:scale-95` on all primary buttons, `hover:-translate-y-0.5` + `hover:shadow-lg` on interactive cards, `transition-all duration-200` everywhere.
 - **Functional preservation**: all props/handlers/state intact. Only className strings changed + 1 useEffect added in FilterBar for CustomEvent listening + 2 CustomEvent dispatchers in EmptyState (no API/data flow changes). Build + dev server confirm no regressions.
+
+---
+Task ID: AUDIT-FE-CALC
+Agent: Frontend Display Calculation Auditor
+Task: Deep audit of number formatting, display logic, color coding, null handling
+
+Work Log:
+- Read /home/z/my-project/worklog.md (tail 400 lines) for context — prior fixes CALC-4, CALC2-1, SIGN-1, FE-6, UI-BEAUTIFY (R1+R2).
+- Read all 12 target files in audit scope: format.ts, ExecutiveSummary.tsx, RestoRecommendationCard.tsx, PrioritySummaryCard.tsx, RestoAnalysis.tsx, PeerComparison.tsx, TopItems.tsx, AdvancedAnalysis.tsx, AnalysisCards.tsx, Charts.tsx, InsightsPanel.tsx, CardDrillDown.tsx. Also ItemDeepDive.tsx, DrillDownDrawer.tsx, SourceDataModal.tsx, globals.css for cross-reference.
+- Searched for toFixed/toLocaleString/directionColor usages across dashboard components to enumerate every dot-decimal & locale-inconsistent site.
+- Verified Excel sign convention propagation: nominalDeviasi/nominalLossSurplus < 0 = LOSS (red) → confirmed in display logic across cards.
+- Verified CALC-4 (totalLoss = SUM(ABS) WHERE < 0): ExecutiveSummary "Total LOSS" label correctly displays LOSS-only magnitude.
+- Verified CALC2-1 (variance sort by delta), SIGN-1 (nominalLossSurplus in rule context), FE-6 (CardDrillDown labels "negatif = LOSS/rugi (merah)") — all intact.
+- Verified primary color in globals.css is neutral grey (oklch(0.205 0 0)), NOT blue — so `text-primary`/`bg-primary/5` usage is fine.
+- Verified `priorityColor` and `severityColor` and `trendColor` exported from format.ts are DEAD CODE (not imported anywhere — RestoAnalysis.tsx defines local versions).
+
+Stage Summary:
+
+Total findings: 24 bugs (4 HIGH, 5 MEDIUM, 15 LOW) — categorized by user impact.
+
+═══════════════════════════════════════════════════════════════
+HIGH severity (4)
+═══════════════════════════════════════════════════════════════
+
+**FE-7 (HIGH)** — Inconsistent priority score color thresholds between two cards
+- File: src/components/dashboard/PrioritySummaryCard.tsx:74-82 vs src/components/dashboard/RestoRecommendationCard.tsx:142-146
+- Description: `PrioritySummaryCard.scoreColor` uses thresholds `>= 55 ? red : >= 30 ? amber : emerald`. `RestoRecommendationCard.scoreColor` uses `>= 60 ? red : >= 35 ? amber : emerald`. SAME outlet with score 57 shows AMBER in PrioritySummaryCard (drill-down view) but RED in RestoRecommendationCard (priority list view) — confusing inconsistency.
+- Proposed fix: Unify thresholds. Pick one set (recommend `>= 60/35` to match TINGGI/SEDANG/RENDAH server cutoffs). Replace `>= 55` with `>= 60` and `>= 30` with `>= 35` in PrioritySummaryCard.tsx.
+
+**FE-21 (HIGH)** — Efficiency Score calculation gives 0 penalty when peerAvg = 0
+- File: src/components/dashboard/PeerComparison.tsx:414-418
+- Description: `safeDiv(a, b)` returns 0 when `b > 0` is false. When `peerAvg.devBom = 0` (all peers have 0 devBom — common for new outlets or quiet weeks) but `target.devBom > 0`, the penalty is 0 (should be max 50). This causes target to appear artificially efficient (score = 100) when peers are all 0. Same flaw for lossPenalty (line 416), residualPenalty (417), salesPenalty (418).
+- Proposed fix: When peerAvg = 0 and target > 0, apply MAX penalty (cap). Replace `safeDiv` with:
+  ```ts
+  const ratioPenalty = (target: number, avg: number, max: number, scale: number) => {
+    if (avg > 0) return Math.min(max, (target - avg) / avg * scale);
+    if (target > 0) return max; // peer avg is 0 but target has issue → max penalty
+    return 0;
+  };
+  ```
+
+**FE-23 (HIGH)** — peerAvgScore hardcoded to 50 contradicts formula
+- File: src/components/dashboard/PeerComparison.tsx:423, 445, 452
+- Description: Comment says "peer avg by definition sits at ~50" and displays "Peer Avg: ~50/100". But the formula (lines 415-420) gives `raw = 100 - (penalties)`; if target = peerAvg exactly, all `target - peerAvg = 0` → all penalties = 0 → score = 100. So peer avg would actually score 100, NOT 50. The "Peer Avg: ~50/100" label and the marker line at `left: 50%` (line 452) are both wrong — misleading users about where peer average sits.
+- Proposed fix: Either (a) compute peer avg score by running the formula with peerAvg values substituted for target, OR (b) remove the "Peer Avg: ~50/100" display + marker line entirely. (b) is simpler.
+
+**FE-26 (HIGH)** — ItemComparisonBlock `isWorse = r.gap > 0` wrong for signed qtyDeviasi
+- File: src/components/dashboard/PeerComparison.tsx:862
+- Description: Comment says "all 3 are bad metrics (higher = worse)". But `qtyDeviasi` is SIGNED (negative = LOSS, positive = SURPLUS). If target has qtyDeviasi = -100 (LOSS) and peerBest has qtyDeviasi = -50 (smaller LOSS = best), gap = target - best = -100 - (-50) = -50. Code says isWorse = gap > 0 = false → green "better", but target is actually WORSE (bigger LOSS magnitude). Similarly for nominal which can be signed. Color and gap interpretation is wrong for signed metrics.
+- Proposed fix: Use absolute magnitude for deviation-based "worse" comparison: `const isWorse = Math.abs(r.gap) > 0 && Math.abs(r.target) > Math.abs(r.best);` — but this is tricky because for signed metrics, "best" depends on direction. Better: ask server to send `isWorse` flag per row, OR use `Math.abs(target) > Math.abs(best)` for deviation metrics. At minimum, document the assumption and only apply to metrics where higher = worse (Dev/BOM, |Nominal|).
+
+═══════════════════════════════════════════════════════════════
+MEDIUM severity (5)
+═══════════════════════════════════════════════════════════════
+
+**FE-2 (MEDIUM)** — `priorityColor` in format.ts uses `sky` (blue) for P3 — violates no-blue rule
+- File: src/lib/format.ts:91
+- Description: `case 'P3': return 'text-sky-700 bg-sky-100 border-sky-300 dark:bg-sky-950/60 dark:border-sky-800 dark:text-sky-400';` — uses blue/sky color. Worklog UI-BEAUTIFY explicitly removed all `sky` colors from InsightsPanel and Charts, but format.ts was missed. NOTE: this function is DEAD CODE (not imported anywhere — RestoAnalysis.tsx defines its own local `priorityColor` using emerald for P3). Still a latent violation.
+- Proposed fix: Change P3 to emerald: `'text-emerald-700 bg-emerald-100 border-emerald-300 dark:bg-emerald-950/60 dark:border-emerald-800 dark:text-emerald-400'`. OR delete the dead function entirely.
+
+**FE-3 (MEDIUM)** — `abnormalPct.toFixed(1)` uses dot decimal in HealthAlert
+- File: src/components/dashboard/ExecutiveSummary.tsx:279
+- Description: `{abnormalPct.toFixed(1)}%` produces "12.3%" (dot) instead of "12,3%" (comma) — inconsistent with fmtPct used everywhere else. Visible to all users on the main dashboard's most prominent alert card.
+- Proposed fix: `abnormalPct.toFixed(1).replace('.', ',')}%` OR use `fmtPct(abnormalPct / 100, false, 1)`.
+
+**FE-4 (MEDIUM)** — NEUTRAL direction (= 0) shown as green in multiple cards
+- File: src/components/dashboard/RestoRecommendationCard.tsx:209, src/components/dashboard/PrioritySummaryCard.tsx:124, src/components/dashboard/RestoAnalysis.tsx:866, 867, 868, 872, 876 (RankingNasionalCard table cells)
+- Description: Pattern `${val < 0 ? 'text-red-600' : 'text-emerald-600'}` is used for nominalDeviasi, qtyDeviasi, qtyLossSurplus, qtyWaste, qtyBom, pctLossSurplusToBom, nominalDeviasi. For value === 0 (NEUTRAL), falls into emerald (green) — implies "good surplus" when it's actually neutral. Inconsistent with `directionColor('NEUTRAL') = 'text-muted-foreground'` convention.
+- Proposed fix: Use `${val < 0 ? 'text-red-600 dark:text-red-400' : val > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}` (3-way branch). Also semantically wrong for `qtyWaste` and `qtyBom` — these are always-positive quantities, not deviations; coloring them red/green by sign is meaningless. For those, use `text-muted-foreground` always or only color by data-error (e.g., waste < 0 = data error → red).
+
+**FE-11 (MEDIUM)** — Bahan Analysis table: Dev/BOM cell always red, Nominal cell lacks direction color
+- File: src/components/dashboard/RestoAnalysis.tsx:390, 391
+- Description: Line 390: `<TableCell className="... text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>` — Dev/BOM is colored red regardless of sign. But `r.devBom` is signed (negative = LOSS, positive = SURPLUS). A SURPLUS item with high positive devBom is shown in red — misleading. Line 391: Nominal cell has NO color (`tabular-nums` only) — nominalLossSurplus is signed, should be red (LOSS) or green (SURPLUS).
+- Proposed fix: For Dev/BOM, use `directionColor(r.direction)` or `numberColor(r.devBom)` (signed). For Nominal, add `${numberColor(r.nominalLossSurplus)}` or `${directionColor(r.direction)}`.
+
+**FE-17 (MEDIUM)** — MenuAnalysis direction badge shows 'S' for NEUTRAL items
+- File: src/components/dashboard/RestoAnalysis.tsx:732
+- Description: `{item.direction === 'LOSS' ? 'L' : 'S'}` — for NEUTRAL direction, shows 'S' (SURPLUS). Inconsistent with the Bahan table (line 392) which correctly uses `r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'`. Misleading — a NEUTRAL item appears as SURPLUS in Menu Analysis.
+- Proposed fix: Mirror the Bahan table logic: `{item.direction === 'LOSS' ? 'L' : item.direction === 'SURPLUS' ? 'S' : '-'}`.
+
+═══════════════════════════════════════════════════════════════
+LOW severity (15) — grouped by theme
+═══════════════════════════════════════════════════════════════
+
+**Theme: Dot decimal separator inconsistencies (Indonesian standard = comma)**
+
+**FE-8 (LOW)** — `fmtGrowth` in RestoAnalysis uses dot decimal
+- File: src/components/dashboard/RestoAnalysis.tsx:56-60
+- Description: `const pct = (v * 100).toFixed(1); return v > 0 ? `+${pct}%` : `${pct}%`;` — produces "+15.2%" (dot). All other growth displays use comma.
+- Proposed fix: `const pct = (v * 100).toFixed(1).replace('.', ',');`
+
+**FE-9 / FE-13 / FE-14 (LOW)** — Various `.toFixed()` for multipliers & zScores
+- Files: src/components/dashboard/RestoAnalysis.tsx:305 (`areaMultiplier.toFixed(2)×`), 401 (`areaMultiplier.toFixed(1)×`), 491 (`zScore.toFixed(2)`), 505-506 (areaMultiplier/networkMultiplier `.toFixed(2)×`), 554 (`zScore.toFixed(2)`), 729 (`outlierMultiple.toFixed(1)× avg`)
+- Description: All produce dot decimals like "1.50×", "2.45", "1.5× avg" instead of Indonesian "1,50×", "2,45", "1,5× avg". Inconsistent with `fmtPct`/`fmtIDR` which use comma.
+- Proposed fix: Wrap each with `.replace('.', ',')` OR add a `fmtMul(v, digits)` helper to format.ts: `\`${(v).toFixed(digits).replace('.', ',')}×\``.
+
+**FE-19 (LOW)** — `pctLossSurplusToBom` in RankingNasionalCard uses dot decimal
+- File: src/components/dashboard/RestoAnalysis.tsx:870
+- Description: `${Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` — produces "5.00%" (dot). Bypasses `fmtPctAbs`.
+- Proposed fix: Use `fmtPctAbs(it.pctLossSurplusToBom, 2)`.
+
+**FE-25 / FE-27 / FE-28 / FE-29 (LOW)** — PeerComparison tooltips/insights use dot decimals
+- Files: src/components/dashboard/PeerComparison.tsx:670 (`d.devBom.toFixed(1)}%` in scatter tooltip), 961 (`(pl.value).toFixed(2)}%` in trend tooltip), 1019 (`(target.devBom * 100).toFixed(1)}%`), 1028 (same), 1048 (`residualRatio.toFixed(1)}× peer average`)
+- Description: All produce dot decimals. Note: line 834 `fmtPctRatio` is the CORRECT pattern (uses `.replace('.', ',')`).
+- Proposed fix: Replace `.toFixed(N)` with `.toFixed(N).replace('.', ',')` OR use `fmtPctAbs`/`fmtPct`.
+
+**FE-33 / FE-35 / FE-36 / FE-37 / FE-38 / FE-39 (LOW)** — Charts tooltips/legends use dot decimals & default toLocaleString
+- Files: src/components/dashboard/AnalysisCards.tsx:65 (`Growth: (v*100).toFixed(1)}%`), src/components/dashboard/Charts.tsx:151 (`v.toLocaleString() (${pct.toFixed(1)}%)`), 165 (`d.value.toLocaleString()`), 166 (`d.pct.toFixed(1)}%`), 208 (`v.toLocaleString()`), 219 (`Rp ${(l.lossNominal / 1_000_000).toFixed(2)}Jt`), 223 (same for surplus), 286 (`(v * 100).toFixed(2)}%` and `v.toLocaleString()`)
+- Description: All produce dot decimals OR use default locale (en-US) for toLocaleString — should be Indonesian. The `fmtIDR` and `fmtPct` helpers exist for this.
+- Proposed fix: Use `fmtIDR(v)` for currency, `fmtPct(v/100, false, 1)` for percentages, `v.toLocaleString('id-ID')` for plain numbers. For the LossVsSurplusChart nominal displays (line 219, 223), use `fmtIDR(l.lossNominal)` and `fmtIDR(l.surplusNominal)`.
+
+**FE-40 through FE-47 (LOW)** — InsightsPanel body texts use dot decimals & default toLocaleString
+- File: src/components/dashboard/InsightsPanel.tsx
+- Description: Lines 86/95/103 (`abnormalPct.toFixed(1)}%`, `hs.abnormal.toLocaleString()`, `total.toLocaleString()`), 129 (`residualPct * 100).toFixed(1)}%`), 147 (`worstPct.toFixed(2)}%`, `bestPct.toFixed(2)}%`, `(worstPct - bestPct).toFixed(2)} ppt`), 163 (`pct.toFixed(2)}%`), 194/202 (`netCostRatio * 100).toFixed(2)}%`, `delta.toFixed(2)} ppt`), 218/226 (`lossShare * 100).toFixed(1)}%`, `(1 - lossShare) * 100).toFixed(1)}%`), 240 (`zScore.toFixed(2)`, `currentDevBom * 100).toFixed(1)}%`, `historicalAvg * 100).toFixed(1)}%`).
+- Description: All insight body strings use dot decimal for percentages and `toLocaleString()` (default locale, may be en-US "1,234" instead of id-ID "1.234") for counts. Inconsistent with fmtIDR/fmtPct used in the same strings.
+- Proposed fix: Replace all `X.toFixed(N)}%` with `X.toFixed(N).replace('.', ',')}%`. Replace `X.toLocaleString()` with `X.toLocaleString('id-ID')`.
+
+**Theme: YAxis tick formatters don't handle negatives**
+
+**FE-32 / FE-34 (LOW)** — YAxis tickFormatter missing negative branch
+- Files: src/components/dashboard/AnalysisCards.tsx:54 (`v >= 1_000_000 ? ... : v.toLocaleString()` — negative -2M falls through to toLocaleString showing "-2,000,000"), src/components/dashboard/Charts.tsx:148 (`v >= 1000 ? ... : v.toFixed(0)` — negative -1500 shows "-1500" instead of "-1K"), src/components/dashboard/Charts.tsx:207 (same)
+- Description: Negative tick values bypass the compact-format branch because `v >= threshold` is false for negatives. Produces long unformatted strings on axis.
+- Proposed fix: Use `Math.abs(v)` for threshold check: `Math.abs(v) >= 1000 ? \`${v < 0 ? '-' : ''}${(Math.abs(v) / 1000).toFixed(0)}K\` : v.toFixed(0)`. Or factor out a `fmtCompact(v)` helper.
+
+**Theme: "+0" prefix when value is zero**
+
+**FE-6 / FE-24 (LOW)** — Contribution/Gap always shows "+" prefix even for 0
+- Files: src/components/dashboard/PrioritySummaryCard.tsx:222 (`+{contribution}` always has +), src/components/dashboard/PeerComparison.tsx:521 (`{r.gap >= 0 ? '+' : ''}{r.format(r.gap)}`), 870 (same pattern in ItemComparisonBlock)
+- Description: When `contribution = 0` or `gap = 0`, display shows "+0" which is misleading (implies adding when nothing is added). Same for "Rp 0" shown as "+Rp 0".
+- Proposed fix: Use `{r.gap > 0 ? '+' : ''}{r.format(r.gap)}` (strict `> 0`, not `>= 0`). For PrioritySummaryCard contribution: `{contribution > 0 ? '+' : ''}{contribution}`.
+
+**Theme: Semantic color misuse on always-positive quantities**
+
+**FE-18 / FE-20 (LOW)** — QTY Waste and QTY BOM colored green for >= 0
+- File: src/components/dashboard/RestoAnalysis.tsx:867 (`it.qtyWaste < 0 ? red : emerald`), 872 (`it.qtyBom < 0 ? red : emerald`)
+- Description: QTY Waste and QTY BOM are always-positive quantities (not signed deviations). Coloring them green for >= 0 implies "good surplus" — semantically wrong. 0 waste is not a "surplus", it's just "no waste". Negative values would indicate data error.
+- Proposed fix: For always-positive quantities, don't use sign-based color. Use `text-foreground` or `text-muted-foreground`. Only color red if value < 0 (data error).
+
+**FE-10 (LOW)** — Top Risk by Dev/BOM always colored red
+- File: src/components/dashboard/RestoAnalysis.tsx:316
+- Description: `<span className="... text-red-600 ...">{fmtPct(r.value)}</span>` — always red. If a top item has positive devBom (SURPLUS direction), showing it red in "Top Risk" is misleading. Title says "Top Risk (by Dev/BOM)" but Dev/BOM magnitude ranking can include SURPLUS items.
+- Proposed fix: Use `numberColor(r.value)` or `directionColor(r.direction)` (signed). Or rename card to "Top Items by Dev/BOM magnitude" to clarify it's not strictly "risk".
+
+**FE-30 (LOW)** — lossOutlets/surplusOutlets colored red/emerald even when 0
+- File: src/components/dashboard/AdvancedAnalysis.tsx:240-241
+- Description: `<TableCell className="... text-red-600 ...">{row.lossOutlets}</TableCell>` and `<TableCell className="... text-emerald-600 ...">{row.surplusOutlets}</TableCell>` — always colored. For 0 loss outlets, shows "0" in red — implies "bad" when 0 is actually "good (no loss)".
+- Proposed fix: Conditional color: `${row.lossOutlets > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`.
+
+**FE-31 (LOW)** — AreaComparison worst/best highlight says "Terburuk" but is sorted by absNominal
+- File: src/components/dashboard/AdvancedAnalysis.tsx:305-306, 315, 316
+- Description: `isWorst = i === 0` (first row after sorting by `totalAbsNominal DESC`). The red dot has `title="Terburuk"` (worst). But "worst by total magnitude" ≠ "worst by loss ratio" — an area with huge sales might have the highest abs nominal but lowest loss/sales ratio. The label is misleading.
+- Proposed fix: Either (a) sort by `lossToSales` DESC to align with "worst" semantics, OR (b) change labels to "Tertinggi |Nominal|" (highest magnitude) and "Terendah |Nominal|" (lowest magnitude).
+
+**FE-1 (LOW)** — `trendColor` in format.ts doesn't handle NaN
+- File: src/lib/format.ts:52-58
+- Description: `if (v == null) return muted; if (v === 0) return muted;` — but `v === NaN` is false for both checks. For `v = NaN`, `positive = NaN > 0 = false`, so non-inverse returns red, inverse returns emerald. Wrong (should be muted). NOTE: function is DEAD CODE (not imported anywhere — RestoAnalysis.tsx defines its own local `growthColor`).
+- Proposed fix: Add `if (isNaN(v)) return 'text-muted-foreground';` after the null check. OR delete the dead function.
+
+**FE-5 (LOW)** — PrioritySummaryCard total row doesn't verify sum = priorityScore
+- File: src/components/dashboard/PrioritySummaryCard.tsx:227-234
+- Description: Total row displays `= {r.priorityScore}` but doesn't sum the per-row `contribution` values to verify. If server's calculation differs (e.g., uses unrounded weights), the displayed total won't match the sum of contributions — misleading.
+- Proposed fix: Compute `const total = r.signalScores.reduce((s, x) => s + Math.round(x.score * x.weight), 0);` and display `= {total}` (with note if it differs from `r.priorityScore`).
+
+**FE-15 (LOW)** — NOT A BUG (verified)
+- File: src/components/dashboard/RestoAnalysis.tsx:534, 537
+- Description: Initial concern that `bg-primary/5` and `text-primary` use blue. Verified globals.css: `--primary: oklch(0.205 0 0)` (dark grey in light mode), `oklch(0.922 0 0)` (light in dark mode) — neutral, NOT blue. No fix needed.
+
+═══════════════════════════════════════════════════════════════
+Summary
+═══════════════════════════════════════════════════════════════
+
+24 findings total: 4 HIGH, 5 MEDIUM, 15 LOW.
+
+The 4 HIGH bugs are functional calculation/display errors that produce visibly wrong numbers:
+- FE-7: Score 57-59 shows different colors across two cards (user-visible inconsistency).
+- FE-21: Efficiency Score = 100 (max) when peerAvg = 0 (artificially inflates target's apparent performance).
+- FE-23: "Peer Avg: ~50/100" marker is wrong (formula gives 100 for peer avg target).
+- FE-26: Item comparison "isWorse" check uses signed gap, wrong for qtyDeviasi/nominal (LOSS direction).
+
+The 5 MEDIUM bugs are display logic errors:
+- FE-2: priorityColor uses sky (blue) for P3 — violates no-blue rule (dead code).
+- FE-3: abnormalPct uses dot decimal in most prominent alert card.
+- FE-4: NEUTRAL (=0) shown green across 7 cells in RestoAnalysis RankingNasionalTable.
+- FE-11: Bahan table Dev/BOM always red, Nominal lacks direction color.
+- FE-17: MenuAnalysis shows 'S' for NEUTRAL items.
+
+The 15 LOW bugs are mostly:
+- Dot decimal separator inconsistencies (Indonesian standard = comma) — 12+ sites.
+- YAxis tick formatters missing negative branch — 3 sites.
+- "+0" prefix when value is zero — 3 sites.
+- Semantic color misuse on always-positive quantities — 3 sites.
+- 1 dead code (FE-1 trendColor NaN).
+
+Recommended fix priority:
+1. **FE-7 (HIGH)** — Unify priority score thresholds. ~2 line change in PrioritySummaryCard.tsx.
+2. **FE-21 + FE-23 (HIGH)** — Fix EfficiencyScoreCard formula + remove hardcoded peerAvgScore=50. ~10 line change.
+3. **FE-26 (HIGH)** — Fix isWorse logic in ItemComparisonBlock. ~3 line change.
+4. **FE-2 + FE-3 + FE-4 + FE-11 + FE-17 (MEDIUM)** — Color/decimal/display logic. ~20 line change.
+5. **LOW bugs** — Batch fix: replace all `.toFixed(N)` with `.toFixed(N).replace('.', ',')` in dashboard components, replace `toLocaleString()` with `toLocaleString('id-ID')`, fix `>= 0` to `> 0` for "+" prefix, add 3-way direction color branch. Could be done with a single regex sweep + manual review.
+
+Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: AUDIT-FLOW-CALC
+Agent: Data Flow & Transformation Auditor
+Task: End-to-end data flow verification, cross-layer consistency
+
+Work Log:
+- Read worklog.md tail for context (recent CALC-1..11, SIGN-1..4, CALC2-1..2, FLOW3-1..3 fixes).
+- Read src/lib/ingestion.ts (processIngestion + processRowsForImport) — confirmed normalize/derive pipeline correct, abs-each-then-sum in computeResidual, BATCH_SIZE 500/2000, cache invalidation (analysisCache + statusCache + clearMonthResolverCache) at lines 440-449.
+- Read src/engine/transform.ts (toNum, normalizeRow, computeResidual, deriveRecord) — confirmed: direction via computeDirection(qtyLossSurplus, qtyDeviasi); residualQty sign-aware + clamped ≥0; netDeviationMismatch uses abs-each-then-sum; absNominalLossSurplus = Math.abs(nominalLossSurplus); all abs values correct.
+- Read src/engine/validator.ts (validateRow, summarizeDQ) — confirmed: criticalNums validation, OVER_EXPLAINED abs-each-then-sum, NET_DEVIATION_MISMATCH formula.
+- Read src/engine/analysis/ruleService.ts (buildRuleContext) — confirmed FLOW3-1 fix applied: computeDirectionFromData helper at lines 68-81 computes direction on-the-fly from nominalLossSurplus sign (with qtyDeviasi fallback). All ctx fields populated including nominalLossSurplus (SIGN-1), isOverExplained, isDirectionFlip.
+- Read src/engine/analysis/rankingService.ts (buildWorklistFromFlags, computeVarianceAnalysis, computeOutletHealthRanking, computeHistoricalAnalysis) — **FOUND FLOW-1**: lines 114 + 232 still use STORED `curr.direction` (FLOW3-1 fix INCOMPLETE).
+- Read src/engine/analysis/types.ts (RecWithRels slim shape) — confirmed structurally compatible with full InventoryRecord from export-report route.
+- Read src/lib/queries/outlets.ts (queryTopOutlets, queryTopOutletsBySales, queryPeerComparison, queryPeerItemComparison, queryPeerTrend, queryRestoRecommendations) — confirmed CALC-4 (LOSS=negative), CALC2-2 (qtyDeviasiLoss), 15-signal scoring formulas. **FOUND FLOW-2**: queryRestoRecommendations doesn't auto-compute prevWeek/prevMonth when null (line 703 `prevWeek && prevMonth ? ... : Promise.resolve([])`).
+- Read src/lib/queries/items.ts (queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByDeviasiRank, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency) — confirmed all direction CASE statements include qtyDeviasi NULL fallback (VERIFY3-8).
+- Read src/lib/queries/dashboard.ts (queryTrendAgg, queryExecSummary, queryDeviationBreakdown, queryLossVsSurplus, queryCostImpact) — confirmed FLOW3-2 fix (qtyBom in TrendAggRow), CALC-4 (LOSS=negative).
+- Read src/lib/queries/shared.ts (buildSqlFilters) — confirmed case-insensitive itemName via LOWER().
+- Read src/app/api/analysis/route.ts — confirmed: auto-compute prevWeek/prevMonth from allPeriods (lines 224-249), buildExecSummaryFromSql with _prevMetrics injection, multiPeriodComparison populated (FLOW3-2), varianceAnalysis via computeVarianceAnalysis.
+- Read src/app/api/outlet-items/route.ts — confirmed: auto-compute prevWeek/prevMonth (lines 91-123), outlet profile with 6 sections, bahan analysis 3 rankings, pctQtyDeviasiToBom uses SUM/SUM (FLOW3-3 fix).
+- Read src/app/api/recommendations/route.ts — **FOUND FLOW-2**: passes prevWeek/prevMonth from URL params directly to queryRestoRecommendations; NO auto-compute logic. Default state has comparisonWeek=null → growth/flip signals zero.
+- Read src/app/api/peer-comparison/route.ts + items/route.ts + trend/route.ts — confirmed MAX(weekLabel) cumulative-week fix, peer set derivation, trend aggregation.
+- Read src/app/api/export-report/route.ts — confirmed same queries as analysis route. **FOUND FLOW-8**: lines 645, 652 still say "Selisih Terbesar/Terkecil" but sort uses delta (magnitude) — VERIFY3-2 carry-over.
+- Read src/app/api/migrate-direction/route.ts — confirmed cache invalidation (statusCache + analysisCache + clearMonthResolverCache).
+- Read src/app/api/data/route.ts (DELETE) — confirmed cascade + cache invalidation.
+- Read src/app/api/pic/route.ts + pic/import/route.ts — confirmed cache invalidation.
+- Read src/app/api/settings/route.ts — confirmed analysisCache.clear() (statusCache NOT cleared — correct, settings don't affect /api/status).
+- Read src/hooks/useAnalysis.ts (AnalysisData, VarianceItem) — confirmed FLOW3-4 type drift fix.
+- Read src/hooks/useDashboard.ts — confirmed: setWeek resets comparisonWeek + comparisonMonth to null (default state has no compare period).
+- Read src/components/dashboard/ExecutiveSummary.tsx — confirmed: totalLoss + totalSurplus from exec summary (CALC-4), residualLossPct uses qtyDeviasiLoss denominator, DQ status reads only errors+warnings.
+- Read src/components/dashboard/RestoRecommendationCard.tsx — **FOUND FLOW-7**: interface missing signalScores field (type drift; card doesn't render signalScores so no runtime bug).
+- Read src/components/dashboard/RestoAnalysis.tsx — **FOUND FLOW-6**: line 110 uses singular `['recommendation', ...]` queryKey (RestoRecommendationCard uses plural `['recommendations', ...]`).
+- Read src/components/dashboard/PrioritySummaryCard.tsx — confirmed signalScores consumption + collapsible 15-signal breakdown.
+- Grep'd cache invalidation patterns across FilterBar, FileUploadDialog, DataManagementDialog, PicManagementDialog, SettingsDialog, QuickSettings — **FOUND FLOW-3/4/5**: 7 of 8 mutation handlers miss `['recommendations']` invalidation; SettingsDialog.migrateMutation misses `['item-history']`.
+
+Stage Summary:
+
+9 findings total — 2 HIGH, 4 MEDIUM, 3 LOW.
+
+═══════════════════════════════════════════════════════════════
+HIGH SEVERITY
+═══════════════════════════════════════════════════════════════
+
+**FLOW-1 (HIGH)** — rankingService.ts incomplete FLOW3-1 fix: stored direction still read in 2 places
+- File: `src/engine/analysis/rankingService.ts:114, 232`
+- Description: FLOW3-1 fix (compute direction on-the-fly) was applied to `ruleService.buildRuleContext` (lines 68-86) but NOT to:
+  1. `buildWorklistFromFlags` line 114: `direction: (curr.direction || 'NEUTRAL') as 'LOSS' | 'SURPLUS' | 'NEUTRAL'`
+  2. `computeVarianceAnalysis` line 232: `direction: curr.direction || 'NEUTRAL'`
+  
+  `curr` is the raw Prisma record from the analysis route's findMany (line 340-354), where `direction: true` selects the STORED DB column. For NEW ingests post-CALC-1, the stored value is correct. For OLD ingests pre-migration (or partially-migrated DBs), the stored `direction` is INVERTED.
+  
+  The worklog (Task FIX-DEEP-AUDIT-3) claims:
+  > "ALL direction computations now use on-the-fly computation from nominalLossSurplus sign (with qtyDeviasi fallback). The stored ir.direction field is NO LONGER READ by any query or rule engine."
+  
+  This claim is INCORRECT — 2 read paths in rankingService.ts still use the stored field. Worklog task description for FLOW3-1 explicitly listed 4 places needing fix:
+  > "1. ruleService.buildRuleContext, 2. rankingService.computeVarianceAnalysis line 232, 3. buildWorklistFromFlags line 114, 4. (rule context direction field)"
+  
+  Only #1 and #4 (both in ruleService) were fixed. #2 and #3 (in rankingService) were missed.
+- Impact: Investigation Worklist + Variance Analysis direction badges show INVERTED direction (LOSS ↔ SURPLUS) on un-migrated or partially-migrated DBs. After full migration, this works correctly — but the FLOW3-1 stated goal was "migration no longer required for correctness", which is not achieved.
+- Proposed fix: Apply the same `computeDirectionFromData` helper pattern used in ruleService.ts to rankingService.ts:
+  ```ts
+  // In buildWorklistFromFlags (before items.push):
+  const currDir = curr.nominalLossSurplus != null
+    ? (curr.nominalLossSurplus < 0 ? 'LOSS' : curr.nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
+    : (curr.qtyDeviasi != null
+        ? (curr.qtyDeviasi < 0 ? 'LOSS' : curr.qtyDeviasi > 0 ? 'SURPLUS' : 'NEUTRAL')
+        : (curr.direction || 'NEUTRAL'));
+  // Use currDir in place of (curr.direction || 'NEUTRAL')
+  
+  // Same pattern in computeVarianceAnalysis line 232
+  ```
+  Better: extract `computeDirectionFromData` to a shared util (e.g. in `src/lib/metrics/`) and import it from both ruleService.ts and rankingService.ts. Single source of truth.
+
+**FLOW-2 (HIGH)** — /api/recommendations doesn't auto-compute prevWeek/prevMonth
+- File: `src/app/api/recommendations/route.ts:20-21, 65`
+- Description: Recommendations route reads `prevWeek` and `prevMonth` from URL params directly and passes them to `queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit)`. There is NO auto-compute logic.
+  
+  Inside `queryRestoRecommendations` (outlets.ts:703-727), prevRows is fetched ONLY if `prevWeek && prevMonth`. When either is null (the default state — `setWeek` in useDashboard.ts resets comparisonWeek + comparisonMonth to null), `prevRows` is `Promise.resolve([])` → prevMap is empty → for every outlet:
+  - `prevNominal = null` → `deviasiGrowth = null` → `s2Score = 0`
+  - `prevDirection = null` → `directionFlip = false` → `s6Score = 0`
+  - `trendDeteriorating = false` (requires non-null deviasiGrowth) → `s7Score = 0`
+  
+  Total weight of these 3 signals: 10% + 8% + 8% = 26% of priority score.
+  
+  By contrast, `/api/analysis` (route.ts:224-249) and `/api/outlet-items` (route.ts:91-123) BOTH auto-compute prevWeek/prevMonth from allPeriods when not specified. This means:
+  - Analysis route shows variance + growth metrics with auto-compare
+  - Outlet-items route shows historical growth + direction flip with auto-compare
+  - Recommendations route does NOT — it silently shows "no growth/flip/trend" for the same outlet/period
+  
+  Inconsistent behavior across 3 routes that consume the same data.
+- Impact: When user opens the dashboard (default state: no compare week selected), the RestoRecommendationCard priority scores systematically underweight 26% of the signal space. Outlets with severe direction flips or deteriorating trends (the most actionable signals) won't bubble to the top until the user manually selects a compare period.
+- Proposed fix: Add auto-compute logic in `/api/recommendations/route.ts` mirroring the pattern in `/api/analysis/route.ts:224-249`:
+  ```ts
+  // After month/week resolution, before queryRestoRecommendations:
+  if (!prevWeek || !prevMonth) {
+    const weeksRaw = await db.week.findMany({
+      select: { weekLabel: true, monthKey: true },
+      distinct: ['monthKey', 'weekLabel'],
+    });
+    const fileMonthKeys = await db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } });
+    const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
+    const allPeriods = weeksRaw.map(w => ({
+      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+      weekLabel: w.weekLabel,
+      sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+    })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    
+    if (!prevWeek) prevWeek = week; // compare same weekLabel
+    if (!prevMonth) {
+      const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
+      const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
+      for (let i = startIdx; i >= 0; i--) {
+        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+          prevMonth = allPeriods[i].monthLabel;
+          break;
+        }
+      }
+      if (!prevMonth && currentIdx > 0) {
+        prevWeek = allPeriods[currentIdx - 1].weekLabel;
+        prevMonth = allPeriods[currentIdx - 1].monthLabel;
+      }
+    }
+  }
+  ```
+
+═══════════════════════════════════════════════════════════════
+MEDIUM SEVERITY
+═══════════════════════════════════════════════════════════════
+
+**FLOW-3 (MEDIUM)** — 7 cache invalidation handlers miss `['recommendations']` key
+- Files:
+  - `src/components/filters/FilterBar.tsx:137-142` (handleIngest)
+  - `src/components/filters/FilterBar.tsx:199-204` (handleDriveImport)
+  - `src/components/filters/FileUploadDialog.tsx:470-474`
+  - `src/components/filters/DataManagementDialog.tsx:187-194` (invalidateAll)
+  - `src/components/filters/PicManagementDialog.tsx:195-201` (invalidateAll)
+  - `src/components/filters/SettingsDialog.tsx:133-138` (saveMutation)
+  - `src/components/filters/SettingsDialog.tsx:167-172` (resetMutation)
+  - `src/components/dashboard/QuickSettings.tsx:123-130`
+- Description: All 8 mutation handlers invalidate the same 5 keys: `status`, `analysis`, `outlet-items`, `item-history`, `peer-comparison`. NONE of them invalidate `['recommendations']`. The RestoRecommendationCard uses `queryKey: ['recommendations', ...]` with `staleTime: 60_000` (RestoRecommendationCard.tsx:71). After ingest/drive-import/data-delete/PIC-update/settings-save/settings-reset/quick-settings-save, the recommendations card stays stale for up to 60 seconds.
+- Impact: User imports new data → dashboard KPIs refresh (analysis invalidated) but Priority Recommendations card still shows old priority scores, old signal badges, old ranking. User has to manually wait 60s or change a filter to trigger refetch. Confusing UX — appears the import "didn't work" for the recommendations section.
+- Proposed fix: Add `queryClient.invalidateQueries({ queryKey: ['recommendations'] });` to all 8 handlers. Consider extracting a shared `invalidateAnalysisQueries()` helper to prevent future drift:
+  ```ts
+  // src/lib/query-invalidation.ts
+  export const ANALYSIS_QUERY_KEYS = ['status', 'analysis', 'outlet-items', 'item-history', 'peer-comparison', 'recommendations'] as const;
+  export function invalidateAnalysisQueries(qc: QueryClient) {
+    for (const key of ANALYSIS_QUERY_KEYS) {
+      qc.invalidateQueries({ queryKey: [key] });
+    }
+  }
+  ```
+
+**FLOW-4 (MEDIUM)** — SettingsDialog.migrateMutation misses `['item-history']` invalidation
+- File: `src/components/filters/SettingsDialog.tsx:213-216`
+- Description: migrate-direction endpoint (`/api/migrate-direction`) updates the `direction` column on InventoryRecord rows. The handler invalidates: `analysis`, `outlet-items`, `recommendations`, `peer-comparison`. It does NOT invalidate `['item-history']`.
+  
+  The item-history route (`/api/item-history/route.ts:91-105`) computes direction on-the-fly via SQL CASE (doesn't read stored direction), so technically this won't cause inverted direction display. BUT the item-history route also reads `nominalLossSurplus` and `qtyDeviasi` directly — and after migration, the SQL CASE produces the same result as before. So this is a low-risk gap.
+  
+  However, if a future change to item-history starts reading the stored `direction` column, this stale cache would surface the bug. Better to invalidate for consistency.
+- Impact: Low — item-history direction is computed on-the-fly in SQL, so stale cache only affects direction-adjacent fields (none currently). But inconsistent with the other 7 handlers which all invalidate `['item-history']`.
+- Proposed fix: Add `queryClient.invalidateQueries({ queryKey: ['item-history'] });` at line 216 (before or after the peer-comparison invalidation).
+
+**FLOW-5 (MEDIUM)** — SettingsDialog saveMutation + resetMutation miss `['recommendations']` invalidation
+- File: `src/components/filters/SettingsDialog.tsx:133-138` (save), `:167-172` (reset)
+- Description: Settings affect priority thresholds (HIGH_LOSS_NOMINAL_THRESHOLD, RESIDUAL_LOSS_WARN_PCT, HISTORICAL_ZSCORE_HIGH, etc.). After saving settings, the analysis + outlet-items + item-history + peer-comparison queries all refetch with new thresholds — but `recommendations` doesn't. The RestoRecommendationCard continues to display priority scores computed with OLD thresholds for up to 60s.
+  
+  Specifically, the priority threshold `HIGH_LOSS_NOMINAL_THRESHOLD` (default 10M) determines `highLossItem` count → drives Signal 11 (HIGH_LOSS_NOMINAL) → 5% of priority score. If user lowers the threshold from 10M to 5M, more items qualify as high-loss → priority scores should rise. But recommendations cache stays stale.
+- Impact: After threshold adjustment, Priority Recommendations card shows outdated priority scores for up to 60s. The KPI cards (analysis) refresh immediately, but the priority ranking doesn't — user may conclude "my threshold change had no effect".
+- Proposed fix: Add `queryClient.invalidateQueries({ queryKey: ['recommendations'] });` to both saveMutation (after line 138) and resetMutation (after line 172). Note that migrateMutation at line 215 already has this — so this is just bringing the other 2 in line.
+
+**FLOW-6 (MEDIUM)** — RestoAnalysis uses singular `['recommendation']` queryKey — never invalidated
+- File: `src/components/dashboard/RestoAnalysis.tsx:110`
+- Description: RestoAnalysis fetches the recommendation for `activeOutlet` via:
+  ```ts
+  queryKey: ['recommendation', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth]
+  ```
+  Note: SINGULAR `recommendation` (not `recommendations`).
+  
+  Meanwhile, RestoRecommendationCard uses PLURAL:
+  ```ts
+  queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic]
+  ```
+  
+  And SettingsDialog.migrateMutation invalidates PLURAL:
+  ```ts
+  queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+  ```
+  
+  TanStack Query's `invalidateQueries({ queryKey: ['recommendations'] })` invalidates queries whose key STARTS with `'recommendations'`. The singular-keyed query starts with `'recommendation'` — different prefix → NOT invalidated.
+- Impact: After migrate-direction runs, the Priority Summary Card in RestoAnalysis (which uses the singular-keyed query) stays stale. The user sees old priority score, old signal breakdown, old analysis bullets — even though migrate-direction did update direction values in the DB. The RestoRecommendationCard (plural key) refreshes correctly.
+- Proposed fix: Change RestoAnalysis.tsx line 110 to use PLURAL `['recommendations', activeOutlet, ...]`. This makes migrate-direction's invalidation cover both cards. Note: this means the singular-keyed query was likely a typo from the start.
+
+═══════════════════════════════════════════════════════════════
+LOW SEVERITY
+═══════════════════════════════════════════════════════════════
+
+**FLOW-7 (LOW)** — RestoRecommendationCard.tsx interface missing signalScores field (type drift)
+- File: `src/components/dashboard/RestoRecommendationCard.tsx:12-48`
+- Description: The card's local `RestoRecommendation` interface (lines 12-48) declares `signals` and `metrics` and `analysis` but NOT `signalScores`. The API response (outlets.ts:898-914) includes `signalScores?: Array<{ name, score, weight, value }>`.
+  
+  The card itself doesn't render signalScores (only signal badges via `r.signals.*`), so this is type incompleteness only — no runtime bug.
+  
+  Compare with PrioritySummaryCard.tsx which DOES declare `signalScores?: SignalScore[]` (line 58) and renders the collapsible 15-signal breakdown table.
+- Impact: Type drift. If a future refactor passes the RestoRecommendationCard's `recommendation` object to a child component that expects `signalScores`, TypeScript will complain (or worse, the data will be silently dropped).
+- Proposed fix: Add `signalScores?: Array<{ name: string; score: number; weight: number; value: string }>;` to the interface in RestoRecommendationCard.tsx (after line 47, before the closing brace). Or better: extract a shared `RestoRecommendation` interface to `src/types/recommendations.ts` and import it in both RestoRecommendationCard.tsx, PrioritySummaryCard.tsx, and RestoAnalysis.tsx.
+
+**FLOW-8 (LOW)** — export-report variance section labels still say "Selisih" but sort uses delta (magnitude)
+- File: `src/app/api/export-report/route.ts:645, 652`
+- Description: This is the VERIFY3-2 carry-over finding that was noted in the prior audit but never applied as a fix. The variance section paragraph (line 643) was correctly updated to "Item yang memburuk (magnitude deviasi naik)..." (VERIFY3-2 part 1 fix), but the subsection headings were NOT updated:
+  - Line 645: `"11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)"`
+  - Line 652: `"11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)"`
+  
+  The actual sort (rankingService.ts:242-243) uses `delta` (magnitude change), NOT `selisih` (signed change):
+  ```ts
+  const topWorsened = [...deltas].sort((a, b) => b.delta - a.delta).slice(0, 5);
+  const topImproved = [...deltas].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  ```
+  
+  So the labels say "Selisih Terbesar/Terkecil" but the sort is by magnitude, not by signed selisih. The displayed "Selisih" column shows the signed value, which can be confusing — e.g., a LOSS item that worsened (-5M → -10M) has selisih = -5M (negative), but appears in the "Terbesar" section because its delta = +5M (magnitude grew).
+- Impact: Word export users see "Selisih Terbesar" section containing items with negative Selisih values — confusing. The column header says "Selisih" but the sort criterion is different.
+- Proposed fix:
+  - Line 645: change heading to `"11.1 Item dengan Perubahan Magnitude Terbesar (Memburuk)"` (or keep "Terbesar" but drop "(Selisih Terbesar)")
+  - Line 652: change heading to `"11.2 Item dengan Perubahan Magnitude Terkecil (Membaik)"`
+  - Consider adding a separate "Delta |Nom|" column showing `it.delta` (the magnitude change used for sorting) alongside the existing "Selisih" column.
+
+**FLOW-9 (LOW)** — queryHistoricalCategoryAvg relies on caller filtering to same weekLabel (fragile)
+- File: `src/lib/queries/items.ts:312`
+- Description: The query uses `WHERE ir."weekLabel" = ${historicalPeriods[0].weekLabel}` — only the FIRST period's weekLabel. This relies on the caller (export-report route.ts:346) having pre-filtered `historicalPeriods` to only contain periods with the same weekLabel as the current period:
+  ```ts
+  const historicalPeriods = allPeriods.filter(p => p.weekLabel === week && p.monthLabel !== month)
+  ```
+  If a future caller passes mixed weekLabels, only the first period's week would be considered — historical avg would be wrong (e.g., mixing W1 baseline into a W4 comparison).
+- Impact: Low — current caller correctly filters. But the function's contract is implicit and easy to violate. No test guards against this.
+- Proposed fix: Either:
+  1. Add a runtime assertion at the top of `queryHistoricalCategoryAvg`:
+     ```ts
+     const weekLabels = new Set(historicalPeriods.map(p => p.weekLabel));
+     if (weekLabels.size > 1) {
+       console.warn('[queryHistoricalCategoryAvg] mixed weekLabels — results may be incorrect', weekLabels);
+     }
+     ```
+  2. OR change the query to use `IN` with all unique weekLabels from `historicalPeriods` (more robust):
+     ```ts
+     const weekLabels = [...new Set(historicalPeriods.map(p => p.weekLabel))];
+     const weekClauses = Prisma.join(weekLabels, ', ');
+     // ... WHERE ir."weekLabel" IN (${weekClauses}) ...
+     ```
+
+═══════════════════════════════════════════════════════════════
+INFORMATIONAL (no action needed)
+═══════════════════════════════════════════════════════════════
+
+- /api/settings does NOT clear statusCache — CORRECT (settings don't affect /api/status month/file/outlet list).
+- /api/pic and /api/pic/import do NOT clear monthResolverCache — CORRECT (PIC changes don't affect SourceFile.monthLabel set).
+- /api/settings does NOT clear monthResolverCache — CORRECT.
+- outletCode filter is case-sensitive in buildSqlFilters (shared.ts:24) and analysis route's Prisma `buildWhere` (line 300) — consistent across routes. Outlet codes come from /api/status (which returns DB-stored codes), so case mismatch is unlikely in practice. Documented for completeness.
+- RestoRecommendationCard fetches via /api/recommendations with prevWeek/prevMonth ONLY if comparisonWeek/comparisonMonth are non-null. Default state (setWeek resets compare to null) means FLOW-2 affects every default dashboard load.
+- All direction CASE statements in SQL queries (outlet-items, items.ts, outlets.ts, item-history) include qtyDeviasi NULL fallback (VERIFY3-7/8 fix correctly applied).
+- 15-signal priority scoring formulas in outlets.ts (lines 767-836) verified correct: weights sum to 1.00, all signals clamped to [0, 100], priorityScore rounded, priorityLevel thresholds (55/30) match documentation.
+
+═══════════════════════════════════════════════════════════════
+RECOMMENDED FIX PRIORITY
+═══════════════════════════════════════════════════════════════
+
+1. **FLOW-1 (HIGH)** — Apply FLOW3-1 pattern to rankingService.ts lines 114 + 232. ~5 line change. Restores the FLOW3-1 stated guarantee that "stored direction is no longer read". Extract `computeDirectionFromData` to shared util for DRY.
+2. **FLOW-2 (HIGH)** — Add auto-compute prevWeek/prevMonth logic to /api/recommendations/route.ts (mirror analysis route pattern). ~25 line change. Restores 26% of priority signal weight on default dashboard loads.
+3. **FLOW-3 + FLOW-5 + FLOW-6 (MEDIUM)** — Cache invalidation consistency. Extract shared `invalidateAnalysisQueries()` helper + add `['recommendations']` to all 8 handlers + fix RestoAnalysis singular→plural key. ~15 line change.
+4. **FLOW-4 (MEDIUM)** — Add `['item-history']` to SettingsDialog.migrateMutation. ~1 line change.
+5. **FLOW-7 (LOW)** — Type drift cleanup. Add signalScores to RestoRecommendationCard interface OR extract shared type. ~5 line change.
+6. **FLOW-8 (LOW)** — Update export-report variance section labels. ~2 line change.
+7. **FLOW-9 (LOW)** — Add assertion or use IN clause in queryHistoricalCategoryAvg. ~3 line change.
+
+Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: AUDIT-API-CALC
+Agent: API Route Calculation Auditor
+Task: Deep audit of API response building, data transformations, number coercion
+
+Work Log:
+- Read worklog.md tail (last 400 lines) for context — confirmed recent CALC-4, CALC2-2, FLOW3-1/2/3, SIGN-3/4, VERIFY3-* fixes; confirmed prior audits AUDIT-FLOW-CALC (FLOW-1..9) and AUDIT-FE-CALC exist.
+- Read src/app/api/analysis/route.ts (772 lines) — buildExecSummaryFromSql (lines 57-110), GET handler (112-771). Verified: lossToSales/surplusToSales use totalLoss/totalSurplus (CALC-4 LOSS-only); deviationToBom uses SUM(absQtyDeviasi)/SUM(absQtyBom) (Math.abs redundant but safe); multiPeriodComparison.bom populated (FLOW3-2 fix applied); netCostTrend.netCostRatio = (lossNominal - surplusNominal)/sales; growthMetrics.multiPeriodComparison growthPct uses computeNominalDeviationGrowth (magnitude).
+- Read src/app/api/outlet-items/route.ts (575 lines). Verified: severity counts (line 283-288) use AND-zero criterion + ABS comparison (CALC-2); totalLossNominal = SUM(ABS(nls) WHERE nls<0) (CALC-4); lossPct/surplusPct = LOSS/SURPLUS / totalAbsNominalLossSurplus; itemBreakdown's isOverExplained uses abs-each-then-sum (FIX-DEEP-3C). **FOUND API-CALC-2**: PREV query (line 201) still uses `MAX(ir."pctQtyDeviasiToBom")` — FLOW3-3 fix was applied to CURRENT query (lines 170-172) but NOT to PREV query.
+- Read src/app/api/item-history/route.ts (308 lines). Verified: direction computed on-the-fly via SQL CASE (SIGN-4); zScore via computeZScore (handles null currentValue); historicalValues filtered to same weekLabel (BUG 5 fix); deterioration via computeDeterioration (magnitude). **FOUND API-CALC-7**: route doesn't validate `week` param (only validates outletCode + itemName).
+- Read src/app/api/drilldown/route.ts (120 lines). Verified: direction computed on-the-fly (VERIFY3-4 fix); residualQty/residualRatio/absQtyDeviasi/absNominalDeviasi passed through; tolerancePct + toleranceRaw exposed.
+- Read src/app/api/recommendations/route.ts (72 lines). Confirmed FLOW-2 still open (route passes prevWeek/prevMonth from URL params directly, no auto-compute). Not in this audit's scope (cache/UX issue, not calculation).
+- Read src/app/api/peer-comparison/route.ts (50 lines) + items/route.ts (216 lines) + trend/route.ts (91 lines). Verified: peer set via sales_mode + ±10% band; MAX(weekLabel) cumulative-week fix (month mode); peerAvg/peerBest/gap computations. **FOUND API-CALC-5**: items route CTE uses `t.sales * 0.1` directly (no 999999999 fallback like main route). **FOUND API-CALC-6**: gap.nominalPctAboveBest uses safeDiv which returns 0 (not null) when peerBest.nominal=0.
+- Read src/app/api/export-report/route.ts (751 lines). Verified: buildExecSummaryFromSql mirrors analysis route (with _prevMetrics injection); variance section uses signed selisih for display + delta for sort (CALC2-1); topDeviasiRank same query as analysis. **FOUND API-CALC-9**: export-report's multiPeriodComparison (line 486-489) missing `bom` field (FLOW3-2 fix applied to analysis route but NOT export-report). Dead code in export-report (Word doc doesn't render multiPeriodComparison).
+- Read src/app/api/status/route.ts (127 lines). Verified: totalOutlets/totalItems/totalRecords from Prisma count(); pics deduped + filtered + sorted; outletsWithPic merged with picMap. No bugs.
+- Read src/app/api/migrate-direction/route.ts (158 lines). Verified: 5 UPDATE statements (3 main + 2 fallback); all idempotent (`AND direction != 'X'`); NULL nominalLossSurplus handled via qtyDeviasi fallback (SIGN-2); NEUTRAL handled (nominalLossSurplus = 0); caches cleared (API2-5). GET dry-run only checks nominalLossSurplus IS NOT NULL rows (doesn't check NULL-nominalLossSurplus rows — minor undercount).
+- Read src/engine/analysis/ruleService.ts (167 lines). Verified FLOW3-1 fix applied: computeDirectionFromData helper (lines 68-81) computes direction on-the-fly from nominalLossSurplus sign (with qtyDeviasi fallback). currDirection + prevDirection used for isDirectionFlip + ctx.direction.
+- Read src/engine/analysis/rankingService.ts (398 lines). **CONFIRMED API-CALC-1 (residual FLOW3-1 / FLOW-1)**: lines 114 (buildWorklistFromFlags) + 232 (computeVarianceAnalysis) still use `curr.direction || 'NEUTRAL'` (STORED DB column). FLOW3-1 fix was applied to ruleService but NOT to rankingService. Verified computeVarianceAnalysis sort: topWorsened = descending delta (biggest positive delta first); topImproved = ascending delta (biggest negative delta first) — correct per CALC2-1. selisih (signed) returned for display — correct.
+- Read src/lib/queries/dashboard.ts (286 lines). Verified: queryTrendAgg includes qtyBom (FLOW3-2); queryExecSummary uses CALC-4 (CASE WHEN nominalLossSurplus<0 THEN ABS); residualLossQty/qtyDeviasiLoss filtered to LOSS-only (CALC-3); queryLossVsSurplus lossNominal/surplusNominal correct (CALC-4); queryCostImpact uses ABS for all cost columns + safeDiv guards (BUG 2.3).
+- Read src/lib/queries/items.ts (388 lines). Verified: queryTopItemsByNominal/DevBom/Category all have qtyDeviasi NULL fallback (VERIFY3-8); queryTopItemsByDeviasiRank uses SUM(ABS(qtyBom))>0 (CALC-11) + BOM=0 → NULL rankBom (CALC-6) + BOM=0 → NULL avgDeviasiByBom (CALC-7); BigInt coercion via Number() at lines 208-216.
+- Read src/lib/queries/outlets.ts (923 lines). Verified: queryTopOutlets direction computed from lossAmount vs surplusAmount (CALC-4); queryPeerComparison uses CALC-4 + 999999999 fallback for no-sales target; queryPeerItemComparison has qtyDeviasi NULL fallback (VERIFY3-8); queryRestoRecommendations 15-signal scoring — weights sum to 1.00, all clamped [0,100], residualRatio uses qtyDeviasiLoss denominator (CALC2-2). 
+- Read src/lib/metrics/growth.ts (124 lines). Verified: calcGrowth (signed), calcGrowthAbs (magnitude), computeNominalDeviationGrowth = calcGrowthAbs (delegates), safeRatio returns null on denom=0.
+- Read src/lib/metrics/historical.ts (158 lines). Verified: computeZScore uses ABS values + sample variance (N-1) + HISTORICAL_MIN_WEEKS guard; calcZScoreFromStats null when value=null or stdDev=0.
+- Read src/lib/metrics/deviation.ts (289 lines). Verified: computeDirection uses qtyLossSurplus sign with qtyDeviasi fallback; computeResidual uses abs-each-then-sum + clamp ≥0; computeDevBomAggregate = SUM(ABS)/SUM(ABS); computeLossToSales = totalLossNominal/totalSales; computeHealthScore accepts runtime weights+thresholds, clamps to [0,100] (BUG-2-3); computePriority uses OR logic per criterion (audit issue #5).
+- Read src/components/dashboard/AnalysisCards.tsx (86 lines). Verified: MultiPeriodComparisonCard reads only `sales`, `bom`, `deviation`, `growthPct` — does NOT read `absDeviation` (confirms API-CALC-3 is dead code).
+- Grep'd `absDeviation` usages — only 1 occurrence in src/app/api/analysis/route.ts:597 (plus worklog mentions of CALC-22/CALC2-7). Confirmed dead code.
+- Grep'd `curr.direction` / `prev.direction` reads across src/engine/ — confirmed rankingService.ts:114, 232 are the only 2 remaining places that read STORED direction (ruleService.ts:68-86 already fixed).
+
+Stage Summary:
+
+9 findings total — 2 MEDIUM, 7 LOW. 2 MEDIUM findings are RESIDUALS from prior incomplete fixes (FLOW3-1 applied to ruleService only, FLOW3-3 applied to current query only).
+
+═══════════════════════════════════════════════════════════════
+MEDIUM SEVERITY
+═══════════════════════════════════════════════════════════════
+
+**API-CALC-1 (MEDIUM)** — Residual FLOW3-1 / FLOW-1: rankingService.ts still uses STORED `curr.direction`
+- File: `src/engine/analysis/rankingService.ts:114, 232`
+- Description: FLOW3-1 fix (compute direction on-the-fly from nominalLossSurplus sign) was applied to `ruleService.buildRuleContext` (lines 68-86 — uses `computeDirectionFromData` helper) but NOT to rankingService.ts:
+  1. `buildWorklistFromFlags` line 114: `direction: (curr.direction || 'NEUTRAL') as 'LOSS' | 'SURPLUS' | 'NEUTRAL'`
+  2. `computeVarianceAnalysis` line 232: `direction: curr.direction || 'NEUTRAL'`
+  
+  `curr` is the raw Prisma record from analysis route's findMany (line 340-354) where `direction: true` selects the STORED DB column. For NEW ingests post-CALC-1, stored value is correct. For OLD ingests pre-migration (or partially-migrated DBs), stored `direction` is INVERTED.
+  
+  The worklog (Task FIX-DEEP-AUDIT-3 stage summary) claims: "ALL direction computations now use on-the-fly computation from nominalLossSurplus sign (with qtyDeviasi fallback). The stored ir.direction field is NO LONGER READ by any query or rule engine." — this claim is FALSE for these 2 display paths.
+- Impact: Direction badges in Investigation Worklist + Variance Analysis sections may show INVERTED direction for un-migrated DBs. Example: LOSS item that worsened (-5M → -10M) shows selisih=-5M (red) but direction="SURPLUS" (green badge) → confusing. After full migration, works correctly.
+- Proposed fix: Extract `computeDirectionFromData` to shared util (e.g., `@/lib/metrics/direction.ts`), import in both ruleService + rankingService. Apply at lines 114 + 232:
+  ```ts
+  // Shared util:
+  export function computeDirectionFromData(rec: { nominalLossSurplus: number | null; qtyDeviasi: number | null; direction?: string | null }): 'LOSS' | 'SURPLUS' | 'NEUTRAL' {
+    if (rec.nominalLossSurplus != null) {
+      if (rec.nominalLossSurplus < 0) return 'LOSS';
+      if (rec.nominalLossSurplus > 0) return 'SURPLUS';
+      return 'NEUTRAL';
+    }
+    if (rec.qtyDeviasi != null) {
+      if (rec.qtyDeviasi < 0) return 'LOSS';
+      if (rec.qtyDeviasi > 0) return 'SURPLUS';
+      return 'NEUTRAL';
+    }
+    return (rec.direction as 'LOSS' | 'SURPLUS' | 'NEUTRAL') || 'NEUTRAL';
+  }
+  // rankingService.ts line 114: direction: computeDirectionFromData(curr),
+  // rankingService.ts line 232: direction: computeDirectionFromData(curr),
+  ```
+
+**API-CALC-2 (MEDIUM)** — Residual FLOW3-3: outlet-items PREV query uses MAX(pctQtyDeviasiToBom)
+- File: `src/app/api/outlet-items/route.ts:201`
+- Description: FLOW3-3 fix (replace `MAX(pctQtyDeviasiToBom)` with `SUM(qtyDeviasi)/SUM(ABS(qtyBom))` — proper aggregate ratio) was applied to the CURRENT query (lines 170-172) but NOT to the PREV query (line 201):
+  ```sql
+  -- Current (FIXED per FLOW3-3):
+  CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+    ELSE NULL END as "pctQtyDeviasiToBom",
+  
+  -- Prev (STILL OLD — line 201):
+  MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+  ```
+  
+  As FLOW3-3 noted for the current query, MAX understates LOSS magnitude — for LOSS items with multiple source files in the prev period, MAX picks the LEAST-NEGATIVE per-row value instead of the proper aggregate ratio.
+- Impact: `prevPctDevBom` (line 478) → `devBomGrowth` (line 479) → `historicalTrend` arrow (line 482-484) are computed from the WRONG prev value. Bahan Analysis table's "Historical Trend" column (↑↓→) shows wrong direction for items with multi-source-file prev-period data. Also affects the `devBomGrowth` field exposed in the response.
+- Proposed fix: Change line 201 to match the current query pattern:
+  ```sql
+  -- Replace: MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+  -- With:
+  CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+    ELSE NULL END as "pctQtyDeviasiToBom",
+  ```
+
+═══════════════════════════════════════════════════════════════
+LOW SEVERITY
+═══════════════════════════════════════════════════════════════
+
+**API-CALC-3 (LOW)** — multiPeriodComparison.absDeviation is SIGNED not ABS (residual CALC-22/CALC2-7)
+- File: `src/app/api/analysis/route.ts:597`
+- Description: `absDeviation: r.nominal` — field named `absDeviation` contains SIGNED `r.nominal` (same value as `deviation` field on line 596). Frontend `MultiPeriodComparisonCard` (AnalysisCards.tsx) only reads `sales`, `bom`, `deviation`, `growthPct` — does NOT read `absDeviation`. Dead code with misleading name.
+- Impact: NONE (dead code). If a future frontend change reads `absDeviation` expecting a positive value, it would break for LOSS-dominant periods.
+- Proposed fix: Remove the field entirely (cleanest), OR change to `Math.abs(r.nominal)`.
+
+**API-CALC-4 (LOW)** — netCostRatio returns 0 (not null) when sales=0
+- File: `src/app/api/analysis/route.ts:621`
+- Description: `netCostRatio: r.sales > 0 ? (r.lossNominal - r.surplusNominal) / r.sales : 0` — returns 0 when no sales. Could be misleading (0% looks like "no cost" when actually "no sales to compare"). Other ratio fields in the codebase (e.g., lossToSales, surplusToSales, deviationToBom) return null when denominator is 0 — this one is inconsistent.
+- Impact: Frontend `NetCostTrend` chart shows "0%" for periods with no sales instead of "—" (N/A). Minor visual inconsistency.
+- Proposed fix: Return null when sales=0:
+  ```ts
+  netCostRatio: r.sales > 0 ? (r.lossNominal - r.surplusNominal) / r.sales : null,
+  ```
+
+**API-CALC-5 (LOW)** — peer-comparison/items CTE missing 999999999 fallback for target with no sales
+- File: `src/app/api/peer-comparison/items/route.ts:92`
+- Description: `WHERE COALESCE(sm.sales, 0) > 0 AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1` — uses `t.sales * 0.1` directly. The main peer-comparison route (outlets.ts:293) uses `CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END` — when target has no sales (t.sales=0), threshold becomes 999999999 so ALL outlets with sales>0 qualify as peers. The items route lacks this fallback: if t.sales=0, threshold=0, NO peers returned.
+- Impact: If target outlet has no sales data, item-level peer comparison returns 0 peers (empty table). Inconsistent with main peer-comparison route which returns all outlets as peers in this edge case.
+- Proposed fix: Add the same `CASE WHEN t.sales > 0 ... ELSE 999999999 END` fallback:
+  ```sql
+  AND ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END
+  ```
+
+**API-CALC-6 (LOW)** — gap.nominalPctAboveBest returns 0 (not null) when peerBest.nominal=0
+- File: `src/app/api/peer-comparison/items/route.ts:200`
+- Description: `nominalPctAboveBest: safeDiv(item.target.nominal - peerBest.nominal, peerBest.nominal)` where `safeDiv = (a, b) => b > 0 ? a / b : 0`. If peerBest.nominal=0 (no peer has any nominal), safeDiv returns 0. But 0 is misleading when target is actually 10M and best is 0 (should be +∞ or "N/A").
+- Impact: Frontend shows "0%" instead of "N/A" when no peer has any nominal deviation for that item. Edge case — only triggers when ALL peers have nominal=0 for an item.
+- Proposed fix: Return null when peerBest.nominal=0:
+  ```ts
+  nominalPctAboveBest: peerBest.nominal > 0 ? safeDiv(item.target.nominal - peerBest.nominal, peerBest.nominal) : null,
+  ```
+
+**API-CALC-7 (LOW)** — item-history route doesn't validate `week` param
+- File: `src/app/api/item-history/route.ts:51-53`
+- Description: Route only validates `outletCode` and `itemName`:
+  ```ts
+  if (!outletCode || !itemName) {
+    return NextResponse.json({ success: false, error: 'outletCode and itemName required' }, { status: 400 });
+  }
+  ```
+  If `week` (or `month`) is missing, `currentWeek` is null. The `isCurrent: r.monthLabel === currentMonth && r.weekLabel === currentWeek` check (line 144) never matches. Route returns 404 (line 154-161) with confusing message: "No record for X at Y in Mei 2026 null. Available periods: ...".
+- Impact: User gets confusing 404 error (with "null" in the message) instead of clear 400 "week required" validation error. UX issue, not a calculation bug.
+- Proposed fix: Add `week` and `month` to required params check:
+  ```ts
+  if (!outletCode || !itemName || !month || !week) {
+    return NextResponse.json({ success: false, error: 'outletCode, itemName, month, week required' }, { status: 400 });
+  }
+  ```
+
+**API-CALC-8 (LOW)** — deviationToSalesRatio in growthMetrics is signed (dead code, residual FINAL2-FLOW-9)
+- File: `src/app/api/analysis/route.ts:552-553`
+- Description: `deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null` — `nominalDeviasi.current` is SIGNED (can be negative for net LOSS outlet). So ratio is signed. The ruleService's identically-named field uses ABS (`safeRatio(curr.absNominalDeviasi, curr.nominalSales)` — line 90). Inconsistent semantics for the same field name. Per worklog FINAL2-FLOW-9, no frontend component reads `growthComparison.deviationToSalesRatio` — dead code.
+- Impact: NONE (dead code). But inconsistent semantics could trip up future developers who assume the field is always positive.
+- Proposed fix: Remove the field (per FINAL2-FLOW-9 recommendation), OR change to `Math.abs(execSummary.nominalDeviasi.current)` for consistency with ruleService.
+
+**API-CALC-9 (LOW)** — export-report multiPeriodComparison missing `bom` field (drift from analysis route)
+- File: `src/app/api/export-report/route.ts:486-489`
+- Description: Analysis route's multiPeriodComparison (line 588-600) includes `bom: r.qtyBom ?? null` (FLOW3-2 fix). Export-report route's multiPeriodComparison (line 486-489) does NOT include `bom` — code drift between the 2 routes. Export-report's Word doc renderer doesn't display multiPeriodComparison (only `trend` table at line 692-695), so the field is dead code in export-report.
+- Impact: NONE (dead code in export-report). But code drift makes future maintenance harder — if a future change adds a multiPeriodComparison chart to the Word doc, it would silently miss the `bom` field.
+- Proposed fix: Sync the multiPeriodComparison mapping between analysis and export-report routes (add `bom: r.qtyBom ?? null` and `absDeviation: Math.abs(r.nominal)` to export-report). OR remove multiPeriodComparison from export-report's growthMetrics entirely since it's not rendered.
+
+═══════════════════════════════════════════════════════════════
+INFORMATIONAL (no action needed)
+═══════════════════════════════════════════════════════════════
+
+- All SQL queries that compute direction (outlet-items, items.ts, outlets.ts, item-history, drilldown) include qtyDeviasi NULL fallback (VERIFY3-7/8 fix correctly applied).
+- All SQL queries that compute totalLoss/totalSurplus/lossNominal/surplusNominal use CASE WHEN nominalLossSurplus < 0 (CALC-4 fix correctly applied across 8 queries).
+- All BigInt fields (ROW_NUMBER, COUNT) coerced with Number() in items.ts:208-216 and historical.ts:67.
+- toNum() helper (outlet-items:39-43, item-history:29-33) handles null/undefined/NaN correctly — returns null for those, number otherwise.
+- migrate-direction POST is idempotent (all 5 UPDATEs have `AND direction != 'X'`), handles NULL nominalLossSurplus via qtyDeviasi fallback (SIGN-2), handles NEUTRAL, clears all 3 caches (API2-5).
+- migrate-direction GET dry-run only checks `nominalLossSurplus IS NOT NULL` rows — doesn't check NULL-nominalLossSurplus rows for inversion. Minor undercount of `invertedCount` if NULL rows have wrong stored direction. Acceptable since NULL rows are edge case.
+- queryTopItemsByDeviasiRank handles BOM=0 correctly: NULL rankBom (CALC-6), NULL avgDeviasiByBom (CALC-7), uses SUM(ABS(qtyBom))>0 guard (CALC-11).
+- queryRestoRecommendations 15-signal priority scoring verified: weights sum to 1.00 (0.12+0.10+0.10+0.10+0.08+0.08+0.08+0.05+0.08+0.07+0.05+0.03+0.03+0.02+0.01 = 1.00), all signals clamped to [0,100], priorityScore rounded, priorityLevel thresholds (55/30) match documentation.
+- residualLossPct in analysis route uses qtyDeviasiLoss denominator (CALC2-2 fix correctly applied): `c.qtyDeviasiLoss > 0 ? c.residualLossQty / c.qtyDeviasiLoss : null`.
+- computeVarianceAnalysis sort: topWorsened = descending delta (biggest positive delta first = biggest magnitude increase); topImproved = ascending delta (biggest negative delta first = biggest magnitude decrease). Correct per CALC2-1. selisih (signed) returned for display.
+- outlet-items severity counts (line 283-288) use AND-zero criterion (qtyDeviasi AND absNominalDeviasi both ~0 → normal) + ABS comparison for tolerance breach (CALC-2 fix correctly applied).
+- outlet-items totalLossNominal = SUM(ABS(nls) WHERE nls<0), totalSurplusNominal = SUM(nls WHERE nls>0) — correct per CALC-4. lossPct + surplusPct = 1.0 when both > 0.
+- peer-comparison main route (outlets.ts:293) has 999999999 fallback for no-sales target — correct.
+- status route: totalOutlets/totalItems/totalRecords from Prisma count(); pics deduped + filtered + sorted; outletsWithPic merged with picMap. All correct.
+
+═══════════════════════════════════════════════════════════════
+RECOMMENDED FIX PRIORITY
+═══════════════════════════════════════════════════════════════
+
+1. **API-CALC-1 (MEDIUM)** — Apply FLOW3-1 pattern to rankingService.ts lines 114 + 232. Extract `computeDirectionFromData` to shared util `@/lib/metrics/direction.ts` for DRY (currently duplicated in ruleService.ts:68-81). ~10 line change. Restores the FLOW3-1 stated guarantee that "stored direction is no longer read". NOTE: This is the SAME finding as prior audit's FLOW-1 — confirmed still open.
+2. **API-CALC-2 (MEDIUM)** — Apply FLOW3-3 pattern to outlet-items/route.ts:201 (PREV query). Replace `MAX(ir."pctQtyDeviasiToBom")` with `CASE WHEN SUM(ABS(qtyBom)) > 0 THEN SUM(qtyDeviasi)/SUM(ABS(qtyBom)) ELSE NULL END`. ~3 line change. Fixes wrong historical trend arrows for multi-source-file items.
+3. **API-CALC-7 (LOW)** — Add `month` + `week` to required params check in item-history/route.ts:51-53. ~1 line change. Improves UX (clear 400 instead of confusing 404).
+4. **API-CALC-4 (LOW)** — Change netCostRatio fallback from 0 to null in analysis/route.ts:621. ~1 line change. Visual consistency with other ratio fields.
+5. **API-CALC-5 + API-CALC-6 (LOW)** — Add 999999999 fallback + null-on-zero-denom to peer-comparison/items route. ~3 line change. Edge case correctness.
+6. **API-CALC-3 + API-CALC-8 + API-CALC-9 (LOW)** — Dead code cleanup. Remove `absDeviation`, `deviationToSalesRatio`, sync/remove export-report's `multiPeriodComparison`. ~5 line change. Reduces code drift.
+
+Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: AUDIT-METRICS-CALC
+Agent: Metrics & Rule Engine Auditor
+Task: Deep audit of metrics, rules, priority scoring, z-score, growth, variance
+
+Work Log:
+- Read worklog tail (last 400 lines) for context on prior CALC-1..CALC-11, SIGN-1..SIGN-7, CALC2-1..CALC2-7, API2-*, FE-*, FLOW3-1..FLOW3-8, VERIFY3-1..VERIFY3-9 fixes.
+- Read `src/lib/metrics/deviation.ts` (290 lines) — computeDirection, computeResidual, computeResidualRatio, computeExplainedPct, computeDevBomAggregate, computeResidualPctAggregate, computeExplainedPctAggregate, computeLossToSales, computeHealthScore, computePriority. Verified CALC-1 (direction from NET), SIGN-1 (nominalLossSurplus in RuleContext), CALC-4 (totalLossNominal = SUM(ABS) WHERE < 0).
+- Read `src/lib/metrics/growth.ts` (124 lines) — calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth, computeGrowthResult, safeRatio, calcAvgPrice. Verified magnitude vs signed growth split.
+- Read `src/lib/metrics/historical.ts` (190 lines) — computeZScore, calcZScoreFromStats, computeDeterioration. Verified Bessel's correction (N-1), ABS magnitude, min-weeks guard.
+- Read `src/lib/metrics/benchmark.ts` (103 lines) — computeBenchmark. Verified area/network multiplier logic.
+- Read `src/lib/metrics/sales.ts` (110 lines) — computeSalesModePerOutlet, computeTotalSales. Verified MODE + tie-break (smaller value wins).
+- Read `src/lib/metrics/definitions.ts` (241 lines) — thresholds, weights, direction conventions.
+- Read `src/engine/rules/evaluator.ts` (458 lines) — evalCondition, canOpFire, resolveExpr, evaluateRules. Verified all/any/not logic, null-safe ops, arithmetic expressions (mul/add/sub/div/abs), absPctQtyDeviasiToBom + absTolerancePct pre-computation.
+- Read `src/engine/analysis/ruleService.ts` (167 lines) — buildRuleContext, recommendAction. Verified SIGN-1 (nominalLossSurplus in ctx), FLOW3-1 (direction computed on-the-fly), growth metrics, zScore from precomputed stats, isOverExplained, isDirectionFlip.
+- Read `src/engine/analysis/rankingService.ts` (398 lines) — buildWorklistFromFlags, computePrioritiesFromFlags, computeVarianceAnalysis, computeOutletHealthRanking, computeHistoricalAnalysis. Verified CALC2-1 (variance sort by delta), CALC-4 (lossNominal from nominalLossSurplus < 0).
+- Read `src/engine/transform.ts` (345 lines) — normalizeRow, computeResidual, deriveRecord. Verified abs-each-then-sum for explained, sign-aware residualQty, netDeviationMismatch check.
+- Read `src/config/rules.yaml` (249 lines) — all 17 rules. Verified tolerance rules use absPctQtyDeviasiToBom + absTolerancePct, HIGH_LOSS_NOMINAL uses nominalLossSurplus < 0 + absNominalLossSurplus > threshold, RESIDUAL_LOSS_* use nominalLossSurplus < 0, HISTORICAL_ABNORMAL_LOSS/SURPLUS use nominalLossSurplus < 0 / > 0, OVER_EXPLAINED uses isOverExplained: {eq: true}.
+- Read `src/lib/queries/outlets.ts` (923 lines) — queryTopOutlets, queryTopOutletsBySales, queryPeerComparison, queryPeerItemComparison, queryPeerTrend, queryRestoRecommendations (15-signal priority scoring). Verified weights sum to 100% (0.12+0.10+0.10+0.10+0.08+0.08+0.08+0.05+0.08+0.07+0.05+0.03+0.03+0.02+0.01 = 1.00).
+- Read `src/lib/queries/items.ts` (383 lines) — queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByDeviasiRank, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency.
+- Read `src/lib/queries/dashboard.ts` (283 lines) — queryTrendAgg, queryExecSummary, queryDeviationBreakdown, queryLossVsSurplus, queryCostImpact.
+- Read `src/lib/queries/historical.ts` (76 lines) — queryHistoricalStats (weekly aggregate → mean/stdDev/n).
+- Read `src/app/api/analysis/route.ts` (772 lines), `src/app/api/outlet-items/route.ts` (575 lines), `src/app/api/item-history/route.ts` (308 lines), `src/app/api/export-report/route.ts` (751 lines). Cross-checked severity classification, health score computation, priority computation across routes.
+- Read `src/config/thresholds.ts` (63 lines), `src/lib/settings.ts` (513 lines) — verified runtime thresholds and health score weights/thresholds.
+- Read `src/engine/validator.ts` (260 lines) — verified OVER_EXPLAINED + NET_DEVIATION_MISMATCH checks use abs-each-then-sum (FIX-DEEP-3C).
+- Read `src/engine/analysis/types.ts` (68 lines) — RecWithRels slim type.
+- Read `src/engine/analysis/index.ts`, `src/engine/analysis/analysis.ts` — barrel exports.
+- Grep'd computeResidual, computeResidualRatio, calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth, absNominalLossSurplus, pctQtyDeviasiToBom across src/ to verify usage and find dead code.
+
+Stage Summary:
+- Found 9 calculation bugs: 1 HIGH, 3 MEDIUM, 5 LOW.
+- Verified all prior fixes (CALC-1, SIGN-1, CALC2-1, CALC2-2, FLOW3-1) are correctly applied.
+- 15-signal priority weights sum to exactly 100% (verified).
+- All 17 rules in rules.yaml use correct fields and sign conventions.
+- Rule engine (evaluator.ts) handles all/any/not logic, null-safe ops, arithmetic expressions correctly.
+
+═══════════════════════════════════════════════════════════════
+FINDINGS — Calculation Bugs
+═══════════════════════════════════════════════════════════════
+
+**METRICS-1 (HIGH) — s5Score returns 0 when sales=0, hiding real losses**
+- File: `src/lib/queries/outlets.ts:790-791`
+- Description: Signal 5 (Loss/Sales Ratio, 8% weight) computes:
+  ```javascript
+  const lossToSales = sales > 0 ? totalLoss / sales : 0;
+  const s5Score = Math.min(100, lossToSales * 1000);
+  ```
+  When an outlet has `sales = 0` (no nominalSales recorded, or all rows have nominalSales = null/0), `lossToSales` is set to `0`, giving `s5Score = 0` (no signal). This is incorrect — an outlet with significant losses (totalLoss > 0) but no sales recorded is actually a HIGH-risk anomaly (losses without revenue = severe data quality or operational issue). The Metric Engine's `computeLossToSales` (deviation.ts:156-159) correctly returns `null` when `totalSales <= 0`, but this inline computation in outlets.ts returns `0` (treated as "no problem").
+- Impact: Outlets with losses but no sales recorded get s5Score = 0, underestimating their priority score by up to 8 points (8% weight). An outlet that should be TINGGI (>=55) may be classified SEDANG (>=30) or RENDAH. This directly affects which outlets appear in the "Top N Resto Recommendations" list and their priority level.
+- Proposed fix: Use `null` (like computeLossToSales) and either skip the signal or assign max score:
+  ```javascript
+  const lossToSales = sales > 0 ? totalLoss / sales : null;
+  // If losses exist but no sales → max concern (data quality / operational anomaly)
+  const s5Score = lossToSales != null
+    ? Math.min(100, lossToSales * 1000)
+    : (totalLoss > 0 ? 100 : 0);
+  ```
+  Alternative: align with computeLossToSales (return null) and document that s5Score = 0 means "no loss OR no sales data".
+
+**METRICS-2 (MEDIUM) — s2Score, s7Score, s8Score use |SUM(nominalDeviasi)| (signed sum magnitude), missing LOSS/SURPLUS cancellation**
+- File: `src/lib/queries/outlets.ts:773-776, 799-800, 803-805`
+- Description: Three signals compute magnitude from `nominalDeviasi`, which is `SUM(ir."nominalDeviasi")` (SIGNED sum across all items in the outlet):
+  - **s2Score** (Deviasi Growth, 10%): `deviasiGrowth = (Math.abs(nominalDeviasi) - Math.abs(prevNominal)) / Math.abs(prevNominal)` where `nominalDeviasi` = signed sum.
+  - **s7Score** (Trend Memburuk, 8%): `trendDeteriorating = deviasiGrowth > 0.2` — depends on s2Score's deviasiGrowth.
+  - **s8Score** (Item Concentration, 5%): `itemConcentration = topItemNominal / Math.abs(nominalDeviasi)` — denominator is |signed sum|.
+  
+  Problem: If an outlet has LOSS items totaling -10M and SURPLUS items totaling +5M, the signed sum = -5M, |signed sum| = 5M. If prev period had LOSS = -8M and SURPLUS = +3M (signed sum = -5M, |signed sum| = 5M), then:
+  - deviasiGrowth = (5M - 5M) / 5M = 0 → s2Score = 0, s7Score = 0 (no signal)
+  - But actual total deviation (ABS sum) grew from 11M to 15M (36% growth) — a real worsening that's completely missed.
+  
+  Same issue for s8Score: if topItemNominal = 10M and |signed sum| = 5M, itemConcentration = 2.0 (200%, capped to 100). But the true concentration should be 10M / 15M = 67% (using ABS sum).
+- Impact: Outlets with mixed LOSS/SURPLUS items get underestimated s2Score, s7Score, s8Score. Combined weight = 10+8+5 = 23% of priority score. Outlets that are genuinely worsening (both LOSS and SURPLUS growing) may not be flagged TINGGI. Also affects the exec summary's displayed "Nominal Deviasi Growth" in analysis route (line 91: `computeNominalDeviationGrowth(c.nominalDeviasi, ...)` where `c.nominalDeviasi` is signed sum from queryExecSummary).
+- Proposed fix: Use `SUM(ABS(nominalDeviasi))` (total gross deviation magnitude) instead of `|SUM(nominalDeviasi)|`:
+  - Add `SUM(ir."absNominalDeviasi") as "absNominalDeviasi"` to the outlet_aggs SQL (outlets.ts ~line 606).
+  - s2Score: `deviasiGrowth = (absNominalDeviasi - prevAbsNominalDeviasi) / prevAbsNominalDeviasi`
+  - s7Score: uses corrected deviasiGrowth
+  - s8Score: `itemConcentration = topItemNominal / absNominalDeviasi`
+  - Same fix for exec summary in analysis route (line 91) and export-report route (line 54): use `SUM(ABS(nominalDeviasi))` for the growth computation.
+
+**METRICS-3 (MEDIUM) — outlet-items route severity classification inconsistent with rules.yaml (1x vs 2x tolerance for ABNORMAL)**
+- File: `src/app/api/outlet-items/route.ts:283-288`
+- Description: The outlet-items route classifies item severity using a simple tolerance check:
+  ```javascript
+  const isZeroDev = (qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01);
+  if (isZeroDev) normalCount++;
+  else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
+  else warningCount++;
+  ```
+  This classifies ANY tolerance breach (>1x) as ABNORMAL. But rules.yaml uses a 2-tier system:
+  - `|pctDevBom| > 2 * |tolerancePct|` → TOLERANCE_BREACH_HIGH (ABNORMAL)
+  - `|pctDevBom| > |tolerancePct|` (but ≤ 2x) → TOLERANCE_BREACH (WARNING)
+  
+  The analysis route (line 414-450) uses rule-based severity (from `flags[0].severity`), which correctly applies the 2-tier classification. The outlet-items route's simpler 1-tier classification OVERCLASSIFIES items at 1.01x-1.99x tolerance as ABNORMAL (should be WARNING).
+  
+  This inconsistency affects the `aggregateInput.abnormalCount` and `aggregateInput.warningCount` passed to `computeHealthScore`. The health score's `abnormalRate = abnormal / (warning + abnormal)` is inflated, lowering the health score.
+- Impact: For the SAME outlet+period, the health score shown in the outlet profile (outlet-items route) DIFFERS from the health score shown in the outlet ranking (analysis route). An outlet with 10 items at 1.5x tolerance: outlet-items route gives abnormalRate=1.0 → abnormalScore=0; analysis route gives abnormalRate=0/10=0 → abnormalScore=100. Health score difference = 20 points (abnormal weight = 0.20). Users see inconsistent health ratings depending on which view they're looking at.
+- Proposed fix: Align outlet-items route with rules.yaml 2-tier classification:
+  ```javascript
+  const tolPct = Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT);
+  const devBomPct = Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0);
+  if (isZeroDev) normalCount++;
+  else if (devBomPct > tolPct * 2) abnormalCount++;
+  else if (devBomPct > tolPct) warningCount++;
+  else normalCount++; // deviation exists but within tolerance = NORMAL (not WARNING)
+  ```
+  Note: the current "else warningCount++" branch (deviation within tolerance → WARNING) is also inconsistent with rules.yaml (no rule fires → NORMAL). Fix both issues.
+
+**METRICS-4 (MEDIUM) — s11Score uses 10M threshold but labels as "HIGH_LOSS_NOMINAL rule" (which uses 50M)**
+- File: `src/lib/queries/outlets.ts:642, 814-815, 852`
+- Description: Signal 11 (High Loss Nominal Items, 5% weight) counts items with `nominalLossSurplus < -10000000` (hardcoded 10M threshold):
+  ```sql
+  COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem",
+  ```
+  ```javascript
+  // Signal 11: High Loss Nominal Items (5%) — HIGH_LOSS_NOMINAL rule (>10M per item)
+  const s11Score = Math.min(100, highLossItem * 20);
+  ```
+  ```javascript
+  if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp 10Jt (HIGH_LOSS_NOMINAL)`);
+  ```
+  But the HIGH_LOSS_NOMINAL rule in rules.yaml uses `highLossNominalThreshold` (default 50M from Settings):
+  ```yaml
+  - absNominalLossSurplus: { gt: highLossNominalThreshold }
+  ```
+  The signal counts items at 10M-50M as "high loss" but labels them with the rule name HIGH_LOSS_NOMINAL (which only fires at >50M). The 10M threshold actually matches P2_NOMINAL_THRESHOLD, not HIGH_LOSS_NOMINAL_THRESHOLD.
+- Impact: The priority score's s11Score over-reports (counts 10M-50M items). The analysis bullet misleads users: "5 item dengan nominal loss > Rp 10Jt (HIGH_LOSS_NOMINAL)" — but HIGH_LOSS_NOMINAL rule wouldn't fire for 10M-50M items. Users may investigate items expecting HIGH_LOSS_NOMINAL rule context but find no such rule fired.
+- Proposed fix: Either (a) use `highLossNominalThreshold` (50M) to match the rule:
+  ```sql
+  COUNT(CASE WHEN ir."nominalLossSurplus" < -${highLossNominalThreshold} THEN 1 END) as "highLossItem",
+  ```
+  Or (b) rename the signal to "Medium Loss Nominal Items" and reference P2_NOMINAL_THRESHOLD:
+  ```javascript
+  // Signal 11: Medium-High Loss Nominal Items (5%) — items with LOSS > P2_NOMINAL_THRESHOLD
+  ```
+  Option (a) is preferred for consistency with the rule name.
+
+**METRICS-5 (LOW) — computePriority fires P1 for high-magnitude SURPLUS items, but threshold name says "LOSS"**
+- File: `src/lib/metrics/deviation.ts:275, 282`
+- Description: `computePriority` uses `absNominalLossSurplus` (which is `Math.abs(nominalLossSurplus)` — includes BOTH LOSS and SURPLUS magnitude) for P1/P2 checks:
+  ```typescript
+  const isP1HighNominal = input.absNominalLossSurplus > t.HIGH_LOSS_NOMINAL_THRESHOLD;
+  const isP2MediumNominal = input.absNominalLossSurplus > t.P2_NOMINAL_THRESHOLD;
+  ```
+  For a SURPLUS item with `nominalLossSurplus = +60M`, `absNominalLossSurplus = 60M > 50M` → P1. But the threshold name `HIGH_LOSS_NOMINAL_THRESHOLD` suggests LOSS-only. The HIGH_LOSS_NOMINAL rule (rules.yaml) correctly requires `nominalLossSurplus < 0` (LOSS only), but the priority computation does NOT check direction.
+- Impact: SURPLUS items with high magnitude (e.g., +60M surplus = inventory understated by 60M) get P1 priority in the investigation worklist. This may be INTENTIONAL (high financial magnitude = investigate regardless of direction), but the threshold name is misleading. From a "needs investigation" perspective, flagging both LOSS and SURPLUS high-magnitude items as P1 is reasonable. But the naming creates confusion for future developers.
+- Proposed fix: Either (a) rename threshold to `HIGH_NOMINAL_THRESHOLD` (drop "LOSS") to reflect that it applies to both directions, OR (b) add a direction check to restrict P1 to LOSS items only:
+  ```typescript
+  // Option (b): P1 only for LOSS items
+  const isP1HighNominal = input.nominalLossSurplus != null
+    && input.nominalLossSurplus < 0
+    && input.absNominalLossSurplus > t.HIGH_LOSS_NOMINAL_THRESHOLD;
+  ```
+  Option (a) is simpler if the intent is "high magnitude = P1". Document the decision in definitions.ts.
+
+**METRICS-6 (LOW) — deviation.ts computeResidual returns ABS residualQty, transform.ts returns SIGNED — dead code inconsistency**
+- File: `src/lib/metrics/deviation.ts:67-82` vs `src/engine/transform.ts:239-283`
+- Description: Two functions named `computeResidual` exist:
+  - **deviation.ts** (exported via index.ts, but UNUSED — verified by grep): returns `residualQty = Math.max(0, absDev - explained)` — ALWAYS POSITIVE (absolute residual).
+  - **transform.ts** (actually used by deriveRecord): returns `residualQty = sign * absResidual` where `sign = qtyDeviasi >= 0 ? 1 : -1` — SIGNED (negative for LOSS, positive for SURPLUS).
+  
+  The stored `residualQty` in the DB (from transform.ts) is SIGNED. The exported `computeResidual` in deviation.ts returns ABSOLUTE. If a future developer uses deviation.ts's `computeResidual`, they'll get inconsistent behavior.
+  
+  Similarly, `computeResidualRatio` in deviation.ts (line 87-90) does `residualQty / Math.abs(qtyDeviasi)`. If `residualQty` is signed (from transform.ts), the ratio would be negative for LOSS items. But the stored `residualRatio` (from transform.ts inline, line 276: `absResidual / absDev`) is always POSITIVE. The rule `residualRatio > 0.7` works correctly because it uses the stored (positive) value, not the exported function.
+- Impact: No runtime impact (deviation.ts functions are dead code). But creates confusion — the "single source of truth" claim in deviation.ts is misleading when transform.ts has its own different implementation. Future developers may use the wrong function.
+- Proposed fix: Either (a) delete the dead code in deviation.ts (computeResidual, computeResidualRatio, computeExplainedPct — all unused), OR (b) make deviation.ts's computeResidual match transform.ts's behavior (return signed residualQty). Option (a) is cleaner. Update index.ts to remove the dead exports.
+
+**METRICS-7 (LOW) — items.ts queryTopItemsByDeviasiRank uses signed sum for rankBom check, inconsistent with CALC-11 fix**
+- File: `src/lib/queries/items.ts:192, 195-197`
+- Description: The `rankBom` and `avgDeviasiByBom` computations use `ipo."qtyBom" != 0` where `qtyBom = SUM(ir."qtyBom")` (SIGNED sum):
+  ```sql
+  CASE WHEN ipo."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
+  CASE WHEN ipo."qtyBom" != 0
+    THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
+    ELSE NULL END as "rankBom"
+  ```
+  But the `pctLossSurplusToBom` computation on line 147-150 uses `SUM(ABS(qtyBom)) > 0` (CALC-11 fix):
+  ```sql
+  -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (not SUM(qtyBom) != 0 — can be 0 with canceling +/- values)
+  CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ir."qtyLossSurplus") / SUM(ABS(ir."qtyBom"))
+    ELSE NULL END as "pctLossSurplusToBom",
+  ```
+  Inconsistent: if an item has mixed-sign BOM values (e.g., +100 and -100 across rows), `SUM(qtyBom) = 0` but `SUM(ABS(qtyBom)) = 200 > 0`. The item IS a valid BOM item, but `rankBom` and `avgDeviasiByBom` return NULL (excluded from BOM ranking).
+- Impact: Items with canceling BOM values are excluded from BOM ranking and bucket-average computation. In practice, BOM values are typically all negative (consumption), so cancellation is rare. But the inconsistency with CALC-11 is a latent bug.
+- Proposed fix: Use `SUM(ABS(qtyBom)) > 0` consistently. Add an `absQtyBom` column to the `item_per_outlet` CTE:
+  ```sql
+  SUM(ABS(ir."qtyBom")) as "absQtyBom",
+  ```
+  Then use `ipo."absQtyBom" > 0` instead of `ipo."qtyBom" != 0` in rankBom and avgDeviasiByBom checks.
+
+**METRICS-8 (LOW) — Historical z-score compares per-row pctQtyDeviasiToBom vs weekly aggregate mean (multi-akun items)**
+- File: `src/engine/analysis/ruleService.ts:44`, `src/lib/queries/historical.ts:43-60`
+- Description: `buildRuleContext` computes zScore as:
+  ```typescript
+  calcZScoreFromStats(curr.pctQtyDeviasiToBom, historicalStats.mean, historicalStats.stdDev)
+  ```
+  Where `curr.pctQtyDeviasiToBom` is the PER-ROW value (from Excel, for a specific akunPenyesuaian). But `historicalStats.mean` and `.stdDev` are computed from WEEKLY AGGREGATES (SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) per outlet+item+week, across ALL akunPenyesuaian).
+  
+  For items with a SINGLE row per (outlet, item, week) — the common case — per-row ≈ aggregate, so zScore is correct. But for items with MULTIPLE akunPenyesuaian per week (e.g., "ADJUSTMENT" + "INVENTORY" accounts), the per-row pctQtyDeviasiToBom differs from the weekly aggregate. The zScore then compares a per-row value against an aggregate baseline — apples to oranges.
+  
+  Example: Item has 2 akun rows in current week: akun A with pctDevBom = 0.30, akun B with pctDevBom = 0.10. Weekly aggregate = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) ≈ 0.20 (weighted). Historical mean = 0.15. zScore for akun A = (0.30 - 0.15)/stdDev (high), zScore for akun B = (0.10 - 0.15)/stdDev (low). But the "true" outlet+item zScore should use 0.20 (aggregate) vs 0.15 (historical aggregate).
+- Impact: For multi-akun items, zScore is computed per-row but compared against aggregate historical stats. This may cause false positives (akun A flagged as HISTORICAL_ABNORMAL) or false negatives (akun B not flagged when the aggregate is actually abnormal). In practice, most items have 1 akun per week, so impact is limited. But the inconsistency is a latent bug.
+- Proposed fix: Compute the current-period weekly aggregate for (outlet, item) and use that as the zScore input, instead of per-row pctQtyDeviasiToBom:
+  ```typescript
+  // In buildRuleContext, compute current aggregate for this outlet+item
+  // (requires passing current-period aggregate map, similar to historicalStats)
+  const currentAggregate = currentAggByOutletItem.get(`${curr.outletId}|${curr.itemId}`);
+  const zScore = historicalStats && currentAggregate != null
+    ? calcZScoreFromStats(currentAggregate.devBom, historicalStats.mean, historicalStats.stdDev)
+    : null;
+  ```
+  This requires the analysis route to pre-compute current-period weekly aggregates (similar to queryHistoricalStats but for current period). Alternatively, accept the per-row approximation and document it.
+
+**METRICS-9 (LOW) — Analysis route zero-dev check uses === 0, outlet-items route uses < 0.01 (inconsistent near-zero classification)**
+- File: `src/app/api/analysis/route.ts:419` vs `src/app/api/outlet-items/route.ts:283`
+- Description: The two routes classify "zero deviation" differently:
+  - **Analysis route (line 419)**: `(curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)` — EXACT zero (=== 0).
+  - **Outlet-items route (line 283)**: `(qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01)` — near-zero (< 0.01).
+  
+  An item with qtyDeviasi = 0.005 (tiny but non-zero):
+  - Analysis route: NOT zero-dev → goes through rule evaluation → may fire rules.
+  - Outlet-items route: IS zero-dev → counted as normal, skipped.
+  
+  This means the same item may be classified differently depending on which route processes it.
+- Impact: Items with very small deviations (|qtyDeviasi| < 0.01, |nominalDeviasi| < 0.01) are treated as "normal" in outlet-items but may fire rules in analysis. The health score's normal/warning/abnormal counts differ slightly between routes. Low impact because such tiny deviations are rare and usually don't fire rules anyway.
+- Proposed fix: Standardize on the near-zero check (< 0.01) in both routes:
+  ```typescript
+  // analysis route line 419
+  const isZeroDev = (curr.qtyDeviasi == null || Math.abs(curr.qtyDeviasi) < 0.01)
+    && (curr.absNominalDeviasi == null || Math.abs(curr.absNominalDeviasi) < 0.01);
+  if (isZeroDev) { normal++; ... continue; }
+  ```
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (no fix needed)
+═══════════════════════════════════════════════════════════════
+
+✓ **computeDirection (CALC-1)** — `deviation.ts:39-48`. `net < 0 → LOSS, net > 0 → SURPLUS, net = 0/null → NEUTRAL`. Falls back to `qtyDeviasi` when `qtyLossSurplus` is null. Correct per Excel convention.
+
+✓ **computeResidual (transform.ts)** — `transform.ts:239-283`. `explained = ABS(w) + ABS(s) + ABS(t)` (abs-each-then-sum, FIX-DEEP-3C). `absResidual = max(0, absDev - explained)` (clamped). `residualQty = sign * absResidual` (signed). `isOverExplained = explained > absDev && absDev > 0`. Returns null when qtyDeviasi is null. Correct.
+
+✓ **computeDevBomAggregate** — `deviation.ts:133-135`. `safeDiv(totalQtyDeviasi, totalQtyBom)` = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)). Volume-weighted. safeDiv guards against 0. Correct.
+
+✓ **computeLossToSales** — `deviation.ts:156-159`. `totalLossNominal / totalSales` where `totalLossNominal = SUM(ABS(nominalLossSurplus) WHERE < 0)` (CALC-4). Returns null when `totalSales <= 0`. Correct. NOTE: See METRICS-1 for the inline computation in outlets.ts that deviates from this.
+
+✓ **computeHealthScore** — `deviation.ts:187-244`. 4 components (devBom 30%, residual 25%, lossToSales 25%, abnormal 20%). Linear interpolation: `100 - ((value - good) / (bad - good)) * 100`. Guard: `bad === good → 50` (neutral). Clamp to [0, 100]. Weights normalized (`wSum > 0` guard, falls back to defaults if 0). Correct.
+
+✓ **computePriority** — `deviation.ts:271-289`. P1: high nominal OR high residual OR high zScore OR over-explained (OR logic). P2: medium nominal OR warn residual OR high devBom (OR logic). P3: else. Uses `absNominalLossSurplus > threshold` (ABS). Thresholds from runtime `t`. Correct OR logic. NOTE: See METRICS-5 for the naming concern (fires for SURPLUS too).
+
+✓ **15-signal priority weights** — `outlets.ts:831-836`. Weights: 0.12+0.10+0.10+0.10+0.08+0.08+0.08+0.05+0.08+0.07+0.05+0.03+0.03+0.02+0.01 = 1.00 (100%). Each sNScore = `Math.min(100, ...)` (capped at 100). `priorityScore = Math.round(sum)`. Thresholds: >=55 TINGGI, >=30 SEDANG, else RENDAH. Reasonable. NOTE: See METRICS-1, METRICS-2, METRICS-4 for signal-specific bugs.
+
+✓ **calcGrowth (signed)** — `growth.ts:31-35`. `(curr - prev) / ABS(prev)`. Guards: prev=0 → null (or 0 if curr=0), prev=null → null. Correct.
+
+✓ **calcGrowthAbs (magnitude)** — `growth.ts:43-49`. `(ABS(curr) - ABS(prev)) / ABS(prev)`. Same guards. Correct.
+
+✓ **computeNominalDeviationGrowth** — `growth.ts:67-72`. Delegates to calcGrowthAbs (magnitude). Correct for sign-flip handling.
+
+✓ **computeZScore** — `historical.ts:57-124`. mean = AVG(ABS(historicalValues)). stdDev = SQRT(SUM((x-mean)^2)/(N-1)) (Bessel's correction). zScore = (ABS(current) - mean) / stdDev. Guards: N < HISTORICAL_MIN_WEEKS → null, stdDev=0 → null. Correct.
+
+✓ **calcZScoreFromStats** — `historical.ts:151-158`. `(ABS(value) - mean) / stdDev`. Guards: value=null → null, stdDev=0 → null. Correct.
+
+✓ **evalCondition** — `evaluator.ts:274-313`. Handles `all` (every), `any` (some), `not` (invert). Bug 3 fix: evaluates logic operators AND field comparisons together (no early return). Bug fix: arrays in `not` fail safe (return false). Correct.
+
+✓ **canOpFire** — `evaluator.ts:199-251`. Null-safe: `gt/gte/lt/lte` with null/non-number value → false. `eq` with null value and non-null literal operand → false. `not_null: true` with null → false. `is_null` → don't fail-fast. Conservative for `any`/`not` (returns true). Correct.
+
+✓ **resolveExpr** — `evaluator.ts:142-183`. Handles `mul`, `add`, `sub`, `div`, `abs`. Bug 5 fix: checks typeof number (not just non-null). Div-by-zero guard. Correct.
+
+✓ **evaluateRules** — `evaluator.ts:413-457`. Pre-computes `absPctQtyDeviasiToBom` and `absTolerancePct` (CALC-2 fix). SIGN-1: `nominalLossSurplus` in ctx. Sorts by priority desc. Per-rule error logging (Bug 6 fix). Correct.
+
+✓ **rules.yaml (17 rules)** — All verified:
+  - 5 use `nominalLossSurplus: {lt: 0}` or `{gt: 0}` (RESIDUAL_LOSS_HIGH/WARN, HIGH_LOSS_NOMINAL, HISTORICAL_ABNORMAL/SURPLUS) — SIGN-1 fix applied.
+  - 3 tolerance rules use `absPctQtyDeviasiToBom` and `absTolerancePct` (TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH, TOLERANCE_NOT_SET_HIGH_DEV) — CALC-2 fix applied.
+  - 2 benchmark rules use `benchmarkFlag: {eq: "HISTORICAL_WARNING/HIGH"}`.
+  - 4 growth-mismatch rules use `salesGrowth/bomGrowth/qtyDeviasiGrowth/nominalDeviasiGrowth` with arithmetic expressions.
+  - 1 OVER_EXPLAINED uses `isOverExplained: {eq: true}`.
+  - 1 DIRECTION_FLIP uses `isDirectionFlip: {eq: true}`.
+  - 1 HISTORICAL_WARNING uses `zScore: {gt/lte}`.
+  - SALES_BOM_DEVIATION_MISMATCH is sign-aware (uses magnitude growth via computeNominalDeviationGrowth).
+
+✓ **buildRuleContext (FLOW3-1)** — `ruleService.ts:27-124`. All fields populated. `nominalLossSurplus` in ctx (SIGN-1). Direction computed on-the-fly from `nominalLossSurplus` sign with `qtyDeviasi` fallback (FLOW3-1). `prevDirection` computed on-the-fly. `isDirectionFlip` correct (requires both non-NEUTRAL). `zScore` from precomputed stats. `benchmarkFlag` from zScore. `isOverExplained` computed on-the-fly. Growth metrics: `salesGrowth` (calcGrowth signed), `bomGrowth`/`qtyDeviasiGrowth` (calcGrowthAbs magnitude), `nominalDeviasiGrowth` (computeNominalDeviationGrowth magnitude). Correct.
+
+✓ **computeVarianceAnalysis (CALC2-1)** — `rankingService.ts:190-245`. `delta = curr.absNominalDeviasi - prev.absNominalDeviasi` (magnitude). `selisih = currNominal - prevNominal` (signed). `varianceDirection = delta > 0 ? WORSENED : delta < 0 ? IMPROVED : STABLE`. topWorsened sorted by `delta DESC`, topImproved by `delta ASC` (CALC2-1 fix). Guards: prev=null → skip, prev.absNominalDeviasi=null → skip. Correct.
+
+✓ **deriveRecord** — `transform.ts:285-344`. `direction` via `computeDirection` (CALC-1). `residualQty` via `computeResidual` (signed). `absQtyDeviasi = Math.abs(qtyDeviasi)`. `absNominalDeviasi = Math.abs(nominalDeviasi)`. `netDeviationMismatch` check: `expectedNet = qtyDeviasi - explainedMag * Math.sign(qtyDeviasi)` (abs-each-then-sum, FIX-DEEP-3C). Tolerance: `max(1, |expectedNet| * 0.01)`. Correct.
+
+✓ **computeOutletHealthRanking** — `rankingService.ts:251-363`. Uses `dedupSalesByOutlet` (MODE). `lossNominal = SUM(ABS(nominalLossSurplus) WHERE < 0)` (CALC-4). Passes runtime weights + thresholds to `computeHealthScore`. Sorts by healthScore ASC (worst first), then abnormal DESC. Correct.
+
+✓ **computeHistoricalAnalysis** — `rankingService.ts:368-397`. Filters to HISTORICAL_ABNORMAL/HISTORICAL_WARNING rules. Uses `calcZScoreFromStats` with precomputed stats. Sorts by |zScore| DESC. Correct.
+
+✓ **buildWorklistFromFlags (BUG-2-1)** — `rankingService.ts:65-121`. Delegates to `computePriority` (BUG-2-1 fix). Sorts by priority (P1→P2→P3) then absNominalDeviasi DESC. Slices top 100. Correct.
+
+═══════════════════════════════════════════════════════════════
+NEXT ACTIONS (priority order)
+═══════════════════════════════════════════════════════════════
+
+1. **METRICS-1 (HIGH)** — Fix s5Score in `outlets.ts:790-791`: use `null` when sales=0 and assign max score (100) when totalLoss > 0 but sales = 0 (data quality anomaly). ~3 line change.
+2. **METRICS-2 (MEDIUM)** — Fix s2Score, s7Score, s8Score in `outlets.ts:773-776, 799-800, 803-805`: add `SUM(ir."absNominalDeviasi")` to SQL and use it instead of `|SUM(nominalDeviasi)|`. Also fix exec summary growth in `analysis/route.ts:91` and `export-report/route.ts:54`. ~10 line change.
+3. **METRICS-3 (MEDIUM)** — Align outlet-items route severity classification with rules.yaml 2-tier tolerance (1x=WARNING, 2x=ABNORMAL). `outlet-items/route.ts:283-288`. ~5 line change.
+4. **METRICS-4 (MEDIUM)** — Fix s11Score threshold in `outlets.ts:642`: use `highLossNominalThreshold` (50M) instead of hardcoded 10M, OR rename signal to "Medium Loss" and reference P2_NOMINAL_THRESHOLD. ~2 line change.
+5. **METRICS-5 (LOW)** — Rename `HIGH_LOSS_NOMINAL_THRESHOLD` to `HIGH_NOMINAL_THRESHOLD` (reflects both LOSS+SURPLUS), OR add direction check in computePriority. ~3 line change (rename) or ~2 line change (direction check).
+6. **METRICS-6 (LOW)** — Delete dead code in `deviation.ts:67-105` (computeResidual, computeResidualRatio, computeExplainedPct) and remove from `index.ts` exports. OR align with transform.ts behavior. ~10 line deletion.
+7. **METRICS-7 (LOW)** — Fix `items.ts:192, 195-197`: use `SUM(ABS(qtyBom)) > 0` instead of `qtyBom != 0` for rankBom/avgDeviasiByBom checks (consistent with CALC-11). ~3 line change.
+8. **METRICS-8 (LOW)** — Document the per-row vs aggregate approximation in z-score, OR pre-compute current-period weekly aggregates for z-score input. ~5 line change (document) or ~20 line change (proper fix).
+9. **METRICS-9 (LOW)** — Standardize zero-dev check to `< 0.01` in both `analysis/route.ts:419` and `outlet-items/route.ts:283`. ~2 line change.
+
+Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: AUDIT-SQL-CALC
+Agent: SQL Calculation Auditor
+Task: Deep audit of ALL SQL queries — sign convention, div-by-zero, ABS, aggregation, ranking
+
+Work Log:
+- Read worklog tail (last 400 lines) for context on CALC-1..CALC-11, SIGN-1..SIGN-4, CALC2-1/2, FLOW3-1/2/3 fixes.
+- Read all SQL-emitting files in scope:
+  * src/lib/queries/outlets.ts (922 lines) — queryTopOutlets, queryTopOutletsBySales, queryPeerComparison, queryPeerItemComparison, queryPeerTrend, queryRestoRecommendations
+  * src/lib/queries/items.ts (388 lines) — queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByDeviasiRank, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency
+  * src/lib/queries/dashboard.ts (286 lines) — queryTrendAgg, queryExecSummary, queryDeviationBreakdown, queryLossVsSurplus, queryCostImpact
+  * src/lib/queries/areas.ts (85 lines) — queryAreaAnalysis
+  * src/lib/queries/historical.ts (75 lines) — queryHistoricalStats (z-score mean/stdDev)
+  * src/lib/queries/shared.ts (40 lines) — buildSqlFilters
+  * src/app/api/outlet-items/route.ts (575 lines) — current+prev record SQL, area/network benchmarks
+  * src/app/api/peer-comparison/route.ts (50 lines) + items/route.ts (216 lines) + trend/route.ts (91 lines)
+  * src/app/api/analysis/route.ts (772 lines) — buildExecSummaryFromSql + parallel SQL query orchestration
+  * src/app/api/item-history/route.ts (308 lines) + drilldown/route.ts (120 lines) + recommendations/route.ts (72 lines) — verified direction-on-the-fly + z-score usage
+  * src/engine/transform.ts (computeResidual) + src/lib/metrics/historical.ts (computeZScore) + src/lib/metrics/growth.ts (calcGrowth/calcGrowthAbs) — verified sign convention + Bessel's correction + guards
+- Cross-referenced findings against prior audits (API-CALC-2, METRICS-7, API-CALC-5, FLOW3-3, CALC-1..11, SIGN-1..4, VERIFY3-7/8) to avoid duplication.
+- Used Grep to scan for: `ir.direction = 'LOSS'` (none remain), `MAX(ir."...")` patterns, `nominalLossSurplus > 0` (correct usage), division operators + their guards, ABS() consistency, GROUP BY correctness.
+
+Stage Summary:
+
+Audit verified that CALC-1..CALC-11, SIGN-1..SIGN-4, CALC2-1/2, FLOW3-1/2/3 fixes are correctly applied at the SQL/data layer:
+- All direction computations use on-the-fly `nominalLossSurplus < 0 → LOSS` (no stored `ir.direction` reads remain).
+- All tolerance-breach checks use `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)` (CALC-2).
+- All `totalLoss`/`lossNominal`/`lossAmount` use `SUM(ABS(nominalLossSurplus) WHERE < 0)` (CALC-4).
+- All `totalSurplus`/`surplusNominal`/`surplusAmount` use `SUM(nominalLossSurplus WHERE > 0)` (CALC-4).
+- All Dev/BOM ratios use `CASE WHEN SUM(ABS(qtyBom)) > 0 THEN SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) ELSE 0 END` (CALC-11 pattern, with 1 exception below).
+- All division operators have explicit `> 0` guards (no bare `/` with possible-zero denominators).
+- Z-score uses sample variance (N-1, Bessel's), ABS magnitudes, N<minWeeks guard, stdDev=0 guard.
+- Peer comparison ±10% sales band with `999999999` fallback for target=0 sales (in main route; items route lacks fallback — API-CALC-5 noted).
+- BigInt/Decimal coercion via `Number()` and `CAST(... AS INTEGER)` applied consistently.
+
+**6 NEW findings (not previously noted):**
+
+**SQL-1 (MEDIUM)** — `queryTopOutlets` + `queryPeerComparison` direction missing qtyDeviasi NULL fallback
+- File: `src/lib/queries/outlets.ts:71-73` and `outlets.ts:282-284`
+- Description: These two queries compute outlet `direction` via `CASE WHEN lossAmount > surplusAmount THEN 'LOSS' WHEN surplusAmount > lossAmount THEN 'SURPLUS' ELSE 'NEUTRAL' END`. Mathematically equivalent to `SUM(nominalLossSurplus) < 0 → LOSS`. But the VERIFY3-7/8 fix added a `qtyDeviasi` NULL fallback to ALL other direction CASE statements (items.ts:40-44, items.ts:254-258, outlets.ts:427-431, outlets.ts:645-651, outlets.ts:713-719, outlet-items/route.ts:175-181). These 2 queries are the ONLY ones lacking the fallback.
+  When ALL rows for an outlet have `nominalLossSurplus = NULL` (rare data quality issue), `lossAmount = 0` and `surplusAmount = 0`, so direction = 'NEUTRAL'. But the qtyDeviasi fallback would compute the correct direction from `SUM(qtyDeviasi)` sign.
+- Impact: LOW frequency (requires all rows in an outlet to have NULL nominalLossSurplus). When triggered, outlet shows 'NEUTRAL' instead of 'LOSS'/'SURPLUS' in TopOutlets table and PeerComparison table. Inconsistent with other direction displays.
+- Proposed fix: Replace with the standard pattern:
+  ```sql
+  CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+       WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+       WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+       WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+       ELSE 'NEUTRAL' END as direction,
+  ```
+  But this requires re-aggregating `SUM(ir."nominalLossSurplus")` and `SUM(ir."qtyDeviasi")` in the outer SELECT (currently only `lossAmount`/`surplusAmount` are pre-aggregated in `outlet_aggs` CTE). Easier fix: add 2 columns to `outlet_aggs` CTE: `SUM(ir."nominalLossSurplus") as "netNominal"` and `SUM(ir."qtyDeviasi") as "netQtyDeviasi"`, then use them in the direction CASE.
+- ~6 line change per query × 2 queries = ~12 lines total.
+
+**SQL-2 (MEDIUM)** — `queryCostImpact` totalCost can exceed `SUM(absNominalDeviasi)` for over-explained SURPLUS; residualCost includes SURPLUS residuals (not just LOSS)
+- File: `src/lib/queries/dashboard.ts:261-265`
+- Description: `totalCost = SUM(ABS(nominalWaste)) + SUM(ABS(nominalSusut)) + SUM(ABS(nominalTrial)) + SUM(ABS(residualNominal))`. This is the sum of component magnitudes, NOT the total deviation magnitude.
+  - For LOSS items: all components are negative-signed magnitudes, so |w|+|s|+|t|+|residual| = |deviasi|. ✓
+  - For SURPLUS items with unexplained surplus (|deviasi| > |w|+|s|+|t|): residual = +(|deviasi| - |w|-|s|-|t|), so |w|+|s|+|t|+|residual| = |deviasi|. ✓
+  - For SURPLUS items with over-explained (|deviasi| < |w|+|s|+|t|, fraud indicator): residual = 0 (clamped). Then |w|+|s|+|t|+|residual| = |w|+|s|+|t| > |deviasi|. ✗ — totalCost OVERSTATES actual |deviasi|.
+  Additionally, `residualCost = SUM(ABS(residualNominal))` includes BOTH LOSS residuals (financial loss — correctly a "cost") AND SURPLUS residuals (positive unexplained surplus — a financial GAIN, not a cost). The current formula treats both as costs.
+  The UI displays this as `Total |NOMINAL DEVIASI| ${fmtIDR(ci.totalCost)}` (InsightsPanel.tsx:163) — label claims it's the total nominal deviation magnitude, but the SQL computes sum-of-components which can exceed that.
+- Impact: When over-explained SURPLUS items exist (OVER_EXPLAINED rule fires), the "Biaya Bocor" insight shows a total that exceeds the real total deviation. The pct-of-sales ratio is also overstated. Users see inflated "cost impact" numbers.
+  Compare to `queryExecSummary.residualLossNominal` (dashboard.ts:161) which CORRECTLY filters to LOSS only: `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(residualNominal) ELSE 0 END)`. The queryCostImpact version is inconsistent with this.
+- Proposed fix (2 options):
+  Option A (semantic fix — make totalCost = real |deviasi|):
+  ```sql
+  COALESCE(SUM(ir."absNominalDeviasi"), 0) as "totalCost",
+  ```
+  Then totalCost = SUM(|nominalDeviasi|) which matches the UI label. But then totalCost != wasteCost + susutCost + trialCost + residualCost (the components don't add up). Document this.
+  
+  Option B (filter residualCost to LOSS only — keep totalCost as component sum but fix semantics):
+  ```sql
+  COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualCost",
+  ```
+  And update UI label from "Total |NOMINAL DEVIASI|" to "Total Komponen Biaya (W+S+T+Residual LOSS)".
+  
+  Option A is cleaner (matches label) but loses the component-sum property. Option B is more conservative. Either way, document the semantics.
+- ~3 line SQL change + ~1 line UI label change.
+
+**SQL-3 (LOW)** — `items.ts:100` stale comment for pctLossSurplusToBom formula
+- File: `src/lib/queries/items.ts:100`
+- Description: Comment says `//  pctLossSurplusToBom = SUM(qtyLossSurplus) / SUM(qtyBom) (signed, tanpa ABS)`. But the actual code at line 148-150 uses `SUM(ABS(ir."qtyBom"))` in the denominator (CALC-11 fix):
+  ```sql
+  CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ir."qtyLossSurplus") / SUM(ABS(ir."qtyBom"))
+    ELSE NULL END as "pctLossSurplusToBom",
+  ```
+  The comment "tanpa ABS" (without ABS) is WRONG — the denominator DOES use ABS. The CALC-11 fix was applied to the code but the comment was not updated.
+- Impact: Documentation drift. Future developers reading the comment may incorrectly assume no ABS is used and "fix" the code to match the comment (introducing the CALC-11 bug back). No runtime impact.
+- Proposed fix: Update comment to:
+  ```ts
+  //  pctLossSurplusToBom = SUM(qtyLossSurplus) / SUM(ABS(qtyBom)) (signed loss-surplus / |BOM|)
+  ```
+- ~1 line change.
+
+**SQL-4 (LOW)** — `residualQty`/`residualNominal` SUM filters on `nominalLossSurplus < 0` without qtyDeviasi NULL fallback (inconsistent with direction computation)
+- File: `src/lib/queries/outlets.ts:620-621`, `src/lib/queries/dashboard.ts:160-161`
+- Description: All residual LOSS filters use `SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END)`. This is the CALC-3 fix (use sign of nominalLossSurplus, not stored ir.direction).
+  However, the direction computation in the same queries has a `qtyDeviasi` NULL fallback (VERIFY3-7/8): `WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'`. The residual filter does NOT have this fallback.
+  If a row has `nominalLossSurplus = NULL` but `qtyDeviasi < 0` (LOSS by fallback), the direction is computed as 'LOSS', but the row's `residualQty` is NOT included in `residualLossQty` (because `NULL < 0` returns NULL, CASE returns ELSE 0).
+- Impact: LOW frequency (requires nominalLossSurplus to be NULL while qtyDeviasi is non-NULL — rare data quality case). When triggered, residualLossQty is understated → residualLossPct is understated → RESIDUAL_LOSS rules may not fire when they should. Inconsistency between direction classification and residual accounting.
+- Proposed fix: Add qtyDeviasi fallback to the residual CASE (mirror the direction pattern):
+  ```sql
+  SUM(CASE
+    WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty")
+    WHEN ir."nominalLossSurplus" IS NULL AND ir."qtyDeviasi" < 0 THEN ABS(ir."residualQty")
+    ELSE 0
+  END) as "residualQty",
+  ```
+  Apply to: outlets.ts:620 (residualQty), outlets.ts:621 (residualNominal), outlets.ts:623 (qtyDeviasiLoss), dashboard.ts:160 (residualLossQty), dashboard.ts:161 (residualLossNominal), dashboard.ts:162 (qtyDeviasiLoss).
+- ~6 lines × 2 files = ~12 line change. OR — accept the inconsistency as low-priority since NULL nominalLossSurplus is rare.
+
+**SQL-5 (MEDIUM)** — `queryTopItemsByDeviasiRank` label "Rank Item Nasional" is misleading when filters apply
+- File: `src/lib/queries/items.ts:97` (comment) + `items.ts:193` (rankNominal SQL) + `src/app/api/export-report/route.ts:664` (UI label) + `src/app/api/analysis/route.ts:508` (caller passes filterOpts)
+- Description: The query is called with `filterOpts` (area/outletCode/itemName/picOutletCodes) from both analysis and export-report routes:
+  ```ts
+  queryTopItemsByDeviasiRank(week!, month!, filterOpts, 500)
+  ```
+  The SQL applies `${f}` (buildSqlFilters) inside the `item_per_outlet` CTE (line 161), so the ROW_NUMBER() at line 193 ranks within the FILTERED subset, not nationally:
+  ```sql
+  ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
+  ```
+  But the UI label (export-report route:664) explicitly says: `"Rank Item Nasional = sort by abs(Nominal Deviasi)"`. And the items.ts:97 comment says: `"Rank Item Nasional (by abs(nominalDeviasi) DESC)"`.
+  When user filters to area='JAKARTA', the rank is within Jakarta, not national. When filtered to a single outlet, the rank is within that outlet (rank 1 = the outlet's biggest item).
+- Impact: User-facing label is misleading. When filters are applied, "Rank Item Nasional" shows a rank that doesn't reflect national standing. Users may draw wrong conclusions ("this item is rank 5 nationally" when it's actually rank 5 within the filtered area).
+  The rank NUMBER itself is correct for the filtered set — only the LABEL is wrong.
+- Proposed fix (2 options):
+  Option A (rename label — conservative):
+  - items.ts:97: change "Rank Item Nasional" → "Rank Item (Filtered)" or "Rank Item dalam Filter"
+  - export-report route:664: change "Rank Item Nasional" → "Rank Item (sesuai filter)"
+  
+  Option B (make rank truly national — drop filters from this specific query):
+  ```ts
+  // analysis/route.ts:508
+  queryTopItemsByDeviasiRank(week!, month!, { area: null, outletCode: null, itemName: null, picOutletCodes: null }, 500)
+  // Then post-filter in JS if needed for display
+  ```
+  Option B is heavier (more rows returned) but matches the label.
+  
+  Option A is simpler and clearer. ~2 line change.
+- Recommend Option A.
+
+**SQL-6 (MEDIUM, FOLLOW-UP)** — `MAX(tolerancePct)` and `MAX(residualRatio)` in outlet-items CURRENT query still unfixed (FLOW3-3 noted but fix was never applied)
+- File: `src/app/api/outlet-items/route.ts:167, 182`
+- Description: FLOW3-3 audit (worklog line 9215) explicitly noted: "`MAX(pctQtyDeviasiToBom)`, `MAX(tolerancePct)`, `MAX(residualRatio)`, `AVG(avgPrice)` were not changed." But the subsequent FIX-DEEP-AUDIT-3 task only fixed `MAX(pctQtyDeviasiToBom)` (replaced with `SUM(qtyDeviasi)/SUM(ABS(qtyBom))`). The other 3 MAX aggregations remain:
+  - Line 167: `MAX(ir."tolerancePct") as "tolerancePct"`
+  - Line 182: `MAX(ir."residualRatio") as "residualRatio"`
+  - Line 167: `AVG(ir."avgPrice") as "avgPrice"` (this one is OK — AVG is a sensible aggregate for price)
+  
+  **MAX(tolerancePct) bug**: tolerancePct is stored as NEGATIVE for LOSS items (Excel convention). For grouped records (outlet, item, akun) with duplicate source-file rows, MAX picks the LEAST-NEGATIVE value (smallest magnitude). E.g., if duplicates have tolerancePct = -0.05 and -0.10, MAX = -0.05. Then `ABS(-0.05) = 0.05` is used as the tolerance, but the item's actual tolerance could be 0.10 (10%). This makes the tolerance-breach check `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)` STRICTER than intended → false-positive TOLERANCE_BREACH flags for LOSS items with duplicate source rows.
+  
+  **MAX(residualRatio) bug**: residualRatio is always non-negative (computed as absResidual/absDev at ingest). For grouped records, MAX picks the highest ratio among duplicates → OVERSTATES the residual ratio. This feeds into `computePriority` (line 492-499) which uses `residualRatio > RESIDUAL_LOSS_HIGH_PCT` for P1 classification. Overstated residualRatio → false P1 priority.
+- Impact: Latent in normal data (each (outlet, item, akun) has 1 row per period). With duplicate source-file rows (data quality issue), tolerance-breach false positives + overstated priority. Same root cause as FLOW3-3 (MAX vs proper aggregate for grouped records).
+- Proposed fix:
+  - `MAX(ir."tolerancePct")` → `MIN(ir."tolerancePct")` (conservative — picks strictest tolerance, i.e., most-negative for LOSS, largest positive for SURPLUS). Or use `AVG(ir."tolerancePct")` if tolerance variation is legitimate.
+  - `MAX(ir."residualRatio")` → recompute as `CASE WHEN SUM(ABS(ir."qtyDeviasi")) > 0 THEN SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi")) ELSE NULL END` (proper aggregate ratio, mirroring FLOW3-3 fix pattern).
+- ~3 line change.
+
+**Previously noted findings (confirmed still open, not re-reported in detail):**
+
+- **API-CALC-2 (MEDIUM)** — outlet-items/route.ts:201 prevRecs query still uses `MAX(ir."pctQtyDeviasiToBom")` (FLOW3-3 fix only applied to currentRecs). Affects devBomGrowth historical trend arrows for multi-source-file items. NOT YET FIXED.
+- **METRICS-7 (LOW)** — items.ts:192, 195-197 queryTopItemsByDeviasiRank rankBom/avgDeviasiByBom use `ipo."qtyBom" != 0` (signed sum) instead of `SUM(ABS(qtyBom)) > 0` (CALC-11 inconsistency). Latent with mixed-sign BOM data. NOT YET FIXED.
+- **API-CALC-5 (LOW)** — peer-comparison/items/route.ts:92 lacks the `CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END` fallback that queryPeerComparison has. When target has no sales, peer set is empty (inconsistent with main route which returns all outlets with sales>0). NOT YET FIXED.
+
+**Recommended fix priority:**
+
+1. **SQL-6 (MEDIUM)** — Replace `MAX(tolerancePct)` with `MIN(tolerancePct)` and `MAX(residualRatio)` with proper aggregate `SUM(ABS(residualQty))/SUM(ABS(qtyDeviasi))` in outlet-items/route.ts:167, 182. ~3 line change. Same pattern as FLOW3-3 (which fixed only pctQtyDeviasiToBom). Fixes false tolerance-breach positives + overstated priority for grouped LOSS items.
+2. **SQL-2 (MEDIUM)** — Fix queryCostImpact totalCost semantics (use `SUM(absNominalDeviasi)` for totalCost, OR filter residualCost to LOSS only). Update InsightsPanel.tsx:163 label to match. ~4 line change. Fixes overstated "Biaya Bocor" total when over-explained SURPLUS exists.
+3. **SQL-5 (MEDIUM)** — Rename "Rank Item Nasional" label to "Rank Item (sesuai filter)" in items.ts:97 + export-report/route.ts:664. ~2 line change. Eliminates misleading national-rank claim when filters apply.
+4. **SQL-1 (MEDIUM)** — Add qtyDeviasi NULL fallback to queryTopOutlets + queryPeerComparison direction CASE. Requires adding `SUM(nominalLossSurplus)` + `SUM(qtyDeviasi)` columns to outlet_aggs CTE. ~12 line change. Defensive consistency with other direction computations.
+5. **API-CALC-2 (MEDIUM, previously noted)** — Apply FLOW3-3 pattern to outlet-items/route.ts:201 prevRecs query. ~3 line change. Fixes wrong historical trend arrows for multi-source-file items.
+6. **METRICS-7 (LOW, previously noted)** — Fix items.ts:192, 195-197 rankBom/avgDeviasiByBom to use `SUM(ABS(qtyBom)) > 0`. ~3 line change. CALC-11 consistency.
+7. **API-CALC-5 (LOW, previously noted)** — Add 999999999 fallback to peer-comparison/items/route.ts:92. ~1 line change. Edge case correctness.
+8. **SQL-4 (LOW)** — Add qtyDeviasi NULL fallback to residualQty/residualNominal SUM filters. ~12 line change. Rare edge case (NULL nominalLossSurplus).
+9. **SQL-3 (LOW)** — Update stale comment in items.ts:100. ~1 line change. Documentation hygiene.
+
+Files changed: NONE (audit only — no code changes per task constraints).

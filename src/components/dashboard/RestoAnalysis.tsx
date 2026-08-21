@@ -107,7 +107,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
   const { data: recoData } = useQuery({
-    queryKey: ['recommendation', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+    // FIX FLOW-6: use plural 'recommendations' key (matches RestoRecommendationCard + invalidation patterns)
+    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel!);

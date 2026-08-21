@@ -140,8 +140,7 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ["item-history"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-      } else {
-        setIngestMsg(`Failed: ${d.message || d.error}`);
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
       }
     } catch (e: any) {
       setIngestMsg(`Error: ${e?.message || String(e)}`);
@@ -202,6 +201,7 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ["item-history"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
       }
     } catch (e: any) {
       clearInterval(stepInterval);

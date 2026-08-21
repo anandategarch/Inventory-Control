@@ -164,7 +164,13 @@ export async function GET(req: NextRequest) {
           SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial", SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
           SUM(ir."nominalDeviasi") as "nominalDeviasi", SUM(ir."nominalWaste") as "nominalWaste", SUM(ir."nominalSusut") as "nominalSusut",
           SUM(ir."nominalTrial") as "nominalTrial", SUM(ir."nominalLossSurplus") as "nominalLossSurplus", SUM(ir."nominalSales") as "nominalSales",
-          AVG(ir."avgPrice") as "avgPrice", MAX(ir."tolerancePct") as "tolerancePct",
+          AVG(ir."avgPrice") as "avgPrice",
+          -- FIX SQL-6: was MAX(tolerancePct) which picks least-negative for LOSS items (false breach positives)
+          -- Use MIN (most negative = strictest tolerance) for LOSS, MAX for SURPLUS
+          CASE
+            WHEN SUM(ir."nominalLossSurplus") < 0 THEN MIN(ir."tolerancePct")
+            ELSE MAX(ir."tolerancePct")
+          END as "tolerancePct",
           -- FIX FLOW3-3: was MAX(pctQtyDeviasiToBom) which understates LOSS magnitude
           -- (MAX picks least-negative for LOSS items). Use SUM(qtyDeviasi)/SUM(ABS(qtyBom)) instead.
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
@@ -179,7 +185,11 @@ export async function GET(req: NextRequest) {
             WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "direction",
-          SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal", MAX(ir."residualRatio") as "residualRatio",
+          SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal",
+          -- FIX SQL-6: was MAX(residualRatio) which overstates — use SUM(ABS(residualQty))/SUM(ABS(qtyDeviasi))
+          CASE WHEN SUM(ABS(ir."qtyDeviasi")) > 0
+            THEN SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi"))
+            ELSE 0 END as "residualRatio",
           SUM(ir."absQtyDeviasi") as "absQtyDeviasi", SUM(ir."absNominalDeviasi") as "absNominalDeviasi",
           SUM(ir."absQtyLossSurplus") as "absQtyLossSurplus", SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus"
         FROM "InventoryRecord" ir
@@ -198,7 +208,10 @@ export async function GET(req: NextRequest) {
           SUM(ir."qtyDeviasi") as "qtyDeviasi",
           SUM(ir."nominalDeviasi") as "nominalDeviasi",
           SUM(ir."qtyBom") as "qtyBom",
-          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+          -- FIX API-CALC-2: was MAX(pctQtyDeviasiToBom) — use SUM/SUM aggregate (matches FLOW3-3 fix)
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+            ELSE NULL END as "pctQtyDeviasiToBom",
           SUM(ir."nominalSales") as "nominalSales"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id

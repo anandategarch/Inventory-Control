@@ -859,7 +859,13 @@ function ItemComparisonBlock({
         </TableHeader>
         <TableBody>
           {rows.map(r => {
-            const isWorse = r.gap > 0; // all 3 are "bad" metrics (higher = worse)
+            // FIX FE-26: isWorse logic must account for signed values (qtyDeviasi, nominal can be negative=LOSS)
+            // For signed metrics: "worse" = more negative (bigger loss). Compare ABS magnitudes.
+            // For Dev/BOM (always positive ratio): higher = worse.
+            const isSigned = r.label === 'QTY Deviasi' || r.label === 'Nominal';
+            const isWorse = isSigned
+              ? Math.abs(r.target) > Math.abs(r.best)  // bigger magnitude = worse
+              : r.gap > 0;  // positive metric: gap > 0 = worse
             return (
               <TableRow key={r.label} className="hover:bg-muted/30 transition-colors">
                 <TableCell className="text-[10px] py-1 font-medium">{r.label}</TableCell>

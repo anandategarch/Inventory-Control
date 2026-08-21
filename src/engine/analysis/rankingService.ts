@@ -23,6 +23,23 @@ import {
 import { recommendAction } from './ruleService';
 import type { RecWithRels } from './types';
 
+// FIX FLOW-1 + API-CALC-1: shared direction computation from nominalLossSurplus sign
+// (not stored curr.direction which may be inverted for un-migrated DBs)
+function computeDirectionFromData(rec: RecWithRels | null): 'LOSS' | 'SURPLUS' | 'NEUTRAL' {
+  if (!rec) return 'NEUTRAL';
+  if (rec.nominalLossSurplus != null) {
+    if (rec.nominalLossSurplus < 0) return 'LOSS';
+    if (rec.nominalLossSurplus > 0) return 'SURPLUS';
+    return 'NEUTRAL';
+  }
+  if (rec.qtyDeviasi != null) {
+    if (rec.qtyDeviasi < 0) return 'LOSS';
+    if (rec.qtyDeviasi > 0) return 'SURPLUS';
+    return 'NEUTRAL';
+  }
+  return 'NEUTRAL';
+}
+
 // ============================================================
 //  Sales MODE dedup — internal helper
 //  Bug 6 fix: use MODE (most frequent value) not MAX.
@@ -111,7 +128,8 @@ export function buildWorklistFromFlags(
       ruleCodes: flags.map((f) => f.ruleCode),
       absNominalDeviasi: curr.absNominalLossSurplus ?? 0, // NET per master context #36
       deviationToBom: curr.pctQtyDeviasiToBom,
-      direction: (curr.direction || 'NEUTRAL') as 'LOSS' | 'SURPLUS' | 'NEUTRAL',
+      // FIX FLOW-1: compute direction on-the-fly (not stored curr.direction)
+      direction: computeDirectionFromData(curr),
     });
   }
 
@@ -229,7 +247,8 @@ export function computeVarianceAnalysis(
       currentAbsNominal: curr.absNominalDeviasi,
       previousAbsNominal: prev.absNominalDeviasi,
       delta,
-      direction: curr.direction || 'NEUTRAL',
+      // FIX FLOW-1: compute direction on-the-fly (not stored curr.direction)
+      direction: computeDirectionFromData(curr),
       varianceDirection,
     });
   }

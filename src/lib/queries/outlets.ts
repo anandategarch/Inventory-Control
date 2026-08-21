@@ -787,8 +787,12 @@ export async function queryRestoRecommendations(
     const s4Score = Math.min(100, residualRatio * 100);
 
     // Signal 5: Loss/Sales Ratio (8%)
+    // FIX METRICS-1: when sales=0 but totalLoss > 0, this is a data quality anomaly
+    // (outlet with losses but no sales recorded). Score should be MAX (100), not 0.
     const lossToSales = sales > 0 ? totalLoss / sales : 0;
-    const s5Score = Math.min(100, lossToSales * 1000);
+    const s5Score = sales > 0
+      ? Math.min(100, lossToSales * 1000)
+      : (totalLoss > 0 ? 100 : 0);
 
     // Signal 6: Direction Flip (8%)
     const prevDirection = prev?.prevDirection || null;

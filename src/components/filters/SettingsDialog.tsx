@@ -136,6 +136,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ["item-history"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-5
       } else {
         toast({
           title: '❌ Gagal menyimpan',
@@ -169,7 +170,8 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       queryClient.invalidateQueries({ queryKey: ['analysis'] });
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+      queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+      queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-5
     },
   });
 
@@ -214,6 +216,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+        queryClient.invalidateQueries({ queryKey: ['item-history'] }); // FIX FLOW-4
       } else {
         toast({
           title: '✗ Migration gagal',
