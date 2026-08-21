@@ -10903,3 +10903,772 @@ Stage Summary:
 - Thresholds are hard-coded in synthesizers (tol=5%, 2×tol=10%, High Loss Rp 10jt). If these are tuned via src/config/thresholds.ts later, thread them through.
 - `seededRand(seed)` is deterministic but low-quality (Math.sin-based). Acceptable for chart shape synthesis. If true randomization is needed (e.g. for A/B test rendering), swap with a proper PRNG.
 - The 15 SIGNAL_EXPLANATIONS strings are module-local. If they need to be localized or edited by non-devs, move to a content file (e.g. src/content/signalExplanations.ts).
+
+---
+Task ID: AUDIT-INTEGRATION
+Agent: Integration & Data Flow Auditor
+Task: Audit PrioritySummaryCard integration with RestoAnalysis + recommendations API
+
+Work Log:
+- Read worklog tail (last 150 lines) for context — confirmed SIGNAL-CHARTS rebuilt PrioritySummaryCard with 15-signal accordion + Recharts.
+- Read src/components/dashboard/PrioritySummaryCard.tsx (1026 lines) — interface Recommendation at L30-66 with `signalScores?: SignalScore[]` (optional). Early return at L752 when `!recommendation`. Memoization (defaultExpanded/topContributors/signalByName) BEFORE early return (rules-of-hooks compliant). "Derived state during render" pattern at L720-723 for outlet-change reset (no useEffect).
+- Read src/components/dashboard/RestoAnalysis.tsx (889 lines) — two useQuery hooks: `['outlet-items', activeOutlet, ...]` for profile + `['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth]` for PrioritySummaryCard data (L109-127). `enabled: Boolean(activeOutlet && monthLabel && currentWeek)`. `staleTime: 60_000`. `recommendation = recoData?.success && recoData.recommendations?.length > 0 ? recoData.recommendations[0] : null` (L128). `<PrioritySummaryCard recommendation={recommendation} />` at L249.
+- Read src/app/api/recommendations/route.ts (109 lines) — auto-compute prevWeek/prevMonth when not provided (FLOW-2 fix at L35-70): queries Week table, finds currentIdx, prefers same-week-in-prev-month else previous period. Catches Week-table-not-exist silently. Returns `{ success: true, recommendations }`.
+- Read src/lib/queries/outlets.ts:530-567 (RestoRecommendation interface — has `signalScores?: Array<{...}>`), L569-926 (queryRestoRecommendations). Confirmed 15 signalScores array at L902-918 with correct names matching PrioritySummaryCard's SIGNAL_GROUPS. Confirmed Signal 1 (Dev/BOM vs Peer) uses `networkAvgDevBom = currRows.reduce(...)` at L736-738 — network average is scoped to whatever `currRows` returns (filtered by area/PIC if `f` is set).
+- Read src/components/dashboard/RestoRecommendationCard.tsx (288 lines) — local `RestoRecommendation` interface at L12-48 does NOT declare `signalScores` field (type drift). Uses queryKey `['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic]` at L54. Passes `area`, `outletCode`, `pic` filters to API. Calls `setFocusOutlet(r.outletCode)` on row click (L174) — sets `activeTab='resto'` + `focusOutlet` (per useDashboard.ts L67-71).
+- Audited cache invalidation across all mutation sites: FilterBar (L143, L204 ✓), SettingsDialog (L139, L174, L217 ✓) invalidate `['recommendations']`. FileUploadDialog (L470-474 ✗), DataManagementDialog (L188-194 ✗), PicManagementDialog (L196-201 ✗), QuickSettings (L123-130 ✗) do NOT invalidate `['recommendations']`.
+- Verified `setFocusOutlet` implementation in useDashboard.ts L67-71 — `code ? { focusOutlet: code, activeTab: 'resto' } : { focusOutlet: null }`. Also `setArea`/`setOutlet`/`setPic` clear `focusOutlet` (L52-55) — good, prevents stale focus after filter change.
+- Verified PrioritySummaryCard threshold colors (L763-770) match RestoRecommendationCard (L142-147) — both use 55/30 cutoffs.
+- Verified Signal 1 dependency on filter scope: outlets.ts L768 `devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0` — `networkAvgDevBom` varies based on area/PIC filter applied to SQL `f` (L582). Confirmed divergence potential between two cards.
+- Verified PrioritySummaryCard handles missing `signalScores` gracefully (L889 `r.signalScores && r.signalScores.length > 0` guards the entire breakdown section). Handles missing signals/metrics fields via direct access after `!recommendation` early return — would throw if API returned partial object, but API always returns full object so not a runtime risk.
+
+Stage Summary:
+
+**7 findings** identified across data-flow, cache-invalidation, type-drift, and UX edge cases. NO critical bugs that break the happy path — click-through from RestoRecommendationCard → RestoAnalysis → PrioritySummaryCard works end-to-end. The issues are around (a) subtle data divergence when area/PIC filters are set, (b) stale cache after non-FilterBar mutations, and (c) silent failures with no user feedback.
+
+---
+
+### INT-1 — Signal 1 (Dev/BOM vs Peer) score diverges between two cards when area/PIC filter is set
+- **Severity**: HIGH
+- **File**: `src/components/dashboard/RestoAnalysis.tsx:113-119` (missing `area` + `pic` params) vs `src/components/dashboard/RestoRecommendationCard.tsx:62-64` (passes `area`, `outletCode`, `pic`)
+- **Description**: When user has an area or PIC filter set in FilterBar, RestoRecommendationCard fetches `/api/recommendations?area=JAKARTA&...` which computes `networkAvgDevBom` scoped to JAKARTA only (outlets.ts:736-738 reduces over `currRows` which is filtered by SQL `f`). When user then clicks a Top 5 row → RestoAnalysis fires a separate query WITHOUT the area filter (only `outletCode=focusOutlet`), so the same outlet's Signal 1 score is computed against the GLOBAL network average. Result: Priority Summary shows a HIGHER (or lower) priority score than the Top 5 card for the same outlet. Signal 1 weight is 12%, so divergence can reach ~12 points.
+- **Proposed fix**: In RestoAnalysis.tsx:113-119, also pass `area`, `pic` from `useDashboard()` to the recommendations query (matching RestoRecommendationCard.tsx:62-64). This keeps the network scope consistent between the two cards. Alternative: pass a `scope` param to the API to compute both area-scoped and global Signal 1 scores (richer comparison).
+- **Impact**: User-visible inconsistency. Score in Top 5 (e.g. 72) ≠ score in Priority Summary (e.g. 78) for the same outlet — confusing.
+
+---
+
+### INT-2 — 4 mutation sites miss `['recommendations']` cache invalidation
+- **Severity**: HIGH
+- **File**: 
+  - `src/components/filters/FileUploadDialog.tsx:470-474` (after file upload)
+  - `src/components/filters/DataManagementDialog.tsx:188-194` (after data delete/clear)
+  - `src/components/filters/PicManagementDialog.tsx:196-201` (after PIC reassign)
+  - `src/components/dashboard/QuickSettings.tsx:123-130` (after threshold save)
+- **Description**: These 4 dialogs invalidate `['analysis']`, `['outlet-items']`, `['item-history']`, `['peer-comparison']` but NOT `['recommendations']`. After any of these operations, both `RestoRecommendationCard` (Top 5 list) and `RestoAnalysis` `PrioritySummaryCard` show STALE priority scores until the user manually refetches (e.g. changes week filter back and forth). `FilterBar.ingest` (L143) and `FilterBar.import-drive` (L204) and `SettingsDialog` (L139, L174, L217) DO invalidate `['recommendations']` — these 4 dialogs were missed.
+- **Proposed fix**: Add `queryClient.invalidateQueries({ queryKey: ['recommendations'] });` to each of the 4 sites. Same one-liner as FilterBar L143.
+- **Impact**: Stale data — particularly insidious after FileUploadDialog uploads new period (new prevWeek becomes available for auto-compute → Signal 2/6/7 should change from 0 to non-zero, but cache hides this).
+
+---
+
+### INT-3 — Silent null when focused outlet has 0 records for the period
+- **Severity**: MEDIUM
+- **File**: `src/components/dashboard/PrioritySummaryCard.tsx:752` (`if (!recommendation) return null;`) triggered by `src/components/dashboard/RestoAnalysis.tsx:128` (`recommendation = ... ? ... : null`)
+- **Description**: When the focused outlet has no InventoryRecords for the selected month/week (e.g. new outlet not yet ingested, or wrong period selected), the recommendations API returns `{ success: true, recommendations: [] }` → `recommendation = null` → PrioritySummaryCard returns `null`. The Priority Summary card simply vanishes from the Resto Analysis tab. No "no data" message is shown. Resto Profile (sourced from /api/outlet-items) may also show zeros, compounding the confusion.
+- **Proposed fix**: Pass a `loading`/`empty` flag to PrioritySummaryCard and render a small "Tidak ada priority score untuk outlet ini pada periode terpilih." placeholder Card instead of returning null. Or: in RestoAnalysis, branch on `recoData?.success && recoData.recommendations?.length === 0` and render a placeholder.
+- **Impact**: User sees Resto Profile (with zeros) but no Priority Summary — ambiguous whether it's a loading state, error, or genuinely no data.
+
+---
+
+### INT-4 — Recommendations API errors swallowed silently in RestoAnalysis
+- **Severity**: LOW
+- **File**: `src/components/dashboard/RestoAnalysis.tsx:121-123` (`if (!ct.includes('application/json')) return { success: false, recommendations: [] };`) and L128 (no error branch for `recoData`)
+- **Description**: If the recommendations API throws a 500 (e.g. database error), `queryFn` catches and returns `{ success: false, recommendations: [] }` (when non-JSON) or returns the JSON error body. Either way `recommendation = null` (L128 only checks `recoData?.success`). The `useQuery` `error` field is never populated for non-JSON responses (because queryFn returns a value instead of throwing). So `error` UI at L176-189 only triggers for the `outlet-items` API, never for recommendations. User sees no Priority Summary with no error indicator.
+- **Proposed fix**: In RestoAnalysis queryFn, `throw new Error('Server error')` when content-type is not JSON (matching the outlet-items pattern at L98-101). Then check `recoError` separately and render a small inline warning above PrioritySummaryCard. Alternatively, surface via toast.
+- **Impact**: Silent failure. Same as INT-3 from user perspective, but root cause is API error vs no-data.
+
+---
+
+### INT-5 — Quick metrics grid fixed at 3 columns on mobile
+- **Severity**: LOW
+- **File**: `src/components/dashboard/PrioritySummaryCard.tsx:805` (`<div className="grid grid-cols-3 gap-3 text-center">`)
+- **Description**: The 3-column quick-metrics grid (Dev/BOM, Nominal, Items) does not collapse on narrow mobile screens. Values like `Rp 12.345.678` and percentages may wrap awkwardly or get truncated. Other grids in the same file use `grid-cols-2 sm:grid-cols-4` (RestoRecommendationCard.tsx:203) for responsive behavior.
+- **Proposed fix**: Change to `grid-cols-3 sm:grid-cols-3` (keep 3 cols but allow smaller font on mobile) OR `grid-cols-2 sm:grid-cols-3` to stack on very narrow screens. Or add `text-[10px]` on mobile via responsive class.
+- **Impact**: Visual only — no data loss, but mobile UX slightly degraded.
+
+---
+
+### INT-6 — Duplicate API call for same data (separate cache keys)
+- **Severity**: LOW
+- **File**: `src/components/dashboard/RestoAnalysis.tsx:111` (`queryKey: ['recommendations', 'single', activeOutlet, ...]`) vs `src/components/dashboard/RestoRecommendationCard.tsx:54` (`queryKey: ['recommendations', monthLabel, currentWeek, ...]`)
+- **Description**: When user clicks a Top 5 row, RestoRecommendationCard has already fetched the recommendation for that outlet (it's in its cache). RestoAnalysis then fires a NEW fetch with a different query key (`'single'` prefix vs the un-prefixed key), even though the response would be identical (modulo the INT-1 filter-scope divergence). This wastes 1 API call per click. With `staleTime: 60_000`, repeat clicks within 1 minute hit cache — but first click always double-fetches.
+- **Proposed fix**: Either (a) unify the query key to `['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic]` and have RestoAnalysis read the same cache (passing `outletCode=focusOutlet`); or (b) keep separate keys but accept the overhead (current behavior). Option (a) is cleaner but requires RestoAnalysis to pass `area`/`pic` filters (which it should do anyway per INT-1).
+- **Impact**: 1 extra ~50-200ms API call per click. Minor.
+
+---
+
+### INT-7 — Type drift: RestoRecommendationCard's local interface omits `signalScores`
+- **Severity**: LOW
+- **File**: `src/components/dashboard/RestoRecommendationCard.tsx:12-48` (missing `signalScores` field) vs `src/lib/queries/outlets.ts:530-567` (has `signalScores?: Array<{...}>`) and `src/components/dashboard/PrioritySummaryCard.tsx:30-66` (has `signalScores?: SignalScore[]`)
+- **Description**: Three `RestoRecommendation` interfaces exist in the codebase. The API returns `signalScores` (outlets.ts:902-918 always populates it). PrioritySummaryCard's local `Recommendation` interface declares it. But RestoRecommendationCard's local interface does NOT declare it. At runtime this is harmless (TypeScript doesn't enforce runtime shape), but if a future developer adds `r.signalScores.map(...)` in RestoRecommendationCard.tsx, TypeScript will error. This is the "FLOW-7 type drift" referenced in the worklog context.
+- **Proposed fix**: Either (a) import `RestoRecommendation` from `@/lib/queries/outlets` (single source of truth — recommended), or (b) add `signalScores?: Array<{ name: string; score: number; weight: number; value: string }>;` to RestoRecommendationCard's local interface. Option (a) is preferable — eliminates drift entirely.
+- **Impact**: Developer ergonomics only — no runtime impact today.
+
+---
+
+### Cross-cutting notes (not bugs, but worth flagging)
+
+- **Auto-compute prevWeek/prevMonth (FLOW-2 fix)** is correctly implemented (route.ts:35-70). Edge cases handled: only 1 period exists → `currentIdx === 0` → no prev → Signals 2/6/7 = 0 (26% weight unavailable). Week table missing → catch block silently skips. Behavior is correct and consistent with /api/analysis pattern.
+- **Cache invalidation in FilterBar + SettingsDialog** is correct (matches `['recommendations']` prefix used by both RestoRecommendationCard and RestoAnalysis `'single'` sub-key — react-query prefix matching catches both).
+- **"Derived state during render" pattern** at PrioritySummaryCard L720-723 is correctly conditional (`outletCode !== expandedOutlet`) — no infinite loop, no useEffect lint violation. Outlet change correctly resets expanded-set to defaults while preserving manual toggles within the same outlet across refetches.
+- **PrioritySummaryCard handles missing `signalScores` gracefully** (L889 guards the entire breakdown section, L736/L744 memoize empty structures when undefined). No runtime risk if API omits the field.
+- **Mobile rendering of charts** uses `ResponsiveContainer width="100%"` — works on mobile. The `hidden sm:block` on the value column (L983) is correct.
+- **Enabled flag** `Boolean(activeOutlet && monthLabel && currentWeek)` is identical to outlet-items query — parallel fetch works correctly.
+- **staleTime: 60_000** is reasonable for analytics dashboard — balances freshness with API load.
+
+### Recommended fix priority
+1. **INT-2** (HIGH, 4 one-liner fixes) — highest ROI, prevents stale-data confusion after common operations
+2. **INT-1** (HIGH, 2-line fix in RestoAnalysis) — eliminates user-visible score inconsistency when filters set
+3. **INT-3** (MEDIUM, small UI addition) — improves UX for edge cases (no data)
+4. **INT-7** (LOW, refactor) — eliminates type drift, prevents future TypeScript errors
+5. **INT-4, INT-5, INT-6** (LOW) — polish items, defer if time-constrained
+
+---
+Task ID: AUDIT-REACT
+Agent: React Performance & State Auditor
+Task: Audit state management, re-renders, memoization, hooks
+
+Work Log:
+- Read worklog tail (last 150 lines) for context — confirmed SIGNAL-CHARTS agent built PrioritySummaryCard.tsx (243 → 1025 lines) with 15-signal accordion + Recharts, derived-state-during-render pattern, no useEffect.
+- Read entire PrioritySummaryCard.tsx (lines 1-1025): imports, type defs, 5 constants (SIGNAL_GROUPS, SIGNAL_ICONS, CHART palette, TOOLTIP_STYLE, SIGNAL_EXPLANATIONS), priorityBadge helper, seededRand helper, 15 build*Data chart synthesizers, SignalChart switch component (15 cases + default), main PrioritySummaryCard component.
+- Cross-checked consumer RestoAnalysis.tsx:80-128 — confirmed `recommendation` derived inline from `recoData.recommendations[0]` (NOT memoized → new object identity every render). Confirmed activeOutlet/monthLabel/currentWeek drive the React Query key.
+- Read eslint.config.mjs — confirmed `react-hooks/exhaustive-deps: "off"`, `react-hooks/purity: "off"`, `react-compiler/react-compiler: "off"`. No React Compiler enabled (no babel-plugin-react-compiler in package.json devDeps).
+- Verified package.json: react ^19.0.0, recharts ^2.15.4, next ^16.1.1.
+- Grep for existing ErrorBoundary components in src/ → none found.
+- Grep for React.memo usage in src/components/dashboard/ → none found (no precedent in this codebase for memoizing chart subcomponents).
+- Grep for useEffect/useCallback/useRef in PrioritySummaryCard.tsx → only one match (a comment). Confirmed no effects, no manual cleanup needed.
+- Grep for aria-* / role attributes in PrioritySummaryCard.tsx → no matches. Confirmed accessibility gaps.
+- Grep for console/debugger → none. No console noise.
+- Verified file ends cleanly at line 1025 (no orphan code).
+- Analyzed against 14-point checklist (state, re-renders, memo, accordion, hooks rules, chart rendering, memory leaks, key props, seeded random, component size, prop drilling, error boundaries, a11y, console warnings).
+
+Stage Summary:
+
+**16 findings (1 HIGH, 5 MEDIUM, 6 LOW, 4 INFO).** Headline issues: stale accordion state across period changes (REACT-1), all-expanded-charts re-render on every toggle (REACT-2), no chart memoization (REACT-3), missing aria-expanded (REACT-5), no per-chart error boundary (REACT-6).
+
+### FINDINGS
+
+---
+
+**REACT-1 — HIGH**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:719-723
+**Description:** Accordion `expanded` state resets ONLY when `outletCode` changes, NOT when month/week changes. The reset condition `if (outletCode !== expandedOutlet)` misses the period-switch case. In RestoAnalysis.tsx, when user changes `monthLabel` or `currentWeek` for the SAME outlet, `recoData` refetches → new `recommendation` → new `signalScores` → `defaultExpanded` useMemo recomputes (line 706) — but `outletCode === expandedOutlet` so the reset on line 720 does NOT fire. Result: stale expanded Set persists across period switches. User who expanded signals A/B/C in week W1 sees A/B/C still expanded in week W2 even if those signals have completely different scores (or are no longer relevant). Manual toggles from a prior period leak into the new period.
+**Proposed fix:** Use a composite reset key. Option A (preferred): derive a stable version string from `recommendation` itself, e.g. `const recoVersion = outletCode + '::' + (signalScores?.map(s => s.name+s.score).join('|') ?? '');` and reset when `recoVersion !== expandedVersion`. Option B: have the parent pass an explicit `recommendationVersion` prop. Option C: hash `monthLabel + currentWeek` and pass through.
+
+---
+
+**REACT-2 — HIGH**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:421 (SignalChart def), 996 (<SignalChart> usage)
+**Description:** `SignalChart` is a plain function component — NOT wrapped in `React.memo`. When user clicks to toggle any signal, `setExpanded(new Set(...))` (line 726) triggers a re-render of PrioritySummaryCard. Since SignalChart is not memoized, ALL currently-expanded `<SignalChart>` instances re-render — not just the one the user clicked. Each re-rendering SignalChart re-runs its `buildXData(r)` synthesizer (some loop over N items, calling seededRand) and re-creates the entire Recharts element subtree, forcing Recharts to re-process. With 5 charts expanded, every toggle costs 5 chart re-renders + 5 synthesizer runs.
+**Proposed fix:** Wrap `SignalChart` in `React.memo`. CAVEAT: `r` (recommendation) is a new object identity on every parent render (RestoAnalysis.tsx:128 derives inline from recoData), so `React.memo(SignalChart)` alone would still re-render. Must pair with REACT-3 (memoize chart data inside SignalChart keyed on the specific `r.signals.*` / `r.metrics.*` fields the chart actually consumes — NOT the whole `r` object). Then React.memo will skip re-renders where the consumed fields haven't changed.
+
+---
+
+**REACT-3 — MEDIUM**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:202-391 (15 builders), 422-690 (called inline in SignalChart switch)
+**Description:** Chart data builders are pure functions but are invoked on every render of SignalChart with no memoization. Example waste: `buildZScoreData` (line 237) loops `abnormalCount + normalCount` times calling `seededRand` (Math.sin). `buildTolBreachHighData` (line 302) loops up to 12 times. `buildOverExplainedData` (line 330) loops up to 6 times with 2 seededRand calls each. These run on every parent state change (every toggle of any signal) for every expanded chart.
+**Proposed fix:** Inside SignalChart, wrap each `buildXData(r)` call in `useMemo` with deps on ONLY the specific fields the builder reads. Example for Z-Score:
+```tsx
+const data = useMemo(
+  () => buildZScoreData(r),
+  [r.signals.zScoreAbnormalCount, r.metrics.itemCount]
+);
+```
+For each of the 15 cases, list the consumed fields. This is the prerequisite that makes REACT-2's `React.memo` effective.
+
+---
+
+**REACT-4 — MEDIUM**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:706-714
+**Description:** `defaultExpanded` useMemo depends on `[signalScores]`. But `signalScores = recommendation?.signalScores` (line 703), and `recommendation` is a fresh object on every parent render (RestoAnalysis.tsx:128: `recoData?.success && recoData.recommendations?.length > 0 ? recoData.recommendations[0] : null` — derived inline, not memoized). So `signalScores` identity changes every render → `defaultExpanded` useMemo recomputes a fresh Set every render. The Set is only consumed when outlet changes (line 722), so most of these recomputations are pure waste.
+**Proposed fix:** Option A (preferred): memoize `defaultExpanded` on a stable string signature of signalScores, e.g.:
+```tsx
+const signalScoresKey = signalScores?.map(s => `${s.name}:${s.score}`).join('|') ?? '';
+const defaultExpanded = useMemo(() => {
+  const s = new Set<string>();
+  for (const sig of (signalScores ?? [])) if (sig.score > 50) s.add(sig.name);
+  return s;
+}, [signalScoresKey]);
+```
+Option B: lift memoization upstream — have RestoAnalysis memoize `recommendation` via `useMemo` keyed on `recoData`.
+
+---
+
+**REACT-5 — MEDIUM**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:892-899 (top toggle), 964-986 (signal row toggle)
+**Description:** Accordion toggle buttons lack `aria-expanded` and `aria-controls`. Screen reader users have no way to know whether a section is currently open or closed. The 15 signal-row buttons and the top "Breakdown 15 Sinyal" toggle are all `<button>` elements (keyboard-accessible ✓) but communicate no state to assistive tech.
+**Proposed fix:** Add to top toggle:
+```tsx
+<button
+  onClick={() => setShowBreakdown(!showBreakdown)}
+  aria-expanded={showBreakdown}
+  aria-controls="priority-breakdown-region"
+  ...
+>
+```
+And to each signal row button:
+```tsx
+<button
+  onClick={() => toggleExpand(s.name)}
+  aria-expanded={isExpanded}
+  aria-controls={`signal-region-${s.name.replace(/\s+/g, '-').toLowerCase()}`}
+  ...
+>
+```
+And add matching `id` attributes to the expandable regions (the `<div className="px-3 pb-3 pt-1">` at line 990 and the breakdown container at line 902).
+
+---
+
+**REACT-6 — MEDIUM**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:996
+**Description:** `<SignalChart name={s.name} r={r} />` is rendered without an error boundary. Chart data is synthesized from arbitrary `r.signals.*` / `r.metrics.*` values which can be NaN, Infinity, or undefined from upstream API edge cases. If a chart throws (Recharts internal error, division by zero in a synthesizer, malformed data shape), the error propagates up and unmounts the entire PrioritySummaryCard — header, score, badges, all 15 signals, the works. One bad signal kills the whole card.
+**Proposed fix:** Wrap each `<SignalChart>` in a per-chart ErrorBoundary:
+```tsx
+<ErrorBoundary fallback={<div className="h-[170px] grid place-items-center text-xs text-muted-foreground">Chart gagal dimuat</div>}>
+  <SignalChart name={s.name} r={r} />
+</ErrorBoundary>
+```
+No existing ErrorBoundary in the project — would need to create one in `src/components/ui/error-boundary.tsx` (class component implementing `componentDidCatch`). Wrap once, reuse across all charts.
+
+---
+
+**REACT-7 — MEDIUM**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:878-879
+**Description:** `{r.analysis.map((a, j) => <p key={j}>...)}` uses array index `j` as React key. If the analysis array reorders, inserts, or deletes items between renders, React's reconciliation may reuse DOM nodes with mismatched text content. Currently `r.analysis` is a server-rendered string array, so reorders are unlikely, but this is a fragile pattern that will silently break if the API ever changes ordering.
+**Proposed fix:** Use a content-derived key: `key={\`${j}-${a.slice(0, 20)}\`}`. Or ask the API to include a stable `id` per analysis bullet. At minimum, prefix the index to avoid collisions: `key={\`analysis-${j}\`}`.
+
+---
+
+**REACT-8 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:433, 511, 528, 550, 628, 644
+**Description:** `{data.map((d, i) => <Cell key={i} fill={d.fill} />)}` uses index as key for Recharts `<Cell>` components. For static-length data this is fine, but `buildTolBreachHighData` (line 302), `buildTolBreachData` (line 316), `buildOverExplainedData` (line 330), `buildHighLossData` (line 345) all return variable-length arrays based on `r.signals.*Count`. If count changes between renders, React may warn about missing/mismatched keys (Recharts is generally tolerant but not guaranteed).
+**Proposed fix:** Acceptable as-is for Recharts. If robustness is desired, use `key={d.name ?? i}` — most builders set `name` (e.g., `I1`, `I2`...). This ensures stable keys across length changes.
+
+---
+
+**REACT-9 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:191-194 (seededRand def), used at 246/253/310/324/334/335/353/386/387
+**Description:** `seededRand(seed) = Math.sin(seed * 9999 + 1234) * 10000 mod 1`. Seeds are loop indices (`i+1`, `i+100`, `i+7`, `i+50`). The seed does NOT include `outletCode`. So two outlets with the same `abnormalCount` produce pixel-identical Z-Score scatter plots. Same for tolerance-breach bars, over-explained bars, high-loss bars, no-tolerance rows. The SIGNAL-CHARTS agent's notes acknowledge the data is synthesized, but a user comparing two outlets side-by-side would see identical "random" data points — visually suspicious.
+**Proposed fix:** Hash outletCode into the seed:
+```tsx
+const outletSeed = outletCode.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7);
+const seededRand = (seed: number) => {
+  const x = Math.sin((seed + outletSeed) * 9999 + 1234) * 10000;
+  return x - Math.floor(x);
+};
+```
+Requires threading `outletCode` into SignalChart (pass as prop, or pass `r` which already contains `outletCode` and read inside builders). Acceptable to leave as-is given the "synthesized data" caveat.
+
+---
+
+**REACT-10 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx (entire file, 1025 lines)
+**Description:** Single file mixes: type defs (44 lines), 5 constants (~140 lines), priorityBadge + seededRand helpers (~30 lines), 15 chart data builders (~195 lines), SIGNAL_EXPLANATIONS map (~16 lines), SignalChart switch component (~275 lines), main PrioritySummaryCard (~332 lines). Hard to test (no exported sub-pieces), hard to navigate, hard to reuse (SignalChart can't be used elsewhere without copy-paste).
+**Proposed fix:** Extract to a folder `src/components/dashboard/priority-summary/`:
+- `types.ts` — SignalScore, Recommendation interfaces
+- `constants.ts` — SIGNAL_GROUPS, SIGNAL_ICONS, CHART palette, TOOLTIP_STYLE, SIGNAL_EXPLANATIONS
+- `helpers.ts` — priorityBadge, seededRand
+- `chartBuilders.ts` — 15 build*Data functions (pure, easy to unit test)
+- `SignalChart.tsx` — the switch component (after REACT-2/3 memoization)
+- `PrioritySummaryCard.tsx` (main, ~300 lines — just layout + accordion state)
+Reduces main file to a readable layout-only component; enables targeted unit tests on chart builders.
+
+---
+
+**REACT-11 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:973
+**Description:** `<span className={\`h-1.5 w-1.5 rounded-full ${badge.dot} shrink-0\`} />` — a 6px color dot whose meaning (CRITICAL/HIGH/LOW/NONE) is conveyed by color alone. For red-green colorblind users (deuteranopia ~5% of population), the red/amber/emerald distinction is unreliable. The adjacent priority badge text label (line 985: `{badge.label}` showing "CRITICAL"/"HIGH"/"LOW"/"NONE") does compensate, so this is mostly cosmetic redundancy rather than an accessibility blocker.
+**Proposed fix:** Acceptable as-is (badge text provides the accessible name). If polish is desired: vary shape per tier (circle for CRITICAL, triangle for HIGH, square for LOW) in addition to color — requires SVG icons instead of a CSS dot.
+
+---
+
+**REACT-12 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:898
+**Description:** Inline computation `{r.signalScores.filter(s => s.score > 0).length} aktif · {expanded.size} terbuka` runs `Array.filter` on every render. Cheap (15 items, microseconds), but unnecessary work on every parent re-render. Combined with the inline `groupSignals` filter (line 928), `groupContribution` reduce (line 933), `groupExpandedCount` filter (line 934), `contribution` and `badge` computations per row (lines 956-957) — small accumulations of waste.
+**Proposed fix:** Memoize active count once: `const activeCount = useMemo(() => (signalScores ?? []).filter(s => s.score > 0).length, [signalScores]);` and use `{activeCount} aktif · {expanded.size} terbuka`. Per-row `contribution` and `badge` are fine as inline (only computed for visible rows). Acceptable to leave as-is.
+
+---
+
+**REACT-13 — LOW**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx (all `<ResponsiveContainer>` instances, 15 occurrences)
+**Description:** When a chart is expanded for the first time, ResponsiveContainer mounts with width=0 (its parent's width isn't measured yet), then ResizeObserver fires on next tick with actual width → ResponsiveContainer re-renders the chart with proper dimensions. This causes a brief blank flash on first expand. Not a console warning, just a UX nit. No Recharts deprecation warnings observed in code paths.
+**Proposed fix:** Optional: pass `debounce={50}` to ResponsiveContainer to coalesce resize measurements and reduce flicker:
+```tsx
+<ResponsiveContainer width="100%" height={170} debounce={50}>
+```
+Leave as-is if the flash is acceptable (it's <100ms typically).
+
+---
+
+**REACT-14 — INFO**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:718-723
+**Description:** "Derived state during render" pattern is CORRECTLY implemented. The pattern is officially endorsed by React 19 docs (https://react.dev/reference/react/useState#storing-information-from-previous-renders). Calling `setExpandedOutlet(outletCode)` + `setExpanded(defaultExpanded)` during render inside a conditional is the recommended way to reset state on prop change — it avoids the deprecated `useEffect + setState` anti-pattern (which causes an extra render and can flash stale state). The SIGNAL-CHARTS agent's comment that this "avoids lint rule react-hooks/set-state-in-effect" is accurate in spirit. (Note: the project's eslint.config.mjs:20 disables `react-hooks/exhaustive-deps` and `react-compiler/react-compiler`, so the rule would not have fired anyway — but the pattern choice is still correct independent of lint config.)
+**Proposed fix:** None — keep the pattern. (But fix the reset CONDITION per REACT-1.)
+
+---
+
+**REACT-15 — INFO**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx:698, 706, 718, 719, 735, 744
+**Description:** All 6 hooks (`useState` ×3, `useMemo` ×3) are called UNCONDITIONALLY before the `if (!recommendation) return null` early return at line 752. No conditional hook calls, no hooks in loops, no missing dependency arrays. Rules of Hooks fully satisfied. The SIGNAL-CHARTS agent correctly noted moving `topContributors` and `signalByName` useMemos BEFORE the early return (line 734 + 743 comments) — this was necessary to avoid rules-of-hooks violations.
+**Proposed fix:** None.
+
+---
+
+**REACT-16 — INFO**
+**File:** src/components/dashboard/PrioritySummaryCard.tsx (entire file)
+**Description:** No memory leaks detected. No `addEventListener`, `setInterval`, `setTimeout`, manual ResizeObserver construction, or chart-instance retention in the component. Recharts internally manages ResizeObserver cleanup on unmount. Charts mount only when expanded (`{isExpanded && <SignalChart .../>}` at line 989) and unmount cleanly when collapsed — no hidden-but-mounted charts leaking memory or observers. The agent's choice to avoid Radix Collapsible (which mounts content in DOM hidden via CSS) was correct for the lazy-render performance requirement.
+**Proposed fix:** None.
+
+---
+
+### Summary Table
+
+| ID | Severity | File:Line | Issue |
+|----|----------|-----------|-------|
+| REACT-1 | HIGH | :719-723 | `expanded` not reset when month/week changes (only on outlet switch) |
+| REACT-2 | HIGH | :421, :996 | SignalChart not memoized → all expanded charts re-render on every toggle |
+| REACT-3 | MEDIUM | :202-391, :422-690 | Chart data builders run on every render (no useMemo) |
+| REACT-4 | MEDIUM | :706-714 | `defaultExpanded` recomputed every render (signalScores identity unstable) |
+| REACT-5 | MEDIUM | :892, :964 | Missing `aria-expanded` + `aria-controls` on accordion buttons |
+| REACT-6 | MEDIUM | :996 | No error boundary around charts — one bad signal crashes whole card |
+| REACT-7 | MEDIUM | :878 | Index-based React key (`key={j}`) for analysis bullets |
+| REACT-8 | LOW | :433,511,528,550,628,644 | Index-based keys for Recharts `<Cell>` |
+| REACT-9 | LOW | :191 | seededRand seed excludes outletCode → identical charts across outlets |
+| REACT-10 | LOW | (file) | 1025-line single file — extract SignalChart + builders + constants |
+| REACT-11 | LOW | :973 | Status dot color-only (compensated by badge text) |
+| REACT-12 | LOW | :898 | Inline `filter().length` runs every render |
+| REACT-13 | LOW | (ResponsiveContainer ×15) | First-paint width=0 flash (no debounce prop) |
+| REACT-14 | INFO | :718-723 | Derived-state-during-render pattern correctly implemented |
+| REACT-15 | INFO | :698-752 | All hooks unconditional before early return — Rules of Hooks satisfied |
+| REACT-16 | INFO | (file) | No memory leaks — charts mount/unmount cleanly |
+
+### Recommended Next Actions (priority order)
+
+1. **Fix REACT-1** (stale state across period switches) — composite reset key. ~10 lines.
+2. **Fix REACT-2 + REACT-3 together** (memoize SignalChart + memoize chart data inside it) — biggest perf win. ~30 lines.
+3. **Fix REACT-6** (per-chart error boundary) — defensive. Create ErrorBoundary component once, wrap all 15 charts. ~25 lines.
+4. **Fix REACT-5** (aria-expanded + aria-controls) — a11y compliance. ~15 lines.
+5. **Fix REACT-4** (stable defaultExpanded memo) — small perf polish. ~5 lines.
+6. **Fix REACT-7** (analysis bullet keys) — robustness. ~1 line.
+7. **Defer REACT-10** (file split) — refactor when adding tests or new chart types.
+8. **Defer REACT-8/9/11/12/13** — acceptable as-is, optional polish.
+
+
+---
+Task ID: AUDIT-FORECAST
+Agent: Trend Projection & Pattern Detection Auditor
+Task: Deep audit of forecast.ts + patternEngine.ts + integration in /api/analysis route
+
+Work Log:
+- Read worklog tail (last 150 lines) for context — confirmed ANALYZE-BACKEND-2 added both features (forecast.ts 208 lines, patternEngine.ts 289 lines) and SIGNAL-CHARTS rebuilt PrioritySummaryCard frontend.
+- Read full forecast.ts (src/lib/metrics/forecast.ts:1-280) — verified OLS linear regression formula, R² computation, confidence classification, trend direction, warning builder, output shape.
+- Read full patternEngine.ts (src/engine/analysis/patternEngine.ts:1-433) — verified 4 detectors (SYSTEMIC_ITEM, ISOLATED_OUTLET, AREA_LEVEL, NETWORK_WIDE), thresholds, severity tiers, Indonesian recommendations, output shape.
+- Read barrel exports: src/lib/metrics/index.ts:71-76 (projectTrend, TrendProjection, WeeklyTrendInput) ✓; src/engine/analysis/index.ts:19-26 (detectPatterns + 4 interfaces) ✓.
+- Audited integration src/app/api/analysis/route.ts:715-773 — verified zero additional DB queries, both functions called on already-fetched data (trendAggRows, outletHealthRanking, itemConsistencyAnalysis.items, areaAnalysis). Both results added to response object at lines 809-810.
+- Verified math by replicating forecast.ts algorithm in standalone Node script (/tmp/forecast_test.mjs):
+  * [10,15,20,25] → slope=5 ✓, intercept=10 (spec said 5 — spec is wrong; code correct), R²=1.0 ✓, projection at x=4 → 30 ✓
+  * [25,20,15,10] → slope=-5, intercept=25, R²=1.0, projection=5 ✓
+  * [15,15,15,15] (all same) → slope=0, intercept=15, R²=1.0 (special case yDenom=0) ✓
+  * [-10,-15,-20,-25] (LOSS, growing) → ABS gives [10,15,20,25] → slope=+5 (DETERIORATING) ✓
+  * n=2 → succeeds with R²=1.0 (2 points always perfectly linear) ✓
+  * n=1 → returns null (MIN_DATA_POINTS guard) ✓
+- Demonstrated the sort bug with a second script (/tmp/forecast_unsorted_test.mjs): trendAggRows returns rows ordered by alphabetic Indonesian monthLabel, not chronologically. For data chronologically [10,15,20,25] but DB-ordered [15,10,25,20], the regression gives slope=3 (wrong, should be 5), R²=0.36 (wrong, should be 1.0), projection=25 (wrong, should be 30), confidence=LOW (wrong, should be HIGH).
+- Verified frontend consumption: grep for `trendProjection` and `PatternDetection` across src/components/dashboard/*.tsx → 0 hits. The frontend AnalysisData type (src/hooks/useAnalysis.ts:78-118) does NOT include `trendProjection` or `patterns` fields. Both API response fields are dead data.
+- Verified type safety: zero `as any` casts in forecast.ts and patternEngine.ts (the 2 existing casts in route.ts at lines 290, 615 are pre-existing, unrelated to this feature).
+- Verified zero imports in both new files — pure leaf modules, no circular imports possible.
+- Verified TS compile (`npx tsc --noEmit`) and lint (`bun run lint`) both exit 0 clean.
+- Sign convention audit: forecast.ts uses Math.abs() on nominalDeviasi/devBom internally (lines 220, 231, 242) ✓; patternEngine.ts uses Math.abs() on avgDevBom in computeNetworkAvgDevBom (lines 169, 176, 182, 187) and in detectAreaLevel (line 333) ✓.
+
+Stage Summary:
+
+10 findings (1 HIGH, 3 MEDIUM, 6 LOW). No critical math errors — OLS regression, R², confidence bands, trend direction all verified correct. The most serious issue is a **sort bug in the integration** that silently corrupts forecast output whenever monthLabels are in Indonesian (which they always are on this platform).
+
+---
+
+### HIGH Severity
+
+**FORECAST-1** — `trendProjection` integration does NOT sort trendAggRows chronologically
+- **File:** `src/app/api/analysis/route.ts:723-730`
+- **Severity:** HIGH
+- **Description:** All other consumers of `trendAggRows` (the `trend` array at line 576-588, `multiPeriodComparison` at 591-613, `netCostTrend` at 618-631) explicitly sort rows by `sortKey = ${monthKey}|${weekNumPadded}` BEFORE consuming them, because the SQL query `queryTrendAgg` (src/lib/queries/dashboard.ts:94) orders by `pa."monthLabel", pa."weekLabel"` ALPHABETICALLY. Indonesian month names sort non-chronologically: `AGUSTUS < APRIL < DESEMBER < FEBRUARI < JANUARI < JULI < JUNI < MARET < MEI < NOVEMBER < OKTOBER < SEPTEMBER`. The trendProjection mapping at line 723-730 skips this sort, so `x = 0,1,2,…,n-1` is assigned to weeks in alphabetic-Indonesian order, not chronological order. The regression then fits a line through scrambled points, producing wrong slope, wrong R², wrong confidence, wrong projection, wrong trend direction.
+- **Demonstrated impact:** For chronological data [10,15,20,25] (slope=5, R²=1.0, projection=30, HIGH confidence), if DB returns rows in alphabetic-Indonesian order [15,10,25,20], the code yields slope=3, R²=0.36, projection=25, LOW confidence. The warning ("deviasi bisa mencapai 20% lebih besar") would not fire even though the trend is genuinely deteriorating.
+- **Proposed fix:** Apply the same `sortKey` sort pattern used by the other 3 consumers before passing to `projectTrend`:
+  ```ts
+  const trendProjection = projectTrend(
+    trendAggRows
+      .map((r) => {
+        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+        return {
+          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+          weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+          nominalDeviasi: r.nominal,
+          devBom: r.devBom,
+          sales: r.sales,
+        };
+      })
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(({ sortKey, ...rest }) => rest),
+  );
+  ```
+
+---
+
+### MEDIUM Severity
+
+**FORECAST-2** — `AnalysisData` type name collision
+- **File:** `src/engine/analysis/patternEngine.ts:91` (defines `AnalysisData`) vs `src/hooks/useAnalysis.ts:78` (defines a different `AnalysisData`)
+- **Severity:** MEDIUM
+- **Description:** Two completely different types share the name `AnalysisData`. patternEngine's is the input shape for `detectPatterns` (outletHealthRanking/itemConsistency/areaAnalysis/totalOutlets/networkAvgDevBom). The frontend's is the full /api/analysis response (executiveSummary/growthComparison/topItems/etc.). The barrel `src/engine/analysis/index.ts:21` exports patternEngine's AnalysisData. If a frontend file accidentally imports `AnalysisData` from `@/engine/analysis` instead of `@/hooks/useAnalysis`, TypeScript will silently accept the wrong shape. Not currently broken, but a maintenance hazard.
+- **Proposed fix:** Rename patternEngine's type to `PatternAnalysisInput` (or `PatternEngineData`) to disambiguate. Update the barrel export and the one call site in route.ts:744.
+
+**FORECAST-3** — `trendProjection` + `patterns` are dead data (no frontend consumer)
+- **File:** `src/app/api/analysis/route.ts:809-810` (response fields), `src/hooks/useAnalysis.ts:78-118` (AnalysisData type omits them)
+- **Severity:** MEDIUM
+- **Description:** Grep across `src/components/**/*.tsx` for `trendProjection` and `PatternDetection` → 0 hits. The frontend `AnalysisData` interface does not declare either field, so even if a component tried to read `data.trendProjection`, TypeScript would reject it. The PrioritySummaryCard rebuild (SIGNAL-CHARTS, worklog line 10830-10831) synthesizes trend projection chart data LOCALLY using hard-coded ratios (`buildDeviasiGrowthData` uses 1.18×, `buildTrendMemburukData` uses 1.25×) rather than consuming the real API field. Every /api/analysis response carries ~500 bytes of `trendProjection` + `patterns` JSON that no client reads.
+- **Proposed fix:** Either (a) add `trendProjection?: TrendProjection | null` and `patterns?: PatternDetection[]` to `src/hooks/useAnalysis.ts:AnalysisData`, then wire them into PrioritySummaryCard's `buildDeviasiGrowthData` / `buildTrendMemburukData` to replace the synthesized ratios; OR (b) drop the fields from the response until a consumer is built (YAGNI). Recommend (a) since the backend work is done and the synthesized ratios are misleading.
+
+**FORECAST-4** — `networkAvgDevBom` inconsistency between API display and pattern detection
+- **File:** `src/app/api/analysis/route.ts:744-773` (does not pass `networkAvgDevBom`); `src/engine/analysis/patternEngine.ts:167-188` (computes from areaAnalysis)
+- **Severity:** MEDIUM
+- **Description:** The route has `execSummary.deviationToBom` available (the network-wide deviation ratio shown in the UI) but does NOT pass it as `data.networkAvgDevBom` to `detectPatterns`. Instead, `computeNetworkAvgDevBom` derives it as the outletCount-weighted mean of `areaAnalysis[].avgDevBom`. These can differ:
+  - `execSummary.deviationToBom` = `SUM(|qtyDeviasi|) / SUM(|qtyBom|)` — overall volume-weighted across the whole network.
+  - `computeNetworkAvgDevBom` = `Σ(area|avgDevBom| × outletCount) / Σ(outletCount)` — mean of per-area means.
+  
+  Example: area A (1 outlet, devBom=50%) + area B (100 outlets, devBom=5%). `execSummary` ≈ 5.45%, `computeNetworkAvgDevBom` ≈ 5.45% (coincidentally close here). But for skewed distributions they diverge. The NETWORK_WIDE pattern may fire at >10% while the UI shows <10%, or vice versa.
+- **Proposed fix:** Pass `networkAvgDevBom: execSummary.deviationToBom` in the `detectPatterns({...})` call at route.ts:744. The patternEngine already supports this override (line 168).
+
+---
+
+### LOW Severity
+
+**FORECAST-5** — Severity boundary uses `>=` instead of spec's `>`
+- **Files:** `src/engine/analysis/patternEngine.ts:202-211` (`severityFromRatio`, `severityFromFactor`); `:372` (NETWORK_WIDE inline check)
+- **Severity:** LOW
+- **Description:** Spec says "CRITICAL if > 0.5" / "> 0.7" / "> 2.0×" / "> 20%" (strictly greater). Code uses `>=` for the CRITICAL tier:
+  - SYSTEMIC_ITEM: `ratio >= 0.5` → CRITICAL (line 246 via `severityFromRatio`)
+  - ISOLATED_OUTLET: `ratio >= 0.7` → CRITICAL (line 302)
+  - AREA_LEVEL: `factor >= 2.0` → CRITICAL (line 344)
+  - NETWORK_WIDE: `networkAvgDevBom >= 0.20` → CRITICAL (line 372)
+  
+  At the exact boundary value (e.g., ratio = exactly 0.50), code reports CRITICAL where spec says WARNING.
+- **Proposed fix:** Change `>=` to `>` in `severityFromRatio`, `severityFromFactor`, and the NETWORK_WIDE inline check. (Or update the spec to match `>=` — the boundary choice is arbitrary, but the code+spec should agree.)
+
+**FORECAST-6** — Dead defensive code in `detectPatterns` entry
+- **File:** `src/engine/analysis/patternEngine.ts:420`
+- **Severity:** LOW
+- **Description:** `if (!data || (Array.isArray(data) && data.length === 0)) return [];` — `data` is typed `AnalysisData` (object), so `Array.isArray(data)` is always false. The array-length check is unreachable. Only the `!data` null/undefined guard is effective.
+- **Proposed fix:** Simplify to `if (!data) return [];`. Cosmetic.
+
+**FORECAST-7** — `devBomFit` fallback is unreachable dead code
+- **File:** `src/lib/metrics/forecast.ts:233-239`
+- **Severity:** LOW
+- **Description:** The fallback `devBomFit ? ... : Math.abs(clean[n - 1].devBom)` cannot trigger. `devBomFit` uses the same `x = 0,1,…,n-1` as `nominalFit` (lines 229-232 vs 219-222). The regression's `denom = n*Σx² − (Σx)²` depends only on x and n. If `nominalFit` succeeded (denom ≠ 0), `devBomFit` must also succeed since denom is identical. The only way `devBomFit` could return null is if `n < MIN_DATA_POINTS` — but that's already guarded at line 216 before either fit runs.
+- **Proposed fix:** Either remove the ternary (just use `devBomFit.intercept + devBomFit.slope * n`), or add a comment explaining it's belt-and-suspenders defense against future code changes.
+
+**FORECAST-8** — Audit checklist's math claim is wrong (not a code bug)
+- **File:** N/A (audit checklist)
+- **Severity:** LOW (informational)
+- **Description:** The audit spec states "weekly data: [10, 15, 20, 25] — slope should be 5, intercept 5, projection 30". The correct OLS intercept for these points is **10**, not 5 (since y(0) = a + b·0 = a = 10). The code at forecast.ts:126 computes `intercept = (Σy − b·Σx) / n = (70 − 5·6) / 4 = 10` — correct. The projection `a + b·n = 10 + 5·4 = 30` is correct. The spec's "intercept = 5" claim is mathematically impossible for these data points.
+- **Proposed fix:** None — code is correct. Noting for the record so future auditors don't flag this as a bug.
+
+**FORECAST-9** — `formatNominal` duplicates `fmtIDR` logic
+- **File:** `src/engine/analysis/patternEngine.ts:396-403`
+- **Severity:** LOW
+- **Description:** `formatNominal` reimplements Indonesian abbreviated formatting (Jt/M/Rb) already provided by `src/lib/format.ts fmtIDR`. The inline comment justifies the duplication ("without the `Rp ` prefix so descriptions stay readable in narrative form") but `fmtIDR` could be parameterized with `{ prefix: '' }` to serve both use cases.
+- **Proposed fix:** Optional refactor — extend `fmtIDR` with an options arg, or extract a shared `formatNominalAbbrev` helper into `src/lib/format.ts`. Low priority.
+
+**FORECAST-10** — AREA_LEVEL detector does not filter 1-outlet areas
+- **File:** `src/engine/analysis/patternEngine.ts:331-339`
+- **Severity:** LOW
+- **Description:** A 1-outlet "area" has `avgDevBom = theOutlet.devBom`. If that single outlet has high deviation, the area is flagged as AREA_LEVEL pattern, even though the underlying issue is isolated to one outlet (which `detectIsolatedOutlets` should already catch). This produces duplicate flags for the same underlying problem.
+- **Proposed fix:** Add `a.outletCount >= 2` guard to the area filter (line 331), e.g. `.filter((a) => a.outletCount >= 2)` before the `.map(...)`. Or apply the filter inside the `.map` chain at line 337. Minor — only affects datasets with thin area splits.
+
+---
+
+### Verified CORRECT (no action needed)
+
+- **OLS formula** (forecast.ts:125-126): `b = (n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)`, `a = (Σy − b·Σx) / n` ✓
+- **R² formula** (forecast.ts:133): `(n·Σxy − Σx·Σy)² / ((n·Σx² − (Σx)²)·(n·Σy² − (Σy)²))` ✓
+- **Edge case: n < 2** → returns null (line 216) ✓
+- **Edge case: all y equal** → yDenom=0 → R²=1 (line 133 special case) ✓
+- **Edge case: negative (LOSS)** → Math.abs() applied at lines 220, 231, 242 ✓
+- **Edge case: division by zero in slope** → denom check at line 123 returns null ✓ (though unreachable since x=0..n-1 is always distinct when n≥2)
+- **Confidence thresholds** (forecast.ts:148-152): HIGH if n≥4 & R²>0.7, MEDIUM if n≥3 & R²>0.4, else LOW ✓
+- **Trend direction** (forecast.ts:162-166): b>0.1→DETERIORATING, b<−0.1→IMPROVING, else STABLE ✓
+- **Warning trigger** (forecast.ts:175-188): only when DETERIORATING AND ratio > 1.2 ✓
+- **Sign convention** in patternEngine: Math.abs() applied to avgDevBom in computeNetworkAvgDevBom (lines 169, 176, 182, 187) and detectAreaLevel (line 333) ✓
+- **Edge case: totalOutlets=0** → detectSystemicItems returns [] (line 230) ✓
+- **Edge case: totalItems=0** → ratio=0, filtered out by >0.50 threshold (line 293) AND by ≥5 min-items guard (line 292) ✓
+- **Edge case: networkAvg=0** → detectAreaLevel returns [] (line 329: `networkAvgDevBom <= 0`); detectNetworkWide returns [] (line 369: `<= NETWORK_WIDE_THRESHOLD`) ✓
+- **Edge case: trendAggRows empty** → clean=[], n=0 < 2 → projectTrend returns null ✓
+- **Edge case: outletHealthRanking empty** → detectIsolatedOutlets returns [] (line 278); detectSystemicItems: totalOutlets=0 → [] (line 230); detectAreaLevel falls through to outlet-devBom fallback in computeNetworkAvgDevBom (line 185-187) ✓
+- **Edge case: itemConsistency empty** → detectSystemicItems returns [] (line 230) ✓
+- **Edge case: areaAnalysis empty** → detectAreaLevel returns [] (line 329); computeNetworkAvgDevBom falls back to outlet mean (line 185-187) ✓
+- **Type safety**: zero `as any` casts in forecast.ts or patternEngine.ts ✓
+- **Barrel exports**: forecast.ts in `src/lib/metrics/index.ts:71-76` ✓; patternEngine.ts in `src/engine/analysis/index.ts:19-26` ✓
+- **Circular imports**: NONE — both files have zero imports ✓
+- **Performance**: O(n) regression, O(items+outlets+areas) pattern detection — no N² issues ✓
+- **Indonesian recommendations**: grammatically correct, consistent with platform's bilingual style (Indonesian narrative + English technical terms like "recipe/supplier/price", "BOM master", "SOP") ✓
+- **TypeScript compile**: `npx tsc --noEmit` exits 0 ✓
+- **ESLint**: `bun run lint` exits 0 ✓
+
+---
+
+### Recommended next actions (priority order)
+
+1. **Fix FORECAST-1** (sort bug) — HIGH priority, blocks forecast correctness on Indonesian-month datasets. ~10 lines in route.ts.
+2. **Fix FORECAST-3** (wire frontend) — MEDIUM priority, unblocks the dead backend work. Add 2 fields to `useAnalysis.ts:AnalysisData`, then replace synthesized ratios in `PrioritySummaryCard.tsx:buildDeviasiGrowthData/buildTrendMemburukData` with real `data.trendProjection.projectedNominalDeviasi`. ~20 lines.
+3. **Fix FORECAST-4** (networkAvgDevBom override) — MEDIUM priority, 1 line in route.ts: `networkAvgDevBom: execSummary.deviationToBom`.
+4. **Fix FORECAST-2** (rename type) — MEDIUM priority, ~5 lines across 3 files. Purely defensive.
+5. **Fix FORECAST-5** (`>=` → `>`) — LOW priority, ~3 lines. Spec/code alignment.
+6. **Defer FORECAST-6/7/8/9/10** — acceptable as-is, optional polish.
+
+---
+Task ID: AUDIT-CHARTS
+Agent: Signal Charts Auditor
+Task: Deep audit of interactive 15-signal breakdown — chart data, accordion, grouping
+
+Work Log:
+- Read worklog tail (last 150 lines) for context — confirmed SIGNAL-CHARTS rebuild (243 → 1025 lines) and ANALYZE-BACKEND-2 trend/pattern additions.
+- Read entire `src/components/dashboard/PrioritySummaryCard.tsx` (1025 lines, 4 chunks).
+- Cross-referenced SIGNAL_GROUPS + SIGNAL_ICONS + SignalChart switch arms against the 15 signal names in `src/lib/queries/outlets.ts:902-917` — all 15 match exactly (no missing/misspelled/duplicate).
+- Cross-referenced priorityScore computation in `src/lib/queries/outlets.ts:835-840` (single `Math.round` at end with UNROUNDED s_iScore × weight) vs PrioritySummaryCard's per-row contribution (`Math.round(Math.round(s_iScore) × weight)` — double rounding).
+- Wrote Node script to verify rounding hypothesis — confirmed systematic ±1 to ±3 discrepancy between `r.priorityScore` and Σ(card contributions) in realistic scenarios (e.g. all 49.5 → priorityScore=50 but card sum=53; mixed scores → priorityScore=41 but card sum=43).
+- Verified `npx tsc --noEmit` exits 0 and `bun run lint` exits 0 (no compiler/lint regressions introduced by audit read).
+- Inspected each of the 15 chart synthesizers (build*Data functions, lines 202-391) and each SignalChart case (lines 421-691) for data correctness, edge cases, and misleading visualizations.
+- Inspected accordion state management (lines 698-732) — derived-state-during-render pattern is correctly conditional, no infinite loop, resets on outlet change.
+- Inspected priorityBadge helper (lines 163-184) — thresholds match spec.
+- Inspected chart palette (lines 136-146) — only red/amber/emerald/zinc, no blue/indigo.
+- Inspected Top Contributors + group accordion + signal rows rendering (lines 901-1010) for key warnings, mobile responsive, dark mode.
+- Inspected `src/lib/format.ts` fmtIDR/fmtPctAbs — both null-safe and Infinity-safe.
+
+Stage Summary:
+
+Audit of the new interactive 15-signal breakdown surfaced **19 findings** — 2 HIGH, 6 MEDIUM, 11 LOW. The component compiles and lints clean, and structurally the accordion + grouping + lazy chart rendering are sound. The HIGH-severity issues are about **trust**: charts that fabricate breaches when none exist, and a total that doesn't add up to its parts.
+
+---
+
+## HIGH Severity
+
+### CHART-1 · Synthesized bars show fake "breaches" when count = 0
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:306, 320, 331, 349`
+**Description:** Four synthesizers use `Math.min(Math.max(count, N), M)` to force a minimum of 3 (or 1) bars even when the underlying signal count is 0:
+- `buildTolBreachHighData` (line 306): `visible = Math.min(Math.max(count, 3), 12)` — if `toleranceBreachHighCount === 0`, renders 3 fake items above the 2× tolerance line.
+- `buildTolBreachData` (line 320): same pattern, 3 fake items above tolerance line.
+- `buildOverExplainedData` (line 331): `count = Math.min(Math.max(r.signals.overExplainedCount, 1), 6)` — renders 1 fake over-explained item when count = 0.
+- `buildHighLossData` (line 349): `visible = Math.min(Math.max(count, 3), 8)` — renders 3 fake high-loss items above the Rp 10jt line.
+
+**Impact:** A signal that legitimately has 0 breaches (the outlet is OK on that dimension) shows a chart that LOOKS like 3 items breaching. This directly misleads the user — the entire point of the breakdown is to show WHY the outlet is priority, and showing fabricated breaches destroys trust. The `No Tolerance` chart (line 651-658) correctly handles this with a "Semua item punya toleransi. ✓" empty state — the other four should follow the same pattern.
+
+**Proposed fix:** At the top of each of the 4 affected SignalChart cases, add:
+```tsx
+if (r.signals.toleranceBreachHighCount === 0) {
+  return <div className="flex items-center justify-center h-[170px] text-xs text-emerald-600 dark:text-emerald-400">Tidak ada item breach 2× toleransi. ✓</div>;
+}
+```
+Then use `visible = Math.min(count, 12)` (no lower bound). Same pattern for the other three.
+
+---
+
+### CHART-2 · Total Priority Score does not equal sum of displayed contributions
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:738, 933, 956, 1015`
+**Description:** Two different rounding paths produce different totals:
+- `src/lib/queries/outlets.ts:835-840` computes `priorityScore = Math.round(s1Score*0.12 + s2Score*0.10 + ... + s15Score*0.01)` — unrounded scores × weights, summed, rounded ONCE.
+- PrioritySummaryCard computes each row's contribution as `Math.round(s.score * s.weight)` where `s.score` is ALREADY rounded (`Math.round(s1Score)` per `outlets.ts:903`). Double rounding + per-row rounding introduces ±1 to ±3 error.
+
+Verified with Node simulation:
+| Scenario | priorityScore | Σ card contributions | Diff |
+|---|---|---|---|
+| all s_iScore = 49.5 | 50 | 53 | **−3** |
+| all s_iScore = 2.5 | 3 | 0 | **+3** |
+| mixed (80,60,50,...) | 41 | 43 | **−2** |
+| all s_iScore = 10 | 10 | 11 | **−1** |
+
+**Impact:** The "Total Priority Score = X" line at the bottom (line 1015) shows `r.priorityScore` (e.g. 50), but the sum of group contributions shown above (lines 933 + 956) adds up to a different number (e.g. 53). Top Contributors (line 916) shows "+N" contributions that don't reconcile with the total either. Auditors/managers cross-checking the math will see the discrepancy and lose trust in the entire priority engine.
+
+**Proposed fix (pick one):**
+1. **Display-side fix (recommended, minimal):** Compute the displayed total from the sum of contributions, not from `r.priorityScore`:
+   ```tsx
+   const displayedTotal = useMemo(() => signalScores?.reduce((sum, s) => sum + Math.round(s.score * s.weight), 0) ?? 0, [signalScores]);
+   // ...
+   <span>= {displayedTotal}</span> <span className="text-[10px]">Σ (score × weight, rounded per signal)</span>
+   ```
+2. **Source-side fix:** Have `outlets.ts` expose `priorityScore` computed as `Σ Math.round(s_iScore * weight_i)` to match the per-row display. Riskier — changes API contract.
+
+---
+
+## MEDIUM Severity
+
+### CHART-3 · "Dev/BOM vs Peer" — Peer Best value is incorrectly computed
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:207`
+**Description:** `Peer Best = Math.max(0.3, ratio * 0.4)`. The Peer Best value should be INDEPENDENT of the outlet's own ratio — it represents the lowest-deviation peer in the cohort. Currently it scales with the outlet's ratio: if outlet ratio = 2.0, Peer Best = 0.8; if outlet ratio = 0.5, Peer Best = 0.3 (clamped). This couples the peer's best value to the outlet's performance, which is conceptually wrong.
+**Proposed fix:** Use a fixed multiplier of the peer average (e.g. 0.4× of peer avg = 0.4 in ratio terms), or better, source the actual peer best value from the API (the analysis route already has `outletHealthRanking` which contains per-outlet devBom).
+```tsx
+{ name: 'Peer Best', value: 0.4, fill: CHART.zincLight }, // 0.4× peer avg = best peer
+```
+Or thread `peerBestDevBomRatio` through the recommendation payload.
+
+---
+
+### CHART-4 · "Loss/Sales" chart doesn't effectively show the ratio
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:269-276, 501-515`
+**Description:** Two side-by-side bars (Sales emerald, Loss red) on a shared IDR-formatted Y-axis. In typical outlets, sales ≫ loss (e.g. sales 100jt, loss 5jt), so the loss bar is ~5% the height of the sales bar — nearly invisible. The chart is labeled "Loss/Sales" (a ratio) but doesn't visualize the ratio; it visualizes two unrelated magnitudes. The signal value is `lossToSales` (a fraction 0-1), but the chart doesn't use that value at all.
+**Proposed fix (pick one):**
+1. Single bar showing `lossToSales * 100` (%) with a ReferenceLine at industry benchmark (e.g. 2%).
+2. Stacked bar: Loss + (Sales − Loss) = Sales, with Loss as a thin red slice on top of emerald "Net Sales".
+3. Two y-axes (left: IDR for sales, right: % for loss ratio).
+
+---
+
+### CHART-5 · "Benchmark High" chart always shows Outlet as the highest bar
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:359-366`
+**Description:** `Area Avg = outletDev * 0.65`, `Network = outletDev * 0.45`. Since 0.65 < 1.0 and 0.45 < 1.0, the Outlet bar is always rendered as the tallest. This means even when the outlet is NOT benchmark-high (i.e. its deviation is below area/network average), the chart visually misrepresents it as the worst. The Area Avg and Network values are also pure synthesized multipliers of the outlet's own |devBom|, not actual area/network averages. The signal itself is `benchmarkHighCount` (count of items above benchmark), but the chart shows aggregate |devBom| comparison — different metric.
+**Proposed fix:** Thread `areaAvgDevBom` and `networkAvgDevBom` from the analysis route (already computed in `computeNetworkAvgDevBom` per worklog ANALYZE-BACKEND-2). Failing that, render an empty state when `benchmarkHighCount === 0` (similar to CHART-1 fix).
+
+---
+
+### CHART-6 · "Over-Explained" stacked bar obscures the "Explanation > Deviasi" relationship
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:330-343, 587-601`
+**Description:** Stacked bars: Deviasi (zinc, 100-150) + Explanation (amber, 115-218% of Deviasi). The ReferenceLine at y=100 sits BELOW the Deviasi bar (since Deviasi ≥ 100), so the threshold line is visually meaningless. The chart doesn't clearly communicate "Explanation exceeds 100% of Deviasi" — which is the whole point of the signal. A stacked bar of Deviasi + Explanation just shows a tall bar.
+**Proposed fix:** Switch to grouped bars (Deviasi vs Explanation side-by-side) so the user can directly see Explanation > Deviasi. OR a single bar showing `Explanation / Deviasi * 100` (%) with ReferenceLine at 100%.
+
+---
+
+### CHART-7 · No "data ilustrasi" disclaimer on synthesized per-item/per-week charts
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx` (multiple synthesizers)
+**Description:** Eight charts render per-item or per-week data that does NOT exist in the recommendation payload:
+- `buildDeviasiGrowthData` — synthesizes W1-W3 weekly trend (only W4 = current value is real).
+- `buildTrendMemburukData` — same.
+- `buildZScoreData` — synthesizes per-item z-scores (only the COUNT is real).
+- `buildItemConcentrationData` — synthesizes top-5 item weights (only the aggregate concentration is real).
+- `buildTolBreachHighData`, `buildTolBreachData`, `buildOverExplainedData`, `buildHighLossData` — synthesize per-item breach values (only counts are real).
+- `buildNoToleranceRows` — synthesizes per-item nominal/pct (only count is real).
+- `buildBenchmarkData` — synthesizes area/network averages.
+
+The charts look like real data visualizations but most of the per-item/per-week values are deterministic fabrications from `seededRand()`. The agent's worklog note acknowledges this, but the UI does NOT communicate it to the end user. An analyst looking at "Item #1 = 28%" in the donut may believe that's the actual top item's contribution.
+**Proposed fix:** Add a small italic disclaimer below each synthesized chart, e.g. `<p className="text-[9px] italic text-muted-foreground/60 mt-1">⚠ Data per-item/per-minggu adalah ilustrasi bentuk distribusi, bukan nilai aktual.</p>`. Or add a single global disclaimer at the top of the breakdown section.
+
+---
+
+### CHART-8 · CartesianGrid stroke is hardcoded light-gray — low contrast in dark mode
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:428, 444, 460, 475, 491, 506, 522, 562, 577, 592, 608, 623, 639` (13 occurrences)
+**Description:** Every CartesianGrid uses `stroke="#e4e4e7"` (zinc-200) with `strokeOpacity={0.3}`. On a dark background (zinc-950), light-gray at 30% opacity is nearly invisible — the grid lines disappear, making the charts look flat and harder to read.
+**Proposed fix:** Use Tailwind's CSS variable for the chart stroke so it adapts to theme:
+```tsx
+<CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} vertical={false} className="text-zinc-400" />
+```
+Or use a mid-gray that works in both themes: `stroke="#71717a"` (zinc-500) with `strokeOpacity={0.25}`.
+
+---
+
+## LOW Severity
+
+### CHART-9 · "Item Concentration" donut — top-5 weights are hardcoded fabrications
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:291`
+**Description:** `weights = [0.35, 0.25, 0.18, 0.12, 0.10]` — Item #1 always shows 35% of the concentration ratio, regardless of the actual top item's share. The donut shape is correct (top 5 + Others = 100%), but the per-slice values are fake. Combined with CHART-7, this is misleading.
+**Proposed fix:** Thread `topItems: Array<{ name, nominalDeviasi }>` (top 5) from the API and compute real slice values. Or rename "Item #1" → "Top item (estimasi)".
+
+---
+
+### CHART-10 · "Residual Nominal" — labeled "waterfall-style" but is 3 separate bars
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:368-378`
+**Description:** Three side-by-side bars (Gross, Explained, Residual). The agent's worklog note calls this "waterfall-style" but a true waterfall would stack Explained (from 0) + Residual (from Explained's top) = Gross. Currently Gross, Explained, and Residual are independent bars — the visual relationship "Explained + Residual = Gross" is not shown.
+**Proposed fix (optional):** Convert to a stacked bar where Explained (emerald) + Residual (red) = Gross, OR use Recharts' BarChart with `stackId="a"` for Explained and Residual only (drop the redundant Gross bar — it equals Explained + Residual).
+
+---
+
+### CHART-11 · Tooltip formatter typing is narrower than Recharts' ValueType
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:431, 447, 463, 478, 494, 509, 525, 552, 565, 580, 595, 611, 626, 642`
+**Description:** All Tooltip formatters use `(v: number) => ...` but Recharts' `formatter` signature passes `ValueType = number | string | Array<number | string>`. TypeScript allows this (function parameter bivariance), but if Recharts ever passes a string (e.g. from a formatted axis), arithmetic like `(v * 100).toFixed(1)` would produce `NaN%`. Currently works because all synthesized data values are numbers, but fragile.
+**Proposed fix:** Type as `(v: number | string) => ...` and coerce: `const n = typeof v === 'number' ? v : parseFloat(v);`.
+
+---
+
+### CHART-12 · Top Contributors shows weight %, not % of total priority score
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:917-919`
+**Description:** Spec checklist asks "Percentage of total score — correct?". Currently shows `{Math.round(c.weight * 100)}% bobot` (the signal's weight, e.g. "12% bobot"), NOT `contribution / priorityScore * 100` (the share of total score). The "+N" contribution is shown but its percentage of the total is not.
+**Proposed fix:** Add a third column or replace the weight % with share-of-total:
+```tsx
+<span className="tabular-nums text-muted-foreground/80 text-[10px] w-16 text-right">
+  {priorityScore > 0 ? Math.round(c.contribution / priorityScore * 100) : 0}% dari total
+</span>
+```
+(Note: this interacts with CHART-2 — use `displayedTotal` not `r.priorityScore` to keep the math consistent.)
+
+---
+
+### CHART-13 · Signal name lookup silently drops signals not in any group
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:927-931`
+**Description:** `SIGNAL_GROUPS.map(group => group.signals.map(name => signalByName.get(name)).filter(Boolean))` — if a future signal is added to `signalScores` but not to `SIGNAL_GROUPS`, it will be silently dropped from the accordion (still appears in Top Contributors, but not in any group). No warning.
+**Proposed fix:** Compute the set of grouped signal names once and add a dev-mode assertion:
+```tsx
+if (process.env.NODE_ENV !== 'production') {
+  const grouped = new Set(SIGNAL_GROUPS.flatMap(g => g.signals));
+  signalScores?.forEach(s => { if (!grouped.has(s.name)) console.warn(`[PrioritySummaryCard] Signal "${s.name}" not assigned to any group`); });
+}
+```
+
+---
+
+### CHART-14 · build*Data functions are not memoized — re-compute on every parent render
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:421-691`
+**Description:** `SignalChart` calls `build*Data(r)` inline on every render. When the parent re-renders (e.g., user expands a 2nd signal), all already-expanded SignalCharts re-render and re-compute their data. The functions are cheap (O(count)), but for 15 simultaneously expanded charts this is 15 redundant computations per render.
+**Proposed fix:** Wrap each `build*Data(r)` call in `useMemo(() => buildX(r), [r])` inside `SignalChart`, or wrap `SignalChart` in `React.memo`. Low impact, optional.
+
+---
+
+### CHART-15 · "Deviasi Growth" W1-W3 are synthesized weekly trend that doesn't exist in data
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:211-222`
+**Description:** The chart shows a 5-week line (W1-W4 actual + W5 projected), but `r.signals.deviasiGrowth` is a single scalar (period-over-period growth rate). Only the W4 point is real; W1-W3 are fabricated backwards-progressing values (`base * 0.55, 0.75, 0.9`) and W5 is a fabricated forward projection (`base * 1.18`). The line shape (monotonic toward W4) implies a real historical trend that doesn't exist.
+**Proposed fix:** If `trendProjection` (per worklog ANALYZE-BACKEND-2) is threaded into the recommendation, replace W1-W3 with real weekly |nominalDeviasi| from `trendAggRows`. Otherwise, add a "ilustrasi tren" disclaimer (see CHART-7).
+
+---
+
+### CHART-16 · priorityBadge "LOW" + emerald for score 1-49 may imply "good"
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:174-178`
+**Description:** A signal with score 30 (contributes 30×weight to priority) is labeled "LOW" with emerald (green = positive) color. This is semantically confusing — the signal IS contributing to the outlet's priority score, but the green badge implies it's fine. The spec says `LOW (>0 emerald)`, so the agent followed spec, but UX-wise it may mislead.
+**Proposed fix (optional, requires spec change):** Consider renaming LOW → "MINOR" and using amber instead of emerald, so any non-zero contribution is amber-or-warmer. NONE stays muted.
+
+---
+
+### CHART-17 · `metrics.direction` typed as `string` instead of union
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:60`
+**Description:** `direction: string` — but the code treats it as `'LOSS' | 'SURPLUS'` (line 281, 825). Looser typing than the actual domain. Could allow typos like `'Loss'` or `'loss'` to slip through.
+**Proposed fix:** `direction: 'LOSS' | 'SURPLUS';` (matches `outlets.ts` source).
+
+---
+
+### CHART-18 · Z-Score scatter X-axis is item index, not a meaningful value
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:243-256, 476`
+**Description:** Each scatter point's `x` is `i + 1` (positional index), not the item's deviation magnitude or any meaningful value. The X-axis label "Item" implies item identity, but the position is arbitrary. A more informative scatter would plot `x = item deviation magnitude, y = z-score` so the user can see which items are abnormal AND how big they are.
+**Proposed fix:** Requires per-item data (not currently in payload). Until then, change X-axis label to "Item #" to clarify it's positional.
+
+---
+
+### CHART-19 · Expanded set resets on outlet change — may not match user mental model
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:718-723`
+**Description:** The "derived state during render" pattern resets `expanded` to `defaultExpanded` whenever `outletCode` changes. This is by design ("State reset when outlet changes" per spec), but a user comparing 2 outlets side-by-side (mentally) may want their expansion choices to persist. Currently if they expand "Dev/BOM vs Peer" on outlet A, switch to outlet B, the expansion is lost (B's defaults take over).
+**Proposed fix (optional, design choice):** Make the reset opt-out — add a "Pin expansion across outlets" checkbox. Or accept current behavior as correct (different outlets have different priorities). Low priority — current behavior is defensible.
+
+---
+
+## Audit Checklist Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Chart data correctness | ❌ 4 charts fabricate breaches when count=0 (CHART-1); Peer Best wrong (CHART-3); Loss/Sales doesn't show ratio (CHART-4); Benchmark always shows outlet highest (CHART-5); Over-Explained obscures relationship (CHART-6) |
+| 2 | Accordion behavior | ✅ Default expand >50 works; click toggle works; multiple expanded works; outlet-change reset works (derived-state pattern, no useEffect, no infinite loop); no React key warnings |
+| 3 | Chart rendering | ⚠ Charts lazy-render ✓; fixed height 170 ✓; ResponsiveContainer correct ✓; CartesianGrid low-contrast in dark mode (CHART-8); colors are red/amber/emerald/zinc only ✓; tooltip formatting correct ✓; axis labels readable (10px) ✓ |
+| 4 | Signal grouping | ✅ 5 groups correct; all 15 signals assigned; no missing/wrong group; group headers show count + contribution ✓ |
+| 5 | Top Contributors | ⚠ Top 3 by score×weight ✓; percentage of total NOT shown (CHART-12); display format clean ✓ |
+| 6 | Priority badges | ✅ CRITICAL/HIGH/LOW/NONE thresholds match spec; badge on each row ✓; color matches score ✓ |
+| 7 | Data synthesis | ❌ No "data ilustrasi" disclaimer (CHART-7); 8 charts synthesize per-item/per-week data; no wrong direction observed; seededRand is deterministic ✓ |
+| 8 | Edge cases | ⚠ signalScores null → breakdown hidden ✓; all scores 0 → shows 3 fake breaches (CHART-1); 1 signal >0 → top contributors shows 3 (1 real + 2 zero) ✓; recommendation null → early return ✓; priorityScore 0 → score 0 emerald ✓ |
+| 9 | Mobile responsive | ✅ Value column `hidden sm:block` ✓; charts ResponsiveContainer ✓; rows touch-friendly (px-3 py-2) ✓; text 10-11px readable ✓ |
+| 10 | Dark mode | ⚠ Chart palette hex works in both ✓; tooltip dark bg works in both ✓; CartesianGrid stroke too faint in dark (CHART-8); text uses `dark:` variants ✓ |
+| 11 | Performance | ⚠ 15 charts lazy-rendered ✓; seededRand deterministic ✓; useMemo for derived data ✓; build*Data not memoized (CHART-14, minor) |
+| 12 | Type safety | ✅ No `as any` casts; `direction: string` looser than ideal (CHART-17); tooltip formatter narrower than Recharts' ValueType (CHART-11); `tsc --noEmit` clean |
+
+---
+
+## Recommended Next Actions (priority order)
+
+1. **CHART-1** (HIGH) — Add empty-state branches to 4 synthesizers. ~20 lines. Prevents fabricated breaches.
+2. **CHART-2** (HIGH) — Compute displayed total from Σ contributions, not `r.priorityScore`. ~5 lines. Makes the math reconcile.
+3. **CHART-7** (MEDIUM) — Add "data ilustrasi" disclaimer under each synthesized chart. ~15 lines. Restores user trust.
+4. **CHART-8** (MEDIUM) — Replace CartesianGrid `stroke="#e4e4e7"` with `currentColor` + className. ~13 lines. Fixes dark mode readability.
+5. **CHART-3, CHART-4, CHART-5, CHART-6** (MEDIUM) — Chart-specific data fixes. Can be batched into one PR.
+6. **CHART-12** (LOW) — Add "% dari total" to Top Contributors (depends on CHART-2 fix).
+7. **CHART-9, CHART-15** (LOW) — Thread real per-item/per-week data from API when available.
+8. **CHART-10, CHART-11, CHART-13, CHART-14, CHART-16, CHART-17, CHART-18, CHART-19** (LOW) — Optional polish.
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.

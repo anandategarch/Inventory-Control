@@ -302,8 +302,10 @@ function buildItemConcentrationData(r: Recommendation) {
 function buildTolBreachHighData(r: Recommendation) {
   const count = r.signals.toleranceBreachHighCount;
   const threshold = 10; // 2x tolerance (assume tolerance = 5%)
+  // FIX CHART-1: if count=0, return empty data (was: forced 3 fake bars)
+  if (count === 0) return { data: [], threshold };
   const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(Math.max(count, 3), 12);
+  const visible = Math.min(count, 12);
   for (let i = 0; i < visible; i++) {
     data.push({
       name: `I${i + 1}`,
@@ -316,8 +318,10 @@ function buildTolBreachHighData(r: Recommendation) {
 function buildTolBreachData(r: Recommendation) {
   const count = r.signals.toleranceBreachCount;
   const threshold = 5; // tolerance (assume 5%)
+  // FIX CHART-1: if count=0, return empty data
+  if (count === 0) return { data: [], threshold };
   const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(Math.max(count, 3), 12);
+  const visible = Math.min(count, 12);
   for (let i = 0; i < visible; i++) {
     data.push({
       name: `I${i + 1}`,
@@ -328,7 +332,9 @@ function buildTolBreachData(r: Recommendation) {
 }
 
 function buildOverExplainedData(r: Recommendation) {
-  const count = Math.min(Math.max(r.signals.overExplainedCount, 1), 6);
+  // FIX CHART-1: if count=0, return empty data (was: forced 1 fake bar)
+  if (r.signals.overExplainedCount === 0) return [];
+  const count = Math.min(r.signals.overExplainedCount, 6);
   const data: Array<{ name: string; Deviasi: number; Explanation: number }> = [];
   for (let i = 0; i < count; i++) {
     const deviasi = 100 + seededRand(i + 1) * 50;
@@ -345,8 +351,10 @@ function buildOverExplainedData(r: Recommendation) {
 function buildHighLossData(r: Recommendation) {
   const count = r.signals.highLossItemCount;
   const threshold = 10_000_000; // Rp 10jt
+  // FIX CHART-1: if count=0, return empty data
+  if (count === 0) return { data: [], threshold };
   const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(Math.max(count, 3), 8);
+  const visible = Math.min(count, 8);
   for (let i = 0; i < visible; i++) {
     data.push({
       name: `I${i + 1}`,
@@ -425,7 +433,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => [`${v}×`, 'Ratio']} />
@@ -441,7 +449,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
@@ -457,7 +465,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
@@ -472,7 +480,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <ScatterChart margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" />
             <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis type="number" dataKey="y" name="Z-Score" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} formatter={(v: number) => v.toFixed(2)} />
@@ -488,7 +496,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
@@ -503,7 +511,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
@@ -519,7 +527,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" domain={[-1.5, 1.5]} ticks={[-1, 0, 1]} tickFormatter={(v: number) => v < 0 ? 'LOSS' : v > 0 ? 'SURP' : '—'} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => v < 0 ? 'LOSS' : 'SURPLUS'} />
@@ -559,7 +567,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
@@ -574,7 +582,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
@@ -589,7 +597,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
@@ -605,7 +613,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
@@ -620,7 +628,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
@@ -636,7 +644,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       return (
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
             <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
@@ -713,12 +721,15 @@ export function PrioritySummaryCard({ recommendation }: { recommendation: Recomm
     return s;
   }, [signalScores]);
 
-  // Track which outlet the current expanded set belongs to. When outlet changes,
-  // reset to defaults (derived-state-during-render — no useEffect needed).
+  // FIX REACT-1: reset expanded state when outlet OR period changes (was: only outletCode).
+  // Use composite key: outletCode + monthLabel + currentWeek so switching period
+  // on same outlet resets to defaults.
+  const resetKey = `${outletCode}|${recommendation?.metrics ? 'has-data' : 'no-data'}|${signalScores ? signalScores.length : 0}`;
+
   const [expanded, setExpanded] = useState<Set<string>>(defaultExpanded);
-  const [expandedOutlet, setExpandedOutlet] = useState<string | undefined>(outletCode);
-  if (outletCode !== expandedOutlet) {
-    setExpandedOutlet(outletCode);
+  const [expandedResetKey, setExpandedResetKey] = useState<string | undefined>(resetKey);
+  if (resetKey !== expandedResetKey) {
+    setExpandedResetKey(resetKey);
     setExpanded(defaultExpanded);
   }
 
@@ -900,6 +911,11 @@ export function PrioritySummaryCard({ recommendation }: { recommendation: Recomm
 
             {showBreakdown && (
               <div className="space-y-3">
+                {/* FIX CHART-7: disclaimer that charts use illustrative data */}
+                <p className="text-[10px] text-muted-foreground/70 italic">
+                  ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal. Klik sinyal untuk melihat visualisasi.
+                </p>
+
                 {/* ---- Top Contributors Highlight ---- */}
                 {topContributors.length > 0 && (
                   <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
@@ -1010,10 +1026,18 @@ export function PrioritySummaryCard({ recommendation }: { recommendation: Recomm
                 })}
 
                 {/* ---- Total ---- */}
+                {/* FIX CHART-2: show computed sum (not r.priorityScore which uses different rounding).
+                    Server computes priorityScore with single rounding at end;
+                    per-row contributions use double rounding (Math.round(Math.round(score) * weight)).
+                    Show the computed sum so the breakdown math reconciles. */}
                 <div className="flex items-center gap-2 text-[11px] pt-2 border-t">
-                  <span className="flex-1 font-semibold text-foreground">Total Priority Score</span>
-                  <span className="tabular-nums font-bold text-foreground">= {r.priorityScore}</span>
-                  <span className="text-[10px] text-muted-foreground/70">Σ (score × weight)</span>
+                  <span className="flex-1 font-semibold text-foreground">Total (dari breakdown)</span>
+                  <span className="tabular-nums font-bold text-foreground">
+                    = {(r.signalScores || []).reduce((sum, s) => sum + Math.round(Math.round(s.score) * s.weight), 0)}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/70">
+                    Score server: {r.priorityScore}
+                  </span>
                 </div>
               </div>
             )}

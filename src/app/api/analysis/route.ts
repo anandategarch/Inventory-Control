@@ -720,13 +720,21 @@ export async function GET(req: NextRequest) {
     //  — no extra DB query. Sign convention: input uses signed nominal
     //  (LOSS = negative); projectTrend takes ABS internally.
     // ============================================================
+    // FIX FORECAST-1: sort trendAggRows chronologically before projecting
+    // (DB returns rows in arbitrary order; projectTrend needs chronological W1→W4)
     const trendProjection = projectTrend(
-      trendAggRows.map((r) => ({
-        weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-        nominalDeviasi: r.nominal,
-        devBom: r.devBom,
-        sales: r.sales,
-      })),
+      trendAggRows
+        .map((r) => {
+          const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
+          return {
+            sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
+            weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+            nominalDeviasi: r.nominal,
+            devBom: r.devBom,
+            sales: r.sales,
+          };
+        })
+        .sort((a, b) => a.sortKey.localeCompare(b.sortKey)),
     );
 
     // ============================================================

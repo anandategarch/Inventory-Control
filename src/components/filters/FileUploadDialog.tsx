@@ -472,7 +472,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
       queryClient.invalidateQueries({ queryKey: ["item-history"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX INT-2
       toast({
         title: '✅ Import berhasil',
         description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,

@@ -128,6 +128,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
         queryClient.invalidateQueries({ queryKey: ['outlet-items'], refetchType: 'active' });
         queryClient.invalidateQueries({ queryKey: ['item-history'], refetchType: 'active' });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX INT-2
       } else {
         toast({
           title: '❌ Gagal menyimpan',

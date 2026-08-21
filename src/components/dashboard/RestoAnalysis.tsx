@@ -78,7 +78,7 @@ function directionColor(d: string): string {
 }
 
 export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic } = useDashboard();
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');
@@ -106,9 +106,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   });
 
   // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
+  // FIX INT-1: pass area + pic params so Signal 1 (Dev/BOM vs Peer) uses correct network scope
   const { data: recoData } = useQuery({
-    // FIX FLOW-6: use plural 'recommendations' key (matches RestoRecommendationCard + invalidation patterns)
-    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel!);
@@ -117,6 +117,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       if (comparisonMonth) p.set('prevMonth', comparisonMonth);
       p.set('outletCode', activeOutlet!);
       p.set('limit', '1');
+      if (area && area !== 'all') p.set('area', area);
+      if (pic) p.set('pic', pic);
       const res = await fetch(`/api/recommendations?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) return { success: false, recommendations: [] };
