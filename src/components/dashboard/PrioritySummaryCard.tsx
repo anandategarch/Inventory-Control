@@ -620,14 +620,13 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
               outerRadius={62}
               paddingAngle={1}
               isAnimationActive={false}
-              label={{
-                fill: '#a1a1aa',
-                fontSize: 9,
-                position: 'outside',
-                formatter: (entry: { name?: string; value?: number }) => {
-                  const shortName = (entry.name || '').length > 10 ? (entry.name || '').slice(0, 8) + '…' : (entry.name || '');
-                  return `${shortName}: ${entry.value}%`;
-                },
+              label={(entry: { name?: string; value?: number }) => {
+                const shortName = (entry.name || '').length > 10 ? (entry.name || '').slice(0, 8) + '…' : (entry.name || '');
+                return (
+                  <text fill="#a1a1aa" fontSize={9} textAnchor="middle">
+                    {`${shortName}: ${entry.value}%`}
+                  </text>
+                );
               }}
               labelLine={{ stroke: '#a1a1aa', strokeWidth: 0.5 }}
             >
