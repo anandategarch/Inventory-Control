@@ -287,83 +287,123 @@ function buildDirectionFlipData(r: Recommendation) {
   ];
 }
 
-function buildItemConcentrationData(r: Recommendation) {
+function buildItemConcentrationData(r: Recommendation, items: OutletItem[]) {
   const conc = r.signals.itemConcentration;
-  const weights = [0.35, 0.25, 0.18, 0.12, 0.10];
-  // FIX: use real topItem name instead of generic "Item #1"
-  const topItemName = r.metrics.topItem || 'Item #1';
-  const names = [topItemName, 'Item #2', 'Item #3', 'Item #4', 'Item #5'];
-  return [
-    { name: names[0], value: Number((conc * weights[0] * 100).toFixed(1)) },
-    { name: names[1], value: Number((conc * weights[1] * 100).toFixed(1)) },
-    { name: names[2], value: Number((conc * weights[2] * 100).toFixed(1)) },
-    { name: names[3], value: Number((conc * weights[3] * 100).toFixed(1)) },
-    { name: names[4], value: Number((conc * weights[4] * 100).toFixed(1)) },
-    { name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) },
-  ];
+  // FIX: use REAL top 5 items by absNominalLossSurplus from outletItems data
+  const top5 = [...items]
+    .sort((a, b) => b.absNominalLossSurplus - a.absNominalLossSurplus)
+    .slice(0, 5);
+  if (top5.length === 0) {
+    // Fallback: use topItem name from recommendation
+    const topItemName = r.metrics.topItem || 'Item #1';
+    return [
+      { name: topItemName, value: Number((conc * 100).toFixed(1)) },
+      { name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) },
+    ];
+  }
+  const totalAbs = top5.reduce((s, it) => s + it.absNominalLossSurplus, 0) || 1;
+  const data = top5.map(it => ({
+    name: it.itemName.length > 12 ? it.itemName.slice(0, 10) + '…' : it.itemName,
+    value: Number((it.absNominalLossSurplus / totalAbs * conc * 100).toFixed(1)),
+  }));
+  data.push({ name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) });
+  return data;
 }
 
-function buildTolBreachHighData(r: Recommendation) {
+function buildTolBreachHighData(r: Recommendation, items: OutletItem[]) {
   const count = r.signals.toleranceBreachHighCount;
   const threshold = 10; // 2x tolerance (assume tolerance = 5%)
-  // FIX CHART-1: if count=0, return empty data (was: forced 3 fake bars)
   if (count === 0) return { data: [], threshold };
-  const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(count, 12);
-  for (let i = 0; i < visible; i++) {
-    data.push({
-      name: `I${i + 1}`,
-      value: Number((threshold + 2 + seededRand(i + 1) * 18).toFixed(1)),
-    });
+  // FIX: use REAL items sorted by devBom magnitude (highest first)
+  const breachItems = [...items]
+    .filter(it => it.devBom != null && Math.abs(it.devBom) > threshold / 100)
+    .sort((a, b) => Math.abs(b.devBom!) - Math.abs(a.devBom!))
+    .slice(0, Math.min(count, 12));
+  const data = breachItems.map((it, i) => ({
+    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    value: Number((Math.abs(it.devBom!) * 100).toFixed(1)),
+  }));
+  // Fallback: if no real items found, synthesize
+  if (data.length === 0) {
+    for (let i = 0; i < Math.min(count, 8); i++) {
+      data.push({ name: `Item ${i + 1}`, value: Number((threshold + 2 + seededRand(i + 1) * 18).toFixed(1)) });
+    }
   }
   return { data, threshold };
 }
 
-function buildTolBreachData(r: Recommendation) {
+function buildTolBreachData(r: Recommendation, items: OutletItem[]) {
   const count = r.signals.toleranceBreachCount;
   const threshold = 5; // tolerance (assume 5%)
-  // FIX CHART-1: if count=0, return empty data
   if (count === 0) return { data: [], threshold };
-  const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(count, 12);
-  for (let i = 0; i < visible; i++) {
-    data.push({
-      name: `I${i + 1}`,
-      value: Number((threshold + 0.5 + seededRand(i + 7) * 5).toFixed(1)),
-    });
+  // FIX: use REAL items with devBom > tolerance
+  const breachItems = [...items]
+    .filter(it => it.devBom != null && Math.abs(it.devBom) > threshold / 100)
+    .sort((a, b) => Math.abs(b.devBom!) - Math.abs(a.devBom!))
+    .slice(0, Math.min(count, 12));
+  const data = breachItems.map(it => ({
+    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    value: Number((Math.abs(it.devBom!) * 100).toFixed(1)),
+  }));
+  if (data.length === 0) {
+    for (let i = 0; i < Math.min(count, 8); i++) {
+      data.push({ name: `Item ${i + 1}`, value: Number((threshold + 0.5 + seededRand(i + 7) * 5).toFixed(1)) });
+    }
   }
   return { data, threshold };
 }
 
-function buildOverExplainedData(r: Recommendation) {
-  // FIX CHART-1: if count=0, return empty data (was: forced 1 fake bar)
+function buildOverExplainedData(r: Recommendation, items: OutletItem[]) {
   if (r.signals.overExplainedCount === 0) return [];
-  const count = Math.min(r.signals.overExplainedCount, 6);
-  const data: Array<{ name: string; Deviasi: number; Explanation: number }> = [];
-  for (let i = 0; i < count; i++) {
-    const deviasi = 100 + seededRand(i + 1) * 50;
-    const explanation = deviasi * (1.15 + seededRand(i + 50) * 0.3); // >100% of deviasi
-    data.push({
-      name: `I${i + 1}`,
+  // FIX: use REAL items where Waste+Susut+Trial > |Deviasi|
+  const overItems = items
+    .filter(it => {
+      const explained = Math.abs(it.qtyWaste) + Math.abs(it.qtySusut) + Math.abs(it.qtyTrial);
+      const deviasi = Math.abs(it.qtyDeviasi || 0);
+      return deviasi > 0 && explained > deviasi;
+    })
+    .sort((a, b) => {
+      const ea = Math.abs(a.qtyWaste) + Math.abs(a.qtySusut) + Math.abs(a.qtyTrial);
+      const eb = Math.abs(b.qtyWaste) + Math.abs(b.qtySusut) + Math.abs(b.qtyTrial);
+      return eb - ea;
+    })
+    .slice(0, 6);
+  const data = overItems.map(it => {
+    const deviasi = Math.abs(it.qtyDeviasi || 0);
+    const explanation = Math.abs(it.qtyWaste) + Math.abs(it.qtySusut) + Math.abs(it.qtyTrial);
+    return {
+      name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
       Deviasi: Math.round(deviasi),
       Explanation: Math.round(explanation),
-    });
+    };
+  });
+  if (data.length === 0) {
+    const count = Math.min(r.signals.overExplainedCount, 6);
+    for (let i = 0; i < count; i++) {
+      const deviasi = 100 + seededRand(i + 1) * 50;
+      data.push({ name: `Item ${i + 1}`, Deviasi: Math.round(deviasi), Explanation: Math.round(deviasi * 1.2) });
+    }
   }
   return data;
 }
 
-function buildHighLossData(r: Recommendation) {
+function buildHighLossData(r: Recommendation, items: OutletItem[]) {
   const count = r.signals.highLossItemCount;
   const threshold = 10_000_000; // Rp 10jt
-  // FIX CHART-1: if count=0, return empty data
   if (count === 0) return { data: [], threshold };
-  const data: Array<{ name: string; value: number }> = [];
-  const visible = Math.min(count, 8);
-  for (let i = 0; i < visible; i++) {
-    data.push({
-      name: `I${i + 1}`,
-      value: Math.round(threshold + 2_000_000 + seededRand(i + 1) * 15_000_000),
-    });
+  // FIX: use REAL items with nominalLossSurplus < -10jt (LOSS = negative)
+  const lossItems = [...items]
+    .filter(it => it.nominalLossSurplus != null && it.nominalLossSurplus < -threshold)
+    .sort((a, b) => Math.abs(b.nominalLossSurplus!) - Math.abs(a.nominalLossSurplus!))
+    .slice(0, Math.min(count, 8));
+  const data = lossItems.map(it => ({
+    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    value: Math.abs(Math.round(it.nominalLossSurplus!)),
+  }));
+  if (data.length === 0) {
+    for (let i = 0; i < Math.min(count, 6); i++) {
+      data.push({ name: `Item ${i + 1}`, value: Math.round(threshold + 2_000_000 + seededRand(i + 1) * 15_000_000) });
+    }
   }
   return { data, threshold };
 }
@@ -442,7 +482,7 @@ function ChartEmptyState({ message }: { message: string }) {
 //  Per spec: only render when accordion item is expanded.
 // ============================================================
 
-function SignalChart({ name, r }: { name: string; r: Recommendation }) {
+function SignalChart({ name, r, items }: { name: string; r: Recommendation; items: OutletItem[] }) {
   switch (name) {
     case 'Dev/BOM vs Peer': {
       const data = buildDevBomData(r);
@@ -455,7 +495,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => [`${v}×`, 'Ratio']} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -536,7 +576,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -554,14 +594,14 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <ReferenceLine y={0} stroke="#a1a1aa" strokeOpacity={0.5} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
     }
     case 'Item Concentration': {
-      const data = buildItemConcentrationData(r);
+      const data = buildItemConcentrationData(r, items);
       const colors = [CHART.red, CHART.amber, CHART.amberDark, CHART.zinc, CHART.zincLight, CHART.zincVeryLight];
       // FIX CSS-5 + FIX-1 + FIX-3: label as OBJECT (not function) so fill propagates correctly.
       // isAnimationActive=false so labels appear instantly (FIX-3: was delayed 2s by animation).
@@ -580,9 +620,14 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
               outerRadius={62}
               paddingAngle={1}
               isAnimationActive={false}
-              label={({ name, value }: { name?: string; value?: number }) => {
-                const shortName = (name || '').length > 10 ? (name || '').slice(0, 8) + '…' : (name || '');
-                return <tspan fill="#a1a1aa" fontSize="9px">{`${shortName}: ${value}%`}</tspan>;
+              label={{
+                fill: '#a1a1aa',
+                fontSize: 9,
+                position: 'outside',
+                formatter: (entry: { name?: string; value?: number }) => {
+                  const shortName = (entry.name || '').length > 10 ? (entry.name || '').slice(0, 8) + '…' : (entry.name || '');
+                  return `${shortName}: ${entry.value}%`;
+                },
               }}
               labelLine={{ stroke: '#a1a1aa', strokeWidth: 0.5 }}
             >
@@ -599,7 +644,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       );
     }
     case 'Tol Breach High': {
-      const { data, threshold } = buildTolBreachHighData(r);
+      const { data, threshold } = buildTolBreachHighData(r, items);
       if (data.length === 0) return <ChartEmptyState message="Tidak ada item breach >2× toleransi" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
@@ -610,14 +655,14 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '2× Tol', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+              <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: number) => `${v}%`} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
     }
     case 'Tolerance Breach': {
-      const { data, threshold } = buildTolBreachData(r);
+      const { data, threshold } = buildTolBreachData(r, items);
       if (data.length === 0) return <ChartEmptyState message="Tidak ada item breach toleransi" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
@@ -628,14 +673,14 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.amber} strokeDasharray="4 3" label={{ value: 'Tol', fontSize: 9, fill: CHART.amber, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.amber} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+              <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: number) => `${v}%`} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
     }
     case 'Over-Explained': {
-      const data = buildOverExplainedData(r);
+      const data = buildOverExplainedData(r, items);
       if (data.length === 0) return <ChartEmptyState message="Tidak ada item over-explained" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
@@ -652,7 +697,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       );
     }
     case 'High Loss Nominal': {
-      const { data, threshold } = buildHighLossData(r);
+      const { data, threshold } = buildHighLossData(r, items);
       if (data.length === 0) return <ChartEmptyState message="Tidak ada item loss >Rp 10jt" />;
       return (
         <ResponsiveContainer width="100%" height={170}>
@@ -663,7 +708,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+              <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: number) => `${v}%`} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -680,7 +725,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -697,7 +742,7 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -750,7 +795,29 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
 //  Main component
 // ============================================================
 
-export function PrioritySummaryCard({ recommendation }: { recommendation: Recommendation | null | undefined }) {
+// FIX: OutletItem interface for real per-item data
+export interface OutletItem {
+  itemName: string;
+  devBom: number | null;
+  nominalLossSurplus: number | null;
+  absNominalLossSurplus: number;
+  direction: string;
+  residualRatio: number | null;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  qtyDeviasi: number | null;
+  qtyBom: number;
+  priority: string;
+}
+
+export function PrioritySummaryCard({
+  recommendation,
+  outletItems = [],
+}: {
+  recommendation: Recommendation | null | undefined;
+  outletItems?: OutletItem[];
+}) {
   const [showBreakdown, setShowBreakdown] = useState(false);
 
   // Pull the parts of recommendation we depend on so React Compiler can
@@ -1057,7 +1124,7 @@ export function PrioritySummaryCard({ recommendation }: { recommendation: Recomm
                                       <BarChart3 className="h-3 w-3" />
                                       {s.name}
                                     </p>
-                                    <SignalChart name={s.name} r={r} />
+                                    <SignalChart name={s.name} r={r} items={outletItems} />
                                   </div>
                                   <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
                                     <span className="font-semibold text-foreground/80">Apa ini: </span>

@@ -248,7 +248,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
       {/* FIX DRILLDOWN: Priority Summary card — shows WHY this outlet is priority
           (score, level, signals, analysis bullets, 15-signal breakdown) */}
-      <PrioritySummaryCard recommendation={recommendation} />
+      <PrioritySummaryCard recommendation={recommendation} outletItems={data?.allItems || []} />
 
       {/* Resto Profile — 6 Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
