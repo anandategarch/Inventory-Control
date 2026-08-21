@@ -11982,3 +11982,1487 @@ label={({ value }: { value?: number }) => `${value}%`}
 **Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
 
 **Verification method:** Empirical browser test via agent-browser + VLM screenshot analysis + Recharts 2.15.4 source code trace. NOT just static analysis.
+
+---
+
+## Task ID: AUDIT-UI-FINAL
+## Agent: UI Consistency Auditor (deep audit — dark mode + chart visibility + color consistency)
+
+**Audit Scope:** PrioritySummaryCard.tsx (focus), RestoRecommendationCard.tsx, RestoAnalysis.tsx, PeerComparison.tsx, globals.css, layout.tsx — plus cross-references to Charts.tsx and AnalysisCards.tsx for chart color consistency.
+
+**Method:** Static analysis + empirical browser test via agent-browser (DOM inspection + getComputedStyle + WCAG contrast computation). Dev server running at http://localhost:3000.
+
+---
+
+### Work Log
+
+1. Read `src/app/layout.tsx` → confirmed **NO `ThemeProvider` from next-themes wrapping the app**. Only `QueryProvider` and `GlobalLoadingBar` are present. The `<html>` tag has `lang="id"` and `suppressHydrationWarning` only.
+2. Read `src/components/providers.tsx` → confirmed only `QueryClientProvider`, no theme wrapping.
+3. Ran `grep next-themes|ThemeProvider|useTheme` across `src/` → only hit: `src/components/ui/sonner.tsx` (imports `useTheme` from next-themes, but ThemeProvider is never mounted, so `useTheme()` returns `{ theme: undefined }` and falls back to `"system"` string).
+4. Read `src/app/globals.css` → confirmed:
+   - `:root` defines light-mode tokens (e.g. `--card: oklch(1 0 0)` = pure white, `--foreground: oklch(0.145 0 0)` = near-black, `--muted-foreground: oklch(0.556 0 0)`).
+   - `.dark` class defines dark-mode tokens, but since nothing ever adds `.dark` to `<html>`, these tokens are **inert**.
+   - `@custom-variant dark (&:is(.dark *))` defines how `dark:` Tailwind variant resolves — requires `.dark` ancestor, never present.
+5. Read `src/components/ui/card.tsx` → confirmed `Card` uses `bg-card text-card-foreground` (= pure white bg + near-black text in light mode).
+6. Read `src/components/dashboard/PrioritySummaryCard.tsx` (1172 lines) in full:
+   - `CHART_TEXT = '#fafafa'` (line 151) — near-white, used as hardcoded chart text color in EVERY chart.
+   - `CHART_TEXT_MUTED = '#d4d4d8'` (line 152) — also near-white, but appears unused (defined but not referenced).
+   - `TOOLTIP_STYLE` (lines 155–163) — white bg + dark text (#18181b). Good contrast.
+   - Every `<XAxis>`, `<YAxis>`, `<LabelList>`, `<Legend>`, `<Pie label>`, `<ReferenceLine>` uses `fill: '#fafafa'` or `stroke="#fafafa"`.
+7. Read `src/components/dashboard/RestoRecommendationCard.tsx` (287 lines):
+   - No charts, no `#fafafa` usage. Uses Tailwind classes with `dark:` variants (all inert).
+   - Thresholds: `scoreColor(score) >= 55 → red, >= 30 → amber, else emerald` (line 142–147). Matches PrioritySummaryCard's `scoreColor` (line 896–901) ✓.
+   - `levelColor` thresholds match PrioritySummaryCard's `levelColor` (both use priorityLevel from server, no client thresholds) ✓.
+   - `priorityBadge` (line 169–190 in PrioritySummaryCard) uses DIFFERENT thresholds: 80/50/0 for CRITICAL/HIGH/LOW/NONE — this is per-signal severity, not priority-level. Different concept, but visually similar palette could confuse.
+8. Read `src/components/dashboard/PeerComparison.tsx` (1130 lines) excerpts:
+   - Uses `hsl(var(--muted-foreground))` and `hsl(var(--border))` for chart text/strokes (lines 638, 644, 645, 655, 656, 949, 950, 952, 953).
+   - `--muted-foreground` is `oklch(0.556 0 0)` (a full color, not hsl channels), so `hsl(oklch(0.556 0 0))` is **invalid CSS**. Browser silently falls back to `currentColor` (inherited foreground).
+9. Read `src/components/dashboard/Charts.tsx` (298 lines) and `src/components/dashboard/AnalysisCards.tsx` (85 lines):
+   - Both use the same broken `hsl(var(--muted-foreground))` pattern.
+10. Read `src/components/dashboard/RestoAnalysis.tsx` (891 lines) excerpts:
+    - Loading states ✓ (Loader2 spinner), error state ✓ (AlertTriangle), empty state ✓ ("Pilih outlet…").
+    - Calls `PrioritySummaryCard` and fetches recommendation + outletItems separately.
+11. **Empirical browser test** via agent-browser:
+    - Confirmed `<html>` has NO `class`, NO `data-theme`, NO `style.colorScheme`.
+    - Confirmed `colorScheme: "normal"` (light).
+    - Confirmed NO `.dark` class anywhere in DOM (`darkClassCount: 0`).
+    - Confirmed NO `next-themes` script tag injected.
+    - Computed `--card` resolves to `lab(100% 0 0)` (= pure white).
+    - Computed `#fafafa` resolves to `rgb(250, 250, 250)`.
+    - **WCAG contrast ratio of `#fafafa` on white card = 1.044:1** — INVISIBLE (fails both AA 4.5:1 and AA Large 3.0:1).
+    - For comparison: `#a1a1aa` (previous chart text) on white = **2.563:1** — also fails WCAG AA Large, but visible-ish.
+    - For comparison: `#18181b` (tooltip text) on white = **17.717:1** — excellent.
+    - Computed `hsl(var(--muted-foreground))` resolves to `lab(2.75381 0 0)` (= near-black, the inherited foreground). Browser silently fell back to `currentColor` because the syntax is invalid. So PeerComparison/Charts/AnalysisCards chart text IS visible (using wrong color — foreground instead of muted-foreground), but PrioritySummaryCard chart text is INVISIBLE (using explicit `#fafafa`).
+
+---
+
+### Stage Summary — Findings
+
+#### UI-1 · CRITICAL — No ThemeProvider wired up; `dark:` variants are inert app-wide
+- **Severity:** HIGH
+- **File:** `src/app/layout.tsx:23-41` (missing ThemeProvider), `src/components/providers.tsx:1-17`
+- **Description:** `next-themes@0.4.6` is installed in `package.json` but only `useTheme` is imported in `src/components/ui/sonner.tsx`. No `<ThemeProvider attribute="class" …>` wraps the app. The `<html>` element never receives the `.dark` class. Result: every `dark:bg-…`, `dark:text-…`, `dark:border-…` variant across the entire codebase is dead CSS. The `.dark { … }` token block in `globals.css:81-113` is also inert. The app is functionally **light-mode only**.
+- **Empirical proof:** `document.documentElement.className === ""`, `colorScheme === "normal"`, `document.querySelectorAll('.dark').length === 0`.
+- **Proposed fix:** Add a client-side ThemeProvider:
+  ```tsx
+  // src/components/providers.tsx
+  'use client';
+  import { ThemeProvider } from 'next-themes';
+  // …
+  return (
+    <QueryClientProvider client={client}>
+      <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
+        {children}
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+  ```
+  Decision required: does the product want dark mode at all? If yes, also add a theme toggle in the header. If no, remove the entire `.dark { … }` block from `globals.css` and strip all `dark:` variants to reduce dead-code confusion. **The current state — extensive `dark:` variants with no provider — is the worst of both worlds.**
+
+#### UI-2 · CRITICAL — PrioritySummaryCard chart text is INVISIBLE in light mode (#fafafa on white)
+- **Severity:** HIGH
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:151` (definition) + ~40 usage sites: 498, 499, 500, 503, 515, 516, 518, 521, 532, 533, 537, 548, 549, 554, 565, 566, 567, 580, 581, 585, 597, 598, 600, 603, 632, 637, 645, 658, 659, 663, 676, 677, 681, 694, 695, 700, 702, 714, 715, 719, 731, 732, 736, 748, 749, 753.
+- **Description:** `const CHART_TEXT = '#fafafa'` is the hardcoded chart text color. Comment on line 149–150 says "use LIGHT color (white) so it's visible on ALL backgrounds (dark mode card bg, tooltip bg, etc)". This assumption is **wrong**: (a) the app has no dark mode (see UI-1), (b) the card background is `bg-card` = `oklch(1 0 0)` = pure white, and the chart container is `bg-muted/20` = `oklch(0.97 0 0 / 0.2)` over white = effectively very light gray. White-on-white = invisible. The previous audit (worklog lines ~11700+) noted the prior value `#a1a1aa` was visible; this "fix" to `#fafafa` made it dramatically worse.
+- **Empirical proof:** WCAG contrast `#fafafa` on white = **1.044:1** (INVISIBLE, fails AA Large 3:1). Previous `#a1a1aa` on white = 2.563:1 (still failed AA Large but visible).
+- **Proposed fix:** Use a theme-aware chart text color. Since ThemeProvider isn't wired (UI-1), the simplest fix is to switch to a DARK color that works on the light card background:
+  ```tsx
+  // Until dark mode is properly wired, use the same dark gray the rest of the
+  // dashboard uses for chart text (muted-foreground).
+  const CHART_TEXT = '#52525b'; // zinc-600 — WCAG AA Large pass on white (4.83:1)
+  const CHART_TEXT_MUTED = '#71717a'; // zinc-500 — visible on white
+  ```
+  Then later, when UI-1 is fixed and ThemeProvider is mounted, switch to:
+  ```tsx
+  const CHART_TEXT = 'hsl(var(--chart-text))'; // define --chart-text in :root + .dark
+  ```
+
+#### UI-3 · HIGH — Tooltip bg in PrioritySummaryCard has same color as card bg (low edge contrast)
+- **Severity:** MEDIUM
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:155-163`
+- **Description:** `TOOLTIP_STYLE.backgroundColor = 'rgba(255, 255, 255, 0.97)'` is nearly identical to the white card background (`oklch(1 0 0)`). The tooltip text (#18181b) is readable inside the tooltip, but the tooltip box itself is hard to distinguish from the card — only the `1px solid #e4e4e7` border + `0 4px 12px rgba(0,0,0,0.25)` shadow give it definition. In light mode this is acceptable but suboptimal. In dark mode (if ever enabled) it would be fine. Not a blocker.
+- **Proposed fix:** Optional — add a slightly stronger border or use `bg-popover` token for theme-awareness:
+  ```tsx
+  const TOOLTIP_STYLE: React.CSSProperties = {
+    backgroundColor: 'var(--popover)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    fontSize: '11px',
+    color: 'var(--popover-foreground)',
+    padding: '6px 8px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  };
+  ```
+
+#### UI-4 · HIGH — PeerComparison uses invalid `hsl(var(--muted-foreground))` syntax (silent fallback)
+- **Severity:** MEDIUM (degraded but still visible due to fallback)
+- **File:** `src/components/dashboard/PeerComparison.tsx:638, 644, 645, 655, 656, 949, 950, 952, 953`
+- **Description:** Code writes `fill="hsl(var(--muted-foreground))"` and `stroke="hsl(var(--border))"`. But `--muted-foreground` and `--border` are full `oklch(...)` color values (per `globals.css`), not HSL channel triples. So the resolved string `hsl(oklch(0.556 0 0))` is **invalid CSS**. The browser silently falls back to `currentColor` (inherited foreground). Empirical test: `getComputedStyle(probe).color` for `color: hsl(var(--muted-foreground))` returned `lab(2.75381 0 0)` — that's the inherited `--foreground` (near-black), NOT `--muted-foreground`.
+- **Impact:** Charts *appear* to work (text is visible because it falls back to dark foreground) but use the wrong color (foreground instead of muted-foreground = too dark / heavy). In dark mode (if ever enabled), `--muted-foreground` is `oklch(0.708 0 0)` (light gray) — but `hsl(oklch(0.708 0 0))` is still invalid, so it would fall back to `currentColor` = `--foreground` = white. The wrong-color fallback "happens to work" in both modes by accident.
+- **Proposed fix:** Drop the `hsl()` wrapper — `--muted-foreground` is already a complete color:
+  ```tsx
+  // Before
+  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+  stroke="hsl(var(--border))"
+  // After
+  tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+  stroke="var(--border)"
+  ```
+  This pattern affects ~9 sites in PeerComparison, ~9 sites in Charts.tsx (lines 69, 70, 71, 146, 147, 148, 205, 206, 207, 274, 275, 276, 283), and ~5 sites in AnalysisCards.tsx (lines 52, 53, 54, 55, 57). Total ~23 sites.
+
+#### UI-5 · MEDIUM — Color inconsistency between PrioritySummaryCard and other dashboard charts
+- **Severity:** MEDIUM
+- **File:** cross-component
+- **Description:** Three different chart-text strategies in the codebase, none of them correct:
+  | Component | Strategy | Result in light mode |
+  |---|---|---|
+  | `PrioritySummaryCard.tsx` | Hardcoded `#fafafa` (white) | INVISIBLE (1.04:1 contrast) |
+  | `PeerComparison.tsx`, `Charts.tsx`, `AnalysisCards.tsx` | `hsl(var(--muted-foreground))` (invalid CSS) | Falls back to `currentColor` = near-black — VISIBLE but wrong color |
+  | `RestoRecommendationCard.tsx` | No charts (text-only) | N/A |
+- **Proposed fix:** Standardize on a shared `CHART_TEXT` constant or CSS variable. Define once in `globals.css`:
+  ```css
+  :root { --chart-text: oklch(0.32 0 0); }       /* zinc-700, ~6:1 on white */
+  .dark  { --chart-text: oklch(0.85 0 0); }       /* zinc-200, ~10:1 on dark */
+  ```
+  Then in all chart components: `fill="var(--chart-text)"`.
+
+#### UI-6 · MEDIUM — Accordion buttons missing `aria-expanded` (a11y)
+- **Severity:** MEDIUM
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:1026-1033` (breakdown toggle), `1103-1125` (per-signal row buttons)
+- **Description:** The breakdown toggle button and each per-signal accordion row button use `<button onClick={…}>` with visual chevron rotation indicating state, but no `aria-expanded` attribute. Screen readers cannot determine expanded/collapsed state. Also missing `aria-controls` linking button to the controlled region.
+- **Proposed fix:**
+  ```tsx
+  <button
+    onClick={() => setShowBreakdown(!showBreakdown)}
+    aria-expanded={showBreakdown}
+    aria-controls="breakdown-region"
+    className="…"
+  >
+  …
+  {showBreakdown && (
+    <div id="breakdown-region" className="space-y-3">
+      …
+    </div>
+  )}
+  ```
+  Same pattern for per-signal rows: `aria-expanded={isExpanded}` and `aria-controls={`signal-${s.name}`}.
+
+#### UI-7 · MEDIUM — Touch targets too small on mobile (PrioritySummaryCard accordion)
+- **Severity:** MEDIUM
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:1103-1125` (signal rows), `1026-1033` (breakdown toggle)
+- **Description:** Signal row button has `px-3 py-2` (~8px top/bottom) + `text-[11px]` → total height ~28–32px. WCAG 2.5.5 recommends ≥44×44px. Breakdown toggle button has no explicit padding. Hard to tap on mobile.
+- **Proposed fix:** Increase vertical padding to `py-3` (12px) for signal rows, and add `min-h-[44px]` to the breakdown toggle:
+  ```tsx
+  <button
+    onClick={() => toggleExpand(s.name)}
+    className="w-full flex items-center gap-2 px-3 py-3 text-left min-h-[44px]"
+  >
+  ```
+
+#### UI-8 · MEDIUM — `priorityBadge` thresholds (80/50/0) differ from `scoreColor`/`levelColor` thresholds (55/30)
+- **Severity:** LOW
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:169-190` (priorityBadge) vs `896-904` (scoreColor/scoreBarColor)
+- **Description:** Two parallel priority scales coexist in the same component:
+  - `priorityBadge(score)`: 80→CRITICAL, 50→HIGH, >0→LOW, 0→NONE (per-signal severity badges on each row)
+  - `scoreColor/scoreBarColor`: 55→red, 30→amber, else emerald (overall priority score)
+  - `RestoRecommendationCard.scoreColor` matches the 55/30 scale (line 142–147).
+  The 80/50 scale for per-signal badges is intentionally different (per-signal severity vs overall priority) but visually they use the same red/amber/emerald palette, which may confuse users. A score of 55 is "red/CRITICAL-looking" on the overall bar but only "amber/HIGH" on a per-signal badge with the same number.
+- **Proposed fix:** Either (a) document the difference in a comment, or (b) align both scales to 55/30, or (c) use different visual languages (e.g., per-signal badges use icons only, overall score uses color). Recommend (a) + (b): align per-signal badge thresholds to 55/30 to match server `priorityLevel` thresholds. No code change unless product confirms.
+
+#### UI-9 · LOW — `CHART_TEXT_MUTED = '#d4d4d8'` defined but never used
+- **Severity:** LOW
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:152`
+- **Description:** `const CHART_TEXT_MUTED = '#d4d4d8'` is declared but no usage found in the file. Dead code. Also `#d4d4d8` would be invisible on white (similar issue to UI-2).
+- **Proposed fix:** Remove the unused constant, or use it consistently for secondary chart text (after fixing UI-2 to use a theme-aware value).
+
+#### UI-10 · LOW — `bg-muted/20` chart container provides negligible contrast vs card bg
+- **Severity:** LOW
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:1130`
+- **Description:** Chart container `<div className="bg-muted/20 dark:bg-muted/10 rounded-lg p-3">` — `bg-muted` is `oklch(0.97 0 0)` (very light gray), at 20% opacity over white card → effectively `oklch(0.994 0 0)` ≈ indistinguishable from white. The intended visual "chart panel" separation is missing. In dark mode it would be more visible (but dark mode is inert — UI-1).
+- **Proposed fix:** Use stronger contrast: `bg-muted/40` or `bg-muted` (full) or add a `border border-border/60`:
+  ```tsx
+  <div className="bg-muted/40 dark:bg-muted/20 rounded-lg p-3 border border-border/40">
+  ```
+
+#### UI-11 · LOW — Empty state when `recommendation === null`: returns `null` (no message)
+- **Severity:** LOW
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:886`
+- **Description:** `if (!recommendation) return null;` — when the parent `RestoAnalysis` is still fetching the recommendation, PrioritySummaryCard renders nothing. This causes a brief layout shift (empty space) before data arrives. Parent `RestoAnalysis` does have its own loading spinner, so this is a minor visual gap, not a blocker.
+- **Proposed fix:** Accept `isLoading` prop and render a skeleton:
+  ```tsx
+  if (!recommendation) {
+    return (
+      <Card className="overflow-hidden">
+        <CardHeader className="pb-3"><Skeleton className="h-4 w-48" /></CardHeader>
+        <CardContent className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+        </CardContent>
+      </Card>
+    );
+  }
+  ```
+
+#### UI-12 · LOW — Synthetic chart data shown briefly while `outletItems` loads
+- **Severity:** LOW
+- **File:** `src/components/dashboard/PrioritySummaryCard.tsx:295-448` (all `build*Data` functions have a "fallback to synthetic data" branch)
+- **Description:** When `outletItems=[]` (still loading), `buildItemConcentrationData`, `buildTolBreachHighData`, `buildTolBreachData`, `buildOverExplainedData`, `buildHighLossData` all fall back to synthesized placeholder data using `seededRand`. The disclaimer at line 1038 ("ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal") partially mitigates this, but a user expanding a signal during the brief loading window will see fake data shaped to look real. No flash-of-unstyled-content, but a flash-of-wrong-content.
+- **Proposed fix:** Pass an `isLoading` flag and show a chart skeleton until outletItems resolves:
+  ```tsx
+  {isLoadingItems ? <ChartSkeleton /> : <SignalChart name={s.name} r={r} items={outletItems} />}
+  ```
+
+#### UI-13 · LOW — `text-yellow-600 dark:text-yellow-400` (RestoAnalysis line 202) — color not in design palette
+- **Severity:** LOW
+- **File:** `src/components/dashboard/RestoAnalysis.tsx:201-202`
+- **Description:** `scoreText` uses `text-yellow-500`/`text-yellow-600` for the 50–70 health score bucket. The chart palette comment (PrioritySummaryCard line 134) explicitly says "NO blue/indigo, only red/amber/emerald/zinc". `yellow` is not in the palette and visually clashes with amber. Minor cosmetic inconsistency.
+- **Proposed fix:** Replace `yellow` with `amber`:
+  ```tsx
+  const scoreRing = healthScore < 30 ? 'stroke-red-500' : healthScore < 50 ? 'stroke-amber-500' : healthScore < 70 ? 'stroke-amber-400' : 'stroke-emerald-500';
+  const scoreText = healthScore < 30 ? 'text-red-600 dark:text-red-400' : healthScore < 50 ? 'text-amber-600 dark:text-amber-400' : healthScore < 70 ? 'text-amber-500 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-400';
+  ```
+
+#### UI-14 · INFO — Console errors / hydration mismatches
+- **Severity:** INFO
+- **File:** N/A (no errors observed in current state)
+- **Description:** `suppressHydrationWarning` on `<html>` (layout.tsx:29) is typically paired with next-themes ThemeProvider to suppress the warning that occurs when ThemeProvider sets `class` on `<html>` after hydration. Since no ThemeProvider is mounted, this attribute is **unnecessary but harmless** — it suppresses nothing because there's no attribute manipulation. No hydration mismatches observed.
+- **Proposed fix:** When UI-1 is fixed (ThemeProvider mounted), keep `suppressHydrationWarning`. If UI-1 is decided as "no dark mode ever", remove `suppressHydrationWarning` for code cleanliness.
+
+#### UI-15 · INFO — Empirical verification confirms PeerComparison/Charts/AnalysisCards charts ARE visible
+- **Severity:** INFO (positive finding)
+- **Description:** Despite UI-4 (invalid `hsl(var(--muted-foreground))` syntax), Chrome silently falls back to `currentColor` (inherited `--foreground` = near-black). So PeerComparison scatter chart axes, Charts.tsx bar/line charts, and AnalysisCards.tsx composed chart axes are all VISIBLE in light mode (just using the wrong color). Only PrioritySummaryCard is truly invisible (because it uses explicit `#fafafa`).
+
+---
+
+### Recommended Next Actions (priority order)
+
+1. **UI-1 (CRITICAL)** — Mount `<ThemeProvider attribute="class" defaultTheme="light">` in `providers.tsx` (or decide to delete all `dark:` variants and the `.dark` CSS block). All `dark:` variants are currently dead code. ~10 lines added, but enables proper dark mode if/when product wants it.
+2. **UI-2 (CRITICAL)** — Replace `CHART_TEXT = '#fafafa'` with `'#52525b'` (zinc-600) in `PrioritySummaryCard.tsx:151`, plus remove all `#fafafa` literals in chart `fill`/`stroke` (~40 sites). OR adopt the `var(--chart-text)` approach from UI-5. This is the user's reported "black on black" / "invisible labels" bug, root-caused.
+3. **UI-4 (HIGH)** — Replace `hsl(var(--muted-foreground))` → `var(--muted-foreground)` and `hsl(var(--border))` → `var(--border)` in PeerComparison, Charts.tsx, AnalysisCards.tsx (~23 sites total). Same change applies to `hsl(var(--muted))` in cursor fills.
+4. **UI-5 (MEDIUM)** — Define a shared `--chart-text` CSS variable in `globals.css` `:root` + `.dark` blocks, and adopt it across all chart components for consistency.
+5. **UI-6 (MEDIUM)** — Add `aria-expanded` + `aria-controls` to accordion buttons (PrioritySummaryCard ~17 buttons).
+6. **UI-7 (MEDIUM)** — Increase touch target height on signal rows + breakdown toggle.
+7. **UI-3 (MEDIUM)** — Optional: switch TOOLTIP_STYLE to use CSS variables for theme-awareness.
+8. **UI-8, UI-9, UI-10, UI-11, UI-12, UI-13 (LOW)** — Cleanup + polish.
+
+### Code change preview (minimal fix for UI-2 alone — unblocks user immediately)
+
+```diff
+--- a/src/components/dashboard/PrioritySummaryCard.tsx
++++ b/src/components/dashboard/PrioritySummaryCard.tsx
+@@ -148,11 +148,11 @@ const CHART = {
+ };
+ 
+-// FIX: chart text color — use LIGHT color (white) so it's visible on ALL backgrounds
+-// (dark mode card bg, tooltip bg, etc). Previous #a1a1aa was too dark on dark backgrounds.
+-const CHART_TEXT = '#fafafa'; // white — always visible
+-const CHART_TEXT_MUTED = '#d4d4d8'; // light grey for secondary text
++// Chart text color — DARK zinc so it's visible on white card background in light mode.
++// When dark mode is wired (ThemeProvider), replace with var(--chart-text) for theme awareness.
++const CHART_TEXT = '#52525b';   // zinc-600, ~4.83:1 contrast on white (passes WCAG AA Large)
++const CHART_TEXT_MUTED = '#71717a'; // zinc-500, ~3.95:1 contrast on white
+```
+
+Then a project-wide find/replace: `'#fafafa'` → `CHART_TEXT` in PrioritySummaryCard.tsx (or `'var(--chart-text)'` after UI-5 lands).
+
+### Files changed by this audit
+
+None (read-only audit + empirical browser verification). All findings are recommendations for the next implementer.
+
+### Verification method
+
+- Static read: layout.tsx, providers.tsx, globals.css, card.tsx, PrioritySummaryCard.tsx (full 1172 lines), RestoRecommendationCard.tsx (full 287 lines), RestoAnalysis.tsx (excerpts), PeerComparison.tsx (excerpts), Charts.tsx (full 298 lines), AnalysisCards.tsx (full 85 lines).
+- Grep: `next-themes|ThemeProvider|useTheme` across `src/`, plus `fill=|stroke=|tick=|contentStyle|wrapperStyle` in PeerComparison.tsx.
+- Empirical: agent-browser open http://localhost:3000, `getComputedStyle` on `<html>`, `<body>`, `<card>`, probe `<div>` for `hsl(var(--muted-foreground))` and `#fafafa`. WCAG contrast ratios computed manually from RGB values.
+
+---
+
+---
+Task ID: AUDIT-PSC-FINAL
+Agent: PrioritySummaryCard Auditor
+Task: Deep audit of charts, colors, data, labels, empty states
+
+Work Log:
+- Read worklog tail (lines 11834-11984) for prior audit context (FIX-1..FIX-8).
+- Read entire `src/components/dashboard/PrioritySummaryCard.tsx` (1172 lines, 13 chunks).
+- Verified `OutletItem` interface vs `ItemRow` interface in `RestoAnalysis.tsx` (line 45-54) — structurally compatible (narrowed 'P1'|'P2'|'P3' assignable to string; extras allowed).
+- Ran `npx tsc --noEmit` → EXIT 0, no TypeScript errors.
+- Grep'd for `#a1a1aa`, `#000`, `#333`, `#666`, `#fafafa`, `rgba(250,250,250`, `rgba(255, 255, 255` to map color usage.
+- Grep'd for `slice(0,`, `Item #`, `Item ${i`, `resetKey`, `height={`, `h-[` to map truncation, fallback naming, state reset, heights.
+- Cross-checked `RestoAnalysis.tsx` line 251: passes `data?.allItems || []` as `outletItems` prop. ItemRow fields match OutletItem fields 1:1.
+- Verified all 5 chart builders (ItemConcentration, TolBreachHigh, TolBreach, OverExplained, HighLoss) accept `items: OutletItem[]` and filter/sort real items.
+- Verified 4 charts (TolBreachHigh, TolBreach, OverExplained, HighLoss) wrap with `<ChartEmptyState>` when `data.length === 0`.
+- Verified Pie label (lines 629-636) uses render function returning `<text fill="#fafafa">` element.
+- Verified Pie chart `isAnimationActive={false}` (FIX-3 applied), `cy="50%"`, `outerRadius={62}`, `height={240}` (FIX-1 applied).
+- Verified Legend formatters on Z-Score, Item Concentration, Over-Explained (FIX-2 applied with `<span style={{color:'#fafafa'}}>`).
+- Verified Tooltip `TOOLTIP_STYLE` = white bg `rgba(255,255,255,0.97)` + dark text `#18181b` (line 155-163).
+- Verified all `ResponsiveContainer` heights = 200, except Pie = 240 (line 617). 12 containers in total.
+- Verified all `XAxis`/`YAxis` use `tick={{ fill: '#fafafa' }}` + `stroke="#fafafa"`.
+- Verified all `LabelList` use `fill="#fafafa"` (11 instances).
+- Verified all 4 angled XAxes use `angle={-35} textAnchor="end" height={60}` (lines 658, 676, 694, 714).
+- Verified cursor fill `rgba(250,250,250,0.15)` on all BarCharts (8 instances). ScatterChart uses `cursor={{ strokeDasharray: '3 3' }}` (OK). LineCharts have no explicit cursor (Recharts default).
+- Verified ReferenceLine labels use CHART.red (3x) or CHART.amber (1x) — intentional color match to line. NOT changed to #fafafa.
+- Verified default expand for score > 50 (lines 837-845).
+- Verified lazy render: charts only mount when `isExpanded && (...)` (line 1128).
+
+Stage Summary:
+- TypeScript: CLEAN (tsc --noEmit EXIT 0).
+- Color consistency: PASS — all chart text uses #fafafa, tooltip uses white bg + dark text, no leftover #a1a1aa in chart text (only in CHART palette constant + comment).
+- Real data integration: 5/5 builders use real items ✓. Fallback synthesis triggers when filters return 0 items — no visual indicator distinguishes real vs synthesized.
+- Empty states: 4/4 charts have ChartEmptyState ✓. Plus No Tolerance has its own inline empty state.
+- Animation/positioning: All prior FIX-1, FIX-2, FIX-3 applied.
+- 14 findings identified below (1 HIGH, 6 MEDIUM, 7 LOW).
+
+### Findings
+
+---
+
+**PSC-1 · HIGH — Over-Explained chart labels absolute quantities as percentages (REAL BUG)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:695-700, 697`
+**Description:** `buildOverExplainedData` (lines 376-384) produces data shape `{name, Deviasi: number, Explanation: number}` where the values are **absolute quantities** — `Math.round(Math.abs(it.qtyDeviasi))` and `Math.round(Math.abs(it.qtyWaste) + Math.abs(it.qtySusut) + Math.abs(it.qtyTrial))`. A typical value is e.g. `Deviasi: 100, Explanation: 150` (raw unit counts, NOT 100% and 150%).
+However, the chart renders these with `%` suffixes everywhere:
+- Line 695: `<YAxis tickFormatter={(v) => `${v}%`} />` → y-axis shows "100%", "150%" for quantities
+- Line 696: `<Tooltip formatter={(v) => `${v}%`} />` → tooltip shows "150%"
+- Line 697: `<ReferenceLine y={100} label={{ value: '100%' }} />` → mislabeled absolute threshold
+- Line 700: `<LabelList formatter={(v) => `${Math.round(Number(v))}%`} />` → bar label "150%"
+Result: user sees a 150-unit bar labeled "150%" and a reference line at quantity 100 labeled "100%". The 100% threshold is meaningless because each item has a different Deviasi value (e.g., item A has Deviasi=80, item B has Deviasi=120 — a single y=100 line can't represent "100% of deviasi" for both).
+**Proposed fix (pick one):**
+```tsx
+// Option A (preferred): convert to percentage of each item's Deviasi.
+// In buildOverExplainedData, normalize:
+const data = overItems.map(it => {
+  const deviasi = Math.abs(it.qtyDeviasi || 0);
+  const explanation = Math.abs(it.qtyWaste) + Math.abs(it.qtySusut) + Math.abs(it.qtyTrial);
+  return {
+    name: it.itemName.length > 12 ? it.itemName.slice(0, 11) + '…' : it.itemName,
+    Deviasi: 100, // normalized baseline
+    Explanation: Math.round((explanation / Math.max(deviasi, 1)) * 100),
+  };
+});
+// Then y=100 reference line + % labels are correct.
+
+// Option B: keep absolute quantities, drop % suffixes everywhere.
+<YAxis tickFormatter={(v) => fmtNum(v)} />
+<Tooltip formatter={(v) => fmtNum(v)} />
+<ReferenceLine y={undefined} /* remove */ />
+<LabelList formatter={(v) => fmtNum(Number(v))} />
+```
+
+---
+
+**PSC-2 · MEDIUM — State reset key doesn't include period; comment lies about implementation**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:847-850`
+**Description:** Comment on line 847-849 says: "Use composite key: outletCode + monthLabel + currentWeek so switching period on same outlet resets to defaults." But the actual implementation on line 850 is:
+```tsx
+const resetKey = `${outletCode}|${recommendation?.metrics ? 'has-data' : 'no-data'}|${signalScores ? signalScores.length : 0}`;
+```
+- `monthLabel` and `currentWeek` are NOT in the key.
+- `recommendation?.metrics ? 'has-data' : 'no-data'` is binary (always 'has-data' when data exists).
+- `signalScores.length` is constant at 15 across periods.
+Result: switching period on same outlet keeps expanded accordion state from previous period. Spec requirement "state reset on outlet/period change?" is NOT met.
+**Proposed fix:** Pass `monthLabel` and `currentWeek` as props from `RestoAnalysis.tsx`, or hash signal scores:
+```tsx
+// Option A: pass props
+export function PrioritySummaryCard({ recommendation, outletItems = [], monthLabel, currentWeek }: {
+  ...
+  monthLabel?: string;
+  currentWeek?: string;
+}) {
+  const resetKey = `${outletCode}|${monthLabel || ''}|${currentWeek || ''}`;
+  ...
+}
+
+// Option B: hash signalScores (no prop changes)
+const scoresHash = signalScores?.reduce((h, s) => h + s.score, 0) ?? 0;
+const resetKey = `${outletCode}|${scoresHash}`;
+```
+
+---
+
+**PSC-3 · MEDIUM — Inconsistent item name truncation: 4 builders use slice(0,11), 1 uses slice(0,10), Pie label uses slice(0,8)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:311, 328, 350, 380, 405, 630`
+**Description:**
+- `buildItemConcentrationData` line 311: `it.itemName.slice(0, 10) + '…'` → 10 chars + ellipsis = 11 total
+- `buildTolBreachHighData` line 328: `it.itemName.slice(0, 11) + '…'` → 11 chars + ellipsis = 12 total
+- `buildTolBreachData` line 350: `it.itemName.slice(0, 11) + '…'` → 12 total
+- `buildOverExplainedData` line 380: `it.itemName.slice(0, 11) + '…'` → 12 total
+- `buildHighLossData` line 405: `it.itemName.slice(0, 11) + '…'` → 12 total
+- Pie label function line 630: `(entry.name || '').slice(0, 8) + '…'` → 8 chars + ellipsis = 9 total
+Spec says "Item names lengthened from 6 to 12 chars" and "is the truncation consistent (slice(0,11)+'…')?" — answer: NO. `buildItemConcentrationData` and Pie label function are inconsistent.
+Worse: Pie chart receives pre-truncated names from `buildItemConcentrationData` (already 11 chars including ellipsis for long names). The Pie label function then re-truncates: 11 > 10 → slice(0,8)+'…' = "AYAM GOR…" (9 chars). DOUBLE truncation causes extra data loss (e.g., "AYAM GORENG SPESIAL" → "AYAM GOREN…" → "AYAM GOR…").
+**Proposed fix:**
+```tsx
+// buildItemConcentrationData line 311:
+name: it.itemName.length > 12 ? it.itemName.slice(0, 11) + '…' : it.itemName,
+// (change slice(0,10) → slice(0,11))
+
+// Pie label function line 629-636:
+label={(entry: { name?: string; value?: number }) => {
+  // Trust that data is already truncated to ≤12 chars; no re-truncation
+  return (
+    <text fill="#fafafa" fontSize={9} textAnchor="middle">
+      {`${entry.name}: ${entry.value}%`}
+    </text>
+  );
+}}
+```
+
+---
+
+**PSC-4 · MEDIUM — Disclaimer "ilustrasi" is now misleading after real-data integration**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:1037-1040`
+**Description:**
+```tsx
+<p className="text-[10px] text-muted-foreground/70 italic">
+  ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal. Klik sinyal untuk melihat visualisasi.
+</p>
+```
+After the recent rewrite, 5 charts (Item Concentration, Tol Breach High, Tolerance Breach, Over-Explained, High Loss Nominal) use **real** `outletItems` data. Only 7 charts (Deviasi Growth, Trend Memburuk, Z-Score, Residual Ratio, Loss/Sales, Direction Flip, Benchmark, Residual Nominal, No Tolerance) still synthesize. The blanket "ilustrasi" disclaimer is now inaccurate for the most important charts (the ones with per-item detail).
+**Proposed fix:**
+```tsx
+<p className="text-[10px] text-muted-foreground/70 italic">
+  ℹ️ Chart item-level (Item Concentration, Tolerance Breach, Over-Explained, High Loss) menggunakan data real. Chart lain ilustratif berdasarkan nilai sinyal.
+</p>
+```
+
+---
+
+**PSC-5 · MEDIUM — Synthesized fallback data has no visual indicator; user can't tell fake from real**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:332-336, 353-357, 385-391, 408-412`
+**Description:** When `recommendation.signals.XxxCount > 0` but the real `outletItems` filter returns 0 rows (e.g., devBom is null for all items, or `Math.abs(devBom)` doesn't exceed the threshold), the builder falls back to synthesized data with names like `Item 1`, `Item 2` and `seededRand`-based values. The chart then renders these synthesized items identically to real items — no badge, no watermark, no color difference.
+Result: user investigates "Item 1" that doesn't actually exist, wasting audit time.
+Trigger condition is realistic: `toleranceBreachHighCount` is computed server-side using actual tolerance master data; the client-side filter uses a hardcoded `threshold = 10` (assumes tolerance = 5%). If actual tolerance is 3% or 7%, the client filter mismatches the server count, fallback triggers.
+**Proposed fix:**
+```tsx
+// Option A: tag fallback data with a flag, render a "ILUSTRASI" badge
+const data = breachItems.map(...);
+const isSynthesized = data.length === 0;
+if (isSynthesized) { /* synthesize with `synth: true` flag */ }
+return { data, threshold, isSynthesized };
+
+// In chart:
+{isSynthesized && (
+  <div className="text-[9px] text-amber-500 italic mb-1">⚠️ Data ilustratif (item real tidak cocok filter)</div>
+)}
+
+// Option B (preferred): remove fallback entirely, return empty + ChartEmptyState
+if (data.length === 0) return { data: [], threshold, isSynthesized: true };
+// Then in chart: if (data.length === 0) return <ChartEmptyState message="Data item tidak tersedia untuk filter ini" />;
+```
+
+---
+
+**PSC-6 · MEDIUM — Over-Explained stacked bars don't visually communicate "explanation > deviasi"**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:698-701`
+**Description:** Current design uses `stackId="a"` for both Deviasi (zinc) and Explanation (amber) bars. Total bar height = Deviasi + Explanation. This doesn't visually communicate the over-explanation relationship — a tall bar just means "both quantities are large", not "explanation exceeds deviasi".
+For an over-explained item where Deviasi=100 and Explanation=150, the stacked bar reaches height 250 with no visual cue that the 150 portion exceeds the 100 portion. A user must mouseover and read tooltips to discover the relationship.
+**Proposed fix (pick one):**
+```tsx
+// Option A (preferred): grouped bars side-by-side — direct visual comparison
+<Bar dataKey="Deviasi" fill={CHART.zinc} radius={[3, 3, 0, 0]} />  // remove stackId
+<Bar dataKey="Explanation" fill={CHART.amber} radius={[3, 3, 0, 0]} />
+// ReferenceLine y={100} removed (no single threshold for grouped abs quantities)
+
+// Option B: single "Explanation/Deviasi ratio" bar — value >100% means over-explained
+// In buildOverExplainedData: return [{name, Ratio: Math.round(explanation/deviasi*100)}]
+<Bar dataKey="Ratio" fill={CHART.amber}>
+  <LabelList formatter={(v) => `${Math.round(Number(v))}%`} />
+</Bar>
+<ReferenceLine y={100} label="100%" />  // now meaningful
+```
+
+---
+
+**PSC-7 · MEDIUM — buildNoToleranceRows still synthesizes fake item names**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:437-448, 783`
+**Description:** `buildNoToleranceRows` ignores `outletItems` and synthesizes rows with random `nominal` and `pct` via `seededRand`. The table at line 783 displays `Item tanpa tol #{row.idx}` — a fake label that looks like real item identification. User can't act on "Item tanpa tol #3" without an actual item name.
+Note: the `OutletItem` interface doesn't have a `tolerance` field, so the data model doesn't directly support this. But we can heuristically identify items likely without tolerance (e.g., `qtyBom === 0` or `qtyDeviasi === null`).
+**Proposed fix:**
+```tsx
+function buildNoToleranceRows(r: Recommendation, items: OutletItem[]) {
+  const count = r.signals.noToleranceItems;
+  // Heuristic: items with no BOM data probably have no tolerance setup
+  const noTolItems = items
+    .filter(it => it.qtyBom === 0 || it.qtyDeviasi == null)
+    .slice(0, Math.min(count, 20));
+  if (noTolItems.length === 0) {
+    // Fallback: keep synthesized but label clearly
+    return Array.from({ length: count }, (_, i) => ({
+      idx: i + 1,
+      itemName: null, // signal "unknown"
+      nominal: Math.round(500_000 + seededRand(i + 1) * 5_000_000),
+      pct: Number((2 + seededRand(i + 30) * 8).toFixed(1)),
+    }));
+  }
+  return noTolItems.map((it, i) => ({
+    idx: i + 1,
+    itemName: it.itemName,
+    nominal: Math.abs(it.nominalLossSurplus ?? 0),
+    pct: Number((Math.abs(it.devBom ?? 0) * 100).toFixed(1)),
+  }));
+}
+
+// Table render line 783:
+<td className="px-2 py-1 truncate">{row.itemName || `Item tanpa tol #${row.idx}`}</td>
+```
+
+---
+
+**PSC-8 · LOW — Line chart Legends don't use custom formatter (inconsistent with other 3 Legends)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:521, 537`
+**Description:**
+- Line 521 (Deviasi Growth): `<Legend wrapperStyle={{ fontSize: '9px', color: '#fafafa' }} iconType="line" />`
+- Line 537 (Trend Memburuk): same pattern
+- Lines 554, 645, 702 (Z-Score, Item Concentration, Over-Explained): use `formatter={(value) => <span style={{ color: '#fafafa', fontSize: '9px' }}>{value}</span>}`
+Per FIX-2 in prior audit, `wrapperStyle.color` doesn't propagate to `<span class="recharts-legend-item-text">` — Recharts overrides with the line's stroke color. For Line charts the stroke colors (amber, red, redDark) are vibrant and visible, so this is cosmetic, not functional.
+**Proposed fix:**
+```tsx
+<Legend
+  wrapperStyle={{ fontSize: '9px' }}
+  iconType="line"
+  formatter={(value: string) => <span style={{ color: '#fafafa', fontSize: '9px' }}>{value}</span>}
+/>
+```
+
+---
+
+**PSC-9 · LOW — Empty state height (h-[170px]) doesn't match chart height (200px)**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:476, 763, 769, 795`
+**Description:** `ChartEmptyState` uses `h-[170px]` (line 476), but charts use `height={200}`. When user expands a chart that has no data, the empty state appears 30px shorter than a populated chart, causing visual jumpiness as user toggles between populated and empty charts in the same accordion.
+Also: the No Tolerance empty state (line 763) and the default fallback (line 795) use `h-[170px]`, while the No Tolerance table view (line 769) also uses `h-[170px]` — all inconsistent with chart height.
+**Proposed fix:**
+```tsx
+// ChartEmptyState line 476:
+<div className="flex items-center justify-center h-[200px] text-xs text-muted-foreground">
+
+// Lines 763, 769, 795: change h-[170px] → h-[200px]
+```
+
+---
+
+**PSC-10 · LOW — Benchmark High LabelList formatter doesn't append "%"**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:736`
+**Description:** Benchmark High chart shows percentage values (e.g., `outletDev * 100` = 5.0 for 5% deviation). YAxis tickFormatter (line 732) and Tooltip formatter (line 733) both append `%` — `${v}%`. But the LabelList formatter (line 736) uses the generic `jt/rb/toFixed(1)` formatter that produces bare numbers like "5.0" without `%`.
+Cosmetic inconsistency — user sees bar labeled "5.0" next to y-axis tick "5%".
+**Proposed fix:** Add a dedicated percentage formatter for Benchmark High:
+```tsx
+<LabelList dataKey="value" position="top" fill="#fafafa" fontSize={9} formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
+```
+
+---
+
+**PSC-11 · LOW — Fallback item naming inconsistent: "Item #1" vs "Item 1"**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:303, 334, 355, 389, 410`
+**Description:**
+- `buildItemConcentrationData` line 303: `r.metrics.topItem || 'Item #1'` (with `#`)
+- `buildTolBreachHighData` line 334: `Item ${i + 1}` (no `#`)
+- `buildTolBreachData` line 355: `Item ${i + 1}` (no `#`)
+- `buildOverExplainedData` line 389: `Item ${i + 1}` (no `#`)
+- `buildHighLossData` line 410: `Item ${i + 1}` (no `#`)
+Spec asked: "are item names from real data (outletItems) or still 'Item #1'?" — answer: real data when available; fallback uses BOTH 'Item #1' (1 place) and 'Item 1' (4 places).
+**Proposed fix:** Standardize on `Item #N`:
+```tsx
+data.push({ name: `Item #${i + 1}`, ... });
+```
+Or better: prefix with `⚠️ Ilustrasi Item #${i + 1}` so users can tell fallback from real (see PSC-5).
+
+---
+
+**PSC-12 · LOW — build*Data functions not memoized; re-run on every parent render**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:295-448, 490-800`
+**Description:** `SignalChart` is a function component (not memoized) that calls `buildItemConcentrationData`, `buildTolBreachHighData`, etc. on every render. The `build*` functions perform `[...items].sort().filter().slice()` — O(n log n) on each render.
+When the parent re-renders (e.g., expanding a different signal in the same accordion), all currently-expanded charts re-run their builders. For an outlet with 200 items, this is ~200 × log(200) ≈ 1500 ops per chart per render — minor but adds up.
+**Proposed fix:** Wrap `SignalChart` in `React.memo` and/or wrap builders in `useMemo`:
+```tsx
+const SignalChart = React.memo(function SignalChart({ name, r, items }: Props) {
+  const data = useMemo(() => {
+    switch (name) {
+      case 'Item Concentration': return buildItemConcentrationData(r, items);
+      // ...
+    }
+  }, [name, r, items]);
+  // ...
+});
+```
+
+---
+
+**PSC-13 · LOW — High Loss Nominal LabelList formatter doesn't format sub-1jt values**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:719`
+**Description:**
+```tsx
+formatter={(v: any) => {
+  const n = Number(v);
+  if (isNaN(n)) return "";
+  return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : `${n}`;
+}}
+```
+For values < 1,000,000 (e.g., 500,000), the formatter returns the bare number "500000" — not "500rb" or formatted Rupiah. Inconsistent with other Rupiah formatters (lines 503, 585, 603, 736, 753) that handle the `>= 1000` case with "rb" suffix.
+Note: in practice this branch is never hit because `buildHighLossData` filters items with `nominalLossSurplus < -10_000_000` (line 401) — all displayed values are ≥ 10jt. So this is a latent inconsistency, not a visible bug.
+**Proposed fix:**
+```tsx
+formatter={(v: any) => {
+  const n = Number(v);
+  if (isNaN(n)) return "";
+  return Math.abs(n) >= 1000000
+    ? `${(Math.abs(n)/1000000).toFixed(1)}jt`
+    : Math.abs(n) >= 1000
+      ? `${(Math.abs(n)/1000).toFixed(0)}rb`
+      : `${n}`;
+}}
+```
+
+---
+
+**PSC-14 · LOW — LineCharts (Deviasi Growth, Trend Memburuk) have no explicit cursor prop**
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:517, 534`
+**Description:** Both LineCharts use `<Tooltip contentStyle={TOOLTIP_STYLE} formatter={...} />` without a `cursor` prop. Recharts default for LineChart is `cursor={{ stroke: '#fafafa', strokeWidth: 1, strokeDasharray: '3 3' }}` (or similar) — usually invisible on dark backgrounds because the default stroke is gray.
+User hovering over the chart sees tooltip appear but no visual indicator of which x-position they're hovering. Cosmetic UX issue.
+**Proposed fix:**
+```tsx
+<Tooltip
+  contentStyle={TOOLTIP_STYLE}
+  cursor={{ stroke: '#fafafa', strokeWidth: 1, strokeDasharray: '3 3', strokeOpacity: 0.4 }}
+  formatter={...}
+/>
+```
+
+---
+
+### Summary table
+
+| ID | Severity | File:Line | One-liner |
+|----|----------|-----------|-----------|
+| PSC-1 | HIGH | 695-700 | Over-Explained chart labels absolute quantities as percentages |
+| PSC-2 | MEDIUM | 847-850 | State resetKey doesn't include period (comment lies) |
+| PSC-3 | MEDIUM | 311, 630 | Inconsistent truncation: slice(0,10), slice(0,11), slice(0,8) |
+| PSC-4 | MEDIUM | 1037-1040 | "ilustrasi" disclaimer now misleading after real-data rewrite |
+| PSC-5 | MEDIUM | 332-336, 353-357, 385-391, 408-412 | Synthesized fallback has no visual indicator |
+| PSC-6 | MEDIUM | 698-701 | Over-Explained stacked bars don't show explanation>deviasi relationship |
+| PSC-7 | MEDIUM | 437-448, 783 | No Tolerance table shows fake item names "Item tanpa tol #N" |
+| PSC-8 | LOW | 521, 537 | Line chart Legends missing formatter (inconsistent w/ other 3) |
+| PSC-9 | LOW | 476, 763, 769, 795 | Empty state h-[170px] vs chart height={200} (visual jump) |
+| PSC-10 | LOW | 736 | Benchmark High LabelList missing "%" suffix |
+| PSC-11 | LOW | 303, 334, 355, 389, 410 | Fallback naming: "Item #1" vs "Item 1" |
+| PSC-12 | LOW | 295-448, 490-800 | build*Data not memoized; re-runs every render |
+| PSC-13 | LOW | 719 | High Loss LabelList doesn't format sub-1jt values |
+| PSC-14 | LOW | 517, 534 | LineCharts missing explicit cursor prop |
+
+### Recommended next actions (priority order)
+1. **PSC-1** (HIGH) — Fix Over-Explained chart: normalize to percentages OR drop % suffixes. ~5 lines.
+2. **PSC-6** (MEDIUM) — Switch Over-Explained to grouped bars (remove stackId). ~2 lines. Often fixed together with PSC-1.
+3. **PSC-2** (MEDIUM) — Add period to resetKey (pass monthLabel/currentWeek props OR hash signalScores). ~3 lines + 2 prop additions.
+4. **PSC-3** (MEDIUM) — Standardize all 5 builders + Pie label to `slice(0,11)+'…'`; remove double-truncation in Pie label. ~3 lines.
+5. **PSC-5** (MEDIUM) — Add `isSynthesized` flag + visual badge, OR remove fallback entirely. ~10 lines.
+6. **PSC-7** (MEDIUM) — Pass `outletItems` to `buildNoToleranceRows`; heuristically filter items without tolerance. ~15 lines.
+7. **PSC-4** (MEDIUM) — Update disclaimer text to distinguish real vs illustrative charts. ~1 line.
+8. **PSC-8..14** (LOW) — Cosmetic fixes; batch into one cleanup PR.
+
+### Verification
+- TypeScript compile: `npx tsc --noEmit` → EXIT 0 (no type errors)
+- OutletItem ↔ ItemRow (RestoAnalysis) structural compatibility: ✓
+- All 5 chart builders use real `outletItems` ✓
+- All 4 charts have ChartEmptyState ✓
+- Pie label returns `<text>` element ✓
+- All chart text uses #fafafa ✓
+- All tooltips use white bg + dark text ✓
+- All ResponsiveContainer heights = 200 (Pie = 240) ✓
+- All LabelList use fill="#fafafa" ✓
+- All angled XAxes use angle=-35, height=60 ✓
+- All BarChart cursors use rgba(250,250,250,0.15) ✓
+- All ReferenceLine labels use CHART.red or CHART.amber (intentional, NOT changed) ✓
+
+**Files changed by this audit:** none (read-only audit). All 14 findings are recommendations for the next implementer.
+
+**Verification method:** Static analysis (full file read) + TypeScript compile + cross-check against RestoAnalysis.tsx consumer. NOT empirically browser-tested — recommend a follow-up browser test for PSC-1 and PSC-3 to confirm visual impact.
+
+---
+
+## AUDIT-BACKEND-FINAL — Backend Features Auditor
+
+**Task ID:** AUDIT-BACKEND-FINAL
+**Agent:** Backend Features Auditor
+**Scope:** Deep audit of forecast.ts, patternEngine.ts, analysis/route.ts, recommendations/route.ts, outlets.ts signalScores, outlet-items/route.ts allItems, RestoAnalysis data flow.
+
+**Audit method:** Read-only static analysis. No code changes. All findings are recommendations.
+
+### Work Log
+
+1. Read `/home/z/my-project/worklog.md` tail (previous CSS audit context).
+2. Read `src/lib/metrics/forecast.ts` (280 lines) — verified linear regression formula, R² calc, ABS() convention, n<2 guard, degenerate x guard, R²=1 for constant y, confidence thresholds (HIGH/MEDIUM/LOW), warning message (Indonesian).
+3. Read `src/engine/analysis/patternEngine.ts` (432 lines) — verified 4 detectors (SYSTEMIC_ITEM, ISOLATED_OUTLET, AREA_LEVEL, NETWORK_WIDE), division-by-zero guards, thresholds (0.30/0.50/1.5×/0.10), Indonesian recommendations.
+4. Read `src/app/api/analysis/route.ts` (845 lines) — verified FORECAST-1 fix (trendAggRows sorted chronologically via sortKey before projectTrend, line 725-738), patterns uses outletHealthRanking + itemConsistencyAnalysis.items + areaAnalysis (line 752-781), both added to response (line 817-818), zero additional DB queries (reuses trendAggRows + in-memory artifacts).
+5. Read `src/app/api/recommendations/route.ts` (109 lines) — verified FLOW-2 auto-compute prevWeek/prevMonth (line 38-70), area + pic filter support, rate limiting (60/min), month resolver, Week-table-missing graceful fallback via try/catch.
+6. Read `src/lib/queries/outlets.ts` (926 lines) — verified signalScores array (15 entries, weights sum to 1.00, all clamped via Math.min(100,...) with non-negative inputs), signal names match PrioritySummaryCard SIGNAL_GROUPS exactly.
+7. Read `src/app/api/outlet-items/route.ts` (587 lines) — verified allItems (itemBreakdown) includes itemName/devBom/nominalLossSurplus/absNominalLossSurplus, direction computed on-the-fly from `nominalLossSurplus < 0` (line 181-187), pctQtyDeviasiToBom uses SUM/SUM (line 176-178), tolerancePct uses MIN for LOSS (line 171).
+8. Read `src/components/dashboard/RestoAnalysis.tsx` (891 lines) — verified both fetches use same outlet/month/week, outletItems={data?.allItems || []} passed to PrioritySummaryCard (line 251), recommendation fetched with area+pic (INT-1 fix verified, line 120-121).
+9. Read `src/components/dashboard/PrioritySummaryCard.tsx` (1172 lines) — verified OutletItem interface matches allItems shape, signalScores consumed via topContributors + signalByName + SIGNAL_GROUPS iteration.
+10. Cross-checked sign convention: all SQL uses `nominalLossSurplus < 0 → LOSS`; no remaining `ir.direction` column references (only comments).
+
+### Findings
+
+#### BACKEND-1 · LOW — `trendProjection` + `patterns` are dead code (computed but never consumed)
+**File:** `src/app/api/analysis/route.ts:725-781, 817-818`
+**Description:** `trendProjection` (linear regression forecast) and `patterns` (4 cross-outlet pattern detectors) are computed on every `/api/analysis` request and returned in the response, but no frontend component reads these fields. Grep confirms zero `.tsx` files reference `trendProjection` or `analysisData.patterns`. Wasted CPU (~5-50ms depending on data size) + payload bytes per request.
+**Proposed fix:** Either:
+- (preferred) Add UI consumers — a "Trend Forecast" mini-card showing projected next-period deviation + warning, and a "Pattern Insights" section listing detected patterns (SYSTEMIC_ITEM / ISOLATED_OUTLET / etc.)
+- OR gate behind `?include=forecast,patterns` query param so default requests skip the compute
+- OR remove from response until UI is ready (delete lines 725-781 + 817-818)
+
+---
+
+#### BACKEND-2 · LOW — `classifyTrendDirection` uses absolute slope threshold (±0.1) — meaningless for IDR-scale data
+**File:** `src/lib/metrics/forecast.ts:87, 162-166`
+**Description:** `SLOPE_THRESHOLD = 0.1` is in raw `|nominalDeviasi|` units (IDR). For typical Indonesian F&B data (losses in millions/billions of IDR), any non-zero slope exceeds 0.1 IDR → `trendDirection` is effectively never `STABLE`. The file's own comment (line 158-161) acknowledges this. The downstream `buildWarning` is saved by the secondary `ratio > 1.2` check, but the `trendDirection` field shown in UI/response is misleading (always IMPROVING/DETERIORATING, never STABLE).
+**Proposed fix:** Use relative threshold instead:
+```ts
+function classifyTrendDirection(slope: number, meanAbsY: number): 'IMPROVING' | 'DETERIORATING' | 'STABLE' {
+  const relSlope = meanAbsY > 0 ? Math.abs(slope) / meanAbsY : 0;
+  if (relSlope > 0.05) return slope > 0 ? 'DETERIORATING' : 'IMPROVING';
+  return 'STABLE';
+}
+// call site: classifyTrendDirection(nominalFit.slope, meanAbsNominal)
+```
+Or simply gate STABLE on `trendStrength < 0.05`.
+
+---
+
+#### BACKEND-3 · LOW — `totalOutlets` under-counts for SYSTEMIC_ITEM pattern detection
+**File:** `src/app/api/analysis/route.ts:780`
+**Description:** `totalOutlets: outletHealthRanking.length` only counts outlets with at least one evaluated (non-zero-dev) item. Outlets where ALL items are zero-dev are excluded from `outletHealthRanking` (they're skipped in the rule-evaluation loop, line 422-427). Comment at line 749-751 acknowledges this. Impact: SYSTEMIC_ITEM ratio (`item.outletCount / totalOutlets`) is inflated when zero-dev outlets exist → false positive (item flagged as SYSTEMIC when actual ratio is lower). For typical dashboards with mostly healthy outlets, this can over-flag.
+**Proposed fix:** Compute true outlet count via a separate lightweight `db.inventoryRecord.groupBy({ by: ['outletId'], where: { monthLabel, weekLabel, ...filters } })` query, OR derive from `topOutletsRaw` if all outlets with any record are included.
+Alternative: pass `topOutletsRaw.length` (SQL `GROUP BY outletId` includes outlets with zero absNominal).
+
+---
+
+#### BACKEND-4 · MEDIUM — `networkAvgDevBom` uses unweighted mean of per-outlet ratios (Signal 1 bias)
+**File:** `src/lib/queries/outlets.ts:736-738`
+**Description:** 
+```js
+const networkAvgDevBom = currRows.length > 0
+  ? currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length
+  : 0;
+```
+Each `r.devBom` is a per-outlet ratio `SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))`. Taking the simple mean gives equal weight to small-BOM and large-BOM outlets — statistically biased. Example:
+- Outlet A: BOM=1000, deviasi=100 → devBom=10%
+- Outlet B: BOM=10, deviasi=5 → devBom=50%
+- Mean of ratios: 30% (outlet A looks under peer)
+- Pooled ratio: (100+5)/(1000+10) ≈ 10.4% (outlet A is at peer)
+
+Signal 1 (Dev/BOM vs Peer, weight 12%) uses `devBom / networkAvgDevBom`. With current code: A's ratio = 10%/30% = 0.33 → s1Score = 11. With pooled: A's ratio = 10%/10.4% = 0.96 → s1Score = 32. **3× score difference** → priority ranking distortion.
+**Proposed fix:** Compute pooled network devBom in SQL via a separate aggregate query (or as a window function in the main CTE):
+```sql
+SELECT SUM(ABS(qtyDeviasi)) / NULLIF(SUM(ABS(qtyBom)), 0) as network_dev_bom
+FROM "InventoryRecord" WHERE monthLabel = ${month} AND weekLabel = ${week} ${f}
+```
+Then use this as `networkAvgDevBom` instead of the JS mean.
+
+---
+
+#### BACKEND-5 · LOW — Redundant `Math.abs(residualQty)` in signalScores calculation
+**File:** `src/lib/queries/outlets.ts:786`
+**Description:** 
+```js
+const residualRatio = qtyDeviasiLoss > 0 ? Math.abs(residualQty) / qtyDeviasiLoss : 0;
+```
+`residualQty` is computed in SQL as `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(residualQty) ELSE 0 END)` (line 620-621) — already non-negative. `Math.abs()` is a no-op. Cosmetic only.
+**Proposed fix:** Remove `Math.abs()`:
+```js
+const residualRatio = qtyDeviasiLoss > 0 ? residualQty / qtyDeviasiLoss : 0;
+```
+
+---
+
+#### BACKEND-6 · LOW — `Math.max(0, projectedNominal)` hides "trend eliminated" case
+**File:** `src/lib/metrics/forecast.ts:236`
+**Description:** 
+```js
+const projectedNominal = Math.max(0, nominalFit.intercept + nominalFit.slope * n);
+```
+For a strongly improving trend (large negative slope), `intercept + slope*n` can be negative. The `Math.max(0, ...)` clips to 0, which is then displayed as "projected deviation = 0". This is misleading — it suggests "no deviation" when actually the trend implies "deviation eliminated (potentially surplus)".
+**Proposed fix:** Either:
+- (preferred) Keep the clip (magnitude can't be negative) but add a `trendEliminated: boolean` flag when projection ≤ 0, so UI can show "Tren menuju eliminasi deviasi"
+- OR display the raw projection (allow negative) and let UI interpret (but breaks the "magnitude" contract)
+
+---
+
+#### BACKEND-7 · LOW — Duplicate prevWeek/prevMonth computation in RestoAnalysis (outlet-items + recommendations)
+**File:** `src/components/dashboard/RestoAnalysis.tsx:87-129`
+**Description:** Two separate `useQuery` hooks fetch `/api/outlet-items` and `/api/recommendations` in parallel. When `comparisonWeek` is null, both endpoints independently compute prevWeek/prevMonth by querying `db.week.findMany` + `db.sourceFile.findMany`. This is 2 extra DB round-trips per outlet click (one per endpoint).
+**Impact:** ~5-10ms additional latency per outlet click. Not user-visible (parallel fetches), but wasteful at scale.
+**Proposed fix:** Either:
+- Lift the auto-compute to a shared hook (e.g., `usePrevPeriod(month, week)`) that both fetches consume
+- OR pass `prevWeek` + `prevMonth` from the parent dashboard context (computed once when month/week changes)
+
+---
+
+#### BACKEND-8 · LOW — `ISOLATED_OUTLET_MIN_ITEMS = 5` excludes small outlets from ISOLATED_OUTLET pattern
+**File:** `src/engine/analysis/patternEngine.ts:143, 291-294`
+**Description:** The detector requires `total >= 5` evaluated items at an outlet before considering it for ISOLATED_OUTLET. Outlets with fewer than 5 items can never be flagged, regardless of deviation ratio. This is intentional (small sample = unreliable ratio), but undocumented in the user-facing output — a small outlet with 4/4 abnormal items would not be flagged.
+**Proposed fix:** Document as intended behavior in the API response (`notes: ["Outlet dengan <5 item dievaluasi dikecualikan dari deteksi ISOLATED_OUTLET karena sample terlalu kecil"]`), OR scale the threshold (e.g., `min(5, totalItems/2)`).
+
+---
+
+#### BACKEND-9 · LOW — `OutletItem.priority` typed as `string` but actual value is `'P1' | 'P2' | 'P3'`
+**File:** `src/components/dashboard/PrioritySummaryCard.tsx:819` (interface) vs `src/lib/metrics/deviation.ts:271` (computePriority return type)
+**Description:** `computePriority` returns `'P1' | 'P2' | 'P3'` (strict union), but `OutletItem.priority` is typed as `string`. Type widening. If `computePriority` ever returns a new value (e.g., `'P0'`), TypeScript won't catch the missing case in PrioritySummaryCard's `priorityColor`/`priorityBg` switches.
+**Proposed fix:** Tighten the interface:
+```ts
+export interface OutletItem {
+  // ...
+  priority: 'P1' | 'P2' | 'P3';
+}
+```
+
+---
+
+#### BACKEND-10 · INFO — All recent fixes verified correct
+
+The following fixes mentioned in the audit scope are confirmed implemented correctly:
+
+| Fix | File:Line | Verification |
+|-----|-----------|--------------|
+| **FORECAST-1** (sort trendAggRows before projectTrend) | `analysis/route.ts:725-738` | ✅ Sorts by `sortKey = ${monthKey}|${weekNumPadded}` before passing to `projectTrend` |
+| **FLOW-2** (auto-compute prevWeek/prevMonth in recommendations) | `recommendations/route.ts:38-70` | ✅ Mirrors `/api/analysis` algorithm; same-weekLabel-in-prev-month fallback; try/catch for missing Week table |
+| **INT-1** (RestoAnalysis passes area+pic to recommendations) | `RestoAnalysis.tsx:120-121` | ✅ `if (area && area !== 'all') p.set('area', area); if (pic) p.set('pic', pic);` |
+| **signalScores in recommendations response** | `outlets.ts:902-918` | ✅ 15 entries, names match SIGNAL_GROUPS, weights sum to 1.00, scores clamped via Math.min(100,...), all inputs non-negative |
+| **allItems passed to PrioritySummaryCard** | `RestoAnalysis.tsx:251` | ✅ `outletItems={data?.allItems || []}` — full itemBreakdown (not just top-20 rankings) |
+
+---
+
+#### BACKEND-11 · INFO — Sign convention verified consistent across all SQL
+
+All SQL queries compute direction on-the-fly from `nominalLossSurplus < 0` (LOSS) / `> 0` (SURPLUS), with NULL fallback to `qtyDeviasi < 0` / `> 0`. No remaining `ir.direction` column references (only comments). Verified in:
+- `outlets.ts:617-621, 644-651, 713-719` (queryRestoRecommendations)
+- `outlets.ts:71-73` (queryTopOutlets — via lossAmount/surplusAmount comparison)
+- `outlets.ts:282-284` (queryPeerComparison — via lossAmount/surplusAmount)
+- `items.ts:254-258` (queryTopItemsByCategory)
+- `dashboard.ts:157-162` (queryExecSummary — totalLoss/totalSurplus/residualLossQty via nominalLossSurplus sign)
+- `areas.ts:67` (queryAreaAnalysis — lossNominal via nominalLossSurplus < 0)
+- `outlet-items/route.ts:181-187` (itemBreakdown direction)
+
+---
+
+#### BACKEND-12 · INFO — Type safety verified
+
+- `TrendProjection` interface (`forecast.ts:52-81`) — comprehensive, all fields documented.
+- `PatternDetection` interface (`patternEngine.ts:116-131`) — discriminated union by `type`, severity enum correct.
+- `OutletItem` interface (`PrioritySummaryCard.tsx:807-820`) — fields match `itemBreakdown` output (subset; see BACKEND-9 for `priority` type widening).
+- `RestoRecommendation.signalScores` (`outlets.ts:566`) — matches `SignalScore` interface in PrioritySummaryCard.
+- No type drift detected in critical paths.
+
+---
+
+#### BACKEND-13 · INFO — Edge cases verified graceful
+
+| Edge case | Behavior | Verified |
+|-----------|----------|----------|
+| Outlet with 0 items | outlet-items returns empty `allItems` → PrioritySummaryCard charts use fallback synthesized data | ✅ `outlet-items/route.ts:568-582` returns success with empty arrays |
+| Outlet not in recommendations (no records) | recommendations returns empty array → `recommendation = null` → PrioritySummaryCard returns null (hidden) | ✅ `RestoAnalysis.tsx:130` null check |
+| No prev period (single month in DB) | `growth=null`, `directionFlip=false`, `trendDeteriorating=false` | ✅ `outlets.ts:772-775, 798` — prevNominal=null → deviasiGrowth=null → s2/s6/s7 scores = 0 |
+| Week table missing | recommendations FLOW-2 try/catch swallows error → prevWeek/prevMonth stay null | ✅ `recommendations/route.ts:67-69` |
+| forecast.ts n<2 | `projectTrend` returns null | ✅ `forecast.ts:216` |
+| forecast.ts all-same y values | R²=1 (yDenom===0 branch) | ✅ `forecast.ts:132-133` |
+| forecast.ts degenerate x (all same) | `fitLinearRegression` returns null → `projectTrend` returns null | ✅ `forecast.ts:123` |
+| patternEngine division by zero (totalOutlets=0, totalItems=0, networkAvgDevBom=0) | All detectors return `[]` | ✅ `patternEngine.ts:230, 287, 329` |
+
+---
+
+### Stage Summary
+
+**Overall assessment:** The backend analysis stack is well-engineered and the 5 recent fixes (FORECAST-1, FLOW-2, INT-1, signalScores, allItems) are all correctly implemented with proper edge-case handling.
+
+**Critical bugs:** 0
+**Medium bugs:** 1 (BACKEND-4 — networkAvgDevBom unweighted mean biases Signal 1)
+**Low bugs:** 7 (BACKEND-1, 2, 3, 5, 6, 7, 8, 9)
+**Info items:** 4 (BACKEND-10, 11, 12, 13 — verifications)
+
+**Recommended priority order for fixes:**
+1. **BACKEND-4** (MEDIUM) — Replace unweighted mean with pooled SQL aggregate for `networkAvgDevBom`. ~10 lines. Fixes Signal 1 score distortion.
+2. **BACKEND-2** (LOW) — Switch `classifyTrendDirection` to relative threshold. ~5 lines. Fixes misleading trendDirection field.
+3. **BACKEND-1** (LOW) — Either build UI for `trendProjection` + `patterns`, or gate behind query param. Prevents wasted compute.
+4. **BACKEND-3** (LOW) — Pass true outlet count to `detectPatterns`. ~3 lines. Fixes SYSTEMIC_ITEM false positives.
+5. **BACKEND-6** (LOW) — Add `trendEliminated` flag for strongly improving trends. ~3 lines.
+6. **BACKEND-7** (LOW) — Lift prevWeek/prevMonth computation to shared hook. ~15 lines.
+7. **BACKEND-5, 8, 9** (LOW) — Cosmetic / typing cleanups.
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+**Verification method:** Static analysis via Read/Grep tools. Cross-referenced SQL queries, TypeScript interfaces, and frontend consumption patterns. No runtime testing performed (recommend follow-up with browser test for BACKEND-4 to confirm score shift).
+
+---
+
+## Task ID: AUDIT-FLOW-FINAL
+**Agent:** Data Flow Auditor
+**Task:** Deep audit of data flow, cache invalidation, type consistency
+
+### Work Log:
+- Read `worklog.md` tail (last 150 lines) for prior audit context (chart label clipping fixes).
+- Read full `RestoAnalysis.tsx` (891 lines), `PrioritySummaryCard.tsx` (1173 lines), `RestoRecommendationCard.tsx` (288 lines).
+- Read `/api/outlet-items/route.ts` (588 lines) and `/api/recommendations/route.ts` (110 lines).
+- Read `src/lib/queries/outlets.ts` (927 lines) — `queryRestoRecommendations` SQL + signal scoring.
+- Read `src/lib/queries/shared.ts` — `buildSqlFilters` (area/outletCode/pic/itemName SQL fragment builder).
+- Grep'd all 6 mutation handler files for `invalidateQueries` — verified 9 invalidation sites.
+- Grep'd all `queryKey: ['recommendations', ...]` and `invalidateQueries({ queryKey: ['recommendations'] })` patterns.
+- Verified `PrioritySummaryCard.OutletItem` interface vs `allItems` API response (field-by-field).
+- Verified `PrioritySummaryCard.Recommendation` interface vs `/api/recommendations` response shape.
+- Ran `npx tsc --noEmit` — no TypeScript errors.
+- Inspected `QueryClient` config (`providers.tsx`) — React Query v5, `staleTime: 30_000`, no `placeholderData`.
+- Traced SQL data flow for `queryRestoRecommendations` — identified peer-set scoping bug.
+
+### Stage Summary:
+
+#### **FLOW-1 · HIGH — Single-outlet recommendation fetch always returns `devBomRatio=1.0` (peer comparison broken)**
+**File:** `src/lib/queries/outlets.ts:582, 736-738, 768`
+**Description:** When `/api/recommendations` is called with `outletCode` (always set in `RestoAnalysis` since `activeOutlet = focusOutlet || outletCode`; sometimes in `RestoRecommendationCard` when user picks a specific outlet in `FilterBar`), the SQL filter fragment `f` (built by `buildSqlFilters`) includes `AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${outletCode})`. This filter is applied to ALL three CTEs (`sales_counts`, `outlet_aggs`, `top_items`) at lines 592, 654, 667. Result: `currRows` contains ONLY the active outlet's row.
+
+Then:
+- `networkAvgDevBom` (line 736-738) = `currRows[0].devBom` — the outlet's OWN devBom.
+- `devBomRatio` (line 768) = `devBom / networkAvgDevBom` = **1.0 always**.
+- `s1Score` (line 769) = `Math.min(100, 1.0 * 33)` = **33 always** (out of 100).
+- Analysis bullet `"Dev/BOM X% adalah Y× peer average"` (line 847) requires `devBomRatio > 2` → **NEVER appears** for single-outlet fetches.
+- `signalScores` entry for `'Dev/BOM vs Peer'` (line 903) always reports `value: "1.00×"`, `score: 33`.
+- `PrioritySummaryCard`'s "Dev/BOM vs Peer" chart (`buildDevBomData`, line 208-215) renders misleading `Outlet: 1.0, Peer Avg: 1.0, Peer Best: 0.4` — implying outlet equals peer average when no real peer comparison occurred.
+- Signal 1 has weight 12% (highest) → always contributes `33 × 0.12 = 4.0` points to `priorityScore`, regardless of actual peer performance.
+
+**INT-1 did NOT fix this:** INT-1 added `area` to the API call, but `area` is AND-ed with `outletCode` in `buildSqlFilters`. When both are set, the outletCode filter (restricting to 1 outlet) takes precedence — the area filter becomes a no-op (the 1 outlet is presumably in the area, so the area condition is trivially satisfied).
+
+**Affects:**
+- `RestoAnalysis` — **always** (activeOutlet is always passed).
+- `RestoRecommendationCard` — only when user picks a specific `outletCode` in `FilterBar` (default `'all'` skips the outletCode filter, so peer set is correct).
+
+**Proposed fix:** Refactor `queryRestoRecommendations` to compute peer aggregate from area-scoped set (excluding outletCode filter), then filter to the active outlet in JavaScript:
+
+```ts
+// In queryRestoRecommendations:
+// 1. Build TWO filter fragments:
+const peerFilters = { area: filters.area, picOutletCodes: filters.picOutletCodes };
+//    (NO outletCode — peer set is area-scoped)
+const fPeer = buildSqlFilters(peerFilters);
+
+// 2. SQL: use fPeer in CTEs (sales_counts, outlet_aggs, top_items) — returns ALL outlets in area
+// 3. SQL: do NOT add outletCode filter to outer SELECT either — return all area outlets
+
+// 4. JavaScript: compute networkAvgDevBom from ALL rows (peer set)
+const networkAvgDevBom = currRows.length > 0
+  ? currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length
+  : 0;
+
+// 5. JavaScript: filter to active outlet (if outletCode is set)
+const targetRows = filters.outletCode
+  ? currRows.filter(r => r.outletCode === filters.outletCode)
+  : currRows;
+
+// 6. Map targetRows → recommendations (existing signal computation, now with correct networkAvgDevBom)
+const recommendations = targetRows.map((r: any) => { /* existing code */ });
+
+// 7. Sort + slice (existing)
+return recommendations.sort(...).slice(0, limit);
+```
+
+This ensures:
+- Peer aggregate is computed from ALL outlets in the area (correct network scope).
+- The active outlet's `devBomRatio` is its devBom vs the area's average (real comparison).
+- For top-N view (no outletCode), behavior is unchanged (returns all area outlets, sorted by priorityScore).
+
+**Performance note:** Peer query returns more rows (all area outlets vs 1), but the SQL is already doing the aggregate work — the additional cost is just returning more rows to JS. Should be negligible for typical area sizes (10-50 outlets).
+
+---
+
+#### **FLOW-2 · LOW — Inconsistent `staleTime` between outlet-items and recommendations queries**
+**File:** `src/components/dashboard/RestoAnalysis.tsx:87-106` (no `staleTime`) vs `110-129` (`staleTime: 60_000`)
+**Description:** The outlet-items `useQuery` (line 87-106) has no explicit `staleTime`, so it uses the global default of `30_000` (30s) from `providers.tsx`. The recommendations `useQuery` (line 110-129) explicitly sets `staleTime: 60_000` (60s). This means:
+- outlet-items becomes stale 30s after fetch.
+- recommendations becomes stale 60s after fetch.
+- If user revisits the same outlet+period within 30-60s, recommendations returns cached data but outlet-items refetches.
+- Minor inefficiency and inconsistent UX (one card updates, the other doesn't).
+**Proposed fix:** Either add `staleTime: 60_000` to outlet-items (align with recommendations), OR remove `staleTime: 60_000` from recommendations (use global default 30s). Recommend aligning both to 60s for consistency:
+
+```diff
+   const { data, isLoading, isFetching, error } = useQuery({
+     queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+     queryFn: async () => { ... },
+     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
++    staleTime: 60_000,
+   });
+```
+
+---
+
+#### **FLOW-3 · LOW — Type safety: `data.allItems` is implicit `any` (no `useQuery` generic)**
+**File:** `src/components/dashboard/RestoAnalysis.tsx:87, 251`
+**Description:** The outlet-items `useQuery` (line 87) has no explicit generic type parameter. In React Query v5, `data` defaults to `unknown` (or `any` depending on tsconfig). When `data?.allItems` is passed to `PrioritySummaryCard` as `outletItems` (line 251), TypeScript does not verify the shape matches `OutletItem[]`. If the API response changes a field name (e.g., `itemName` → `name`), no compile-time error — only a runtime `undefined` in the chart.
+**Proposed fix:** Define a response interface and use it as the generic:
+
+```ts
+interface OutletItemsResponse {
+  success: boolean;
+  outlet: { code: string; name: string; area: string; pic: string | null };
+  period: { month: string; week: string; prevWeek: string | null; prevMonth: string | null };
+  restoProfile: RestoProfile;
+  rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] };
+  allItems: ItemRow[];
+  itemCount: number;
+  durationMs: number;
+  error?: string;
+}
+
+const { data, isLoading, isFetching, error } = useQuery<OutletItemsResponse>({
+  queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
+  queryFn: async () => { ... },
+  enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+});
+```
+
+Then `data?.allItems` is typed as `ItemRow[] | undefined`, which is assignable to `OutletItem[]` (since `ItemRow` is a superset of `OutletItem`).
+
+---
+
+#### **FLOW-4 · LOW — Multiple `any` casts in `RestoAnalysis.tsx` reduce type safety**
+**File:** `src/components/dashboard/RestoAnalysis.tsx:80, 333-335, 536, 608, 715, 773, 781-787, 862`
+**Description:** Several `any` types are used:
+- Line 80: `analysisData?: any` (component prop).
+- Lines 333-335: `(r: any) => r.priority === 'P1'` (filtering `data.allItems` for P1/P2/P3 counts).
+- Line 536: `(t: any, i: number)` (timeline data in `ItemDetailModal`).
+- Line 608: `allItemsData: any` (prop on `MenuAnalysis`).
+- Line 715: `(item: any)` (group items in `MenuAnalysis`).
+- Line 773: `analysisData?: any` (prop on `RankingNasionalCard`).
+- Lines 781-787: `allItems: any[]`, `(it: any) => ...` (ranking data).
+- Line 862: `(it: any, i: number)`.
+
+These could mask runtime bugs (e.g., if `r.priority` is undefined, the filter returns 0 silently).
+**Proposed fix:** Define proper interfaces for `analysisData` (likely a top-deviasi rank response from `/api/analysis`), `MenuGroup`, etc. This is a larger refactor — prioritize after FLOW-1 fix.
+
+---
+
+#### **FLOW-5 · INFO — All 9 invalidation sites properly invalidate `['recommendations']` (VERIFIED ✓)**
+**Description:** Every mutation handler that affects recommendation-dependent data correctly invalidates the `['recommendations']` prefix, which marks both consumer queries as stale:
+
+| # | File | Handler | Line | Invalidates `['recommendations']`? |
+|---|------|---------|------|-----------------------------------|
+| 1 | `FilterBar.tsx` | ingest (upload file) | 143 | ✓ FIX FLOW-3 |
+| 2 | `FilterBar.tsx` | drive-import (Google Drive) | 204 | ✓ FIX FLOW-3 |
+| 3 | `FileUploadDialog.tsx` | upload confirm | 475 | ✓ FIX INT-2 |
+| 4 | `DataManagementDialog.tsx` | `invalidateAll()` (delete file) | 195 | ✓ FIX INT-2 |
+| 5 | `PicManagementDialog.tsx` | `invalidateAll()` (PIC change) | 202 | ✓ FIX INT-2 |
+| 6 | `SettingsDialog.tsx` | `saveMutation` (thresholds) | 139 | ✓ FIX FLOW-5 |
+| 7 | `SettingsDialog.tsx` | `resetMutation` (reset thresholds) | 174 | ✓ FIX FLOW-5 |
+| 8 | `SettingsDialog.tsx` | `migrateMutation` (direction migration) | 217 | ✓ + invalidates `['item-history']` at line 219 (FLOW-4) |
+| 9 | `QuickSettings.tsx` | save (compact settings) | 131 | ✓ FIX INT-2 |
+
+All 9 sites use the prefix form `invalidateQueries({ queryKey: ['recommendations'] })`, which marks stale ALL queries whose key starts with `'recommendations'`. This covers both:
+- `RestoRecommendationCard`: `['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic]`
+- `RestoAnalysis`: `['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic]`
+
+**No issues found.** Cache invalidation is comprehensive and consistent.
+
+---
+
+#### **FLOW-6 · INFO — `allItems` data shape matches `PrioritySummaryCard.OutletItem` interface (VERIFIED ✓)**
+**Description:** The `/api/outlet-items` route returns `allItems: itemBreakdown` (line 579), where each item has 25+ fields (lines 514-546). `PrioritySummaryCard`'s `OutletItem` interface (lines 807-820) declares a 12-field subset:
+
+| `OutletItem` field | Type | Present in `allItems`? | Source in API |
+|---|---|---|---|
+| `itemName` | `string` | ✓ | `r.itemName` (line 516) |
+| `devBom` | `number \| null` | ✓ | `pctDevBom` (line 530) |
+| `nominalLossSurplus` | `number \| null` | ✓ | `nominalLS` (line 526) |
+| `absNominalLossSurplus` | `number` | ✓ | `absNominalLS` (line 527) |
+| `direction` | `string` | ✓ | `r.direction \|\| 'NEUTRAL'` (line 531) |
+| `residualRatio` | `number \| null` | ✓ | `residualRatio` (line 533) |
+| `qtyWaste` | `number` | ✓ | `Math.abs(toNum(r.qtyWaste) ?? 0)` (line 521) |
+| `qtySusut` | `number` | ✓ | line 522 |
+| `qtyTrial` | `number` | ✓ | line 523 |
+| `qtyDeviasi` | `number \| null` | ✓ | `qtyDeviasi` (line 520) |
+| `qtyBom` | `number` | ✓ | `Math.abs(qtyBom ?? 0)` (line 518) |
+| `priority` | `string` | ✓ | `computePriority(...)` (line 505-512) |
+
+`OutletItem` is a strict subset of `allItems` items. All chart builders in `PrioritySummaryCard` (`buildItemConcentrationData`, `buildTolBreachHighData`, `buildTolBreachData`, `buildOverExplainedData`, `buildHighLossData`) have access to all fields they need. **No missing fields.**
+
+---
+
+#### **FLOW-7 · INFO — Recommendation data shape matches `PrioritySummaryCard.Recommendation` interface (VERIFIED ✓)**
+**Description:** `/api/recommendations` returns `{ success: true, recommendations: RestoRecommendation[] }`. Each `RestoRecommendation` (from `queryRestoRecommendations`, lines 865-919) includes:
+
+| Group | Fields | Match `PrioritySummaryCard.Recommendation`? |
+|---|---|---|
+| Top-level | `outletCode`, `outletName`, `area`, `priorityScore`, `priorityLevel`, `analysis` | ✓ (note: `area` is extra in API, not in interface — harmless) |
+| `signals` (15 fields) | `devBomRatio`, `deviasiGrowth`, `abnormalCount`, `residualRatio`, `lossToSales`, `directionFlip`, `trendDeteriorating`, `itemConcentration`, `toleranceBreachCount`, `toleranceBreachHighCount`, `zScoreAbnormalCount`, `overExplainedCount`, `highLossItemCount`, `noToleranceItems`, `benchmarkHighCount` | ✓ All 15 match |
+| `metrics` (10 fields) | `sales`, `nominalDeviasi`, `devBom`, `totalLoss`, `totalSurplus`, `residualQty`, `itemCount`, `direction`, `topItem`, `topItemNominal` | ✓ All 10 match |
+| `signalScores` (optional) | Array of 15 `{ name, score, weight, value }` | ✓ Optional in interface, always present in API response (line 902-918) |
+
+**No missing fields.** The `signalScores` array is correctly typed as optional (`signalScores?: SignalScore[]`) and the card guards with `if (signalScores)` (line 839, 870, 880).
+
+---
+
+#### **FLOW-8 · INFO — Loading & error states are independent; no hooks violation (VERIFIED ✓)**
+**Description:** `RestoAnalysis` registers BOTH `useQuery` hooks (outlet-items at line 87, recommendations at line 110) BEFORE any early returns (lines 132, 152, 167, 178). React hooks rules satisfied.
+
+Behavior matrix:
+| outlet-items state | recommendations state | Render result |
+|---|---|---|
+| Loading | Loading | Spinner (line 167-176). PrioritySummaryCard not rendered. |
+| Loading | Loaded | Spinner (isLoading=true early-returns). recoData ignored. |
+| Error | Any | Error card (line 178-192). PrioritySummaryCard not rendered. |
+| Loaded | Loading | Full RestoAnalysis renders. `recommendation = null` → PrioritySummaryCard returns null (line 886). |
+| Loaded | Error | Full RestoAnalysis renders. `recoData = {success:false}` → `recommendation = null` → PrioritySummaryCard returns null. |
+| Loaded | Loaded | Full RestoAnalysis + PrioritySummaryCard with both datasets. |
+
+**No race condition in React Query v5:** The `QueryClient` config (`providers.tsx`) does NOT set `placeholderData: keepPreviousData`. So when queryKey changes (e.g., user picks new period), `data` becomes `undefined` and `isLoading` becomes `true` until the new fetch completes. No transient mismatch window between old recommendation + new outletItems.
+
+**Neither query blocks the other.** Recommendations failure doesn't prevent outlet-items from rendering. Outlet-items failure prevents everything (by design — the header needs outlet info).
+
+---
+
+#### **FLOW-9 · INFO — Query key consistency: no collision, prefix match works (VERIFIED ✓)**
+**Description:** Two `['recommendations', ...]` query keys exist:
+
+| Consumer | Query key | 2nd element |
+|---|---|---|
+| `RestoRecommendationCard` (top-N) | `['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic]` | `monthLabel` (e.g., `'2024-01'`) |
+| `RestoAnalysis` (single outlet) | `['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic]` | `'single'` (literal) |
+
+**No collision risk:** The 2nd element distinguishes the two. `monthLabel` is always a date-like string (e.g., `'2024-01'`, `'Okt 2024'`), never the literal `'single'`. Even if a user somehow had `monthLabel === 'single'`, the rest of the key differs.
+
+**Prefix match works:** `invalidateQueries({ queryKey: ['recommendations'] })` marks BOTH queries as stale (React Query v5 prefix matching). Verified by tracing all 9 invalidation sites — all use the prefix form.
+
+**Other recommendation queries:** None. Grep confirms only 2 readers of `/api/recommendations`.
+
+---
+
+#### **FLOW-10 · INFO — Filter consistency between `RestoAnalysis` and `RestoRecommendationCard` (VERIFIED ✓)**
+**Description:** Both consumers pass `area` and `pic` filters to `/api/recommendations` using the SAME conditional pattern:
+
+```ts
+// RestoRecommendationCard (lines 62-64):
+if (area && area !== 'all') p.set('area', area);
+if (outletCode && outletCode !== 'all') p.set('outletCode', outletCode);
+if (pic) p.set('pic', pic);
+
+// RestoAnalysis (lines 118-121):
+p.set('outletCode', activeOutlet!);
+p.set('limit', '1');
+if (area && area !== 'all') p.set('area', area);
+if (pic) p.set('pic', pic);
+```
+
+**Difference (intentional):** `RestoAnalysis` ALWAYS passes `outletCode` (single-outlet view), while `RestoRecommendationCard` only passes it when a specific outlet is selected (top-N view). This is correct for their respective use cases.
+
+**INT-1 verified:** `RestoAnalysis` passes both `area` (line 120) and `pic` (line 121) to the recommendations API. The `pic` filter is routed through `picOutletCodes` (array of outlet codes assigned to the PIC) in the recommendations route (lines 72-94).
+
+**Caveat (related to FLOW-1):** The `area` filter is correctly transmitted but doesn't have the intended effect when `outletCode` is also set, because `buildSqlFilters` AND-s them together — the outletCode filter restricts to 1 outlet, making the area filter a no-op. See FLOW-1 for the fix.
+
+---
+
+### Recommended Next Actions (priority order):
+
+1. **FLOW-1** (HIGH) — Refactor `queryRestoRecommendations` to use area-only peer scope, filter to active outlet in JS. ~20 lines changed in `outlets.ts`. Fixes the broken Signal 1 (Dev/BOM vs Peer) for single-outlet view. This is the **only HIGH-severity finding** — all other findings are LOW or INFO.
+
+2. **FLOW-2** (LOW) — Add `staleTime: 60_000` to outlet-items `useQuery` in `RestoAnalysis.tsx:87`. ~1 line. Aligns with recommendations query.
+
+3. **FLOW-3** (LOW) — Add explicit `useQuery<OutletItemsResponse>` generic in `RestoAnalysis.tsx:87`. ~15 lines (interface + generic). Improves type safety.
+
+4. **FLOW-4** (LOW) — Replace `any` casts in `RestoAnalysis.tsx` with proper interfaces. Larger refactor — defer until after FLOW-1.
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+**Verification method:** Static code analysis + TypeScript compilation check + React Query v5 behavior tracing + SQL data flow analysis. No browser testing performed (focused on data flow, not visual rendering — visual issues are covered by prior AUDIT-CSS-CHART).
+
+---
+Task ID: AUDIT-CALC-FINAL
+Agent: Calculation Auditor (Agent CALC)
+Task: Deep audit of all calculations — 15 signals, sign convention, forecast, rules
+
+Work Log:
+- Read tail of worklog.md (200 lines) for context — prior audits AUDIT-CSS-CHART, AUDIT-CHART-FIX, etc. Last calc audit was AUDIT-CALC (pre-fixes).
+- Read all in-scope files end-to-end:
+  - src/lib/queries/outlets.ts (927 lines) — queryTopOutlets, queryPeerComparison, queryRestoRecommendations (15-signal engine)
+  - src/lib/queries/items.ts (614 lines) — queryTopItemsByDeviasiRank (BOM=0 handling, bucket_avg CTE)
+  - src/lib/queries/dashboard.ts (286 lines) — queryExecSummary, queryTrendAgg, queryLossVsSurplus, queryCostImpact
+  - src/lib/metrics/deviation.ts (289 lines) — computeDirection, computeResidual, computeHealthScore, computePriority
+  - src/lib/metrics/growth.ts (125 lines) — calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth, computeGrowthResult
+  - src/lib/metrics/forecast.ts (279 lines) — projectTrend (OLS linear regression, R²)
+  - src/lib/metrics/definitions.ts (241 lines) — Single source of truth
+  - src/lib/metrics/historical.ts (189 lines) — computeZScore, calcZScoreFromStats
+  - src/lib/queries/historical.ts (75 lines) — queryHistoricalStats (weekly aggregate, sample variance)
+  - src/engine/analysis/rankingService.ts (416 lines) — buildWorklistFromFlags, computeVarianceAnalysis, computeOutletHealthRanking, computeHistoricalAnalysis, computeDirectionFromData helper
+  - src/engine/analysis/ruleService.ts (166 lines) — buildRuleContext, recommendAction (17 rules coverage)
+  - src/engine/rules/evaluator.ts (457 lines) — loadRules, evalOp, evalCondition, canConditionFire fast-path
+  - src/config/rules.yaml (248 lines) — 17 rules verified
+  - src/app/api/outlet-items/route.ts (587 lines) — severity counts, totalLossNominal, topRisk rankings
+  - src/app/api/analysis/route.ts (845 lines) — exec summary, trendProjection, multiPeriodComparison, patterns
+  - src/app/api/recommendations/route.ts (110 lines) — FLOW-2 fix verification
+  - src/engine/transform.ts (344 lines) — computeResidual (abs-each-then-sum BUG-2-9 fix)
+  - src/engine/analysis/types.ts (67 lines) — RecWithRels slim shape
+  - src/engine/analysis/patternEngine.ts (433 lines) — detectPatterns (4 detectors)
+  - src/lib/queries/shared.ts (40 lines) — buildSqlFilters
+  - src/lib/metrics/index.ts (77 lines) — barrel export
+- Verified all recent fixes:
+  - FLOW-1: rankingService.ts:132 + 251 both call computeDirectionFromData ✓
+  - FLOW-2: recommendations/route.ts:38-70 auto-computes prevWeek/prevMonth ✓
+  - METRICS-1: outlets.ts:793-795 s5Score returns 100 when sales=0 + totalLoss>0 ✓
+  - CALC2-1: rankingService.ts:261-262 variance sort by delta (magnitude) ✓
+  - CALC2-2: outlets.ts:786 residualRatio uses qtyDeviasiLoss (LOSS-only denominator) ✓
+  - FORECAST-1: analysis/route.ts:725-738 trendAggRows sorted before projectTrend ✓
+  - SIGN-1: ruleService.ts:98 nominalLossSurplus in ctx; rules.yaml uses it in 5 rules ✓
+- Performed division-by-zero sweep across outlets.ts, dashboard.ts, deviation.ts, growth.ts, forecast.ts, rankingService.ts, analysis/route.ts, outlet-items/route.ts — ALL divisions guarded.
+- Performed sign-convention sweep — all LOSS=negative, SURPLUS=positive, ABS comparison for tolerance breach (CALC-2 fix applied consistently).
+- Performed edge-case sweep — empty data, BOM=0, sales=0, no prev period, no historical data all handled (with minor issues noted below).
+- Verified 15-signal weights sum to 1.00 (0.12+0.10+0.10+0.10+0.08+0.08+0.08+0.05+0.08+0.07+0.05+0.03+0.03+0.02+0.01 = 1.00).
+- Verified all 17 rules in rules.yaml have corresponding recommendAction entries.
+- Verified health score 4-component formula (30% DevBOM + 25% Residual + 25% Loss/Sales + 20% Abnormal), weights normalized, clamped to [0,100].
+- Verified forecast linear regression formula (OLS: slope = (n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)), R² formula correct, edge cases (n<2, all-same-x, all-same-y) handled.
+
+Stage Summary:
+
+### Verified Fixes (all 7 confirmed working)
+
+| Fix ID | Description | Location | Status |
+|--------|-------------|----------|--------|
+| FLOW-1 | Use computeDirectionFromData (not stored curr.direction) | rankingService.ts:132, 251 | ✓ Applied at both sites |
+| FLOW-2 | Auto-compute prevWeek/prevMonth in recommendations | recommendations/route.ts:38-70 | ✓ Mirrors /api/analysis pattern |
+| METRICS-1 | s5Score returns 100 when sales=0 + totalLoss>0 | outlets.ts:793-795 | ✓ Implemented (minor bullet-text gap — see CALC-F) |
+| CALC2-1 | Variance sort by delta (magnitude) not signed selisih | rankingService.ts:261-262 | ✓ topWorsened=DESC, topImproved=ASC |
+| CALC2-2 | residualRatio uses qtyDeviasiLoss (LOSS-only) | outlets.ts:786 | ✓ Correct denominator |
+| FORECAST-1 | trendAggRows sorted chronologically before projectTrend | analysis/route.ts:725-738 | ✓ sortKey-based sort applied |
+| SIGN-1 | nominalLossSurplus added to RuleContext | ruleService.ts:98, evaluator.ts:380 | ✓ Used by 5 rules in rules.yaml |
+
+### Findings (8 bugs + 2 info)
+
+---
+
+**CALC-A · LOW — s2Score conflates "no prev data" with "prev deviation = 0"**
+**File:** `src/lib/queries/outlets.ts:773-776`
+**Description:** `deviasiGrowth = prevNominal != null && Math.abs(prevNominal) > 0 ? (|curr| - |prev|) / |prev| : null`. When `prevNominal = 0` (outlet had records in prev period but SUM of nominalDeviasi = 0 due to canceling LOSS+SURPLUS), `Math.abs(prevNominal) > 0` is false → `deviasiGrowth = null` → `s2Score = 0`. This is indistinguishable from "outlet had no prev records at all" (also `prevNominal = null` → `s2Score = 0`). Conceptually, growth from 0 → X is infinite growth (should score 100), but the code scores it 0.
+**Impact:** Outlets with prior-period net-zero deviation (rare but possible with mixed LOSS/SURPLUS) get artificially low s2Score. Affects 10% weight (Signal 2).
+**Proposed fix:**
+```typescript
+const deviasiGrowth = prev
+  ? (Math.abs(prevNominal!) > 0
+      ? (Math.abs(nominalDeviasi) - Math.abs(prevNominal!)) / Math.abs(prevNominal!)
+      : (Math.abs(nominalDeviasi) > 0 ? 1 : 0))  // 0→X = infinite growth → score 1 (capped to 100)
+  : null;  // null = no prev record at all
+const s2Score = deviasiGrowth != null ? Math.min(100, Math.max(0, deviasiGrowth * 100)) : 0;
+```
+
+---
+
+**CALC-B · MEDIUM — s2Score & s8Score use |signed SUM| instead of SUM(ABS) — magnitude cancellation bug**
+**File:** `src/lib/queries/outlets.ts:774` (s2Score) and `:807-808` (s8Score)
+**Description:** Both signals use `Math.abs(nominalDeviasi)` where `nominalDeviasi = SUM(ir."nominalDeviasi")` (SIGNED sum from SQL line 606). `Math.abs(SUM)` = |net| — when an outlet has both LOSS items (negative nominalDeviasi) and SURPLUS items (positive nominalDeviasi), they cancel, making |net| much smaller than the true gross deviation magnitude `SUM(ABS(nominalDeviasi))`.
+- **s2Score (Deviasi Growth, 10% weight):** `deviasiGrowth = (|curr net| - |prev net|) / |prev net|`. If cancellation pattern changes between periods (e.g., prev had only LOSS = -10M, curr has -10M LOSS + 8M SURPLUS = -2M net), growth = (2M - 10M) / 10M = -80% (score 0). But the gross deviation actually grew from 10M to 18M (80% growth → should score 80). **Understates growth.**
+- **s8Score (Item Concentration, 5% weight):** `itemConcentration = topItemNominal / |net|`. If top item is 10M (single record's `absNominalDeviasi`) and outlet net is -2M (cancellation), concentration = 10M / 2M = 5.0 (500% — clamped to 100). But the true concentration vs gross is 10M / 18M = 55%. **Overstates concentration by up to 5×.**
+**Impact:** Outlets with mixed LOSS+SURPLUS items get incorrect s2Score (understated) and s8Score (overstated). Combined weight: 15% of priority score. Common in real data — most outlets have some items in each direction.
+**Proposed fix:** Add `SUM(ir."absNominalDeviasi")` (gross ABS) to the SQL CTE in `queryRestoRecommendations`, then use it as the denominator:
+```sql
+-- In outlet_aggs CTE (line 604-655), add:
+SUM(ir."absNominalDeviasi") as "grossAbsNominal",
+```
+```typescript
+// In JS (line 746):
+const grossAbsNominal = Number(r.grossAbsNominal || 0);
+
+// s2Score (line 773-776):
+const deviasiGrowth = prev && grossAbsPrevNominal > 0
+  ? (grossAbsNominal - grossAbsPrevNominal) / grossAbsPrevNominal
+  : null;
+
+// s8Score (line 807-809):
+const itemConcentration = grossAbsNominal > 0 && topItemNominal > 0
+  ? topItemNominal / grossAbsNominal
+  : 0;
+```
+(Note: `prevRows` SQL at line 704-725 must also be updated to compute `SUM(ir."absNominalDeviasi") as "prevGrossAbsNominal"`.)
+
+---
+
+**CALC-C · LOW — `deviationToSalesRatio` is signed (can be negative), field name doesn't indicate signedness**
+**File:** `src/app/api/analysis/route.ts:555-556`
+**Description:** `deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null`. `execSummary.nominalDeviasi.current` is `SUM(nominalDeviasi)` (signed). When net is LOSS (negative), ratio is negative (e.g., -0.05 = -5%). UI may render "-5%" or interpret as error. Inconsistent with `lossToSales` (outlet-items route) which is always non-negative (LOSS-only / sales).
+**Impact:** Frontend may display negative percentages confusingly. No data corruption.
+**Proposed fix:** Either (a) rename to `netDeviationToSalesRatio` to signal signedness, or (b) use `Math.abs(execSummary.nominalDeviasi.current)` for magnitude:
+```typescript
+deviationToSalesRatio: execSummary.sales.current > 0
+  ? Math.abs(execSummary.nominalDeviasi.current) / execSummary.sales.current
+  : null,
+```
+
+---
+
+**CALC-D · LOW — `absDeviation` field contains SIGNED value (field name lies)**
+**File:** `src/app/api/analysis/route.ts:600`
+**Description:** In `multiPeriodComparison` builder:
+```typescript
+deviation: r.nominal,        // signed SUM(nominalDeviasi) — OK
+absDeviation: r.nominal,     // SAME signed value — BUG: field name says "abs"
+```
+Both fields have the same value (signed). `absDeviation` should be `Math.abs(r.nominal)`. UI consumers reading `absDeviation` expect a non-negative number (e.g., for chart y-axis scaling, sort by magnitude).
+**Impact:** Frontend charts sorting/scaling by `absDeviation` may break or display negative values where non-negative expected.
+**Proposed fix:**
+```typescript
+deviation: r.nominal,
+absDeviation: Math.abs(r.nominal),
+```
+
+---
+
+**CALC-E · LOW — outlet-items severity counts: BOM=0 items misclassified as WARNING**
+**File:** `src/app/api/outlet-items/route.ts:296-301`
+**Description:** Severity classification logic:
+```typescript
+const isZeroDev = (qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01);
+if (isZeroDev) normalCount++;
+else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
+else warningCount++;
+```
+When `qtyBom = 0` (BOM not set for item), SQL returns `pctQtyDeviasiToBom = NULL` (CASE WHEN SUM(ABS(qtyBom)) > 0 THEN ... ELSE NULL). Then `toNum(null) ?? 0 = 0`, so `Math.abs(0) > Math.abs(fallback)` is false → item goes to `warningCount`. But BOM=0 items have no meaningful BOM-ratio — classifying them as WARNING conflates "can't compute ratio" with "deviation within tolerance".
+**Impact:** Over-counts WARNING items for outlets with many BOM=0 items (e.g., new items without BOM master data). Affects health score (abnormalRate denominator) and UI severity badges.
+**Proposed fix:** Add explicit BOM=0 check — count as NORMAL (no BOM = no tolerance to breach) or skip:
+```typescript
+const qb = toNum(r.qtyBom) ?? 0;
+if (isZeroDev) normalCount++;
+else if (qb === 0) normalCount++;  // BOM=0 — can't compute ratio, treat as normal
+else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
+else warningCount++;
+```
+
+---
+
+**CALC-F · LOW — s5Score analysis bullet doesn't fire when METRICS-1 fix triggers (sales=0 + totalLoss>0)**
+**File:** `src/lib/queries/outlets.ts:792-795, 851`
+**Description:** METRICS-1 fix correctly sets `s5Score = 100` when `sales = 0 && totalLoss > 0`. But the `lossToSales` variable is `sales > 0 ? totalLoss / sales : 0` — set to 0 when sales = 0. The analysis bullet at line 851 `if (lossToSales > 0.03) analysis.push(...)` checks `lossToSales > 0.03`, which is `0 > 0.03` = false → bullet doesn't fire. Result: Priority Summary card shows s5Score=100 but no explanatory text about the data quality anomaly.
+**Impact:** User sees high score with no explanation. UX inconsistency, not a calc bug.
+**Proposed fix:**
+```typescript
+if (lossToSales > 0.03) {
+  analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
+} else if (sales === 0 && totalLoss > 0) {
+  analysis.push(`Outlet punya rugi Rp ${totalLoss.toLocaleString('id-ID')} tapi tidak ada penjualan tercatat — indikasi data quality issue (sales belum diinput)`);
+}
+```
+
+---
+
+**CALC-G · LOW — `qtyLossSurplus` field in execSummary is actually `absQtyLossSurplus` (NET ABS), field name misleading**
+**File:** `src/lib/queries/dashboard.ts:155` (SQL) + `src/app/api/analysis/route.ts:100` (JS field)
+**Description:** SQL: `COALESCE(SUM(ir."absQtyLossSurplus"), 0) as "qtyLossSurplus"` — sums the pre-computed `absQtyLossSurplus` column (always non-negative). The field is named `qtyLossSurplus` (suggesting signed: LOSS=negative, SURPLUS=positive) but the value is always non-negative (NET ABS). UI consumers expecting signed values (e.g., to determine direction from the field) will be misled.
+**Impact:** Frontend may not render direction correctly if it relies on this field's sign. Direction is correctly computed elsewhere (via `nominalLossSurplus` sign), so this is a naming/clarity issue, not a calc bug.
+**Proposed fix:** Rename field to `absQtyLossSurplus` for clarity, OR change SQL to `SUM(ir."qtyLossSurplus")` (signed) if signed value is intended:
+```sql
+-- Option A (rename): explicit abs
+COALESCE(SUM(ir."absQtyLossSurplus"), 0) as "absQtyLossSurplus",
+-- Option B (signed): use raw qtyLossSurplus
+COALESCE(SUM(ir."qtyLossSurplus"), 0) as "qtyLossSurplus",
+```
+
+---
+
+**CALC-H · LOW — outlet-items route: `performance.nominalDeviasi` is gross ABS, but `performance.nominalLossSurplus` is signed NET — inconsistent signedness**
+**File:** `src/app/api/outlet-items/route.ts` (around line 282-290, 400-410)
+**Description:** In the recs loop:
+```typescript
+totalNominalDeviasi += Math.abs(nd);       // gross ABS — always non-negative
+totalNominalLossSurplus += nls;            // signed NET — can be negative
+```
+Then both are exposed in `restoProfile.performance`:
+```typescript
+nominalDeviasi: totalNominalDeviasi,        // non-negative (gross ABS)
+nominalLossSurplus: totalNominalLossSurplus, // signed (NET)
+```
+UI expecting consistent signedness (e.g., "nominalDeviasi is LOSS if negative") will misinterpret. The `nominalDeviasi` field looks signed but is actually gross ABS.
+**Impact:** Frontend may display `nominalDeviasi` with a sign indicator (LOSS/SURPLUS) that doesn't reflect reality, since the value is always non-negative.
+**Proposed fix:** Make both consistent — either both signed (use `SUM(ir."nominalDeviasi")` for nominalDeviasi) or both ABS (use `Math.abs(nls)` for nominalLossSurplus). Recommended: both signed (matches Excel convention, allows direction inference):
+```typescript
+totalNominalDeviasi += nd;  // signed (matches SQL SUM(nominalDeviasi))
+totalNominalLossSurplus += nls;  // already signed
+```
+
+---
+
+**CALC-I · INFO — `computeResidualRatio` in deviation.ts is dead code (never called)**
+**File:** `src/lib/metrics/deviation.ts:87-90`
+**Description:** `computeResidualRatio(residualQty, qtyDeviasi)` is exported but only referenced in `index.ts` barrel export — no caller in the codebase. The actual residual ratio used in the app is computed inline in `transform.ts:276` (`absDev > 0 ? absResidual / absDev : null`). The dead function also has a subtle issue: it doesn't take `Math.abs(residualQty)`, so if a caller passed a signed residual, it could return a negative ratio.
+**Impact:** None (dead code). But confusing for future maintainers.
+**Proposed fix:** Either delete the function, or fix it to use `Math.abs(residualQty)` and use it from transform.ts (single source of truth).
+
+---
+
+**CALC-J · INFO — `deviationToBomRatio` and `deviationToSalesRatio` in RuleContext are unused by any rule**
+**File:** `src/engine/analysis/ruleService.ts:90-91`, `src/config/rules.yaml`
+**Description:** `buildRuleContext` computes `deviationToSalesRatio` and `deviationToBomRatio` and injects them into the RuleContext. But none of the 17 rules in `rules.yaml` reference these fields — they use `pctQtyDeviasiToBom` (signed Excel value) and `absPctQtyDeviasiToBom` (CALC-2 fix) instead. The computed fields are still included in `evidence: { ...ctx }` for display, so not strictly dead.
+**Impact:** Minor CPU waste (computing ratios that no rule uses). No correctness issue.
+**Proposed fix:** Either (a) remove from RuleContext if evidence display doesn't need them, or (b) leave as-is for future rule authors. Recommended: leave (future-proofing).
+
+---
+
+**CALC-K · INFO — `computeDirectionFromData` duplicated in rankingService.ts and ruleService.ts**
+**File:** `src/engine/analysis/rankingService.ts:28-41` (module-level helper) + `src/engine/analysis/ruleService.ts:68-81` (local closure inside `buildRuleContext`)
+**Description:** Both files define a `computeDirectionFromData` function with identical logic (LOSS if `nominalLossSurplus < 0`, SURPLUS if `> 0`, fallback to `qtyDeviasi` sign, else NEUTRAL). The duplication risks divergence if one is updated but not the other.
+**Impact:** None currently (logic is identical). Code smell.
+**Proposed fix:** Extract to a shared utility (e.g., `src/lib/metrics/deviation.ts` alongside `computeDirection`), import in both files:
+```typescript
+// In deviation.ts:
+export function computeDirectionFromRecord(rec: { nominalLossSurplus: number | null; qtyDeviasi: number | null } | null): Direction {
+  if (!rec) return 'NEUTRAL';
+  if (rec.nominalLossSurplus != null) {
+    if (rec.nominalLossSurplus < 0) return 'LOSS';
+    if (rec.nominalLossSurplus > 0) return 'SURPLUS';
+    return 'NEUTRAL';
+  }
+  if (rec.qtyDeviasi != null) {
+    if (rec.qtyDeviasi < 0) return 'LOSS';
+    if (rec.qtyDeviasi > 0) return 'SURPLUS';
+    return 'NEUTRAL';
+  }
+  return 'NEUTRAL';
+}
+```
+
+---
+
+### Audit Summary Table
+
+| ID | Severity | File | One-liner |
+|----|----------|------|-----------|
+| CALC-A | LOW | outlets.ts:773-776 | s2Score conflates "no prev data" with "prev=0" |
+| CALC-B | MEDIUM | outlets.ts:774, 807-808 | s2Score & s8Score use \|signed SUM\| instead of SUM(ABS) — cancellation bug |
+| CALC-C | LOW | analysis/route.ts:555-556 | `deviationToSalesRatio` is signed (can be negative) |
+| CALC-D | LOW | analysis/route.ts:600 | `absDeviation` field contains SIGNED value (name lies) |
+| CALC-E | LOW | outlet-items/route.ts:296-301 | BOM=0 items misclassified as WARNING |
+| CALC-F | LOW | outlets.ts:792-795, 851 | s5Score bullet doesn't fire when METRICS-1 triggers |
+| CALC-G | LOW | dashboard.ts:155, analysis/route.ts:100 | `qtyLossSurplus` field is actually `absQtyLossSurplus` |
+| CALC-H | LOW | outlet-items/route.ts:282-290 | `nominalDeviasi` (gross ABS) inconsistent with `nominalLossSurplus` (signed) |
+| CALC-I | INFO | deviation.ts:87-90 | `computeResidualRatio` is dead code |
+| CALC-J | INFO | ruleService.ts:90-91 | `deviationToBomRatio`/`deviationToSalesRatio` unused by rules |
+| CALC-K | INFO | rankingService.ts:28-41, ruleService.ts:68-81 | Duplicated `computeDirectionFromData` helper |
+
+### Priority Recommendations (for next implementer)
+
+1. **CALC-B (MEDIUM)** — Fix s2Score/s8Score to use `SUM(ABS(nominalDeviasi))` (gross ABS) instead of `|SUM(nominalDeviasi)|` (|net|). Add `SUM(ir."absNominalDeviasi")` to SQL CTE in `queryRestoRecommendations` (currRows + prevRows). Affects 15% of priority score weight — meaningful impact on outlet ranking accuracy. ~10 lines of code change across SQL + JS.
+2. **CALC-A (LOW)** — Distinguish "no prev record" from "prev = 0" in s2Score. ~5 lines.
+3. **CALC-D (LOW)** — One-line fix: `absDeviation: Math.abs(r.nominal)`.
+4. **CALC-E (LOW)** — Add BOM=0 guard in severity classification. ~2 lines.
+5. **CALC-F (LOW)** — Add else-if branch for sales=0 + totalLoss>0 in analysis bullet. ~3 lines.
+6. **CALC-C, CALC-G, CALC-H (LOW)** — Field naming/clarity fixes. Coordinate with frontend to ensure no breakage.
+7. **CALC-I, CALC-J, CALC-K (INFO)** — Optional cleanup (dead code, duplication). No correctness impact.
+
+### What's Verified Correct (no bugs found)
+
+- ✅ 15-signal weights sum to exactly 1.00
+- ✅ All signal scores clamped to [0, 100] (via Math.min/Math.max where needed)
+- ✅ Sign convention: LOSS = negative `nominalLossSurplus` applied consistently across all SQL CTEs and JS
+- ✅ ABS comparison for tolerance breach (CALC-2 fix) applied in all 4 sites: outlets.ts SQL, outlet-items SQL, outlet-items JS severity count, rules.yaml (via `absPctQtyDeviasiToBom`/`absTolerancePct`)
+- ✅ `computeDirectionFromData` (FLOW-1) applied at both rankingService sites
+- ✅ `nominalLossSurplus` (SIGN-1) in RuleContext, used by 5 rules
+- ✅ All 17 rules in rules.yaml have valid conditions + matching `recommendAction` entries
+- ✅ Health score: 4 components, weights normalized (when wSum=0 falls back to defaults), clamped to [0,100]
+- ✅ `computeLossToSales` returns null when sales ≤ 0 (correct guard, METRICS-1 only applies to s5Score)
+- ✅ `projectTrend` linear regression: OLS formula correct, R² formula correct, edge cases (n<2, all-same-x, all-same-y) handled
+- ✅ FORECAST-1: trendAggRows sorted chronologically before projectTrend
+- ✅ CALC2-1: variance sort by delta (magnitude), not signed selisih
+- ✅ CALC2-2: residualRatio uses qtyDeviasiLoss (LOSS-only denominator)
+- ✅ Division-by-zero: ALL divisions guarded (safeDiv pattern, `> 0` checks, COALESCE in SQL)
+- ✅ Historical Z-Score: uses ABS magnitude, sample variance (N-1), weekly aggregate (not row-level AVG), requires HISTORICAL_MIN_WEEKS
+- ✅ `queryTopItemsByDeviasiRank`: BOM=0 items get NULL rankBom and NULL avgDeviasiByBom (CALC-6/CALC-7 fixes)
+- ✅ Edge cases: empty data, no prev period, no historical data all return null/0 gracefully
+
+**Files changed by this audit:** none (read-only audit). All findings are recommendations for the next implementer.
+
+**Verification method:** Static code analysis + cross-file data flow tracing + SQL CTE verification + formula derivation (linear regression, R², sample variance). No runtime testing — all findings derived from code inspection. Recommended next step: implement CALC-B fix first (highest severity), then verify with a unit test that mixed LOSS+SURPLUS outlets score correctly.
