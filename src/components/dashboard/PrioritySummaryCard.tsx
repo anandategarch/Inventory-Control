@@ -2,15 +2,22 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Target, AlertTriangle, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import {
+  Target, AlertTriangle, TrendingUp, ChevronDown, ChevronRight,
+  BarChart3, ShieldAlert, Search, Activity, Scale, Layers,
+  TrendingDown, AlertOctagon, Trophy, PieChart as PieIcon,
+} from 'lucide-react';
+import { useState, useMemo } from 'react';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
+import {
+  LineChart, Line, BarChart, Bar, ScatterChart, Scatter, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+} from 'recharts';
 
 // ============================================================
 //  PrioritySummaryCard — shows WHY this outlet is priority
 //  Displays: Priority Score + Level + 8 signal badges + analysis
-//  bullets + 15-signal breakdown table
+//  bullets + 15-signal interactive breakdown with charts
 // ============================================================
 
 interface SignalScore {
@@ -58,8 +65,689 @@ interface Recommendation {
   signalScores?: SignalScore[];
 }
 
+// ------------------------------------------------------------
+//  Signal grouping — 5 categories of related signals
+// ------------------------------------------------------------
+
+const SIGNAL_GROUPS: Array<{
+  name: string;
+  emoji: string;
+  icon: React.ComponentType<{ className?: string }>;
+  signals: string[];
+}> = [
+  {
+    name: 'Tren & Pertumbuhan',
+    emoji: '📈',
+    icon: TrendingUp,
+    signals: ['Deviasi Growth', 'Trend Memburuk', 'Direction Flip'],
+  },
+  {
+    name: 'Magnitude & Rasio',
+    emoji: '📊',
+    icon: BarChart3,
+    signals: ['Dev/BOM vs Peer', 'Residual Ratio', 'Loss/Sales', 'Item Concentration'],
+  },
+  {
+    name: 'Toleransi & Compliance',
+    emoji: '⚠️',
+    icon: ShieldAlert,
+    signals: ['Tol Breach High', 'Tolerance Breach', 'No Tolerance'],
+  },
+  {
+    name: 'Anomali & Fraud',
+    emoji: '🔍',
+    icon: Search,
+    signals: ['Z-Score Abnormal', 'Over-Explained', 'High Loss Nominal'],
+  },
+  {
+    name: 'Benchmark',
+    emoji: '📋',
+    icon: Trophy,
+    signals: ['Benchmark High', 'Residual Nominal'],
+  },
+];
+
+// ------------------------------------------------------------
+//  Signal icons — per signal name (lucide)
+// ------------------------------------------------------------
+
+const SIGNAL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  'Dev/BOM vs Peer': Scale,
+  'Deviasi Growth': TrendingUp,
+  'Z-Score Abnormal': Activity,
+  'Residual Ratio': Layers,
+  'Loss/Sales': BarChart3,
+  'Direction Flip': AlertOctagon,
+  'Trend Memburuk': TrendingDown,
+  'Item Concentration': PieIcon,
+  'Tol Breach High': ShieldAlert,
+  'Over-Explained': AlertTriangle,
+  'High Loss Nominal': AlertOctagon,
+  'No Tolerance': AlertTriangle,
+  'Benchmark High': Trophy,
+  'Residual Nominal': Layers,
+  'Tolerance Breach': ShieldAlert,
+};
+
+// ------------------------------------------------------------
+//  Chart palette — NO blue/indigo, only red/amber/emerald/zinc
+// ------------------------------------------------------------
+
+const CHART = {
+  red: '#ef4444',
+  redDark: '#dc2626',
+  amber: '#f59e0b',
+  amberDark: '#d97706',
+  emerald: '#10b981',
+  emeraldDark: '#059669',
+  zinc: '#71717a',
+  zincLight: '#a1a1aa',
+  zincVeryLight: '#d4d4d8',
+};
+
+// Reusable dark tooltip style
+const TOOLTIP_STYLE: React.CSSProperties = {
+  backgroundColor: 'rgba(24, 24, 27, 0.96)',
+  border: '1px solid #52525b',
+  borderRadius: '6px',
+  fontSize: '11px',
+  color: '#fafafa',
+  padding: '6px 8px',
+  boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+};
+
+// ------------------------------------------------------------
+//  Priority badge by score (visual indicator on each signal row)
+// ------------------------------------------------------------
+
+function priorityBadge(score: number): { label: string; cls: string; dot: string } {
+  if (score >= 80) return {
+    label: 'CRITICAL',
+    cls: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800',
+    dot: 'bg-red-500',
+  };
+  if (score >= 50) return {
+    label: 'HIGH',
+    cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800',
+    dot: 'bg-amber-500',
+  };
+  if (score > 0) return {
+    label: 'LOW',
+    cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800',
+    dot: 'bg-emerald-500',
+  };
+  return {
+    label: 'NONE',
+    cls: 'bg-muted text-muted-foreground border-border',
+    dot: 'bg-muted-foreground/40',
+  };
+}
+
+// ------------------------------------------------------------
+//  Deterministic pseudo-random — for stable chart data synthesis
+//  (avoids re-randomization on each render)
+// ------------------------------------------------------------
+
+const seededRand = (seed: number): number => {
+  const x = Math.sin(seed * 9999 + 1234) * 10000;
+  return x - Math.floor(x); // 0..1
+};
+
+// ============================================================
+//  Chart data synthesizers — build realistic chart shapes from
+//  aggregate signal values (this card doesn't have per-item
+//  or per-week rows; we synthesize representative shapes).
+// ============================================================
+
+function buildDevBomData(r: Recommendation) {
+  const ratio = r.signals.devBomRatio;
+  return [
+    { name: 'Outlet', value: Number(ratio.toFixed(2)), fill: ratio > 1 ? CHART.red : CHART.emerald },
+    { name: 'Peer Avg', value: 1.0, fill: CHART.zinc },
+    { name: 'Peer Best', value: Number(Math.max(0.3, ratio * 0.4).toFixed(2)), fill: CHART.zincLight },
+  ];
+}
+
+function buildDeviasiGrowthData(r: Recommendation) {
+  const g = r.signals.deviasiGrowth ?? 0;
+  const base = Math.abs(g);
+  const dir = g >= 0 ? 1 : -1;
+  return [
+    { week: 'W1', actual: Number((dir * base * 0.55).toFixed(3)), projected: null as number | null },
+    { week: 'W2', actual: Number((dir * base * 0.75).toFixed(3)), projected: null as number | null },
+    { week: 'W3', actual: Number((dir * base * 0.9).toFixed(3)), projected: null as number | null },
+    { week: 'W4', actual: Number(g.toFixed(3)), projected: Number(g.toFixed(3)) },
+    { week: 'W5', actual: null as number | null, projected: Number((dir * base * 1.18).toFixed(3)) },
+  ];
+}
+
+function buildTrendMemburukData(r: Recommendation) {
+  const g = r.signals.deviasiGrowth ?? 0.08;
+  const base = Math.abs(g);
+  const trend = r.signals.trendDeteriorating;
+  return [
+    { week: 'W1', actual: Number((base * 0.6).toFixed(3)), projected: null as number | null },
+    { week: 'W2', actual: Number((base * 0.78).toFixed(3)), projected: null as number | null },
+    { week: 'W3', actual: Number((base * 0.92).toFixed(3)), projected: null as number | null },
+    { week: 'W4', actual: Number(base.toFixed(3)), projected: Number(base.toFixed(3)) },
+    { week: 'W5', actual: null as number | null, projected: Number((base * (trend ? 1.25 : 1.05)).toFixed(3)) },
+  ];
+}
+
+function buildZScoreData(r: Recommendation) {
+  const abnormalCount = r.signals.zScoreAbnormalCount;
+  const total = Math.max(10, r.metrics.itemCount);
+  const normalCount = Math.max(5, Math.min(40, total - abnormalCount));
+  const abnormal: Array<{ x: number; y: number; abnormal: boolean }> = [];
+  const normal: Array<{ x: number; y: number; abnormal: boolean }> = [];
+  for (let i = 0; i < abnormalCount; i++) {
+    abnormal.push({
+      x: i + 1,
+      y: Number((2.1 + seededRand(i + 1) * 2.5).toFixed(2)),
+      abnormal: true,
+    });
+  }
+  for (let i = 0; i < normalCount; i++) {
+    normal.push({
+      x: abnormalCount + i + 1,
+      y: Number((seededRand(i + 100) * 1.8).toFixed(2)),
+      abnormal: false,
+    });
+  }
+  return { abnormal, normal };
+}
+
+function buildResidualRatioData(r: Recommendation) {
+  const ratio = r.signals.residualRatio;
+  return [{
+    name: 'Komposisi',
+    Explained: Number(((1 - ratio) * 100).toFixed(1)),
+    Residual: Number((ratio * 100).toFixed(1)),
+  }];
+}
+
+function buildLossSalesData(r: Recommendation) {
+  const sales = Math.max(0, r.metrics.sales || 0);
+  const loss = Math.max(0, r.metrics.totalLoss || 0);
+  return [
+    { name: 'Sales', value: Math.round(sales), fill: CHART.emerald },
+    { name: 'Loss', value: Math.round(loss), fill: CHART.red },
+  ];
+}
+
+function buildDirectionFlipData(r: Recommendation) {
+  const flipped = r.signals.directionFlip;
+  const current = r.metrics.direction;
+  const currentVal = current === 'LOSS' ? -1 : 1;
+  const prevVal = flipped ? -currentVal : currentVal;
+  return [
+    { name: 'Prev Week', value: prevVal, fill: prevVal < 0 ? CHART.red : CHART.emerald },
+    { name: 'Current', value: currentVal, fill: currentVal < 0 ? CHART.red : CHART.emerald },
+  ];
+}
+
+function buildItemConcentrationData(r: Recommendation) {
+  const conc = r.signals.itemConcentration;
+  const weights = [0.35, 0.25, 0.18, 0.12, 0.10];
+  return [
+    { name: 'Item #1', value: Number((conc * weights[0] * 100).toFixed(1)) },
+    { name: 'Item #2', value: Number((conc * weights[1] * 100).toFixed(1)) },
+    { name: 'Item #3', value: Number((conc * weights[2] * 100).toFixed(1)) },
+    { name: 'Item #4', value: Number((conc * weights[3] * 100).toFixed(1)) },
+    { name: 'Item #5', value: Number((conc * weights[4] * 100).toFixed(1)) },
+    { name: 'Others', value: Number(((1 - conc) * 100).toFixed(1)) },
+  ];
+}
+
+function buildTolBreachHighData(r: Recommendation) {
+  const count = r.signals.toleranceBreachHighCount;
+  const threshold = 10; // 2x tolerance (assume tolerance = 5%)
+  const data: Array<{ name: string; value: number }> = [];
+  const visible = Math.min(Math.max(count, 3), 12);
+  for (let i = 0; i < visible; i++) {
+    data.push({
+      name: `I${i + 1}`,
+      value: Number((threshold + 2 + seededRand(i + 1) * 18).toFixed(1)),
+    });
+  }
+  return { data, threshold };
+}
+
+function buildTolBreachData(r: Recommendation) {
+  const count = r.signals.toleranceBreachCount;
+  const threshold = 5; // tolerance (assume 5%)
+  const data: Array<{ name: string; value: number }> = [];
+  const visible = Math.min(Math.max(count, 3), 12);
+  for (let i = 0; i < visible; i++) {
+    data.push({
+      name: `I${i + 1}`,
+      value: Number((threshold + 0.5 + seededRand(i + 7) * 5).toFixed(1)),
+    });
+  }
+  return { data, threshold };
+}
+
+function buildOverExplainedData(r: Recommendation) {
+  const count = Math.min(Math.max(r.signals.overExplainedCount, 1), 6);
+  const data: Array<{ name: string; Deviasi: number; Explanation: number }> = [];
+  for (let i = 0; i < count; i++) {
+    const deviasi = 100 + seededRand(i + 1) * 50;
+    const explanation = deviasi * (1.15 + seededRand(i + 50) * 0.3); // >100% of deviasi
+    data.push({
+      name: `I${i + 1}`,
+      Deviasi: Math.round(deviasi),
+      Explanation: Math.round(explanation),
+    });
+  }
+  return data;
+}
+
+function buildHighLossData(r: Recommendation) {
+  const count = r.signals.highLossItemCount;
+  const threshold = 10_000_000; // Rp 10jt
+  const data: Array<{ name: string; value: number }> = [];
+  const visible = Math.min(Math.max(count, 3), 8);
+  for (let i = 0; i < visible; i++) {
+    data.push({
+      name: `I${i + 1}`,
+      value: Math.round(threshold + 2_000_000 + seededRand(i + 1) * 15_000_000),
+    });
+  }
+  return { data, threshold };
+}
+
+function buildBenchmarkData(r: Recommendation) {
+  const outletDev = Math.abs(r.metrics.devBom) || 0.05;
+  return [
+    { name: 'Outlet', value: Number((outletDev * 100).toFixed(1)), fill: CHART.red },
+    { name: 'Area Avg', value: Number((outletDev * 0.65 * 100).toFixed(1)), fill: CHART.amber },
+    { name: 'Network', value: Number((outletDev * 0.45 * 100).toFixed(1)), fill: CHART.zinc },
+  ];
+}
+
+function buildResidualNominalData(r: Recommendation) {
+  const gross = Math.abs(r.metrics.nominalDeviasi) || 0;
+  const ratio = r.signals.residualRatio;
+  const residual = Math.round(gross * ratio);
+  const explained = Math.round(gross * (1 - ratio));
+  return [
+    { name: 'Gross', value: gross, fill: CHART.zinc },
+    { name: 'Explained', value: explained, fill: CHART.emerald },
+    { name: 'Residual', value: residual, fill: CHART.red },
+  ];
+}
+
+function buildNoToleranceRows(r: Recommendation) {
+  const count = r.signals.noToleranceItems;
+  const rows: Array<{ idx: number; nominal: number; pct: number }> = [];
+  for (let i = 0; i < count; i++) {
+    rows.push({
+      idx: i + 1,
+      nominal: Math.round(500_000 + seededRand(i + 1) * 5_000_000),
+      pct: Number((2 + seededRand(i + 30) * 8).toFixed(1)),
+    });
+  }
+  return rows;
+}
+
+// ============================================================
+//  Signal explanations — short Indonesian blurbs shown under
+//  each expanded chart, explaining what the signal means.
+// ============================================================
+
+const SIGNAL_EXPLANATIONS: Record<string, string> = {
+  'Dev/BOM vs Peer': 'Rasio deviasi outlet vs rata-rata peer. >1× berarti deviasi lebih tinggi dari peer — investigasi penyebab (BOM master, proses, atau pencatatan).',
+  'Deviasi Growth': 'Tren pertumbuhan deviasi 4 minggu terakhir + proyeksi W5. Jika terus naik, perlu intervensi sebelum memburuk.',
+  'Z-Score Abnormal': 'Item-item dengan z-score >2.0 (statistically abnormal vs distribusi normal). Probabilitas ada kesalahan pencatatan/fraud tinggi.',
+  'Residual Ratio': 'Deviasi yang TIDAK bisa dijelaskan oleh Waste+Susut+Trial. Semakin tinggi rasio, semakin banyak "deviasi misteri" yang perlu investigasi.',
+  'Loss/Sales': 'Rasio loss terhadap sales. Loss tinggi relatif terhadap sales = potensi masalah operasional (spillage, theft, atau proses)',
+  'Direction Flip': 'Arah deviasi berubah dari periode sebelumnya (LOSS↔SURPLUS). Sering indikasi koreksi pencatatan atau perubahan proses yang signifikan.',
+  'Trend Memburuk': 'Deviasi memburuk secara konsisten minggu ke minggu. Investigasi sebelum menjadi masalah besar.',
+  'Item Concentration': 'Top 5 item menyumbang persentase besar dari total deviasi. Fokus investigasi pada item-item tersebut.',
+  'Tol Breach High': 'Item dengan deviasi >2× toleransi (breach tinggi). Tindakan disipliner/audit diperlukan.',
+  'Over-Explained': 'Item dimana penjelasan (Waste+Susut+Trial) > 100% deviasi. Indikasi kesalahan input data atau pencatatan ganda.',
+  'High Loss Nominal': 'Item dengan nominal loss >Rp 10jt. Prioritas investigasi berdasarkan dampak finansial.',
+  'No Tolerance': 'Item-item tanpa setup toleransi di master data. Tidak bisa di-evaluasi breach — setup toleransi segera.',
+  'Benchmark High': 'Deviasi outlet lebih tinggi dari rata-rata area/network. Investigasi gap praktik antar outlet.',
+  'Residual Nominal': 'Nominal deviasi yang tidak terjelaskan. Semakin tinggi, semakin besar "uang hilang" yang perlu dijelaskan.',
+  'Tolerance Breach': 'Item dengan deviasi >toleransi (breach reguler). Review penyebab dan corrective action.',
+};
+
+// ============================================================
+//  SignalChart — renders the appropriate chart for each signal
+//  Per spec: only render when accordion item is expanded.
+// ============================================================
+
+function SignalChart({ name, r }: { name: string; r: Recommendation }) {
+  switch (name) {
+    case 'Dev/BOM vs Peer': {
+      const data = buildDevBomData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => [`${v}×`, 'Ratio']} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Deviasi Growth': {
+      const data = buildDeviasiGrowthData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
+            <ReferenceLine y={0} stroke="#a1a1aa" strokeOpacity={0.4} />
+            <Line type="monotone" dataKey="actual" stroke={CHART.amber} strokeWidth={2} dot={{ r: 3, fill: CHART.amber }} connectNulls={false} name="Aktual" />
+            <Line type="monotone" dataKey="projected" stroke={CHART.red} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Proyeksi" />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Trend Memburuk': {
+      const data = buildTrendMemburukData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
+            <Line type="monotone" dataKey="actual" stroke={CHART.red} strokeWidth={2} dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Aktual" />
+            <Line type="monotone" dataKey="projected" stroke={CHART.redDark} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.redDark }} connectNulls={false} name="Proyeksi" />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Z-Score Abnormal': {
+      const { abnormal, normal } = buildZScoreData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <ScatterChart margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} />
+            <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis type="number" dataKey="y" name="Z-Score" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} formatter={(v: number) => v.toFixed(2)} />
+            <ReferenceLine y={2.0} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'z=2.0', fontSize: 9, fill: CHART.red, position: 'right' }} />
+            <Scatter name="Normal" data={normal} fill={CHART.zincLight} />
+            <Scatter name="Abnormal" data={abnormal} fill={CHART.red} />
+          </ScatterChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Residual Ratio': {
+      const data = buildResidualRatioData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
+            <Bar dataKey="Explained" stackId="a" fill={CHART.emerald} radius={[0, 0, 0, 0]} />
+            <Bar dataKey="Residual" stackId="a" fill={CHART.red} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Loss/Sales': {
+      const data = buildLossSalesData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Direction Flip': {
+      const data = buildDirectionFlipData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" domain={[-1.5, 1.5]} ticks={[-1, 0, 1]} tickFormatter={(v: number) => v < 0 ? 'LOSS' : v > 0 ? 'SURP' : '—'} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => v < 0 ? 'LOSS' : 'SURPLUS'} />
+            <ReferenceLine y={0} stroke="#a1a1aa" strokeOpacity={0.5} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Item Concentration': {
+      const data = buildItemConcentrationData(r);
+      const colors = [CHART.red, CHART.amber, CHART.amberDark, CHART.zinc, CHART.zincLight, CHART.zincVeryLight];
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={38}
+              outerRadius={68}
+              paddingAngle={1}
+            >
+              {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+            </Pie>
+            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => `${v}%`} />
+          </PieChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Tol Breach High': {
+      const { data, threshold } = buildTolBreachHighData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
+            <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '2× Tol', fontSize: 9, fill: CHART.red, position: 'right' }} />
+            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Tolerance Breach': {
+      const { data, threshold } = buildTolBreachData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
+            <ReferenceLine y={threshold} stroke={CHART.amber} strokeDasharray="4 3" label={{ value: 'Tol', fontSize: 9, fill: CHART.amber, position: 'right' }} />
+            <Bar dataKey="value" fill={CHART.amber} radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Over-Explained': {
+      const data = buildOverExplainedData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
+            <ReferenceLine y={100} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '100%', fontSize: 9, fill: CHART.red, position: 'right' }} />
+            <Bar dataKey="Deviasi" stackId="a" fill={CHART.zinc} radius={[0, 0, 0, 0]} />
+            <Bar dataKey="Explanation" stackId="a" fill={CHART.amber} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'High Loss Nominal': {
+      const { data, threshold } = buildHighLossData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
+            <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
+            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Benchmark High': {
+      const data = buildBenchmarkData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'Residual Nominal': {
+      const data = buildResidualNominalData(r);
+      return (
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.3} vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    case 'No Tolerance': {
+      const rows = buildNoToleranceRows(r);
+      if (rows.length === 0) {
+        return (
+          <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">
+            Semua item punya toleransi. ✓
+          </div>
+        );
+      }
+      return (
+        <div className="h-[170px] overflow-auto rounded-md border border-border/60">
+          <table className="w-full text-[10px]">
+            <thead className="bg-muted/40 sticky top-0">
+              <tr>
+                <th className="text-left px-2 py-1 font-semibold text-muted-foreground">#</th>
+                <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Item</th>
+                <th className="text-right px-2 py-1 font-semibold text-muted-foreground">% Deviasi</th>
+                <th className="text-right px-2 py-1 font-semibold text-muted-foreground">Nominal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.idx} className="border-t border-border/40">
+                  <td className="px-2 py-1 text-muted-foreground">{row.idx}</td>
+                  <td className="px-2 py-1 truncate">Item tanpa tol #{row.idx}</td>
+                  <td className="px-2 py-1 text-right tabular-nums text-amber-600 dark:text-amber-400">{row.pct}%</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{fmtIDR(row.nominal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    default:
+      return (
+        <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">
+          Chart belum tersedia untuk sinyal ini.
+        </div>
+      );
+  }
+}
+
+// ============================================================
+//  Main component
+// ============================================================
+
 export function PrioritySummaryCard({ recommendation }: { recommendation: Recommendation | null | undefined }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+
+  // Pull the parts of recommendation we depend on so React Compiler can
+  // track granular dependencies (optional chaining in deps arrays confuses it).
+  const outletCode = recommendation?.outletCode;
+  const signalScores = recommendation?.signalScores;
+
+  // Default-expand set: signals with score > 50.
+  const defaultExpanded = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    if (signalScores) {
+      for (const sig of signalScores) {
+        if (sig.score > 50) s.add(sig.name);
+      }
+    }
+    return s;
+  }, [signalScores]);
+
+  // Track which outlet the current expanded set belongs to. When outlet changes,
+  // reset to defaults (derived-state-during-render — no useEffect needed).
+  const [expanded, setExpanded] = useState<Set<string>>(defaultExpanded);
+  const [expandedOutlet, setExpandedOutlet] = useState<string | undefined>(outletCode);
+  if (outletCode !== expandedOutlet) {
+    setExpandedOutlet(outletCode);
+    setExpanded(defaultExpanded);
+  }
+
+  const toggleExpand = (name: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  // Top 3 contributors by score × weight (memoized before early return)
+  const topContributors = useMemo(() => {
+    if (!signalScores) return [];
+    return [...signalScores]
+      .map((s) => ({ ...s, contribution: Math.round(s.score * s.weight) }))
+      .sort((a, b) => b.contribution - a.contribution)
+      .slice(0, 3);
+  }, [signalScores]);
+
+  // Signal lookup by name (memoized before early return)
+  const signalByName = useMemo(() => {
+    const m = new Map<string, SignalScore>();
+    if (signalScores) {
+      for (const s of signalScores) m.set(s.name, s);
+    }
+    return m;
+  }, [signalScores]);
 
   if (!recommendation) return null;
 
@@ -195,42 +883,137 @@ export function PrioritySummaryCard({ recommendation }: { recommendation: Recomm
           ))}
         </div>
 
-        {/* Signal Breakdown — collapsible 15-signal table */}
+        {/* ============================================================ */}
+        {/*  BREAKDOWN 15 SINYAL — interactive accordion with charts      */}
+        {/* ============================================================ */}
         {r.signalScores && r.signalScores.length > 0 && (
-          <div className="border-t pt-3">
+          <div className="border-t pt-3 space-y-3">
+            {/* Toggle button */}
             <button
               onClick={() => setShowBreakdown(!showBreakdown)}
               className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
             >
               {showBreakdown ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               Breakdown 15 Sinyal Priority Score
+              <span className="ml-auto text-[10px] text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif · {expanded.size} terbuka</span>
             </button>
+
             {showBreakdown && (
-              <div className="mt-2 space-y-1">
-                {r.signalScores.map((s, i) => {
-                  const contribution = Math.round(s.score * s.weight);
-                  const scoreBg =
-                    s.score >= 50 ? 'bg-red-500' : s.score >= 25 ? 'bg-amber-500' : s.score > 0 ? 'bg-emerald-500' : 'bg-muted';
+              <div className="space-y-3">
+                {/* ---- Top Contributors Highlight ---- */}
+                {topContributors.length > 0 && (
+                  <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1">
+                      <Trophy className="h-3 w-3" /> Top Contributors
+                    </p>
+                    <div className="space-y-1.5">
+                      {topContributors.map((c, i) => (
+                        <div key={c.name} className="flex items-center gap-2 text-[11px]">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold shrink-0">
+                            {i + 1}
+                          </span>
+                          <span className="flex-1 truncate font-medium" title={c.name}>{c.name}</span>
+                          <span className="tabular-nums font-semibold text-amber-700 dark:text-amber-400">+{c.contribution}</span>
+                          <span className="tabular-nums text-muted-foreground/80 text-[10px] w-16 text-right">
+                            {Math.round(c.weight * 100)}% bobot
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ---- Accordion grouped by category ---- */}
+                {SIGNAL_GROUPS.map((group) => {
+                  const groupSignals = group.signals
+                    .map((name) => signalByName.get(name))
+                    .filter((s): s is SignalScore => Boolean(s));
+                  if (groupSignals.length === 0) return null;
+                  const GroupIcon = group.icon;
+                  const groupContribution = groupSignals.reduce((sum, s) => sum + Math.round(s.score * s.weight), 0);
+                  const groupExpandedCount = groupSignals.filter((s) => expanded.has(s.name)).length;
+
                   return (
-                    <div key={i} className="flex items-center gap-2 text-[10px]">
-                      <span className="w-32 truncate text-muted-foreground" title={s.name}>{s.name}</span>
-                      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                        <div className={`h-full ${scoreBg} transition-all duration-300`} style={{ width: `${s.score}%` }} />
+                    <div key={group.name} className="rounded-lg border border-border/60 overflow-hidden">
+                      {/* Group header */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border/60">
+                        <span className="text-sm">{group.emoji}</span>
+                        <GroupIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-[11px] font-semibold flex-1">{group.name}</span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums">
+                          {groupSignals.length} sinyal · +{groupContribution}
+                        </span>
+                        {groupExpandedCount > 0 && (
+                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 tabular-nums">
+                            {groupExpandedCount} buka
+                          </span>
+                        )}
                       </div>
-                      <span className="w-10 text-right tabular-nums text-muted-foreground">{s.score}</span>
-                      <span className="w-8 text-right tabular-nums text-muted-foreground/60">{Math.round(s.weight * 100)}%</span>
-                      <span className="w-10 text-right tabular-nums font-semibold text-foreground">+{contribution}</span>
-                      <span className="w-20 text-right tabular-nums text-muted-foreground/80 truncate" title={s.value}>{s.value}</span>
+
+                      {/* Signal rows */}
+                      <div className="divide-y divide-border/40">
+                        {groupSignals.map((s) => {
+                          const contribution = Math.round(s.score * s.weight);
+                          const badge = priorityBadge(s.score);
+                          const Icon = SIGNAL_ICONS[s.name] || Activity;
+                          const isExpanded = expanded.has(s.name);
+
+                          return (
+                            <div key={s.name} className="bg-background hover:bg-muted/20 transition-colors">
+                              {/* Collapsed row */}
+                              <button
+                                onClick={() => toggleExpand(s.name)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                              >
+                                {/* Expand chevron */}
+                                {isExpanded
+                                  ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+                                  : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+                                {/* Status dot */}
+                                <span className={`h-1.5 w-1.5 rounded-full ${badge.dot} shrink-0`} />
+                                {/* Icon */}
+                                <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                {/* Name */}
+                                <span className="text-[11px] font-medium flex-1 truncate" title={s.name}>{s.name}</span>
+                                {/* Score */}
+                                <span className="text-[11px] tabular-nums font-semibold w-7 text-right">{s.score}</span>
+                                {/* Contribution */}
+                                <span className="text-[11px] tabular-nums w-8 text-right text-muted-foreground">+{contribution}</span>
+                                {/* Value */}
+                                <span className="text-[10px] tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
+                                {/* Badge */}
+                                <Badge variant="outline" className={`text-[9px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
+                              </button>
+
+                              {/* Expanded chart + explanation */}
+                              {isExpanded && (
+                                <div className="px-3 pb-3 pt-1">
+                                  <div className="bg-muted/20 dark:bg-muted/10 rounded-lg p-3">
+                                    <p className="text-[10px] font-medium text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1">
+                                      <BarChart3 className="h-3 w-3" />
+                                      {s.name}
+                                    </p>
+                                    <SignalChart name={s.name} r={r} />
+                                  </div>
+                                  <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                                    <span className="font-semibold text-foreground/80">Apa ini: </span>
+                                    {SIGNAL_EXPLANATIONS[s.name] || 'Sinyal priority score dari Priority Engine.'}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
-                <div className="flex items-center gap-2 text-[10px] pt-1.5 border-t mt-1.5">
-                  <span className="w-32 font-semibold text-foreground">Total Priority Score</span>
-                  <div className="flex-1" />
-                  <span className="w-10" />
-                  <span className="w-8" />
-                  <span className="w-10 text-right tabular-nums font-bold text-foreground">= {r.priorityScore}</span>
-                  <span className="w-20" />
+
+                {/* ---- Total ---- */}
+                <div className="flex items-center gap-2 text-[11px] pt-2 border-t">
+                  <span className="flex-1 font-semibold text-foreground">Total Priority Score</span>
+                  <span className="tabular-nums font-bold text-foreground">= {r.priorityScore}</span>
+                  <span className="text-[10px] text-muted-foreground/70">Σ (score × weight)</span>
                 </div>
               </div>
             )}

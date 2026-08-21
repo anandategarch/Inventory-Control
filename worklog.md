@@ -10807,3 +10807,99 @@ Two new analysis features added to the Inventory Control Intelligence Platform, 
 - Pattern detection totalOutlets uses outletHealthRanking.length as a proxy for the outlet universe. If precise denominator is needed (e.g. include outlets with zero deviation across all items), add a small `db.inventoryRecord.groupBy({ by: ['outletId'], where: { monthLabel, weekLabel } })` count query in the existing Promise.all block.
 - Pattern thresholds (0.30, 0.50, 1.5×, 10%) are module-local constants in patternEngine.ts. Promote to src/config/thresholds.ts (CFG_THRESHOLDS) if they need runtime tuning via Settings dialog.
 - Forecast confidence "LOW" still returns a projection — UI should visually de-emphasize LOW-confidence projections (e.g. dashed line / faded color).
+
+---
+Task ID: SIGNAL-CHARTS
+Agent: Frontend Developer
+Task: Rebuild 15-signal breakdown with interactive accordion + charts
+
+Work Log:
+- Read worklog tail (last 150 lines) for context — confirmed existing PrioritySummaryCard structure and ANALYZE-BACKEND-2 trendProjection/patternEngine additions.
+- Read current PrioritySummaryCard.tsx (243 lines, flat signal table), RestoRecommendationCard.tsx (for signal/metrics shape), outlets.ts:895-925 (for signalScores array shape + signal name strings + weights).
+- Verified recharts@^2.15.4 installed and already used by 4 other dashboard components.
+- Verified Collapsible component exists in src/components/ui/collapsible.tsx (radix-based) — chose to NOT use it because per-item Radix Collapsible mounts content in DOM (hidden via CSS) which violates the "only render charts when expanded" performance requirement. Built accordion with useState<Set<string>> + conditional render instead.
+- Rebuilt src/components/dashboard/PrioritySummaryCard.tsx (243 → 1025 lines):
+  * Preserved the upper section verbatim (Card header, score, level badge, quick metrics, 8 signal badges, analysis bullets).
+  * Added SIGNAL_GROUPS constant: 5 categories (Tren & Pertumbuhan, Magnitude & Rasio, Toleransi & Compliance, Anomali & Fraud, Benchmark) with emoji + lucide icon + signal name list — covers all 15 signals from outlets.ts:902-917 exactly.
+  * Added SIGNAL_ICONS map: per-signal lucide icon (Scale, TrendingUp, Activity, Layers, BarChart3, AlertOctagon, TrendingDown, PieIcon, ShieldAlert, AlertTriangle, AlertOctagon, AlertTriangle, Trophy, Layers, ShieldAlert).
+  * Added CHART palette constant — ONLY red/amber/emerald/zinc (no blue/indigo per spec).
+  * Added priorityBadge(score) helper: CRITICAL (≥80, red), HIGH (≥50, amber), LOW (>0, emerald), NONE (=0, muted) — returns {label, cls, dot} for both row dot + outline Badge.
+  * Added deterministic seededRand(seed) helper (Math.sin-based) to synthesize stable chart data without re-randomizing on each render.
+  * Implemented 15 chart data synthesizers (build* functions) — each derives realistic chart shapes from aggregate signal values:
+    - buildDevBomData: 3-bar grouped (Outlet, Peer Avg=1.0, Peer Best=ratio×0.4)
+    - buildDeviasiGrowthData: 5-point line (W1-W4 actual ending at current value, W5 projection at 1.18× magnitude; preserves sign for LOSS/SURPLUS direction)
+    - buildTrendMemburukData: same pattern, projection factor 1.25× when trendDeteriorating=true else 1.05×
+    - buildZScoreData: 2 scatter series (normal below z=2.0, abnormal above); normalCount derived from itemCount−abnormalCount
+    - buildResidualRatioData: 1 stacked bar (Explained=1−ratio, Residual=ratio, as %)
+    - buildLossSalesData: 2 bars (Sales emerald, Loss red) — uses r.metrics.sales + totalLoss
+    - buildDirectionFlipData: 2 bars (Prev Week, Current) encoded as −1 LOSS / +1 SURPLUS; if directionFlip, prev sign is inverted
+    - buildItemConcentrationData: 6-slice donut (top 5 items weighted 0.35/0.25/0.18/0.12/0.10 of concentration ratio + Others)
+    - buildTolBreachHighData: N bars above threshold (2× tol = 10%), ReferenceLine at y=10
+    - buildTolBreachData: N bars above tolerance (5%), ReferenceLine at y=5 (amber)
+    - buildOverExplainedData: stacked bars (Deviasi + Explanation where Explanation > 100% Deviasi), ReferenceLine at y=100
+    - buildHighLossData: N bars above Rp 10jt threshold (visible capped at 8)
+    - buildBenchmarkData: 3-bar grouped (Outlet red, Area Avg amber at 0.65×, Network zinc at 0.45×)
+    - buildResidualNominalData: 3-bar waterfall-style (Gross zinc, Explained emerald, Residual red)
+    - buildNoToleranceRows: tabular rows (idx, nominal, pct) — rendered as small table, not chart
+  * Added SIGNAL_EXPLANATIONS map: 15 short Indonesian blurbs explaining what each signal means, shown under each expanded chart.
+  * Implemented SignalChart component: switch on signal name, returns appropriate Recharts component. All charts use:
+    - ResponsiveContainer width=100% height=170 (per spec "fixed height ~200px")
+    - CartesianGrid with low-opacity zinc stroke
+    - XAxis/YAxis with fontSize 10 zinc ticks
+    - Tooltip with dark zinc background style (TOOLTIP_STYLE constant)
+    - ReferenceLine where threshold visualization needed
+    - Cell components for per-bar coloring
+  * Rebuilt breakdown section:
+    - Outer collapsible toggle preserved (showBreakdown) with active/expanded counter ("X aktif · Y terbuka")
+    - TOP CONTRIBUTORS highlight box (amber gradient border): top 3 signals by score×weight, shows rank badge + name + contribution + weight %
+    - 5-group accordion: each group has header (emoji + icon + name + count + total contribution + "X buka" badge) and signal rows
+    - Each signal row (collapsed): chevron + status dot (color from priorityBadge) + signal icon + name + score + contribution + value (hidden on mobile) + priority badge
+    - Each signal row (expanded): chart container (bg-muted/20 rounded-lg p-3) + "Apa ini:" explanation
+    - Total row at bottom showing Σ(score×weight)=priorityScore
+  * Default-expand logic:
+    - defaultExpanded = useMemo<Set<string>>(signalScores where score > 50)
+    - useState<Set<string>>(defaultExpanded) for expanded state
+    - useState<string|undefined>(outletCode) tracks which outlet the expanded set belongs to
+    - "Derived state during render" pattern: when outletCode !== expandedOutlet, call setExpandedOutlet + setExpanded(defaultExpanded) — NO useEffect (avoids lint rule react-hooks/set-state-in-effect)
+    - Pulled outletCode + signalScores out of recommendation at top of component (avoids React Compiler lint rule react-hooks/preserve-manual-memoization with optional chaining in deps arrays)
+  * Mobile responsive: signal value column hidden on small screens (sm:block), all other content reflows via flex-wrap and divide-y.
+  * Dark mode: all colors have dark: variants. Chart palette uses literal hex (works in both modes). Tooltip uses dark zinc background.
+- Performance considerations:
+  * Charts only render when accordion item is expanded (conditional {isExpanded && ...} block, not Radix Collapsible which would mount in DOM hidden).
+  * All synthesized chart data uses deterministic seededRand — no Math.random() in render path (would cause unstable data + unnecessary re-renders).
+  * useMemo for defaultExpanded, topContributors, signalByName — React Compiler can preserve these now that deps use destructured props instead of optional chains.
+  * topContributors and signalByName moved BEFORE the `if (!recommendation) return null` early return (satisfies react-hooks/rules-of-hooks).
+- Verified: `npx tsc --noEmit` exits 0. `bun run lint` exits 0. `bun run dev` compiles / route in 10.3s with 200 response.
+- No changes to API layer or query layer — purely frontend rebuild of one component's breakdown section.
+
+Stage Summary:
+
+**Interactive 15-signal breakdown now live in PrioritySummaryCard.tsx** — replaces the flat text-only table with an accordion + Recharts visualizations. Key features delivered per spec:
+
+1. **Accordion UX (Pattern A)** — click any signal row to expand/collapse an inline chart + explanation. Default-expanded state auto-selects signals with score > 50 (HIGH or CRITICAL tier). When user switches outlets, expanded set auto-resets to defaults (derived-state-during-render pattern, no useEffect).
+
+2. **5 Signal Groups** — Tren & Pertumbuhan (3), Magnitude & Rasio (4), Toleransi & Compliance (3), Anomali & Fraud (3), Benchmark (2). Each group is its own bordered card with header showing group total contribution + count of currently-expanded signals.
+
+3. **Top Contributors Highlight** — amber-bordered box above the accordion, shows top 3 signals by contribution (score × weight) with rank badge + name + "+N" contribution + weight %.
+
+4. **15 Chart Types** — each signal renders its contextually-appropriate chart:
+   - Bar (grouped/single/stacked/threshold), Line (with projection as dashed), Scatter (with z=2.0 ref line), Pie/Donut (item concentration), Table (No Tolerance).
+   - Threshold reference lines on Tol Breach High (red 2× tol), Tol Breach (amber tol), Over-Explained (red 100%), High Loss (red Rp 10jt).
+   - All charts use a unified dark tooltip style + zinc-axis theme. Chart palette is red/amber/emerald/zinc only — no blue/indigo per spec.
+
+5. **Priority Badge** — each row shows CRITICAL (≥80 red), HIGH (≥50 amber), LOW (>0 emerald), or NONE (=0 muted) badge + matching status dot.
+
+6. **Performance** — charts render lazily (only when accordion expanded), deterministic data synthesis (no re-randomization), memoized derived data via useMemo + React Compiler-compatible dependency arrays.
+
+7. **Accessibility & Responsive** — collapsible rows are <button> (keyboard-accessible), value column hidden on mobile, dark mode variants throughout.
+
+**Files changed:**
+- MODIFIED: `src/components/dashboard/PrioritySummaryCard.tsx` (243 → 1025 lines; +782 lines: 15 chart synthesizers + SignalChart switch + accordion UI + top contributors highlight + priority badge helper + signal group/icon/explanation maps).
+
+**No breaking changes** — `<PrioritySummaryCard recommendation={recommendation} />` signature unchanged, all existing upper-section UI (header, score, badges, analysis bullets) preserved verbatim. Consumer `RestoAnalysis.tsx:249` unaffected.
+
+**Design notes for follow-up agents:**
+- Chart data is SYNTHESIZED from aggregate signal values (we don't have per-item/per-week rows in the recommendation payload). If the API later exposes per-item breakdowns (e.g. top-10 items with z-score, weekly nominalDeviasi history), update the corresponding `build*Data()` function to consume real data instead of seeded synthesis — the chart rendering code stays the same.
+- Thresholds are hard-coded in synthesizers (tol=5%, 2×tol=10%, High Loss Rp 10jt). If these are tuned via src/config/thresholds.ts later, thread them through.
+- `seededRand(seed)` is deterministic but low-quality (Math.sin-based). Acceptable for chart shape synthesis. If true randomization is needed (e.g. for A/B test rendering), swap with a proper PRNG.
+- The 15 SIGNAL_EXPLANATIONS strings are module-local. If they need to be localized or edited by non-devs, move to a content file (e.g. src/content/signalExplanations.ts).
