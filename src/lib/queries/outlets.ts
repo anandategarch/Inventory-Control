@@ -423,8 +423,11 @@ export async function queryPeerItemComparison(
         THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBom",
       -- FIX CALC-5: Excel convention: LOSS = negative nominalLossSurplus
-      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+      -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
+      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as "direction",
       CASE WHEN o.code = ${outletCode} THEN true ELSE false END as "isTarget",
       ti.item_rank as "itemRank"
@@ -637,9 +640,12 @@ export async function queryRestoRecommendations(
           -- FIX CALC-4: LOSS = negative nominalLossSurplus. High loss = < -10jt
           COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem",
           -- FIX CALC-5: compute outlet direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
+          -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
           CASE
-            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "outletDirection"
         FROM "InventoryRecord" ir
@@ -702,9 +708,12 @@ export async function queryRestoRecommendations(
             THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
             ELSE 0 END as "prevDevBom",
           -- FIX CALC-5: compute prev direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
+          -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
           CASE
-            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "prevDirection"
         FROM "InventoryRecord" ir

@@ -19,6 +19,11 @@ export interface VarianceItem {
   previousAbsNominal: number;
   delta: number;
   direction: string;
+  // FIX FLOW3-4: add fields emitted by server (rankingService.computeVarianceAnalysis)
+  currentNominal?: number;
+  previousNominal?: number;
+  selisih?: number;
+  varianceDirection?: string;
 }
 
 export interface OutletHealthRanking {
@@ -84,7 +89,8 @@ export interface AnalysisData {
       byRule: Record<string, number>;
     };
   };
-  dqStatus: { ok: number; warnings: number; errors: number; issues: any[] };
+  // FIX FLOW3-5: dqStatus type drift — server emits only { errors, warnings } (no ok/issues)
+  dqStatus: { errors: number; warnings: number; ok?: number; issues?: any[] };
   growthComparison: { salesGrowth: number | null; bomGrowth: number | null; qtyDeviasiGrowth: number | null; nominalDeviasiGrowth: number | null; deviationToSalesRatio: number | null; deviationToBomRatio: number | null; historicalAnalysis?: HistoricalAnalysisResult } & Record<string, any>;
   topItemsByNominal: any[];
   topItemsByDevBom: any[];

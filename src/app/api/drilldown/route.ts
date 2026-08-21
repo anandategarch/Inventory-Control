@@ -85,10 +85,21 @@ export async function GET(req: NextRequest) {
           sales: r.nominalSales,
         },
         derived: {
-          // FIX CALC-1: compute direction from nominalLossSurplus sign (not stored direction, which may be inverted)
-          direction: r.nominalLossSurplus != null
-            ? (r.nominalLossSurplus < 0 ? 'LOSS' : r.nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
-            : r.direction,
+          // FIX CALC-1 + VERIFY3-4: compute direction from nominalLossSurplus sign with qtyDeviasi fallback
+          // (not stored r.direction which may be inverted for un-migrated data)
+          direction: (() => {
+            if (r.nominalLossSurplus != null) {
+              if (r.nominalLossSurplus < 0) return 'LOSS';
+              if (r.nominalLossSurplus > 0) return 'SURPLUS';
+              return 'NEUTRAL';
+            }
+            if (r.qtyDeviasi != null) {
+              if (r.qtyDeviasi < 0) return 'LOSS';
+              if (r.qtyDeviasi > 0) return 'SURPLUS';
+              return 'NEUTRAL';
+            }
+            return r.direction; // last resort fallback
+          })(),
           residualQty: r.residualQty,
           residualRatio: r.residualRatio,
           absQtyDeviasi: r.absQtyDeviasi,

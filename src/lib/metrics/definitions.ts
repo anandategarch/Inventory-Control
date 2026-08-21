@@ -45,7 +45,7 @@ export const SALES_MODE = 'MODE(nominalSales) per outlet — tie: smaller value 
 /**
  * Gross Deviation:
  *   QTY DEVIASI (Stok Fisik - Stok Sistem)
- *   Signed: positive = LOSS, negative = SURPLUS
+ *   Signed: negative = LOSS (rugi), positive = SURPLUS (untung) — Excel convention
  *
  * Master context #8: QTY DEVIASI = Gross Deviation (Layer 1)
  */
@@ -54,7 +54,7 @@ export const GROSS_DEVIATION = 'qtyDeviasi (signed, from Excel)';
 /**
  * Net Deviation:
  *   QTY LOSS/SURPLUS = Gross Deviation - Waste - Susut - Trial
- *   Signed: positive = LOSS, negative = SURPLUS
+ *   Signed: negative = LOSS (rugi), positive = SURPLUS (untung) — Excel convention
  *
  * Master context #11: Three-Layer — Net = Gross - Explained (W+S+T)
  */
@@ -211,8 +211,8 @@ export const PRIORITY_DEFINITIONS = {
 /**
  * Direction:
  *   Berdasarkan NET DEVIATION (qtyLossSurplus), BUKAN GROSS (qtyDeviasi)
- *   Net > 0 → LOSS (over-consumption)
- *   Net < 0 → SURPLUS (under-consumption)
+ *   Net < 0 → LOSS (over-consumption)
+ *   Net > 0 → SURPLUS (under-consumption)
  *   Net = 0 → NEUTRAL
  *
  * Master context #9: Direction dari Net Deviation

@@ -52,7 +52,7 @@ export function calcGrowthAbs(curr: number | null, prev: number | null): number 
  * Compute nominal deviation growth (magnitude) — for nominalDeviasi
  *
  * FIX (audit issue #11): calcGrowth() is signed, which is misleading for
- * nominalDeviasi. Going from -10M (SURPLUS) to -20M (SURPLUS) gives
+ * nominalDeviasi. Going from -10M (LOSS) to -20M (LOSS) gives
  * calcGrowth = (-20M - (-10M)) / |-10M| = -100% (decreasing), but the
  * MAGNITUDE of deviation actually INCREASED 100% (got worse).
  *

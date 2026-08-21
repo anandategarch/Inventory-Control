@@ -592,7 +592,7 @@ export async function GET(req: NextRequest) {
           period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
           sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
           sales: r.sales,
-          bom: null, // BUG 2.7 fix: was `r.sales / r.devBom` which is dimensionally wrong
+          bom: r.qtyBom ?? null, // FIX FLOW3-2: populate from SQL (was always null)
           deviation: r.nominal,
           absDeviation: r.nominal,
           devBomRatio: r.devBom,

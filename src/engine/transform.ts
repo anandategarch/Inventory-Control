@@ -230,7 +230,7 @@ export function normalizeRow(
 
 // FIX (audit issue #6): classifyDirection wrapper REMOVED.
 // All consumers now use computeDirection() directly from @/lib/metrics.
-// Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS.
+// Direction logic: NET deviation (qtyLossSurplus) < 0 → LOSS, > 0 → SURPLUS (Excel convention).
 // Falls back to GROSS (qtyDeviasi) if NET is null.
 
 // Compute residual = qtyDeviasi - (qtyWaste + qtySusut + qtyTrial)

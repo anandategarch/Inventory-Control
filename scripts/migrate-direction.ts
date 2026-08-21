@@ -64,7 +64,7 @@ async function main() {
   `;
   console.log(`  Set SURPLUS: ${surplusUpdated} rows updated`);
 
-  // NEUTRAL: nominalLossSurplus = 0 (or qtyDeviasi = 0 as fallback)
+  // NEUTRAL: nominalLossSurplus = 0
   const neutralUpdated = await db.$executeRaw`
     UPDATE "InventoryRecord"
     SET direction = 'NEUTRAL'
@@ -73,6 +73,28 @@ async function main() {
       AND direction != 'NEUTRAL'
   `;
   console.log(`  Set NEUTRAL: ${neutralUpdated} rows updated`);
+
+  // FIX VERIFY3-1: Fallback for rows with NULL nominalLossSurplus — use qtyDeviasi sign
+  // (matches computeDirection fallback in transform.ts)
+  const lossFallback = await db.$executeRaw`
+    UPDATE "InventoryRecord"
+    SET direction = 'LOSS'
+    WHERE "nominalLossSurplus" IS NULL
+      AND "qtyDeviasi" IS NOT NULL
+      AND "qtyDeviasi" < 0
+      AND direction != 'LOSS'
+  `;
+  console.log(`  Set LOSS (fallback):    ${lossFallback} rows updated`);
+
+  const surplusFallback = await db.$executeRaw`
+    UPDATE "InventoryRecord"
+    SET direction = 'SURPLUS'
+    WHERE "nominalLossSurplus" IS NULL
+      AND "qtyDeviasi" IS NOT NULL
+      AND "qtyDeviasi" > 0
+      AND direction != 'SURPLUS'
+  `;
+  console.log(`  Set SURPLUS (fallback): ${surplusFallback} rows updated`);
 
   // Count after
   const afterLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });

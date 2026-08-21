@@ -63,10 +63,27 @@ export function buildRuleContext(
 
   // Bug 3 fix: expose prevDirection for flip-flop detection
   // Master context #30/#58: direction flip = LOSS↔SURPLUS between periods
-  const prevDirection = prev?.direction ?? null;
-  const isDirectionFlip = prevDirection != null && curr.direction != null &&
-    prevDirection !== 'NEUTRAL' && curr.direction !== 'NEUTRAL' &&
-    prevDirection !== curr.direction;
+  // FIX FLOW3-1: compute direction on-the-fly from nominalLossSurplus sign (not stored curr.direction
+  // which may be inverted for un-migrated data). Falls back to qtyDeviasi if nominalLossSurplus is null.
+  const computeDirectionFromData = (rec: RecWithRels | null): string | null => {
+    if (!rec) return null;
+    if (rec.nominalLossSurplus != null) {
+      if (rec.nominalLossSurplus < 0) return 'LOSS';
+      if (rec.nominalLossSurplus > 0) return 'SURPLUS';
+      return 'NEUTRAL';
+    }
+    if (rec.qtyDeviasi != null) {
+      if (rec.qtyDeviasi < 0) return 'LOSS';
+      if (rec.qtyDeviasi > 0) return 'SURPLUS';
+      return 'NEUTRAL';
+    }
+    return null;
+  };
+  const currDirection = computeDirectionFromData(curr);
+  const prevDirection = computeDirectionFromData(prev);
+  const isDirectionFlip = prevDirection != null && currDirection != null &&
+    prevDirection !== 'NEUTRAL' && currDirection !== 'NEUTRAL' &&
+    prevDirection !== currDirection;
 
   return {
     salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth,
@@ -81,7 +98,8 @@ export function buildRuleContext(
     nominalLossSurplus: curr.nominalLossSurplus,
     residualQty: curr.residualQty, residualRatio: curr.residualRatio,
     tolerancePct: curr.tolerancePct, pctQtyDeviasiToBom: curr.pctQtyDeviasiToBom,
-    direction: curr.direction,
+    // FIX FLOW3-1: use computed direction (not stored curr.direction which may be inverted)
+    direction: currDirection,
     prevDirection,
     isDirectionFlip,
     absNominalDeviasi: curr.absNominalDeviasi, absQtyDeviasi: curr.absQtyDeviasi,

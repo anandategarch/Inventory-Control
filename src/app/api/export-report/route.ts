@@ -590,7 +590,7 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('topItems')) {
     children.push(heading('4. ITEM PRIORITAS (TOP ITEMS)'));
-    children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = SURPLUS (ditandai merah).'));
+    children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
       { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
@@ -640,7 +640,7 @@ export async function GET(req: NextRequest) {
     const va = data.varianceAnalysis || {};
     if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
       children.push(heading('11. ANALISIS PERUBAHAN ITEM (Variance)'));
-    children.push(paragraph('Item yang memburuk (selisih naik) dan membaik (selisih turun) dibanding periode sebelumnya. Menampilkan Nominal Deviasi actual (bukan abs). Angka negatif = SURPLUS (merah).'));
+    children.push(paragraph('Item yang memburuk (magnitude deviasi naik) dan membaik (magnitude deviasi turun) dibanding periode sebelumnya. Menampilkan Nominal Deviasi actual (bukan abs). Angka negatif = LOSS/rugi (merah).'));
       if ((va.topWorsened || []).length > 0) {
         children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
         // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
@@ -661,7 +661,7 @@ export async function GET(req: NextRequest) {
     const dr = data.topDeviasiRank || [];
     if (dr.length > 0) {
       children.push(heading('13. RANKING ITEM NASIONAL (Deviasi)'));
-      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = SURPLUS, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.'));
+      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = LOSS/rugi, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.'));
       children.push(makeTable([
         'Item', 'Rank Nasional', 'Rank BOM', 'Resto', 'PIC', 'Satuan',
         'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',

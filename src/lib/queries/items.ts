@@ -36,8 +36,11 @@ export async function queryTopItemsByNominal(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ir."absNominalDeviasi") as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+      -- FIX VERIFY3-8: add qtyDeviasi NULL fallback for direction computation
+      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -247,8 +250,11 @@ export async function queryTopItemsByCategory(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ABS(${qtyRef})) as qty,
       SUM(ABS(${nomRef})) as nominal,
-      CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+      -- FIX VERIFY3-8: add qtyDeviasi NULL fallback for direction computation
+      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id

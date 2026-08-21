@@ -8938,3 +8938,473 @@ Stage Summary:
 - Files changed: 15 files, +1296/-34 lines
 - Lint clean. Page loads HTTP 200. No console errors.
 - Pushed to GitHub: 6c2cf42
+
+---
+Task ID: AUDIT-VERIFY3
+Agent: Post-Fix Verification Auditor
+Task: Verify SIGN-1 to FE-7 fixes are correct, find regressions and missed spots
+
+Work Log:
+- Read worklog tail (lines 8540-8940) for context on SIGN-1..SIGN-7, CALC2-1..CALC2-7, FIX-DEEP-AUDIT-2 fixes.
+- Read all 18 audit-scope files:
+  * src/engine/analysis/ruleService.ts (146 lines) — SIGN-1 fix verified.
+  * src/engine/rules/evaluator.ts (458 lines) — SIGN-1 RuleContext interface + canOpFire null-handling verified.
+  * src/app/api/migrate-direction/route.ts (159 lines) — SIGN-2, API2-3, API2-5 fixes verified.
+  * src/engine/analysis/rankingService.ts (398 lines) — CALC2-1 sort by delta verified.
+  * src/app/api/peer-comparison/route.ts (51 lines) — API2-1 limit cap verified.
+  * src/components/dashboard/PeerComparison.tsx (1077 lines) — FE-1/FE-2 !data&&!error branch verified.
+  * src/components/dashboard/ExecutiveSummary.tsx (321 lines) — FE-3 clickableRowProps verified.
+  * src/components/dashboard/RestoAnalysis.tsx (810 lines) — FE-4 MenuAnalysis keyboard verified.
+  * src/components/dashboard/CardDrillDown.tsx (214 lines) — FE-6 labels verified.
+  * src/components/dashboard/RestoRecommendationCard.tsx (218 lines) — FE-7 dark mode badges verified.
+  * src/app/api/outlet-items/route.ts (561 lines) — SIGN-3 on-the-fly direction verified.
+  * src/app/api/item-history/route.ts (308 lines) — SIGN-4 on-the-fly direction + qtyDeviasi fallback verified.
+  * src/lib/queries/outlets.ts (895 lines) — CALC2-2 qtyDeviasiLoss verified.
+  * src/app/page.tsx (414 lines) — FE-3b aria-label verified.
+  * src/config/rules.yaml (249 lines) — All 17 rules verified.
+  * src/lib/metrics/deviation.ts (290 lines) — computeDirection verified.
+  * src/middleware.ts (117 lines) — migrate-direction protected, fail-closed verified.
+  * scripts/migrate-direction.ts (100 lines) — IDEMPOTENT but missing SIGN-2 fallback (VERIFY3-1).
+- Cross-checked: src/lib/a11y.ts (clickableRowProps), src/lib/cache.ts (LRUCache.clear), src/lib/rate-limit.ts (RATE_LIMITS), src/lib/format.ts (directionColor/numberColor), src/lib/metrics/growth.ts, src/lib/metrics/definitions.ts, src/lib/queries/items.ts, src/lib/queries/dashboard.ts, src/app/api/drilldown/route.ts, src/app/api/peer-comparison/items/route.ts, src/app/api/recommendations/route.ts, src/app/api/analysis/route.ts, src/app/api/export-report/route.ts, src/engine/analysis/types.ts, prisma/schema.prisma.
+
+Stage Summary:
+- All 12 fixes from FIX-DEEP-AUDIT-2 batch (SIGN-1, SIGN-2 API route, CALC2-1, API2-1, API2-3, FE-1/2/3/4/6/7/3b, SIGN-3/4, CALC2-2, API2-5) verified CORRECT at the implementation level.
+- Found 9 new findings: 4 MEDIUM (missed spots / inconsistencies), 5 LOW (cleanup not applied).
+- No CRITICAL regressions introduced by the fixes.
+- Most significant finding: VERIFY3-1 — the SIGN-2 fix was applied to the API route but NOT to the standalone CLI script `scripts/migrate-direction.ts`. Operators running the CLI migration will leave NULL nominalLossSurplus rows un-migrated, which then causes drilldown (VERIFY3-4) and other components to show inverted direction for those rows.
+- Second significant finding: VERIFY3-2 + VERIFY3-3 — the Word export's variance section (route.ts:643-654) has stale text that contradicts the CALC2-1 sort-by-magnitude logic ("selisih naik/turun" should be "magnitude naik/turun"), AND the SIGN-5 inverted labels ("negatif = SURPLUS") were never applied (still present at lines 593, 643, 664).
+
+Findings (9 total):
+
+**BUG VERIFY3-1 (MEDIUM) — scripts/migrate-direction.ts missing SIGN-2 fallback**
+- File: `scripts/migrate-direction.ts:42-75`
+- Description: SIGN-2 fix added qtyDeviasi-fallback UPDATE blocks to `src/app/api/migrate-direction/route.ts` (lines 61-79) for rows with NULL nominalLossSurplus. The standalone CLI script `scripts/migrate-direction.ts` was NOT updated — only has 3 UPDATE blocks (LOSS/SURPLUS/NEUTRAL) for rows where `nominalLossSurplus IS NOT NULL`. Line 67 comment "(or qtyDeviasi = 0 as fallback)" is misleading — SQL does NOT implement this.
+- Impact: If operator runs CLI script instead of API endpoint, NULL nominalLossSurplus rows keep inverted `direction`. drilldown route (line 91) falls back to `r.direction` for those rows → shows inverted direction in DrillDownDrawer UI.
+- Proposed fix: Add the same 2 fallback UPDATE blocks (lossFallback + surplusFallback using qtyDeviasi sign) to `scripts/migrate-direction.ts` after the neutralUpdated block, mirroring the API route. Also update line 89 to include fallback counts in totalUpdated.
+
+**BUG VERIFY3-2 (MEDIUM) — Word export variance description contradicts CALC2-1 sort logic**
+- File: `src/app/api/export-report/route.ts:643, 645, 648, 652`
+- Description: After CALC2-1 fix, `topWorsened` is sorted by `delta` (magnitude change), not `selisih` (signed change). But:
+  * Line 643: "Item yang memburuk (selisih naik) dan membaik (selisih turun)" — INCORRECT. Now "memburuk" = magnitude grew (delta > 0), regardless of selisih sign.
+  * Line 648: Table displays `it.selisih` (signed). For LOSS-worsening rows (prev=-5M → curr=-10M), selisih=-5M (negative, red) appears in "Worsened" section. Visually confusing: user expects positive values in "worsened" list.
+  * Line 652: "Item dengan Perubahan Terkecil (Selisih Terkecil)" — INCORRECT, topImproved is now sorted by smallest delta (magnitude shrink), not smallest selisih.
+- Impact: Word export users see misleading labels and confusing Selisih values (negative red numbers in "Worsened" section).
+- Proposed fix:
+  1. Update line 643 description to: "Item yang memburuk (magnitude deviasi naik) dan membaik (magnitude deviasi turun)..."
+  2. Add a "Delta |Nom|" column showing `it.delta` (the magnitude change used for sorting) alongside existing "Selisih" column.
+  3. Update line 652 heading to "Perubahan Magnitude Terkecil" or similar.
+
+**BUG VERIFY3-3 (MEDIUM) — SIGN-5 not applied: 3 inverted labels in export-report route**
+- File: `src/app/api/export-report/route.ts:593, 643, 664`
+- Description: SIGN-5 was identified as LOW priority in prior audit but NEVER applied. Three paragraph descriptions still use the OLD inverted convention:
+  * Line 593: "Angka negatif = SURPLUS (ditandai merah)." — WRONG (Excel convention post-CALC-1: NEGATIVE = LOSS/rugi, red).
+  * Line 643: "Angka negatif = SURPLUS (merah)." — WRONG.
+  * Line 664: "Semua nilai signed (negatif = SURPLUS, merah)." — WRONG.
+- Impact: Word export users see contradicting labels — table cells color negative numbers red (correct = LOSS), but the paragraph text above the tables says "negative = SURPLUS". Confusing.
+- Proposed fix: Change all 3 occurrences:
+  - Line 593: "Angka negatif = LOSS/rugi (ditandai merah)."
+  - Line 643: "Angka negatif = LOSS/rugi (merah)."
+  - Line 664: "Semua nilai signed (negatif = LOSS/rugi, merah)."
+
+**BUG VERIFY3-4 (MEDIUM) — drilldown route falls back to stored r.direction (inconsistent with SIGN-4)**
+- File: `src/app/api/drilldown/route.ts:91`
+- Description: Line 91 falls back to `r.direction` (stored DB value) when `nominalLossSurplus` is null. SIGN-4 fix in item-history route (line 100-102) instead falls back to `qtyDeviasi` sign — more defensive against un-migrated data.
+- Impact: If migration hasn't been run (or was run via CLI script without SIGN-2 fallback — see VERIFY3-1), drilldown drawer shows inverted direction for NULL nominalLossSurplus rows. DrillDownDrawer UI (lines 89, 102) displays this direction with color coding (red for LOSS, emerald for SURPLUS).
+- Proposed fix: Add qtyDeviasi fallback to drilldown route, mirroring item-history:
+  ```typescript
+  direction: r.nominalLossSurplus != null
+    ? (r.nominalLossSurplus < 0 ? 'LOSS' : r.nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
+    : r.qtyDeviasi != null
+      ? (r.qtyDeviasi < 0 ? 'LOSS' : r.qtyDeviasi > 0 ? 'SURPLUS' : 'NEUTRAL')
+      : r.direction,
+  ```
+
+**BUG VERIFY3-5 (LOW) — migrate-direction GET (dry-run) under-reports migration scope**
+- File: `src/app/api/migrate-direction/route.ts:129-137`
+- Description: GET endpoint counts rows needing migration only where `nominalLossSurplus IS NOT NULL`. POST endpoint's fallback UPDATEs (lines 63-79) also fix rows where `nominalLossSurplus IS NULL` (using qtyDeviasi sign). So GET's `invertedCount` under-reports the actual scope.
+- Impact: Dry-run response says "X rows need migration" but actual migration updates X + Y rows. Operators may be confused by the discrepancy.
+- Proposed fix: Add a second COUNT query for NULL nominalLossSurplus rows with mismatched direction (using qtyDeviasi sign), include in `invertedCount` total:
+  ```sql
+  SELECT COUNT(*) FROM "InventoryRecord"
+  WHERE "nominalLossSurplus" IS NULL
+    AND "qtyDeviasi" IS NOT NULL
+    AND (
+      ("qtyDeviasi" < 0 AND direction != 'LOSS')
+      OR ("qtyDeviasi" > 0 AND direction != 'SURPLUS')
+    )
+  ```
+
+**BUG VERIFY3-6 (LOW) — SIGN-7 not applied: 6 stale inverted comments across 4 files**
+- Files:
+  * `src/lib/metrics/definitions.ts:48, 57` — "Signed: positive = LOSS, negative = SURPLUS" (INVERTED)
+  * `src/lib/metrics/definitions.ts:214-215` — "Net > 0 → LOSS" / "Net < 0 → SURPLUS" (INVERTED)
+  * `src/lib/metrics/growth.ts:55-56` — "Going from -10M (SURPLUS) to -20M (SURPLUS)" (INVERTED, -10M is LOSS post-CALC-1)
+  * `src/lib/queries/items.ts:68` — "can be negative (SURPLUS) or positive (LOSS)" (INVERTED)
+  * `src/lib/queries/dashboard.ts:19-20` — "lossNominal = SUM(nominalDeviasi) WHERE > 0" / "surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0" (INVERTED + uses nominalDeviasi instead of nominalLossSurplus; actual SQL on lines 74-75 uses nominalLossSurplus)
+  * `src/engine/transform.ts:233` — "Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS" (INVERTED)
+- Description: SIGN-7 was identified as LOW priority cleanup but NEVER applied. Documentation comments across 6 files still describe the OLD convention (positive=LOSS, negative=SURPLUS). These contradict the actual implementation (CALC-1: negative=LOSS, positive=SURPLUS).
+- Impact: Future developers reading these comments may be misled and re-introduce the bug. No runtime impact.
+- Proposed fix: Update each comment to match new convention:
+  - "Signed: negative = LOSS (over-consumption), positive = SURPLUS (under-consumption)"
+  - "Net < 0 → LOSS, Net > 0 → SURPLUS"
+  - "Going from -10M (LOSS) to -20M (LOSS)..."
+  - "can be negative (LOSS) or positive (SURPLUS)"
+  - "lossNominal = SUM(ABS(nominalLossSurplus)) WHERE nominalLossSurplus < 0" / "surplusNominal = SUM(nominalLossSurplus) WHERE > 0"
+
+**BUG VERIFY3-7 (LOW) — outlet-items direction lacks qtyDeviasi fallback (inconsistent with item-history)**
+- File: `src/app/api/outlet-items/route.ts:170-174`
+- Description: SIGN-3 fix computes direction on-the-fly via `CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'...`. But when `SUM(ir."nominalLossSurplus")` returns NULL (all rows for that group have NULL nominalLossSurplus), the CASE falls to ELSE → 'NEUTRAL'. This is inconsistent with SIGN-4 (item-history) which has a qtyDeviasi fallback for the NULL case.
+- Impact: For groups where ALL source rows have NULL nominalLossSurplus but non-NULL qtyDeviasi, outlet-items displays 'NEUTRAL' instead of the correct LOSS/SURPLUS. Low likelihood (most rows have nominalLossSurplus populated post-Excel import), but inconsistent.
+- Proposed fix: Add qtyDeviasi fallback to the CASE (NULL checks first because `NULL < 0` returns NULL not false):
+  ```sql
+  CASE
+    WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+    WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+    WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+    WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+    ELSE 'NEUTRAL'
+  END as "direction"
+  ```
+
+**BUG VERIFY3-8 (LOW) — items.ts queryTopItemsByNominal/queryTopItemsByDevBom direction lacks qtyDeviasi fallback**
+- File: `src/lib/queries/items.ts:39-41, 250-252`
+- Description: Same as VERIFY3-7 — these queries use `CASE WHEN SUM(ir."nominalLossSurplus") < 0...` without a NULL fallback. If SUM returns NULL, falls to ELSE → 'NEUTRAL'.
+- Impact: Same as VERIFY3-7, low likelihood but inconsistent with item-history pattern.
+- Proposed fix: Same NULL-fallback pattern as VERIFY3-7.
+
+**BUG VERIFY3-9 (LOW) — CLI script migrate-direction.ts has misleading comment about qtyDeviasi fallback**
+- File: `scripts/migrate-direction.ts:67`
+- Description: Comment says "(or qtyDeviasi = 0 as fallback)" but the SQL does NOT implement any qtyDeviasi fallback (only updates rows where nominalLossSurplus = 0). This comment was the original indicator of SIGN-2 bug — but the comment is still present even though the fix was only applied to the API route.
+- Impact: Misleading comment may cause future developers to think the CLI script handles the fallback when it doesn't.
+- Proposed fix: Either implement the fallback in CLI script (preferred, see VERIFY3-1) OR remove the misleading comment.
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (no fix needed)
+═══════════════════════════════════════════════════════════════
+
+✓ **SIGN-1 (CRITICAL)** — `ruleService.ts:81` adds `nominalLossSurplus: curr.nominalLossSurplus` to ctx return. `evaluator.ts:380` declares `nominalLossSurplus?: number | null` in RuleContext interface. All 5 rules in rules.yaml (HIGH_LOSS_NOMINAL, RESIDUAL_LOSS_HIGH/WARN, HISTORICAL_ABNORMAL/SURPLUS) use `nominalLossSurplus: {lt: 0}` or `{gt: 0}` correctly. `canOpFire` (line 209-211) handles null safely (returns false for lt/gt ops when value is null or non-number). Prisma schema types `nominalLossSurplus` as `Float?` (JS number, no BigInt concern).
+
+✓ **SIGN-2 (HIGH, API route)** — `migrate-direction/route.ts:63-79` adds 2 fallback UPDATE blocks using qtyDeviasi sign for NULL nominalLossSurplus rows. Idempotent (uses `AND direction != 'LOSS'` / `!= 'SURPLUS'`). Tagged template literals (safe from SQL injection). NOTE: See VERIFY3-1 — CLI script NOT updated.
+
+✓ **CALC2-1 (HIGH)** — `rankingService.ts:242-243` sorts topWorsened by `b.delta - a.delta` (DESC magnitude), topImproved by `a.delta - b.delta` (ASC magnitude). `delta` defined at line 216 as `curr.absNominalDeviasi - prev.absNominalDeviasi`. Both `absNominalDeviasi` fields are null-checked before computing (lines 211, 215 — `continue` if null). `varianceDirection` (line 221) uses `delta` correctly (`delta > 0 → WORSENED`, `delta < 0 → IMPROVED`, `else STABLE`).
+
+✓ **CALC2-2 (MEDIUM)** — `outlets.ts:619` adds `qtyDeviasiLoss = SUM(CASE WHEN nominalLossSurplus < 0 THEN absQtyDeviasi ELSE 0 END)`. Outer SELECT (line 676) wraps with `COALESCE(oa."qtyDeviasiLoss", 0)`. JS (line 776) uses `qtyDeviasiLoss > 0 ? Math.abs(residualQty) / qtyDeviasiLoss : 0`. Bullet text (line 836) updated to "total deviasi LOSS tidak terjelaskan". Matches dashboard.ts:108 pattern (Bug 6 fix).
+
+✓ **API2-1 (HIGH)** — `peer-comparison/route.ts:28` caps limit: `Math.min(Math.max(1, parseInt(...) || 10), 100)`. NaN-safe.
+
+✓ **API2-3 (HIGH)** — `migrate-direction/route.ts:22` uses `migrate-direction:POST:${ip}` (5/min); line 118 uses `migrate-direction:GET:${ip}` (analysis tier, 60/min). Distinct keys prevent GET-then-POST false 429.
+
+✓ **API2-5 (MEDIUM)** — `migrate-direction/route.ts:86-88` clears statusCache, analysisCache, clearMonthResolverCache after UPDATEs. Imports correct (lines 13-14).
+
+✓ **FE-1/FE-2 (HIGH)** — `PeerComparison.tsx:272` (main table) and `:769` (items table) both have `!data && !error` branch BEFORE the `error || !data?.success` branch. Logic correctly shows "Pilih outlet..." when query is disabled (data=undefined, error=null).
+
+✓ **FE-3/FE-4 (HIGH)** — `ExecutiveSummary.tsx`: KPICard (line 57) uses `clickableRowProps` when drillDown is present. 4 health alert cards (lines 106, 114, 122, 130) all use `clickableRowProps`. `RestoAnalysis.tsx:314` (ranking row) and `:640` (MenuAnalysis item row) both use `clickableRowProps`. `a11y.ts` returns `{tabIndex: 0, role: 'button', onClick, onKeyDown}` with Enter/Space handling (line 24-29, includes `e.preventDefault()` for Space to avoid scroll).
+
+✓ **FE-3b (MEDIUM)** — `page.tsx:245` adds `aria-label="Export laporan Word"` to the Export button.
+
+✓ **FE-6 (MEDIUM)** — `CardDrillDown.tsx:116, 130` corrected to "nominalDeviasi < 0 = rugi (LOSS)" and "> 0 = untung (SURPLUS)".
+
+✓ **FE-7 (MEDIUM)** — `RestoRecommendationCard.tsx`: All 9 badges have `dark:text-X-400 dark:border-X-900` variants. Lines 166-167 (direction), 172 (flip), 177 (memburuk), 182 (residual), 187 (tol breach high), 192 (anomali), 197 (high loss), 202 (no tol), 207 (bench high).
+
+✓ **SIGN-3 (MEDIUM)** — `outlet-items/route.ts:170-174` computes direction on-the-fly via `CASE WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'...`. Replaces previous `MAX(ir.direction)` which depended on migration. NOTE: See VERIFY3-7 — lacks qtyDeviasi NULL fallback.
+
+✓ **SIGN-4 (MEDIUM)** — `item-history/route.ts:97-103` computes direction on-the-fly with nominalLossSurplus sign + qtyDeviasi fallback for NULL case. Most defensive of all direction computations.
+
+✓ **Middleware** — `middleware.ts:38` includes `/api/migrate-direction` in PROTECTED_PATHS. Matcher (line 114) includes `/api/migrate-direction/:path*`. POST protected; GET (dry-run) public. Fail-closed in production if ADMIN_TOKEN not set (lines 62-69). Constant-time token comparison (lines 20-27, 93).
+
+✓ **rules.yaml (17 rules)** — All 17 rules verified:
+  - 5 use `nominalLossSurplus: {lt: 0}` or `{gt: 0}` (RESIDUAL_LOSS_HIGH/WARN, HIGH_LOSS_NOMINAL, HISTORICAL_ABNORMAL/SURPLUS)
+  - 3 tolerance rules use `absPctQtyDeviasiToBom` and `absTolerancePct` (TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH, TOLERANCE_NOT_SET_HIGH_DEV)
+  - 2 benchmark rules use `benchmarkFlag: {eq: "HISTORICAL_WARNING/HIGH"}`
+  - 4 growth-mismatch rules use `salesGrowth/bomGrowth/qtyDeviasiGrowth/nominalDeviasiGrowth`
+  - 1 OVER_EXPLAINED uses `isOverExplained: {eq: true}`
+  - 1 DIRECTION_FLIP uses `isDirectionFlip: {eq: true}`
+  - 1 HISTORICAL_WARNING uses `zScore: {gt/lte}`
+  - NO rule uses `direction: {eq: ...}` — all migrated to nominalLossSurplus sign.
+
+✓ **Type safety** — `RestoRecommendation` interface in `RestoRecommendationCard.tsx:12-48` matches API response (signals + metrics + analysis). `ItemComparisonResponse` (PeerComparison.tsx:721-742) matches peer-comparison/items route output. `RuleContext` (evaluator.ts:364-411) declares all fields used in rules.yaml including `nominalLossSurplus`, `absPctQtyDeviasiToBom`, `absTolerancePct`, `absNominalLossSurplus`.
+
+✓ **computeDirection (CALC-1)** — `deviation.ts:39-48` correctly returns LOSS for `net < 0`, SURPLUS for `net > 0`, NEUTRAL for `net === 0 || null`. Comment block (lines 27-37) accurately describes Excel convention. Falls back to `qtyDeviasi` when `qtyLossSurplus` is null (line 43).
+
+✓ **Performance** — CALC2-2's new `qtyDeviasiLoss` SUM column is in the same GROUP BY query (no N+1). migrate-direction route has 5 UPDATE blocks (was 3) — still fast on indexed columns. No new indexes needed.
+
+✓ **CALC2-1 edge cases** — delta computation guards against NaN: `if (curr.absNominalDeviasi == null) continue;` (line 211) and `if (!prev || prev.absNominalDeviasi == null) continue;` (line 215). `selisih` uses `?? 0` fallback (line 218-219) so null nominalDeviasi becomes 0 (no NaN).
+
+✓ **CALC2-2 edge cases** — `qtyDeviasiLoss` is `COALESCE(..., 0)` (line 676), so outlets with all SURPLUS items get `qtyDeviasiLoss=0`. JS residualRatio guarded by `qtyDeviasiLoss > 0` (line 776) → returns 0 (not NaN/Infinity).
+
+NEXT ACTIONS (priority order):
+1. **VERIFY3-1 (MEDIUM)** — Add SIGN-2 qtyDeviasi-fallback UPDATEs to `scripts/migrate-direction.ts` (mirror API route lines 61-79). Operators using CLI script otherwise get incomplete migration.
+2. **VERIFY3-4 (MEDIUM)** — Add qtyDeviasi fallback to `src/app/api/drilldown/route.ts:91` (mirror item-history:100-102). Defensive against un-migrated NULL nominalLossSurplus rows.
+3. **VERIFY3-3 (MEDIUM)** — Apply SIGN-5 fix: change 3 inverted labels in `export-report/route.ts:593, 643, 664` from "negatif = SURPLUS" to "negatif = LOSS/rugi".
+4. **VERIFY3-2 (MEDIUM)** — Update Word export variance section text + add Delta column to reflect CALC2-1 magnitude-based sort.
+5. **VERIFY3-7, VERIFY3-8 (LOW)** — Add qtyDeviasi NULL fallback to outlet-items + items.ts direction CASE (mirror item-history pattern).
+6. **VERIFY3-5 (LOW)** — Add NULL-nominalLossSurplus count to migrate-direction GET dry-run.
+7. **VERIFY3-6 (LOW)** — Apply SIGN-7 cleanup: update 6 stale inverted comments in definitions.ts, growth.ts, items.ts, dashboard.ts, transform.ts.
+8. **VERIFY3-9 (LOW)** — Remove misleading comment in CLI script OR (preferred) implement the fallback per VERIFY3-1.
+
+Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: AUDIT-FLOW3
+Agent: Data Flow & Integration Auditor
+Task: End-to-end data flow verification, find inconsistencies
+
+Work Log:
+- Read worklog tail (lines 8640-8940) for context on prior CALC-1..CALC-11, SIGN-1..SIGN-7, CALC2-1..CALC2-7, API2-*, FE-* fixes.
+- Read ingestion pipeline: `src/lib/ingestion.ts` (601 lines) — processIngestion + processRowsForImport. Verified `deriveRecord` is called per row, `direction`/`residualQty`/`absQtyDeviasi`/`absNominalDeviasi`/`absQtyLossSurplus`/`absNominalLossSurplus` all stored. Cache invalidation (analysisCache + statusCache + clearMonthResolverCache) at lines 420-429.
+- Read `src/engine/transform.ts` (345 lines) — normalizeRow, computeResidual, deriveRecord. Verified `computeDirection` is called from `@/lib/metrics` (CALC-1 fix applied). Residual sign handling correct (sign from qtyDeviasi, clamp to >=0, abs-each-then-sum for explained).
+- Read `src/engine/validator.ts` (260 lines) — validateRow, summarizeDQ. ABS-based checks for tolerance, NET_DEVIATION_MISMATCH, OVER_EXPLAINED — all correct post-FIX-DEEP-3C.
+- Read `src/engine/analysis/ruleService.ts` (149 lines) — buildRuleContext. SIGN-1 fix applied: `nominalLossSurplus` is in ctx (line 81). Verified all fields consumed by rules.yaml are populated.
+- Read `src/engine/analysis/rankingService.ts` (398 lines). Verified CALC2-1 fix (variance sort by `delta` not `selisih`, lines 242-243). Verified CALC2-2 pattern (residualRatio uses LOSS-only numerator in outlets.ts).
+- Read `src/engine/analysis/types.ts` (68 lines) — RecWithRels slim type. Verified `direction` field is declared (line 57) — used downstream.
+- Read `src/app/api/analysis/route.ts` (771 lines). Verified:
+  * buildWhere + filterOpts for Prisma vs SQL paths
+  * Rule eval loop reads `curr.direction` (stored DB value, NOT computed on-the-fly — see FLOW3-1)
+  * Auto-compare: same weekLabel in previous month (cumulative-week safe)
+  * Historical periods filtered to same weekLabel (z-score safe)
+- Read `src/app/api/outlet-items/route.ts` (568 lines). SIGN-3 fix applied: direction computed on-the-fly via CASE WHEN SUM(nominalLossSurplus)<0. CALC-2 ABS comparison in severity count.
+- Read `src/app/api/drilldown/route.ts` (109 lines). SIGN-style fix: direction computed on-the-fly with stored fallback.
+- Read `src/app/api/item-history/route.ts` (308 lines). SIGN-4 fix applied: direction computed on-the-fly via CASE WHEN.
+- Read `src/app/api/recommendations/route.ts` (72 lines) + `src/lib/queries/outlets.ts` queryRestoRecommendations (lines 565-894). CALC-3, CALC-4, CALC-5, CALC2-2 all applied in SQL. Priority score weights sum to 100%.
+- Read `src/app/api/peer-comparison/route.ts` (50 lines), `peer-comparison/items/route.ts` (216 lines), `peer-comparison/trend/route.ts` (92 lines). API2-1 limit cap applied. Cumulative-week fix (MAX weekLabel in month mode) applied in outlets.ts queryPeerComparison + queryPeerItemComparison.
+- Read `src/app/api/export-report/route.ts` (750 lines). Same SQL queries as analysis route (queryExecSummary, queryTopItemsByNominal, etc.). Variance sort fix (CALC2-1) inherited via computeVarianceAnalysis. Filter handling converts 'all' → null (line 297-301).
+- Read `src/app/api/migrate-direction/route.ts` (158 lines). API2-5 cache invalidation applied (statusCache, analysisCache, clearMonthResolverCache at lines 86-88). SIGN-2 fallback for NULL nominalLossSurplus applied (lines 63-79).
+- Read `src/lib/queries/outlets.ts` (895 lines) — queryTopOutlets, queryTopOutletsBySales, queryPeerComparison, queryPeerItemComparison, queryPeerTrend, queryRestoRecommendations. All use CALC-4 (SUM CASE WHEN nominalLossSurplus<0), CALC-5 (CASE WHEN SUM(nominalLossSurplus)<0), CALC-3 (residualQty LOSS-only).
+- Read `src/lib/queries/items.ts` (383 lines) — queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByDeviasiRank, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency. All direction computations are on-the-fly (CASE WHEN SUM(nominalLossSurplus)<0).
+- Read `src/lib/queries/dashboard.ts` (283 lines) — queryTrendAgg, queryExecSummary, queryDeviationBreakdown, queryLossVsSurplus, queryCostImpact. CALC-4 applied. (Stale comment at lines 19-20 still present — FLOW3-6.)
+- Read `src/lib/queries/areas.ts` (85 lines), `src/lib/queries/historical.ts` (76 lines), `src/lib/queries/shared.ts` (41 lines). buildSqlFilters uses intersection (separate AND clauses), sentinel pattern works correctly.
+- Read `src/lib/metrics/deviation.ts` (290 lines), `growth.ts` (124 lines), `historical.ts` (190 lines), `benchmark.ts` (103 lines). z-score uses ABS(pctQtyDeviasiToBom) — sign-convention-agnostic. calcGrowth/calcGrowthAbs/computeNominalDeviationGrowth all correct.
+- Read `src/hooks/useAnalysis.ts` (225 lines), `useDashboard.ts` (75 lines). Found type drift in `VarianceItem` and `dqStatus` (FLOW3-4, FLOW3-5).
+- Read `src/components/dashboard/ExecutiveSummary.tsx` (321 lines), `RestoRecommendationCard.tsx` (218 lines), `PeerComparison.tsx` (1077 lines), `RestoAnalysis.tsx` (810 lines), `AnalysisCards.tsx` (76 lines), `ItemDeepDive.tsx` (239 lines). FE-1/FE-2/FE-3/FE-4/FE-6/FE-7 fixes verified.
+- Read `src/components/filters/FilterBar.tsx` (673 lines), `SearchableComboBox.tsx` (146 lines). All filters use `null` for "All" (not 'all' string).
+- Read `src/lib/cache.ts` (73 lines), `src/lib/month-resolver.ts` (79 lines). Cache invalidation pattern consistent across mutation routes.
+- Grep'd all `ir.direction` / `r.direction` / `curr.direction` / `prev.direction` reads across src/ — 11 files. Verified all use computed-on-the-fly EXCEPT analysis route (Prisma select `direction: true` at line 349) — FLOW3-1.
+- Grep'd all `queryClient.invalidateQueries` calls — FilterBar, FileUploadDialog, SettingsDialog, DataManagementDialog, PicManagementDialog, QuickSettings. All invalidate ['analysis'], ['outlet-items'], ['item-history'], ['peer-comparison'] consistently.
+
+Stage Summary:
+- Found 8 data-flow inconsistencies. 1 MEDIUM severity (FLOW3-1), 2 MEDIUM (FLOW3-2, FLOW3-3), 5 LOW (FLOW3-4 to FLOW3-8).
+
+**FLOW3-1 (MEDIUM)** — Analysis route reads STORED `direction` from DB, depending on migration
+- Files: `src/app/api/analysis/route.ts:349,366` (Prisma `select: { direction: true }`), `src/engine/analysis/ruleService.ts:66-69,84`, `src/engine/analysis/rankingService.ts:114,232`
+- Description: The analysis route uses `db.inventoryRecord.findMany({ select: { ..., direction: true, ... } })` to fetch records. This reads the STORED `direction` column (set by ingestion via `deriveRecord.direction`). For NEW ingests (post-CALC-1), this is correct. For OLD ingests (pre-CALC-1, before migration), this is INVERTED. The stored `direction` is consumed by:
+  1. `ruleService.buildRuleContext` (line 67-69) — `isDirectionFlip = prevDirection !== curr.direction`. If migration was partially run (some rows migrated, some not), DIRECTION_FLIP rule could fire FALSE POSITIVES (comparing migrated LOSS with unmigrated SURPLUS for the same physical direction).
+  2. `ruleService.buildRuleContext` (line 84) — `direction: curr.direction` into ctx (used in DIRECTION_FLIP narrative).
+  3. `rankingService.computeVarianceAnalysis` (line 232) — `direction: curr.direction || 'NEUTRAL'` for variance display.
+  4. `rankingService.buildWorklistFromFlags` (line 114) — `direction: (curr.direction || 'NEUTRAL')` for worklist display.
+  
+  By contrast, ALL other read paths (drilldown, item-history, outlet-items, items.ts queries, outlets.ts queries) compute direction on-the-fly from `SUM(nominalLossSurplus) < 0`. Only the analysis route's rule-evaluation + variance path uses the stored value.
+- Impact: For unmigrated DBs or partially-migrated DBs, DIRECTION_FLIP rule false-positives and direction badges in variance/worklist may be wrong. After full migration, this works correctly.
+- Proposed fix: Compute direction on-the-fly in `ruleService.buildRuleContext`:
+  ```ts
+  const computeDirectionFromNominal = (n: number | null): string | null =>
+    n == null ? null : n < 0 ? 'LOSS' : n > 0 ? 'SURPLUS' : 'NEUTRAL';
+  const currDir = computeDirectionFromNominal(curr.nominalLossSurplus) ?? curr.direction;
+  const prevDir = prev ? (computeDirectionFromNominal(prev.nominalLossSurplus) ?? prev.direction) : null;
+  // ... use currDir / prevDir everywhere instead of curr.direction / prev.direction
+  ```
+  Same for `rankingService.computeVarianceAnalysis` line 232 and `buildWorklistFromFlags` line 114.
+
+**FLOW3-2 (MEDIUM)** — `multiPeriodComparison.bom` is always null
+- Files: `src/app/api/analysis/route.ts:595`, `src/app/api/export-report/route.ts:488`, `src/lib/queries/dashboard.ts:22-30` (TrendAggRow schema), `src/components/dashboard/AnalysisCards.tsx:66`
+- Description: The `multiPeriodComparison` array (used by MultiPeriodComparisonCard chart) emits `bom: null` for every period (analysis route line 595, comment "BUG 2.7 fix: was `r.sales / r.devBom` which is dimensionally wrong"). The `queryTrendAgg` SQL doesn't return `qtyBom` at all, so the field can't be populated without a schema change. The chart `MultiPeriodComparisonCard` declares three Bar series — Sales, BOM, Deviasi — but BOM always renders as 0/empty.
+- Impact: Chart legend claims "BOM" bar exists but no BOM data is shown. User sees empty BOM bars in Multi-Period Comparison card. Misleading visualization.
+- Proposed fix: Either (a) add `qtyBom` to TrendAggRow + queryTrendAgg SQL and populate `bom: r.qtyBom` in the route, or (b) remove the BOM Bar from MultiPeriodComparisonCard and update the FormulaInfo description to "Sales vs Deviasi + Growth %".
+
+**FLOW3-3 (MEDIUM)** — `MAX(ir."pctQtyDeviasiToBom")` understates LOSS deviation for grouped records
+- File: `src/app/api/outlet-items/route.ts:168`
+- Description: The outlet-items route groups records by `(outletId, itemId, akunPenyesuaian)` and uses `MAX(ir."pctQtyDeviasiToBom")` to pick a single value. For LOSS items (where `pctQtyDeviasiToBom` is negative — Excel convention), MAX picks the LEAST negative value (closest to zero), UNDERSTATING the deviation magnitude. For SURPLUS items (positive), MAX picks the highest, OVERSTATING. SIGN-3 fixed the equivalent issue for `MAX(ir.direction)` by computing on-the-fly, but `MAX(pctQtyDeviasiToBom)`, `MAX(tolerancePct)`, `MAX(residualRatio)`, `AVG(avgPrice)` were not changed.
+  
+  Currently latent: in normal data each (outlet, item, akun) has exactly 1 row per period (single weekLabel filter + dedup by file hash). But if duplicate source-file rows for the same tuple exist (data quality issue), MAX picks misleading values.
+  
+  This affects: severity count (line 280) — `Math.abs(pctQtyDeviasiToBom) > Math.abs(tolerancePct)` uses the understated magnitude; `computePriority` (line 485-492) — `devBom: pctDevBom` uses understated value; `devBomGrowth` (line 472); devBom display in itemBreakdown (line 510).
+- Impact: Items that should be flagged ABNORMAL might be flagged WARNING or NORMAL. Priority score (operational component) understated for grouped LOSS items. Only manifests with duplicate source-file rows.
+- Proposed fix: Recompute `pctQtyDeviasiToBom` as `SUM(qtyDeviasi) / SUM(ABS(qtyBom))` (volume-weighted, signed) instead of `MAX`:
+  ```sql
+  CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+    ELSE NULL END as "pctQtyDeviasiToBom",
+  ```
+  Same for `residualRatio` — recompute as `SUM(ABS(residualQty)) / SUM(ABS(qtyDeviasi))`. `tolerancePct` and `avgPrice` can stay as MAX/AVG (single value per item+outlet, no aggregation issue).
+
+**FLOW3-4 (LOW)** — `VarianceItem` type missing 4 fields server emits
+- Files: `src/hooks/useAnalysis.ts:14-22` (VarianceItem interface), `src/engine/analysis/rankingService.ts:196-208` (computeVarianceAnalysis return shape)
+- Description: `VarianceItem` declares 7 fields: `itemName, outletCode, area, currentAbsNominal, previousAbsNominal, delta, direction`. Server emits 11 fields (also: `currentNominal, previousNominal, selisih, varianceDirection`). Type is underspecified. The 4 missing fields are consumed by `export-report/route.ts:648,653` via `any` cast.
+- Impact: Type drift. No frontend component reads `varianceAnalysis` (only export-report uses it). No runtime impact. Future frontend consumers would need `any` casts.
+- Proposed fix: Add the 4 missing fields to `VarianceItem`:
+  ```ts
+  export interface VarianceItem {
+    itemName: string;
+    outletCode: string;
+    area: string;
+    currentNominal: number;       // signed: SUM(nominalDeviasi) current
+    previousNominal: number;      // signed: SUM(nominalDeviasi) previous
+    selisih: number;              // signed: currentNominal - previousNominal
+    currentAbsNominal: number;
+    previousAbsNominal: number;
+    delta: number;                // magnitude change: currentAbsNominal - previousAbsNominal
+    direction: string;
+    varianceDirection: string;    // WORSENED | IMPROVED | STABLE (based on delta sign)
+  }
+  ```
+
+**FLOW3-5 (LOW)** — `dqStatus` type declares fields server doesn't emit
+- Files: `src/hooks/useAnalysis.ts:87` (type), `src/app/api/analysis/route.ts:720-723` (server response)
+- Description: AnalysisData.dqStatus type declares `{ ok: number; warnings: number; errors: number; issues: any[] }`, but server only emits `{ errors: number; warnings: number }`. The `ok` and `issues` fields were removed in OPTIMIZE-ANALYSIS (line 498-507 comment: "frontend reads only dqStatus.errors + dqStatus.warnings counts"). Type was not updated.
+- Impact: Type drift. ExecutiveSummary.tsx only reads `dq.errors` and `dq.warnings` (line 313). No runtime impact. Future code accessing `dq.ok` or `dq.issues` would silently get `undefined`.
+- Proposed fix: Trim the type to match server response:
+  ```ts
+  dqStatus: { errors: number; warnings: number };
+  ```
+
+**FLOW3-6 (LOW)** — Stale comment in dashboard.ts:19-20 (CALC2-6, still not applied)
+- File: `src/lib/queries/dashboard.ts:19-20`
+- Description: Comment says:
+  ```
+  //  - lossNominal = SUM(nominalDeviasi) WHERE > 0
+  //  - surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0
+  ```
+  Both lines describe the OLD WRONG convention (positive=LOSS, negative=SURPLUS, using nominalDeviasi instead of nominalLossSurplus). The actual SQL (lines 74-75) correctly uses `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus))` for lossNominal and `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus)` for surplusNominal.
+- Impact: Documentation drift. Future developers reading the comment may be misled. No runtime impact.
+- Proposed fix:
+  ```
+  //  - lossNominal = SUM(ABS(nominalLossSurplus)) WHERE nominalLossSurplus < 0
+  //  - surplusNominal = SUM(nominalLossSurplus) WHERE nominalLossSurplus > 0
+  ```
+
+**FLOW3-7 (LOW)** — Stale docstring in growth.ts:55 (CALC2-7 / SIGN-7, still not applied)
+- File: `src/lib/metrics/growth.ts:55`
+- Description: Docstring for `computeNominalDeviationGrowth` says "Going from -10M (SURPLUS) to -20M (SURPLUS) gives calcGrowth = -100%...". But per Excel convention (CALC-1 fix), -10M is LOSS (negative = LOSS), not SURPLUS. The actual function is correct (uses magnitude via calcGrowthAbs), only the docstring example is wrong.
+- Impact: Documentation drift. No runtime impact.
+- Proposed fix: Change to "Going from -10M (LOSS) to -20M (LOSS) gives calcGrowth = -100%...".
+
+**FLOW3-8 (LOW)** — Stale comment in transform.ts:233 (CALC2-5, still not applied)
+- File: `src/engine/transform.ts:233`
+- Description: Comment says "Direction logic: NET deviation (qtyLossSurplus) > 0 → LOSS, < 0 → SURPLUS." — WRONG (old convention). The actual `computeDirection` from `@/lib/metrics` correctly returns LOSS for `net < 0` (CALC-1 fix).
+- Impact: Documentation drift. No runtime impact.
+- Proposed fix: Change to "Direction logic: NET deviation (qtyLossSurplus) < 0 → LOSS, > 0 → SURPLUS."
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (no fix needed)
+═══════════════════════════════════════════════════════════════
+
+✓ **Ingestion → Transform → Storage**: ingestion.ts:281 calls `deriveRecord(n)` for every row. deriveRecord calls `computeDirection` (CALC-1 fix), `computeResidual` (abs-each-then-sum, clamp to 0). All fields stored: `direction, residualQty, residualNominal, residualRatio, absQtyDeviasi, absNominalDeviasi, absQtyLossSurplus, absNominalLossSurplus` (lines 360-363).
+
+✓ **Cache invalidation on ingestion**: ingestion.ts:420-429 clears `analysisCache`, `statusCache`, `clearMonthResolverCache()`. Same pattern in `ingest-process/route.ts:485-492`, `data/route.ts:249-256`, `pic/route.ts:75-76,117-118`, `pic/import/route.ts:118-119`, `migrate-direction/route.ts:86-88` (API2-5 fix). Settings route only clears analysisCache (line 180, 250) — correct because settings don't affect statusCache content.
+
+✓ **React Query invalidation**: FilterBar.tsx (ingest + drive-import), FileUploadDialog.tsx, SettingsDialog.tsx, DataManagementDialog.tsx, PicManagementDialog.tsx, QuickSettings.tsx all invalidate ['status'], ['analysis'], ['outlet-items'], ['item-history'], ['peer-comparison'] consistently. No missing keys.
+
+✓ **SIGN-1 (nominalLossSurplus in RuleContext)**: ruleService.ts:81 injects `nominalLossSurplus: curr.nominalLossSurplus` into ctx. RuleContext interface (evaluator.ts:380) declares it. All 5 rules (HIGH_LOSS_NOMINAL, RESIDUAL_LOSS_HIGH, RESIDUAL_LOSS_WARN, HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS) now fire correctly.
+
+✓ **SIGN-2 (migration fallback for NULL nominalLossSurplus)**: migrate-direction/route.ts:63-79 has 2 fallback UPDATE blocks using `qtyDeviasi` sign. Idempotent.
+
+✓ **SIGN-3, SIGN-4 (outlet-items + item-history on-the-fly direction)**: outlet-items/route.ts:169-174 uses `CASE WHEN SUM(nominalLossSurplus) < 0 THEN 'LOSS' ...`. item-history/route.ts:97-103 uses same pattern with qtyDeviasi fallback.
+
+✓ **CALC-4 (totalLoss/totalSurplus SQL pattern)**: Verified across 8 SQL queries:
+  - dashboard.ts:74-75 (execSummary), 153-154 (trendAgg), 220-223 (lossVsSurplus)
+  - outlets.ts:62-63 (topOutlets), 237-238 (peerComparison), 613-614 (recommendations)
+  - areas.ts:67 (areaAnalysis)
+  - items.ts:250-252 (topItemsByCategory direction)
+  All use `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END)` for loss and `SUM(CASE WHEN nominalLossSurplus > 0 THEN nominalLossSurplus ELSE 0 END)` for surplus.
+
+✓ **CALC-5 (outlet direction from SUM(nominalLossSurplus) sign)**: All 6 places compute direction on-the-fly via `CASE WHEN SUM(nominalLossSurplus) < 0 THEN 'LOSS' ...`:
+  - outlets.ts:71-73, 282-284, 426-428, 639-642, 703-706 (prevDirection)
+  - items.ts:39-41, 250-252
+
+✓ **CALC-3 (residualQty LOSS-only)**: All SQL uses `SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(residualQty) ELSE 0 END)`:
+  - outlets.ts:240, 616, 617
+  - dashboard.ts:156, 157
+
+✓ **CALC2-1 (variance sort by delta, not selisih)**: rankingService.ts:242-243 sorts by `b.delta - a.delta` for topWorsened and `a.delta - b.delta` for topImproved. Comment at lines 237-241 explains why.
+
+✓ **CALC2-2 (residualRatio uses qtyDeviasiLoss)**: outlets.ts:776 `const residualRatio = qtyDeviasiLoss > 0 ? Math.abs(residualQty) / qtyDeviasiLoss : 0;`. SQL adds `qtyDeviasiLoss` (line 619): `SUM(CASE WHEN nominalLossSurplus < 0 THEN absQtyDeviasi ELSE 0 END)`.
+
+✓ **CALC-2 (ABS for tolerance breach)**: outlets.ts:622-623, 624-625, 629-630, 632 — all use `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)`. outlet-items/route.ts:280 same pattern. evaluator.ts:418-423 pre-computes `absPctQtyDeviasiToBom` and `absTolerancePct`.
+
+✓ **CALC-6, CALC-7, CALC-10, CALC-11 (BOM=0, zScore ABS, SUM(ABS(qtyBom)) guards)**: items.ts:144-147, 178-180, 189, 192-194; outlets.ts:627-630. All correctly use ABS guards.
+
+✓ **Historical Z-Score flow**: queryHistoricalStats (historical.ts:18-75) uses weekly_dev CTE — each week = 1 observation via `SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))`. mean/stdDev computed across weekly observations. calcZScoreFromStats (historical.ts:151-158) uses `(ABS(value) - mean) / stdDev` — sign-convention-agnostic. ruleService.ts:43-45 enforces `HISTORICAL_MIN_WEEKS` guard.
+
+✓ **Growth metrics flow**: calcGrowth (signed, for sales), calcGrowthAbs (magnitude, for BOM/COM), computeNominalDeviationGrowth (= calcGrowthAbs, magnitude — handles sign flips). ruleService.ts:33-37 uses calcGrowthAbs for bomGrowth + qtyDeviasiGrowth, computeNominalDeviationGrowth for nominalDeviasiGrowth. Consistent with CALC2-1 (variance uses delta = magnitude change).
+
+✓ **Auto-compare (cumulative weeks)**: analysis route:220-249 finds same `weekLabel` in chronologically previous month. Export-report route:329-343 same pattern. outlet-items route:88-123 same pattern. All correctly skip same-month comparison and fall back to chronological previous only if no same-weekLabel-in-other-month exists.
+
+✓ **Filter consistency (PIC case-insensitive + sentinel)**: All 4 routes that accept PIC param (analysis, export-report, recommendations, [outlet-items does NOT accept pic]) use the same pattern: raw SQL `LOWER(pic) = LOWER(${pic})`, empty list → `['__NO_MATCH__']` sentinel. buildSqlFilters in shared.ts correctly skips empty arrays (but caller already substitutes sentinel).
+
+✓ **Month-resolver case-insensitive**: All 7 routes that accept `month` param (analysis, export-report, outlet-items, item-history, drilldown, recommendations, peer-comparison) call `getMonthResolver()` + `resolveMonthLabel()` before using the month value. Cache cleared by all mutation handlers.
+
+✓ **Peer Comparison cumulative-week fix (PEER-BACKEND-5)**: outlets.ts:178-183 (queryPeerComparison), 363-368 (queryPeerItemComparison) — both use `MAX(weekLabel)` subquery in month mode (NOT sum across weeks, which would quadruple-count). queryPeerTrend intentionally does NOT apply this fix (line 461-468 comment explains: trend chart needs per-week breakdown).
+
+✓ **Drilldown returns all ItemDeepDive fields**: drilldown route returns `id, outlet, item, period, source, qty, nominal, derived, bulan, bulan2`. ItemDeepDive.tsx reads `r.period.weekLabel`, `r.qty.deviasi`, `r.nominal.deviasi ?? r.derived.absNominalDeviasi` — all present.
+
+✓ **API2-1 (peer-comparison limit cap)**: peer-comparison/route.ts:28 `Math.min(Math.max(1, parseInt(...) || 10), 100)`. peer-comparison/items/route.ts:38 same pattern (cap 20).
+
+✓ **API2-3 (migrate-direction rate-limit keys)**: migrate-direction/route.ts:22 uses `migrate-direction:POST:${ip}`, line 118 uses `migrate-direction:GET:${ip}`. Distinct keys, no false 429 after dry-run.
+
+✓ **FE-1, FE-2 (PeerComparison "Pilih outlet" prompt)**: PeerComparison.tsx:272-277 (main table), 769-774 (items table) — both check `!data && !error` BEFORE the `error || !data?.success` branch. Shows "Pilih outlet..." when query disabled.
+
+✓ **Type consistency for RestoRecommendation**: RestoRecommendationCard.tsx:12-48 interface matches outlets.ts:527-563 interface exactly (both include priorityScore, priorityLevel, signals[15], metrics[10], analysis).
+
+✓ **Type consistency for RecWithRels**: analysis/types.ts:29-67 slim type matches what ruleService + rankingService read. Verified by grep — every `curr.*` access is on a declared field.
+
+✓ **Net cost trend**: analysis route:621 `netCostRatio = (lossNominal - surplusNominal) / sales`. Both lossNominal and surplusNominal are positive magnitudes (CALC-4 fix), so subtraction gives net direction (positive=net LOSS).
+
+═══════════════════════════════════════════════════════════════
+PLACES THAT READ STORED `ir.direction` / `r.direction` FROM DB
+═══════════════════════════════════════════════════════════════
+
+Complete inventory (from grep across src/):
+
+1. **`src/app/api/analysis/route.ts:349,366`** — Prisma `select: { direction: true }` for currentRecs + prevRecs. Used by ruleService + rankingService. ⚠️ **FLOW3-1**: only path that depends on stored direction.
+
+2. **`src/app/api/drilldown/route.ts:91`** — `r.direction` as FALLBACK when `nominalLossSurplus` is null (defensive). Computes on-the-fly otherwise. ✓ Safe.
+
+3. **`src/app/api/item-history/route.ts:140`** — `r.direction || 'NEUTRAL'` — but the SQL at lines 97-103 computes direction on-the-fly via CASE WHEN. So `r.direction` here is the COMPUTED value, not stored. ✓ Safe.
+
+4. **`src/app/api/outlet-items/route.ts:410,511`** — `r.direction || 'NEUTRAL'` — but SQL at lines 169-174 computes on-the-fly. ✓ Safe.
+
+5. **`src/app/api/export-report/route.ts:470`** — `direction: r.direction` from queryTopItemsByCategory, which computes on-the-fly (items.ts:250-252). ✓ Safe.
+
+6. **`src/app/api/analysis/route.ts:515`** — `direction: r.direction` from queryTopItemsByCategory. ✓ Safe.
+
+7. **`src/lib/queries/outlets.ts:321,452,753`** — `direction: r.direction` from CASE WHEN in SQL. ✓ Safe.
+
+8. **`src/engine/analysis/ruleService.ts:66-69,84`** — reads `prev.direction` and `curr.direction` (STORED, see FLOW3-1). ⚠️
+
+9. **`src/engine/analysis/rankingService.ts:114,232`** — `curr.direction` (STORED, see FLOW3-1). ⚠️
+
+10. **`src/lib/queries/dashboard.ts:155`** — comment only ("instead of stored ir.direction"). SQL uses nominalLossSurplus. ✓ Safe.
+
+11. **`src/lib/queries/outlets.ts:239,615`** — comment only. SQL uses nominalLossSurplus. ✓ Safe.
+
+12. **`src/lib/queries/items.ts:357`** — comment only. SQL uses nominalLossSurplus. ✓ Safe.
+
+13. **`src/components/dashboard/RestoAnalysis.tsx:321`** — `r.direction` from outlet-items API response (computed on-the-fly). ✓ Safe.
+
+**Summary**: Only 3 code paths depend on the STORED `direction` column — all in the analysis route's rule-evaluation pipeline:
+- `analysis/route.ts:349,366` (Prisma select)
+- `ruleService.ts:66-69,84` (isDirectionFlip + ctx.direction)
+- `rankingService.ts:114,232` (worklist + variance display)
+
+All other consumers either compute on-the-fly or read from a query that already computed on-the-fly. After running `/api/migrate-direction`, the stored direction is correct and FLOW3-1 is mitigated. The defensive fix (compute on-the-fly in ruleService + rankingService) would eliminate the migration dependency entirely.
+
+═══════════════════════════════════════════════════════════════
+SUMMARY
+═══════════════════════════════════════════════════════════════
+
+8 findings total:
+- 3 MEDIUM: FLOW3-1 (analysis route uses stored direction), FLOW3-2 (multiPeriodComparison.bom always null), FLOW3-3 (MAX(pctQtyDeviasiToBom) understates LOSS)
+- 5 LOW: FLOW3-4 (VarianceItem type drift), FLOW3-5 (dqStatus type drift), FLOW3-6 (dashboard.ts stale comment), FLOW3-7 (growth.ts stale docstring), FLOW3-8 (transform.ts stale comment)
+
+The CALC-1 to CALC-11 + SIGN-1 to SIGN-7 + CALC2-1 to CALC2-2 + API2-* + FE-* fixes are correctly applied at the SQL/data layer. The remaining gaps are:
+1. The analysis route's rule-evaluation pipeline still uses stored `direction` (FLOW3-1) — defensive fix would make it migration-independent.
+2. The MultiPeriodComparisonCard chart shows an empty BOM bar (FLOW3-2) — UX issue.
+3. The outlet-items route's MAX(pctQtyDeviasiToBom) for grouped records can understate LOSS magnitude (FLOW3-3) — latent for data quality issues.
+
+Recommended fix priority:
+1. **FLOW3-1 (MEDIUM)** — Compute direction on-the-fly in `ruleService.buildRuleContext` + `rankingService.computeVarianceAnalysis` + `buildWorklistFromFlags`. Eliminates dependency on migrate-direction being run. ~5 line change.
+2. **FLOW3-2 (MEDIUM)** — Either add qtyBom to queryTrendAgg SQL + populate `bom` in route, OR remove BOM Bar from MultiPeriodComparisonCard. ~10 line change.
+3. **FLOW3-3 (MEDIUM)** — Replace `MAX(ir."pctQtyDeviasiToBom")` with `SUM(qtyDeviasi)/SUM(ABS(qtyBom))` in outlet-items SQL. ~3 line change.
+4. **FLOW3-4, FLOW3-5 (LOW)** — Type drift cleanup. ~10 line change.
+5. **FLOW3-6, FLOW3-7, FLOW3-8 (LOW)** — Stale comment/docstring updates (carry-over from CALC2-4..CALC2-7 which were noted but not applied as fixes). ~5 line change.
+
+Files changed: NONE (audit only — no code changes per task constraints).

@@ -165,11 +165,18 @@ export async function GET(req: NextRequest) {
           SUM(ir."nominalDeviasi") as "nominalDeviasi", SUM(ir."nominalWaste") as "nominalWaste", SUM(ir."nominalSusut") as "nominalSusut",
           SUM(ir."nominalTrial") as "nominalTrial", SUM(ir."nominalLossSurplus") as "nominalLossSurplus", SUM(ir."nominalSales") as "nominalSales",
           AVG(ir."avgPrice") as "avgPrice", MAX(ir."tolerancePct") as "tolerancePct",
-          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+          -- FIX FLOW3-3: was MAX(pctQtyDeviasiToBom) which understates LOSS magnitude
+          -- (MAX picks least-negative for LOSS items). Use SUM(qtyDeviasi)/SUM(ABS(qtyBom)) instead.
+          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+            THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+            ELSE NULL END as "pctQtyDeviasiToBom",
           -- FIX SIGN-3: compute direction on-the-fly from nominalLossSurplus sign (not MAX(ir.direction) which depends on migration)
+          -- FIX VERIFY3-7: add qtyDeviasi NULL fallback for rows where nominalLossSurplus is null
           CASE
-            WHEN SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
             ELSE 'NEUTRAL'
           END as "direction",
           SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal", MAX(ir."residualRatio") as "residualRatio",

@@ -14,10 +14,10 @@ import { buildSqlFilters } from './shared';
 //
 //  Business logic preserved:
 //  - sales = SUM(MODE(nominalSales) per outlet) — dedup via ROW_NUMBER
-//  - nominal = SUM(absNominalDeviasi)
+//  - nominal = SUM(nominalDeviasi) (signed)
 //  - devBom = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))  (volume-weighted, Metric Engine)
-//  - lossNominal = SUM(nominalDeviasi) WHERE > 0
-//  - surplusNominal = SUM(ABS(nominalDeviasi)) WHERE < 0
+//  - lossNominal = SUM(ABS(nominalLossSurplus)) WHERE nominalLossSurplus < 0 (LOSS = negative)
+//  - surplusNominal = SUM(nominalLossSurplus) WHERE > 0 (SURPLUS = positive)
 // ============================================================
 export interface TrendAggRow {
   monthLabel: string;
@@ -70,6 +70,8 @@ export async function queryTrendAgg(filters: {
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
+        -- FIX FLOW3-2: add qtyBom aggregate so multiPeriodComparison.bom is not always null
+        COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
         -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "lossNominal",
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "surplusNominal"
@@ -83,6 +85,7 @@ export async function queryTrendAgg(filters: {
       COALESCE(sp.sales, 0) as sales,
       pa.nominal,
       pa."devBom",
+      pa."qtyBom",
       pa."lossNominal",
       pa."surplusNominal"
     FROM period_aggs pa
