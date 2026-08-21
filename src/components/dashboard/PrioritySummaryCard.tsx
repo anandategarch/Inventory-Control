@@ -12,6 +12,7 @@ import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+  LabelList, Legend,
 } from 'recharts';
 
 // ============================================================
@@ -289,13 +290,16 @@ function buildDirectionFlipData(r: Recommendation) {
 function buildItemConcentrationData(r: Recommendation) {
   const conc = r.signals.itemConcentration;
   const weights = [0.35, 0.25, 0.18, 0.12, 0.10];
+  // FIX: use real topItem name instead of generic "Item #1"
+  const topItemName = r.metrics.topItem || 'Item #1';
+  const names = [topItemName, 'Item #2', 'Item #3', 'Item #4', 'Item #5'];
   return [
-    { name: 'Item #1', value: Number((conc * weights[0] * 100).toFixed(1)) },
-    { name: 'Item #2', value: Number((conc * weights[1] * 100).toFixed(1)) },
-    { name: 'Item #3', value: Number((conc * weights[2] * 100).toFixed(1)) },
-    { name: 'Item #4', value: Number((conc * weights[3] * 100).toFixed(1)) },
-    { name: 'Item #5', value: Number((conc * weights[4] * 100).toFixed(1)) },
-    { name: 'Others', value: Number(((1 - conc) * 100).toFixed(1)) },
+    { name: names[0], value: Number((conc * weights[0] * 100).toFixed(1)) },
+    { name: names[1], value: Number((conc * weights[1] * 100).toFixed(1)) },
+    { name: names[2], value: Number((conc * weights[2] * 100).toFixed(1)) },
+    { name: names[3], value: Number((conc * weights[3] * 100).toFixed(1)) },
+    { name: names[4], value: Number((conc * weights[4] * 100).toFixed(1)) },
+    { name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) },
   ];
 }
 
@@ -434,11 +438,12 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => [`${v}×`, 'Ratio']} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -450,12 +455,13 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
             <ReferenceLine y={0} stroke="#a1a1aa" strokeOpacity={0.4} />
             <Line type="monotone" dataKey="actual" stroke={CHART.amber} strokeWidth={2} dot={{ r: 3, fill: CHART.amber }} connectNulls={false} name="Aktual" />
             <Line type="monotone" dataKey="projected" stroke={CHART.red} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Proyeksi" />
+            <Legend wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }} iconType="line" />
           </LineChart>
         </ResponsiveContainer>
       );
@@ -466,11 +472,12 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <LineChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="week" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
             <Line type="monotone" dataKey="actual" stroke={CHART.red} strokeWidth={2} dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Aktual" />
             <Line type="monotone" dataKey="projected" stroke={CHART.redDark} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.redDark }} connectNulls={false} name="Proyeksi" />
+            <Legend wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }} iconType="line" />
           </LineChart>
         </ResponsiveContainer>
       );
@@ -481,8 +488,8 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <ScatterChart margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" />
-            <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis type="number" dataKey="y" name="Z-Score" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
+            <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis type="number" dataKey="y" name="Z-Score" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} formatter={(v: number) => v.toFixed(2)} />
             <ReferenceLine y={2.0} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'z=2.0', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Scatter name="Normal" data={normal} fill={CHART.zincLight} />
@@ -497,8 +504,8 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <Bar dataKey="Explained" stackId="a" fill={CHART.emerald} radius={[0, 0, 0, 0]} />
             <Bar dataKey="Residual" stackId="a" fill={CHART.red} radius={[4, 4, 0, 0]} />
@@ -512,11 +519,12 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -528,12 +536,13 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" domain={[-1.5, 1.5]} ticks={[-1, 0, 1]} tickFormatter={(v: number) => v < 0 ? 'LOSS' : v > 0 ? 'SURP' : '—'} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" domain={[-1.5, 1.5]} ticks={[-1, 0, 1]} tickFormatter={(v: number) => v < 0 ? 'LOSS' : v > 0 ? 'SURP' : '—'} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => v < 0 ? 'LOSS' : 'SURPLUS'} />
             <ReferenceLine y={0} stroke="#a1a1aa" strokeOpacity={0.5} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -543,21 +552,28 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
       const data = buildItemConcentrationData(r);
       const colors = [CHART.red, CHART.amber, CHART.amberDark, CHART.zinc, CHART.zincLight, CHART.zincVeryLight];
       return (
-        <ResponsiveContainer width="100%" height={170}>
+        <ResponsiveContainer width="100%" height={200}>
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
               nameKey="name"
               cx="50%"
-              cy="50%"
+              cy="45%"
               innerRadius={38}
               outerRadius={68}
               paddingAngle={1}
+              label={({ name, value }: { name?: string; value?: number }) => {
+                const shortName = (name || '').length > 12 ? (name || '').slice(0, 10) + '…' : name;
+                return `${shortName}: ${value}%`;
+              }}
+              labelLine={{ stroke: '#a1a1aa', strokeWidth: 0.5 }}
+              style={{ fontSize: '9px', fill: '#a1a1aa' }}
             >
               {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
             </Pie>
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => `${v}%`} />
+            <Legend wrapperStyle={{ fontSize: '9px', color: '#a1a1aa' }} iconType="circle" />
           </PieChart>
         </ResponsiveContainer>
       );
@@ -568,11 +584,13 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '2× Tol', fontSize: 9, fill: CHART.red, position: 'right' }} />
-            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
+              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
@@ -583,11 +601,13 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.amber} strokeDasharray="4 3" label={{ value: 'Tol', fontSize: 9, fill: CHART.amber, position: 'right' }} />
-            <Bar dataKey="value" fill={CHART.amber} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="value" fill={CHART.amber} radius={[3, 3, 0, 0]}>
+              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
@@ -598,8 +618,8 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={100} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '100%', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="Deviasi" stackId="a" fill={CHART.zinc} radius={[0, 0, 0, 0]} />
@@ -614,11 +634,13 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
-            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
+              <LabelList dataKey="value" position="top" style={{ fontSize: "9px", fill: "#a1a1aa" }} formatter={(v: number) => `${v}%`} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
@@ -629,11 +651,12 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -645,11 +668,12 @@ function SignalChart({ name, r }: { name: string; r: Recommendation }) {
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#a1a1aa" />
-            <YAxis tick={{ fontSize: 10 }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            <LabelList dataKey="value" position="top" style={ { fontSize: "9px", fill: "#a1a1aa" } } formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
