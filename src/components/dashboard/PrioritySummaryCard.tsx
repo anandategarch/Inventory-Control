@@ -320,7 +320,7 @@ function buildTolBreachHighData(r: Recommendation, items: OutletItem[]) {
     .sort((a, b) => Math.abs(b.devBom!) - Math.abs(a.devBom!))
     .slice(0, Math.min(count, 12));
   const data = breachItems.map((it, i) => ({
-    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    name: it.itemName.length > 6 ? it.itemName.slice(0, 5) + '…' : it.itemName,
     value: Number((Math.abs(it.devBom!) * 100).toFixed(1)),
   }));
   // Fallback: if no real items found, synthesize
@@ -342,7 +342,7 @@ function buildTolBreachData(r: Recommendation, items: OutletItem[]) {
     .sort((a, b) => Math.abs(b.devBom!) - Math.abs(a.devBom!))
     .slice(0, Math.min(count, 12));
   const data = breachItems.map(it => ({
-    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    name: it.itemName.length > 6 ? it.itemName.slice(0, 5) + '…' : it.itemName,
     value: Number((Math.abs(it.devBom!) * 100).toFixed(1)),
   }));
   if (data.length === 0) {
@@ -372,7 +372,7 @@ function buildOverExplainedData(r: Recommendation, items: OutletItem[]) {
     const deviasi = Math.abs(it.qtyDeviasi || 0);
     const explanation = Math.abs(it.qtyWaste) + Math.abs(it.qtySusut) + Math.abs(it.qtyTrial);
     return {
-      name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+      name: it.itemName.length > 6 ? it.itemName.slice(0, 5) + '…' : it.itemName,
       Deviasi: Math.round(deviasi),
       Explanation: Math.round(explanation),
     };
@@ -397,7 +397,7 @@ function buildHighLossData(r: Recommendation, items: OutletItem[]) {
     .sort((a, b) => Math.abs(b.nominalLossSurplus!) - Math.abs(a.nominalLossSurplus!))
     .slice(0, Math.min(count, 8));
   const data = lossItems.map(it => ({
-    name: it.itemName.length > 8 ? it.itemName.slice(0, 6) + '…' : it.itemName,
+    name: it.itemName.length > 6 ? it.itemName.slice(0, 5) + '…' : it.itemName,
     value: Math.abs(Math.round(it.nominalLossSurplus!)),
   }));
   if (data.length === 0) {
@@ -546,6 +546,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <ReferenceLine y={2.0} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'z=2.0', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Scatter name="Normal" data={normal} fill={CHART.zincLight} />
             <Scatter name="Abnormal" data={abnormal} fill={CHART.red} />
+            <Legend wrapperStyle={{ fontSize: '9px' }} iconType="circle" formatter={(value: string) => <span style={{ color: '#a1a1aa', fontSize: '9px' }}>{value}</span>} />
           </ScatterChart>
         </ResponsiveContainer>
       );
@@ -649,7 +650,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <XAxis dataKey="name" tick={{ fontSize: 8, fill: '#a1a1aa' }} stroke="#a1a1aa" interval={0} angle={-30} textAnchor="end" height={50} />
             <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '2× Tol', fontSize: 9, fill: CHART.red, position: 'right' }} />
@@ -667,7 +668,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <XAxis dataKey="name" tick={{ fontSize: 8, fill: '#a1a1aa' }} stroke="#a1a1aa" interval={0} angle={-30} textAnchor="end" height={50} />
             <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={threshold} stroke={CHART.amber} strokeDasharray="4 3" label={{ value: 'Tol', fontSize: 9, fill: CHART.amber, position: 'right' }} />
@@ -685,12 +686,15 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <XAxis dataKey="name" tick={{ fontSize: 8, fill: '#a1a1aa' }} stroke="#a1a1aa" interval={0} angle={-30} textAnchor="end" height={50} />
             <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => `${v}%`} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => `${v}%`} />
             <ReferenceLine y={100} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '100%', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="Deviasi" stackId="a" fill={CHART.zinc} radius={[0, 0, 0, 0]} />
-            <Bar dataKey="Explanation" stackId="a" fill={CHART.amber} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Explanation" stackId="a" fill={CHART.amber} radius={[4, 4, 0, 0]}>
+              <LabelList dataKey="Explanation" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => `${Math.round(Number(v))}%`} />
+            </Bar>
+            <Legend wrapperStyle={{ fontSize: '9px' }} iconType="circle" formatter={(value: string) => <span style={{ color: '#a1a1aa', fontSize: '9px' }}>{value}</span>} />
           </BarChart>
         </ResponsiveContainer>
       );
@@ -702,12 +706,12 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
         <ResponsiveContainer width="100%" height={170}>
           <BarChart data={data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#a1a1aa' }} stroke="#a1a1aa" />
+            <XAxis dataKey="name" tick={{ fontSize: 8, fill: '#a1a1aa' }} stroke="#a1a1aa" interval={0} angle={-30} textAnchor="end" height={50} />
             <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} stroke="#a1a1aa" tickFormatter={(v: number) => fmtIDR(v)} />
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(161,161,170,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: number) => `${v}%`} />
+              <LabelList dataKey="value" position="top" fill="#a1a1aa" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : `${n}`; }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
