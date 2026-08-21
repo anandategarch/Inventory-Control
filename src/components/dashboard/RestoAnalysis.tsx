@@ -106,7 +106,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   if (!activeOutlet) {
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="relative mb-4">
@@ -126,7 +126,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   // Bug 6.9 fix: show "select period" message instead of error when week not selected
   if (!monthLabel || !currentWeek) {
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50 mb-4">
@@ -141,7 +141,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   if (isLoading) {
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardContent className="py-16 flex items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           <span className="ml-2.5 text-sm text-muted-foreground font-medium">Memuat Resto Analysis...</span>
@@ -182,7 +182,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
@@ -224,8 +224,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       {/* Resto Profile — 6 Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* 1. Performance */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />Performance</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0"><TrendingUp className="h-3 w-3" /></span>Performance</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Sales" value={fmtIDR(profile.performance.sales)} />
             <Row label="QTY BOM" value={fmtNum(profile.performance.qtyBom)} growth={profile.performance.qtyBomGrowth} />
@@ -238,8 +238,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 2. Behavior */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Activity className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />Behavior</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0"><Activity className="h-3 w-3" /></span>Behavior</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Total LOSS" value={fmtIDR(profile.behavior.lossNominal)} sub={fmtPct(profile.behavior.lossPct)} />
             <Row label="Total SURPLUS" value={fmtIDR(profile.behavior.surplusNominal)} sub={fmtPct(profile.behavior.surplusPct)} />
@@ -252,8 +252,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 3. Historical */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />Historical</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400 shrink-0"><Calendar className="h-3 w-3" /></span>Historical</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="BOM Growth" value={fmtGrowth(profile.historical.bomGrowth)} growthColor={growthColor(profile.historical.bomGrowth)} />
             <Row label="Deviasi Growth" value={fmtGrowth(profile.historical.deviasiGrowth)} growthColor={growthColor(profile.historical.deviasiGrowth, true)} />
@@ -270,8 +270,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 4. Benchmark */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Gauge className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />Benchmark</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400 shrink-0"><Gauge className="h-3 w-3" /></span>Benchmark</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Outlet Dev/BOM" value={fmtPct(profile.benchmark.outletDevBom)} />
             <Row label="Area Avg Dev/BOM" value={fmtPct(profile.benchmark.areaAvgDevBom)} />
@@ -281,8 +281,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 5. Top Risk */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />Top Risk (by Dev/BOM)</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0"><AlertTriangle className="h-3 w-3" /></span>Top Risk (by Dev/BOM)</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             {profile.topRisk.byDevBom.slice(0, 5).map((r, i) => (
               <div key={i} className="flex justify-between items-center gap-2">
@@ -294,8 +294,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 6. Investigation */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />Investigation</CardTitle></CardHeader>
+        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0"><ShieldAlert className="h-3 w-3" /></span>Investigation</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Normal" value={profile.investigation.normal.toString()} />
             <Row label="Warning" value={profile.investigation.warning.toString()} />
@@ -315,7 +315,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       )}
 
       {/* Bahan Analysis — 3 Rankings */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -469,7 +469,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
             </div>
 
             {/* Benchmark */}
-            <Card>
+            <Card className="shadow-sm dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Benchmark (Current Period)</CardTitle></CardHeader>
               <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <Row label="Outlet Dev/BOM" value={fmtPct(data.benchmark?.outletDevBom)} />
@@ -484,7 +484,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
             </Card>
 
             {/* Historical Timeline */}
-            <Card>
+            <Card className="shadow-sm dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Historical Timeline</CardTitle></CardHeader>
               <CardContent>
                 <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
@@ -531,7 +531,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
             </Card>
 
             {/* Investigation Checklist */}
-            <Card>
+            <Card className="shadow-sm dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Possible Investigation</CardTitle></CardHeader>
               <CardContent>
                 <ol className="text-xs space-y-1 list-decimal list-inside text-muted-foreground">
@@ -646,7 +646,7 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
   }, [outletData]);
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -759,7 +759,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
     .slice(0, topN === 'all' ? 9999 : parseInt(topN));
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">

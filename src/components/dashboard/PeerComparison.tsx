@@ -136,7 +136,7 @@ export function PeerComparison() {
 
   if (!activeOutlet) {
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="relative mb-4">
@@ -210,7 +210,7 @@ export function PeerComparison() {
   return (
     <div className="space-y-4">
       {/* ============ 1. HEADER + EXISTING TABLE ============ */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-start gap-2.5">
@@ -267,7 +267,7 @@ export function PeerComparison() {
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -426,7 +426,7 @@ function EfficiencyScoreCard({ target, peerAvg }: { target: PeerRow; peerAvg: Re
   const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -492,7 +492,7 @@ function GapAnalysisCard({
   });
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -577,7 +577,7 @@ function RankingSummaryCard({
   };
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -619,7 +619,7 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
   }));
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -783,7 +783,7 @@ function ItemLevelComparison({
   error: Error | null;
 }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -907,7 +907,7 @@ function TrendChartCard({
   }));
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -1097,7 +1097,7 @@ function CorrelationInsightCard({
         : '💡';
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">

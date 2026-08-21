@@ -282,7 +282,7 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3 border-b">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-start gap-2.5">
@@ -335,7 +335,7 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
               return (
                 <div
                   key={insight.id}
-                  className={`relative rounded-lg border ${style.border} ${style.bg} p-3 pl-4 flex items-start gap-3 transition-all hover:shadow-sm hover:-translate-y-px`}
+                  className={`relative rounded-lg border ${style.border} ${style.bg} p-3 pl-4 flex items-start gap-3 transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5`}
                 >
                   {/* Left accent bar */}
                   <span className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-lg ${style.accent}`} aria-hidden />

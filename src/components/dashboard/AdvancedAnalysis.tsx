@@ -50,7 +50,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
   const criticalCount = ranking.filter((o) => o.healthScore < 30).length;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -191,7 +191,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -262,7 +262,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
     .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">

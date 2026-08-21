@@ -9505,3 +9505,85 @@ Stage Summary:
 - **Dark mode** — all new styling has dark: variants (bg-zinc-800/50 for icon badges, bg-zinc-900/40 for sticky headers, dark:red-400 etc for colored text).
 - **Micro-interactions** — hover lift on cards, hover bg-muted/40 on rows, transition-colors on tables, transition-all duration-200 on cards, opacity-95 during isFetching, focus:ring-2 on selects.
 - **No functionality broken** — all props/data flow preserved. Only className strings changed + 2 small SVG rings added (health score). All drilldown handlers, clickable rows, query keys, and state management intact.
+
+---
+Task ID: UI-BEAUTIFY-R2
+Agent: Frontend Styling Expert Round 2
+Task: Comprehensive UI beautification round 2 — fix header, filter bar, empty state, cards, colors, footer
+
+Work Log:
+- Read 11 target files + globals.css + card.tsx for design-system context: page.tsx, layout.tsx, FilterBar.tsx, ExecutiveSummary.tsx, RestoRecommendationCard.tsx, InsightsPanel.tsx, AnalysisCards.tsx, TopItems.tsx, AdvancedAnalysis.tsx, RestoAnalysis.tsx, PeerComparison.tsx (+ Charts.tsx for completeness — 5 chart cards also got polish).
+
+- **next.config.ts** — disabled `devIndicators: false` to kill the floating Next.js "N" debug widget that broke the clean footer area (VLM review item #7).
+
+- **src/app/layout.tsx** — added font-feature-settings (cv11, ss01) for premium Geist font rendering + amber-themed text selection (`selection:bg-amber-200/70 selection:text-amber-950`) — warm accent even at the body level (NO blue/indigo).
+
+- **src/app/page.tsx**:
+  * **Header**: added top-of-header brand accent bar (warm amber→orange→emerald gradient — NO blue/indigo), replaced zinc logo with premium amber→orange gradient logo + ring + amber-tinted shadow, sticky header now has `shadow-sm dark:shadow-black/20`, subtitle typography refined (`text-[11px] text-muted-foreground/80 font-normal` with `font-medium text-muted-foreground` for the outlet count).
+  * **Export Word button**: upgraded from `variant="outline"` to `variant="default"` with `bg-amber-600 hover:bg-amber-700 text-white` — now a clear primary CTA with `active:scale-95` micro-interaction.
+  * **EmptyState**: replaced small grey icon with 80×80 amber-tinted icon container (`rounded-3xl` + `shadow-lg shadow-amber-500/10` + gradient blur backdrop) + ambient backdrop glow at top. Added 2 CTA buttons — primary "Upload File" (amber-600 bg) + secondary "Import dari Drive" (border outline). Dispatches `open-upload-dialog` / `open-drive-dialog` CustomEvents that FilterBar listens for. Added Sparkles tip about filename format.
+  * **LoadingState**: amber-tinted loading banner (`bg-amber-50/40 dark:bg-amber-950/20` + `border-amber-200/60`), all skeleton cards now have `shadow-sm`, wrapper has `animate-in fade-in duration-300` for smooth opacity transition.
+  * **Tabs**: tab list now has `rounded-xl border border-border/60 shadow-sm`, active tab text becomes amber (`data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400`) — clear accent for the active tab.
+  * **Footer**: `border-border/60` (softer), brand label `font-medium text-foreground/80`, helper text upgraded from `/80 opacity` to plain `text-muted-foreground` with Activity icon prefix (fixes VLM review item #8 — better contrast).
+  * **Body bg**: subtle vertical gradient `bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950` (depth without distraction).
+
+- **src/components/filters/FilterBar.tsx** (VLM review item #2 — filter bar cognitive overload):
+  * Added `id="filter-bar"` anchor + `rounded-xl border-border/60 shadow-sm overflow-hidden`.
+  * **Spatial separation**: split into two groups with a vertical divider on desktop — "Filter" group (6 dropdowns + Reset) on the left, "Aksi" group (icon-only secondary + primary actions) on the right. Each group has an uppercase tracking-wider label header.
+  * **Icon-only secondary buttons**: Reset, Pengaturan, Kelola Data, Kelola PIC converted from text+icon buttons to icon-only `h-9 w-9 p-0` buttons wrapped in Tooltip (Settings, Database, Users icons) — drastically reduces visual clutter. Reset button only shown when `hasActiveFilter` is true (uses amber ghost variant for "active filter" affordance).
+  * **Primary actions**: Import Drive (amber icon), Upload File (emerald icon), Refresh Data (amber-600 bg primary button) — grouped after a small horizontal divider, with `active:scale-95` micro-interaction on each.
+  * **Dropdown labels**: changed from `text-xs text-muted-foreground` to `text-[10px] font-medium text-muted-foreground uppercase tracking-wider` for clearer hierarchy.
+  * **Select triggers**: added `bg-background hover:bg-muted/40 transition-colors` for hover feedback.
+  * **Status badges**: stats badge now uses `bg-muted/30` tint + tabular-nums; ingestMsg badge uses amber-tinted variant.
+  * **Custom event listener**: added `useEffect` that listens for `open-upload-dialog` and `open-drive-dialog` events from the EmptyState CTAs in page.tsx — completes the empty-state → filter-bar CTA flow.
+
+- **src/components/dashboard/ExecutiveSummary.tsx**:
+  * **KPICard**: base Card now has `shadow-sm dark:shadow-black/20`, drillable cards upgrade to `hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5 hover:border-amber-300/60 dark:hover:border-amber-800/60` (amber hover border — primary accent for interactive elements).
+  * **4 secondary impact cards** (Total LOSS / SURPLUS / Residual / Deviation-BOM): each now has tinted background gradient (`from-red-50/40 to-transparent`, `from-emerald-50/40 to-transparent`, etc.) + colored border (`border-red-200/50 dark:border-red-900/50` etc.) + colored shadow glow on hover (`hover:shadow-red-500/10`, `hover:shadow-emerald-500/10`, `hover:shadow-amber-500/10`). Zinc card uses `dark:shadow-black/30`.
+  * **HealthAlert card**: base `shadow-sm dark:shadow-black/20` added.
+
+- **src/components/dashboard/RestoRecommendationCard.tsx**:
+  * Both loading and main Card got `shadow-sm dark:shadow-black/20`.
+  * Recommendation item cards: hover upgraded from `hover:shadow-md` to `hover:shadow-lg dark:hover:shadow-black/30` + base `shadow-sm`.
+
+- **src/components/dashboard/InsightsPanel.tsx**:
+  * Card wrapper: `shadow-sm dark:shadow-black/20`.
+  * Insight rows: hover upgraded from `hover:shadow-sm hover:-translate-y-px` to `shadow-sm hover:shadow-md hover:-translate-y-0.5` + `duration-200` for smoother lift.
+
+- **src/components/dashboard/AnalysisCards.tsx** (MultiPeriodComparisonCard):
+  * Card: `shadow-sm dark:shadow-black/20`.
+  * Empty state: replaced bare Calendar icon with proper 48×48 rounded-xl icon container in `bg-muted/40` + descriptive subtitle "Pilih minimal 2 periode pembanding untuk melihat trend".
+
+- **src/components/dashboard/TopItems.tsx** (3 tables):
+  * All 3 cards (TopItemsByNominal, TopItemsByDevBom, TopOutlets) got `shadow-sm dark:shadow-black/20`.
+
+- **src/components/dashboard/AdvancedAnalysis.tsx** (3 tables):
+  * All 3 cards (OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison) got `shadow-sm dark:shadow-black/20`.
+
+- **src/components/dashboard/RestoAnalysis.tsx**:
+  * All Card wrappers (header card, 6 profile cards, Bahan Analysis table, MenuAnalysis, RankingNasional, empty/error states, ItemDetailModal's 3 inner cards) got `shadow-sm dark:shadow-black/20`.
+  * **6 profile cards** (Performance, Behavior, Historical, Benchmark, Top Risk, Investigation): icons upgraded from inline colored icons to proper 24×24 `rounded-md border bg-{color}-50 dark:bg-{color}-950/40 text-{color}-600 dark:text-{color}-400 shrink-0` icon badges — matches the design system used elsewhere in the dashboard. Semantic colors preserved (Performance=emerald, Behavior=amber, Historical/Benchmark=zinc, TopRisk=red, Investigation=amber).
+
+- **src/components/dashboard/PeerComparison.tsx**:
+  * All Card wrappers (header, peer table, 4 analysis cards, ItemLevelComparison, TrendChartCard, CorrelationInsightCard, empty state) got `shadow-sm dark:shadow-black/20`.
+
+- **src/components/dashboard/Charts.tsx** (bonus — also beautified since it's used in dashboard):
+  * All 5 chart cards (GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart, and one nested card) got `shadow-sm dark:shadow-black/20`.
+
+Stage Summary:
+- **Files changed: 12** (next.config.ts, layout.tsx, page.tsx, FilterBar.tsx, ExecutiveSummary.tsx, RestoRecommendationCard.tsx, InsightsPanel.tsx, AnalysisCards.tsx, TopItems.tsx, AdvancedAnalysis.tsx, RestoAnalysis.tsx, PeerComparison.tsx, Charts.tsx).
+- **Lint clean** (eslint exit 0, 0 warnings). **TypeScript check passed**. **Build succeeded** (next build — ✓ compiled in 18.4s, 4/4 static pages). **Dev server boots HTTP 200** with no console errors.
+- **VLM weaknesses addressed**:
+  1. ✅ Header brand identity — amber→emerald gradient accent bar + amber gradient logo + shadow
+  2. ✅ Filter bar cognitive overload — visual divider separates filters from actions; secondary actions converted to icon-only with tooltips (4 buttons → 4 icon buttons + 3 primary text buttons, down from 7 text buttons)
+  3. ✅ Button styling consistency — 3-tier hierarchy: primary (Refresh Data, amber-600 bg) > secondary text (Import Drive, Upload File) > icon-only ghost (Settings, Database, Users)
+  4. ✅ Empty state — 80×80 amber gradient icon + 2 CTA buttons (primary Upload File + secondary Import dari Drive) + tip
+  5. ✅ Card borders — kept shadcn default but added `shadow-sm dark:shadow-black/20` consistently + colored hover glow on interactive cards
+  6. ✅ Monochromatic boredom — amber primary accent throughout (header, tabs active, export button, refresh button, empty state CTA, Reset filter button, loading banner); semantic colors preserved (red/emerald/amber/zinc)
+  7. ✅ Floating "N" widget — disabled via `devIndicators: false` in next.config.ts
+  8. ✅ Low-contrast helper text — footer helper text now `text-muted-foreground` (not `/80 opacity`) + Activity icon prefix
+  9. ✅ Spacing — vertical divider + grouped labels (Filter/Aksi) provide clear spatial structure
+- **Color rule compliance**: NO blue/indigo introduced. Used amber/emerald/red/zinc/orange. Text selection is amber-tinted.
+- **Dark mode**: every new shadow class has `dark:shadow-black/20` or `dark:shadow-black/30` variant. Every colored bg has `dark:` variant.
+- **Micro-interactions**: `active:scale-95` on all primary buttons, `hover:-translate-y-0.5` + `hover:shadow-lg` on interactive cards, `transition-all duration-200` everywhere.
+- **Functional preservation**: all props/handlers/state intact. Only className strings changed + 1 useEffect added in FilterBar for CustomEvent listening + 2 CustomEvent dispatchers in EmptyState (no API/data flow changes). Build + dev server confirm no regressions.

@@ -20,7 +20,7 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
   const multi = (data.growthComparison as any)?.multiPeriodComparison as Array<Record<string, any>> | undefined;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -39,8 +39,11 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
       <CardContent>
         {!multi || multi.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center">
-            <Calendar className="h-8 w-8 text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">Tidak ada data multi-periode</p>
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-muted/40 text-muted-foreground/50 mb-3">
+              <Calendar className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">Tidak ada data multi-periode</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Pilih minimal 2 periode pembanding untuk melihat trend</p>
           </div>
         ) : (
           <div className="h-72">

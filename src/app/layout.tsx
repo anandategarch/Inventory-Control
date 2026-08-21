@@ -28,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="id" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground [font-feature-settings:'cv11','ss01'] selection:bg-amber-200/70 selection:text-amber-950 dark:selection:bg-amber-500/30 dark:selection:text-amber-50`}
       >
         <QueryProvider>
           <GlobalLoadingBar />

@@ -7,7 +7,7 @@ import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, 
 import { useDashboard } from '@/hooks/useDashboard';
 import { useStatus } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
 import { SettingsDialog } from '@/components/filters/SettingsDialog';
 import { DataManagementDialog } from '@/components/filters/DataManagementDialog';
@@ -66,6 +67,19 @@ export function FilterBar() {
   // Data management & PIC management dialog state
   const [dataMgmtOpen, setDataMgmtOpen] = useState(false);
   const [picMgmtOpen, setPicMgmtOpen] = useState(false);
+
+  // UI-BEAUTIFY-R2: listen for custom events from EmptyState CTAs in page.tsx
+  // so the "Upload File" / "Import dari Drive" buttons in the empty state actually open the dialogs.
+  useEffect(() => {
+    const openUpload = () => setUploadDialogOpen(true);
+    const openDrive = () => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); };
+    document.addEventListener('open-upload-dialog', openUpload);
+    document.addEventListener('open-drive-dialog', openDrive);
+    return () => {
+      document.removeEventListener('open-upload-dialog', openUpload);
+      document.removeEventListener('open-drive-dialog', openDrive);
+    };
+  }, []);
 
   const months = status?.months || [];
   const weeks = (monthLabel && status?.weeksByMonth) ? Object.entries(status.weeksByMonth).find(([k]) => {
@@ -206,175 +220,232 @@ export function FilterBar() {
 
   return (
     <>
-      <Card className="mb-4">
-        <CardContent className="p-3">
+      <Card id="filter-bar" className="mb-4 rounded-xl border-border/60 shadow-sm overflow-hidden">
+        <CardContent className="p-3 sm:p-4">
           {isLoading && (
             <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
+              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
               <span>Memuat filter...</span>
             </div>
           )}
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="flex flex-col gap-1 min-w-[140px]">
-              <label className="text-xs text-muted-foreground">Bulan</label>
-              <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih bulan" /></SelectTrigger>
-                <SelectContent>
-                  {months.map((m) => <SelectItem key={m.key} value={m.label} className="text-xs">{m.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Filters row — left side: dropdowns, right side: actions */}
+          <div className="flex flex-col lg:flex-row lg:items-end gap-3 lg:gap-4">
+            {/* Filter dropdowns — grouped visually */}
+            <div className="flex flex-wrap items-end gap-2 flex-1 min-w-0">
+              <span className="hidden lg:inline-flex text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80 self-end mb-2.5 mr-1 shrink-0">
+                Filter
+              </span>
+              <div className="flex flex-col gap-1 min-w-[140px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Bulan</label>
+                <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
+                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Pilih bulan" /></SelectTrigger>
+                  <SelectContent>
+                    {months.map((m) => <SelectItem key={m.key} value={m.label} className="text-xs">{m.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex flex-col gap-1 min-w-[100px]">
-              <label className="text-xs text-muted-foreground">Minggu</label>
-              <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Minggu" /></SelectTrigger>
-                <SelectContent>
-                  {weeks.map((w) => <SelectItem key={w} value={w} className="text-xs">{w}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="flex flex-col gap-1 min-w-[100px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Minggu</label>
+                <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
+                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Minggu" /></SelectTrigger>
+                  <SelectContent>
+                    {weeks.map((w) => <SelectItem key={w} value={w} className="text-xs">{w}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex flex-col gap-1 min-w-[160px]">
-              <label className="text-xs text-muted-foreground">Periode Pembanding</label>
-              <Select
-                value={compareValue}
-                onValueChange={(v) => {
-                  if (v === 'auto') {
-                    setCompareWeek(null, null);
-                  } else {
-                    const [wk, ml] = v.split('|||');
-                    setCompareWeek(wk, ml);
-                  }
-                }}
-                disabled={!currentWeek}
-              >
-                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto" className="text-xs">Otomatis (periode sebelumnya)</SelectItem>
-                  {allComparePeriods.map((p) => (
-                    <SelectItem
-                      key={`${p.weekLabel}|${p.monthLabel}`}
-                      value={`${p.weekLabel}|||${p.monthLabel}`}
-                      className="text-xs"
+              <div className="flex flex-col gap-1 min-w-[160px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Periode Pembanding</label>
+                <Select
+                  value={compareValue}
+                  onValueChange={(v) => {
+                    if (v === 'auto') {
+                      setCompareWeek(null, null);
+                    } else {
+                      const [wk, ml] = v.split('|||');
+                      setCompareWeek(wk, ml);
+                    }
+                  }}
+                  disabled={!currentWeek}
+                >
+                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto" className="text-xs">Otomatis (periode sebelumnya)</SelectItem>
+                    {allComparePeriods.map((p) => (
+                      <SelectItem
+                        key={`${p.weekLabel}|${p.monthLabel}`}
+                        value={`${p.weekLabel}|||${p.monthLabel}`}
+                        className="text-xs"
+                      >
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-1 min-w-[140px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">PIC</label>
+                <SearchableComboBox
+                  options={pics.map((p) => ({ value: p, label: p }))}
+                  value={pic}
+                  onValueChange={setPic}
+                  placeholder="Semua PIC"
+                  searchPlaceholder="Cari PIC..."
+                  emptyText="PIC tidak ditemukan."
+                  allOptionLabel={`Semua PIC (${pics.length})`}
+                  buttonClassName="w-full"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 min-w-[140px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Area</label>
+                <SearchableComboBox
+                  options={areas.map((a) => ({ value: a, label: a }))}
+                  value={area}
+                  onValueChange={setArea}
+                  placeholder="Semua Area"
+                  searchPlaceholder="Cari area..."
+                  emptyText="Area tidak ditemukan."
+                  allOptionLabel={`Semua Area (${areas.length})`}
+                  buttonClassName="w-full"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 min-w-[160px]">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Outlet</label>
+                <SearchableComboBox
+                  options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
+                  value={outletCode}
+                  onValueChange={setOutlet}
+                  placeholder="Semua Outlet"
+                  searchPlaceholder="Cari outlet (kode/nama)..."
+                  emptyText="Outlet tidak ditemukan."
+                  allOptionLabel={`Semua Outlet (${outlets.length})`}
+                  buttonClassName="w-full"
+                />
+              </div>
+
+              {hasActiveFilter && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 px-2.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors active:scale-95"
+                      onClick={reset}
+                      aria-label="Reset filter aktif"
                     >
-                      {p.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span className="ml-1 hidden sm:inline">Reset</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Reset filter aktif</TooltipContent>
+                </Tooltip>
+              )}
             </div>
 
-            <div className="flex flex-col gap-1 min-w-[140px]">
-              <label className="text-xs text-muted-foreground">PIC</label>
-              <SearchableComboBox
-                options={pics.map((p) => ({ value: p, label: p }))}
-                value={pic}
-                onValueChange={setPic}
-                placeholder="Semua PIC"
-                searchPlaceholder="Cari PIC..."
-                emptyText="PIC tidak ditemukan."
-                allOptionLabel={`Semua PIC (${pics.length})`}
-                buttonClassName="w-full"
-              />
-            </div>
+            {/* Vertical divider on desktop */}
+            <div className="hidden lg:block w-px self-stretch bg-border/60 my-1" aria-hidden />
 
-            <div className="flex flex-col gap-1 min-w-[160px]">
-              <label className="text-xs text-muted-foreground">Area</label>
-              <SearchableComboBox
-                options={areas.map((a) => ({ value: a, label: a }))}
-                value={area}
-                onValueChange={setArea}
-                placeholder="Semua Area"
-                searchPlaceholder="Cari area..."
-                emptyText="Area tidak ditemukan."
-                allOptionLabel={`Semua Area (${areas.length})`}
-                buttonClassName="w-full"
-              />
-            </div>
+            {/* Actions — secondary icon-only (with tooltips) + primary actions */}
+            <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0">
+              <span className="hidden lg:inline-flex text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80 mr-0.5">
+                Aksi
+              </span>
 
-            <div className="flex flex-col gap-1 min-w-[160px]">
-              <label className="text-xs text-muted-foreground">Outlet</label>
-              <SearchableComboBox
-                options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
-                value={outletCode}
-                onValueChange={setOutlet}
-                placeholder="Semua Outlet"
-                searchPlaceholder="Cari outlet (kode/nama)..."
-                emptyText="Outlet tidak ditemukan."
-                allOptionLabel={`Semua Outlet (${outlets.length})`}
-                buttonClassName="w-full"
-              />
-            </div>
+              {/* Secondary icon-only buttons with tooltips */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
+                    onClick={() => setSettingsOpen(true)}
+                    aria-label="Pengaturan"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Pengaturan</TooltipContent>
+              </Tooltip>
 
-            <div className="flex-1 hidden md:block" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
+                    onClick={() => setDataMgmtOpen(true)}
+                    aria-label="Kelola Data"
+                  >
+                    <Database className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Kelola Data</TooltipContent>
+              </Tooltip>
 
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            <Button variant="outline" size="sm" className="h-9" onClick={reset} disabled={!hasActiveFilter}>
-              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings className="h-3.5 w-3.5 mr-1" />
-              Pengaturan
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9"
-              onClick={() => setDataMgmtOpen(true)}
-            >
-              <Database className="h-3.5 w-3.5 mr-1" />
-              Kelola Data
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9"
-              onClick={() => setPicMgmtOpen(true)}
-            >
-              <Users className="h-3.5 w-3.5 mr-1" />
-              Kelola PIC
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-9"
-              onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
-            >
-              <CloudDownload className="h-3.5 w-3.5 mr-1" />
-              Import dari Drive
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-9"
-              onClick={() => setUploadDialogOpen(true)}
-            >
-              <Upload className="h-3.5 w-3.5 mr-1" />
-              Upload File
-            </Button>
-            <Button variant="default" size="sm" className="h-9" onClick={handleIngest} disabled={ingesting}>
-              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${ingesting ? 'animate-spin' : ''}`} />
-              {ingesting ? 'Memproses...' : 'Refresh Data'}
-            </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
+                    onClick={() => setPicMgmtOpen(true)}
+                    aria-label="Kelola PIC"
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Kelola PIC</TooltipContent>
+              </Tooltip>
+
+              {/* Primary actions — Import dari Drive, Upload File, Refresh Data */}
+              <div className="h-6 w-px bg-border/60 mx-0.5 hidden sm:block" aria-hidden />
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
+                onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
+              >
+                <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                <span className="hidden md:inline">Import Drive</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
+                onClick={() => setUploadDialogOpen(true)}
+              >
+                <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="hidden md:inline">Upload File</span>
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
+                onClick={handleIngest}
+                disabled={ingesting}
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Refresh Data'}</span>
+              </Button>
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          {/* Status badges row */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
             {status?.stats && (
-              <Badge variant="outline" className="text-[11px]">
-                <Database className="h-3 w-3 mr-1" />
-                {status.stats.totalFiles} file · {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
+              <Badge variant="outline" className="text-[11px] gap-1 bg-muted/30 font-medium">
+                <Database className="h-3 w-3 text-muted-foreground" />
+                <span className="tabular-nums">{status.stats.totalFiles}</span> file · <span className="tabular-nums">{status.stats.totalOutlets}</span> outlet · <span className="tabular-nums">{status.stats.totalItems}</span> item · <span className="tabular-nums">{status.stats.totalRecords.toLocaleString()}</span> record
               </Badge>
             )}
             {ingestMsg && (
-              <Badge variant="secondary" className="text-[11px]">
-                <AlertTriangle className="h-3 w-3 mr-1" />
+              <Badge variant="outline" className="text-[11px] gap-1 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 font-medium">
+                <AlertTriangle className="h-3 w-3" />
                 {ingestMsg}
               </Badge>
             )}

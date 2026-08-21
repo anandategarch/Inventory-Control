@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
   reactStrictMode: true,
+  // Disable Next.js dev tools floating widget ("N" circle in bottom-right)
+  // UI-BEAUTIFY-R2: floating widget looked like debug artifact and broke clean layout.
+  devIndicators: false,
   // Phase 1-4: Security headers
   async headers() {
     return [

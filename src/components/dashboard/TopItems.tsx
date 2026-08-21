@@ -16,7 +16,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByNominal || [];
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -77,7 +77,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByDevBom || [];
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -142,7 +142,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">

@@ -33,21 +33,55 @@ import {
   Activity, Boxes, BarChart3, ShieldAlert,
   MapPin,
   Calendar, Loader2, Store,
-  FileDown,
+  FileDown, Upload, CloudDownload, Sparkles,
 } from 'lucide-react';
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-20 px-4 text-center">
+    <div className="relative flex flex-col items-center justify-center py-20 px-4 text-center">
+      {/* Ambient backdrop glow */}
+      <div
+        className="absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-amber-50/70 via-amber-50/20 to-transparent dark:from-amber-950/30 dark:via-amber-950/10 pointer-events-none"
+        aria-hidden
+      />
       <div className="relative mb-6">
-        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-amber-200/40 to-red-200/40 dark:from-amber-900/20 dark:to-red-900/20 blur-2xl" aria-hidden />
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border bg-gradient-to-br from-muted/80 to-muted/40 dark:from-zinc-800 dark:to-zinc-900 shadow-sm">
-          <Boxes className="h-8 w-8 text-muted-foreground/70" />
+        <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-amber-300/40 to-orange-300/30 dark:from-amber-700/30 dark:to-orange-700/20 blur-2xl" aria-hidden />
+        <div className="relative flex h-20 w-20 items-center justify-center rounded-3xl border border-amber-200/70 dark:border-amber-900/60 bg-gradient-to-br from-amber-50 to-amber-100/60 dark:from-amber-950/60 dark:to-amber-900/30 shadow-lg shadow-amber-500/10">
+          <Boxes className="h-10 w-10 text-amber-600 dark:text-amber-400" />
         </div>
       </div>
-      <h3 className="text-lg font-semibold tracking-tight">Tidak Ada Data Tersedia</h3>
+      <h3 className="text-xl font-semibold tracking-tight text-foreground">Belum Ada Data Inventory</h3>
       <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
-        Belum ada data inventory di database. Hubungi administrator untuk import data pertama kali.
+        Database masih kosong. Mulai dengan upload file Excel rekoniliasi atau import langsung dari Google Drive untuk analisis pertama.
+      </p>
+      {/* CTA buttons */}
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        <a
+          href="#filter-bar"
+          onClick={(e) => {
+            e.preventDefault();
+            document.dispatchEvent(new CustomEvent('open-upload-dialog'));
+          }}
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 hover:shadow active:scale-95 transition-all"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          Upload File
+        </a>
+        <a
+          href="#filter-bar"
+          onClick={(e) => {
+            e.preventDefault();
+            document.dispatchEvent(new CustomEvent('open-drive-dialog'));
+          }}
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium border border-border bg-background hover:bg-muted/60 hover:shadow-sm active:scale-95 transition-all"
+        >
+          <CloudDownload className="h-3.5 w-3.5" />
+          Import dari Drive
+        </a>
+      </div>
+      <p className="mt-4 text-[11px] text-muted-foreground/70 flex items-center gap-1.5">
+        <Sparkles className="h-3 w-3 text-amber-500" />
+        Tip: format nama file BULAN TAHUN.xlsx (contoh: JULI 2026.xlsx)
       </p>
     </div>
   );
@@ -55,16 +89,16 @@ function EmptyState() {
 
 function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 animate-in fade-in duration-300">
       {/* Loading banner */}
-      <div className="flex items-center justify-center gap-2.5 py-3 text-sm text-muted-foreground rounded-lg border bg-muted/30">
-        <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+      <div className="flex items-center justify-center gap-2.5 py-2.5 text-sm text-muted-foreground rounded-xl border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 shadow-sm">
+        <Loader2 className="h-4 w-4 animate-spin text-amber-600 dark:text-amber-400" />
         <span className="font-medium">{text}</span>
       </div>
       {/* Skeleton grid — KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="rounded-xl border bg-card p-4 space-y-2">
+          <div key={i} className="rounded-xl border bg-card p-4 space-y-2 shadow-sm">
             <div className="flex items-center justify-between">
               <Skeleton className="h-3 w-20" />
               <Skeleton className="h-3 w-8 rounded-full" />
@@ -75,7 +109,7 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
         ))}
       </div>
       {/* Skeleton — recommendation card */}
-      <div className="rounded-xl border bg-card p-5 space-y-3">
+      <div className="rounded-xl border bg-card p-5 space-y-3 shadow-sm">
         <Skeleton className="h-5 w-48" />
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="rounded-lg border p-3 space-y-2">
@@ -88,7 +122,7 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
       {/* Skeleton — insights + health */}
       <div className="grid lg:grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="rounded-xl border bg-card p-5 space-y-3">
+          <div key={i} className="rounded-xl border bg-card p-5 space-y-3 shadow-sm">
             <Skeleton className="h-5 w-32" />
             {Array.from({ length: 4 }).map((_, j) => (
               <Skeleton key={j} className="h-3 w-full" />
@@ -99,7 +133,7 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
       {/* Skeleton — top items tables */}
       <div className="grid lg:grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="rounded-xl border bg-card p-5 space-y-2">
+          <div key={i} className="rounded-xl border bg-card p-5 space-y-2 shadow-sm">
             <Skeleton className="h-5 w-40" />
             {Array.from({ length: 6 }).map((_, j) => (
               <Skeleton key={j} className="h-3 w-full" />
@@ -294,19 +328,24 @@ export default function DashboardPage() {
   const hasData = statusLoaded && Boolean(status?.stats?.totalRecords && status.stats.totalRecords > 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      {/* Header */}
-      <header className="border-b bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">
+      {/* Header — sticky with brand accent bar */}
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
+        {/* Brand accent bar — warm amber→emerald gradient (NO blue/indigo) */}
+        <div className="h-0.5 bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500" aria-hidden />
         <div className="px-4 sm:px-6 py-3 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-700 dark:from-zinc-100 dark:to-zinc-300 text-primary-foreground shadow-sm shrink-0">
+            {/* Logo — premium gradient with soft shadow + ring */}
+            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-400 dark:to-orange-500 text-white shadow-md shadow-amber-500/20 ring-1 ring-amber-500/20 shrink-0">
               <Boxes className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-base font-semibold tracking-tight truncate leading-tight">Inventory Control Intelligence</h1>
-              <p className="text-[11px] text-muted-foreground truncate">
+              <h1 className="text-[15px] font-semibold tracking-tight truncate leading-tight text-foreground">
+                Inventory Control Intelligence
+              </h1>
+              <p className="text-[11px] text-muted-foreground/80 truncate font-normal">
                 {status?.stats ? (
-                  <span className="tabular-nums">{status.stats.totalOutlets} Outlet · </span>
+                  <span className="tabular-nums font-medium text-muted-foreground">{status.stats.totalOutlets} Outlet · </span>
                 ) : null}
                 F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
               </p>
@@ -327,9 +366,9 @@ export default function DashboardPage() {
             )}
             {analysis.data && (
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
-                className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow transition-all"
+                className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
                 disabled={isExporting}
                 onClick={() => setExportDialogOpen(true)}
                 aria-label="Export laporan Word"
@@ -359,14 +398,14 @@ export default function DashboardPage() {
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1">
-              <TabsTrigger value="dashboard" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm">
+              <TabsTrigger value="dashboard" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>
-              <TabsTrigger value="resto" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+              <TabsTrigger value="resto" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
                 <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
-              <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+              <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
                 <Activity className="h-3.5 w-3.5" /> Peer Comparison
               </TabsTrigger>
             </TabsList>
@@ -482,10 +521,10 @@ export default function DashboardPage() {
       </main>
 
       {/* Footer (sticky bottom) */}
-      <footer className="mt-auto border-t bg-background/80 backdrop-blur">
+      <footer className="mt-auto border-t border-border/60 bg-background/80 backdrop-blur">
         <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1 font-medium">
+            <span className="flex items-center gap-1.5 font-medium text-foreground/80">
               <ShieldAlert className="h-3 w-3 text-amber-500" />
               Inventory Control Intelligence
             </span>
@@ -501,7 +540,10 @@ export default function DashboardPage() {
                 Analisis terakhir: {analysis.data.durationMs}ms · {analysis.data.cached ? 'cache' : 'segar'}
               </span>
             )}
-            <span className="hidden sm:inline text-muted-foreground/80">Klik baris mana saja untuk drill-down ke sumber</span>
+            <span className="hidden sm:inline text-muted-foreground flex items-center gap-1">
+              <Activity className="h-3 w-3" />
+              Klik baris mana saja untuk drill-down ke sumber
+            </span>
           </div>
         </div>
       </footer>

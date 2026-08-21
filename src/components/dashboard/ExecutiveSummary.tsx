@@ -60,7 +60,7 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
         : 'bg-muted text-muted-foreground';
   return (
     <Card
-      className={`relative overflow-hidden transition-all duration-200 ${drillDown ? 'cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5' : ''}`}
+      className={`relative overflow-hidden transition-all duration-200 shadow-sm dark:shadow-black/20 ${drillDown ? 'cursor-pointer hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5 hover:border-amber-300/60 dark:hover:border-amber-800/60' : ''}`}
       {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
     >
       {/* Subtle top accent line */}
@@ -121,7 +121,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('loss'))}>
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-red-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50" {...clickableRowProps(() => setCardDrillDown('loss'))}>
           <div className="absolute inset-y-0 left-0 w-0.5 bg-red-500/60" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -132,7 +132,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-[10px] text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-emerald-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
           <div className="absolute inset-y-0 left-0 w-0.5 bg-emerald-500/60" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -143,7 +143,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-[10px] text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
           <div className="absolute inset-y-0 left-0 w-0.5 bg-amber-500/60" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -154,7 +154,7 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
             <p className="text-[10px] text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
+        <Card className="cursor-pointer hover:shadow-lg dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-zinc-50/40 to-transparent dark:from-zinc-900/20 border-zinc-200/50 dark:border-zinc-800/50" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
           <div className="absolute inset-y-0 left-0 w-0.5 bg-zinc-400/60" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -217,7 +217,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
   const dash = (healthScore / 100) * circ;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center justify-between">
           <span className="flex items-center gap-2.5">

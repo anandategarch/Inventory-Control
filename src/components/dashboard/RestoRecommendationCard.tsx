@@ -73,7 +73,7 @@ export function RestoRecommendationCard() {
 
   if (isLoading) {
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -146,7 +146,7 @@ export function RestoRecommendationCard() {
   };
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -165,7 +165,7 @@ export function RestoRecommendationCard() {
         {recommendations.map((r, i) => (
           <div
             key={r.outletCode}
-            className={`relative rounded-xl border p-3 pl-4 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 overflow-hidden ${
+            className={`relative rounded-xl border p-3 pl-4 cursor-pointer hover:shadow-lg dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden shadow-sm ${
               r.priorityLevel === 'TINGGI' ? 'border-red-200/80 dark:border-red-900/60 bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20' :
               r.priorityLevel === 'SEDANG' ? 'border-amber-200/80 dark:border-amber-900/60 bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20' :
               'border-border bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20'
