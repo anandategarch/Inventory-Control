@@ -18,11 +18,14 @@ import {
   computeVarianceAnalysis,
   computeOutletHealthRanking,
   computeHistoricalAnalysis,
+  detectPatterns,
+  getRootCauses,
+  generateExecutiveInsights,
 } from '@/engine/analysis/analysis';
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
+import { calcGrowth, computeNominalDeviationGrowth, projectTrend } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -709,6 +712,66 @@ export async function GET(req: NextRequest) {
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
+    // ============================================================
+    //  Trend Projection (ANALYZE-BACKEND-2 — Feature 4)
+    //  --------------------------------------------------------
+    //  Linear projection of next period's |nominalDeviasi| based on
+    //  the historical weekly trend. Reuses trendAggRows (already fetched)
+    //  — no extra DB query. Sign convention: input uses signed nominal
+    //  (LOSS = negative); projectTrend takes ABS internally.
+    // ============================================================
+    const trendProjection = projectTrend(
+      trendAggRows.map((r) => ({
+        weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
+        nominalDeviasi: r.nominal,
+        devBom: r.devBom,
+        sales: r.sales,
+      })),
+    );
+
+    // ============================================================
+    //  Pattern Detection (ANALYZE-BACKEND-2 — Feature 5)
+    //  --------------------------------------------------------
+    //  Classifies systemic vs isolated vs area-level vs network-wide
+    //  deviation patterns from existing analysis artifacts. No extra
+    //  DB query — runs entirely on already-computed in-memory data.
+    //
+    //  totalOutlets = outletHealthRanking.length (universe of outlets
+    //  with at least one evaluated item this period). Slight under-count
+    //  for outlets where ALL items are zero-dev, but those are rare and
+    //  irrelevant for systemic-pattern detection.
+    // ============================================================
+    const patterns = detectPatterns({
+      outletHealthRanking: outletHealthRanking.map((o) => ({
+        outletCode: o.outletCode,
+        outletName: o.outletName,
+        area: o.area,
+        healthScore: o.healthScore,
+        normal: o.normal,
+        warning: o.warning,
+        abnormal: o.abnormal,
+        absNominal: o.absNominal,
+        devBom: o.devBom,
+        sales: o.sales,
+      })),
+      itemConsistency: itemConsistencyAnalysis.items.map((i) => ({
+        itemName: i.itemName,
+        outletCount: i.outletCount,
+        totalAbsNominal: i.totalAbsNominal,
+        avgDevBom: i.avgDevBom,
+        consistency: i.consistency,
+      })),
+      areaAnalysis: areaAnalysis.map((a) => ({
+        area: a.area,
+        outletCount: a.outletCount,
+        totalSales: a.totalSales,
+        totalAbsNominal: a.totalAbsNominal,
+        avgDevBom: a.avgDevBom,
+        lossToSales: a.lossToSales,
+      })),
+      totalOutlets: outletHealthRanking.length,
+    });
+
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -742,6 +805,9 @@ export async function GET(req: NextRequest) {
       costImpact,
       itemConsistencyAnalysis,
       netCostTrend,
+      // ANALYZE-BACKEND-2: trend projection + cross-outlet pattern detection
+      trendProjection,
+      patterns,
       durationMs: Date.now() - startedAt,
     };
 

@@ -10734,3 +10734,76 @@ Audit verified that CALC-1..CALC-11, SIGN-1..SIGN-4, CALC2-1/2, FLOW3-1/2/3 fixe
 9. **SQL-3 (LOW)** — Update stale comment in items.ts:100. ~1 line change. Documentation hygiene.
 
 Files changed: NONE (audit only — no code changes per task constraints).
+
+---
+Task ID: ANALYZE-BACKEND-2
+Agent: Backend Feature Developer 2
+Task: Add Trend Projection + Cross-Outlet Pattern Detection
+
+Work Log:
+- Read worklog tail (last 200 lines) for context — verified CALC-4 (LOSS=negative nominalLossSurplus) and existing metric engine conventions.
+- Read existing modules: src/lib/metrics/{index,historical,growth,definitions}.ts, src/lib/queries/{dashboard,items,areas,historical,shared,outlets}.ts, src/engine/analysis/{index,rankingService,ruleService,types,analysis}.ts, src/app/api/analysis/route.ts, src/types/inventory.ts, src/config/thresholds.ts, src/lib/format.ts.
+- Created src/lib/metrics/forecast.ts (Feature 4):
+  * TrendProjection + WeeklyTrendInput interfaces (with extra diagnostic fields rSquared/sampleSize/slope/intercept/currentNominalDeviasi for transparent debugging/UI).
+  * fitLinearRegression() — pure OLS helper: returns {slope, intercept, rSquared} or null when degenerate (<2 points or all-x-equal). Coefficient of determination R² computed from the standard formula ((n·Σxy − Σx·Σy)² / ((n·Σx² − (Σx)²)(n·Σy² − (Σy)²))). When yDenom=0 (all y identical), R²=1 (perfect constant prediction).
+  * classifyConfidence(): HIGH if n≥4 AND R²>0.7, MEDIUM if n≥3 AND R²>0.4, LOW otherwise — matches task spec exactly.
+  * classifyTrendDirection(): DETERIORATING if slope>+0.1, IMPROVING if slope<-0.1, STABLE otherwise.
+  * buildWarning(): emits "Jika tren berlanjut, deviasi bisa mencapai X% lebih besar dari periode ini." when trendDirection=DETERIORATING AND projected > 1.2× current.
+  * projectTrend() main entry: fits one regression on |nominalDeviasi| (slope/intercept/R²/confidence derived from this) + a second independent regression on |devBom| (used only for the projectedDevBom projection). Projection x = n (one step beyond last observed index). All magnitudes clamped to ≥0 (forecast can never be negative). Returns null when input has <2 valid weeks.
+  * Sign convention: takes ABS internally, so callers pass signed nominal (LOSS=negative per CALC-4).
+- Exported projectTrend + TrendProjection + WeeklyTrendInput from src/lib/metrics/index.ts barrel.
+- Created src/engine/analysis/patternEngine.ts (Feature 5):
+  * AnalysisData / AnalysisOutlet / AnalysisItem / AnalysisArea / PatternDetection interfaces — shapes mirror existing computeOutletHealthRanking / queryItemConsistency / queryAreaAnalysis outputs.
+  * 4 detectors (one per PatternDetection.type):
+    1. detectSystemicItems() — for each item, ratio = outletCount/totalOutlets; flag if ratio>0.30 (CRITICAL if >0.50). Top 5 by totalAbsNominal DESC. Recommendation: review recipe/supplier/price.
+    2. detectIsolatedOutlets() — for each outlet, ratio = (warning+abnormal)/(normal+warning+abnormal); flag if ratio>0.50 (CRITICAL if >0.70) AND total items evaluated ≥5 (avoid noise from tiny outlets). Top 5 by ratio DESC. Recommendation: audit SPV/staff/process.
+    3. detectAreaLevel() — for each area, factor = |areaAvgDevBom|/networkAvg; flag if factor>1.5 (CRITICAL if >2.0). Top 5 by factor DESC. Recommendation: review supervisor/logistics.
+    4. detectNetworkWide() — single pattern: networkAvg > 0.10 (10%) → flag (CRITICAL if >20%). Recommendation: review BOM master/training/recording process.
+  * computeNetworkAvgDevBom() — outletCount-weighted mean of area |avgDevBom|, falling back to simple mean of outlets when areaAnalysis is empty. Accepts optional override (data.networkAvgDevBom) for callers that already have execSummary.deviationToBom.
+  * detectPatterns() main entry: runs all 4 detectors, returns flat array ordered by leverage (NETWORK_WIDE → SYSTEMIC_ITEM → ISOLATED_OUTLET → AREA_LEVEL). Returns [] when no patterns breach any threshold.
+  * All magnitudes use ABS() per platform sign convention.
+- Exported detectPatterns + AnalysisData/Outlet/Item/Area + PatternDetection from src/engine/analysis/index.ts barrel.
+- Integrated both features into src/app/api/analysis/route.ts response (after itemConsistencyAnalysis, before assembling result object):
+  * Added imports: detectPatterns from '@/engine/analysis/analysis', projectTrend from '@/lib/metrics'.
+  * trendProjection: built by mapping trendAggRows (already fetched by queryTrendAgg in the parallel Promise.all block) into the WeeklyTrendInput shape (weekLabel "Wxx Mon", nominalDeviasi=r.nominal, devBom=r.devBom, sales=r.sales). NO extra DB query.
+  * patterns: built by mapping outletHealthRanking + itemConsistencyAnalysis.items + areaAnalysis into the AnalysisData shape. totalOutlets = outletHealthRanking.length (universe of outlets with ≥1 evaluated item — slight under-count for outlets where ALL items are zero-dev, but those are irrelevant for systemic detection). NO extra DB query.
+  * Both fields added to the response object (result.trendProjection, result.patterns).
+- Verified: `bun run lint` exits 0 (clean), `npx tsc --noEmit` exits 0 (clean).
+
+Stage Summary:
+
+Two new analysis features added to the Inventory Control Intelligence Platform, both running on already-fetched data (zero additional DB queries):
+
+**Feature 4 — Trend Projection (src/lib/metrics/forecast.ts):**
+- OLS linear regression on weekly |nominalDeviasi| + independent regression on |devBom|.
+- Outputs: projectedNominalDeviasi, projectedDevBom, confidence (HIGH/MEDIUM/LOW from n + R²), trendDirection (IMPROVING/DETERIORATING/STABLE from slope sign), trendStrength (|slope|/mean(|y|), clamped 0-1), warning (when projection >1.2× current AND worsening).
+- Returns null when <2 valid weekly observations.
+- Diagnostic fields exposed (rSquared, sampleSize, slope, intercept, currentNominalDeviasi) for transparent UI/debugging.
+
+**Feature 5 — Cross-Outlet Pattern Detection (src/engine/analysis/patternEngine.ts):**
+- 4 pattern archetypes: SYSTEMIC_ITEM (item→many outlets), ISOLATED_OUTLET (outlet→many items), AREA_LEVEL (area>1.5× network), NETWORK_WIDE (network>10%).
+- Severity tiers (CRITICAL/WARNING/INFO) with higher-ratio thresholds for CRITICAL.
+- Indonesian recommendations per pattern (recipe/supplier review, SPV audit, supervisor review, BOM master review).
+- Pure function on existing analysis data — no SQL changes.
+
+**Integration (src/app/api/analysis/route.ts):**
+- Both features added to /api/analysis response: result.trendProjection (TrendProjection | null), result.patterns (PatternDetection[]).
+- Zero additional DB queries — reuses trendAggRows (already in Promise.all), outletHealthRanking, itemConsistencyAnalysis.items, areaAnalysis (all already computed).
+- CPU-only post-processing after existing SQL aggregate phase — sub-millisecond overhead.
+
+**Barrel exports:**
+- src/lib/metrics/index.ts → projectTrend, TrendProjection, WeeklyTrendInput
+- src/engine/analysis/index.ts → detectPatterns, AnalysisData, AnalysisArea, AnalysisItem, AnalysisOutlet, PatternDetection
+
+**Files changed:**
+- NEW: src/lib/metrics/forecast.ts (208 lines)
+- NEW: src/engine/analysis/patternEngine.ts (289 lines)
+- MODIFIED: src/lib/metrics/index.ts (+8 lines — forecast barrel)
+- MODIFIED: src/engine/analysis/index.ts (+9 lines — patternEngine barrel)
+- MODIFIED: src/app/api/analysis/route.ts (+59 lines — integration: imports + 2 computations + 2 response fields)
+
+**Design notes for follow-up agents:**
+- Trend projection uses |nominalDeviasi| (GROSS magnitude). If user wants NET projection instead, swap r.nominal → (r.lossNominal - r.surplusNominal) in the route mapping. TrendAnalysis with |NET| would be more stable (excludes measurement-driven surplus fluctuations).
+- Pattern detection totalOutlets uses outletHealthRanking.length as a proxy for the outlet universe. If precise denominator is needed (e.g. include outlets with zero deviation across all items), add a small `db.inventoryRecord.groupBy({ by: ['outletId'], where: { monthLabel, weekLabel } })` count query in the existing Promise.all block.
+- Pattern thresholds (0.30, 0.50, 1.5×, 10%) are module-local constants in patternEngine.ts. Promote to src/config/thresholds.ts (CFG_THRESHOLDS) if they need runtime tuning via Settings dialog.
+- Forecast confidence "LOW" still returns a projection — UI should visually de-emphasize LOW-confidence projections (e.g. dashed line / faded color).

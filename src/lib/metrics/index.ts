@@ -67,3 +67,10 @@ export {
   calcAvgPrice,
   type GrowthResult,
 } from './growth';
+
+// Forecast metrics (trend projection via OLS linear regression)
+export {
+  projectTrend,
+  type TrendProjection,
+  type WeeklyTrendInput,
+} from './forecast';
