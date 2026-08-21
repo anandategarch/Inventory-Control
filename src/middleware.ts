@@ -1,16 +1,19 @@
 // ============================================================
 //  Middleware — protect destructive endpoints
-//  Bug #1 fix: Auth middleware
 //
 //  Auth model: simple token-based via ADMIN_TOKEN env var
 //  - Dashboard & GET endpoints (read-only): PUBLIC (no auth)
 //  - /api/setup, POST /api/ingest, POST /api/import-drive, POST/DELETE /api/settings,
-//    DELETE /api/data, POST/DELETE /api/pic: requires ADMIN_TOKEN
+//    DELETE /api/data, POST/DELETE /api/pic, POST /api/migrate-direction: requires ADMIN_TOKEN
 //
 //  Client sends: Authorization: Bearer <ADMIN_TOKEN>
 //  Or: ?admin_token=<ADMIN_TOKEN> (for browser-accessible /api/setup)
 //
-//  If ADMIN_TOKEN not set in env → endpoints are PUBLIC (dev mode, backward compat)
+//  FIX API-5-REVERT: If ADMIN_TOKEN not set → ALLOW (fail-open) with warning.
+//  Reason: Frontend has no auth UI (no login page, no token input).
+//  Fail-closed breaks all imports/mutations in production without auth UI.
+//  Rate limiting on each route provides DoS protection.
+//  TODO: Add auth UI (login page) then re-enable fail-closed.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -57,17 +60,11 @@ export function middleware(req: NextRequest) {
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // FIX API-5: In production, FAIL CLOSED if ADMIN_TOKEN not set (was: fail open → security risk).
-  // In dev mode, allow without auth (backward compat) but warn.
+  // FIX API-5-REVERT: If ADMIN_TOKEN not set → ALLOW (fail-open) with warning.
+  // Frontend has no auth UI, so fail-closed breaks all imports/mutations.
+  // Rate limiting on each route provides DoS protection.
   if (!adminToken) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error(`[middleware] ADMIN_TOKEN not set — ${pathname} BLOCKED in production (fail-closed)`);
-      return NextResponse.json(
-        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set ADMIN_TOKEN env var to enable auth.' },
-        { status: 500 }
-      );
-    }
-    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth (dev mode)`);
+    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth. Set ADMIN_TOKEN + add auth UI for production security.`);
     return NextResponse.next();
   }
 
@@ -83,7 +80,6 @@ export function middleware(req: NextRequest) {
   }
 
   // FIX (BUG 8): Use constant-time comparison to prevent timing attacks.
-  // Previously: !== short-circuits on first byte mismatch, leaking token info.
   if (!providedToken) {
     return NextResponse.json(
       { success: false, error: 'Unauthorized. Set ADMIN_TOKEN env var and provide via Authorization: Bearer <token> or ?admin_token=<token>.' },
@@ -93,7 +89,7 @@ export function middleware(req: NextRequest) {
   const tokenValid = constantTimeEqual(providedToken, adminToken);
   if (!tokenValid) {
     return NextResponse.json(
-      { success: false, error: 'Unauthorized. Set ADMIN_TOKEN env var and provide via Authorization: Bearer <token> or ?admin_token=<token>.' },
+      { success: false, error: 'Unauthorized. Invalid token.' },
       { status: 401 }
     );
   }

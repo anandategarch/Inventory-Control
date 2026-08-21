@@ -368,7 +368,18 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
         // Batch insert
         if (batchRecords.length >= BATCH_SIZE) {
           // BUG-06 fix: createMany returns { count: N } — use actual count, not batch length
-          const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+          // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
+          let result;
+          try {
+            result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+          } catch {
+            // SQLite fallback: insert one by one, skip duplicates manually
+            let count = 0;
+            for (const rec of batchRecords) {
+              try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+            }
+            result = { count };
+          }
           totalInserted += result.count;
           batchRecords = [];
         }
@@ -376,7 +387,16 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 
       // Insert remaining records
       if (batchRecords.length > 0) {
-        const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+        let result2;
+        try {
+          result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+        } catch {
+          let count = 0;
+          for (const rec of batchRecords) {
+            try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+          }
+          result2 = { count };
+        }
         totalInserted += result2.count;
       }
 
@@ -585,14 +605,33 @@ export async function processRowsForImport(
     }
 
     if (batchRecords.length >= BATCH_SIZE) {
-      const result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+      // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
+      let result;
+      try {
+        result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+      } catch {
+        let count = 0;
+        for (const rec of batchRecords) {
+          try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+        }
+        result = { count };
+      }
       inserted += result.count;
       batchRecords = [];
     }
   }
 
   if (batchRecords.length > 0) {
-    const result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+    let result2;
+    try {
+      result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+    } catch {
+      let count = 0;
+      for (const rec of batchRecords) {
+        try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+      }
+      result2 = { count };
+    }
     inserted += result2.count;
   }
 

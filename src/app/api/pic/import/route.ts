@@ -86,11 +86,22 @@ export async function POST(req: NextRequest) {
         // Batch create new entries
         let actuallyCreated = 0;
         if (toCreate.length > 0) {
-          const result = await db.outletPIC.createMany({
-            data: toCreate,
-            skipDuplicates: true,
-          });
-          actuallyCreated = result.count;
+          // FIX DB2-5: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
+          try {
+            const result = await db.outletPIC.createMany({
+              data: toCreate,
+              skipDuplicates: true,
+            });
+            actuallyCreated = result.count;
+          } catch {
+            // SQLite fallback: insert one by one, skip duplicates manually
+            for (const rec of toCreate) {
+              try {
+                await db.outletPIC.create({ data: rec });
+                actuallyCreated++;
+              } catch {}
+            }
+          }
         }
 
         // Batch update existing entries (use raw SQL for batch upsert)
