@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Utensils } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Utensils, Activity, Calendar, Gauge, ShieldAlert } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
@@ -106,10 +106,18 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   if (!activeOutlet) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          <Target className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>Pilih outlet untuk melihat Resto Analysis</p>
+      <Card className="overflow-hidden">
+        <CardContent className="py-16 text-center">
+          <div className="flex flex-col items-center">
+            <div className="relative mb-4">
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-amber-200/30 to-red-200/30 dark:from-amber-900/20 dark:to-red-900/20 blur-xl" aria-hidden />
+              <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50">
+                <Target className="h-7 w-7" />
+              </div>
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">Pilih outlet untuk melihat Resto Analysis</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Klik baris di Resto Prioritas atau tabel peer untuk deep dive</p>
+          </div>
         </CardContent>
       </Card>
     );
@@ -118,10 +126,14 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   // Bug 6.9 fix: show "select period" message instead of error when week not selected
   if (!monthLabel || !currentWeek) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          <Target className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>Pilih bulan dan minggu untuk melihat Resto Analysis</p>
+      <Card className="overflow-hidden">
+        <CardContent className="py-16 text-center">
+          <div className="flex flex-col items-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50 mb-4">
+              <Target className="h-7 w-7" />
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">Pilih bulan dan minggu untuk melihat Resto Analysis</p>
+          </div>
         </CardContent>
       </Card>
     );
@@ -129,10 +141,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="py-12 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Memuat Resto Analysis...</span>
+      <Card className="overflow-hidden">
+        <CardContent className="py-16 flex items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+          <span className="ml-2.5 text-sm text-muted-foreground font-medium">Memuat Resto Analysis...</span>
         </CardContent>
       </Card>
     );
@@ -140,10 +152,15 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 
   if (error || !data?.success) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-red-600">
-          <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
-          <p className="text-sm">Error: {error?.message || data?.error || 'Unknown'}</p>
+      <Card className="overflow-hidden border-red-200/70 dark:border-red-900/60">
+        <CardContent className="py-12 text-center">
+          <div className="flex flex-col items-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 mb-3">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+            <p className="text-sm text-red-700 dark:text-red-400 font-medium">Gagal Memuat Data</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-md">{error?.message || data?.error || 'Unknown'}</p>
+          </div>
         </CardContent>
       </Card>
     );
@@ -154,28 +171,51 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
   const rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] } = data.rankings;
   const currentRanking = rankings[rankingTab as keyof typeof rankings] || [];
 
+  // Health score ring color
+  const healthScore = profile.investigation.healthScore;
+  const scoreRing = healthScore < 30 ? 'stroke-red-500' : healthScore < 50 ? 'stroke-amber-500' : healthScore < 70 ? 'stroke-yellow-500' : 'stroke-emerald-500';
+  const scoreText = healthScore < 30 ? 'text-red-600 dark:text-red-400' : healthScore < 50 ? 'text-amber-600 dark:text-amber-400' : healthScore < 70 ? 'text-yellow-600 dark:text-yellow-400' : 'text-emerald-600 dark:text-emerald-400';
+  const radius = 26;
+  const circ = 2 * Math.PI * radius;
+  const dash = (healthScore / 100) * circ;
+
   return (
     <div className="space-y-4">
       {/* Header */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Target className="h-5 w-5" />
-                {outlet.name} ({outlet.code})
-                {isFetching && !isLoading && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                )}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                {outlet.area} {outlet.pic ? `· PIC: ${outlet.pic}` : ''} · {data.period.week} {data.period.month}
-                {data.period.prevWeek ? ` vs ${data.period.prevWeek}` : ''}
-              </p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+                <Target className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <span className="truncate">{outlet.name}</span>
+                  <span className="text-muted-foreground font-normal text-sm shrink-0">({outlet.code})</span>
+                  {isFetching && !isLoading && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                  {outlet.area} {outlet.pic ? `· PIC: ${outlet.pic}` : ''} · {data.period.week} {data.period.month}
+                  {data.period.prevWeek ? ` vs ${data.period.prevWeek}` : ''}
+                </p>
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold">{profile.investigation.healthScore}</p>
-              <p className="text-[10px] text-muted-foreground uppercase">Health Score</p>
+            {/* Health Score ring */}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="relative h-14 w-14 rounded-full bg-muted/30 ring-2 ring-foreground/10 flex items-center justify-center">
+                <svg className="absolute inset-0 -rotate-90" viewBox="0 0 64 64" aria-hidden>
+                  <circle cx="32" cy="32" r={radius} className="fill-none stroke-muted/50" strokeWidth="4" />
+                  <circle cx="32" cy="32" r={radius} className={`fill-none ${scoreRing}`} strokeWidth="4" strokeLinecap="round" strokeDasharray={`${dash} ${circ}`} />
+                </svg>
+                <span className={`text-sm font-bold tabular-nums ${scoreText}`}>{healthScore}</span>
+              </div>
+              <div>
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Health Score</p>
+                <p className={`text-xs font-semibold ${scoreText}`}>{healthScore < 30 ? 'Kritis' : healthScore < 50 ? 'Perhatian' : healthScore < 70 ? 'Cukup' : 'Sehat'}</p>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -184,9 +224,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       {/* Resto Profile — 6 Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* 1. Performance */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Performance</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />Performance</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Sales" value={fmtIDR(profile.performance.sales)} />
             <Row label="QTY BOM" value={fmtNum(profile.performance.qtyBom)} growth={profile.performance.qtyBomGrowth} />
             <Row label="QTY Deviasi" value={fmtNum(profile.performance.qtyDeviasi)} growth={profile.performance.qtyDeviasiGrowth} growthColor={growthColor(profile.performance.qtyDeviasiGrowth, true)} />
@@ -198,9 +238,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 2. Behavior */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Behavior</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Activity className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />Behavior</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Total LOSS" value={fmtIDR(profile.behavior.lossNominal)} sub={fmtPct(profile.behavior.lossPct)} />
             <Row label="Total SURPLUS" value={fmtIDR(profile.behavior.surplusNominal)} sub={fmtPct(profile.behavior.surplusPct)} />
             <Row label="Waste" value={fmtNum(profile.behavior.qtyWaste)} />
@@ -212,17 +252,17 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 3. Historical */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Historical</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />Historical</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             <Row label="BOM Growth" value={fmtGrowth(profile.historical.bomGrowth)} growthColor={growthColor(profile.historical.bomGrowth)} />
             <Row label="Deviasi Growth" value={fmtGrowth(profile.historical.deviasiGrowth)} growthColor={growthColor(profile.historical.deviasiGrowth, true)} />
             <Row label="Nominal Growth" value={fmtGrowth(profile.historical.nominalGrowth)} growthColor={growthColor(profile.historical.nominalGrowth, true)} />
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex items-center gap-2 pt-1.5 mt-1.5 border-t">
               {profile.historical.trend === 'DETERIORATING' && <TrendingUp className="h-4 w-4 text-red-600" />}
               {profile.historical.trend === 'IMPROVING' && <TrendingDown className="h-4 w-4 text-emerald-600" />}
               {profile.historical.trend === 'STABLE' && <Minus className="h-4 w-4 text-muted-foreground" />}
-              <span className={`font-semibold ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+              <span className={`font-semibold text-[11px] ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
                 {profile.historical.trend}
               </span>
             </div>
@@ -230,9 +270,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 4. Benchmark */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Benchmark</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><Gauge className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />Benchmark</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Outlet Dev/BOM" value={fmtPct(profile.benchmark.outletDevBom)} />
             <Row label="Area Avg Dev/BOM" value={fmtPct(profile.benchmark.areaAvgDevBom)} />
             <Row label="Network Avg Dev/BOM" value={fmtPct(profile.benchmark.networkAvgDevBom)} />
@@ -241,29 +281,29 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         </Card>
 
         {/* 5. Top Risk */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Top Risk (by Dev/BOM)</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />Top Risk (by Dev/BOM)</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             {profile.topRisk.byDevBom.slice(0, 5).map((r, i) => (
-              <div key={i} className="flex justify-between">
-                <span className="truncate max-w-[140px]">{r.itemName}</span>
-                <span className="font-mono font-semibold text-red-600">{fmtPct(r.value)}</span>
+              <div key={i} className="flex justify-between items-center gap-2">
+                <span className="truncate max-w-[140px]" title={r.itemName}>{r.itemName}</span>
+                <span className="font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums shrink-0">{fmtPct(r.value)}</span>
               </div>
             ))}
           </CardContent>
         </Card>
 
         {/* 6. Investigation */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Investigation</CardTitle></CardHeader>
-          <CardContent className="space-y-1 text-xs">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />Investigation</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Normal" value={profile.investigation.normal.toString()} />
             <Row label="Warning" value={profile.investigation.warning.toString()} />
             <Row label="Abnormal" value={profile.investigation.abnormal.toString()} />
             <div className="flex gap-1 mt-2">
-              <Badge variant="outline" className="text-[10px] text-red-600 border-red-300">P1: {(data.allItems || []).filter((r: any) => r.priority === 'P1').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">P2: {(data.allItems || []).filter((r: any) => r.priority === 'P2').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-300">P3: {(data.allItems || []).filter((r: any) => r.priority === 'P3').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">P1: {(data.allItems || []).filter((r: any) => r.priority === 'P1').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 font-medium tabular-nums">P2: {(data.allItems || []).filter((r: any) => r.priority === 'P2').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 font-medium tabular-nums">P3: {(data.allItems || []).filter((r: any) => r.priority === 'P3').length}</Badge>
             </div>
           </CardContent>
         </Card>
@@ -275,13 +315,15 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       )}
 
       {/* Bahan Analysis — 3 Rankings */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
+          <CardTitle className="text-base flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5" />
+            </span>
             Bahan Analysis — Financial Impact
           </CardTitle>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground ml-9">
             Financial Impact (dampak uang)
           </p>
         </CardHeader>
@@ -292,44 +334,44 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
             </TabsList>
 
             <TabsContent value={rankingTab} className="mt-3">
-              <div className="overflow-x-auto max-h-[500px] overflow-y-auto border rounded-md">
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto border rounded-lg">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-background z-10">
-                    <TableRow>
-                      <TableHead className="text-[11px] h-8">#</TableHead>
-                      <TableHead className="text-[11px] h-8">Nama Bahan</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">BOM</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">Deviasi</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">Dev/BOM</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">Nominal</TableHead>
-                      <TableHead className="text-[11px] h-8 text-center">Dir</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">W</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">S</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">T</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">Resid%</TableHead>
-                      <TableHead className="text-[11px] h-8 text-center">Hist</TableHead>
-                      <TableHead className="text-[11px] h-8 text-right">vs Area</TableHead>
-                      <TableHead className="text-[11px] h-8 text-center">Pri</TableHead>
+                  <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+                    <TableRow className="border-b hover:bg-transparent">
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">#</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Nama Bahan</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">BOM</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Deviasi</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Dev/BOM</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Nominal</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Dir</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">W</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">S</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">T</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Resid%</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Hist</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">vs Area</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Pri</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {currentRanking.map((r) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-primary/30`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
-                        <TableCell className="text-[11px] py-1.5 font-mono">{r.rank}</TableCell>
+                    {currentRanking.map((r, idx) => (
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all ${idx % 2 === 1 ? 'bg-muted/10' : ''}`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
+                        <TableCell className="text-[11px] py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
                         <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(r.qtyBom)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(r.qtyDeviasi)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono font-semibold text-red-600">{fmtPct(r.devBom)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtIDR(r.nominalLossSurplus)}</TableCell>
-                        <TableCell className={`text-[11px] py-1.5 text-center font-semibold ${directionColor(r.direction)}`}>{r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono">{r.residualRatio != null ? fmtPct(r.residualRatio) : '—'}</TableCell>
-                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${r.historicalTrend === '↑' ? 'text-red-600' : r.historicalTrend === '↓' ? 'text-emerald-600' : 'text-muted-foreground'}`}>{r.historicalTrend}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono">
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyDeviasi)}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtIDR(r.nominalLossSurplus)}</TableCell>
+                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${directionColor(r.direction)}`}>{r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{r.residualRatio != null ? fmtPct(r.residualRatio) : '—'}</TableCell>
+                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${r.historicalTrend === '↑' ? 'text-red-600 dark:text-red-400' : r.historicalTrend === '↓' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>{r.historicalTrend}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">
                           {r.areaMultiplier != null ? (
-                            <span className={r.areaMultiplier > 1.5 ? 'text-red-600 font-semibold' : ''}>
+                            <span className={r.areaMultiplier > 1.5 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}>
                               {r.areaMultiplier.toFixed(1)}×
                             </span>
                           ) : '—'}
@@ -604,55 +646,60 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
   }, [outletData]);
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Utensils className="h-4 w-4" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+            <Utensils className="h-3.5 w-3.5" />
+          </span>
           Menu Analysis — Outlier Detection
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground ml-9">
           Group by menu (kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama
         </p>
       </CardHeader>
       <CardContent>
         {menuGroups.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data menu.</p>
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <Utensils className="h-8 w-8 text-muted-foreground/40 mb-2" />
+            <p className="text-sm text-muted-foreground">Tidak ada data menu.</p>
+          </div>
         ) : (
-          <div className="space-y-3 max-h-[500px] overflow-y-auto">
+          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
             {menuGroups.map(group => (
-              <div key={group.menuName} className="rounded-lg border p-3">
-                <div className="flex items-center justify-between mb-2">
+              <div key={group.menuName} className="rounded-lg border overflow-hidden">
+                <div className="flex items-center justify-between mb-2 px-3 py-2 border-b bg-muted/30 dark:bg-zinc-900/30">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm">{group.menuName}</span>
-                    <Badge variant="outline" className="text-[10px]">{group.itemCount} bahan</Badge>
+                    <Badge variant="outline" className="text-[10px] font-medium tabular-nums">{group.itemCount} bahan</Badge>
                     {group.outlierCount > 0 && (
-                      <Badge variant="outline" className="text-[10px] text-red-600 border-red-300">
-                        🔴 {group.outlierCount} outlier
+                      <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">
+                        {group.outlierCount} outlier
                       </Badge>
                     )}
                   </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Avg Dev/BOM: {fmtPct(group.avgDevBom)} · Threshold: {fmtPct(group.threshold)}
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    Avg Dev/BOM: <span className="font-medium">{fmtPct(group.avgDevBom)}</span> · Threshold: <span className="font-medium">{fmtPct(group.threshold)}</span>
                   </span>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5 p-2">
                   {group.items.map((item: any) => (
                     <div
                       key={item.itemName}
-                      className={`flex items-center justify-between text-xs py-1 px-2 rounded cursor-pointer hover:bg-muted/50 ${item.isOutlier ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+                      className={`flex items-center justify-between text-xs py-1.5 px-2 rounded cursor-pointer hover:bg-muted/40 transition-colors ${item.isOutlier ? 'bg-red-50/60 dark:bg-red-950/20' : ''}`}
                       {...clickableRowProps(() => onSelectItem({ outletCode, itemName: item.itemName }))}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        {item.isOutlier && <span className="text-red-600 font-bold text-[10px]">⚠</span>}
+                        {item.isOutlier && <span className="text-red-600 dark:text-red-400 font-bold text-[10px]">⚠</span>}
                         <span className="truncate max-w-[160px]" title={item.itemName}>{item.itemName}</span>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <span className="font-mono text-muted-foreground">BOM: {fmtNum(item.qtyBom)}</span>
-                        <span className={`font-mono font-semibold ${item.isOutlier ? 'text-red-600' : ''}`}>
+                        <span className="font-mono text-muted-foreground tabular-nums">BOM: {fmtNum(item.qtyBom)}</span>
+                        <span className={`font-mono font-semibold tabular-nums ${item.isOutlier ? 'text-red-600 dark:text-red-400' : ''}`}>
                           Dev/BOM: {fmtPct(item.devBom)}
                         </span>
                         {item.outlierMultiple != null && item.outlierMultiple > 1 && (
-                          <span className={`text-[10px] ${item.isOutlier ? 'text-red-600 font-bold' : 'text-muted-foreground'}`}>
+                          <span className={`text-[10px] tabular-nums ${item.isOutlier ? 'text-red-600 dark:text-red-400 font-bold' : 'text-muted-foreground'}`}>
                             {item.outlierMultiple.toFixed(1)}× avg
                           </span>
                         )}
@@ -712,22 +759,24 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
     .slice(0, topN === 'all' ? 9999 : parseInt(topN));
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Target className="h-4 w-4" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
+            <Target className="h-3.5 w-3.5" />
+          </span>
           Ranking Item Nasional (Deviasi)
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground ml-9">
           Ranking item per resto. Negatif (merah) = rugi. Positif (hijau) = untung.
           AVG Dev By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.
         </p>
         {/* Top N + Filters */}
-        <div className="flex items-center gap-2 pt-2 flex-wrap">
+        <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
           <select
             value={topN}
             onChange={(e) => setTopN(e.target.value)}
-            className="h-7 text-xs border rounded px-2 bg-background"
+            className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
           >
             <option value="10">Top 10</option>
             <option value="20">Top 20</option>
@@ -738,7 +787,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
           <select
             value={filterPic}
             onChange={(e) => setFilterPic(e.target.value)}
-            className="h-7 text-xs border rounded px-2 bg-background"
+            className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
           >
             <option value="all">Semua PIC</option>
             {picOptions.map((pic: string) => <option key={pic} value={pic}>{pic}</option>)}
@@ -746,7 +795,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
           <select
             value={filterResto}
             onChange={(e) => setFilterResto(e.target.value)}
-            className="h-7 text-xs border rounded px-2 bg-background"
+            className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
           >
             <option value="all">Semua Resto</option>
             {restoOptions.map((resto: string) => <option key={resto} value={resto}>{resto}</option>)}
@@ -756,49 +805,49 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
               Reset
             </Button>
           )}
-          <Badge variant="secondary" className="text-[10px] ml-auto">{items.length} item</Badge>
+          <Badge variant="secondary" className="text-[10px] ml-auto tabular-nums font-medium">{items.length} item</Badge>
         </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[600px] overflow-auto">
           <Table className="min-w-[1200px]">
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="w-8 text-center">Rank Nas</TableHead>
-                <TableHead className="w-8 text-center">Rank BOM</TableHead>
-                <TableHead>Item</TableHead>
-                <TableHead>Resto</TableHead>
-                <TableHead>PIC</TableHead>
-                <TableHead className="text-right">QTY Deviasi</TableHead>
-                <TableHead className="text-right">QTY Waste</TableHead>
-                <TableHead className="text-right">QTY LS</TableHead>
-                <TableHead className="text-right">%LS to BOM</TableHead>
-                <TableHead className="text-right">QTY BOM</TableHead>
-                <TableHead className="text-right">AVG Dev By BOM</TableHead>
-                <TableHead className="text-right">Nominal Deviasi</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank Nas</TableHead>
+                <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank BOM</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Item</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Resto</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">PIC</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY Deviasi</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY Waste</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY LS</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">%LS to BOM</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">AVG Dev By BOM</TableHead>
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">Nominal Deviasi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
               ) : items.map((it: any, i: number) => (
-                <TableRow key={`${it.itemName}-${it.outletCode}-${i}`}>
-                  <TableCell className="text-center text-xs font-bold">{it.rankNominal}</TableCell>
-                  <TableCell className="text-center text-xs text-muted-foreground">{it.rankBom != null ? it.rankBom : '—'}</TableCell>
+                <TableRow key={`${it.itemName}-${it.outletCode}-${i}`} className={`hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}>
+                  <TableCell className="text-center text-xs font-bold tabular-nums">{it.rankNominal}</TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground tabular-nums">{it.rankBom != null ? it.rankBom : '—'}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyWaste < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyWaste)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyLossSurplus < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
-                  <TableCell className={`text-right text-xs ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
+                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyWaste < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyWaste)}</TableCell>
+                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyLossSurplus < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
+                  <TableCell className={`text-right text-xs tabular-nums ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {it.pctLossSurplusToBom != null ? `${Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` : '—'}
                   </TableCell>
-                  <TableCell className={`text-right text-xs ${it.qtyBom < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(it.qtyBom)}</TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
+                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyBom)}</TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
                     {it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—'}
                   </TableCell>
-                  <TableCell className={`text-right font-semibold text-xs ${it.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {fmtIDR(it.nominalDeviasi)}
                   </TableCell>
                 </TableRow>

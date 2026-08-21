@@ -9,16 +9,19 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Coins, Percent, Store } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 
 export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByNominal || [];
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+            <Coins className="h-3.5 w-3.5" />
+          </span>
           Top 10 by Nominal Deviasi
           <FormulaInfo
             formula="Rank by |NOMINAL DEVIASI| (descending)"
@@ -32,34 +35,34 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">Financial impact ranking (absolute)</p>
+        <p className="text-xs text-muted-foreground ml-9">Financial impact ranking (absolute)</p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8">#</TableHead>
-                <TableHead>Item</TableHead>
-                <TableHead>Outlet</TableHead>
-                <TableHead className="text-right">Nominal</TableHead>
-                <TableHead className="text-center">Dir</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Nominal</TableHead>
+                <TableHead className="text-center h-8 text-[10px] font-semibold uppercase tracking-wider w-12">Dir</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => (
                 <TableRow
                   key={`${it.itemName}-${it.outletCode}`}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                   {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                 >
-                  <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
-                  <TableCell className="text-right font-semibold text-xs">{fmtIDR(it.absNominal)}</TableCell>
-                  <TableCell className={`text-center text-xs font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
+                  <TableCell className="text-right font-semibold text-xs tabular-nums">{fmtIDR(it.absNominal)}</TableCell>
+                  <TableCell className={`text-center text-xs font-bold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -74,9 +77,12 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByDevBom || [];
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <Percent className="h-3.5 w-3.5" />
+          </span>
           Top 10 by Deviation/BOM
           <FormulaInfo
             formula="Dev/BOM % = |QTY Deviasi| / |QTY BOM| × 100%"
@@ -90,36 +96,36 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">Operational abnormality ranking</p>
+        <p className="text-xs text-muted-foreground ml-9">Operational abnormality ranking</p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8">#</TableHead>
-                <TableHead>Item</TableHead>
-                <TableHead>Outlet</TableHead>
-                <TableHead className="text-right">Dev/BOM</TableHead>
-                <TableHead className="text-right">Tol.</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider w-16">Tol.</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => {
                 const breach = it.tolerance != null && Math.abs(it.devBom) > Math.abs(it.tolerance);
                 return (
                   <TableRow
                     key={`${it.itemName}-${it.outletCode}`}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${breach ? 'bg-red-50/40 dark:bg-red-950/10' : ''}`}
                     {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                   >
-                    <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
-                    <TableCell className={`text-right font-semibold text-xs ${breach ? 'text-red-600' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
+                    <TableCell className={`text-right font-semibold text-xs tabular-nums ${breach ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
                   </TableRow>
                 );
               })}
@@ -136,9 +142,12 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+            <Store className="h-3.5 w-3.5" />
+          </span>
           Top Outlets
           <FormulaInfo
             formula="Rank by Σ|NOMINAL DEVIASI| per outlet (descending)"
@@ -152,38 +161,38 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">By absolute nominal deviation</p>
+        <p className="text-xs text-muted-foreground ml-9">By absolute nominal deviation</p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8">#</TableHead>
-                <TableHead>Outlet</TableHead>
-                <TableHead>Area</TableHead>
-                <TableHead className="text-right">Nominal</TableHead>
-                <TableHead className="text-right">Dev/BOM</TableHead>
-                <TableHead className="text-right">Area Avg</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Area</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Nominal</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
+                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Area Avg</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground text-xs py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
               ) : items.map((o, i) => {
                 const aboveArea = o.areaAvg > 0 && o.devBom > o.areaAvg * 1.5;
                 return (
                   <TableRow
                     key={o.outletCode}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${aboveArea ? 'bg-red-50/40 dark:bg-red-950/10' : ''}`}
                     {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                   >
-                    <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
-                    <TableCell className="text-right font-semibold text-xs">{fmtIDR(o.absNominal)}</TableCell>
-                    <TableCell className={`text-right text-xs font-semibold ${aboveArea ? 'text-red-600' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">{fmtPctAbs(o.areaAvg)}</TableCell>
+                    <TableCell className="text-right font-semibold text-xs tabular-nums">{fmtIDR(o.absNominal)}</TableCell>
+                    <TableCell className={`text-right text-xs font-semibold tabular-nums ${aboveArea ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{fmtPctAbs(o.areaAvg)}</TableCell>
                   </TableRow>
                 );
               })}

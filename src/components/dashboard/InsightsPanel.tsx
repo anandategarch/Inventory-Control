@@ -30,34 +30,39 @@ const SEVERITY_STYLES: Record<Insight['severity'], {
   iconBg: string;
   title: string;
   badge: string;
+  accent: string;
 }> = {
   critical: {
-    border: 'border-red-200/50 dark:border-red-900/50',
-    bg: 'bg-red-50/40 dark:bg-red-950/20',
+    border: 'border-red-200/70 dark:border-red-900/60',
+    bg: 'bg-gradient-to-br from-red-50/80 to-red-50/30 dark:from-red-950/30 dark:to-red-950/10',
     iconBg: 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400',
     title: 'text-red-700 dark:text-red-400',
     badge: 'border-red-300 text-red-700 dark:border-red-800 dark:text-red-400',
+    accent: 'bg-red-500',
   },
   warning: {
-    border: 'border-amber-200/50 dark:border-amber-900/50',
-    bg: 'bg-amber-50/40 dark:bg-amber-950/20',
+    border: 'border-amber-200/70 dark:border-amber-900/60',
+    bg: 'bg-gradient-to-br from-amber-50/80 to-amber-50/30 dark:from-amber-950/30 dark:to-amber-950/10',
     iconBg: 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400',
     title: 'text-amber-700 dark:text-amber-400',
     badge: 'border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400',
+    accent: 'bg-amber-500',
   },
   info: {
-    border: 'border-sky-200/50 dark:border-sky-900/50',
-    bg: 'bg-sky-50/40 dark:bg-sky-950/20',
-    iconBg: 'bg-sky-100 text-sky-600 dark:bg-sky-950/60 dark:text-sky-400',
-    title: 'text-sky-700 dark:text-sky-400',
-    badge: 'border-sky-300 text-sky-700 dark:border-sky-800 dark:text-sky-400',
+    border: 'border-zinc-200/80 dark:border-zinc-800/60',
+    bg: 'bg-gradient-to-br from-zinc-50/80 to-zinc-50/30 dark:from-zinc-900/40 dark:to-zinc-900/10',
+    iconBg: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300',
+    title: 'text-zinc-700 dark:text-zinc-300',
+    badge: 'border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300',
+    accent: 'bg-zinc-500',
   },
   positive: {
-    border: 'border-emerald-200/50 dark:border-emerald-900/50',
-    bg: 'bg-emerald-50/40 dark:bg-emerald-950/20',
+    border: 'border-emerald-200/70 dark:border-emerald-900/60',
+    bg: 'bg-gradient-to-br from-emerald-50/80 to-emerald-50/30 dark:from-emerald-950/30 dark:to-emerald-950/10',
     iconBg: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400',
     title: 'text-emerald-700 dark:text-emerald-400',
     badge: 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400',
+    accent: 'bg-emerald-500',
   },
 };
 
@@ -277,47 +282,52 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3 border-b">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Lightbulb className="h-4 w-4 text-amber-500" />
-              Insight Otomatis
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {insights.length} insight dihasilkan dari analisis periode {data.period.weekLabel} {data.period.monthLabel}
-            </p>
+          <div className="flex items-start gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5">
+              <Lightbulb className="h-3.5 w-3.5" />
+            </span>
+            <div>
+              <CardTitle className="text-base">Insight Otomatis</CardTitle>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                <span className="font-medium tabular-nums">{insights.length}</span> insight dari analisis periode <span className="font-medium">{data.period.weekLabel} {data.period.monthLabel}</span>
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {counts.critical > 0 && (
-              <Badge variant="outline" className="text-xs border-red-300 text-red-700 dark:border-red-800 dark:text-red-400">
-                Kritis: {counts.critical}
+              <Badge variant="outline" className="text-[10px] h-5 border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 bg-red-50/50 dark:bg-red-950/30 font-medium">
+                Kritis: <span className="tabular-nums">{counts.critical}</span>
               </Badge>
             )}
             {counts.warning > 0 && (
-              <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400">
-                Warning: {counts.warning}
+              <Badge variant="outline" className="text-[10px] h-5 border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/30 font-medium">
+                Warning: <span className="tabular-nums">{counts.warning}</span>
               </Badge>
             )}
             {counts.positive > 0 && (
-              <Badge variant="outline" className="text-xs border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400">
-                Positif: {counts.positive}
+              <Badge variant="outline" className="text-[10px] h-5 border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30 font-medium">
+                Positif: <span className="tabular-nums">{counts.positive}</span>
               </Badge>
             )}
             {counts.info > 0 && (
-              <Badge variant="outline" className="text-xs border-sky-300 text-sky-700 dark:border-sky-800 dark:text-sky-400">
-                Info: {counts.info}
+              <Badge variant="outline" className="text-[10px] h-5 border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 bg-zinc-50/50 dark:bg-zinc-900/30 font-medium">
+                Info: <span className="tabular-nums">{counts.info}</span>
               </Badge>
             )}
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-4">
         {insights.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6">
-            Tidak ada insight yang dapat dihasilkan dari data ini.
-          </p>
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-muted/40 text-muted-foreground/50 mb-3">
+              <Lightbulb className="h-6 w-6" />
+            </div>
+            <p className="text-sm text-muted-foreground">Tidak ada insight yang dapat dihasilkan dari data ini.</p>
+          </div>
         ) : (
           <div className="grid md:grid-cols-2 gap-3">
             {insights.map((insight) => {
@@ -325,19 +335,21 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
               return (
                 <div
                   key={insight.id}
-                  className={`rounded-lg border ${style.border} ${style.bg} p-3 flex items-start gap-3`}
+                  className={`relative rounded-lg border ${style.border} ${style.bg} p-3 pl-4 flex items-start gap-3 transition-all hover:shadow-sm hover:-translate-y-px`}
                 >
-                  <div className={`shrink-0 h-8 w-8 rounded-md flex items-center justify-center ${style.iconBg}`}>
+                  {/* Left accent bar */}
+                  <span className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-lg ${style.accent}`} aria-hidden />
+                  <div className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center ${style.iconBg} shadow-sm`}>
                     {insight.icon}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm font-semibold ${style.title}`}>{insight.title}</p>
-                    <p className="text-xs text-foreground/80 mt-0.5 leading-relaxed">{insight.body}</p>
+                    <p className="text-xs text-foreground/80 mt-1 leading-relaxed">{insight.body}</p>
                     {insight.action && insight.actionTarget && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 mt-2 px-2 text-xs"
+                        className="h-6 mt-2 px-2 text-xs hover:bg-foreground/5"
                         onClick={() => onAction(insight)}
                       >
                         {insight.action}

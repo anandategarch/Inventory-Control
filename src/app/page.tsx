@@ -38,11 +38,16 @@ import {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
-      <Boxes className="h-12 w-12 text-muted-foreground/50 mb-4" />
-      <h3 className="text-lg font-semibold">Tidak Ada Data Tersedia</h3>
-      <p className="text-sm text-muted-foreground mt-2 max-w-md">
-        Tidak ada data inventory di database. Hubungi administrator untuk import data.
+    <div className="flex flex-col items-center justify-center py-20 px-4 text-center">
+      <div className="relative mb-6">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-amber-200/40 to-red-200/40 dark:from-amber-900/20 dark:to-red-900/20 blur-2xl" aria-hidden />
+        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border bg-gradient-to-br from-muted/80 to-muted/40 dark:from-zinc-800 dark:to-zinc-900 shadow-sm">
+          <Boxes className="h-8 w-8 text-muted-foreground/70" />
+        </div>
+      </div>
+      <h3 className="text-lg font-semibold tracking-tight">Tidak Ada Data Tersedia</h3>
+      <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
+        Belum ada data inventory di database. Hubungi administrator untuk import data pertama kali.
       </p>
     </div>
   );
@@ -51,27 +56,56 @@ function EmptyState() {
 function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
   return (
     <div className="space-y-4">
-      {/* Loading header with spinner */}
-      <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        <span>{text}</span>
+      {/* Loading banner */}
+      <div className="flex items-center justify-center gap-2.5 py-3 text-sm text-muted-foreground rounded-lg border bg-muted/30">
+        <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+        <span className="font-medium">{text}</span>
       </div>
       {/* Skeleton grid — KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-8 rounded-full" />
+            </div>
+            <Skeleton className="h-6 w-28" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+        ))}
       </div>
       {/* Skeleton — recommendation card */}
-      <Skeleton className="h-48" />
+      <div className="rounded-xl border bg-card p-5 space-y-3">
+        <Skeleton className="h-5 w-48" />
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="rounded-lg border p-3 space-y-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+            <Skeleton className="h-2 w-full" />
+          </div>
+        ))}
+      </div>
       {/* Skeleton — insights + health */}
       <div className="grid lg:grid-cols-3 gap-4">
-        <Skeleton className="h-72" />
-        <Skeleton className="h-72" />
-        <Skeleton className="h-72" />
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-5 space-y-3">
+            <Skeleton className="h-5 w-32" />
+            {Array.from({ length: 4 }).map((_, j) => (
+              <Skeleton key={j} className="h-3 w-full" />
+            ))}
+          </div>
+        ))}
       </div>
       {/* Skeleton — top items tables */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <Skeleton className="h-72" />
-        <Skeleton className="h-72" />
+      <div className="grid lg:grid-cols-3 gap-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-5 space-y-2">
+            <Skeleton className="h-5 w-40" />
+            {Array.from({ length: 6 }).map((_, j) => (
+              <Skeleton key={j} className="h-3 w-full" />
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -79,10 +113,20 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <Card className="border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-900">
+    <Card className="border-red-200/70 bg-gradient-to-br from-red-50 to-red-50/30 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/70 shadow-sm">
       <CardContent className="p-6">
-        <h3 className="text-base font-semibold text-red-700 dark:text-red-400 mb-1">Error Analisis</h3>
-        <p className="text-sm text-red-600 dark:text-red-400/90">{message}</p>
+        <div className="flex items-start gap-3">
+          <div className="shrink-0 flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-red-700 dark:text-red-400">Gagal Memuat Analisis</h3>
+            <p className="text-sm text-red-600/90 dark:text-red-400/80 mt-1 leading-relaxed">{message}</p>
+            <p className="text-xs text-red-600/60 dark:text-red-400/50 mt-2">
+              Periksa koneksi jaringan atau coba refresh halaman. Jika berlanjut, hubungi administrator.
+            </p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -90,12 +134,18 @@ function ErrorState({ message }: { message: string }) {
 
 function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNode; title: string; badge?: string; isFetching?: boolean }) {
   return (
-    <div className="flex items-center gap-2 mb-3">
-      {icon}
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      {badge && <Badge variant="outline" className="text-xs">{badge}</Badge>}
+    <div className="flex items-center gap-2.5 mb-3">
+      <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+        {icon}
+      </span>
+      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+      {badge && (
+        <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground/80 h-5">
+          {badge}
+        </Badge>
+      )}
       {isFetching && (
-        <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5">
           <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
           Memperbarui
         </Badge>
@@ -107,10 +157,10 @@ function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNo
 // Wrapper that shows loading overlay when fetching
 function FetchAware({ isFetching, children }: { isFetching: boolean; children: React.ReactNode }) {
   return (
-    <div className="relative">
+    <div className={`relative transition-all duration-200 ${isFetching ? 'opacity-95' : 'opacity-100'}`}>
       {isFetching && (
-        <div className="absolute top-2 right-2 z-10">
-          <Badge variant="outline" className="text-[10px] text-primary border-primary/30 bg-background/80 backdrop-blur">
+        <div className="absolute -top-1 right-1 z-10">
+          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-background/85 backdrop-blur-sm h-5 shadow-sm">
             <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
             Memperbarui
           </Badge>
@@ -246,37 +296,40 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
-        <div className="px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+      <header className="border-b bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
+        <div className="px-4 sm:px-6 py-3 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-700 dark:from-zinc-100 dark:to-zinc-300 text-primary-foreground shadow-sm shrink-0">
               <Boxes className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-base font-semibold tracking-tight truncate">Inventory Control Intelligence</h1>
-              <p className="text-xs text-muted-foreground truncate">
-                {status?.stats ? `${status.stats.totalOutlets} Outlet · ` : ''}F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
+              <h1 className="text-base font-semibold tracking-tight truncate leading-tight">Inventory Control Intelligence</h1>
+              <p className="text-[11px] text-muted-foreground truncate">
+                {status?.stats ? (
+                  <span className="tabular-nums">{status.stats.totalOutlets} Outlet · </span>
+                ) : null}
+                F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {analysis.isFetching && analysis.data && (
-              <Badge variant="outline" className="text-[11px]">
-                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              <Badge variant="outline" className="text-[11px] h-7 gap-1 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
+                <Loader2 className="h-3 w-3 animate-spin" />
                 Memperbarui...
               </Badge>
             )}
             {analysis.data && (
-              <Badge variant="outline" className="text-[11px] hidden sm:inline-flex">
-                <Activity className="h-3 w-3 mr-1" />
-                {analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms
+              <Badge variant="outline" className="text-[11px] h-7 hidden sm:inline-flex gap-1 text-muted-foreground">
+                <Activity className="h-3 w-3" />
+                <span className="tabular-nums">{analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms</span>
               </Badge>
             )}
             {analysis.data && (
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 gap-1.5 text-xs"
+                className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow transition-all"
                 disabled={isExporting}
                 onClick={() => setExportDialogOpen(true)}
                 aria-label="Export laporan Word"
@@ -306,14 +359,14 @@ export default function DashboardPage() {
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap">
-              <TabsTrigger value="dashboard" className="text-xs">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1">
+              <TabsTrigger value="dashboard" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>
-              <TabsTrigger value="resto" className="text-xs">
+              <TabsTrigger value="resto" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
                 <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
-              <TabsTrigger value="peer" className="text-xs">
+              <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
                 <Activity className="h-3.5 w-3.5" /> Peer Comparison
               </TabsTrigger>
             </TabsList>
@@ -429,26 +482,26 @@ export default function DashboardPage() {
       </main>
 
       {/* Footer (sticky bottom) */}
-      <footer className="mt-auto border-t bg-background/95 backdrop-blur">
-        <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <footer className="mt-auto border-t bg-background/80 backdrop-blur">
+        <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <ShieldAlert className="h-3 w-3" />
+            <span className="flex items-center gap-1 font-medium">
+              <ShieldAlert className="h-3 w-3 text-amber-500" />
               Inventory Control Intelligence
             </span>
             {status?.stats && (
-              <span className="hidden sm:inline">
+              <span className="hidden sm:inline tabular-nums">
                 {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
               </span>
             )}
           </div>
           <div className="flex items-center gap-3">
             {analysis.data && (
-              <span>
+              <span className="tabular-nums">
                 Analisis terakhir: {analysis.data.durationMs}ms · {analysis.data.cached ? 'cache' : 'segar'}
               </span>
             )}
-            <span className="hidden sm:inline">Klik baris mana saja untuk drill-down ke sumber</span>
+            <span className="hidden sm:inline text-muted-foreground/80">Klik baris mana saja untuk drill-down ke sumber</span>
           </div>
         </div>
       </footer>

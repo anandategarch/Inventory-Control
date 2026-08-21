@@ -73,13 +73,16 @@ export function RestoRecommendationCard() {
 
   if (isLoading) {
     return (
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Target className="h-4 w-4" />
+          <CardTitle className="text-base flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+              <Target className="h-3.5 w-3.5" />
+            </span>
             Resto Prioritas Analisa
-            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
           </CardTitle>
+          <p className="text-xs text-muted-foreground ml-9">Memuat rekomendasi...</p>
         </CardHeader>
         <CardContent className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -105,7 +108,6 @@ export function RestoRecommendationCard() {
               </div>
             </div>
           ))}
-          <p className="text-center text-xs text-muted-foreground">Memuat rekomendasi...</p>
         </CardContent>
       </Card>
     );
@@ -120,125 +122,159 @@ export function RestoRecommendationCard() {
   if (recommendations.length === 0) return null;
 
   const levelColor = (level: string) => {
-    if (level === 'TINGGI') return 'text-red-600 bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900 dark:text-red-400';
-    if (level === 'SEDANG') return 'text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900 dark:text-amber-400';
-    return 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-400';
+    if (level === 'TINGGI') return 'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-950/40 border-red-300 dark:border-red-800';
+    if (level === 'SEDANG') return 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800';
+    return 'text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800';
+  };
+
+  const levelAccent = (level: string) => {
+    if (level === 'TINGGI') return 'bg-red-500';
+    if (level === 'SEDANG') return 'bg-amber-500';
+    return 'bg-emerald-500';
+  };
+
+  const rankBg = (level: string) => {
+    if (level === 'TINGGI') return 'bg-gradient-to-br from-red-500 to-red-600 text-white';
+    if (level === 'SEDANG') return 'bg-gradient-to-br from-amber-500 to-amber-600 text-white';
+    return 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white';
   };
 
   const scoreColor = (score: number) => {
-    if (score >= 60) return 'text-red-600';
-    if (score >= 35) return 'text-amber-600';
-    return 'text-emerald-600';
+    if (score >= 60) return 'text-red-600 dark:text-red-400';
+    if (score >= 35) return 'text-amber-600 dark:text-amber-400';
+    return 'text-emerald-600 dark:text-emerald-400';
   };
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Target className="h-4 w-4" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+            <Target className="h-3.5 w-3.5" />
+          </span>
           Resto Prioritas Analisa
           {isFetching && !isLoading && (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
           )}
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Top {recommendations.length} resto dengan Priority Score tertinggi — klik untuk deep dive
+        <p className="text-xs text-muted-foreground ml-9">
+          Top <span className="font-medium tabular-nums">{recommendations.length}</span> resto dengan Priority Score tertinggi — klik untuk deep dive
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
         {recommendations.map((r, i) => (
           <div
             key={r.outletCode}
-            className={`rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors ${
-              r.priorityLevel === 'TINGGI' ? 'border-red-200 dark:border-red-900' :
-              r.priorityLevel === 'SEDANG' ? 'border-amber-200 dark:border-amber-900' :
-              'border-muted'
+            className={`relative rounded-xl border p-3 pl-4 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 overflow-hidden ${
+              r.priorityLevel === 'TINGGI' ? 'border-red-200/80 dark:border-red-900/60 bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20' :
+              r.priorityLevel === 'SEDANG' ? 'border-amber-200/80 dark:border-amber-900/60 bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20' :
+              'border-border bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20'
             }`}
             {...clickableRowProps(() => setFocusOutlet(r.outletCode))}
           >
+            {/* Left accent bar by priority */}
+            <span className={`absolute left-0 top-0 bottom-0 w-1 ${levelAccent(r.priorityLevel)}`} aria-hidden />
+
             {/* Header row */}
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-xs font-bold text-muted-foreground">#{i + 1}</span>
+            <div className="flex items-start justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {/* Rank badge with gradient */}
+                <span className={`flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-bold shrink-0 shadow-sm ${rankBg(r.priorityLevel)}`}>
+                  {i + 1}
+                </span>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate">{r.outletName}</p>
-                  <p className="text-[10px] text-muted-foreground">{r.outletCode} · {r.area}</p>
+                  <p className="text-sm font-semibold truncate leading-tight">{r.outletName}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{r.outletCode} · {r.area}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-lg font-bold ${scoreColor(r.priorityScore)}`}>{r.priorityScore}</span>
-                <Badge variant="outline" className={`text-[10px] ${levelColor(r.priorityLevel)}`}>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <div className="text-right">
+                  <p className={`text-xl font-bold leading-none tabular-nums ${scoreColor(r.priorityScore)}`}>{r.priorityScore}</p>
+                  <p className="text-[9px] text-muted-foreground uppercase tracking-wider mt-0.5">Priority</p>
+                </div>
+                <Badge variant="outline" className={`text-[10px] font-semibold border ${levelColor(r.priorityLevel)}`}>
                   {r.priorityLevel}
                 </Badge>
               </div>
             </div>
 
             {/* Quick metrics */}
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground mb-2">
-              <span>Dev/BOM: <span className="font-mono font-semibold text-foreground">{fmtPctAbs(r.metrics.devBom)}</span></span>
-              <span>Nominal: <span className={`font-mono font-semibold ${r.metrics.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtIDR(r.metrics.nominalDeviasi)}</span></span>
-              <span>Items: <span className="font-mono font-semibold text-foreground">{r.metrics.itemCount}</span></span>
-              {r.metrics.topItem && (
-                <span className="truncate max-w-[150px]">Top: <span className="font-medium text-foreground">{r.metrics.topItem}</span></span>
-              )}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2 text-[11px]">
+              <div className="rounded-md border bg-background/60 px-2 py-1">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
+                <p className="font-mono font-semibold tabular-nums">{fmtPctAbs(r.metrics.devBom)}</p>
+              </div>
+              <div className="rounded-md border bg-background/60 px-2 py-1">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Nominal</p>
+                <p className={`font-mono font-semibold tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(r.metrics.nominalDeviasi)}</p>
+              </div>
+              <div className="rounded-md border bg-background/60 px-2 py-1">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Items</p>
+                <p className="font-mono font-semibold tabular-nums">{r.metrics.itemCount}</p>
+              </div>
+              <div className="rounded-md border bg-background/60 px-2 py-1 min-w-0">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Top Item</p>
+                <p className="font-medium truncate" title={r.metrics.topItem || ''}>{r.metrics.topItem || '—'}</p>
+              </div>
             </div>
 
             {/* Analysis bullets — show all signals (1-15), compact text */}
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 mb-2">
               {r.analysis.map((a, j) => (
-                <p key={j} className="text-[10px] text-muted-foreground flex items-start gap-1 leading-tight">
-                  <span className="text-primary mt-0.5 shrink-0">•</span>
+                <p key={j} className="text-[10px] text-muted-foreground flex items-start gap-1.5 leading-tight">
+                  <span className="text-amber-500 mt-1 shrink-0 text-[8px]">●</span>
                   <span>{a}</span>
                 </p>
               ))}
             </div>
 
             {/* Direction + trend indicators */}
-            <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t">
-              <Badge variant="outline" className={`text-[9px] ${
+            <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t">
+              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">Signals:</span>
+              <Badge variant="outline" className={`text-[9px] h-4 ${
                 r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' :
                 r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900' : ''
               }`}>
                 {r.metrics.direction}
               </Badge>
               {r.signals.directionFlip && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
                 </Badge>
               )}
               {r.signals.trendDeteriorating && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
                 </Badge>
               )}
               {r.signals.residualRatio > 0.4 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Residual {(r.signals.residualRatio * 100).toFixed(0)}%
+                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                  Residual <span className="tabular-nums ml-0.5">{(r.signals.residualRatio * 100).toFixed(0)}%</span>
                 </Badge>
               )}
               {r.signals.toleranceBreachHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Tol Breach High: {r.signals.toleranceBreachHighCount}
+                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                  Tol Breach: <span className="tabular-nums ml-0.5">{r.signals.toleranceBreachHighCount}</span>
                 </Badge>
               )}
               {r.signals.overExplainedCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Anomali: {r.signals.overExplainedCount}
+                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                  Anomali: <span className="tabular-nums ml-0.5">{r.signals.overExplainedCount}</span>
                 </Badge>
               )}
               {r.signals.highLossItemCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  High Loss: {r.signals.highLossItemCount}
+                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                  High Loss: <span className="tabular-nums ml-0.5">{r.signals.highLossItemCount}</span>
                 </Badge>
               )}
               {r.signals.noToleranceItems > 0 && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-                  No Tol: {r.signals.noToleranceItems}
+                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                  No Tol: <span className="tabular-nums ml-0.5">{r.signals.noToleranceItems}</span>
                 </Badge>
               )}
               {r.signals.benchmarkHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-                  Bench High: {r.signals.benchmarkHighCount}
+                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                  Bench High: <span className="tabular-nums ml-0.5">{r.signals.benchmarkHighCount}</span>
                 </Badge>
               )}
             </div>

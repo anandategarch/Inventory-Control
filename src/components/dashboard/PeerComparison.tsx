@@ -136,10 +136,18 @@ export function PeerComparison() {
 
   if (!activeOutlet) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>Pilih outlet untuk melihat Peer Comparison</p>
+      <Card className="overflow-hidden">
+        <CardContent className="py-16 text-center">
+          <div className="flex flex-col items-center">
+            <div className="relative mb-4">
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-amber-200/30 to-emerald-200/30 dark:from-amber-900/20 dark:to-emerald-900/20 blur-xl" aria-hidden />
+              <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50">
+                <Users className="h-7 w-7" />
+              </div>
+            </div>
+            <p className="text-sm font-medium text-muted-foreground">Pilih outlet untuk melihat Peer Comparison</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Sistem akan mencari resto dengan sales ±10% sebagai peer group</p>
+          </div>
         </CardContent>
       </Card>
     );
@@ -202,23 +210,25 @@ export function PeerComparison() {
   return (
     <div className="space-y-4">
       {/* ============ 1. HEADER + EXISTING TABLE ============ */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                Peer Comparison
-              </CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                {activeOutlet} vs {peerCount} resto dengan sales ±10% ({mode === 'week' ? `WEEK ${currentWeek}` : 'Bulan'})
-              </p>
+            <div className="flex items-start gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+                <Users className="h-3.5 w-3.5" />
+              </span>
+              <div>
+                <CardTitle className="text-base">Peer Comparison</CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
+                  <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{peerCount}</span> resto dengan sales ±10% ({mode === 'week' ? `WEEK ${currentWeek}` : 'Bulan'})
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <select
                 value={mode}
                 onChange={(e) => setMode(e.target.value as 'week' | 'month')}
-                className="h-7 text-xs border rounded px-2 bg-background"
+                className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
                 aria-label="Mode periode"
               >
                 <option value="week">Per Week</option>
@@ -227,7 +237,7 @@ export function PeerComparison() {
               <select
                 value={String(peerLimit)}
                 onChange={(e) => setPeerLimit(parseInt(e.target.value))}
-                className="h-7 text-xs border rounded px-2 bg-background"
+                className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
                 aria-label="Jumlah peer"
               >
                 <option value="5">Top 5</option>
@@ -257,11 +267,14 @@ export function PeerComparison() {
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <BarChart3 className="h-4 w-4" />
-            Peer Table {peerCount > 0 && <span className="text-muted-foreground">— dengan Anomaly Flags</span>}
+          <CardTitle className="text-sm flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+              <BarChart3 className="h-3.5 w-3.5" />
+            </span>
+            Peer Table
+            {peerCount > 0 && <span className="text-muted-foreground text-xs font-normal">dengan Anomaly Flags</span>}
             {mainFetching && !mainLoading && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
             )}
@@ -270,7 +283,7 @@ export function PeerComparison() {
         <CardContent className="p-0">
           {mainLoading ? (
             <div className="py-12 flex items-center justify-center">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
             </div>
           ) : !mainData && !mainError ? (
             // FIX FE-1: When query is disabled (e.g., no outlet selected), show
@@ -279,9 +292,10 @@ export function PeerComparison() {
               Pilih outlet untuk melihat peer comparison
             </p>
           ) : mainError || !mainData?.success ? (
-            <p className="text-center text-red-600 py-12">
-              Error: {mainError?.message || mainData?.error || 'Unknown'}
-            </p>
+            <div className="py-10 text-center">
+              <p className="text-red-600 dark:text-red-400 font-medium">Gagal Memuat Data</p>
+              <p className="text-xs text-muted-foreground mt-1">{mainError?.message || mainData?.error || 'Unknown'}</p>
+            </div>
           ) : peers.length === 0 ? (
             <div className="text-center text-muted-foreground text-xs py-6 space-y-2">
               <p>Tidak ada peer ditemukan untuk outlet ini.</p>
@@ -290,29 +304,29 @@ export function PeerComparison() {
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <Table className="min-w-[1400px]">
-                <TableHeader className="sticky top-0 bg-background z-10">
-                  <TableRow>
-                    <TableHead className="text-[11px] sticky left-0 bg-background">Resto</TableHead>
-                    <TableHead className="text-[11px]">Area</TableHead>
-                    <TableHead className="text-[11px]">PIC</TableHead>
-                    <TableHead className="text-[11px]">Top Item</TableHead>
+                <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+                  <TableRow className="border-b hover:bg-transparent">
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider sticky left-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-20">Resto</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Area</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">PIC</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Top Item</TableHead>
                     {columns.map(col => (
-                      <TableHead key={col.key} className="text-[11px] text-right">{col.label}</TableHead>
+                      <TableHead key={col.key} className="text-[10px] font-semibold uppercase tracking-wider text-right">{col.label}</TableHead>
                     ))}
-                    <TableHead className="text-[11px] text-center">Dir</TableHead>
-                    <TableHead className="text-[11px] text-center">Flags</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Dir</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Flags</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {/* Peer Average Row */}
                   {peerCount > 0 && (
-                    <TableRow className="border-b-2 border-muted-foreground/20 bg-muted/50">
-                      <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50">📊 Peer Avg</TableCell>
+                    <TableRow className="border-b-2 border-foreground/20 bg-muted/50 dark:bg-zinc-900/50 font-medium">
+                      <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50 dark:bg-zinc-900/50 z-10">📊 Peer Avg</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
                       {columns.map(col => (
-                        <TableCell key={col.key} className="text-[11px] text-right text-muted-foreground font-mono">
+                        <TableCell key={col.key} className="text-[11px] text-right text-muted-foreground font-mono tabular-nums">
                           {col.format(peerAverages[col.key] as number)}
                         </TableCell>
                       ))}
@@ -321,15 +335,18 @@ export function PeerComparison() {
                     </TableRow>
                   )}
                   {/* Outlet Rows */}
-                  {peers.map((p) => (
+                  {peers.map((p, i) => (
                     <TableRow
                       key={p.outletCode}
-                      className={`cursor-pointer hover:bg-muted/50 ${p.isTarget ? 'bg-primary/10 border-primary/30' : ''}`}
+                      className={`cursor-pointer hover:bg-muted/40 transition-colors ${p.isTarget ? 'bg-amber-50/60 dark:bg-amber-950/20 border-l-2 border-l-amber-500' : i % 2 === 1 ? 'bg-muted/20' : ''}`}
                       {...clickableRowProps(() => setFocusOutlet(p.outletCode))}
                     >
-                      <TableCell className="text-[11px] font-medium sticky left-0 bg-background">
-                        {p.outletName}
-                        {p.isTarget && <Badge variant="default" className="text-[9px] ml-1 h-4">TARGET</Badge>}
+                      <TableCell className="text-[11px] font-medium sticky left-0 bg-background z-10">
+                        <div className="flex items-center gap-1.5">
+                          {p.isTarget && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
+                          <span className="truncate">{p.outletName}</span>
+                        </div>
+                        {p.isTarget && <Badge variant="default" className="text-[9px] ml-3 h-4 bg-amber-600 hover:bg-amber-600 text-white">TARGET</Badge>}
                         <div className="text-[10px] text-muted-foreground">{p.outletCode}</div>
                       </TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
@@ -339,12 +356,12 @@ export function PeerComparison() {
                         const val = p[col.key] as number;
                         const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, col.higherBetter) : '';
                         return (
-                          <TableCell key={col.key} className={`text-[11px] text-right font-mono ${colorClass}`}>
+                          <TableCell key={col.key} className={`text-[11px] text-right font-mono tabular-nums ${colorClass}`}>
                             {col.format(val)}
                           </TableCell>
                         );
                       })}
-                      <TableCell className={`text-[11px] text-center font-semibold ${p.direction === 'LOSS' ? 'text-red-600' : p.direction === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+                      <TableCell className={`text-[11px] text-center font-bold ${p.direction === 'LOSS' ? 'text-red-600 dark:text-red-400' : p.direction === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                         {p.direction?.[0] || '—'}
                       </TableCell>
                       <TableCell className="text-[11px] text-center">
@@ -356,9 +373,9 @@ export function PeerComparison() {
               </Table>
             </div>
           )}
-          <div className="p-2 text-[10px] text-muted-foreground border-t">
-            💡 Klik baris untuk deep dive ke Resto Analysis. Hijau = lebih baik dari peer avg, Merah = lebih buruk.
-            Sales range: ±10% dari {targetRow ? fmtIDR(targetRow.sales) : 'target'}.
+          <div className="p-3 text-[10px] text-muted-foreground border-t bg-muted/20 dark:bg-zinc-900/20">
+            💡 Klik baris untuk deep dive ke Resto Analysis. <span className="text-emerald-600 dark:text-emerald-400 font-medium">Hijau</span> = lebih baik dari peer avg, <span className="text-red-600 dark:text-red-400 font-medium">Merah</span> = lebih buruk.
+            Sales range: ±10% dari <span className="font-medium tabular-nums">{targetRow ? fmtIDR(targetRow.sales) : 'target'}</span>.
           </div>
         </CardContent>
       </Card>
@@ -409,26 +426,28 @@ function EfficiencyScoreCard({ target, peerAvg }: { target: PeerRow; peerAvg: Re
   const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Gauge className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
+            <Gauge className="h-3.5 w-3.5" />
+          </span>
           Efficiency Score
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-end justify-between">
           <div>
-            <span className={`text-3xl font-bold ${textColor}`}>{score.toFixed(0)}</span>
-            <span className="text-sm text-muted-foreground">/100</span>
+            <span className={`text-3xl font-bold tabular-nums ${textColor}`}>{score.toFixed(0)}</span>
+            <span className="text-sm text-muted-foreground ml-0.5">/100</span>
           </div>
           <div className="text-right text-xs">
-            <div className="text-muted-foreground">Peer Avg: ~{peerAvgScore}/100</div>
-            <div className={textColor}>{label}</div>
+            <div className="text-muted-foreground tabular-nums">Peer Avg: ~{peerAvgScore}/100</div>
+            <div className={`font-medium ${textColor}`}>{label}</div>
           </div>
         </div>
         <div className="relative h-3 w-full rounded-full bg-muted overflow-hidden" role="progressbar" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100}>
-          <div className={`h-full ${color} transition-all`} style={{ width: `${score}%` }} />
+          <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${score}%` }} />
           {/* Peer average marker */}
           <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ left: '50%' }} title="Peer avg ~50" />
         </div>
@@ -473,30 +492,32 @@ function GapAnalysisCard({
   });
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Target className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+            <Target className="h-3.5 w-3.5" />
+          </span>
           Gap Analysis (vs Peer Best)
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">Membandingkan target dengan peer TERBAIK (bukan rata-rata).</p>
+        <p className="text-[11px] text-muted-foreground ml-9">Membandingkan target dengan peer TERBAIK (bukan rata-rata).</p>
       </CardHeader>
       <CardContent>
         <div className="grid gap-2 sm:grid-cols-2">
           {rows.map(r => (
-            <div key={r.key as string} className="rounded-md border p-2.5 bg-muted/30">
+            <div key={r.key as string} className="rounded-lg border bg-muted/20 p-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
-                <Badge variant="outline" className={`text-[9px] h-4 ${r.isWorse ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'}`}>
+                <Badge variant="outline" className={`text-[9px] h-4 font-medium ${r.isWorse ? 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30' : 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'}`}>
                   {r.isWorse ? 'di bawah best' : 'di atas best'}
                 </Badge>
               </div>
-              <div className="mt-1 text-xs font-mono">
+              <div className="mt-1 text-xs font-mono tabular-nums">
                 <span className="font-semibold">{r.format(r.targetVal)}</span>
                 <span className="text-muted-foreground"> vs best </span>
-                <span className="text-emerald-600">{r.format(r.bestVal)}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{r.format(r.bestVal)}</span>
               </div>
-              <div className={`text-[11px] font-semibold ${r.isWorse ? 'text-red-600' : 'text-emerald-600'}`}>
+              <div className={`text-[11px] font-semibold tabular-nums ${r.isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                 {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
                 {r.pctAboveBest !== 0 && (
                   <span className="text-[10px] text-muted-foreground ml-1">
@@ -556,22 +577,24 @@ function RankingSummaryCard({
   };
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Award className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <Award className="h-3.5 w-3.5" />
+          </span>
           Ranking Summary
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
-          {target.outletName} ranked di antara {total} resto (1 = terbaik, {total} = terburuk).
+        <p className="text-[11px] text-muted-foreground ml-9">
+          <span className="font-medium text-foreground">{target.outletName}</span> ranked di antara <span className="font-medium tabular-nums">{total}</span> resto (1 = terbaik, <span className="tabular-nums">{total}</span> = terburuk).
         </p>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {keyRanks.map(({ col, rank, total: t, worst, best }) => (
-            <div key={col.key as string} className="flex items-center justify-between rounded-md border p-2 bg-muted/30">
+            <div key={col.key as string} className="flex items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
               <span className="text-[11px] text-muted-foreground">{col.label}</span>
-              <Badge className={`text-[10px] h-5 ${rankColor(rank, t)}`} variant="secondary">
+              <Badge className={`text-[10px] h-5 font-medium tabular-nums ${rankColor(rank, t)}`} variant="secondary">
                 #{rank}/{t}
                 {best && ' ★'}
                 {worst && ' ⚠'}
@@ -596,21 +619,23 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
   }));
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Sparkles className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
+            <Sparkles className="h-3.5 w-3.5" />
+          </span>
           Sales vs Dev/BOM
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
-          Setiap titik = 1 resto. Target ditandai merah. Posisi kanan-bawah = sales tinggi & deviasi rendah (ideal).
+        <p className="text-[11px] text-muted-foreground ml-9">
+          Setiap titik = 1 resto. Target ditandai merah. Posisi kanan-bawah = sales tinggi &amp; deviasi rendah (ideal).
         </p>
       </CardHeader>
       <CardContent>
         <div className="h-[280px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 10, right: 16, bottom: 24, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
               <XAxis
                 type="number"
                 dataKey="sales"
@@ -618,6 +643,8 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
                 tickFormatter={(v) => fmtIDR(v)}
                 tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                 stroke="hsl(var(--border))"
+                tickLine={false}
+                axisLine={false}
               >
               </XAxis>
               <YAxis
@@ -627,6 +654,8 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
                 unit="%"
                 tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                 stroke="hsl(var(--border))"
+                tickLine={false}
+                axisLine={false}
                 width={48}
               />
               <RTooltip
@@ -635,11 +664,11 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
                   if (!active || !payload || payload.length === 0) return null;
                   const d = payload[0].payload as any;
                   return (
-                    <div className="rounded-md border bg-background p-2 text-[11px] shadow-md">
-                      <div className="font-semibold">{d.outletName}</div>
-                      <div className="text-muted-foreground">Sales: {fmtIDR(d.sales)}</div>
-                      <div className="text-muted-foreground">Dev/BOM: {d.devBom.toFixed(1)}%</div>
-                      {d.isTarget && <div className="text-red-600 font-semibold mt-0.5">TARGET</div>}
+                    <div className="rounded-lg border bg-popover p-2.5 text-[11px] shadow-lg">
+                      <div className="font-semibold border-b pb-1 mb-1">{d.outletName}</div>
+                      <div className="text-muted-foreground tabular-nums">Sales: {fmtIDR(d.sales)}</div>
+                      <div className="text-muted-foreground tabular-nums">Dev/BOM: {d.devBom.toFixed(1)}%</div>
+                      {d.isTarget && <div className="text-red-600 dark:text-red-400 font-semibold mt-1">TARGET</div>}
                     </div>
                   );
                 }}
@@ -656,12 +685,12 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
             </ScatterChart>
           </ResponsiveContainer>
         </div>
-        <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground mt-1">
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-red-600" /> Target
+        <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground mt-2">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> Target
           </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" /> Peer
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-500" /> Peer
           </span>
         </div>
       </CardContent>
@@ -754,33 +783,35 @@ function ItemLevelComparison({
   error: Error | null;
 }) {
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <BarChart3 className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
+            <BarChart3 className="h-3.5 w-3.5" />
+          </span>
           Item-Level Comparison
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
-          Top 5 item di target outlet, dibandingkan dengan peer avg & peer best.
+        <p className="text-[11px] text-muted-foreground ml-9">
+          Top 5 item di target outlet, dibandingkan dengan peer avg &amp; peer best.
         </p>
       </CardHeader>
       <CardContent>
         {isLoading ? (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           </div>
         ) : !data && !error ? (
           // FIX FE-2: When query is disabled (no outlet selected), show waiting state
           // instead of "Error: Unknown" (!data?.success = true when data=undefined)
-          <p className="text-center text-xs text-muted-foreground py-4">
+          <p className="text-center text-xs text-muted-foreground py-6">
             Pilih outlet untuk melihat item-level comparison
           </p>
         ) : error || !data?.success ? (
-          <p className="text-center text-xs text-red-600 py-4">
+          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
             Error: {error?.message || data?.error || 'Unknown'}
           </p>
         ) : !data.items || data.items.length === 0 ? (
-          <p className="text-center text-xs text-muted-foreground py-4">
+          <p className="text-center text-xs text-muted-foreground py-6">
             Tidak ada item dengan deviasi signifikan pada periode ini.
           </p>
         ) : (
@@ -808,34 +839,34 @@ function ItemComparisonBlock({
   ];
 
   return (
-    <div className="rounded-md border p-3 bg-muted/20">
-      <div className="flex items-center justify-between mb-2">
+    <div className="rounded-lg border bg-muted/10 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 dark:bg-zinc-900/30">
         <h4 className="text-xs font-semibold flex items-center gap-1.5">
-          <span className="text-muted-foreground">📦</span>
-          {item.itemName}
+          <span className="text-zinc-500 dark:text-zinc-400">📦</span>
+          <span className="truncate" title={item.itemName}>{item.itemName}</span>
         </h4>
-        <Badge variant="outline" className="text-[9px] h-4">{item.peerCount} peer</Badge>
+        <Badge variant="outline" className="text-[9px] h-4 tabular-nums font-medium">{item.peerCount} peer</Badge>
       </div>
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead className="text-[10px] h-7">Metric</TableHead>
-            <TableHead className="text-[10px] h-7 text-right">Target</TableHead>
-            <TableHead className="text-[10px] h-7 text-right">Peer Avg</TableHead>
-            <TableHead className="text-[10px] h-7 text-right">Peer Best</TableHead>
-            <TableHead className="text-[10px] h-7 text-right">Gap</TableHead>
+          <TableRow className="border-b hover:bg-transparent">
+            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7">Metric</TableHead>
+            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Target</TableHead>
+            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Peer Avg</TableHead>
+            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Peer Best</TableHead>
+            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Gap</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map(r => {
             const isWorse = r.gap > 0; // all 3 are "bad" metrics (higher = worse)
             return (
-              <TableRow key={r.label}>
-                <TableCell className="text-[10px] py-1">{r.label}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono font-semibold">{r.format(r.target)}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono text-muted-foreground">{r.format(r.avg)}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono text-emerald-600">{r.format(r.best)}</TableCell>
-                <TableCell className={`text-[10px] py-1 text-right font-mono font-semibold ${isWorse ? 'text-red-600' : 'text-emerald-600'}`}>
+              <TableRow key={r.label} className="hover:bg-muted/30 transition-colors">
+                <TableCell className="text-[10px] py-1 font-medium">{r.label}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono font-semibold tabular-nums">{r.format(r.target)}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono text-muted-foreground tabular-nums">{r.format(r.avg)}</TableCell>
+                <TableCell className="text-[10px] py-1 text-right font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">{r.format(r.best)}</TableCell>
+                <TableCell className={`text-[10px] py-1 text-right font-mono font-semibold tabular-nums ${isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
                 </TableCell>
               </TableRow>
@@ -876,42 +907,46 @@ function TrendChartCard({
   }));
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <TrendingUp className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <TrendingUp className="h-3.5 w-3.5" />
+          </span>
           Trend Dev/BOM — Target vs Peer Avg
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-[11px] text-muted-foreground ml-9">
           Perbandingan Dev/BOM target vs rata-rata peer di setiap minggu bulan ini.
         </p>
       </CardHeader>
       <CardContent>
         {isLoading ? (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           </div>
         ) : !data ? (
-          <p className="text-center text-xs text-muted-foreground py-4">
+          <p className="text-center text-xs text-muted-foreground py-6">
             Menunggu peer data...
           </p>
         ) : error || !data?.success ? (
-          <p className="text-center text-xs text-red-600 py-4">
+          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
             Error: {error?.message || data?.error || 'Unknown'}
           </p>
         ) : chartData.length === 0 ? (
-          <p className="text-center text-xs text-muted-foreground py-4">
+          <p className="text-center text-xs text-muted-foreground py-6">
             Tidak ada data mingguan pada bulan ini.
           </p>
         ) : (
           <div className="h-[260px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="week" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
+                <XAxis dataKey="week" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" tickLine={false} axisLine={false} />
                 <YAxis
                   tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                   stroke="hsl(var(--border))"
+                  tickLine={false}
+                  axisLine={false}
                   width={40}
                   unit="%"
                 />
@@ -919,10 +954,10 @@ function TrendChartCard({
                   content={({ active, payload, label }) => {
                     if (!active || !payload || payload.length === 0) return null;
                     return (
-                      <div className="rounded-md border bg-background p-2 text-[11px] shadow-md">
-                        <div className="font-semibold mb-1">{label}</div>
+                      <div className="rounded-lg border bg-popover p-2.5 text-[11px] shadow-lg">
+                        <div className="font-semibold mb-1 border-b pb-1">{label}</div>
                         {payload.map((pl, i) => (
-                          <div key={i} style={{ color: pl.color }}>
+                          <div key={i} style={{ color: pl.color }} className="tabular-nums">
                             {pl.name}: {(pl.value as number).toFixed(2)}%
                           </div>
                         ))}
@@ -930,7 +965,7 @@ function TrendChartCard({
                     );
                   }}
                 />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
                 <Line
                   type="monotone"
                   dataKey="target"
@@ -1049,19 +1084,28 @@ function CorrelationInsightCard({
 
   const colorByType = (t: string) =>
     t === 'warn'
-      ? 'border-l-red-500 bg-red-50/50 dark:bg-red-950/20'
+      ? 'border-l-red-500 bg-red-50/60 dark:bg-red-950/20'
       : t === 'good'
-        ? 'border-l-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20'
-        : 'border-l-amber-500 bg-amber-50/50 dark:bg-amber-950/20';
+        ? 'border-l-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/20'
+        : 'border-l-amber-500 bg-amber-50/60 dark:bg-amber-950/20';
+
+  const iconByType = (t: string) =>
+    t === 'warn'
+      ? '⚠️'
+      : t === 'good'
+        ? '✅'
+        : '💡';
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Lightbulb className="h-4 w-4" />
+        <CardTitle className="text-sm flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <Lightbulb className="h-3.5 w-3.5" />
+          </span>
           Correlation Insight
         </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-[11px] text-muted-foreground ml-9">
           Insight otomatis berdasarkan pola data peer group.
         </p>
       </CardHeader>
@@ -1069,7 +1113,8 @@ function CorrelationInsightCard({
         <ul className="space-y-2">
           {insights.map((ins, i) => (
             <li key={i} className={`text-xs rounded-md border-l-4 px-3 py-2 ${colorByType(ins.type)}`}>
-              💡 {ins.text}
+              <span className="mr-1">{iconByType(ins.type)}</span>
+              <span className="text-foreground">{ins.text}</span>
             </li>
           ))}
         </ul>

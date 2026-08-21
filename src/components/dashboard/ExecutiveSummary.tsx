@@ -2,9 +2,8 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, ShieldCheck, ShieldAlert, Info } from 'lucide-react';
-import { fmtIDR, fmtNum, fmtPct, trendColor } from '@/lib/format';
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, Info, BarChart3 } from 'lucide-react';
+import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
@@ -51,31 +50,45 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
   const { setCardDrillDown } = useDashboard();
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
+  // Pill color based on direction (respects inverse flag for "bad when up" metrics)
+  const pillCls =
+    growth == null ? 'bg-muted text-muted-foreground'
+    : growth > 0
+      ? (inverse ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400' : 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400')
+      : growth < 0
+        ? (inverse ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400')
+        : 'bg-muted text-muted-foreground';
   return (
     <Card
-      className={`relative overflow-hidden transition-all ${drillDown ? 'cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md' : ''}`}
+      className={`relative overflow-hidden transition-all duration-200 ${drillDown ? 'cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5' : ''}`}
       {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
     >
-      <CardContent className="p-4">
+      {/* Subtle top accent line */}
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/10 to-transparent" aria-hidden />
+      <CardContent className="p-4 pt-3.5">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide line-clamp-2 leading-tight" title={label}>{label}</p>
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider line-clamp-2 leading-tight" title={label}>{label}</p>
           {growthStr && (
-            <span className={`inline-flex items-center gap-0.5 text-xs font-semibold shrink-0 ${trendColor(growth, inverse)}`}>
-              <Icon className="h-3 w-3" />
+            <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold shrink-0 rounded-full px-1.5 py-0.5 ${pillCls}`}>
+              <Icon className="h-2.5 w-2.5" />
               {growthStr}
             </span>
           )}
         </div>
-        <p className="mt-1.5 text-lg font-bold tracking-tight">
+        <p className="mt-1.5 text-xl font-bold tracking-tight tabular-nums">
           {unit === 'IDR' ? fmtIDR(value) : fmtNum(value, unit || '')}
         </p>
         {previous != null && (
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
+          <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
         )}
-        {hint && <p className="mt-1 text-[11px] text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
-        {drillDown && <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>}
+        {hint && <p className="mt-1 text-[10px] text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
+        {drillDown && (
+          <p className="mt-1.5 text-[10px] text-muted-foreground/60 inline-flex items-center gap-0.5">
+            <BarChart3 className="h-2.5 w-2.5" /> Detail
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -85,10 +98,15 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
   const { setCardDrillDown } = useDashboard();
   const s = data.executiveSummary;
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">Executive Summary</h2>
-        <Badge variant="outline" className="text-xs">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+            <Activity className="h-3.5 w-3.5" />
+          </span>
+          <h2 className="text-base font-semibold tracking-tight">Executive Summary</h2>
+        </div>
+        <Badge variant="outline" className="text-[11px] font-medium text-muted-foreground/80 tabular-nums h-6">
           {data.period.weekLabel} {data.period.monthLabel}
           {data.period.comparisonWeek ? ` vs ${data.period.comparisonWeek}${data.period.comparisonMonth && data.period.comparisonMonth !== data.period.monthLabel ? ` ${data.period.comparisonMonth}` : ''}` : ''}
         </Badge>
@@ -102,37 +120,49 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" />
         <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('loss'))}>
-          <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground">Total LOSS</p>
-            <p className="text-base font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-xs text-muted-foreground">Loss/Sales: {fmtPct(s.lossToSales, false)}</p>
-            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('loss'))}>
+          <div className="absolute inset-y-0 left-0 w-0.5 bg-red-500/60" aria-hidden />
+          <CardContent className="p-3.5 pl-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+              <TrendingDown className="h-3 w-3 text-red-500/70" />
+            </div>
+            <p className="text-base font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5">{fmtIDR(s.totalLoss)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
-          <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground">Total SURPLUS</p>
-            <p className="text-base font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-xs text-muted-foreground">Surplus/Sales: {fmtPct(s.surplusToSales, false)}</p>
-            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
+        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
+          <div className="absolute inset-y-0 left-0 w-0.5 bg-emerald-500/60" aria-hidden />
+          <CardContent className="p-3.5 pl-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+              <TrendingUp className="h-3 w-3 text-emerald-500/70" />
+            </div>
+            <p className="text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">{fmtIDR(s.totalSurplus)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
-          <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground">Residual Loss (QTY)</p>
-            <p className="text-base font-semibold text-amber-600">{fmtNum(s.residualLossQty)}</p>
-            <p className="text-xs text-muted-foreground">{fmtPct(s.residualLossPct, false)} of deviation</p>
-            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
+        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
+          <div className="absolute inset-y-0 left-0 w-0.5 bg-amber-500/60" aria-hidden />
+          <CardContent className="p-3.5 pl-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Residual Loss</p>
+              <AlertTriangle className="h-3 w-3 text-amber-500/70" />
+            </div>
+            <p className="text-base font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5">{fmtNum(s.residualLossQty)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:ring-2 hover:ring-primary/30 hover:shadow-md transition-all" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
-          <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground">Deviation/BOM</p>
-            <p className="text-base font-semibold">{fmtPct(s.deviationToBom, false)}</p>
-            <p className="text-xs text-muted-foreground">normalized ratio</p>
-            <p className="mt-1 text-[11px] text-primary/60">📊 Detail</p>
+        <Card className="cursor-pointer hover:shadow-md hover:border-foreground/20 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
+          <div className="absolute inset-y-0 left-0 w-0.5 bg-zinc-400/60" aria-hidden />
+          <CardContent className="p-3.5 pl-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Deviation/BOM</p>
+              <BarChart3 className="h-3 w-3 text-muted-foreground/70" />
+            </div>
+            <p className="text-base font-bold tabular-nums mt-0.5">{fmtPct(s.deviationToBom, false)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">normalized ratio</p>
           </CardContent>
         </Card>
       </div>
@@ -160,34 +190,47 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
 
   // Health verdict
   let verdict = 'SEHAT';
-  let verdictColor = 'text-emerald-600';
-  let verdictBg = 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-900';
-  let verdictIcon = <ShieldCheck className="h-5 w-5" />;
+  let verdictColor = 'text-emerald-600 dark:text-emerald-400';
+  let verdictBg = 'bg-gradient-to-br from-emerald-50 to-emerald-50/40 border-emerald-200/70 dark:from-emerald-950/40 dark:to-emerald-950/10 dark:border-emerald-900/60';
+  let verdictRing = 'ring-emerald-500/30';
+  let scoreColor = 'text-emerald-600 dark:text-emerald-400';
+  let scoreStroke = 'stroke-emerald-500';
   if (abnormalPct > 20) {
     verdict = 'KRITIS';
-    verdictColor = 'text-red-600';
-    verdictBg = 'bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-900';
-    verdictIcon = <ShieldAlert className="h-5 w-5" />;
+    verdictColor = 'text-red-600 dark:text-red-400';
+    verdictBg = 'bg-gradient-to-br from-red-50 to-red-50/40 border-red-200/70 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/60';
+    verdictRing = 'ring-red-500/30';
+    scoreColor = 'text-red-600 dark:text-red-400';
+    scoreStroke = 'stroke-red-500';
   } else if (abnormalPct > 5 || warningPct > 15) {
     verdict = 'PERLU PERHATIAN';
-    verdictColor = 'text-amber-600';
-    verdictBg = 'bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-900';
-    verdictIcon = <AlertTriangle className="h-5 w-5" />;
+    verdictColor = 'text-amber-600 dark:text-amber-400';
+    verdictBg = 'bg-gradient-to-br from-amber-50 to-amber-50/40 border-amber-200/70 dark:from-amber-950/40 dark:to-amber-950/10 dark:border-amber-900/60';
+    verdictRing = 'ring-amber-500/30';
+    scoreColor = 'text-amber-600 dark:text-amber-400';
+    scoreStroke = 'stroke-amber-500';
   }
 
+  // Circular progress (SVG ring) for health score
+  const radius = 26;
+  const circ = 2 * Math.PI * radius;
+  const dash = (healthScore / 100) * circ;
+
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-muted-foreground" />
+          <span className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+              <Activity className="h-3.5 w-3.5" />
+            </span>
             Health &amp; Alert
           </span>
           <div className="flex items-center gap-2">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs font-normal text-muted-foreground cursor-help flex items-center gap-1">
+                  <span className="text-xs font-normal text-muted-foreground cursor-help flex items-center gap-1 tabular-nums">
                     {total.toLocaleString()} records
                     <Info className="h-3 w-3" />
                   </span>
@@ -208,18 +251,31 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Health Verdict Banner */}
-        <div className={`flex items-center justify-between rounded-lg border p-3 ${verdictBg}`}>
-          <div className="flex items-center gap-2">
-            <span className={verdictColor}>{verdictIcon}</span>
-            <div>
+        {/* Health Verdict Banner — with circular progress ring */}
+        <div className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${verdictBg}`}>
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Circular progress ring */}
+            <div className={`relative h-14 w-14 shrink-0 rounded-full bg-background/60 ring-2 ${verdictRing} flex items-center justify-center`}>
+              <svg className="absolute inset-0 -rotate-90" viewBox="0 0 64 64" aria-hidden>
+                <circle cx="32" cy="32" r={radius} className="fill-none stroke-muted/50" strokeWidth="4" />
+                <circle
+                  cx="32" cy="32" r={radius}
+                  className={`fill-none ${scoreStroke}`}
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  strokeDasharray={`${dash} ${circ}`}
+                />
+              </svg>
+              <span className={`text-sm font-bold tabular-nums ${scoreColor}`}>{healthScore}</span>
+            </div>
+            <div className="min-w-0">
               <p className={`text-sm font-bold ${verdictColor}`}>{verdict}</p>
-              <p className="text-[11px] text-muted-foreground">Skor Kondisi Inventory: {healthScore}/100</p>
+              <p className="text-[11px] text-muted-foreground">Skor Kondisi Inventory</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-muted-foreground">Abnormal Rate</p>
-            <p className={`text-sm font-bold ${abnormalPct > 20 ? 'text-red-600' : abnormalPct > 5 ? 'text-amber-600' : 'text-emerald-600'}`}>
+          <div className="text-right shrink-0">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Abnormal Rate</p>
+            <p className={`text-lg font-bold tabular-nums ${abnormalPct > 20 ? 'text-red-600 dark:text-red-400' : abnormalPct > 5 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
               {abnormalPct.toFixed(1)}%
             </p>
           </div>
@@ -228,24 +284,24 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         {/* Status counts with progress bar */}
         <div className="space-y-2">
           <div className="grid grid-cols-3 gap-2">
-            <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-900 p-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 dark:bg-emerald-950/30 dark:border-emerald-900/60 p-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <div className="min-w-0">
-                <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400 leading-none">{normal.toLocaleString()}</p>
+                <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400 leading-none tabular-nums">{normal.toLocaleString()}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">Normal</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 p-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200/70 bg-amber-50/60 dark:bg-amber-950/30 dark:border-amber-900/60 p-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <div className="min-w-0">
-                <p className="text-lg font-bold text-amber-700 dark:text-amber-400 leading-none">{warning.toLocaleString()}</p>
+                <p className="text-lg font-bold text-amber-700 dark:text-amber-400 leading-none tabular-nums">{warning.toLocaleString()}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">Warning</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/40 dark:border-red-900 p-2">
-              <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+            <div className="flex items-center gap-2 rounded-lg border border-red-200/70 bg-red-50/60 dark:bg-red-950/30 dark:border-red-900/60 p-2">
+              <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0" />
               <div className="min-w-0">
-                <p className="text-lg font-bold text-red-700 dark:text-red-400 leading-none">{abnormal.toLocaleString()}</p>
+                <p className="text-lg font-bold text-red-700 dark:text-red-400 leading-none tabular-nums">{abnormal.toLocaleString()}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">Abnormal</p>
               </div>
             </div>
@@ -254,17 +310,17 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
           {/* Stacked progress bar */}
           <div className="flex h-2 rounded-full overflow-hidden bg-muted">
             {/* BUG 3.7 fix: guard against total=0 (division by zero → NaN%) */}
-            <div className="bg-emerald-500" style={{ width: `${total > 0 ? (normal / total) * 100 : 0}%` }} />
-            <div className="bg-amber-500" style={{ width: `${total > 0 ? (warning / total) * 100 : 0}%` }} />
-            <div className="bg-red-500" style={{ width: `${total > 0 ? (abnormal / total) * 100 : 0}%` }} />
+            <div className="bg-emerald-500 transition-all duration-500" style={{ width: `${total > 0 ? (normal / total) * 100 : 0}%` }} />
+            <div className="bg-amber-500 transition-all duration-500" style={{ width: `${total > 0 ? (warning / total) * 100 : 0}%` }} />
+            <div className="bg-red-500 transition-all duration-500" style={{ width: `${total > 0 ? (abnormal / total) * 100 : 0}%` }} />
           </div>
         </div>
 
         {/* Top Issue Categories */}
         {categoryList.length > 0 && (
-          <div className="space-y-1.5">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Kategori Masalah Utama</p>
-            <div className="space-y-1">
+          <div className="space-y-1.5 pt-1">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Kategori Masalah Utama</p>
+            <div className="space-y-1.5">
               {categoryList.slice(0, 4).map(({ cat, count }) => {
                 const pct = total > 0 ? (count / total) * 100 : 0;
                 return (
@@ -281,9 +337,9 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
                       </Tooltip>
                     </TooltipProvider>
                     <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div className="h-full bg-red-400" style={{ width: `${Math.min(pct * 5, 100)}%` }} />
+                      <div className="h-full bg-gradient-to-r from-red-400 to-red-500 transition-all duration-500" style={{ width: `${Math.min(pct * 5, 100)}%` }} />
                     </div>
-                    <span className="text-[11px] font-medium text-muted-foreground w-8 text-right">{count}</span>
+                    <span className="text-[11px] font-medium text-muted-foreground w-8 text-right tabular-nums">{count}</span>
                   </div>
                 );
               })}
@@ -292,25 +348,25 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         )}
 
         {/* Quick Financial Impact Summary */}
-        <div className="grid grid-cols-2 gap-2 pt-1 border-t">
-          <div>
-            <p className="text-[11px] text-muted-foreground">Total LOSS</p>
-            <p className="text-sm font-semibold text-red-600">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-[11px] text-muted-foreground">{fmtPct(s.lossToSales, false)} of Sales</p>
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t">
+          <div className="rounded-md p-1.5">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+            <p className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">{fmtIDR(s.totalLoss)}</p>
+            <p className="text-[10px] text-muted-foreground tabular-nums">{fmtPct(s.lossToSales, false)} of Sales</p>
           </div>
-          <div>
-            <p className="text-[11px] text-muted-foreground">Total SURPLUS</p>
-            <p className="text-sm font-semibold text-emerald-600">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-[11px] text-muted-foreground">{fmtPct(s.surplusToSales, false)} of Sales</p>
+          <div className="rounded-md p-1.5">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+            <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtIDR(s.totalSurplus)}</p>
+            <p className="text-[10px] text-muted-foreground tabular-nums">{fmtPct(s.surplusToSales, false)} of Sales</p>
           </div>
         </div>
 
         {/* DQ status */}
         {(dq.errors > 0 || dq.warnings > 0) && (
-          <div className="flex items-center gap-2 text-xs pt-1 border-t">
+          <div className="flex items-center gap-2 text-xs pt-2 border-t">
             <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
             <span className="text-muted-foreground">
-              Data Quality: {dq.errors} errors, {dq.warnings} warnings
+              Data Quality: <span className="font-medium text-amber-700 dark:text-amber-400 tabular-nums">{dq.errors} errors</span>, <span className="font-medium text-amber-700 dark:text-amber-400 tabular-nums">{dq.warnings} warnings</span>
             </span>
           </div>
         )}

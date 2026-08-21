@@ -8,7 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtPct, fmtPctAbs, directionColor } from '@/lib/format';
+import { fmtIDR, fmtPct, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
@@ -50,10 +50,12 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
   const criticalCount = ranking.filter((o) => o.healthScore < 30).length;
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <Heart className="h-4 w-4 text-rose-600" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+            <Heart className="h-3.5 w-3.5" />
+          </span>
           Ranking Kondisi Outlet
           <FormulaInfo
             formula="Skor = 30% % DEV TO BOM + 25% RESIDUAL + 25% LOSS/PENJUALAN + 20% Jumlah Masalah"
@@ -70,46 +72,46 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Outlet terburuk {worstCount} (berdasarkan skor kondisi) · {criticalCount} kritis
+        <p className="text-xs text-muted-foreground ml-9">
+          <span className="font-medium tabular-nums">{worstCount}</span> outlet terburuk · <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{criticalCount} kritis</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] w-8 h-7 px-2">#</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">Skor</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Masalah</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-8 h-8 px-2">#</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Outlet</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Skor</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Masalah</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {ranking.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-8">Tidak ada data</TableCell></TableRow>
               ) : ranking.map((o, i) => (
                 <TableRow
                   key={o.outletCode}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${o.healthScore < 30 ? 'bg-red-50/30 dark:bg-red-950/10' : ''}`}
                   {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                 >
-                  <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
-                  <TableCell className="px-2 py-1">
+                  <TableCell className="text-[11px] text-muted-foreground px-2 py-1.5 tabular-nums">{i + 1}</TableCell>
+                  <TableCell className="px-2 py-1.5">
                     <div className="text-[11px] font-medium leading-tight whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
-                  <TableCell className="px-2 py-1">
+                  <TableCell className="px-2 py-1.5">
                     <div className="flex items-center gap-1.5 min-w-[80px]">
                       <Progress value={o.healthScore} className="h-1.5" indicatorClassName={healthScoreBg(o.healthScore)} />
-                      <span className={`text-[11px] font-semibold ${healthScoreColor(o.healthScore)}`}>{o.healthScore}</span>
+                      <span className={`text-[11px] font-semibold tabular-nums ${healthScoreColor(o.healthScore)}`}>{o.healthScore}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right">{fmtPctAbs(o.devBom)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-red-600">{o.abnormal}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(o.absNominal)}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(o.devBom)}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(o.absNominal)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -189,10 +191,12 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <Link2 className="h-4 w-4 text-indigo-600" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <Link2 className="h-3.5 w-3.5" />
+          </span>
           Analisis Pola Item
           <FormulaInfo
             formula="Outlets = COUNT(DISTINCT outlet) per item dengan deviasi"
@@ -201,42 +205,42 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
             side="bottom"
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          {systemicCount} systemic · {widespreadCount} widespread · {isolatedCount} isolated
+        <p className="text-xs text-muted-foreground ml-9">
+          <span className="font-medium text-red-600 dark:text-red-400 tabular-nums">{systemicCount} systemic</span> · <span className="font-medium text-amber-600 dark:text-amber-400 tabular-nums">{widespreadCount} widespread</span> · <span className="font-medium tabular-nums">{isolatedCount} isolated</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] h-7 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2">Type</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">LOSS</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">SURPLUS</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">NAMA BAHAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Type</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Outlets</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">LOSS</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">SURPLUS</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-8">Tidak ada data</TableCell></TableRow>
               ) : rows.map((row, i) => (
                 <TableRow
                   key={`${row.itemName}-${i}`}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                   {...clickableRowProps(() => onClick(row))}
                 >
-                  <TableCell className="text-[11px] px-2 py-1 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
-                  <TableCell className="px-2 py-1">
-                    <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${consistencyBadge(row.type)}`}>{row.type}</Badge>
+                  <TableCell className="text-[11px] px-2 py-1.5 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
+                  <TableCell className="px-2 py-1.5">
+                    <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{row.type}</Badge>
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{row.outletCount}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-red-600">{row.lossOutlets}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right text-emerald-600">{row.surplusOutlets}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(row.absNominal)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1 text-right">{fmtPctAbs(row.avgDevBom)}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{row.outletCount}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{row.lossOutlets}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">{row.surplusOutlets}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(row.absNominal)}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(row.avgDevBom)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -256,13 +260,14 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
   const areas = (data.areaAnalysis || [])
     .slice()
     .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
-  const maxAbs = areas.length > 0 ? areas[0].totalAbsNominal : 1;
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-1.5">
-          <MapPin className="h-4 w-4 text-orange-600" />
+        <CardTitle className="text-base flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+            <MapPin className="h-3.5 w-3.5" />
+          </span>
           Perbandingan Area
           <FormulaInfo
             formula="LOSS/PENJUALAN = Total LOSS / Total PENJUALAN per area"
@@ -276,42 +281,47 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          {areas.length} area · diurutkan dari NOMINAL DEVIASI terbesar
+        <p className="text-xs text-muted-foreground ml-9">
+          <span className="font-medium tabular-nums">{areas.length}</span> area · diurutkan dari NOMINAL DEVIASI terbesar
         </p>
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
-              <TableRow>
-                <TableHead className="text-[11px] h-7 px-2">Area</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">PENJUALAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">LOSS/PENJUALAN</TableHead>
-                <TableHead className="text-[11px] h-7 px-2 text-right">% DEV TO BOM</TableHead>
+            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Area</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Outlets</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">PENJUALAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">LOSS/PENJUALAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">% DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {areas.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Tidak ada data</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-8">Tidak ada data</TableCell></TableRow>
               ) : areas.map((a, i) => {
-                const marker = i === 0 ? '🔴' : i === areas.length - 1 ? '🟢' : '';
+                const isWorst = i === 0;
+                const isBest = i === areas.length - 1;
                 return (
                   <TableRow
                     key={a.area}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                     {...clickableRowProps(() => setArea(a.area))}
                   >
-                    <TableCell className="text-[11px] px-2 py-1 font-medium">
-                      <span className="mr-1">{marker}</span>{a.area}
+                    <TableCell className="text-[11px] px-2 py-1.5 font-medium">
+                      <div className="flex items-center gap-1.5">
+                        {isWorst && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" title="Terburuk" />}
+                        {isBest && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title="Terbaik" />}
+                        <span className="truncate" title={a.area}>{a.area}</span>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right text-muted-foreground">{a.outletCount}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtIDR(a.totalSales)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(a.totalAbsNominal)}</TableCell>
-                    <TableCell className={`text-[11px] px-2 py-1 text-right font-semibold ${lossToSalesColor(a.lossToSales)}`}>{fmtPct(a.lossToSales, false)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1 text-right">{fmtPctAbs(a.avgDevBom)}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1.5 text-right text-muted-foreground tabular-nums">{a.outletCount}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtIDR(a.totalSales)}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(a.totalAbsNominal)}</TableCell>
+                    <TableCell className={`text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums ${lossToSalesColor(a.lossToSales)}`}>{fmtPct(a.lossToSales, false)}</TableCell>
+                    <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(a.avgDevBom)}</TableCell>
                   </TableRow>
                 );
               })}
