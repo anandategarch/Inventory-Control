@@ -77,7 +77,11 @@ export async function queryTopItemsByDevBom(
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBomAbs",
-      MAX(ir."tolerancePct") as "tolerance"
+      -- FIX FUNC-3: use MIN for LOSS (strictest tolerance), MAX for SURPLUS (was: MAX always)
+      CASE
+        WHEN SUM(ir."nominalLossSurplus") < 0 THEN MIN(ir."tolerancePct")
+        ELSE MAX(ir."tolerancePct")
+      END as "tolerance"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id

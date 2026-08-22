@@ -62,11 +62,11 @@ function toNum(v: unknown): number | null {
   return isNaN(n) ? null : n;
 }
 
+// FIX MIG-2: CUMULATIVE week periods (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+// Was: discrete (W2=8-14, W4=15-31) — wrong per schema comment + master context
 function weekPeriod(weekLabel: string): { start: number; end: number } {
-  if (weekLabel.includes('1')) return { start: 1, end: 7 };
-  if (weekLabel.includes('2')) return { start: 8, end: 14 };
-  if (weekLabel.includes('3') || weekLabel.includes('4')) return { start: 15, end: 31 };
-  return { start: 1, end: 31 };
+  const num = parseInt(weekLabel.replace(/\D/g, '')) || 1;
+  return { start: 1, end: Math.min(num * 7, 31) };
 }
 
 // ============================================================
@@ -267,7 +267,13 @@ async function uploadFile(filePath: string) {
     const pctQtyLossToBom = toNum(get('pctQtyLossToBom'));
     const { pct: tolerancePct, raw: toleranceRawVal } = parseTolerance(get('toleranceRaw'));
 
-    const direction = nominalDeviasi == null ? null : nominalDeviasi > 0 ? 'LOSS' : nominalDeviasi < 0 ? 'SURPLUS' : 'NEUTRAL';
+    // FIX MIG-1: use nominalLossSurplus (NET) not nominalDeviasi (GROSS), and correct sign convention
+    // Excel: LOSS = negative, SURPLUS = positive
+    const direction = nominalLossSurplus != null
+      ? (nominalLossSurplus < 0 ? 'LOSS' : nominalLossSurplus > 0 ? 'SURPLUS' : 'NEUTRAL')
+      : (qtyDeviasi != null
+        ? (qtyDeviasi < 0 ? 'LOSS' : qtyDeviasi > 0 ? 'SURPLUS' : 'NEUTRAL')
+        : null);
     const residualQty = (qtyDeviasi != null && qtyWaste != null && qtySusut != null && qtyTrial != null)
       ? qtyDeviasi - (qtyWaste + qtySusut + qtyTrial) : null;
     const residualNominal = (nominalDeviasi != null && nominalWaste != null && nominalSusut != null && nominalTrial != null)

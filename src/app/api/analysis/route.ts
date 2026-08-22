@@ -46,6 +46,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import type { ExecutiveSummary } from '@/types/inventory';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // FIX MIG-3/FUNC-1: heaviest route, needs >10s on Vercel Hobby
 
 // OPTIMIZE-ANALYSIS: RecWithRels is the slim record shape declared in
 // src/engine/analysis/types.ts. Both findMany queries below use `select`
