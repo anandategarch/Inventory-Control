@@ -613,6 +613,8 @@ export async function queryRestoRecommendations(
           SUM(ABS(ir."qtySusut")) as "qtySusut",
           SUM(ABS(ir."qtyTrial")) as "qtyTrial",
           SUM(ir."absQtyLossSurplus") as "qtyLossSurplus",
+          -- FIX Bug 1A: grossAbsNominal = SUM(ABS(nominalDeviasi)) for correct itemConcentration denominator
+          SUM(ir."absNominalDeviasi") as "grossAbsNominal",
           -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
           SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalLoss",
           SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalSurplus",
@@ -681,6 +683,7 @@ export async function queryRestoRecommendations(
         COALESCE(oa."itemCount", 0) as "itemCount",
         COALESCE(oa."deviatingItems", 0) as "deviatingItems",
         COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
+        COALESCE(oa."grossAbsNominal", 0) as "grossAbsNominal",
         COALESCE(oa."qtyDeviasiLoss", 0) as "qtyDeviasiLoss",
         COALESCE(oa."residualNominal", 0) as "residualNominal",
         COALESCE(oa."toleranceBreachCount", 0) as "toleranceBreachCount",
@@ -805,8 +808,11 @@ export async function queryRestoRecommendations(
     const s7Score = trendDeteriorating ? 100 : 0;
 
     // Signal 8: Item Concentration (5%)
-    const itemConcentration = Math.abs(nominalDeviasi) > 0 && topItemNominal > 0
-      ? topItemNominal / Math.abs(nominalDeviasi)
+    // FIX Bug 1A: use grossAbsNominal (SUM(ABS(nominalDeviasi))) as denominator, not |SUM(nominalDeviasi)|
+    // which cancels out LOSS+SURPLUS. Also clamp to [0, 1] so donut chart values are always valid.
+    const grossAbsNominal = Number(r.grossAbsNominal || 0);
+    const itemConcentration = grossAbsNominal > 0 && topItemNominal > 0
+      ? Math.min(1, topItemNominal / grossAbsNominal)
       : 0;
     const s8Score = Math.min(100, itemConcentration * 100);
 
@@ -906,7 +912,7 @@ export async function queryRestoRecommendations(
       signalScores: [
         { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.12, value: `${devBomRatio.toFixed(2)}×` },
         { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: deviasiGrowth != null ? `${(deviasiGrowth * 100).toFixed(0)}%` : '—' },
-        { name: 'Z-Score Abnormal', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
+        { name: 'Deviasi >20% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
         { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
         { name: 'Loss/Sales', score: Math.round(s5Score), weight: 0.08, value: `${(lossToSales * 100).toFixed(1)}%` },
         { name: 'Direction Flip', score: Math.round(s6Score), weight: 0.08, value: directionFlip ? 'YA' : 'Tidak' },

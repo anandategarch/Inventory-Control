@@ -148,9 +148,10 @@ export async function queryTopItemsByDeviasiRank(
         SUM(ir."qtyDeviasi") as "qtyDeviasi",
         SUM(ir."qtyWaste") as "qtyWaste",
         SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
+        -- FIX Bug 3A: use ABS(qtyLossSurplus) so percentage is always positive (signed display handled by direction)
         -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (not SUM(qtyBom) != 0 — can be 0 with canceling +/- values)
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN SUM(ir."qtyLossSurplus") / SUM(ABS(ir."qtyBom"))
+          THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
           ELSE NULL END as "pctLossSurplusToBom",
         SUM(ir."qtyBom") as "qtyBom",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",

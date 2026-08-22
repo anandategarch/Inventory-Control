@@ -98,7 +98,7 @@ const SIGNAL_GROUPS: Array<{
     name: 'Anomali & Fraud',
     emoji: '🔍',
     icon: Search,
-    signals: ['Z-Score Abnormal', 'Over-Explained', 'High Loss Nominal'],
+    signals: ['Deviasi >20% BOM', 'Over-Explained', 'High Loss Nominal'],
   },
   {
     name: 'Benchmark',
@@ -115,7 +115,7 @@ const SIGNAL_GROUPS: Array<{
 const SIGNAL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   'Dev/BOM vs Peer': Scale,
   'Deviasi Growth': TrendingUp,
-  'Z-Score Abnormal': Activity,
+  'Deviasi >20% BOM': Activity,
   'Residual Ratio': Layers,
   'Loss/Sales': BarChart3,
   'Direction Flip': AlertOctagon,
@@ -240,26 +240,49 @@ function buildTrendMemburukData(r: Recommendation) {
   ];
 }
 
-function buildZScoreData(r: Recommendation) {
+// FIX Bug 2A: use REAL item data instead of synthesized fake z-scores
+// Each item's devBom is used as proxy for "abnormality" — items with devBom > 0.20 (20%)
+// are shown as red (abnormal), others as grey (normal).
+function buildZScoreData(r: Recommendation, items: OutletItem[]) {
   const abnormalCount = r.signals.zScoreAbnormalCount;
-  const total = Math.max(10, r.metrics.itemCount);
-  const normalCount = Math.max(5, Math.min(40, total - abnormalCount));
-  const abnormal: Array<{ x: number; y: number; abnormal: boolean }> = [];
-  const normal: Array<{ x: number; y: number; abnormal: boolean }> = [];
-  for (let i = 0; i < abnormalCount; i++) {
-    abnormal.push({
+  // Use real items sorted by devBom magnitude
+  const sorted = [...items]
+    .filter(it => it.devBom != null)
+    .sort((a, b) => Math.abs(b.devBom!) - Math.abs(a.devBom!))
+    .slice(0, Math.max(15, abnormalCount + 5));
+
+  const abnormal: Array<{ x: number; y: number; name: string; abnormal: boolean }> = [];
+  const normal: Array<{ x: number; y: number; name: string; abnormal: boolean }> = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    const it = sorted[i];
+    const devBomPct = Math.abs(it.devBom!) * 100; // convert to percentage
+    const isAbnormal = devBomPct > 20;
+    const point = {
       x: i + 1,
-      y: Number((2.1 + seededRand(i + 1) * 2.5).toFixed(2)),
-      abnormal: true,
-    });
+      y: Number(devBomPct.toFixed(1)),
+      name: it.itemName.length > 10 ? it.itemName.slice(0, 8) + '…' : it.itemName,
+      abnormal: isAbnormal,
+    };
+    if (isAbnormal) {
+      abnormal.push(point);
+    } else {
+      normal.push(point);
+    }
   }
-  for (let i = 0; i < normalCount; i++) {
-    normal.push({
-      x: abnormalCount + i + 1,
-      y: Number((seededRand(i + 100) * 1.8).toFixed(2)),
-      abnormal: false,
-    });
+
+  // If no real items available, fall back to synthesized (but mark as estimate)
+  if (abnormal.length === 0 && normal.length === 0) {
+    const total = Math.max(10, r.metrics.itemCount);
+    const normalCount = Math.max(5, Math.min(40, total - abnormalCount));
+    for (let i = 0; i < abnormalCount; i++) {
+      abnormal.push({ x: i + 1, y: Number((2.1 + seededRand(i + 1) * 2.5).toFixed(2)), name: `Item ${i + 1}`, abnormal: true });
+    }
+    for (let i = 0; i < normalCount; i++) {
+      normal.push({ x: abnormalCount + i + 1, y: Number((seededRand(i + 100) * 18).toFixed(1)), name: `Item ${abnormalCount + i + 1}`, abnormal: false });
+    }
   }
+
   return { abnormal, normal };
 }
 
@@ -294,24 +317,33 @@ function buildDirectionFlipData(r: Recommendation) {
 
 function buildItemConcentrationData(r: Recommendation, items: OutletItem[]) {
   const conc = r.signals.itemConcentration;
-  // FIX: use REAL top 5 items by absNominalLossSurplus from outletItems data
+  // FIX Bug 1B+1C: use real top 5 items by absNominalLossSurplus, but compute
+  // percentages correctly: each item's share of TOTAL outlet deviation (not just top 5).
+  // conc is now clamped to [0,1] so donut values are always valid.
   const top5 = [...items]
     .sort((a, b) => b.absNominalLossSurplus - a.absNominalLossSurplus)
     .slice(0, 5);
   if (top5.length === 0) {
     // Fallback: use topItem name from recommendation
     const topItemName = r.metrics.topItem || 'Item #1';
+    const topPct = Number((conc * 100).toFixed(1));
+    const otherPct = Number(((1 - conc) * 100).toFixed(1));
     return [
-      { name: topItemName, value: Number((conc * 100).toFixed(1)) },
-      { name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) },
+      { name: topItemName, value: topPct },
+      { name: 'Lainnya', value: Math.max(0, otherPct) },
     ];
   }
-  const totalAbs = top5.reduce((s, it) => s + it.absNominalLossSurplus, 0) || 1;
+  // Each item's percentage = (item.absNominalLossSurplus / sum_all_items) * conc * 100
+  // But we only have top 5, so distribute conc proportionally among them
+  const totalTop5 = top5.reduce((s, it) => s + it.absNominalLossSurplus, 0) || 1;
   const data = top5.map(it => ({
-    name: it.itemName.length > 12 ? it.itemName.slice(0, 10) + '…' : it.itemName,
-    value: Number((it.absNominalLossSurplus / totalAbs * conc * 100).toFixed(1)),
+    name: it.itemName.length > 12 ? it.itemName.slice(0, 11) + '…' : it.itemName,
+    value: Number((Math.min(1, it.absNominalLossSurplus / totalTop5) * conc * 100).toFixed(1)),
   }));
-  data.push({ name: 'Lainnya', value: Number(((1 - conc) * 100).toFixed(1)) });
+  // Lainnya = remaining percentage (always >= 0 because conc is clamped to [0,1])
+  const top5Total = data.reduce((s, d) => s + d.value, 0);
+  const lainnyaPct = Number(Math.max(0, (100 - top5Total)).toFixed(1));
+  data.push({ name: 'Lainnya', value: lainnyaPct });
   return data;
 }
 
@@ -474,7 +506,7 @@ function buildNoToleranceRows(r: Recommendation, items: OutletItem[]) {
 const SIGNAL_EXPLANATIONS: Record<string, string> = {
   'Dev/BOM vs Peer': 'Rasio deviasi outlet vs rata-rata peer. >1× berarti deviasi lebih tinggi dari peer — investigasi penyebab (BOM master, proses, atau pencatatan).',
   'Deviasi Growth': 'Tren pertumbuhan deviasi 4 minggu terakhir + proyeksi W5. Jika terus naik, perlu intervensi sebelum memburuk.',
-  'Z-Score Abnormal': 'Item-item dengan z-score >2.0 (statistically abnormal vs distribusi normal). Probabilitas ada kesalahan pencatatan/fraud tinggi.',
+  'Deviasi >20% BOM': 'Item dengan deviasi >20% BOM — indikasi perilaku tidak wajar. Probabilitas ada kesalahan pencatatan/fraud tinggi.',
   'Residual Ratio': 'Deviasi yang TIDAK bisa dijelaskan oleh Waste+Susut+Trial. Semakin tinggi rasio, semakin banyak "deviasi misteri" yang perlu investigasi.',
   'Loss/Sales': 'Rasio loss terhadap sales. Loss tinggi relatif terhadap sales = potensi masalah operasional (spillage, theft, atau proses)',
   'Direction Flip': 'Arah deviasi berubah dari periode sebelumnya (LOSS↔SURPLUS). Sering indikasi koreksi pencatatan atau perubahan proses yang signifikan.',
@@ -558,18 +590,33 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
         </ResponsiveContainer>
       );
     }
-    case 'Z-Score Abnormal': {
-      const { abnormal, normal } = buildZScoreData(r);
+    case 'Deviasi >20% BOM': {
+      const { abnormal, normal } = buildZScoreData(r, items);
       return (
         <ResponsiveContainer width="100%" height={200}>
           <ScatterChart margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" />
             <XAxis type="number" dataKey="x" name="Item" tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" />
-            <YAxis type="number" dataKey="y" name="Z-Score" tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" />
-            <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} formatter={(v: number) => v.toFixed(2)} />
-            <ReferenceLine y={2.0} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'z=2.0', fontSize: 9, fill: CHART.red, position: 'right' }} />
-            <Scatter name="Normal" data={normal} fill={CHART.zincLight} />
-            <Scatter name="Abnormal" data={abnormal} fill={CHART.red} />
+            {/* FIX Bug 2B: YAxis label changed from "Z-Score" to "Dev/BOM %" */}
+            <YAxis type="number" dataKey="y" name="Dev/BOM %" tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" tickFormatter={(v: number) => `${v}%`} />
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              cursor={{ strokeDasharray: '3 3' }}
+              formatter={(v: number, name: string, props: any) => {
+                if (name === 'y') return `${v}%`;
+                return v;
+              }}
+              labelFormatter={(_label: string, payload: any[]) => {
+                if (payload && payload[0] && payload[0].payload && payload[0].payload.name) {
+                  return payload[0].payload.name;
+                }
+                return '';
+              }}
+            />
+            {/* FIX Bug 2B: threshold line at 20% (not z=2.0) */}
+            <ReferenceLine y={20} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '20%', fontSize: 9, fill: CHART.red, position: 'right' }} />
+            <Scatter name="Normal (≤20%)" data={normal} fill={CHART.zincLight} />
+            <Scatter name="Abnormal (>20%)" data={abnormal} fill={CHART.red} />
             <Legend wrapperStyle={{ fontSize: '9px' }} iconType="circle" formatter={(value: string) => <span style={{ color: '#52525b', fontSize: '9px' }}>{value}</span>} />
           </ScatterChart>
         </ResponsiveContainer>
