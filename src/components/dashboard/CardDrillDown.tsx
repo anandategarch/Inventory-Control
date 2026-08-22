@@ -9,29 +9,44 @@ import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
 import { X } from 'lucide-react';
-import type { AnalysisData } from '@/hooks/useAnalysis';
+import type { AnalysisData, TopOutlet } from '@/hooks/useAnalysis';
 
 interface CardDrillDownProps {
   data: AnalysisData | undefined;
 }
 
-const CARD_CONFIG: Record<string, {
+// Union of all possible row shapes returned by `getData` across the card configs.
+// All rows share `outletCode` + `area` (outlet rows) or `itemName` + `outletCode` (item rows).
+// Additional columns are accessed via `col.format(val, row)` with permissive `unknown` typing.
+type DrillRow = Record<string, unknown>;
+
+interface ColumnDef {
+  key: string;
+  label: string;
+  align?: string;
+  format?: (v: unknown, row: DrillRow) => string;
+  color?: (v: unknown, row: DrillRow) => string;
+}
+
+interface CardConfig {
   title: string;
   description: string;
-  columns: Array<{ key: string; label: string; align?: string; format?: (v: any, row: any) => string; color?: (v: any, row: any) => string }>;
-  getData: (data: AnalysisData) => any[];
-}> = {
+  columns: ColumnDef[];
+  getData: (data: AnalysisData) => DrillRow[];
+}
+
+const CARD_CONFIG: Record<string, CardConfig> = {
   sales: {
     title: 'Top 10 Outlets by Sales',
     description: 'Outlet dengan Sales tertinggi (nilai unique per outlet, bukan sum)',
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'absNominal', label: '|Nom Dev|', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'devToSalesRatio', label: 'Dev/Sales', align: 'right', format: (v) => v != null ? fmtPctAbs(v) : '—' },
+      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'absNominal', label: '|Nom Dev|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'devToSalesRatio', label: 'Dev/Sales', align: 'right', format: (v) => v != null ? fmtPctAbs(v as number) : '—' },
     ],
-    getData: (data) => data.topOutletsBySales || [],
+    getData: (data) => (data.topOutletsBySales || []) as unknown as DrillRow[],
   },
   nominalDeviasi: {
     title: 'Top 10 Items by Nominal Deviasi',
@@ -39,10 +54,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'absNominal', label: '|Nominal|', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'direction', label: 'Dir', align: 'center', format: (v) => v?.[0] || '-', color: (v) => directionColor(v) },
+      { key: 'absNominal', label: '|Nominal|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'direction', label: 'Dir', align: 'center', format: (v) => (v as string)?.[0] || '-', color: (v) => directionColor(v as string) },
     ],
-    getData: (data) => data.topItemsByNominal || [],
+    getData: (data) => (data.topItemsByNominal || []) as unknown as DrillRow[],
   },
   qtyBom: {
     title: 'Top 10 Items (by Nominal Deviasi)',
@@ -50,10 +65,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'direction', label: 'Dir', align: 'center', format: (v) => v?.[0] || '-', color: (v) => directionColor(v) },
+      { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'direction', label: 'Dir', align: 'center', format: (v) => (v as string)?.[0] || '-', color: (v) => directionColor(v as string) },
     ],
-    getData: (data) => data.topItemsByNominal || [],
+    getData: (data) => (data.topItemsByNominal || []) as unknown as DrillRow[],
   },
   qtyDeviasi: {
     title: 'Top 10 Items by Deviation/BOM',
@@ -61,10 +76,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'devBom', label: 'Dev/BOM', align: 'right', format: (v) => fmtPctAbs(v) },
-      { key: 'tolerance', label: 'Tolerance', align: 'right', format: (v) => v != null ? fmtPctAbs(v) : '—' },
+      { key: 'devBom', label: 'Dev/BOM', align: 'right', format: (v) => fmtPctAbs(v as number) },
+      { key: 'tolerance', label: 'Tolerance', align: 'right', format: (v) => v != null ? fmtPctAbs(v as number) : '—' },
     ],
-    getData: (data) => data.topItemsByDevBom || [],
+    getData: (data) => (data.topItemsByDevBom || []) as unknown as DrillRow[],
   },
   waste: {
     title: 'Top 10 Items by Waste',
@@ -72,10 +87,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'qtyWaste', label: 'QTY Waste', align: 'right', format: (v) => fmtNum(v) },
-      { key: 'nominalWaste', label: 'Nominal Waste', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'qtyWaste', label: 'QTY Waste', align: 'right', format: (v) => fmtNum(v as number) },
+      { key: 'nominalWaste', label: 'Nominal Waste', align: 'right', format: (v) => fmtIDR(v as number) },
     ],
-    getData: (data) => data.topItemsByWaste || [],
+    getData: (data) => (data.topItemsByWaste || []) as unknown as DrillRow[],
   },
   susut: {
     title: 'Top 10 Items by Susut',
@@ -83,10 +98,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'qtySusut', label: 'QTY Susut', align: 'right', format: (v) => fmtNum(v) },
-      { key: 'nominalSusut', label: 'Nominal Susut', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'qtySusut', label: 'QTY Susut', align: 'right', format: (v) => fmtNum(v as number) },
+      { key: 'nominalSusut', label: 'Nominal Susut', align: 'right', format: (v) => fmtIDR(v as number) },
     ],
-    getData: (data) => data.topItemsBySusut || [],
+    getData: (data) => (data.topItemsBySusut || []) as unknown as DrillRow[],
   },
   trial: {
     title: 'Top 10 Items by Trial',
@@ -94,10 +109,10 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'qtyTrial', label: 'QTY Trial', align: 'right', format: (v) => fmtNum(v) },
-      { key: 'nominalTrial', label: 'Nominal Trial', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'qtyTrial', label: 'QTY Trial', align: 'right', format: (v) => fmtNum(v as number) },
+      { key: 'nominalTrial', label: 'Nominal Trial', align: 'right', format: (v) => fmtIDR(v as number) },
     ],
-    getData: (data) => data.topItemsByTrial || [],
+    getData: (data) => (data.topItemsByTrial || []) as unknown as DrillRow[],
   },
   lossSurplus: {
     title: 'Top 10 Items by Loss/Surplus',
@@ -105,11 +120,11 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'qtyLossSurplus', label: 'QTY LS', align: 'right', format: (v) => fmtNum(v) },
-      { key: 'nominalLossSurplus', label: 'Nominal LS', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'direction', label: 'Dir', align: 'center', format: (v) => v?.[0] || '-', color: (v) => directionColor(v) },
+      { key: 'qtyLossSurplus', label: 'QTY LS', align: 'right', format: (v) => fmtNum(v as number) },
+      { key: 'nominalLossSurplus', label: 'Nominal LS', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'direction', label: 'Dir', align: 'center', format: (v) => (v as string)?.[0] || '-', color: (v) => directionColor(v as string) },
     ],
-    getData: (data) => data.topItemsByLossSurplus || [],
+    getData: (data) => (data.topItemsByLossSurplus || []) as unknown as DrillRow[],
   },
   loss: {
     title: 'Top 10 Outlets by Loss',
@@ -117,13 +132,13 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'lossAmount', label: 'Loss Amount', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'lossAmount', label: 'Loss Amount', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v as number) },
     ],
     // BUG FIX #003: Filter by LOSS direction, not just absNominal
     getData: (data) => (data.topOutlets || [])
-      .filter((o: any) => o && o.direction === 'LOSS')
-      .sort((a: any, b: any) => b.absNominal - a.absNominal),
+      .filter((o: TopOutlet) => o && o.direction === 'LOSS')
+      .sort((a, b) => b.absNominal - a.absNominal) as unknown as DrillRow[],
   },
   surplus: {
     title: 'Top 10 Outlets by Surplus',
@@ -131,13 +146,13 @@ const CARD_CONFIG: Record<string, {
     columns: [
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
-      { key: 'surplusAmount', label: 'Surplus Amount', align: 'right', format: (v) => fmtIDR(v) },
-      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v) },
+      { key: 'surplusAmount', label: 'Surplus Amount', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v as number) },
     ],
     // BUG FIX #003: Filter by SURPLUS direction, not just absNominal
     getData: (data) => (data.topOutlets || [])
-      .filter((o: any) => o && o.direction === 'SURPLUS')
-      .sort((a: any, b: any) => b.absNominal - a.absNominal),
+      .filter((o: TopOutlet) => o && o.direction === 'SURPLUS')
+      .sort((a, b) => b.absNominal - a.absNominal) as unknown as DrillRow[],
   },
 };
 
@@ -179,7 +194,7 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row: any, i: number) => (
+                {rows.map((row: DrillRow, i: number) => (
                   <TableRow key={i}>
                     <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                     {config?.columns.map((col) => {

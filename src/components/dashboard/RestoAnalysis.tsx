@@ -11,8 +11,9 @@ import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Utensi
 import { useDashboard } from '@/hooks/useDashboard';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
-import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
+import { PrioritySummaryCard, type OutletItem, type Recommendation } from '@/components/dashboard/PrioritySummaryCard';
 import { useState, useMemo } from 'react';
+import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 
 interface RestoProfile {
   performance: {
@@ -51,6 +52,81 @@ interface ItemRow {
   historicalTrend: '↑' | '↓' | '→' | '?';
   areaMultiplier: number | null;
   priority: 'P1' | 'P2' | 'P3';
+  [key: string]: unknown;
+}
+
+/** /api/outlet-items response payload. */
+interface OutletItemsResponse {
+  success: boolean;
+  outlet: { code: string; name: string; area: string; pic: string | null };
+  period: { month: string; week: string; prevWeek: string | null; prevMonth: string | null };
+  restoProfile: RestoProfile;
+  rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] };
+  allItems: OutletItem[];
+  itemCount?: number;
+  durationMs?: number;
+  error?: string;
+}
+
+/** /api/item-history response payload (timeline rows). */
+interface ItemHistoryTimelineRow {
+  monthLabel: string;
+  weekLabel: string;
+  qtyBom: number;
+  qtyCom: number | null;
+  qtyDeviasi: number | null;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  qtyLossSurplus: number | null;
+  nominalDeviasi: number | null;
+  nominalLossSurplus: number | null;
+  absNominalLossSurplus: number;
+  devBom: number | null;
+  direction: string;
+  residualQty: number | null;
+  residualRatio: number | null;
+  tolerancePct: number | null;
+  isCurrent: boolean;
+}
+
+interface ItemHistoryResponse {
+  success: boolean;
+  outlet?: { code: string; name: string; area: string };
+  itemName?: string;
+  timeline?: ItemHistoryTimelineRow[];
+  benchmark?: {
+    outletDevBom: number | null;
+    areaAvgDevBom: number | null;
+    networkAvgDevBom: number | null;
+    bestDevBom: number | null;
+    areaMultiplier: number | null;
+    networkMultiplier: number | null;
+    areaOutletCount: number;
+    networkOutletCount: number;
+  };
+  historical?: {
+    mean: number | null;
+    stdDev: number | null;
+    zScore: number | null;
+    sampleSize: number;
+    earliestDevBom: number | null;
+    currentDevBom: number | null;
+    deterioration: number | null;
+    trend: string;
+    warningLevel: string | null;
+    benchmarkFlag: string | null;
+  };
+  current?: ItemHistoryTimelineRow;
+  priority?: string;
+  error?: string;
+}
+
+/** /api/recommendations response payload. */
+interface RecommendationResponse {
+  success: boolean;
+  recommendations: Recommendation[];
+  error?: string;
 }
 
 function fmtGrowth(v: number | null | undefined): string {
@@ -77,14 +153,14 @@ function directionColor(d: string): string {
   return d === 'LOSS' ? 'text-red-600' : d === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground';
 }
 
-export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
+export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData }) {
   const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic } = useDashboard();
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
 
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery<OutletItemsResponse>({
     queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -100,14 +176,14 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
         throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      return res.json() as Promise<OutletItemsResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
   });
 
   // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
   // FIX INT-1: pass area + pic params so Signal 1 (Dev/BOM vs Peer) uses correct network scope
-  const { data: recoData } = useQuery({
+  const { data: recoData } = useQuery<RecommendationResponse>({
     queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -122,12 +198,12 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
       const res = await fetch(`/api/recommendations?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) return { success: false, recommendations: [] };
-      return res.json();
+      return res.json() as Promise<RecommendationResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
     staleTime: 60_000,
   });
-  const recommendation = recoData?.success && recoData.recommendations?.length > 0 ? recoData.recommendations[0] : null;
+  const recommendation = recoData?.success && recoData.recommendations && recoData.recommendations.length > 0 ? recoData.recommendations[0] : null;
 
   if (!activeOutlet) {
     return (
@@ -191,9 +267,13 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
     );
   }
 
-  const profile: RestoProfile = data.restoProfile;
-  const outlet = data.outlet;
-  const rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] } = data.rankings;
+  // CRITICAL null guards: server occasionally returns partial payloads (e.g. during
+  // ingest race conditions). Without these guards, accessing `data.restoProfile`
+  // directly would throw a TypeError that crashes the entire dashboard.
+  const profile: RestoProfile = data.restoProfile ?? ({} as RestoProfile);
+  const outlet = data.outlet ?? { code: '', name: '', area: '', pic: null };
+  const rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] } =
+    data.rankings ?? { financial: [], operational: [], unexplained: [] };
   const currentRanking = rankings[rankingTab as keyof typeof rankings] || [];
 
   // Health score ring color
@@ -330,9 +410,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
             <Row label="Warning" value={profile.investigation.warning.toString()} />
             <Row label="Abnormal" value={profile.investigation.abnormal.toString()} />
             <div className="flex gap-1 mt-2">
-              <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">P1: {(data.allItems || []).filter((r: any) => r.priority === 'P1').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 font-medium tabular-nums">P2: {(data.allItems || []).filter((r: any) => r.priority === 'P2').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 font-medium tabular-nums">P3: {(data.allItems || []).filter((r: any) => r.priority === 'P3').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">P1: {(data.allItems || []).filter((r: OutletItem) => r.priority === 'P1').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 font-medium tabular-nums">P2: {(data.allItems || []).filter((r: OutletItem) => r.priority === 'P2').length}</Badge>
+              <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 font-medium tabular-nums">P3: {(data.allItems || []).filter((r: OutletItem) => r.priority === 'P3').length}</Badge>
             </div>
           </CardContent>
         </Card>
@@ -444,7 +524,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: any }) {
 function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
   outletCode: string; itemName: string; month: string; week: string; onClose: () => void;
 }) {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery<ItemHistoryResponse>({
     queryKey: ['item-history', outletCode, itemName, month, week],
     queryFn: async () => {
       const p = new URLSearchParams({ outletCode, itemName, month, week });
@@ -455,7 +535,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
         throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      return res.json() as Promise<ItemHistoryResponse>;
     },
   });
 
@@ -533,7 +613,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.timeline?.map((t: any, i: number) => (
+                      {data.timeline?.map((t: ItemHistoryTimelineRow, i: number) => (
                         <TableRow key={i} className={t.isCurrent ? 'bg-primary/5 font-semibold' : ''}>
                           <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
                             {t.weekLabel} {t.monthLabel?.split(' ')[0]?.slice(0, 3)}
@@ -605,7 +685,7 @@ function SummaryCard({ label, value, sub, color }: { label: string; value: strin
 function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allItemsData }: {
   outletCode: string; monthLabel: string; currentWeek: string;
   onSelectItem: (item: { outletCode: string; itemName: string }) => void;
-  allItemsData: any;
+  allItemsData: OutletItemsResponse | undefined;
 }) {
   // Bug 6.10 fix: use parent's data instead of duplicate query
   const outletData = allItemsData;
@@ -613,19 +693,19 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
   const menuGroups = useMemo<Array<{
     menuName: string; itemCount: number; avgDevBom: number;
     stdDev: number; threshold: number; outlierCount: number;
-    items: Array<any>;
+    items: Array<OutletItem & { isOutlier?: boolean; outlierMultiple?: number | null }>;
   }>>(() => {
     if (!outletData?.allItems && !outletData?.rankings?.financial) return [];
     // Bug fix: use allItems (complete list) instead of rankings (only top 20)
-    const allItemsArray = outletData.allItems || [];
+    const allItemsArray: OutletItem[] = outletData.allItems || [];
     if (allItemsArray.length === 0) return [];
-    const allItems = new Map<string, any>();
+    const allItems = new Map<string, OutletItem>();
     for (const item of allItemsArray) {
       allItems.set(item.itemName, item);
     }
 
     // Group by first word (menu name)
-    const groups = new Map<string, any[]>();
+    const groups = new Map<string, OutletItem[]>();
     for (const item of allItems.values()) {
       const menuName = (item.itemName || 'LAINNYA').split(/\s+/)[0].toUpperCase();
       if (!groups.has(menuName)) groups.set(menuName, []);
@@ -636,7 +716,7 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
     const result: Array<{
       menuName: string; itemCount: number; avgDevBom: number;
       stdDev: number; threshold: number; outlierCount: number;
-      items: Array<any>;
+      items: Array<OutletItem & { isOutlier?: boolean; outlierMultiple?: number | null }>;
     }> = [];
     for (const [menuName, items] of groups) {
       if (items.length < 2) continue; // Skip single-item groups
@@ -712,7 +792,7 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
                   </span>
                 </div>
                 <div className="space-y-0.5 p-2">
-                  {group.items.map((item: any) => (
+                  {group.items.map((item) => (
                     <div
                       key={item.itemName}
                       className={`flex items-center justify-between text-xs py-1.5 px-2 rounded cursor-pointer hover:bg-muted/40 transition-colors ${item.isOutlier ? 'bg-red-50/60 dark:bg-red-950/20' : ''}`}
@@ -770,7 +850,7 @@ function Row({ label, value, growth, sub, growthColor: gc }: {
 //  Ranking Nasional Card — Top Items by Deviasi Rank
 //  Shows after resto is selected. Custom Top N selector.
 // ============================================================
-function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: string; analysisData?: any }) {
+function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: string; analysisData?: AnalysisData }) {
   const [topN, setTopN] = useState<string>('50');
   const [filterPic, setFilterPic] = useState<string>('all');
   // Auto-filter by focusOutlet — ranking hanya menampilkan item untuk resto yang dipilih
@@ -778,13 +858,13 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
   // (component remounts when focusOutlet changes → initial state resets).
   const [filterResto, setFilterResto] = useState<string>(focusOutlet || 'all');
 
-  const allItems: any[] = analysisData?.topDeviasiRank || [];
-  const picOptions = [...new Set(allItems.map((it: any) => it.pic).filter(Boolean))].sort() as string[];
-  const restoOptions = [...new Set(allItems.map((it: any) => it.outletCode))].sort() as string[];
+  const allItems: DeviasiRankItem[] = analysisData?.topDeviasiRank || [];
+  const picOptions = [...new Set(allItems.map((it) => it.pic).filter((v): v is string => Boolean(v)))].sort();
+  const restoOptions = [...new Set(allItems.map((it) => it.outletCode))].sort();
 
   const items = allItems
-    .filter((it: any) => filterPic === 'all' || it.pic === filterPic)
-    .filter((it: any) => filterResto === 'all' || it.outletCode === filterResto)
+    .filter((it) => filterPic === 'all' || it.pic === filterPic)
+    .filter((it) => filterResto === 'all' || it.outletCode === filterResto)
     .slice(0, topN === 'all' ? 9999 : parseInt(topN));
 
   return (
@@ -859,7 +939,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
             <TableBody>
               {items.length === 0 ? (
                 <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
-              ) : items.map((it: any, i: number) => (
+              ) : items.map((it, i) => (
                 <TableRow key={`${it.itemName}-${it.outletCode}-${i}`} className={`hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}>
                   <TableCell className="text-center text-xs font-bold tabular-nums">{it.rankNominal}</TableCell>
                   <TableCell className="text-center text-xs text-muted-foreground tabular-nums">{it.rankBom != null ? it.rankBom : '—'}</TableCell>

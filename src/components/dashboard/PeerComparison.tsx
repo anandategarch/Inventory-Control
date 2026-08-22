@@ -662,7 +662,7 @@ function ScatterPlotCard({ peers, targetCode }: { peers: PeerRow[]; targetCode?:
                 cursor={{ strokeDasharray: '3 3' }}
                 content={({ active, payload }) => {
                   if (!active || !payload || payload.length === 0) return null;
-                  const d = payload[0].payload as any;
+                  const d = payload[0].payload as { outletName: string; sales: number; devBom: number; nominalDeviasi: number; direction: string; outletCode: string; isTarget: boolean };
                   return (
                     <div className="rounded-lg border bg-popover p-2.5 text-[11px] shadow-lg">
                       <div className="font-semibold border-b pb-1 mb-1">{d.outletName}</div>

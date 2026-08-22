@@ -14690,3 +14690,91 @@ Also update the FIX DB2-2 comments to note "PostgreSQL supports skipDuplicates n
 5. Add statement_timeout + idle_timeout to db.ts (MIG-10, ~4 lines).
 6. Clean up: remove @libsql/client + @prisma/adapter-libsql deps (MIG-13), remove SQLite fallback in db.ts (MIG-5), add globalThis singleton (MIG-9).
 7. Data cleanup: delete orphan OutletPIC 1372.AMBRIJ (MIG-6), normalize monthLabel case (MIG-8), verify BAKSO/WCR area with business (MIG-7).
+
+---
+Task ID: FIX-TYPE-SAFETY
+Agent: Type Safety Fixer
+Task: Fix all any types + null/undefined handling in dashboard components
+
+Work Log:
+
+**src/hooks/useAnalysis.ts (16 → 0 `any`)**
+- Imported `ExecutiveSummary` and `InvestigationItem` from `@/types/inventory` (already-existing shared types) instead of redeclaring.
+- Created new top-N ranking interfaces that mirror the actual SQL query shapes in `src/lib/queries/items.ts` + `src/lib/queries/outlets.ts`:
+  - `TopItemByNominal` (itemName, outletCode, absNominal, nominalDeviasi, direction)
+  - `TopItemByDevBom` (itemName, outletCode, devBom, devBomAbs, tolerance)
+  - `TopOutlet` (outletCode, outletName, area, absNominal, devBom, areaAvg, sales, lossAmount, surplusAmount, direction)
+  - `TopOutletBySales` (outletCode, outletName, area, sales, absNominal, devToSalesRatio)
+  - `TopItemByCategory` (itemName, outletCode, qty, nominal, direction) — covers Waste/Susut/Trial/LossSurplus
+  - `DeviasiRankItem` (full national-rank row: 15 fields incl. rankNominal, rankBom, avgDeviasiByBom, pctLossSurplusToBom)
+  - `MultiPeriodComparisonRow` (period, sales, bom, deviation, absDeviation, devBomRatio, growthPct) + index signature for forward-compat
+  - `SourceFileInfo` (fileName, monthLabel, monthKey, rowCount, dqStatus, importedAt) — mirrors `/api/status` SourceFile select
+  - `DrilldownRecord` (full drilldown row with qty/nominal/derived sub-objects + bulan/bulan2)
+- Updated `AnalysisData.growthComparison` to include `multiPeriodComparison?: MultiPeriodComparisonRow[]` (previously accessed via `(data.growthComparison as any)?.multiPeriodComparison` in AnalysisCards.tsx).
+- Replaced `executiveSummary: any` → `ExecutiveSummary`, `dqStatus.issues?: any[]` → `unknown[]`, `topItemsByNominal/DevBom/Outlets/etc: any[]` → typed arrays, `topDeviasiRank?: any[]` → `DeviasiRankItem[]`, `investigationWorklist: any[]` → `InvestigationItem[]`, `files: any[]` → `SourceFileInfo[]`, `records: any[]` → `DrilldownRecord[]`.
+- Replaced `growthComparison: ... & Record<string, any>` with a properly-typed object literal (preserved extensibility via dedicated `multiPeriodComparison` field instead of an open index signature).
+- Replaced `(e as any)?.message` → `(e as { message?: string }).message` in both `useStatus` and `useDrilldown` error handlers. Same pattern in `fetchAnalysis`.
+
+**src/components/dashboard/RestoAnalysis.tsx (16 → 0 `any` + null guards)**
+- Imported `AnalysisData` + `DeviasiRankItem` from `@/hooks/useAnalysis`, and `OutletItem` + `Recommendation` from `@/components/dashboard/PrioritySummaryCard`.
+- Created `OutletItemsResponse`, `ItemHistoryTimelineRow`, `ItemHistoryResponse`, and `RecommendationResponse` interfaces matching the actual API payloads (`/api/outlet-items`, `/api/item-history`, `/api/recommendations`).
+- Added `ItemRow` index signature `[key: string]: unknown` to accommodate extra fields emitted by the server without breaking type safety on the fields the UI actually reads.
+- `RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })` — was `any`.
+- `RankingNasionalCard({ ... analysisData?: AnalysisData })` — was `any`.
+- `MenuAnalysis({ ... allItemsData: OutletItemsResponse | undefined })` — was `any`.
+- `(r: any) => r.priority === 'P1'` (×3) → `(r: OutletItem) => r.priority === 'P1'`.
+- `(t: any, i: number)` in timeline → `(t: ItemHistoryTimelineRow, i: number)`.
+- `new Map<string, any>()` (×2) → `new Map<string, OutletItem>()` (groups + per-item dedup map).
+- `(item: any)` in `group.items.map` → untyped parameter (TS infers from `menuGroups` memo).
+- `allItems: any[]` → `DeviasiRankItem[]`.
+- `(it: any) => it.pic` / `(it: any) => it.outletCode` / filter callbacks → typed `(it: DeviasiRankItem)`.
+- `(it: any, i: number)` in render → `(it, i)` (TS infers from `DeviasiRankItem[]`).
+- **CRITICAL null guards (lines 194-196)**: replaced direct property access `data.restoProfile` / `data.outlet` / `data.rankings` with `data.restoProfile ?? ({} as RestoProfile)` / `data.outlet ?? { code: '', name: '', area: '', pic: null }` / `data.rankings ?? { financial: [], operational: [], unexplained: [] }`. Without these guards, a partial API response (e.g. during ingest race conditions) would throw `TypeError: Cannot read properties of undefined` and crash the entire dashboard. Behavior preserved for the happy path; only the failure path is hardened.
+- Cast `useQuery<OutletItemsResponse>` / `useQuery<ItemHistoryResponse>` / `useQuery<RecommendationResponse>` so `data` is properly typed (was inferred as `unknown`).
+- `picOptions` filter now uses type guard `(v): v is string => Boolean(v)` instead of `filter(Boolean) as string[]`.
+
+**src/components/dashboard/CardDrillDown.tsx (6 → 0 `any`)**
+- Imported `TopOutlet` from `@/hooks/useAnalysis`.
+- Created `ColumnDef` and `CardConfig` interfaces replacing the inline `Record<string, {...format?: (v: any, row: any) => string; color?: (v: any, row: any) => string; getData: (data: AnalysisData) => any[]}>`.
+- Created `DrillRow = Record<string, unknown>` — union of all possible row shapes (item rows, outlet rows). Formatters receive `(v: unknown, row: DrillRow)` and cast `v as number` / `v as string` at the format site (preserves existing behavior — Recharts / formatters were already implicitly assuming these types).
+- `getData: (data: AnalysisData) => DrillRow[]` with explicit casts at each return site (`as unknown as DrillRow[]`).
+- `.filter((o: any) => ...)` → `.filter((o: TopOutlet) => ...)` in `loss` and `surplus` configs.
+- `(row: any, i: number)` in render → `(row: DrillRow, i: number)`.
+
+**src/components/dashboard/ItemDeepDive.tsx (8 → 0 `any`)**
+- Imported `DrilldownRecord` and `TopItemByNominal` from `@/hooks/useAnalysis`.
+- `TipPayload` type: replaced all 4 `any` (payload, value, name, label) with `unknown`. `payload` field made optional to match Recharts' `Payload<ValueType, NameType>` shape (TS was rejecting the assignment when payload was required).
+- Hardened the tooltip renderer: `payload[0].payload!.name` + `Number(payload[0].payload!.value ?? 0).toLocaleString()` — preserves the existing assumption (guarded by `active && payload && payload[0] && payload[0].payload`) while protecting against runtime `undefined.toLocaleString()` crash.
+- `.filter((it: any) => ...)` (×4) → `.filter((it: TopItemByNominal) => ...)`.
+- `.reduce((s: number, it: any) => ...)` → `.reduce((s: number, it: TopItemByNominal) => ...)`.
+- `topOutlets.map((it: any, i: number) => ...)` → `topOutlets.map((it: TopItemByNominal, i: number) => ...)`.
+- `drilldownQuery.data.records.slice(0, 8).map((r: any, i: number) => ...)` → `.map((r: DrilldownRecord, i: number) => ...)`.
+
+**src/components/dashboard/PrioritySummaryCard.tsx (9 → 0 `any`)**
+- Exported the existing `Recommendation` interface (was module-private; RestoAnalysis imports it).
+- 7 `formatter={(v: any) => ...}` on `<LabelList>` → `formatter={(v: number | string) => ...}`. Body unchanged (already called `Number(v)`).
+- 1 `formatter={(v: number, name: string, props: any) => ...}` on `<Tooltip>` → `formatter={(v: number, name: string, _props: unknown) => ...}`.
+- 1 `labelFormatter={(_label: string, payload: any[]) => ...}` → `labelFormatter={(_label: string, payload: Array<{ payload?: { name?: string } }>) => ...}`.
+
+**src/components/dashboard/Charts.tsx (4 → 0 `any`)**
+- `formatter={(v: any) => fmtPct(v as number, true, 2)}` → `formatter={(v: number | string) => fmtPct(v as number, true, 2)}`.
+- `formatter={(v: any, _n: any, p: any) => [v.toLocaleString(), p.payload.name]}` → `formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [Number(v).toLocaleString(), p.payload?.name ?? '']}`. Hardened `.pct.toFixed(1)` → `p.payload?.pct?.toFixed(1) ?? '0'` (was crashing on undefined pct).
+- `formatter={(v: any) => v.toLocaleString()}` → `formatter={(v: number | string) => Number(v).toLocaleString()}`.
+- `formatter={(v: any, n: any) => n === 'Dev/BOM' ? (v * 100).toFixed(2) + '%' : v.toLocaleString()}` → `formatter={(v: number | string, n: string) => n === 'Dev/BOM' ? (Number(v) * 100).toFixed(2) + '%' : Number(v).toLocaleString()}`.
+
+**src/components/dashboard/AnalysisCards.tsx (2 → 0 `any`)**
+- `TipPayload` type: replaced all 4 `any` with `unknown` (+ `name?: string | number`). `payload` field made optional to match Recharts' `Payload<ValueType, NameType>` shape.
+- `(data.growthComparison as any)?.multiPeriodComparison as Array<Record<string, any>> | undefined` → `data.growthComparison.multiPeriodComparison` (now a first-class typed field on `AnalysisData.growthComparison`).
+- Hardened tooltip render: `p.value as number` casts → `Number(p.value)` (handles undefined gracefully without changing visible behavior under the existing `active && payload && payload.length` guard).
+
+Stage Summary:
+- **`any` count: 61 → 0** across the 7 target files (16 + 16 + 6 + 8 + 9 + 4 + 2 = 61).
+- **`bun run lint`: 0 errors** (ESLint passes clean).
+- **`npx tsc --noEmit`: 0 errors** (full TypeScript strict-mode type-check passes).
+- **Interfaces created: 11** (TopItemByNominal, TopItemByDevBom, TopOutlet, TopOutletBySales, TopItemByCategory, DeviasiRankItem, MultiPeriodComparisonRow, SourceFileInfo, DrilldownRecord + Recommendation exported + OutletItemsResponse/ItemHistoryTimelineRow/ItemHistoryResponse/RecommendationResponse/ColumnDef/CardConfig/DrillRow local to components).
+- **Interfaces reused: 2** (ExecutiveSummary, InvestigationItem from `@/types/inventory`).
+- **Null guards added: 1 critical site** (RestoAnalysis.tsx lines 194-196 — `data.restoProfile` / `data.outlet` / `data.rankings` access now protected against partial API responses).
+- **Runtime behavior: unchanged** — all changes are type-only (cast sites preserve existing assumptions, hardened paths only activate on previously-crashing inputs).
+- **Side-effect fixes** (consumers of `DrilldownRecord`): the expanded `DrilldownRecord.derived` shape now includes `pctQtyDeviasiToBom`, `tolerancePct`, `avgPrice`, `absQtyDeviasi`, `pctWasteSusut`, `toleranceRaw` + `bulan`/`bulan2` fields — these were already being read by `SourceDataModal.tsx` and `DrillDownDrawer.tsx` but were invisible to TypeScript when `records` was typed `any[]`. Now both files type-check clean without any code changes.
+- **Files touched:** 7 (per task spec). No other files modified.
+

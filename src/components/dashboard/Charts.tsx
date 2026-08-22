@@ -69,7 +69,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" className="opacity-60" />
                   <XAxis type="number" tickFormatter={(v) => fmtPct(v, true, 0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="name" width={90} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: any) => fmtPct(v as number, true, 2)} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
+                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
                   <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28}>
                     {chartData.map((d, i) => {
                       const mismatch =
@@ -148,7 +148,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <Tooltip
                 cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
-                formatter={(v: any, _n: any, p: any) => [`${v.toLocaleString()} (${p.payload.pct.toFixed(1)}%)`, p.payload.name]}
+                formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
                 contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48}>
@@ -205,7 +205,7 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" className="opacity-60" />
               <XAxis dataKey="name" fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: any) => v.toLocaleString()} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
+              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]} maxBarSize={56}>
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
@@ -283,7 +283,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
             }} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <Tooltip
                 cursor={{ stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3 3' }}
-                formatter={(v: any, n: any) => n === 'Dev/BOM' ? `${(v * 100).toFixed(2)}%` : v.toLocaleString()}
+                formatter={(v: number | string, n: string) => n === 'Dev/BOM' ? `${(Number(v) * 100).toFixed(2)}%` : Number(v).toLocaleString()}
                 contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
               />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />

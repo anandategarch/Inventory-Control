@@ -28,7 +28,7 @@ interface SignalScore {
   value: string;
 }
 
-interface Recommendation {
+export interface Recommendation {
   outletCode: string;
   outletName: string;
   priorityScore: number;
@@ -551,7 +551,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => [`${v}×`, 'Ratio']} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -602,11 +602,11 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               cursor={{ strokeDasharray: '3 3' }}
-              formatter={(v: number, name: string, props: any) => {
+              formatter={(v: number, name: string, _props: unknown) => {
                 if (name === 'y') return `${v}%`;
                 return v;
               }}
-              labelFormatter={(_label: string, payload: any[]) => {
+              labelFormatter={(_label: string, payload: Array<{ payload?: { name?: string } }>) => {
                 if (payload && payload[0] && payload[0].payload && payload[0].payload.name) {
                   return payload[0].payload.name;
                 }
@@ -648,7 +648,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -666,7 +666,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <ReferenceLine y={0} stroke="#52525b" strokeOpacity={0.5} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -763,7 +763,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <ReferenceLine y={100} stroke={CHART.red} strokeDasharray="4 3" label={{ value: '100%', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="Deviasi" stackId="a" fill={CHART.zinc} radius={[0, 0, 0, 0]} />
             <Bar dataKey="Explanation" stackId="a" fill={CHART.amber} radius={[4, 4, 0, 0]}>
-              <LabelList dataKey="Explanation" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => `${Math.round(Number(v))}%`} />
+              <LabelList dataKey="Explanation" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => `${Math.round(Number(v))}%`} />
             </Bar>
             <Legend wrapperStyle={{ fontSize: '9px' }} iconType="circle" formatter={(value: string) => <span style={{ color: '#52525b', fontSize: '9px' }}>{value}</span>} />
           </BarChart>
@@ -782,7 +782,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : `${n}`; }} />
+              <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : `${n}`; }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -799,7 +799,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => `${v}%`} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -816,7 +816,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <Bar dataKey="value" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
-            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: any) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
+            <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : Math.abs(n) >= 1000 ? `${(Math.abs(n)/1000).toFixed(0)}rb` : n.toFixed(1); }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

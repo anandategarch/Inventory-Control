@@ -9,15 +9,23 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer,
 } from 'recharts';
 
-// Shared tooltip payload type (any required by Recharts typing)
-type TipPayload = Array<{ payload?: any; value?: any; name?: any; label?: any }> | undefined;
+// Shared tooltip payload type — `payload` is optional to match Recharts'
+// `Payload<ValueType, NameType>` shape (TS would otherwise reject the assignment).
+// The render code already guards with `active && payload && payload.length`.
+type TipPayloadEntry = {
+  payload?: { name?: string; value?: number };
+  value?: unknown;
+  name?: string | number;
+  label?: unknown;
+};
+type TipPayload = TipPayloadEntry[] | undefined;
 
 // ============================================================
 //  2.3 MultiPeriodComparisonCard
 //  Perbandingan multi-periode (trend sales/BOM/deviasi)
 // ============================================================
 export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
-  const multi = (data.growthComparison as any)?.multiPeriodComparison as Array<Record<string, any>> | undefined;
+  const multi = data.growthComparison.multiPeriodComparison;
 
   return (
     <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
@@ -62,7 +70,7 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
                           <p className="font-semibold border-b pb-1 mb-1">{label}</p>
                           {payload.map((p, i) => (
                             <p key={i} className="text-muted-foreground tabular-nums">
-                              <span className="font-medium text-foreground">{p.name}</span>: {p.name === 'Growth' ? `${((p.value as number) * 100).toFixed(1)}%` : fmtIDR(p.value as number)}
+                              <span className="font-medium text-foreground">{p.name}</span>: {p.name === 'Growth' ? `${((Number(p.value) * 100).toFixed(1))}%` : fmtIDR(Number(p.value))}
                             </p>
                           ))}
                         </div>

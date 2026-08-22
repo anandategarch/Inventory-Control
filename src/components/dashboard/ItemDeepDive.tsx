@@ -10,13 +10,23 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
-import type { AnalysisData } from '@/hooks/useAnalysis';
+import type { AnalysisData, DrilldownRecord, TopItemByNominal } from '@/hooks/useAnalysis';
 import { X, Package, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
 } from 'recharts';
 
-type TipPayload = Array<{ payload?: any; value?: any; name?: any; label?: any }> | undefined;
+// Recharts Tooltip payload entry. `payload` is optional here to match Recharts'
+// own `Payload<ValueType, NameType>` shape (TS would otherwise reject the
+// assignment). The render code already guards with `payload[0].payload` access
+// inside an `active && payload && payload[0]` branch.
+type TipPayloadEntry = {
+  payload?: { name?: string; value?: number };
+  value?: unknown;
+  name?: unknown;
+  label?: unknown;
+};
+type TipPayload = TipPayloadEntry[] | undefined;
 
 // ============================================================
 //  ItemDeepDive
@@ -29,14 +39,14 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
 
   // Top 5 outlets with this item
   const topOutlets = (data?.topItemsByNominal || [])
-    .filter((it: any) => it.itemName === itemName)
+    .filter((it: TopItemByNominal) => it.itemName === itemName)
     .slice(0, 5);
 
   // All occurrences of this item (for direction distribution)
-  const allOccurrences = (data?.topItemsByNominal || []).filter((it: any) => it.itemName === itemName);
-  const lossCount = allOccurrences.filter((it: any) => it.direction === 'LOSS').length;
-  const surplusCount = allOccurrences.filter((it: any) => it.direction === 'SURPLUS').length;
-  const totalAbsNominal = allOccurrences.reduce((s: number, it: any) => s + (it.absNominal || 0), 0);
+  const allOccurrences = (data?.topItemsByNominal || []).filter((it: TopItemByNominal) => it.itemName === itemName);
+  const lossCount = allOccurrences.filter((it: TopItemByNominal) => it.direction === 'LOSS').length;
+  const surplusCount = allOccurrences.filter((it: TopItemByNominal) => it.direction === 'SURPLUS').length;
+  const totalAbsNominal = allOccurrences.reduce((s: number, it: TopItemByNominal) => s + (it.absNominal || 0), 0);
 
   // Multi-period trend for this item (filter trend data)
   const trendData = (data?.trend || []).map((t) => ({
@@ -131,11 +141,11 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                         </Pie>
                         <Tooltip
                           content={({ active, payload }: { active?: boolean; payload?: TipPayload }) =>
-                            active && payload && payload[0]
+                            active && payload && payload[0] && payload[0].payload
                               ? (
                                 <div className="rounded-md border bg-background p-2 shadow-md text-xs">
-                                  <p className="font-medium">{payload[0].payload.name}</p>
-                                  <p className="text-muted-foreground">{payload[0].payload.value.toLocaleString()} outlet</p>
+                                  <p className="font-medium">{payload[0].payload!.name}</p>
+                                  <p className="text-muted-foreground">{Number(payload[0].payload!.value ?? 0).toLocaleString()} outlet</p>
                                 </div>
                               )
                               : null
@@ -165,7 +175,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                   <TableBody>
                     {topOutlets.length === 0 ? (
                       <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-3">Tidak ada data</TableCell></TableRow>
-                    ) : topOutlets.map((it: any, i: number) => (
+                    ) : topOutlets.map((it: TopItemByNominal, i: number) => (
                       <TableRow
                         key={i}
                         className="cursor-pointer hover:bg-muted/50"
@@ -199,7 +209,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {drilldownQuery.data.records.slice(0, 8).map((r: any, i: number) => (
+                        {drilldownQuery.data.records.slice(0, 8).map((r: DrilldownRecord, i: number) => (
                           <TableRow key={i}>
                             <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{r.period?.weekLabel || '—'}</TableCell>
                             <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(r.qty?.deviasi)}</TableCell>
