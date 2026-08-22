@@ -687,7 +687,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
                 const shortName = name.length > 12 ? name.slice(0, 10) + '…' : name;
                 return `${shortName} ${val}%`;
               }}
-              labelLine={{ stroke: '#52525b', strokeWidth: 0.5, length: 8, length2: 12 }}
+              labelLine={{ stroke: '#52525b', strokeWidth: 0.5 }}
               style={{ fontSize: '9px', fill: '#52525b' }}
             >
               {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
