@@ -633,7 +633,8 @@ export async function queryRestoRecommendations(
           COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.20 THEN 1 END) as "zScoreAbnormalCount",
           COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.10 THEN 1 END) as "zScoreWarningCount",
           -- benchmarkFlag not available — use high devBom as proxy
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.30 THEN 1 END) as "benchmarkHighCount",
+          -- FIX: threshold changed from 0.30 to 0.50 per user request
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "benchmarkHighCount",
           0 as "benchmarkWarningCount",
           COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
           -- FIX REC-1: was MAX() returning 0/1; now COUNT() returns actual number of items without tolerance
@@ -847,7 +848,8 @@ export async function queryRestoRecommendations(
     if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
     if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
     if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 20% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
-    if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
+    // FIX: removed residual ratio bullet per user request
+    // if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
     if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
     if (directionFlip) analysis.push(`Arah deviasi berubah: ${prevDirection} → ${direction}`);
     if (itemConcentration > 0.3 && topItem) analysis.push(`Item "${topItem}" kontribusi ${(itemConcentration * 100).toFixed(0)}% dari total deviasi`);
@@ -855,9 +857,11 @@ export async function queryRestoRecommendations(
     if (overExplainedCount > 0) analysis.push(`${overExplainedCount} item Waste+Susut+Trial melebihi total deviasi — indikasi salah input atau fraud`);
     if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp 10Jt (HIGH_LOSS_NOMINAL)`);
     if (hasNoTolerance > 0) analysis.push(`${hasNoTolerance} item belum diset toleransinya — tidak bisa deteksi breach`);
-    if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item dengan deviasi > 30% BOM (proxy benchmark high — jauh di atas normal)`);
+    if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item dengan deviasi > 50% BOM (proxy benchmark high — jauh di atas normal)`);
     if (toleranceBreachCount > 0 && toleranceBreachHighCount === 0) analysis.push(`${toleranceBreachCount} item melebihi toleransi (TOLERANCE_BREACH)`);
-    if (residualNominal > 0) analysis.push(`Dampak residual Rp ${Math.round(residualNominal).toLocaleString('id-ID')} — tidak terjelaskan secara finansial (RESIDUAL_NOMINAL)`);
+    // FIX: removed 2 residual bullets per user request (not needed in analysis):
+    // - "Residual X% — Y dari Z total deviasi LOSS tidak terjelaskan" (was line 851)
+    // - "Dampak residual Rp X — tidak terjelaskan secara finansial (RESIDUAL_NOMINAL)" (was line 861)
     // REC-3: removed unreachable Signal 7 bullet (trendDeteriorating requires deviasiGrowth > 0.2,
     // but the bullet condition excluded deviasiGrowth > 0.2 — logically impossible). Signal 2 already covers this case.
     if (analysis.length === 0) analysis.push('Tidak ada anomaly signifikan terdeteksi');
