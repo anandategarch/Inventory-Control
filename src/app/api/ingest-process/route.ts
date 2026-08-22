@@ -395,9 +395,18 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Create SourceFile record — uses safeFileHash (validated) for fileHash composite key.
-      const sourceFile = await db.sourceFile.create({
-        data: {
+      // Create SourceFile record — upsert to handle re-uploads (fileName is @unique)
+      const sourceFile = await db.sourceFile.upsert({
+        where: { fileName: `${fileName} [${weekLabel}]` },
+        update: {
+          filePath: '',
+          monthLabel: monthInfo.monthLabel,
+          monthKey: monthInfo.monthKey,
+          fileHash: `${safeFileHash}-${weekLabel}`,
+          rowCount: 0,
+          dqStatus: 'OK',
+        },
+        create: {
           fileName: `${fileName} [${weekLabel}]`,
           filePath: '',
           monthLabel: monthInfo.monthLabel,
@@ -408,15 +417,24 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Create Week record — FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+      // Create Week record — upsert to handle re-uploads
+      // FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
       const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g,'')) * 7, 31) };
-      const weekRec = await db.week.create({
-        data: {
+      const weekRec = await db.week.upsert({
+        where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
+        update: {
+          weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
+          monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
+        },
+        create: {
           sourceFileId: sourceFile.id, weekLabel,
           weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
           monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
         },
       });
+
+      // FIX: delete old InventoryRecords for this sourceFile+week (handles re-upload)
+      await db.inventoryRecord.deleteMany({ where: { sourceFileId: sourceFile.id, weekId: weekRec.id } }).catch(() => {});
 
       // Process rows — P2 fix: use shared processRowsForImport from ingestion.ts
       // (eliminates ~100 lines of duplicate validate/normalize/derive/insert logic)
@@ -607,9 +625,18 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Create SourceFile per week
-        const sourceFile = await db.sourceFile.create({
-          data: {
+        // Create SourceFile per week — upsert to handle re-uploads (fileName is @unique)
+        const sourceFile = await db.sourceFile.upsert({
+          where: { fileName: `${fileName} [${weekLabel}]` },
+          update: {
+            filePath: '',
+            monthLabel: monthInfo.monthLabel,
+            monthKey: monthInfo.monthKey,
+            fileHash: `${safeFileHash}-${weekLabel}`,
+            rowCount: 0,
+            dqStatus: 'OK',
+          },
+          create: {
             fileName: `${fileName} [${weekLabel}]`,
             filePath: '',
             monthLabel: monthInfo.monthLabel,
@@ -620,14 +647,23 @@ export async function POST(req: NextRequest) {
           },
         });
 
+        // Create Week record — upsert to handle re-uploads
         const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g, '')) * 7, 31) };
-        const weekRec = await db.week.create({
-          data: {
+        const weekRec = await db.week.upsert({
+          where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
+          update: {
+            weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
+            monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
+          },
+          create: {
             sourceFileId: sourceFile.id, weekLabel,
             weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
             monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
           },
         });
+
+        // FIX: delete old InventoryRecords for this sourceFile+week (handles re-upload)
+        await db.inventoryRecord.deleteMany({ where: { sourceFileId: sourceFile.id, weekId: weekRec.id } }).catch(() => {});
 
         const result = await processRowsForImport(
           weekRows, sourceFile.id, weekRec.id, fileName,
