@@ -503,8 +503,187 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // ============================================================
+    // MODE 3: IMPORT-ALL — reassemble + parse ONCE, import ALL weeks in one request
+    // FIX: previously each week was imported via separate 'import' call, causing
+    // reassemble + parse for EACH week (3x for 3 weeks = 3x slow). This mode
+    // does it all in one request → 3x faster, no 504 timeout.
+    // ============================================================
+    if (mode === 'import-all') {
+      const weeksToImport: string[] = body.weeksToImport || [];
+      if (weeksToImport.length === 0) {
+        return NextResponse.json(
+          { success: false, error: 'weeksToImport array required for import-all mode' },
+          { status: 400 }
+        );
+      }
+
+      console.log(`[ingest-process] import-all ${weeksToImport.length} weeks for ${fileName}`);
+
+      // Reassemble ONCE
+      let filePath: string;
+      try {
+        filePath = await reassembleFile(safeFileHash, fileExt);
+        console.log(`[ingest-process] reassembled to ${filePath}`);
+      } catch (e: unknown) {
+        const err = e as Error;
+        console.error('[ingest-process] reassemble failed:', err);
+        return NextResponse.json(
+          { success: false, error: `Gagal reassemble file: ${err?.message}` },
+          { status: 500 }
+        );
+      }
+
+      // Parse ONCE
+      let parsed;
+      try {
+        parsed = await parseExcelFile(filePath);
+        console.log(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
+      } catch (e: unknown) {
+        const err = e as Error;
+        console.error('[ingest-process] parse failed:', err);
+        await fs.unlink(filePath).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `Gagal parse Excel: ${err?.message}` },
+          { status: 500 }
+        );
+      }
+
+      // Extract month if needed
+      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
+        const allRows: Array<Record<string, unknown>> = [];
+        for (const sheet of parsed.sheets) {
+          allRows.push(...sheet.rows);
+        }
+        const extractedMonth = extractMonthFromRows(allRows);
+        if (extractedMonth) {
+          fileName = `${extractedMonth}.xlsx`;
+          monthInfo = parseMonthFromFilename(fileName);
+        }
+      }
+
+      if (!monthInfo) {
+        await fs.unlink(filePath).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `Nama file tidak sesuai format: "${fileName}"` },
+          { status: 400 }
+        );
+      }
+
+      // Clean up temp file (parsed data is in memory)
+      await fs.unlink(filePath).catch(() => {});
+
+      // Group rows by week
+      const rowsByWeek = new Map<string, Record<string, unknown>[]>();
+      for (const sheet of parsed.sheets) {
+        for (const row of sheet.rows) {
+          const wk = String(row.weekLabel ?? '').trim().toUpperCase();
+          if (weeksToImport.includes(wk)) {
+            if (!rowsByWeek.has(wk)) rowsByWeek.set(wk, []);
+            rowsByWeek.get(wk)!.push(row);
+          }
+        }
+      }
+
+      // Shared maps across weeks (outlets/items created in week 1 reused in week 2)
+      const seenKeys = new Set<string>();
+      const outletDbMap = new Map<string, number>();
+      const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
+      const importedWeeks: Array<{
+        weekLabel: string; status: string; rowCount: number;
+        dqErrors: number; dqWarnings: number; durationMs: number;
+      }> = [];
+      let totalInserted = 0;
+
+      for (const weekLabel of weeksToImport) {
+        const weekRows = rowsByWeek.get(weekLabel) || [];
+        const weekStart = Date.now();
+
+        if (weekRows.length === 0) {
+          importedWeeks.push({
+            weekLabel, status: 'SKIPPED', rowCount: 0,
+            dqErrors: 0, dqWarnings: 0, durationMs: Date.now() - weekStart,
+          });
+          continue;
+        }
+
+        // Create SourceFile per week
+        const sourceFile = await db.sourceFile.create({
+          data: {
+            fileName: `${fileName} [${weekLabel}]`,
+            filePath: '',
+            monthLabel: monthInfo.monthLabel,
+            monthKey: monthInfo.monthKey,
+            fileHash: `${safeFileHash}-${weekLabel}`,
+            rowCount: 0,
+            dqStatus: 'OK',
+          },
+        });
+
+        const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g, '')) * 7, 31) };
+        const weekRec = await db.week.create({
+          data: {
+            sourceFileId: sourceFile.id, weekLabel,
+            weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
+            monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
+          },
+        });
+
+        const result = await processRowsForImport(
+          weekRows, sourceFile.id, weekRec.id, fileName,
+          monthInfo.monthLabel, 0, outletDbMap, itemDbMap, seenKeys,
+          true, locale,
+        );
+
+        const dq = summarizeDQ(result.dqIssues);
+        await db.sourceFile.update({
+          where: { id: sourceFile.id },
+          data: {
+            rowCount: result.inserted,
+            dqStatus: dq.status,
+            dqErrorCount: dq.severityCounts.ERROR,
+            dqWarningCount: dq.severityCounts.WARNING,
+          },
+        });
+
+        totalInserted += result.inserted;
+        importedWeeks.push({
+          weekLabel, status: 'IMPORTED', rowCount: result.inserted,
+          dqErrors: dq.severityCounts.ERROR, dqWarnings: dq.severityCounts.WARNING,
+          durationMs: Date.now() - weekStart,
+        });
+
+        console.log(`[ingest-process] ${weekLabel}: ${result.inserted} rows (${((Date.now() - weekStart) / 1000).toFixed(1)}s)`);
+      }
+
+      // Clear caches
+      analysisCache.clear();
+      statusCache.clear();
+      clearMonthResolverCache();
+
+      // Cleanup chunks
+      await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
+
+      // Audit log
+      await db.auditLog.create({
+        data: {
+          action: 'INGEST_ALL_WEEKS',
+          detail: `${fileName}: ${totalInserted} rows across ${importedWeeks.length} weeks [FAST MODE]`,
+          duration: Date.now() - startedAt,
+        },
+      }).catch(() => {});
+
+      return NextResponse.json({
+        success: true,
+        mode: 'import-all',
+        totalInserted,
+        importedWeeks,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
     return NextResponse.json(
-      { success: false, error: `Unknown mode: ${mode}. Use 'detect' or 'import'.` },
+      { success: false, error: `Unknown mode: ${mode}. Use 'detect', 'import', or 'import-all'.` },
       { status: 400 }
     );
   } catch (e: any) {

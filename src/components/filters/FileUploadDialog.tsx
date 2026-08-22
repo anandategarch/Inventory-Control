@@ -375,70 +375,59 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     let totalInserted = 0;
 
     try {
-      for (let wi = 0; wi < weeksToImport.length; wi++) {
-        const weekLabel = weeksToImport[wi];
-        const weekRows = rowCountPerWeek[weekLabel] || 0;
+      // FIX: use 'import-all' mode — reassemble + parse ONCE for all weeks
+      // (was: separate 'import' call per week = reassemble + parse N times = N× slower)
+      const totalRows = weeksToImport.reduce((s, w) => s + (rowCountPerWeek[w] || 0), 0);
+      setStatusLog(prev => [...prev, `⏳ Import semua week (${totalRows.toLocaleString()} rows total)...`]);
+      setProgress(70);
 
-        const weekProgress = 60 + ((wi) / weeksToImport.length) * 40; // 60-100%
-        setProgress(weekProgress);
+      const importRes = await fetch('/api/ingest-process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'import-all',
+          fileName,
+          fileHash,
+          fileSize,
+          ext,
+          weeksToImport,
+          numberLocale,
+          ...(detectData.manualMode ? { manualFileName: fileName } : {}),
+        }),
+      });
 
-        setStatusLog(prev => [...prev, `⏳ Import ${weekLabel} (${weekRows.toLocaleString()} rows)...`]);
+      const contentType = importRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await importRes.text();
+        if (importRes.status === 504) {
+          throw new Error(`Timeout (504) — import terlalu lama. Coba lagi atau gunakan Import dari Drive.`);
+        }
+        throw new Error(`Server error (HTTP ${importRes.status}). ${text.slice(0, 300)}`);
+      }
 
-        try {
-          const importRes = await fetch('/api/ingest-process', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mode: 'import',
-              fileName,
-              fileHash,
-              fileSize,
-              ext,
-              weekLabel,
-              numberLocale,
-              // Pass manualFileName through to import too, so server uses the same name
-              ...(detectData.manualMode ? { manualFileName: fileName } : {}),
-            }),
-          });
+      const importData = await importRes.json();
+      if (!importRes.ok || !importData.success) {
+        throw new Error(importData.error || `HTTP ${importRes.status}`);
+      }
 
-          const contentType = importRes.headers.get('content-type') || '';
-          if (!contentType.includes('application/json')) {
-            const text = await importRes.text();
-            if (importRes.status === 504) {
-              throw new Error(`Timeout (504) — import ${weekLabel} terlalu lama. Coba lagi.`);
-            }
-            throw new Error(`Server error (HTTP ${importRes.status}). ${text.slice(0, 300)}`);
-          }
-
-          const importData = await importRes.json();
-          if (!importRes.ok || !importData.success) {
-            throw new Error(importData.error || `HTTP ${importRes.status}`);
-          }
-
-          totalInserted += importData.rowCount || 0;
-          importedWeeks.push({
-            weekLabel,
-            status: 'IMPORTED',
-            rowCount: importData.rowCount || 0,
-            dqErrors: importData.dqErrors || 0,
-            dqWarnings: importData.dqWarnings || 0,
-            durationMs: importData.durationMs || 0,
-          });
-
-          setStatusLog(prev => [...prev, `✅ ${weekLabel}: ${(importData.rowCount || 0).toLocaleString()} rows imported (${((importData.durationMs || 0) / 1000).toFixed(1)}s) | DQ: ${importData.dqErrors || 0}E ${importData.dqWarnings || 0}W`]);
-        } catch (e: any) {
-          importedWeeks.push({
-            weekLabel,
-            status: 'ERROR',
-            rowCount: 0,
-            dqErrors: 1,
-            dqWarnings: 0,
-            durationMs: 0,
-            error: e?.message || 'unknown',
-          });
-          setStatusLog(prev => [...prev, `❌ ${weekLabel}: ERROR — ${e?.message || 'unknown'}`]);
+      totalInserted = importData.totalInserted || 0;
+      const weeksResult = importData.importedWeeks || [];
+      for (const w of weeksResult) {
+        importedWeeks.push({
+          weekLabel: w.weekLabel,
+          status: w.status,
+          rowCount: w.rowCount || 0,
+          dqErrors: w.dqErrors || 0,
+          dqWarnings: w.dqWarnings || 0,
+          durationMs: w.durationMs || 0,
+        });
+        if (w.status === 'IMPORTED') {
+          setStatusLog(prev => [...prev, `✅ ${w.weekLabel}: ${(w.rowCount || 0).toLocaleString()} rows imported (${((w.durationMs || 0) / 1000).toFixed(1)}s) | DQ: ${w.dqErrors || 0}E ${w.dqWarnings || 0}W`]);
+        } else {
+          setStatusLog(prev => [...prev, `⏭️ ${w.weekLabel}: ${w.status}`]);
         }
       }
+      setStatusLog(prev => [...prev, `📊 Total: ${totalInserted.toLocaleString()} rows dalam ${((importData.durationMs || 0) / 1000).toFixed(1)}s`]);
 
       // Cleanup temp file
       await fetch('/api/ingest-process', {
