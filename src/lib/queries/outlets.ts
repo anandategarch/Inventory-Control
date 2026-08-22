@@ -638,10 +638,11 @@ export async function queryRestoRecommendations(
           COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN 1 END) as "toleranceBreachCount",
           COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN 1 END) as "toleranceBreachHighCount",
           -- zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison.
-          -- Use ABS(pctQtyDeviasiToBom) > 0.20 as proxy for "abnormal" (high deviation ratio vs BOM)
+          -- FIX: threshold changed from 0.20 to 0.50 per user request
+          -- Use ABS(pctQtyDeviasiToBom) > 0.50 as proxy for "abnormal" (high deviation ratio vs BOM)
           -- FIX CALC-2: ABS() needed because pctQtyDeviasiToBom is SIGNED (negative for LOSS)
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.20 THEN 1 END) as "zScoreAbnormalCount",
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.10 THEN 1 END) as "zScoreWarningCount",
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "zScoreAbnormalCount",
+          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.25 THEN 1 END) as "zScoreWarningCount",
           -- benchmarkFlag not available — use high devBom as proxy
           -- FIX: threshold changed from 0.30 to 0.50 per user request
           COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "benchmarkHighCount",
@@ -861,7 +862,7 @@ export async function queryRestoRecommendations(
     const analysis: string[] = [];
     if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
     if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
-    if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 20% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
+    if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 50% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
     // FIX: removed residual ratio bullet per user request
     // if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
     if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
@@ -920,7 +921,7 @@ export async function queryRestoRecommendations(
       signalScores: [
         { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.12, value: `${devBomRatio.toFixed(2)}×` },
         { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: deviasiGrowth != null ? `${(deviasiGrowth * 100).toFixed(0)}%` : '—' },
-        { name: 'Deviasi >20% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
+        { name: 'Deviasi >50% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
         { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
         { name: 'Loss/Sales', score: Math.round(s5Score), weight: 0.08, value: `${(lossToSales * 100).toFixed(1)}%` },
         { name: 'Direction Flip', score: Math.round(s6Score), weight: 0.08, value: directionFlip ? 'YA' : 'Tidak' },
