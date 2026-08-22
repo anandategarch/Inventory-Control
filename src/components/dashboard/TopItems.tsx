@@ -61,7 +61,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
                   <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
-                  <TableCell className="text-right font-semibold text-xs tabular-nums">{fmtIDR(it.absNominal)}</TableCell>
+                  <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(it.nominalDeviasi)}</TableCell>
                   <TableCell className={`text-center text-xs font-bold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                 </TableRow>
               ))}
@@ -190,7 +190,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
                     <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
-                    <TableCell className="text-right font-semibold text-xs tabular-nums">{fmtIDR(o.absNominal)}</TableCell>
+                    <TableCell className={`text-right font-semibold text-xs tabular-nums ${o.nominalDeviasi != null && o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(o.nominalDeviasi ?? o.absNominal)}</TableCell>
                     <TableCell className={`text-right text-xs font-semibold tabular-nums ${aboveArea ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{fmtPctAbs(o.areaAvg)}</TableCell>
                   </TableRow>

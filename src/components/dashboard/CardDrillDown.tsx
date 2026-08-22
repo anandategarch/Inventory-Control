@@ -43,7 +43,7 @@ const CARD_CONFIG: Record<string, CardConfig> = {
       { key: 'outletCode', label: 'Outlet' },
       { key: 'area', label: 'Area' },
       { key: 'sales', label: 'Sales', align: 'right', format: (v) => fmtIDR(v as number) },
-      { key: 'absNominal', label: '|Nom Dev|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'nominalDeviasi', label: 'Nominal Deviasi', align: 'right', format: (v) => fmtIDR(v as number), color: (v) => (v as number) < 0 ? 'text-red-600' : 'text-emerald-600' },
       { key: 'devToSalesRatio', label: 'Dev/Sales', align: 'right', format: (v) => v != null ? fmtPctAbs(v as number) : '—' },
     ],
     getData: (data) => (data.topOutletsBySales || []) as unknown as DrillRow[],
@@ -54,7 +54,7 @@ const CARD_CONFIG: Record<string, CardConfig> = {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'absNominal', label: '|Nominal|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'nominalDeviasi', label: 'Nominal Deviasi', align: 'right', format: (v) => fmtIDR(v as number), color: (v) => (v as number) < 0 ? 'text-red-600' : 'text-emerald-600' },
       { key: 'direction', label: 'Dir', align: 'center', format: (v) => (v as string)?.[0] || '-', color: (v) => directionColor(v as string) },
     ],
     getData: (data) => (data.topItemsByNominal || []) as unknown as DrillRow[],
@@ -65,7 +65,7 @@ const CARD_CONFIG: Record<string, CardConfig> = {
     columns: [
       { key: 'itemName', label: 'Item' },
       { key: 'outletCode', label: 'Outlet' },
-      { key: 'absNominal', label: '|Nominal Dev|', align: 'right', format: (v) => fmtIDR(v as number) },
+      { key: 'nominalDeviasi', label: 'Nominal Deviasi', align: 'right', format: (v) => fmtIDR(v as number), color: (v) => (v as number) < 0 ? 'text-red-600' : 'text-emerald-600' },
       { key: 'direction', label: 'Dir', align: 'center', format: (v) => (v as string)?.[0] || '-', color: (v) => directionColor(v as string) },
     ],
     getData: (data) => (data.topItemsByNominal || []) as unknown as DrillRow[],

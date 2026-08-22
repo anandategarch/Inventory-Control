@@ -141,7 +141,15 @@ Buka `src/config/thresholds.ts` — ubah tolerance, growth factor, priority weig
 ### Sign Convention
 - `QTY BOM`, `QTY COM`, `QTY WASTE/SUSUT/TRIAL` → **NEGATIF** (konsumsi)
 - `QTY DEVIASI` → **+** = LOSS (actual > SOC), **−** = SURPLUS (actual < SOC)
+- `NOMINAL DEVIASI` / `NOMINAL LOSS SURPLUS` → **−** = LOSS (rugi), **+** = SURPLUS (untung)
 - `PENJUALAN` → selalu positif
+
+### Nominal Deviasi — Display vs Sorting
+- **Display**: gunakan `SUM(nominalLossSurplus)` (SIGNED) — menampilkan nilai asli (negatif=LOSS, positif=SURPLUS)
+- **Sorting**: gunakan `SUM(absNominalLossSurplus)` (ABSOLUTE) — urut by magnitude (financial impact terbesar)
+- **Jangan** tampilkan `absNominal` ke user — itu hanya untuk sorting internal
+- Field `nominalDeviasi` (signed) = nilai yang ditampilkan; `absNominal` (ABS) = nilai untuk sorting
+- Warna: negatif → merah (LOSS), positif → hijau (SURPLUS)
 
 ### NULL vs 0
 - `NULL` = tidak ada record/input → `KOSONG`

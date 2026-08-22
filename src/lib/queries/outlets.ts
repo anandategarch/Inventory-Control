@@ -15,7 +15,8 @@ export interface TopOutletRow {
   outletCode: string;
   outletName: string;
   area: string;
-  absNominal: number;
+  absNominal: number;  // ABS for sorting only
+  nominalDeviasi: number;  // FIX: signed SUM for display (was: only absNominal)
   devBom: number;
   direction: string;
   sales: number;
@@ -55,6 +56,8 @@ export async function queryTopOutlets(
     outlet_aggs AS (
       SELECT ir."outletId",
         SUM(ir."absNominalLossSurplus") as "absNominal",
+        -- FIX: add signed SUM(nominalLossSurplus) for display (ABS only for sorting)
+        SUM(ir."nominalLossSurplus") as "nominalDeviasi",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
@@ -67,6 +70,7 @@ export async function queryTopOutlets(
       GROUP BY ir."outletId"
     )
     SELECT o.code as "outletCode", o.name as "outletName", COALESCE(oa."absNominal", 0) as "absNominal",
+      COALESCE(oa."nominalDeviasi", 0) as "nominalDeviasi",
       COALESCE(oa."devBom", 0) as "devBom",
       CASE WHEN oa."lossAmount" > oa."surplusAmount" THEN 'LOSS'
            WHEN oa."surplusAmount" > oa."lossAmount" THEN 'SURPLUS'
@@ -97,9 +101,9 @@ export async function queryTopOutletsBySales(
     picOutletCodes?: string[] | null;
   },
   limit: number = 10
-): Promise<Array<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number }>> {
+): Promise<Array<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }>> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number }[]>`
+  const rows = await db.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -117,7 +121,10 @@ export async function queryTopOutletsBySales(
       SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
     ),
     outlet_nominal AS (
-      SELECT ir."outletId", SUM(ir."absNominalLossSurplus") as "absNominal"
+      SELECT ir."outletId",
+        SUM(ir."absNominalLossSurplus") as "absNominal",
+        -- FIX: add signed SUM for display
+        SUM(ir."nominalLossSurplus") as "nominalDeviasi"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -126,6 +133,7 @@ export async function queryTopOutletsBySales(
     SELECT o.code as "outletCode", o.name as "outletName",
       COALESCE(sm.sales, 0) as sales,
       COALESCE(on2."absNominal", 0) as "absNominal",
+      COALESCE(on2."nominalDeviasi", 0) as "nominalDeviasi",
       o.area
     FROM sales_mode sm
     JOIN "Outlet" o ON sm."outletId" = o.id

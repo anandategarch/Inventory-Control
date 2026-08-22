@@ -528,12 +528,13 @@ export async function GET(req: NextRequest) {
     const areaAvgMap = new Map<string, number>(areaAnalysisRaw.map(a => [a.area, a.avgDevBom ?? 0]));
     const topOut = topOutletsRaw.map(o => ({
       outletCode: o.outletCode, outletName: o.outletName, area: o.area,
-      absNominal: o.absNominal, devBom: o.devBom, areaAvg: areaAvgMap.get(o.area) ?? 0,
+      absNominal: o.absNominal, nominalDeviasi: o.nominalDeviasi ?? 0,
+      devBom: o.devBom, areaAvg: areaAvgMap.get(o.area) ?? 0,
       sales: o.sales, lossAmount: o.lossAmount, surplusAmount: o.surplusAmount, direction: o.direction,
     }));
     const topOutletsSales = topOutletsSalesRaw.map(o => ({
       outletCode: o.outletCode, outletName: o.outletName, area: o.area,
-      sales: o.sales, absNominal: o.absNominal,
+      sales: o.sales, absNominal: o.absNominal, nominalDeviasi: o.nominalDeviasi ?? 0,
       devToSalesRatio: o.sales > 0 ? o.absNominal / o.sales : null,
     }));
 

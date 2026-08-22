@@ -31,7 +31,8 @@ export interface TopOutlet {
   outletCode: string;
   outletName: string;
   area: string;
-  absNominal: number;
+  absNominal: number;      // ABS — for sorting only
+  nominalDeviasi: number;  // FIX: signed SUM for display
   devBom: number;
   areaAvg: number;
   sales: number;
@@ -46,7 +47,8 @@ export interface TopOutletBySales {
   outletName: string;
   area: string;
   sales: number;
-  absNominal: number;
+  absNominal: number;      // ABS — for sorting only
+  nominalDeviasi: number;  // FIX: signed SUM for display
   devToSalesRatio: number | null;
 }
 
