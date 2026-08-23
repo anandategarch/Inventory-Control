@@ -4,6 +4,29 @@
 //    dashboard.ts, items.ts, outlets.ts, areas.ts, historical.ts
 // ============================================================
 import { Prisma } from '@prisma/client';
+import { db } from '@/lib/db';
+
+// FIX H4 (AUDIT-7): PgBouncer transaction mode (port 6543) silently strips the
+// `statement_timeout` URL param. To enforce a per-query timeout, wrap the query
+// in a transaction with `SET LOCAL statement_timeout = 30000`. SET LOCAL only
+// applies to the current transaction, so it's safe and doesn't leak to other queries.
+//
+// Usage: `const rows = await withStatementTimeout(() => db.$queryRaw\`...\`);`
+//
+// Note: this adds ~1-2ms overhead per call (transaction begin/commit). Only use
+// for queries that could potentially hang (e.g. heavy aggregations on large tables).
+export async function withStatementTimeout<T>(
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  timeoutMs: number = 30000
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    // FIX: SET LOCAL doesn't accept parameterized values in Prisma ($1).
+    // Use Prisma.raw to interpolate the integer safely (it's a hardcoded int,
+    // not user input — no SQL injection risk).
+    await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(String(timeoutMs))}`;
+    return fn(tx);
+  });
+}
 
 // ============================================================
 //  Build filter conditions for raw SQL (Prisma.sql fragments)

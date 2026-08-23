@@ -49,12 +49,14 @@ function createPrismaClient(): PrismaClient {
     if (!url.searchParams.has('pool_timeout')) {
       url.searchParams.set('pool_timeout', '10');
     }
-    // FIX MIG-10: statement_timeout (ms) — kill any single query that runs > 30s.
-    // Prevents one hung query from blocking the entire connection pool.
-    // NOTE: These are passed as URL params, but Prisma + PgBouncer may ignore them
-    // in transaction mode. The values are still valid for direct connections (port 5432)
-    // and for non-PgBouncer PostgreSQL. They're harmless if ignored.
-    // We also set them via $executeRaw on client init as a belt-and-suspenders approach.
+    // FIX MIG-10: statement_timeout (ms) — intended to kill any single query
+    // that runs > 30s, preventing one hung query from blocking the pool.
+    // NOTE: PgBouncer transaction mode (port 6543) silently strips this param —
+    // live-verified: actual PG statement_timeout = 2min (Supabase default).
+    // The Vercel maxDuration=60 on the analysis route is the real kill switch.
+    // For true query-level timeout, wrap slow queries in $transaction with
+    // SET LOCAL statement_timeout=30000 (not implemented — reliance on maxDuration).
+    // idle_timeout (seconds) IS honored by Prisma's connection pool.
     if (!url.searchParams.has('statement_timeout')) {
       url.searchParams.set('statement_timeout', '30000');
     }

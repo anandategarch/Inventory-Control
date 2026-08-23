@@ -5,7 +5,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 
 // ============================================================
 //  Top Items by Metric — GROUP BY itemId (Phase 2)
@@ -142,7 +142,10 @@ export async function queryTopItemsByDeviasiRank(
   // (ALL ~36K pairs) but only top-50 were returned. Refactored to compute bucket_avg
   // only for the top-50 (ranked CTE + top_items filter). Reduces self-join from
   // N×N to 50×N — ~720× less work for the bucket_avg step.
-  const rows = await db.$queryRaw<any[]>`
+  //
+  // FIX H4 (AUDIT-7): wrap in withStatementTimeout to enforce 30s query timeout
+  // (PgBouncer tx mode strips the URL-level statement_timeout param).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
     WITH item_per_outlet AS (
       SELECT
         i.name as "itemName",
@@ -217,7 +220,7 @@ export async function queryTopItemsByDeviasiRank(
       ON ti."itemName" = ba."itemName"
      AND ti."outletCode" = ba."outletCode"
     ORDER BY ti."rankNominal"
-  `;
+  `);
   // Coerce BigInt/Decimal to Number
   return rows.map((r: any) => ({
     ...r,

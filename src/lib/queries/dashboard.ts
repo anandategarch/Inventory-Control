@@ -6,7 +6,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 
 // ============================================================
 //  Trend Query — per-period aggregates (Phase 1b)
@@ -41,7 +41,8 @@ export async function queryTrendAgg(filters: {
   const weekFilter = filters.weekLabel
     ? Prisma.sql`AND ir."weekLabel" = ${filters.weekLabel}`
     : Prisma.empty;
-  const rows = await db.$queryRaw<TrendAggRow[]>`
+  // FIX H4 (AUDIT-7): wrap in withStatementTimeout — trend query scans all periods.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<TrendAggRow[]>`
     WITH sales_counts AS (
       SELECT ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales",
         COUNT(*) as cnt
@@ -92,7 +93,7 @@ export async function queryTrendAgg(filters: {
     FROM period_aggs pa
     LEFT JOIN sales_per_period sp ON pa."monthLabel" = sp."monthLabel" AND pa."weekLabel" = sp."weekLabel"
     ORDER BY pa."monthLabel", pa."weekLabel"
-  `;
+  `);
   return rows;
 }
 
@@ -127,7 +128,8 @@ export async function queryExecSummary(
   }
 ): Promise<ExecSummaryRow | null> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<ExecSummaryRow[]>`
+  // FIX H4 (AUDIT-7): wrap in withStatementTimeout — exec summary is critical path.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<ExecSummaryRow[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -172,7 +174,7 @@ export async function queryExecSummary(
       a."residualLossQty", a."residualLossNominal",
       a."qtyDeviasiLoss"
     FROM aggs a, sales_mode sm
-  `;
+  `);
   return rows[0] || null;
 }
 

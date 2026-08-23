@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { analysisCache, statusCache } from '@/lib/cache';
+import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
 
@@ -128,6 +129,10 @@ export async function POST(req: NextRequest) {
     // Clear caches — bulk PIC change affects status + analysis filters
     analysisCache.clear();
     statusCache.clear();
+    // FIX H2 (AUDIT-5/8): invalidate DB-level AggregationCache after PIC bulk import.
+    // Analysis route filters by `pic` param → cached response would reflect old PIC
+    // assignments for up to 5 min (TTL) without this invalidation.
+    invalidateCache('analysis|').catch(() => {});
 
     await db.auditLog.create({
       data: {
