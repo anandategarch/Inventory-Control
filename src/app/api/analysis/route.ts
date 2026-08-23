@@ -822,6 +822,7 @@ export async function GET(req: NextRequest) {
         warning: o.warning,
         abnormal: o.abnormal,
         absNominal: o.absNominal,
+        nominalDeviasi: o.nominalDeviasi, // FIX: SIGNED sum for display
         devBom: o.devBom,
         sales: o.sales,
       })),

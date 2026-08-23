@@ -124,7 +124,8 @@ export interface OutletHealthRanking {
   normal: number;
   warning: number;
   abnormal: number;
-  absNominal: number;
+  absNominal: number;       // ABS(sum) — for sorting only
+  nominalDeviasi?: number;  // FIX: SIGNED sum — for display (negative = LOSS)
   residualPct: number | null;
   lossToSales: number | null;
   devBom: number;

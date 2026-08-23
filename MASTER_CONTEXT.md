@@ -36,6 +36,43 @@ Setiap minggu, setiap outlet mengirim data stock opname (SO). Sistem membandingk
 - **SURPLUS** = `nominalLossSurplus > 0` (aktual < SOC → untung)
 - **NEUTRAL** = 0
 
+### Nominal Deviasi — Signed vs Absolute (PENTING)
+
+**Aturan display + sort:**
+
+| Field | Type | Purpose | Example |
+|-------|------|---------|---------|
+| `nominalDeviasi` | **SIGNED** sum | **DISPLAY** — negatif = LOSS (merah), positif = SURPLUS (hijau) | `-50,999,247` (LOSS) |
+| `absNominal` | **ABS(sum)** | **SORTING** — `Math.abs(nominalDeviasi)` | `50,999,247` |
+
+**Cara hitung yang BENAR:**
+```typescript
+// 1. Sum SIGNED nominalDeviasi per item (bukan sum of ABS per item)
+e.nominalDeviasi += curr.nominalDeviasi ?? 0;
+// 2. Ambil ABS dari SUM (bukan sum of per-item ABS)
+e.absNominal = Math.abs(e.nominalDeviasi);
+// 3. Sort by absNominal (magnitude)
+// 4. Display nominalDeviasi (signed, dengan warna merah/hijau)
+```
+
+**Yang SALAH (old code):**
+```typescript
+// Sum of per-item ABS — menyembunyikan arah LOSS/SURPLUS
+e.absNominal += curr.absNominalDeviasi; // WRONG: sum of ABS, bukan ABS of sum
+```
+
+**Z-Score menggunakan ABSOLUTE quantity (magnitude):**
+```
+Z-Score = (|current Dev/BOM| - mean(|historical Dev/BOM|)) / STDDEV_SAMP(|historical Dev/BOM|)
+```
+Z-Score selalu positif (magnitude), bukan signed. Historical baseline menggunakan ABS values.
+
+**Komponen yang sudah fixed:**
+- `OutletHealthRanking` (AdvancedAnalysis.tsx) — display signed, sort by abs ✓
+- `TopOutlets` (TopItems.tsx) — display signed, sort by abs ✓
+- `CardDrillDown` — display signed, sort by abs ✓
+- `HistoricalZScoreCard` — display absNominal (correct, Z-Score = magnitude) ✓
+
 ---
 
 ## 2. Tech Stack

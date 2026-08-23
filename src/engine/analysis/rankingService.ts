@@ -281,7 +281,8 @@ export function computeOutletHealthRanking(
     normal: number;
     warning: number;
     abnormal: number;
-    absNominal: number;
+    absNominal: number;      // FIX: ABS(sum) for SORTING only
+    nominalDeviasi: number;  // FIX: SIGNED sum for DISPLAY (negative = LOSS)
     totalQtyDeviasi: number;
     totalQtyBom: number;
     totalQtyWaste: number;
@@ -298,7 +299,7 @@ export function computeOutletHealthRanking(
       e = {
         outlet: r.outlet,
         area: r.area,
-        normal: 0, warning: 0, abnormal: 0, absNominal: 0,
+        normal: 0, warning: 0, abnormal: 0, absNominal: 0, nominalDeviasi: 0,
         totalQtyDeviasi: 0, totalQtyBom: 0, totalQtyWaste: 0,
         totalQtySusut: 0, totalQtyTrial: 0, totalResidualQty: 0,
         lossNominal: 0, sales: 0,
@@ -310,7 +311,11 @@ export function computeOutletHealthRanking(
 
   for (const { curr, flags } of recsWithFlags) {
     const e = ensure(curr);
-    e.absNominal += curr.absNominalDeviasi ?? 0;
+    // FIX: sum SIGNED nominalDeviasi first (for display), then ABS for sorting.
+    // Old code: e.absNominal += curr.absNominalDeviasi (per-item ABS, then sum — wrong)
+    // New code: sum signed, then take ABS of the sum for sort key.
+    e.nominalDeviasi += curr.nominalDeviasi ?? 0;
+    e.absNominal = Math.abs(e.nominalDeviasi); // ABS of SIGNED SUM (not sum of ABS)
     e.totalQtyDeviasi += Math.abs(curr.qtyDeviasi ?? 0);
     e.totalQtyBom += Math.abs(curr.qtyBom ?? 0);
     e.totalQtyWaste += Math.abs(curr.qtyWaste ?? 0);
@@ -371,7 +376,8 @@ export function computeOutletHealthRanking(
         normal: v.normal,
         warning: v.warning,
         abnormal: v.abnormal,
-        absNominal: v.absNominal,
+        absNominal: v.absNominal,       // ABS(sum) — for sorting
+        nominalDeviasi: v.nominalDeviasi, // FIX: SIGNED sum — for display
         residualPct,
         lossToSales,
         devBom,

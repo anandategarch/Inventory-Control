@@ -86,7 +86,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Skor</TableHead>
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">% DEV TO BOM</TableHead>
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Masalah</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">NOMINAL DEVIASI</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -111,7 +111,13 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                   </TableCell>
                   <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(o.devBom)}</TableCell>
                   <TableCell className="text-[11px] px-2 py-1.5 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(o.absNominal)}</TableCell>
+                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">
+                    {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
+                    {/* Sort still uses absNominal (ABS of sum) — set in rankingService */}
+                    <span className={(o.nominalDeviasi ?? o.absNominal) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                      {fmtIDR(o.nominalDeviasi ?? o.absNominal)}
+                    </span>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
