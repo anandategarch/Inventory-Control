@@ -5,28 +5,40 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
-import { GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart } from '@/components/dashboard/Charts';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
-import {
-  MultiPeriodComparisonCard,
-} from '@/components/dashboard/AnalysisCards';
-import { HistoricalZScoreCard } from '@/components/dashboard/HistoricalZScoreCard';
-import { AreaTrendChart } from '@/components/dashboard/AreaTrendChart';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
-import { PeerComparison } from '@/components/dashboard/PeerComparison';
-import { ItemDeepDive } from '@/components/dashboard/ItemDeepDive';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 // CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
 import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+
+// Phase 4: Lazy-load heavy chart components (Recharts = 5.4MB)
+// ssr: false — charts are client-only (use ResponsiveContainer which needs window)
+import dynamic from 'next/dynamic';
+
+const LoadingChart = () => (
+  <div className="flex items-center justify-center h-48">
+    <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+  </div>
+);
+
+const GrowthComparison = dynamic(() => import('@/components/dashboard/Charts').then(m => m.GrowthComparison), { ssr: false, loading: () => <LoadingChart /> });
+const DeviationBreakdownChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.DeviationBreakdownChart), { ssr: false, loading: () => <LoadingChart /> });
+const LossVsSurplusChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.LossVsSurplusChart), { ssr: false, loading: () => <LoadingChart /> });
+const TrendChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.TrendChart), { ssr: false, loading: () => <LoadingChart /> });
+const MultiPeriodComparisonCard = dynamic(() => import('@/components/dashboard/AnalysisCards').then(m => m.MultiPeriodComparisonCard), { ssr: false, loading: () => <LoadingChart /> });
+const HistoricalZScoreCard = dynamic(() => import('@/components/dashboard/HistoricalZScoreCard').then(m => m.HistoricalZScoreCard), { ssr: false, loading: () => <LoadingChart /> });
+const AreaTrendChart = dynamic(() => import('@/components/dashboard/AreaTrendChart').then(m => m.AreaTrendChart), { ssr: false, loading: () => <LoadingChart /> });
+const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparison').then(m => m.PeerComparison), { ssr: false, loading: () => <LoadingChart /> });
+const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false });
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';

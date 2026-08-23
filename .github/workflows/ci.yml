@@ -1,13 +1,13 @@
-# CI Pipeline — runs on every push to main + every PR
+# CI Pipeline — runs on every push + every PR
 # Checks: TypeScript compilation, ESLint, unit tests
 # Blocks merge if any check fails
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop, 'feature/**']
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   quality:
@@ -25,6 +25,14 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # Phase 4: cache node_modules + .next for faster CI runs (~60-90s saved)
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

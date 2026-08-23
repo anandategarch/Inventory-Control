@@ -12,12 +12,13 @@
 //  to prevent a single hung query from blocking the entire pool.
 // ============================================================
 import { PrismaClient } from '@prisma/client';
+import { logger } from './logger';
 
 function createPrismaClient(): PrismaClient {
   let dbUrl = process.env.DATABASE_URL || '';
 
   if (!dbUrl) {
-    console.error('[db] DATABASE_URL is not set!');
+    logger.error('DATABASE_URL is not set');
     throw new Error('DATABASE_URL is required (PostgreSQL/Supabase)');
   }
 
@@ -26,9 +27,9 @@ function createPrismaClient(): PrismaClient {
     // Auto-switch Supabase pooler from session mode (port 5432) to transaction mode (port 6543)
     if (dbUrl.includes('.pooler.supabase.com:5432/')) {
       dbUrl = dbUrl.replace('.pooler.supabase.com:5432/', '.pooler.supabase.com:6543/');
-      console.log('[db] Using PostgreSQL (Supabase) — switched to transaction mode (port 6543)');
+      logger.info('Using PostgreSQL (Supabase) — switched to transaction mode (port 6543)');
     } else {
-      console.log('[db] Using PostgreSQL (Supabase)');
+      logger.info('Using PostgreSQL (Supabase)');
     }
     const url = new URL(dbUrl);
     if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
@@ -46,7 +47,7 @@ function createPrismaClient(): PrismaClient {
   // FIX AUDIT-7 #5: Removed non-functional SQLite dev fallback.
   // schema.prisma locks provider = "postgresql" — PrismaClient cannot connect
   // to SQLite. The fallback was dead code that crashed on first query.
-  console.error('[db] DATABASE_URL must start with postgresql:// or postgres://');
+  logger.error('DATABASE_URL must start with postgresql:// or postgres://');
   throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
 }
 

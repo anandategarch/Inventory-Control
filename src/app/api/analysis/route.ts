@@ -11,6 +11,7 @@
 //    analysis, variance analysis still use raw records (per-record logic)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
 import {
   buildWorklistFromFlags,
@@ -196,7 +197,7 @@ export async function GET(req: NextRequest) {
         ? db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`
             .then((r) => r.map((p) => p.outletCode))
             .catch((e) => {
-              console.error('[analysis] OutletPIC query failed (table may not exist):', e instanceof Error ? e.message : String(e));
+              logger.error("OutletPIC query failed (table may not exist)", { error: e instanceof Error ? e.message : String(e) });
               return null;
             })
         : Promise.resolve(null),
@@ -821,12 +822,12 @@ export async function GET(req: NextRequest) {
         duration: Date.now() - startedAt,
       },
     }).catch((e) => {
-      console.error('[analysis] Audit log write failed (non-blocking):', e instanceof Error ? e.message : String(e));
+      logger.error("Audit log write failed (non-blocking)", { error: e instanceof Error ? e.message : String(e) });
     });
 
     return NextResponse.json(result);
   } catch (e: unknown) {
-    console.error('Analysis error:', e);
+    logger.error('Analysis error', { error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
