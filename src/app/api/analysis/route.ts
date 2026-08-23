@@ -11,19 +11,17 @@
 //    analysis, variance analysis still use raw records (per-record logic)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
 import {
   buildWorklistFromFlags,
-  buildRuleContext,
   computeVarianceAnalysis,
   computeOutletHealthRanking,
   computeHistoricalAnalysis,
   detectPatterns,
-  getRootCauses,
-  generateExecutiveInsights,
 } from '@/engine/analysis/analysis';
-import { evaluateRules } from '@/engine/rules/evaluator';
+import type { AnomalyFlagResult } from '@/types/inventory';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { computeNominalDeviationGrowth, projectTrend } from '@/lib/metrics';
@@ -300,10 +298,10 @@ export async function GET(req: NextRequest) {
     // BUG FIX (BUG-NORECORDS-1): add area/outletCode 'all' guards (was missing — caused
     // "No records found" if frontend sent 'all' as literal string).
     // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter (mode: 'insensitive').
-    const buildWhere = (wk: string, mLabel: string) => {
-      const w: any = { monthLabel: mLabel, weekLabel: wk };
+    const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput => {
+      const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
-      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
+      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
       // FIX FILTER-2: PIC filter — case-insensitive (done in raw SQL above) + sentinel for empty list.
       // Combine with outletCode: if both set, outlet must be in PIC list (intersection).
       if (picOutletCodes !== null) {
@@ -428,7 +426,7 @@ export async function GET(req: NextRequest) {
 
     interface RecWithFlags {
       curr: RecWithRels;
-      flags: ReturnType<typeof evaluateRules>;
+      flags: AnomalyFlagResult[];
     }
     const recsWithFlags: RecWithFlags[] = [];
     let zeroDevCount = 0;

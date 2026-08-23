@@ -5,6 +5,7 @@
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, AlignmentType, WidthType,
@@ -76,7 +77,7 @@ function buildExecSummaryFromSql(
       residualLossQty: prev.residualLossQty ?? null,
       residualLossPct: prev.qtyDeviasiLoss > 0 ? (prev.residualLossQty ?? 0) / prev.qtyDeviasiLoss : null,
     } : null,
-  } as ExecutiveSummary & { _prevMetrics: any };
+  } as ExecutiveSummary & { _prevMetrics: Record<string, unknown> | null };
 }
 
 // ============================================================
@@ -278,9 +279,9 @@ export async function GET(req: NextRequest) {
     // Build where clause
     // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter
     const buildWhere = (wk: string, mLabel: string) => {
-      const w: any = { monthLabel: mLabel, weekLabel: wk };
+      const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
-      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' as any } };
+      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
       // FIX FILTER-4: PIC filter with sentinel + outletCode intersection
       if (picOutletCodes !== null) {
         let codes = picOutletCodes; // already has sentinel if empty
@@ -481,14 +482,14 @@ export async function GET(req: NextRequest) {
       qtyDeviasiGrowth: execSummary.qtyDeviasi.growth, nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
       deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
       deviationToBomRatio: execSummary.deviationToBom,
-      multiPeriodComparison: [] as any[],
+      multiPeriodComparison: [] as Array<Record<string, unknown>>,
     };
 
     const multiPeriodComparison = trendAggRows.map(r => {
       const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
       return { period: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0) row.growthPct = computeNominalDeviationGrowth(row.deviation, arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
-    (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
+    growthMetrics.multiPeriodComparison = multiPeriodComparison;
 
     const trend = trendAggRows.map(r => {
       const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';

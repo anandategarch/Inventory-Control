@@ -4,8 +4,8 @@
 // ============================================================
 import { z } from 'zod';
 
-// Month label: "Januari 2026", "Mei 2026", etc. — Title Case + 4-digit year
-export const monthLabelSchema = z.string().min(3).max(30).optional();
+// Month label: "Januari 2026", "Mei 2026", etc. — Indonesian month name + 4-digit year
+export const monthLabelSchema = z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/).optional();
 
 // Week label: "WEEK 1", "WEEK 2", "WEEK 4"
 export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).optional();
