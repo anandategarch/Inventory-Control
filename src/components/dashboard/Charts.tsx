@@ -10,21 +10,45 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ComposedChart, Line, Legend, Cell,
 } from 'recharts';
-import { TrendingUp, BarChart3, PieChart, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, PieChart, Activity } from 'lucide-react';
+import { useState } from 'react';
 
 export function GrowthComparison({ data }: { data: AnalysisData }) {
   const g = data.growthComparison;
+  const drivers = data.growthDrivers || [];
+  const [expanded, setExpanded] = useState<string | null>(null);
+
   const chartData = [
-    { name: 'Sales', growth: g.salesGrowth },
-    { name: 'BOM', growth: g.bomGrowth },
-    { name: 'QTY Deviasi', growth: g.qtyDeviasiGrowth },
-    { name: 'Nominal Deviasi', growth: g.nominalDeviasiGrowth },
+    { name: 'Sales', growth: g.salesGrowth, key: 'sales' },
+    { name: 'BOM', growth: g.bomGrowth, key: 'bom' },
+    { name: 'QTY Deviasi', growth: g.qtyDeviasiGrowth, key: 'qtyDeviasi' },
+    { name: 'Nominal Deviasi', growth: g.nominalDeviasiGrowth, key: 'nominalDeviasi' },
   ].filter((d) => d.growth != null);
 
   const mismatchSales = g.salesGrowth != null && g.nominalDeviasiGrowth != null &&
     g.nominalDeviasiGrowth > 2 * (g.salesGrowth > 0 ? g.salesGrowth : 0) && g.salesGrowth > 0;
   const mismatchBom = g.bomGrowth != null && g.qtyDeviasiGrowth != null &&
     g.qtyDeviasiGrowth > 2 * (g.bomGrowth > 0 ? g.bomGrowth : 0) && g.bomGrowth > 0;
+
+  const getTopDriver = (metricKey: string) => {
+    const md = drivers.find(d => d.metric === metricKey);
+    if (!md) return null;
+    const upTop = md.up.drivers[0];
+    const downTop = md.down.drivers[0];
+    if (upTop && (!downTop || Math.abs(upTop.delta) > Math.abs(downTop.delta))) {
+      return { name: upTop.item, share: upTop.sharePct, dir: 'up' as const };
+    }
+    if (downTop) return { name: downTop.item, share: downTop.sharePct, dir: 'down' as const };
+    return null;
+  };
+
+  const formatDelta = (v: number) => {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}M`;
+    if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}Jt`;
+    if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
+    return v.toFixed(0);
+  };
 
   return (
     <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
@@ -36,7 +60,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
           Growth Comparison
           <FormulaInfo
             formula="Growth = (Current - Previous) / |Previous|"
-            description="Persentase perubahan vs periode pembanding. Bar merah = mismatch (Deviasi/Sales atau Deviasi/BOM tumbuh > 2× lipat dari sales/BOM)."
+            description="Persentase perubahan vs periode pembanding. Klik metric untuk lihat Pareto 80% — item penyebab terbesar."
             example="Sales: (5.98B - 3.88B) / 3.88B = +54%"
             side="bottom"
           />
@@ -50,7 +74,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
         <p className="text-xs text-muted-foreground ml-9 tabular-nums">
           Current vs {data.period.comparisonWeek
             ? `${data.period.comparisonWeek}${data.period.comparisonMonth && data.period.comparisonMonth !== data.period.monthLabel ? ` ${data.period.comparisonMonth}` : ''}`
-            : 'previous'} period
+            : 'previous'} period — klik metric untuk detail Pareto 80%
         </p>
       </CardHeader>
       <CardContent>
@@ -63,14 +87,14 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
           </div>
         ) : (
           <>
-            <div className="h-48">
+            <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20, top: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" className="opacity-60" />
                   <XAxis type="number" tickFormatter={(v) => fmtPct(v, true, 0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="name" width={90} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
-                  <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28}>
+                  <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                     {chartData.map((d, i) => {
                       const mismatch =
                         (d.name === 'Sales' && mismatchSales) ||
@@ -84,7 +108,40 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
+
+            {/* Top Driver badges — clickable to expand */}
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {chartData.map((d) => {
+                const top = getTopDriver(d.key);
+                const isExpanded = expanded === d.key;
+                return (
+                  <button
+                    key={d.key}
+                    onClick={() => setExpanded(isExpanded ? null : d.key)}
+                    className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                      isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
+                    }`}
+                  >
+                    <span className="text-muted-foreground font-medium">{d.name}</span>
+                    {top ? (
+                      <span className="flex items-center gap-1 min-w-0">
+                        <span className={`truncate max-w-[80px] ${top.dir === 'up' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {top.name}
+                        </span>
+                        <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                          {top.share.toFixed(0)}%
+                        </Badge>
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Mismatch badges */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {mismatchSales && (
                 <Badge variant="destructive" className="text-[10px] h-5 font-medium">
                   Sales vs Deviasi MISMATCH
@@ -99,6 +156,89 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                 <Badge variant="secondary" className="text-[10px] h-5 bg-emerald-100/60 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 font-medium">Growth pattern consistent</Badge>
               )}
             </div>
+
+            {/* Pareto 80% detail — expandable */}
+            {expanded && drivers.length > 0 && (() => {
+              const md = drivers.find(d => d.metric === expanded);
+              if (!md) return null;
+              const growthVal = chartData.find(c => c.key === expanded)?.growth;
+              return (
+                <div className="mt-3 rounded-lg border p-3 space-y-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold">
+                      {md.label} — {growthVal != null ? `${(growthVal * 100).toFixed(1)}%` : '—'}
+                    </p>
+                    <button onClick={() => setExpanded(null)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                      ✕ Tutup
+                    </button>
+                  </div>
+
+                  {/* Up drivers */}
+                  {md.up.drivers.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 mb-1 flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" /> Naik — 80% Pareto ({md.up.drivers.length} item)
+                      </p>
+                      <div className="space-y-1">
+                        {md.up.drivers.map((d, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[10px]">
+                            <span className="w-4 text-muted-foreground">{i + 1}.</span>
+                            <span className="flex-1 truncate" title={d.item}>{d.item}</span>
+                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                              <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
+                            </div>
+                            <span className="w-12 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">
+                              +{formatDelta(d.delta)}
+                            </span>
+                            <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
+                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                          </div>
+                        ))}
+                        {md.up.remainderCount > 0 && (
+                          <p className="text-[9px] text-muted-foreground/60 pl-6">
+                            Sisa {md.up.remainderPct.toFixed(0)}%: {md.up.remainderCount} item kecil
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Down drivers */}
+                  {md.down.drivers.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-medium text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
+                        <TrendingDown className="h-3 w-3" /> Turun — 80% Pareto ({md.down.drivers.length} item)
+                      </p>
+                      <div className="space-y-1">
+                        {md.down.drivers.map((d, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[10px]">
+                            <span className="w-4 text-muted-foreground">{i + 1}.</span>
+                            <span className="flex-1 truncate" title={d.item}>{d.item}</span>
+                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                              <div className="h-full bg-red-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
+                            </div>
+                            <span className="w-12 text-right tabular-nums text-red-600 dark:text-red-400 font-medium">
+                              {formatDelta(d.delta)}
+                            </span>
+                            <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
+                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                          </div>
+                        ))}
+                        {md.down.remainderCount > 0 && (
+                          <p className="text-[9px] text-muted-foreground/60 pl-6">
+                            Sisa {md.down.remainderPct.toFixed(0)}%: {md.down.remainderCount} item kecil
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {md.up.drivers.length === 0 && md.down.drivers.length === 0 && (
+                    <p className="text-[10px] text-muted-foreground text-center py-2">Tidak ada perubahan signifikan</p>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
       </CardContent>

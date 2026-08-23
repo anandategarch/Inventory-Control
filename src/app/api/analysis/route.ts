@@ -782,6 +782,75 @@ export async function GET(req: NextRequest) {
       totalOutlets: outletHealthRanking.length,
     });
 
+    // ============================================================
+    //  Growth Drivers — Pareto 80% analysis per metric
+    //  Computes top items contributing to growth/decline for each of 4 metrics
+    // ============================================================
+    const growthDrivers = (() => {
+      const metrics = [
+        { key: 'sales', field: 'nominalSales' as const, label: 'Sales' },
+        { key: 'bom', field: 'qtyBom' as const, label: 'BOM' },
+        { key: 'qtyDeviasi', field: 'qtyDeviasi' as const, label: 'QTY Deviasi' },
+        { key: 'nominalDeviasi', field: 'nominalDeviasi' as const, label: 'Nominal Deviasi' },
+      ];
+
+      return metrics.map(metric => {
+        const currByItem = new Map<string, number>();
+        const prevByItem = new Map<string, number>();
+
+        for (const r of currentRecs) {
+          const name = r.item?.name || `Item ${r.itemId}`;
+          const val = r[metric.field];
+          if (val != null) currByItem.set(name, (currByItem.get(name) ?? 0) + Math.abs(val));
+        }
+        for (const r of prevRecs) {
+          const name = r.item?.name || `Item ${r.itemId}`;
+          const val = r[metric.field];
+          if (val != null) prevByItem.set(name, (prevByItem.get(name) ?? 0) + Math.abs(val));
+        }
+
+        const allItems = new Set([...currByItem.keys(), ...prevByItem.keys()]);
+        const positive: Array<{ item: string; delta: number; pct: number }> = [];
+        const negative: Array<{ item: string; delta: number; pct: number }> = [];
+
+        for (const item of allItems) {
+          const curr = currByItem.get(item) ?? 0;
+          const prev = prevByItem.get(item) ?? 0;
+          const delta = curr - prev;
+          if (Math.abs(delta) < 1) continue;
+          const pct = prev > 0 ? delta / prev : 0;
+          if (delta > 0) positive.push({ item, delta, pct });
+          else negative.push({ item, delta, pct });
+        }
+
+        const computePareto = (arr: Array<{ item: string; delta: number; pct: number }>) => {
+          arr.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+          const totalDelta = arr.reduce((s, d) => s + Math.abs(d.delta), 0);
+          if (totalDelta === 0) return { drivers: [], remainderCount: 0, remainderPct: 0 };
+          let cumPct = 0;
+          const drivers: Array<{ item: string; delta: number; pct: number; cumPct: number; sharePct: number }> = [];
+          for (const d of arr) {
+            const sharePct = (Math.abs(d.delta) / totalDelta) * 100;
+            cumPct += sharePct;
+            drivers.push({ ...d, cumPct: Number(cumPct.toFixed(1)), sharePct: Number(sharePct.toFixed(1)) });
+            if (cumPct >= 80) break;
+          }
+          return {
+            drivers,
+            remainderCount: arr.length - drivers.length,
+            remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
+          };
+        };
+
+        return {
+          metric: metric.key,
+          label: metric.label,
+          up: computePareto(positive),
+          down: computePareto(negative),
+        };
+      });
+    })();
+
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -799,6 +868,7 @@ export async function GET(req: NextRequest) {
       topItemsByDevBom: topDevBom,
       topOutlets: topOut,
       topOutletsBySales: topOutletsSales,
+      growthDrivers, // FIX: Pareto 80% drivers per metric
       topItemsByWaste: topWaste,
       topItemsBySusut: topSusut,
       topItemsByTrial: topTrial,

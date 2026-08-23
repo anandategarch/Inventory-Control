@@ -213,9 +213,25 @@ export interface AnalysisData {
   costImpact?: CostImpact;
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];
+  growthDrivers?: GrowthDriverMetric[];
   durationMs: number;
   cached?: boolean;
   message?: string;
+}
+
+// FIX: Growth Drivers — Pareto 80% per metric
+export interface GrowthDriver {
+  item: string;
+  delta: number;
+  pct: number;
+  cumPct: number;
+  sharePct: number;
+}
+export interface GrowthDriverMetric {
+  metric: string;
+  label: string;
+  up: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
+  down: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
 }
 
 async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
