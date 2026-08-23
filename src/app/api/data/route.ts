@@ -250,7 +250,7 @@ export async function DELETE(req: NextRequest) {
     analysisCache.clear();
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch(() => {});
+    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
     // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the
     // updated SourceFile set. Without this, getMonthResolver() would keep
     // returning a resolver that includes the now-deleted monthLabel, and

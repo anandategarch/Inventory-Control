@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     statusCache.clear();
     analysisCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch(() => {});
+    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
     clearMonthResolverCache();
 
     return NextResponse.json({

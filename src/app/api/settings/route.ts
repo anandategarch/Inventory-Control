@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     analysisCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch(() => {});
+    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
 
     return NextResponse.json({
       success: true,

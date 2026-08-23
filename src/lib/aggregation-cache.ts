@@ -11,10 +11,20 @@
 //  TTL: 5 minutes (300s) by default. Configurable per cache key.
 //  Cache invalidation: explicit via invalidateCache() on data
 //  mutations (ingest, settings change, direction migration).
+//
+//  FIX M3 (AUDIT-5): in-flight Promise dedup — if two concurrent
+//  requests miss the cache for the same key, only one computes;
+//  the second awaits the first's result.
 // ============================================================
 import { db } from './db';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// FIX M3: in-flight Promise map — prevents cache stampede.
+// When a request misses the cache and starts computing, we store
+// the Promise here. Subsequent requests for the same key await
+// the same Promise instead of computing in parallel.
+const inflightPromises = new Map<string, Promise<unknown>>();
 
 /**
  * Build a cache key from the filter parameters.
@@ -55,7 +65,9 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
     const ageMs = Date.now() - row.computedAt.getTime();
     if (ageMs > ttlMs) {
       // Expired — delete stale entry (fire-and-forget)
-      db.aggregationCache.delete({ where: { cacheKey } }).catch(() => {});
+      db.aggregationCache.delete({ where: { cacheKey } }).catch((e) => {
+        console.error('[cache] expired entry delete failed:', e instanceof Error ? e.message : String(e));
+      });
       return null;
     }
     return JSON.parse(row.payload) as T;
@@ -90,6 +102,33 @@ export function setCached(cacheKey: string, payload: unknown): void {
 }
 
 /**
+ * FIX M3: Get or create an in-flight Promise for a cache key.
+ * If a computation for this key is already running, return its Promise
+ * (preventing cache stampede — multiple concurrent requests share one computation).
+ * If not, return null (caller should compute, then call setCached + clearInflight).
+ */
+export function getInflight<T>(cacheKey: string): Promise<T> | null {
+  return (inflightPromises.get(cacheKey) as Promise<T> | undefined) ?? null;
+}
+
+/**
+ * FIX M3: Register an in-flight Promise for a cache key.
+ * The Promise is automatically removed from the map when it settles
+ * (resolve or reject), so subsequent requests will check the DB cache
+ * (which should now be populated by setCached).
+ */
+export function setInflight<T>(cacheKey: string, promise: Promise<T>): Promise<T> {
+  inflightPromises.set(cacheKey, promise);
+  // Auto-cleanup when the promise settles
+  promise.finally(() => {
+    inflightPromises.delete(cacheKey);
+  }).catch(() => {
+    // Swallow — the original caller handles the error
+  });
+  return promise;
+}
+
+/**
  * Invalidate cache entries matching a pattern.
  * Use after data mutations (ingest, settings change, direction migration).
  * Pass a prefix to invalidate all entries for a route (e.g. "analysis|").
@@ -98,12 +137,14 @@ export async function invalidateCache(prefix?: string): Promise<void> {
   try {
     if (prefix) {
       // Delete all entries where cacheKey starts with prefix
-      await db.aggregationCache.deleteMany({
+      const result = await db.aggregationCache.deleteMany({
         where: { cacheKey: { startsWith: prefix } },
       });
+      console.log(`[cache] invalidated ${result.count} entries with prefix "${prefix}"`);
     } else {
       // Delete all entries
-      await db.aggregationCache.deleteMany({});
+      const result = await db.aggregationCache.deleteMany({});
+      console.log(`[cache] invalidated ${result.count} entries (all)`);
     }
   } catch (e) {
     console.error('[cache] invalidateCache error:', e instanceof Error ? e.message : String(e));

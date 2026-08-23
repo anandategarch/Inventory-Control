@@ -444,7 +444,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       statusCache.clear();
       // FIX Medium #1: invalidate DB-level AggregationCache for analysis route.
       // New data means all cached analysis results are stale.
-      invalidateCache('analysis|').catch(() => {});
+      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
       // sees fresh data immediately after ingestion.
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this ingestion. Without this, getMonthResolver() would

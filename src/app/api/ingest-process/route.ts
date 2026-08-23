@@ -505,7 +505,7 @@ export async function POST(req: NextRequest) {
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after week import.
       // Without this, /api/analysis serves stale data for up to 5 min (TTL).
-      invalidateCache('analysis|').catch(() => {});
+      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this import. Without this, getMonthResolver() would
       // keep returning the pre-import resolver and the new month's case might
@@ -700,7 +700,7 @@ export async function POST(req: NextRequest) {
       analysisCache.clear();
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after import-all.
-      invalidateCache('analysis|').catch(() => {});
+      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
       clearMonthResolverCache();
 
       // Cleanup chunks

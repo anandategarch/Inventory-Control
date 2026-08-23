@@ -44,7 +44,7 @@ import {
   queryHistoricalStats,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
+import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import type { ExecutiveSummary } from '@/types/inventory';
 
 export const dynamic = 'force-dynamic';
@@ -153,8 +153,8 @@ export async function GET(req: NextRequest) {
       compareWeek = compareWeekRaw;
     }
 
-    // Cache disabled — no need for thresholdsVersion in cache key
-    // Client-side TanStack Query (staleTime 60s) provides sufficient caching
+    // DB-level AggregationCache is checked below (FIX Medium #1).
+    // No thresholdsVersion needed in cache key — settings invalidation clears all entries.
 
     // Determine available months/weeks if not specified
     let month = monthLabel;
@@ -183,6 +183,15 @@ export async function GET(req: NextRequest) {
       week = week || latest.weekLabel;
     }
 
+    // FIX M4 (AUDIT-5): Resolve month case BEFORE building cache key.
+    // Previously, cache key was built with raw user input (e.g., "AGUSTUS 2026"),
+    // then month was resolved to DB case (e.g., "Agustus 2026"). This caused
+    // different cache keys for the same logical data → cache miss.
+    // Now resolve first, then build key. getMonthResolver() is cached (~1ms).
+    const monthResolverEarly = await getMonthResolver();
+    if (month) month = resolveMonthLabel(month, monthResolverEarly) || month;
+    if (compareMonthExplicit) compareMonthExplicit = resolveMonthLabel(compareMonthExplicit, monthResolverEarly) || compareMonthExplicit;
+
     // FIX Medium #1: DB-level cache check.
     // Try to read cached result BEFORE running the 16 parallel SQL queries.
     // Cache hit: <100ms response (vs 6-8s cold). TTL 5 min.
@@ -193,6 +202,20 @@ export async function GET(req: NextRequest) {
       compareMonth: compareMonthExplicit,
       area, outletCode, itemName, pic,
     });
+
+    // FIX M3 (AUDIT-5): Check in-flight Promise map (prevents cache stampede).
+    // If another request for the same key is already computing, await its result.
+    const inflight = getInflight<unknown>(cacheKey);
+    if (inflight) {
+      const inflightResult = await inflight;
+      if (inflightResult && typeof inflightResult === 'object' && 'success' in inflightResult) {
+        const r = inflightResult as Record<string, unknown>;
+        r.cached = true;
+        r.durationMs = Date.now() - startedAt;
+        return NextResponse.json(r);
+      }
+    }
+
     const cached = await getCached<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
     if (cached && typeof cached === 'object' && 'success' in cached) {
       // Cache hit — return immediately with cached flag
@@ -201,6 +224,13 @@ export async function GET(req: NextRequest) {
       cachedResult.durationMs = Date.now() - startedAt;
       return NextResponse.json(cachedResult);
     }
+
+    // FIX M3 (AUDIT-5): Register in-flight Promise to prevent cache stampede.
+    // Concurrent requests for the same key will await this Promise (checked
+    // at the top of the handler via getInflight) instead of computing in parallel.
+    let resolveComputation!: (v: unknown) => void;
+    const computationPromise = new Promise<unknown>((resolve) => { resolveComputation = resolve; });
+    setInflight(cacheKey, computationPromise);
 
     // ===== P1 fix: Pre-SQL metadata queries — ALL PARALLEL =====
     // weeks + sourceFiles + picOutlets (if pic) + thresholds — all independent
@@ -226,12 +256,10 @@ export async function GET(req: NextRequest) {
     const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
     const monthLabelByKey = new Map(fileMonthKeys.map((f) => [f.monthKey, f.monthLabel]));
     // BUG FIX (BUG-NORECORDS-4/5 / FIX-DEEP-1): Case-insensitive monthLabel resolution
-    // via shared util `@/lib/month-resolver`. DB may have "AGUSTUS 2026" (from
-    // upload-data.ts) or "Agustus 2026" (from dashboard import). User sends whichever
-    // case the status API returned. Resolve to actual DB label to avoid
-    // "No records found" due to case mismatch.
+    // NOTE: month resolution already done above (FIX M4) before cache key construction.
+    // The call below is idempotent (re-resolving an already-resolved label is a no-op).
     const monthResolver = await getMonthResolver();
-    // Resolve current + compare month labels to actual DB case
+    // Resolve current + compare month labels to actual DB case (idempotent — already done above)
     month = resolveMonthLabel(month, monthResolver) || month;
     if (compareMonthExplicit) compareMonthExplicit = resolveMonthLabel(compareMonthExplicit, monthResolver) || compareMonthExplicit;
     // Note: prevMonth is computed later from allPeriods (which uses DB case) — no resolution needed.
@@ -1004,12 +1032,15 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     };
 
-    // DISABLED: analysisCache.set — in-memory cache unreliable in serverless
-    // Client-side TanStack Query handles caching (staleTime 60s)
+    // FIX Medium #1: DB-level AggregationCache is ENABLED (see getCached/setCached above).
+    // In-memory analysisCache is disabled (unreliable in serverless).
 
     // FIX Medium #1: Store result in DB cache (fire-and-forget, non-blocking).
     // Next request with same filter params will hit cache (<100ms vs 6-8s).
     setCached(cacheKey, result);
+
+    // FIX M3: Resolve the in-flight Promise so concurrent requests get the result.
+    resolveComputation(result);
 
     // ============================================================
     //  P2 fix: Fire-and-forget audit log — don't block response on DB write.

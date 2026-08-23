@@ -13,8 +13,6 @@
 // ============================================================
 import { PrismaClient } from '@prisma/client';
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
-
 function createPrismaClient(): PrismaClient {
   let dbUrl = process.env.DATABASE_URL || '';
 
@@ -26,63 +24,28 @@ function createPrismaClient(): PrismaClient {
   // Accept only PostgreSQL URLs — schema.prisma is locked to postgresql provider
   if (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) {
     // Auto-switch Supabase pooler from session mode (port 5432) to transaction mode (port 6543)
-    // Session mode has a hard limit of 15 connections — too low for serverless.
-    // Transaction mode supports 200+ connections and is recommended by Supabase for serverless.
-    // Only switch if using the pooler domain (aws-*.pooler.supabase.com) on port 5432.
     if (dbUrl.includes('.pooler.supabase.com:5432/')) {
       dbUrl = dbUrl.replace('.pooler.supabase.com:5432/', '.pooler.supabase.com:6543/');
       console.log('[db] Using PostgreSQL (Supabase) — switched to transaction mode (port 6543)');
     } else {
       console.log('[db] Using PostgreSQL (Supabase)');
     }
-    // Transaction mode (PgBouncer) requires:
-    // - pgbouncer=true: disables prepared statements (not supported in tx mode)
-    // - connection_limit=3: keeps total connections low across multiple serverless functions
-    // - pool_timeout=10: fail fast if pool exhausted instead of hanging
     const url = new URL(dbUrl);
-    if (!url.searchParams.has('pgbouncer')) {
-      url.searchParams.set('pgbouncer', 'true');
-    }
-    if (!url.searchParams.has('connection_limit')) {
-      url.searchParams.set('connection_limit', '3');
-    }
-    if (!url.searchParams.has('pool_timeout')) {
-      url.searchParams.set('pool_timeout', '10');
-    }
-    // FIX MIG-10: statement_timeout (ms) — intended to kill any single query
-    // that runs > 30s, preventing one hung query from blocking the pool.
-    // NOTE: PgBouncer transaction mode (port 6543) silently strips this param —
-    // live-verified: actual PG statement_timeout = 2min (Supabase default).
-    // The Vercel maxDuration=60 on the analysis route is the real kill switch.
-    // For true query-level timeout, wrap slow queries in $transaction with
-    // SET LOCAL statement_timeout=30000 (not implemented — reliance on maxDuration).
-    // idle_timeout (seconds) IS honored by Prisma's connection pool.
-    if (!url.searchParams.has('statement_timeout')) {
-      url.searchParams.set('statement_timeout', '30000');
-    }
-    if (!url.searchParams.has('idle_timeout')) {
-      url.searchParams.set('idle_timeout', '20');
-    }
+    if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
+    if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', '3');
+    if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', '10');
+    // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
+    if (!url.searchParams.has('statement_timeout')) url.searchParams.set('statement_timeout', '30000');
+    if (!url.searchParams.has('idle_timeout')) url.searchParams.set('idle_timeout', '20');
     return new PrismaClient({
       log: ['error', 'warn'],
       datasources: { db: { url: url.toString() } },
     });
   }
 
-  // Reject SQLite/Turso URLs — Prisma client is compiled for PostgreSQL.
-  // FIX (DEEP-AUDIT-SECURITY-5): Allow SQLite/libsql in development mode so
-  // local dev doesn't crash when DATABASE_URL points to a local SQLite file.
-  // Production still hard-requires PostgreSQL.
-  if (dbUrl.startsWith('file:') || dbUrl.startsWith('libsql://') || dbUrl.startsWith('http')) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('[db] SQLite/Turso URLs not supported in production. Use PostgreSQL.');
-      throw new Error('SQLite/Turso not supported in production. Use PostgreSQL (postgresql:// or postgres://).');
-    }
-    // Dev mode — allow SQLite for local development
-    console.warn('[db] Using SQLite (dev mode). Not for production.');
-    return new PrismaClient({ log: ['error', 'warn'] });
-  }
-
+  // FIX AUDIT-7 #5: Removed non-functional SQLite dev fallback.
+  // schema.prisma locks provider = "postgresql" — PrismaClient cannot connect
+  // to SQLite. The fallback was dead code that crashed on first query.
   console.error('[db] DATABASE_URL must start with postgresql:// or postgres://');
   throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
 }
@@ -90,8 +53,36 @@ function createPrismaClient(): PrismaClient {
 // FIX MIG-9: globalThis singleton — prevents connection pool exhaustion during
 // Next.js dev hot-reload. In production (serverless), each cold start creates a
 // fresh client, but warm invocations reuse the singleton.
-export const db = globalForPrisma.prisma ?? createPrismaClient();
+//
+// FIX M6 (AUDIT-7): Use lazy Proxy pattern — defers PrismaClient creation until
+// first method call. This prevents crash at import time if DATABASE_URL is not
+// set (e.g., during build step or lint). The singleton is stored on globalThis
+// so hot-reload doesn't create a new client.
+let _db: PrismaClient | null = null;
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = db;
+function getDb(): PrismaClient {
+  if (!_db) {
+    _db = createPrismaClient();
+    // Store on globalThis for dev hot-reload reuse
+    if (process.env.NODE_ENV !== 'production') {
+      (globalThis as unknown as { prisma: PrismaClient | undefined }).prisma = _db;
+    }
+  }
+  return _db;
 }
+
+// Check if we already have a singleton on globalThis (dev hot-reload reuse)
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
+if (globalForPrisma.prisma && process.env.NODE_ENV !== 'production') {
+  _db = globalForPrisma.prisma;
+}
+
+// Lazy Proxy — creates client on first use, not on module load.
+// This avoids crashing at import time if DATABASE_URL is missing.
+export const db = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getDb();
+    // @ts-ignore — Proxy intercepts all property access
+    return client[prop];
+  },
+});

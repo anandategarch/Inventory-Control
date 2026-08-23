@@ -5,13 +5,12 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import type { DrilldownRecord } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { Database, Download, X } from 'lucide-react';
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function SourceDataModal() {
@@ -142,7 +141,7 @@ export function SourceDataModal() {
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
               Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
-              {records.length === 500 && ' (maks 500 — gunakan Export CSV untuk data lengkap)'}
+              {records.length === 500 && ' (maks 500 — data lengkap ada di Excel sumber)'}
             </span>
             <Badge variant="outline" className="text-[11px]">
               Dapat ditelusuri ke Excel sumber
@@ -165,8 +164,11 @@ function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
   const rowVirtualizer = useVirtualizer({
     count: records.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 52, // row height (2-line cells)
-    overscan: 10, // render 10 extra rows above/below viewport
+    estimateSize: () => 52,
+    overscan: 10,
+    // FIX M8 (AUDIT-6): measure actual row height — handles 3-line cells
+    // (outlet name + code + area) correctly.
+    measureElement: (element) => element.getBoundingClientRect().height,
   });
 
   const items = rowVirtualizer.getVirtualItems();
@@ -174,77 +176,78 @@ function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
 
   return (
     <div ref={parentRef} className="overflow-auto" style={{ maxHeight: '60vh' }}>
-      <Table>
-        <TableHeader className="sticky top-0 bg-background z-10">
-          <TableRow>
-            <TableHead className="text-xs">Outlet</TableHead>
-            <TableHead className="text-xs">Item</TableHead>
-            <TableHead className="text-xs">Period</TableHead>
-            <TableHead className="text-xs text-right">QTY BOM</TableHead>
-            <TableHead className="text-xs text-right">QTY COM</TableHead>
-            <TableHead className="text-xs text-right">QTY Dev</TableHead>
-            <TableHead className="text-xs text-right">QTY Waste</TableHead>
-            <TableHead className="text-xs text-right">QTY Susut</TableHead>
-            <TableHead className="text-xs text-right">QTY Trial</TableHead>
-            <TableHead className="text-xs text-right">QTY LS</TableHead>
-            <TableHead className="text-xs text-right">Nom Dev</TableHead>
-            <TableHead className="text-xs text-right">Nom Sales</TableHead>
-            <TableHead className="text-xs text-right">Dev/BOM</TableHead>
-            <TableHead className="text-xs text-right">Tol</TableHead>
-            <TableHead className="text-xs text-right">Resid Ratio</TableHead>
-            <TableHead className="text-xs text-center">Dir</TableHead>
-            <TableHead className="text-xs">Source File</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {/* Spacer row above */}
+      {/* FIX M2 (AUDIT-6): Raw <table> — bypasses shadcn <Table> wrapper
+          which breaks position:sticky via overflow-x-auto div. */}
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-background z-10 shadow-sm">
+          <tr className="border-b">
+            <th className="text-left p-2 font-medium">Outlet</th>
+            <th className="text-left p-2 font-medium">Item</th>
+            <th className="text-left p-2 font-medium">Period</th>
+            <th className="text-right p-2 font-medium">QTY BOM</th>
+            <th className="text-right p-2 font-medium">QTY COM</th>
+            <th className="text-right p-2 font-medium">QTY Dev</th>
+            <th className="text-right p-2 font-medium">QTY Waste</th>
+            <th className="text-right p-2 font-medium">QTY Susut</th>
+            <th className="text-right p-2 font-medium">QTY Trial</th>
+            <th className="text-right p-2 font-medium">QTY LS</th>
+            <th className="text-right p-2 font-medium">Nom Dev</th>
+            <th className="text-right p-2 font-medium">Nom Sales</th>
+            <th className="text-right p-2 font-medium">Dev/BOM</th>
+            <th className="text-right p-2 font-medium">Tol</th>
+            <th className="text-right p-2 font-medium">Resid Ratio</th>
+            <th className="text-center p-2 font-medium">Dir</th>
+            <th className="text-left p-2 font-medium">Source File</th>
+          </tr>
+        </thead>
+        <tbody>
           {items.length > 0 && (
             <tr style={{ height: `${items[0].start}px` }} />
           )}
           {items.map((virtualRow) => {
             const r = records[virtualRow.index];
             return (
-              <TableRow key={r.id} style={{ height: `${virtualRow.size}px` }}>
-                <TableCell className="text-xs">
+              <tr key={r.id} ref={rowVirtualizer.measureElement} data-index={virtualRow.index}
+                  className="border-b hover:bg-muted/40">
+                <td className="p-2">
                   <div className="font-medium">{r.outlet?.name ?? '—'}</div>
                   <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
                   <div className="text-[11px] text-muted-foreground">{r.outlet?.area ?? '—'}</div>
-                </TableCell>
-                <TableCell className="text-xs font-medium">
+                </td>
+                <td className="p-2 font-medium">
                   {r.item?.name ?? '—'}
                   {r.item?.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
-                </TableCell>
-                <TableCell className="text-xs">
+                </td>
+                <td className="p-2">
                   <div>{r.period?.weekLabel ?? '—'}</div>
                   <div className="text-[11px] text-muted-foreground">{r.period?.monthLabel ?? '—'}</div>
-                </TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</TableCell>
-                <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
-                <TableCell className="text-xs text-right">{fmtIDR(r.nominal?.sales ?? null)}</TableCell>
-                <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
-                <TableCell className="text-xs text-right">
+                </td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</td>
+                <td className={`p-2 text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</td>
+                <td className={`p-2 text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</td>
+                <td className={`p-2 text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</td>
+                <td className="p-2 text-right">{fmtIDR(r.nominal?.sales ?? null)}</td>
+                <td className="p-2 text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</td>
+                <td className="p-2 text-right">
                   {r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : '—'}
-                </TableCell>
-                <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.residualRatio ?? null)}</TableCell>
-                <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>
+                </td>
+                <td className="p-2 text-right">{fmtPctAbs(r.derived?.residualRatio ?? null)}</td>
+                <td className={`p-2 text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>
                   {r.derived?.direction?.[0] ?? '—'}
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">{r.source?.fileName ?? '—'}</TableCell>
-              </TableRow>
+                </td>
+                <td className="p-2 text-muted-foreground">{r.source?.fileName ?? '—'}</td>
+              </tr>
             );
           })}
-          {/* Spacer row below */}
           {items.length > 0 && (
             <tr style={{ height: `${totalHeight - items[items.length - 1].end}px` }} />
           )}
-        </TableBody>
-      </Table>
+        </tbody>
+      </table>
     </div>
   );
 }
