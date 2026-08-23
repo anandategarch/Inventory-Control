@@ -16,7 +16,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByNominal || [];
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -42,11 +42,11 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Nominal</TableHead>
-                <TableHead className="text-center h-8 text-[10px] font-semibold uppercase tracking-wider w-12">Dir</TableHead>
+                <TableHead className="w-8 h-8 text-xs font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Item</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal</TableHead>
+                <TableHead className="text-center h-8 text-xs font-semibold uppercase tracking-wider w-12">Dir</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -77,7 +77,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByDevBom || [];
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -103,11 +103,11 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider w-16">Tol.</TableHead>
+                <TableHead className="w-8 h-8 text-xs font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Item</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider w-16">Tol.</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -142,7 +142,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -168,12 +168,12 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>
-                <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Area</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Nominal</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
-                <TableHead className="text-right h-8 text-[10px] font-semibold uppercase tracking-wider">Area Avg</TableHead>
+                <TableHead className="w-8 h-8 text-xs font-semibold uppercase tracking-wider">#</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Outlet</TableHead>
+                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Area</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
+                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Area Avg</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

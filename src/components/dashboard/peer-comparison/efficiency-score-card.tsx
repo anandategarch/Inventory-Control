@@ -32,7 +32,7 @@ export function EfficiencyScoreCard({
   const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -57,7 +57,7 @@ export function EfficiencyScoreCard({
           {/* Peer average marker */}
           <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ left: '50%' }} title="Peer avg ~50" />
         </div>
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Komposit dari Dev/BOM (50%), LOSS (25%), Residual (15%), Sales (10%). Higher = better.
         </p>
       </CardContent>

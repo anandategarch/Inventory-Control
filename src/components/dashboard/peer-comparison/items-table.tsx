@@ -22,7 +22,7 @@ export function ItemLevelComparison({
   error: Error | null;
 }) {
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -84,16 +84,16 @@ function ItemComparisonBlock({
           <span className="text-zinc-500 dark:text-zinc-400">📦</span>
           <span className="truncate" title={item.itemName}>{item.itemName}</span>
         </h4>
-        <Badge variant="outline" className="text-[9px] h-4 tabular-nums font-medium">{item.peerCount} peer</Badge>
+        <Badge variant="outline" className="text-[11px] h-4 tabular-nums font-medium">{item.peerCount} peer</Badge>
       </div>
       <Table>
         <TableHeader>
           <TableRow className="border-b hover:bg-transparent">
-            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7">Metric</TableHead>
-            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Target</TableHead>
-            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Peer Avg</TableHead>
-            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Peer Best</TableHead>
-            <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 text-right">Gap</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7">Metric</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Target</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Avg</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Best</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Gap</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -107,11 +107,11 @@ function ItemComparisonBlock({
               : r.gap > 0;  // positive metric: gap > 0 = worse
             return (
               <TableRow key={r.label} className="hover:bg-muted/30 transition-colors">
-                <TableCell className="text-[10px] py-1 font-medium">{r.label}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono font-semibold tabular-nums">{r.format(r.target)}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono text-muted-foreground tabular-nums">{r.format(r.avg)}</TableCell>
-                <TableCell className="text-[10px] py-1 text-right font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">{r.format(r.best)}</TableCell>
-                <TableCell className={`text-[10px] py-1 text-right font-mono font-semibold tabular-nums ${isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                <TableCell className="text-xs py-1 font-medium">{r.label}</TableCell>
+                <TableCell className="text-xs py-1 text-right font-mono font-semibold tabular-nums">{r.format(r.target)}</TableCell>
+                <TableCell className="text-xs py-1 text-right font-mono text-muted-foreground tabular-nums">{r.format(r.avg)}</TableCell>
+                <TableCell className="text-xs py-1 text-right font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">{r.format(r.best)}</TableCell>
+                <TableCell className={`text-xs py-1 text-right font-mono font-semibold tabular-nums ${isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
                 </TableCell>
               </TableRow>

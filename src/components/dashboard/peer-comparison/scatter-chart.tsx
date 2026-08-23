@@ -35,7 +35,7 @@ export function ScatterPlotCard({
   }));
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -93,7 +93,7 @@ export function ScatterPlotCard({
                 {data.map((entry, i) => (
                   <Cell
                     key={`cell-${i}`}
-                    fill={entry.isTarget ? '#dc2626' : '#71717a'}
+                    fill={entry.isTarget ? 'var(--chart-loss)' : '#71717a'}
                     r={entry.isTarget ? 7 : 4}
                   />
                 ))}
@@ -101,7 +101,7 @@ export function ScatterPlotCard({
             </ScatterChart>
           </ResponsiveContainer>
         </div>
-        <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground mt-2">
+        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground mt-2">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> Target
           </span>

@@ -115,7 +115,7 @@ export function PrioritySummaryCard({
     r.priorityScore >= 55 ? 'bg-red-500' : r.priorityScore >= 30 ? 'bg-amber-500' : 'bg-emerald-500';
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20 border-amber-200/50 dark:border-amber-900/40">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20 border-amber-200/50 dark:border-amber-900/40">
       <CardHeader className="pb-3 border-b bg-gradient-to-r from-amber-50/50 to-transparent dark:from-amber-950/20">
         <CardTitle className="text-sm flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -130,7 +130,7 @@ export function PrioritySummaryCard({
           <div className="flex items-center gap-4">
             {/* Priority Score */}
             <div className="text-center">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Priority Score</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Priority Score</p>
               <p className={`text-3xl font-bold tabular-nums ${scoreColor}`}>{r.priorityScore}</p>
               <div className="w-24 h-1.5 rounded-full bg-muted mt-1 overflow-hidden">
                 <div className={`h-full ${scoreBarColor} transition-all duration-500`} style={{ width: `${r.priorityScore}%` }} />
@@ -141,7 +141,7 @@ export function PrioritySummaryCard({
               <Badge variant="outline" className={`text-xs font-semibold ${levelColor}`}>
                 {r.priorityLevel}
               </Badge>
-              <p className="text-[10px] text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {r.priorityLevel === 'TINGGI' ? 'Investigasi segera' : r.priorityLevel === 'SEDANG' ? 'Perlu perhatian' : 'Monitor saja'}
               </p>
             </div>
@@ -149,17 +149,17 @@ export function PrioritySummaryCard({
           {/* Quick Metrics */}
           <div className="grid grid-cols-3 gap-3 text-center">
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
               <p className="text-sm font-semibold tabular-nums">{fmtPctAbs(r.metrics.devBom)}</p>
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Nominal</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Nominal</p>
               <p className={`text-sm font-semibold tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                 {fmtIDR(r.metrics.nominalDeviasi)}
               </p>
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Items</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Items</p>
               <p className="text-sm font-semibold tabular-nums">{r.metrics.itemCount}</p>
             </div>
           </div>
@@ -167,51 +167,51 @@ export function PrioritySummaryCard({
 
         {/* Signal Badges — 8 key signals */}
         <div className="flex flex-wrap gap-1.5">
-          <Badge variant="outline" className={`text-[10px] ${r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' : 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900'}`}>
+          <Badge variant="outline" className={`text-xs ${r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' : 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900'}`}>
             {r.metrics.direction}
           </Badge>
           {r.signals.directionFlip && (
-            <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+            <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
               <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
             </Badge>
           )}
           {r.signals.trendDeteriorating && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
             </Badge>
           )}
           {r.signals.residualRatio > 0.4 && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               Residual {(r.signals.residualRatio * 100).toFixed(0)}%
             </Badge>
           )}
           {r.signals.toleranceBreachHighCount > 0 && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               Tol Breach High: {r.signals.toleranceBreachHighCount}
             </Badge>
           )}
           {r.signals.overExplainedCount > 0 && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               Anomali: {r.signals.overExplainedCount}
             </Badge>
           )}
           {r.signals.highLossItemCount > 0 && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               High Loss: {r.signals.highLossItemCount}
             </Badge>
           )}
           {r.signals.noToleranceItems > 0 && (
-            <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+            <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
               No Tol: {r.signals.noToleranceItems}
             </Badge>
           )}
           {r.signals.benchmarkHighCount > 0 && (
-            <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+            <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
               Bench High: {r.signals.benchmarkHighCount}
             </Badge>
           )}
           {r.signals.zScoreAbnormalCount > 0 && (
-            <Badge variant="outline" className="text-[10px] text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+            <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               Z-Score Abnormal: {r.signals.zScoreAbnormalCount}
             </Badge>
           )}
@@ -219,7 +219,7 @@ export function PrioritySummaryCard({
 
         {/* Analysis Bullets — WHY this outlet is priority */}
         <div className="space-y-1">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Analisa Priority Engine</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Analisa Priority Engine</p>
           {r.analysis.map((a, j) => (
             <p key={j} className="text-[11px] text-muted-foreground flex items-start gap-1.5 leading-tight">
               <span className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0">•</span>
@@ -240,31 +240,31 @@ export function PrioritySummaryCard({
             >
               {showBreakdown ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               Breakdown 15 Sinyal Priority Score
-              <span className="ml-auto text-[10px] text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif · {expanded.size} terbuka</span>
+              <span className="ml-auto text-xs text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif · {expanded.size} terbuka</span>
             </button>
 
             {showBreakdown && (
               <div className="space-y-3">
                 {/* FIX CHART-7: disclaimer that charts use illustrative data */}
-                <p className="text-[10px] text-muted-foreground/70 italic">
+                <p className="text-xs text-muted-foreground/70 italic">
                   ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal. Klik sinyal untuk melihat visualisasi.
                 </p>
 
                 {/* ---- Top Contributors Highlight ---- */}
                 {topContributors.length > 0 && (
                   <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1">
                       <Trophy className="h-3 w-3" /> Top Contributors
                     </p>
                     <div className="space-y-1.5">
                       {topContributors.map((c, i) => (
                         <div key={c.name} className="flex items-center gap-2 text-[11px]">
-                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold shrink-0">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[11px] font-bold shrink-0">
                             {i + 1}
                           </span>
                           <span className="flex-1 truncate font-medium" title={c.name}>{c.name}</span>
                           <span className="tabular-nums font-semibold text-amber-700 dark:text-amber-400">+{c.contribution}</span>
-                          <span className="tabular-nums text-muted-foreground/80 text-[10px] w-16 text-right">
+                          <span className="tabular-nums text-muted-foreground/80 text-xs w-16 text-right">
                             {Math.round(c.weight * 100)}% bobot
                           </span>
                         </div>
@@ -290,11 +290,11 @@ export function PrioritySummaryCard({
                         <span className="text-sm">{group.emoji}</span>
                         <GroupIcon className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-[11px] font-semibold flex-1">{group.name}</span>
-                        <span className="text-[10px] text-muted-foreground tabular-nums">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           {groupSignals.length} sinyal · +{groupContribution}
                         </span>
                         {groupExpandedCount > 0 && (
-                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 tabular-nums">
+                          <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 tabular-nums">
                             {groupExpandedCount} buka
                           </span>
                         )}
@@ -330,22 +330,22 @@ export function PrioritySummaryCard({
                                 {/* Contribution */}
                                 <span className="text-[11px] tabular-nums w-8 text-right text-muted-foreground">+{contribution}</span>
                                 {/* Value */}
-                                <span className="text-[10px] tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
+                                <span className="text-xs tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
                                 {/* Badge */}
-                                <Badge variant="outline" className={`text-[9px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
+                                <Badge variant="outline" className={`text-[11px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
                               </button>
 
                               {/* Expanded chart + explanation */}
                               {isExpanded && (
                                 <div className="px-3 pb-3 pt-1">
                                   <div className="bg-muted/20 dark:bg-muted/10 rounded-lg p-3">
-                                    <p className="text-[10px] font-medium text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1">
+                                    <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1">
                                       <BarChart3 className="h-3 w-3" />
                                       {s.name}
                                     </p>
                                     <SignalChart name={s.name} r={r} items={outletItems} />
                                   </div>
-                                  <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
                                     <span className="font-semibold text-foreground/80">Apa ini: </span>
                                     {SIGNAL_EXPLANATIONS[s.name] || 'Sinyal priority score dari Priority Engine.'}
                                   </p>
@@ -369,7 +369,7 @@ export function PrioritySummaryCard({
                   <span className="tabular-nums font-bold text-foreground">
                     = {(r.signalScores || []).reduce((sum, s) => sum + Math.round(Math.round(s.score) * s.weight), 0)}
                   </span>
-                  <span className="text-[10px] text-muted-foreground/70">
+                  <span className="text-xs text-muted-foreground/70">
                     Score server: {r.priorityScore}
                   </span>
                 </div>

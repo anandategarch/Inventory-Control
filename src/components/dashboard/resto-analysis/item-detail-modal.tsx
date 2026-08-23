@@ -47,7 +47,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             {itemName}
             {data?.outlet && <span className="text-muted-foreground text-sm">— {data.outlet.name} ({data.outlet.code})</span>}
             {data?.priority && (
-              <Badge variant="outline" className={`text-[10px] ${priorityColor(data.priority)} border-current`}>
+              <Badge variant="outline" className={`text-xs ${priorityColor(data.priority)} border-current`}>
                 {data.priority}
               </Badge>
             )}
@@ -77,7 +77,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             </div>
 
             {/* Benchmark */}
-            <Card className="shadow-sm dark:shadow-black/20">
+            <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Benchmark (Current Period)</CardTitle></CardHeader>
               <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <Row label="Outlet Dev/BOM" value={fmtPct(data.benchmark?.outletDevBom)} />
@@ -92,7 +92,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             </Card>
 
             {/* Historical Timeline */}
-            <Card className="shadow-sm dark:shadow-black/20">
+            <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Historical Timeline</CardTitle></CardHeader>
               <CardContent>
                 <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
@@ -116,7 +116,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                         <TableRow key={i} className={t.isCurrent ? 'bg-primary/5 font-semibold' : ''}>
                           <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
                             {t.weekLabel} {t.monthLabel?.split(' ')[0]?.slice(0, 3)}
-                            {t.isCurrent && <span className="ml-1 text-[9px] text-primary">●</span>}
+                            {t.isCurrent && <span className="ml-1 text-[11px] text-primary">●</span>}
                           </TableCell>
                           <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(t.qtyBom)}</TableCell>
                           <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(t.qtyDeviasi)}</TableCell>
@@ -132,14 +132,14 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                     </TableBody>
                   </Table>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   Historical mean: {fmtPct(data.historical?.mean)} · StdDev: {fmtPct(data.historical?.stdDev)} · zScore: {data.historical?.zScore?.toFixed(2) || '—'} · Sample: {data.historical?.sampleSize || 0} periods
                 </p>
               </CardContent>
             </Card>
 
             {/* Investigation Checklist */}
-            <Card className="shadow-sm dark:shadow-black/20">
+            <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Possible Investigation</CardTitle></CardHeader>
               <CardContent>
                 <ol className="text-xs space-y-1 list-decimal list-inside text-muted-foreground">
@@ -154,7 +154,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                   <li>Cek administrasi transaksi</li>
                   <li>Cek stock opname timing</li>
                 </ol>
-                <p className="text-[10px] text-muted-foreground mt-2 italic">
+                <p className="text-xs text-muted-foreground mt-2 italic">
                   ⚠ "Possible Investigation" bukan "Root Cause" — sistem belum melakukan observasi fisik.
                 </p>
               </CardContent>

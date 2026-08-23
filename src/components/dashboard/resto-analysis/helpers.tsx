@@ -18,8 +18,8 @@ export function fmtGrowth(v: number | null | undefined): string {
 
 export function growthColor(v: number | null | undefined, inverse = false): string {
   if (v == null) return 'text-muted-foreground';
-  if (inverse) return v > 0 ? 'text-red-600' : v < 0 ? 'text-emerald-600' : 'text-muted-foreground';
-  return v > 0 ? 'text-emerald-600' : v < 0 ? 'text-red-600' : 'text-muted-foreground';
+  if (inverse) return v > 0 ? 'text-red-600 dark:text-red-400' : v < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
+  return v > 0 ? 'text-emerald-600 dark:text-emerald-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground';
 }
 
 // FIX M-L (AUDIT-3): P2/P3 badge colors failed WCAG AA (amber-600/emerald-600 on
@@ -33,7 +33,7 @@ export function priorityBg(p: string): string {
 }
 
 export function directionColor(d: string): string {
-  return d === 'LOSS' ? 'text-red-600' : d === 'SURPLUS' ? 'text-emerald-600' : 'text-muted-foreground';
+  return d === 'LOSS' ? 'text-red-600 dark:text-red-400' : d === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
 }
 
 // ------------------------------------------------------------
@@ -49,9 +49,9 @@ export function Row({ label, value, growth, sub, growthColor: gc }: {
       <div className="flex items-center gap-1.5">
         <span className="font-mono font-semibold">{value}</span>
         {growth != null && (
-          <span className={`text-[10px] ${gc || growthColor(growth, true)}`}>{fmtGrowth(growth)}</span>
+          <span className={`text-xs ${gc || growthColor(growth, true)}`}>{fmtGrowth(growth)}</span>
         )}
-        {sub && <span className="text-[10px] text-muted-foreground">({sub})</span>}
+        {sub && <span className="text-xs text-muted-foreground">({sub})</span>}
       </div>
     </div>
   );
@@ -64,9 +64,9 @@ export function Row({ label, value, growth, sub, growthColor: gc }: {
 export function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="rounded-lg border p-2 text-center">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className={`text-lg font-bold ${color || ''}`}>{value}</p>
-      {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
+      {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }

@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // FIX: enable gzip compression for API responses (334KB → ~40KB, 85% reduction)
   compress: true,
+  // PERF-OPT: drop the "X-Powered-By: Next.js" response header — saves a few
+  // bytes per response AND avoids advertising the framework (minor security
+  // hygiene bonus).
+  poweredByHeader: false,
   // Phase 1-4: Security headers
   async headers() {
     return [

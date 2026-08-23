@@ -119,7 +119,7 @@ export function PeerComparison() {
 
   if (!activeOutlet) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="relative mb-4">
@@ -161,7 +161,7 @@ export function PeerComparison() {
   return (
     <div className="space-y-4">
       {/* ============ 1. HEADER + EXISTING TABLE ============ */}
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-start gap-2.5">
@@ -218,7 +218,7 @@ export function PeerComparison() {
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -250,22 +250,22 @@ export function PeerComparison() {
           ) : peers.length === 0 ? (
             <div className="text-center text-muted-foreground text-xs py-6 space-y-2">
               <p>Tidak ada peer ditemukan untuk outlet ini.</p>
-              <p className="text-[10px]">Kemungkinan outlet tidak memiliki data sales (PENJUALAN) pada periode ini, atau tidak ada resto lain dengan sales ±10%.</p>
+              <p className="text-xs">Kemungkinan outlet tidak memiliki data sales (PENJUALAN) pada periode ini, atau tidak ada resto lain dengan sales ±10%.</p>
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <Table className="min-w-[1400px]">
                 <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow className="border-b hover:bg-transparent">
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider sticky left-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-20">Resto</TableHead>
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Area</TableHead>
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">PIC</TableHead>
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Top Item</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider sticky left-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-20">Resto</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider">Area</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider">PIC</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider">Top Item</TableHead>
                     {columns.map(col => (
-                      <TableHead key={col.key} className="text-[10px] font-semibold uppercase tracking-wider text-right">{col.label}</TableHead>
+                      <TableHead key={col.key} className="text-xs font-semibold uppercase tracking-wider text-right">{col.label}</TableHead>
                     ))}
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Dir</TableHead>
-                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Flags</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider text-center">Dir</TableHead>
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider text-center">Flags</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -297,8 +297,8 @@ export function PeerComparison() {
                           {p.isTarget && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
                           <span className="truncate">{p.outletName}</span>
                         </div>
-                        {p.isTarget && <Badge variant="default" className="text-[9px] ml-3 h-4 bg-amber-600 hover:bg-amber-600 text-white">TARGET</Badge>}
-                        <div className="text-[10px] text-muted-foreground">{p.outletCode}</div>
+                        {p.isTarget && <Badge variant="default" className="text-[11px] ml-3 h-4 bg-amber-600 hover:bg-amber-600 text-white">TARGET</Badge>}
+                        <div className="text-xs text-muted-foreground">{p.outletCode}</div>
                       </TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">{p.pic || '—'}</TableCell>
@@ -324,7 +324,7 @@ export function PeerComparison() {
               </Table>
             </div>
           )}
-          <div className="p-3 text-[10px] text-muted-foreground border-t bg-muted/20 dark:bg-zinc-900/20">
+          <div className="p-3 text-xs text-muted-foreground border-t bg-muted/20 dark:bg-zinc-900/20">
             💡 Klik baris untuk deep dive ke Resto Analysis. <span className="text-emerald-600 dark:text-emerald-400 font-medium">Hijau</span> = lebih baik dari peer avg, <span className="text-red-600 dark:text-red-400 font-medium">Merah</span> = lebih buruk.
             Sales range: ±10% dari <span className="font-medium tabular-nums">{targetRow ? fmtIDR(targetRow.sales) : 'target'}</span>.
           </div>

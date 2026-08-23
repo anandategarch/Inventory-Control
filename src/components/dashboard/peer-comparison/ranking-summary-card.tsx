@@ -46,7 +46,7 @@ export function RankingSummaryCard({
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -63,7 +63,7 @@ export function RankingSummaryCard({
           {keyRanks.map(({ col, rank, total: t, worst, best }) => (
             <div key={col.key as string} className="flex items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
               <span className="text-[11px] text-muted-foreground">{col.label}</span>
-              <Badge className={`text-[10px] h-5 font-medium tabular-nums ${rankColor(rank, t)}`} variant="secondary">
+              <Badge className={`text-xs h-5 font-medium tabular-nums ${rankColor(rank, t)}`} variant="secondary">
                 #{rank}/{t}
                 {best && ' ★'}
                 {worst && ' ⚠'}

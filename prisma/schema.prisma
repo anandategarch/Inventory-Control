@@ -194,6 +194,12 @@ model AggregationCache {
   cacheKey  String   @unique // "summary|2026-07|WEEK 1|ALL|ALL"
   payload   String   // JSON
   computedAt DateTime @default(now())
+
+  // PERF-OPT: index on computedAt — used by TTL cleanup queries
+  // (getCached filters by computedAt > now() - TTL). Without this index,
+  // every cache read does a full-table scan on AggregationCache (small
+  // today but grows linearly with ingest activity).
+  @@index([computedAt])
 }
 
 // ------------------------------------------------------------

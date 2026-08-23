@@ -68,7 +68,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -110,7 +110,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" className="opacity-60" />
                   <XAxis type="number" tickFormatter={(v) => fmtPct(v, true, 0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="name" width={90} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={getTooltipStyle()} />
+                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4, stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={getTooltipStyle()} />
                   <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                     {chartData.map((d, i) => {
                       const mismatch =
@@ -119,7 +119,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                       const devMismatch =
                         (d.name === 'Nominal Deviasi' && mismatchSales) ||
                         (d.name === 'QTY Deviasi' && mismatchBom);
-                      return <Cell key={i} fill={mismatch || devMismatch ? '#dc2626' : d.growth! >= 0 ? '#10b981' : '#f59e0b'} />;
+                      return <Cell key={i} fill={mismatch || devMismatch ? 'var(--chart-loss)' : d.growth! >= 0 ? 'var(--chart-surplus)' : 'var(--chart-waste)'} />;
                     })}
                   </Bar>
                 </BarChart>
@@ -138,7 +138,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                     onClick={() => setExpanded(isExpanded ? null : d.key)}
                     aria-expanded={isExpanded}
                     aria-controls={panelId}
-                    className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-[10px] transition-colors ${
+                    className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-xs transition-colors ${
                       isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
                     }`}
                   >
@@ -148,7 +148,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                         <span className={`truncate max-w-[80px] ${top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
                           {top.name}
                         </span>
-                        <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                        <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
                           {top.share.toFixed(0)}%
                         </Badge>
                       </span>
@@ -163,17 +163,17 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
             {/* Mismatch badges */}
             <div className="mt-2 flex flex-wrap gap-1.5">
               {mismatchSales && (
-                <Badge variant="destructive" className="text-[10px] h-5 font-medium">
+                <Badge variant="destructive" className="text-xs h-5 font-medium">
                   Sales vs Deviasi MISMATCH
                 </Badge>
               )}
               {mismatchBom && (
-                <Badge variant="destructive" className="text-[10px] h-5 font-medium">
+                <Badge variant="destructive" className="text-xs h-5 font-medium">
                   BOM vs Deviasi MISMATCH
                 </Badge>
               )}
               {!mismatchSales && !mismatchBom && (
-                <Badge variant="secondary" className="text-[10px] h-5 bg-emerald-100/60 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 font-medium">Growth pattern consistent</Badge>
+                <Badge variant="secondary" className="text-xs h-5 bg-emerald-100/60 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 font-medium">Growth pattern consistent</Badge>
               )}
             </div>
 
@@ -189,7 +189,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                     <p className="text-xs font-semibold">
                       {md.label} — {growthVal != null ? `${(growthVal * 100).toFixed(1)}%` : '—'}
                     </p>
-                    <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-[10px] text-muted-foreground hover:text-foreground">
+                    <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-xs text-muted-foreground hover:text-foreground">
                       ✕ Tutup
                     </button>
                   </div>
@@ -197,12 +197,12 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   {/* Up drivers */}
                   {md.up.drivers.length > 0 && (
                     <div>
-                      <p className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 mb-1 flex items-center gap-1">
+                      <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mb-1 flex items-center gap-1">
                         <TrendingUp className="h-3 w-3" /> Naik — 80% Pareto ({md.up.drivers.length} item)
                       </p>
                       <div className="space-y-1">
                         {md.up.drivers.map((d, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[10px]">
+                          <div key={i} className="flex items-center gap-2 text-xs">
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
                             <span className="flex-1 truncate" title={d.item}>{d.item}</span>
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
@@ -216,7 +216,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                           </div>
                         ))}
                         {md.up.remainderCount > 0 && (
-                          <p className="text-[9px] text-muted-foreground/60 pl-6">
+                          <p className="text-[11px] text-muted-foreground/60 pl-6">
                             Sisa {md.up.remainderPct.toFixed(0)}%: {md.up.remainderCount} item kecil
                           </p>
                         )}
@@ -227,12 +227,12 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   {/* Down drivers */}
                   {md.down.drivers.length > 0 && (
                     <div>
-                      <p className="text-[10px] font-medium text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
+                      <p className="text-xs font-medium text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
                         <TrendingDown className="h-3 w-3" /> Turun — 80% Pareto ({md.down.drivers.length} item)
                       </p>
                       <div className="space-y-1">
                         {md.down.drivers.map((d, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[10px]">
+                          <div key={i} className="flex items-center gap-2 text-xs">
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
                             <span className="flex-1 truncate" title={d.item}>{d.item}</span>
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
@@ -246,7 +246,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                           </div>
                         ))}
                         {md.down.remainderCount > 0 && (
-                          <p className="text-[9px] text-muted-foreground/60 pl-6">
+                          <p className="text-[11px] text-muted-foreground/60 pl-6">
                             Sisa {md.down.remainderPct.toFixed(0)}%: {md.down.remainderCount} item kecil
                           </p>
                         )}
@@ -255,7 +255,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   )}
 
                   {md.up.drivers.length === 0 && md.down.drivers.length === 0 && (
-                    <p className="text-[10px] text-muted-foreground text-center py-2">Tidak ada perubahan signifikan</p>
+                    <p className="text-xs text-muted-foreground text-center py-2">Tidak ada perubahan signifikan</p>
                   )}
                 </div>
               );
@@ -281,12 +281,12 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   }
   const total = b.total || 1;
   const chartData = [
-    { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: '#f59e0b', key: 'waste' },
+    { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: 'var(--chart-waste)', key: 'waste' },
     // FIX L1 (AUDIT-1): Susut was #a16207 (amber variant) — too similar to Waste #f59e0b.
     // Changed to violet #7c3aed for color-blind accessibility (distinct hue).
     { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#7c3aed', key: 'susut' },
     { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: '#65a30d', key: 'trial' },
-    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? '#dc2626' : '#71717a', key: 'residual' },
+    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? 'var(--chart-loss)' : '#71717a', key: 'residual' },
   ];
 
   const formatQty = (v: number) => {
@@ -311,7 +311,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -341,7 +341,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
               <XAxis dataKey="name" fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <Tooltip
-                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
+                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4, stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3 3' }}
                 formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
                 contentStyle={getTooltipStyle()}
               />
@@ -364,7 +364,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                 onClick={() => setExpanded(isExpanded ? null : d.key)}
                 aria-expanded={isExpanded}
                 aria-controls={panelId}
-                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-[10px] transition-colors ${
+                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-xs transition-colors ${
                   isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
                 }`}
               >
@@ -375,7 +375,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                 {top ? (
                   <span className="flex items-center gap-1 min-w-0">
                     <span className="truncate max-w-[80px] text-foreground/80">{top.name}</span>
-                    <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                    <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
                       {top.share.toFixed(0)}%
                     </Badge>
                   </span>
@@ -390,7 +390,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
         {/* Residual warning badge */}
         {b.residual / total > 0.5 && (
           <div className="mt-2">
-            <Badge variant="destructive" className="text-[10px] h-5 font-medium">
+            <Badge variant="destructive" className="text-xs h-5 font-medium">
               Residual {((b.residual / total) * 100).toFixed(0)}% — sebagian besar deviation tidak terjelaskan
             </Badge>
           </div>
@@ -413,21 +413,21 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                     ({catRow ? catRow.pct.toFixed(1) : '0'}% dari total)
                   </span>
                 </p>
-                <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-[10px] text-muted-foreground hover:text-foreground">
+                <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-xs text-muted-foreground hover:text-foreground">
                   ✕ Tutup
                 </button>
               </div>
 
               {cd.drivers.length === 0 ? (
-                <p className="text-[10px] text-muted-foreground text-center py-2">Tidak ada data untuk kategori ini</p>
+                <p className="text-xs text-muted-foreground text-center py-2">Tidak ada data untuk kategori ini</p>
               ) : (
                 <>
-                  <p className="text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                  <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
                     80% Pareto ({cd.drivers.length} item)
                   </p>
                   <div className="space-y-1">
                     {cd.drivers.map((d, i) => (
-                      <div key={i} className="flex items-center gap-2 text-[10px]">
+                      <div key={i} className="flex items-center gap-2 text-xs">
                         <span className="w-4 text-muted-foreground">{i + 1}.</span>
                         <span className="flex-1 truncate" title={d.item}>{d.item}</span>
                         <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
@@ -442,7 +442,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                     ))}
                   </div>
                   {cd.remainderCount > 0 && (
-                    <p className="text-[9px] text-muted-foreground/60 pl-6">
+                    <p className="text-[11px] text-muted-foreground/60 pl-6">
                       Sisa {cd.remainderPct.toFixed(0)}%: {cd.remainderCount} item kecil
                     </p>
                   )}
@@ -461,12 +461,12 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
   // FIX: l.loss/l.surplus are RECORD COUNTS, not QTY sums.
   // Label was "qty" (misleading) — changed to "records" for clarity.
   const chartData = [
-    { name: 'LOSS', records: l.loss, nominal: l.lossNominal, color: '#dc2626' },
-    { name: 'SURPLUS', records: l.surplus, nominal: l.surplusNominal, color: '#10b981' },
+    { name: 'LOSS', records: l.loss, nominal: l.lossNominal, color: 'var(--chart-loss)' },
+    { name: 'SURPLUS', records: l.surplus, nominal: l.surplusNominal, color: 'var(--chart-surplus)' },
   ];
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -489,7 +489,7 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" className="opacity-60" />
               <XAxis dataKey="name" fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={getTooltipStyle()} />
+              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4, stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={getTooltipStyle()} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]} maxBarSize={56}>
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
@@ -516,7 +516,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
   const trend = data.trend;
   if (!trend || trend.length === 0) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -535,7 +535,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
     );
   }
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -571,8 +571,8 @@ export function TrendChart({ data }: { data: AnalysisData }) {
                 contentStyle={getTooltipStyle()}
               />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-              <Line yAxisId="left" type="monotone" dataKey="devBom" name="Dev/BOM" stroke="#dc2626" strokeWidth={2.5} dot={{ r: 3, fill: '#dc2626' }} activeDot={{ r: 5 }} />
-              <Line yAxisId="right" type="monotone" dataKey="nominal" name="Nominal Deviasi" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} />
+              <Line yAxisId="left" type="monotone" dataKey="devBom" name="Dev/BOM" stroke="var(--chart-loss)" strokeWidth={2.5} dot={{ r: 3, fill: 'var(--chart-loss)' }} activeDot={{ r: 5 }} />
+              <Line yAxisId="right" type="monotone" dataKey="nominal" name="Nominal Deviasi" stroke="var(--chart-waste)" strokeWidth={2.5} dot={{ r: 3, fill: 'var(--chart-waste)' }} activeDot={{ r: 5 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

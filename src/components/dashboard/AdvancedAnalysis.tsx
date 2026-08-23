@@ -19,10 +19,10 @@ import {
 //  Helpers
 // ============================================================
 function healthScoreColor(score: number): string {
-  if (score < 30) return 'text-red-600';
-  if (score < 50) return 'text-amber-600';
-  if (score < 70) return 'text-yellow-600';
-  return 'text-emerald-600';
+  if (score < 30) return 'text-red-600 dark:text-red-400';
+  if (score < 50) return 'text-amber-600 dark:text-amber-400';
+  if (score < 70) return 'text-yellow-600 dark:text-yellow-400';
+  return 'text-emerald-600 dark:text-emerald-400';
 }
 
 function healthScoreBg(score: number): string {
@@ -34,9 +34,9 @@ function healthScoreBg(score: number): string {
 
 function lossToSalesColor(r: number | null | undefined): string {
   if (r == null) return 'text-muted-foreground';
-  if (r > 0.10) return 'text-red-600';
-  if (r > 0.05) return 'text-amber-600';
-  return 'text-emerald-600';
+  if (r > 0.10) return 'text-red-600 dark:text-red-400';
+  if (r > 0.05) return 'text-amber-600 dark:text-amber-400';
+  return 'text-emerald-600 dark:text-emerald-400';
 }
 
 // ============================================================
@@ -50,7 +50,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
   const criticalCount = ranking.filter((o) => o.healthScore < 30).length;
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -81,12 +81,12 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-8 h-10 px-3">#</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Outlet</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Skor</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Masalah</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">NOMINAL DEVIASI</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider w-8 h-10 px-3">#</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3">Outlet</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3">Skor</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">Masalah</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">NOMINAL DEVIASI</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -197,7 +197,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -220,13 +220,13 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Type</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">SURPLUS</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Rata-rata % DEV TO BOM</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3">NAMA BAHAN</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3">Type</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">SURPLUS</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">Rata-rata % DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -240,7 +240,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                 >
                   <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
                   <TableCell className="px-3 py-2">
-                    <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{row.type}</Badge>
+                    <Badge variant="outline" className={`text-[11px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{row.type}</Badge>
                   </TableCell>
                   <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">{row.outletCount}</TableCell>
                   <TableCell className="text-[11px] px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{row.lossOutlets}</TableCell>
@@ -268,7 +268,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
     .sort((a, b) => b.totalAbsNominal - a.totalAbsNominal);
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -296,12 +296,12 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Area</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">PENJUALAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS/PENJUALAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3">Area</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">PENJUALAN</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS/PENJUALAN</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

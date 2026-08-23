@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { useStatus } from '@/hooks/useAnalysis';
+import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
 import { useState, useMemo, useEffect } from 'react';
 import {
@@ -23,8 +23,9 @@ import { PicManagementDialog } from '@/components/filters/PicManagementDialog';
 import { FileUploadDialog } from '@/components/filters/FileUploadDialog';
 
 export function FilterBar() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
   const { data: status, isLoading } = useStatus();
+  const prefetchAnalysis = usePrefetchAnalysis();
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
 
@@ -240,7 +241,34 @@ export function FilterBar() {
                 <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
                   <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Pilih bulan" /></SelectTrigger>
                   <SelectContent>
-                    {months.map((m) => <SelectItem key={m.key} value={m.label} className="text-xs">{m.label}</SelectItem>)}
+                    {months.map((m) => (
+                      <SelectItem
+                        key={m.key}
+                        value={m.label}
+                        className="text-xs"
+                        // PERF-OPT: prefetch analysis for this month on hover.
+                        // Uses the LAST week of the hovered month (the auto-
+                        // select useEffect will pick the same week on click).
+                        // TanStack Query dedupes — safe to fire multiple times.
+                        onMouseEnter={() => {
+                          const weeksForMonth = status?.weeksByMonth?.[m.key] || [];
+                          const lastWeek = weeksForMonth[weeksForMonth.length - 1];
+                          if (!lastWeek) return;
+                          prefetchAnalysis({
+                            month: m.label,
+                            week: lastWeek,
+                            compareWeek: null,
+                            compareMonth: null,
+                            area,
+                            outlet: outletCode,
+                            item: itemName,
+                            pic,
+                          });
+                        }}
+                      >
+                        {m.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -250,7 +278,32 @@ export function FilterBar() {
                 <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
                   <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Minggu" /></SelectTrigger>
                   <SelectContent>
-                    {weeks.map((w) => <SelectItem key={w} value={w} className="text-xs">{w}</SelectItem>)}
+                    {weeks.map((w) => (
+                      <SelectItem
+                        key={w}
+                        value={w}
+                        className="text-xs"
+                        // PERF-OPT: prefetch analysis for this week on hover.
+                        // compareWeek=null lets the server auto-resolve the
+                        // previous period (matches what useAnalysis will send
+                        // when the user actually clicks).
+                        onMouseEnter={() => {
+                          if (!monthLabel) return;
+                          prefetchAnalysis({
+                            month: monthLabel,
+                            week: w,
+                            compareWeek: null,
+                            compareMonth: null,
+                            area,
+                            outlet: outletCode,
+                            item: itemName,
+                            pic,
+                          });
+                        }}
+                      >
+                        {w}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

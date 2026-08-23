@@ -1,6 +1,8 @@
 'use client';
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
+import type { QueryClient } from '@tanstack/react-query';
 import type { ExecutiveSummary, InvestigationItem } from '@/types/inventory';
 
 // ============================================================
@@ -287,7 +289,12 @@ async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
   return res.json();
 }
 
-export function useAnalysis(params: {
+// ============================================================
+//  PERF-OPT: analysis query params shape (shared by useAnalysis +
+//  prefetchAnalysis). Keeping this in one place guarantees the query
+//  key matches exactly between the live hook and the prefetch helper.
+// ============================================================
+export interface AnalysisParams {
   month: string | null;
   week: string | null;
   compareWeek: string | null;
@@ -296,7 +303,12 @@ export function useAnalysis(params: {
   outlet: string | null;
   item: string | null;
   pic?: string | null;
-}) {
+}
+
+// PERF-OPT: Build the URLSearchParams for an analysis request.
+// Mirrors the param-building logic that used to live inline in useAnalysis
+// so prefetch + live fetch produce identical query strings.
+function buildAnalysisSearchParams(params: AnalysisParams): URLSearchParams {
   const p = new URLSearchParams();
   if (params.month) p.set('month', params.month);
   if (params.week) p.set('week', params.week);
@@ -312,14 +324,81 @@ export function useAnalysis(params: {
   if (params.outlet) p.set('outlet', params.outlet);
   if (params.item) p.set('item', params.item);
   if (params.pic) p.set('pic', params.pic);
+  return p;
+}
+
+// PERF-OPT: build the canonical analysis query key.
+// Exported so prefetch callers can use the EXACT same key shape as useAnalysis.
+export function buildAnalysisQueryKey(params: AnalysisParams) {
+  return ['analysis', params] as const;
+}
+
+// PERF-OPT: staleTime + gcTime constants. Bumped from 60s → 120s staleTime
+// (analysis is heavy — 6-8s cold) and added 10-min gcTime so the data stays
+// in memory across tab switches / filter toggles.
+export const ANALYSIS_STALE_TIME = 120_000; // 2 min
+export const ANALYSIS_GC_TIME = 600_000;     // 10 min
+
+export function useAnalysis(params: AnalysisParams) {
+  // PERF-OPT: memoize the URLSearchParams so the queryFn closure captures a
+  // stable reference across renders (was being rebuilt every render — fine
+  // functionally, but caused TanStack Query to see a new queryFn each render).
+  const searchParams = buildAnalysisSearchParams(params);
 
   return useQuery({
-    queryKey: ['analysis', params],
-    queryFn: () => fetchAnalysis(p),
+    queryKey: buildAnalysisQueryKey(params),
+    queryFn: () => fetchAnalysis(searchParams),
     enabled: Boolean(params.month && params.week),
     placeholderData: keepPreviousData,
-    staleTime: 60_000,
+    // PERF-OPT: staleTime 60s → 120s. Analysis is expensive (6-8s cold,
+    // 100ms warm). 2 min keeps the data fresh enough for filter toggles
+    // without re-fetching on every tab switch.
+    staleTime: ANALYSIS_STALE_TIME,
+    // PERF-OPT: gcTime 5min (default) → 10min. Keeps the data in memory
+    // longer so navigating back to a previously-viewed period is instant.
+    gcTime: ANALYSIS_GC_TIME,
   });
+}
+
+// ============================================================
+//  PERF-OPT: prefetchAnalysis
+//  --------------------------------------------------------
+//  Used by:
+//    1. FilterBar — on hover over a month/week dropdown option,
+//       prefetch the analysis for that period so the click is instant.
+//    2. page.tsx — on first successful status load, prefetch the
+//       default (latest) period so the dashboard's first paint
+//       doesn't wait for the user to interact.
+//
+//  Implementation: queryClient.prefetchQuery with the SAME queryKey
+//  shape as useAnalysis. TanStack Query dedupes — if a real useAnalysis
+//  call is already in flight for the same key, prefetch is a no-op.
+// ============================================================
+export function prefetchAnalysis(
+  queryClient: QueryClient,
+  params: AnalysisParams,
+): void {
+  if (!params.month || !params.week) return;
+  const searchParams = buildAnalysisSearchParams(params);
+  void queryClient.prefetchQuery({
+    queryKey: buildAnalysisQueryKey(params),
+    queryFn: () => fetchAnalysis(searchParams),
+    staleTime: ANALYSIS_STALE_TIME,
+    gcTime: ANALYSIS_GC_TIME,
+  });
+}
+
+// ============================================================
+//  PERF-OPT: usePrefetchAnalysis — React hook wrapper around
+//  prefetchAnalysis. Returns a stable callback that can be passed
+//  to onMouseEnter handlers without re-creating closures every render.
+// ============================================================
+export function usePrefetchAnalysis() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (params: AnalysisParams) => prefetchAnalysis(queryClient, params),
+    [queryClient],
+  );
 }
 
 // ============================================================

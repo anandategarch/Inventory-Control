@@ -92,7 +92,7 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
   }, [outletData]);
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -117,14 +117,14 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
                 <div className="flex items-center justify-between mb-2 px-3 py-2 border-b bg-muted/30 dark:bg-zinc-900/30">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm">{group.menuName}</span>
-                    <Badge variant="outline" className="text-[10px] font-medium tabular-nums">{group.itemCount} bahan</Badge>
+                    <Badge variant="outline" className="text-xs font-medium tabular-nums">{group.itemCount} bahan</Badge>
                     {group.outlierCount > 0 && (
-                      <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">
+                      <Badge variant="outline" className="text-xs text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">
                         {group.outlierCount} outlier
                       </Badge>
                     )}
                   </div>
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                  <span className="text-xs text-muted-foreground tabular-nums">
                     Avg Dev/BOM: <span className="font-medium">{fmtPct(group.avgDevBom)}</span> · Threshold: <span className="font-medium">{fmtPct(group.threshold)}</span>
                   </span>
                 </div>
@@ -136,7 +136,7 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
                       {...clickableRowProps(() => onSelectItem({ outletCode, itemName: item.itemName }))}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        {item.isOutlier && <span className="text-red-600 dark:text-red-400 font-bold text-[10px]">⚠</span>}
+                        {item.isOutlier && <span className="text-red-600 dark:text-red-400 font-bold text-xs">⚠</span>}
                         <span className="truncate max-w-[160px]" title={item.itemName}>{item.itemName}</span>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
@@ -145,11 +145,11 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
                           Dev/BOM: {fmtPct(item.devBom)}
                         </span>
                         {item.outlierMultiple != null && item.outlierMultiple > 1 && (
-                          <span className={`text-[10px] tabular-nums ${item.isOutlier ? 'text-red-600 dark:text-red-400 font-bold' : 'text-muted-foreground'}`}>
+                          <span className={`text-xs tabular-nums ${item.isOutlier ? 'text-red-600 dark:text-red-400 font-bold' : 'text-muted-foreground'}`}>
                             {item.outlierMultiple.toFixed(1)}× avg
                           </span>
                         )}
-                        <span className={`text-[10px] ${directionColor(item.direction)}`}>{item.direction === 'LOSS' ? 'L' : 'S'}</span>
+                        <span className={`text-xs ${directionColor(item.direction)}`}>{item.direction === 'LOSS' ? 'L' : 'S'}</span>
                       </div>
                     </div>
                   ))}
@@ -158,7 +158,7 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
             ))}
           </div>
         )}
-        <p className="text-[10px] text-muted-foreground mt-2">
+        <p className="text-xs text-muted-foreground mt-2">
           ⚠ Outlier = Dev/BOM &gt; (avg + 2σ) DAN &gt; 1.5× avg menu · Klik bahan untuk lihat Investigation Card
         </p>
       </CardContent>

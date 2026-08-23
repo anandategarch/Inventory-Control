@@ -282,7 +282,7 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3 border-b">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-start gap-2.5">
@@ -298,22 +298,22 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {counts.critical > 0 && (
-              <Badge variant="outline" className="text-[10px] h-5 border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 bg-red-50/50 dark:bg-red-950/30 font-medium">
+              <Badge variant="outline" className="text-xs h-5 border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 bg-red-50/50 dark:bg-red-950/30 font-medium">
                 Kritis: <span className="tabular-nums">{counts.critical}</span>
               </Badge>
             )}
             {counts.warning > 0 && (
-              <Badge variant="outline" className="text-[10px] h-5 border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/30 font-medium">
+              <Badge variant="outline" className="text-xs h-5 border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/30 font-medium">
                 Warning: <span className="tabular-nums">{counts.warning}</span>
               </Badge>
             )}
             {counts.positive > 0 && (
-              <Badge variant="outline" className="text-[10px] h-5 border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30 font-medium">
+              <Badge variant="outline" className="text-xs h-5 border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30 font-medium">
                 Positif: <span className="tabular-nums">{counts.positive}</span>
               </Badge>
             )}
             {counts.info > 0 && (
-              <Badge variant="outline" className="text-[10px] h-5 border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 bg-zinc-50/50 dark:bg-zinc-900/30 font-medium">
+              <Badge variant="outline" className="text-xs h-5 border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 bg-zinc-50/50 dark:bg-zinc-900/30 font-medium">
                 Info: <span className="tabular-nums">{counts.info}</span>
               </Badge>
             )}

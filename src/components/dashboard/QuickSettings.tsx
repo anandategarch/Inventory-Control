@@ -323,7 +323,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
                       </Button>
                     </div>
                     {isPercent && (
-                      <p className="text-[10px] text-muted-foreground/80">
+                      <p className="text-xs text-muted-foreground/80">
                         Nilai 0–1 (mis. 0.5 = 50%)
                       </p>
                     )}
@@ -333,7 +333,7 @@ export function QuickSettings({ settings, trigger, align = 'end' }: QuickSetting
             </div>
           )}
 
-          <p className="text-[10px] text-muted-foreground pt-1.5 border-t leading-relaxed">
+          <p className="text-xs text-muted-foreground pt-1.5 border-t leading-relaxed">
             ✅ Perubahan disimpan permanen di database. Chart diperbarui otomatis. Pengaturan tetap ada saat buka aplikasi lagi.
           </p>
         </div>

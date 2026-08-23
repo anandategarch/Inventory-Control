@@ -352,6 +352,16 @@ export async function GET(req: NextRequest) {
     //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline
     //  must compare W4 vs W4 (prev months), NOT W4 vs W1+W2+W4 (mixed).
     //  Mixed weeks inflate mean (W1 is smaller) → false positive Z-Score.
+    //
+    //  PERF-OPT (verified): historicalByOutletItem is ALREADY in a
+    //  Promise.all with currSlim — they run fully parallel. It CANNOT
+    //  be merged into the main Promise.all below because:
+    //    (a) the 404 check at line ~380 needs currSlim first, and
+    //    (b) moving it after the 404 check would serialize it
+    //        (currSlim → 404 check → big Promise.all), losing the
+    //        currSlim ∥ historicalByOutletItem overlap.
+    //  Current structure: max(currSlim, historicalByOutletItem) → 404
+    //  check → big Promise.all. This is the optimal parallel shape.
     // ============================================================
     const historicalPeriods = allPeriods.filter(
       (p) => p.weekLabel === week && p.monthLabel !== month

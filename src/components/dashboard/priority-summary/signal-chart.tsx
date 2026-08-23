@@ -30,7 +30,7 @@ export function ChartEmptyState({ message }: { message: string }) {
     <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">
       <div className="text-center">
         <p className="text-emerald-600 dark:text-emerald-400 font-medium">✓ {message}</p>
-        <p className="text-[10px] text-muted-foreground/70 mt-1">Tidak ada anomali terdeteksi</p>
+        <p className="text-xs text-muted-foreground/70 mt-1">Tidak ada anomali terdeteksi</p>
       </div>
     </div>
   );
@@ -353,7 +353,7 @@ export function SignalChart({ name, r, items }: { name: string; r: Recommendatio
       }
       return (
         <div className="h-[170px] overflow-auto rounded-md border border-border/60">
-          <table className="w-full text-[10px]">
+          <table className="w-full text-xs">
             <thead className="bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm sticky top-0 z-10">
               <tr>
                 <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">#</th>

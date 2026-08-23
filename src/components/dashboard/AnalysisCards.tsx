@@ -28,7 +28,7 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
   const multi = data.growthComparison.multiPeriodComparison;
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -79,10 +79,10 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
                   }
                 />
                 <Legend wrapperStyle={{ fontSize: 10 }} iconType="circle" />
-                <Bar yAxisId="left" dataKey="sales" name="Sales" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                <Bar yAxisId="left" dataKey="sales" name="Sales" fill="var(--chart-surplus)" radius={[3, 3, 0, 0]} maxBarSize={32} />
                 <Bar yAxisId="left" dataKey="bom" name="BOM" fill="#71717a" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Bar yAxisId="left" dataKey="deviation" name="Deviasi" fill="#f59e0b" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Line yAxisId="right" type="monotone" dataKey="growthPct" name="Growth" stroke="#dc2626" strokeWidth={2} dot={{ r: 3, fill: '#dc2626' }} activeDot={{ r: 5 }} />
+                <Bar yAxisId="left" dataKey="deviation" name="Deviasi" fill="var(--chart-waste)" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                <Line yAxisId="right" type="monotone" dataKey="growthPct" name="Growth" stroke="var(--chart-loss)" strokeWidth={2} dot={{ r: 3, fill: 'var(--chart-loss)' }} activeDot={{ r: 5 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>

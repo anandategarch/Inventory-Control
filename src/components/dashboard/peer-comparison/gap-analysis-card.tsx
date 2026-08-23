@@ -40,7 +40,7 @@ export function GapAnalysisCard({
   });
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -56,7 +56,7 @@ export function GapAnalysisCard({
             <div key={r.key as string} className="rounded-lg border bg-muted/20 p-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
-                <Badge variant="outline" className={`text-[9px] h-4 font-medium ${r.isWorse ? 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30' : 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'}`}>
+                <Badge variant="outline" className={`text-[11px] h-4 font-medium ${r.isWorse ? 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30' : 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'}`}>
                   {r.isWorse ? 'di bawah best' : 'di atas best'}
                 </Badge>
               </div>
@@ -68,7 +68,7 @@ export function GapAnalysisCard({
               <div className={`text-[11px] font-semibold tabular-nums ${r.isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                 {r.gap >= 0 ? '+' : ''}{r.format(r.gap)}
                 {r.pctAboveBest !== 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-1">
+                  <span className="text-xs text-muted-foreground ml-1">
                     ({r.pctAboveBest >= 0 ? '+' : ''}{r.pctAboveBest.toFixed(0)}% vs best)
                   </span>
                 )}
@@ -76,7 +76,7 @@ export function GapAnalysisCard({
             </div>
           ))}
         </div>
-        <p className="mt-2 text-[10px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           Untuk metrik &quot;buruk&quot; (Dev/BOM, LOSS, Residual), peer best = nilai terendah.
           Untuk Sales, peer best = nilai tertinggi.
         </p>

@@ -33,7 +33,7 @@ export function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet
     .slice(0, topN === 'all' ? 9999 : parseInt(topN));
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
@@ -80,7 +80,7 @@ export function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet
               Reset
             </Button>
           )}
-          <Badge variant="secondary" className="text-[10px] ml-auto tabular-nums font-medium">{items.length} item</Badge>
+          <Badge variant="secondary" className="text-xs ml-auto tabular-nums font-medium">{items.length} item</Badge>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -88,18 +88,18 @@ export function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet
           <Table className="min-w-[1200px]">
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank Nas</TableHead>
-                <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank BOM</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Item</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Resto</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">PIC</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY Deviasi</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY Waste</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY LS</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">%LS to BOM</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">AVG Dev By BOM</TableHead>
-                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">Nominal Deviasi</TableHead>
+                <TableHead className="w-8 text-center text-xs font-semibold uppercase tracking-wider h-8">Rank Nas</TableHead>
+                <TableHead className="w-8 text-center text-xs font-semibold uppercase tracking-wider h-8">Rank BOM</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Item</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Resto</TableHead>
+                <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">PIC</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY Deviasi</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY Waste</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY LS</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">%LS to BOM</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">AVG Dev By BOM</TableHead>
+                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Nominal Deviasi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

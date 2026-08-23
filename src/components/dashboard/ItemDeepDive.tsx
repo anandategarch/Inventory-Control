@@ -119,7 +119,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                   <p className="text-[11px] text-muted-foreground">Total Kemunculan</p>
                   <p className="text-base font-bold">
                     {totalCount}
-                    {drilldownQuery.isLoading && <span className="text-[10px] text-muted-foreground ml-1">…</span>}
+                    {drilldownQuery.isLoading && <span className="text-xs text-muted-foreground ml-1">…</span>}
                   </p>
                 </div>
                 <div className="rounded-md border p-2.5">
@@ -145,8 +145,8 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                       <PieChart>
                         <Pie
                           data={[
-                            { name: 'LOSS', value: lossCount, color: '#dc2626' },
-                            { name: 'SURPLUS', value: surplusCount, color: '#10b981' },
+                            { name: 'LOSS', value: lossCount, color: 'var(--chart-loss)' },
+                            { name: 'SURPLUS', value: surplusCount, color: 'var(--chart-surplus)' },
                           ].filter((d) => d.value > 0)}
                           dataKey="value"
                           nameKey="name"
@@ -159,8 +159,8 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                           labelLine={false}
                         >
                           {[
-                            { name: 'LOSS', value: lossCount, color: '#dc2626' },
-                            { name: 'SURPLUS', value: surplusCount, color: '#10b981' },
+                            { name: 'LOSS', value: lossCount, color: 'var(--chart-loss)' },
+                            { name: 'SURPLUS', value: surplusCount, color: 'var(--chart-surplus)' },
                           ].filter((d) => d.value > 0).map((d, i) => <Cell key={i} fill={d.color} />)}
                         </Pie>
                         <Tooltip

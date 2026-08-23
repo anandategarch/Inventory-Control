@@ -73,7 +73,7 @@ export function RestoRecommendationCard() {
 
   if (isLoading) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -147,7 +147,7 @@ export function RestoRecommendationCard() {
   };
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
@@ -185,15 +185,15 @@ export function RestoRecommendationCard() {
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold truncate leading-tight">{r.outletName}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{r.outletCode} · {r.area}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{r.outletCode} · {r.area}</p>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <div className="text-right">
                   <p className={`text-xl font-bold leading-none tabular-nums ${scoreColor(r.priorityScore)}`}>{r.priorityScore}</p>
-                  <p className="text-[9px] text-muted-foreground uppercase tracking-wider mt-0.5">Priority</p>
+                  <p className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">Priority</p>
                 </div>
-                <Badge variant="outline" className={`text-[10px] font-semibold border ${levelColor(r.priorityLevel)}`}>
+                <Badge variant="outline" className={`text-xs font-semibold border ${levelColor(r.priorityLevel)}`}>
                   {r.priorityLevel}
                 </Badge>
               </div>
@@ -202,19 +202,19 @@ export function RestoRecommendationCard() {
             {/* Quick metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2 text-[11px]">
               <div className="rounded-md border bg-background/60 px-3 py-1.5">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
                 <p className="font-mono font-semibold tabular-nums">{fmtPctAbs(r.metrics.devBom)}</p>
               </div>
               <div className="rounded-md border bg-background/60 px-3 py-1.5">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Nominal</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Nominal</p>
                 <p className={`font-mono font-semibold tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(r.metrics.nominalDeviasi)}</p>
               </div>
               <div className="rounded-md border bg-background/60 px-3 py-1.5">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Items</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Items</p>
                 <p className="font-mono font-semibold tabular-nums">{r.metrics.itemCount}</p>
               </div>
               <div className="rounded-md border bg-background/60 px-3 py-1.5 min-w-0">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Top Item</p>
+                <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Top Item</p>
                 <p className="font-medium truncate" title={r.metrics.topItem || ''}>{r.metrics.topItem || '—'}</p>
               </div>
             </div>
@@ -222,7 +222,7 @@ export function RestoRecommendationCard() {
             {/* Analysis bullets — show all signals (1-15), compact text */}
             <div className="space-y-0.5 mb-2">
               {r.analysis.map((a, j) => (
-                <p key={j} className="text-[10px] text-muted-foreground flex items-start gap-1.5 leading-tight">
+                <p key={j} className="text-xs text-muted-foreground flex items-start gap-1.5 leading-tight">
                   <span className="text-amber-500 mt-1 shrink-0 text-[8px]">●</span>
                   <span>{a}</span>
                 </p>
@@ -231,50 +231,50 @@ export function RestoRecommendationCard() {
 
             {/* Direction + trend indicators */}
             <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t">
-              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">Signals:</span>
-              <Badge variant="outline" className={`text-[9px] h-4 ${
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">Signals:</span>
+              <Badge variant="outline" className={`text-[11px] h-4 ${
                 r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' :
                 r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900' : ''
               }`}>
                 {r.metrics.direction}
               </Badge>
               {r.signals.directionFlip && (
-                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
                 </Badge>
               )}
               {r.signals.trendDeteriorating && (
-                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
                 </Badge>
               )}
               {r.signals.residualRatio > 0.4 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Residual <span className="tabular-nums ml-0.5">{(r.signals.residualRatio * 100).toFixed(0)}%</span>
                 </Badge>
               )}
               {r.signals.toleranceBreachHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Tol Breach: <span className="tabular-nums ml-0.5">{r.signals.toleranceBreachHighCount}</span>
                 </Badge>
               )}
               {r.signals.overExplainedCount > 0 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   Anomali: <span className="tabular-nums ml-0.5">{r.signals.overExplainedCount}</span>
                 </Badge>
               )}
               {r.signals.highLossItemCount > 0 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
                   High Loss: <span className="tabular-nums ml-0.5">{r.signals.highLossItemCount}</span>
                 </Badge>
               )}
               {r.signals.noToleranceItems > 0 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   No Tol: <span className="tabular-nums ml-0.5">{r.signals.noToleranceItems}</span>
                 </Badge>
               )}
               {r.signals.benchmarkHighCount > 0 && (
-                <Badge variant="outline" className="text-[9px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
+                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
                   Bench High: <span className="tabular-nums ml-0.5">{r.signals.benchmarkHighCount}</span>
                 </Badge>
               )}

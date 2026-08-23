@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, Info, BarChart3 } from 'lucide-react';
@@ -35,6 +36,66 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   HISTORICAL: 'Pola deviation abnormal vs historical behavior',
 };
 
+// ============================================================
+//  UX-ENHANCE: Count-up animation for KPI values
+//  Animates from 0 → target on first load only (not on refetch).
+//  Uses requestAnimationFrame with easeOutCubic over 500ms.
+// ============================================================
+function useCountUp(target: number | null, duration = 500): number | null {
+  const [display, setDisplay] = useState<number | null>(target == null ? null : 0);
+  const [prevTarget, setPrevTarget] = useState<number | null>(target);
+  const [hasAnimated, setHasAnimated] = useState(false);
+  const rafRef = useRef(0);
+
+  // Adjust state during render when target changes (avoids set-state-in-effect).
+  // Pattern per React docs: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  if (prevTarget !== target) {
+    setPrevTarget(target);
+    if (target == null) {
+      setDisplay(null);
+    } else if (hasAnimated) {
+      // Already animated once — sync instantly to new target (no re-animation)
+      setDisplay(target);
+    }
+    // If not yet animated, the effect below starts the animation
+  }
+
+  // First-load animation only (fires once per component instance).
+  // setHasAnimated is called in the rAF callback (async) to avoid the
+  // set-state-in-effect lint rule — it never fires synchronously in the body.
+  useEffect(() => {
+    if (target == null) return;
+    if (hasAnimated) return;
+    const start = performance.now();
+    const to = target;
+    let finished = false;
+    const tick = (now: number) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      setDisplay(to * eased);
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        finished = true;
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    // Mark as animated AFTER the first frame is scheduled so the effect doesn't
+    // re-fire. Using a microtask avoids synchronous setState in the effect body.
+    Promise.resolve().then(() => {
+      if (!finished) setHasAnimated(true);
+    });
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration, hasAnimated]);
+
+  return display;
+}
+
+function AnimatedValue({ value, format }: { value: number | null; format: (v: number | null) => string }) {
+  const animated = useCountUp(value);
+  return <>{format(animated)}</>;
+}
+
 interface KPI {
   label: string;
   value: number | null;
@@ -44,10 +105,12 @@ interface KPI {
   inverse?: boolean;
   hint?: string;
   drillDown?: string; // card key for drill-down modal
+  accent?: 'emerald' | 'amber' | 'zinc' | 'red' | 'blue'; // left border accent color
 }
 
-function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDown }: KPI) {
+function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDown, accent }: KPI) {
   const { setCardDrillDown } = useDashboard();
+  const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
   // Pill color based on direction (respects inverse flag for "bad when up" metrics)
@@ -58,35 +121,57 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
       : growth < 0
         ? (inverse ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400')
         : 'bg-muted text-muted-foreground';
+  // Left border accent based on metric type
+  const accentCls = accent === 'emerald'
+    ? 'bg-emerald-500/70'
+    : accent === 'amber'
+      ? 'bg-amber-500/70'
+      : accent === 'red'
+        ? 'bg-red-500/70'
+        : accent === 'blue'
+          ? 'bg-blue-500/70'
+          : 'bg-zinc-400/70'; // default zinc (BOM)
+  // Subtle gradient tint based on accent
+  const tintCls = accent === 'emerald'
+    ? 'from-emerald-50/60 dark:from-emerald-950/15'
+    : accent === 'amber'
+      ? 'from-amber-50/60 dark:from-amber-950/15'
+      : accent === 'red'
+        ? 'from-red-50/60 dark:from-red-950/15'
+        : accent === 'blue'
+          ? 'from-blue-50/60 dark:from-blue-950/15'
+          : 'from-zinc-50/60 dark:from-zinc-900/15';
   return (
     <Card
-      className={`relative overflow-hidden transition-all duration-200 shadow-sm dark:shadow-black/20 ${drillDown ? 'cursor-pointer hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5 hover:border-amber-300/60 dark:hover:border-amber-800/60' : ''}`}
+      className={`relative overflow-hidden transition-all duration-200 shadow-md shadow-black/5 dark:shadow-black/20 bg-gradient-to-br to-card ${drillDown ? 'cursor-pointer hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5 hover:border-amber-300/60 dark:hover:border-amber-800/60' : ''} ${tintCls}`}
       {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
     >
+      {/* Left border accent (4px colored bar) */}
+      <div className={`absolute inset-y-0 left-0 w-1 ${accentCls}`} aria-hidden />
       {/* Subtle top accent line */}
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/10 to-transparent" aria-hidden />
-      <CardContent className="p-4 pt-3.5">
+      <CardContent className="p-4 pt-3.5 pl-5">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider line-clamp-2 leading-tight" title={label}>{label}</p>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider line-clamp-2 leading-tight" title={label}>{label}</p>
           {growthStr && (
-            <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold shrink-0 rounded-full px-1.5 py-0.5 ${pillCls}`}>
-              <Icon className="h-2.5 w-2.5" />
+            <span className={`inline-flex items-center gap-0.5 text-xs font-semibold shrink-0 rounded-full px-2 py-0.5 ${pillCls}`}>
+              <Icon className="h-3 w-3" />
               {growthStr}
             </span>
           )}
         </div>
-        <p className="mt-1.5 text-xl font-bold tracking-tight tabular-nums">
-          {unit === 'IDR' ? fmtIDR(value) : fmtNum(value, unit || '')}
+        <p className="mt-1.5 text-2xl font-bold tracking-tight tabular-nums">
+          {unit === 'IDR' ? fmtIDR(animatedValue) : fmtNum(animatedValue, unit || '')}
         </p>
         {previous != null && (
           <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
         )}
-        {hint && <p className="mt-1 text-[10px] text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
+        {hint && <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
         {drillDown && (
-          <p className="mt-1.5 text-[10px] text-muted-foreground/60 inline-flex items-center gap-0.5">
-            <BarChart3 className="h-2.5 w-2.5" /> Detail
+          <p className="mt-1.5 text-xs text-muted-foreground/60 inline-flex items-center gap-0.5">
+            <BarChart3 className="h-3 w-3" /> Detail
           </p>
         )}
       </CardContent>
@@ -112,57 +197,57 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         </Badge>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" />
-        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" />
-        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" />
+        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" accent="emerald" />
+        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" accent="amber" />
+        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" accent="zinc" />
         {/* Bug 5 fix: Three-layer deviation labels — Gross / Explained / Net */}
-        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" />
-        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" />
-        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" />
+        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" accent="amber" />
+        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" accent="zinc" />
+        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" accent="red" />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-red-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50" {...clickableRowProps(() => setCardDrillDown('loss'))}>
-          <div className="absolute inset-y-0 left-0 w-0.5 bg-red-500/60" aria-hidden />
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-red-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('loss'))}>
+          <div className="absolute inset-y-0 left-0 w-1 bg-red-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
-              <TrendingDown className="h-3 w-3 text-red-500/70" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+              <TrendingDown className="h-3.5 w-3.5 text-red-500/70" />
             </div>
-            <p className="text-base font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
+            <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalLoss} format={fmtIDR} /></p>
+            <p className="text-xs text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-emerald-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
-          <div className="absolute inset-y-0 left-0 w-0.5 bg-emerald-500/60" aria-hidden />
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-emerald-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
+          <div className="absolute inset-y-0 left-0 w-1 bg-emerald-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
-              <TrendingUp className="h-3 w-3 text-emerald-500/70" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+              <TrendingUp className="h-3.5 w-3.5 text-emerald-500/70" />
             </div>
-            <p className="text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
+            <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalSurplus} format={fmtIDR} /></p>
+            <p className="text-xs text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
-          <div className="absolute inset-y-0 left-0 w-0.5 bg-amber-500/60" aria-hidden />
+        <Card className="cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
+          <div className="absolute inset-y-0 left-0 w-1 bg-amber-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Residual Loss</p>
-              <AlertTriangle className="h-3 w-3 text-amber-500/70" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Residual Loss</p>
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500/70" />
             </div>
-            <p className="text-base font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5">{fmtNum(s.residualLossQty)}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
+            <p className="text-lg font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5"><AnimatedValue value={s.residualLossQty} format={(v) => fmtNum(v, '')} /></p>
+            <p className="text-xs text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-zinc-50/40 to-transparent dark:from-zinc-900/20 border-zinc-200/50 dark:border-zinc-800/50" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
-          <div className="absolute inset-y-0 left-0 w-0.5 bg-zinc-400/60" aria-hidden />
+        <Card className="cursor-pointer hover:shadow-lg dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-zinc-50/40 to-transparent dark:from-zinc-900/20 border-zinc-200/50 dark:border-zinc-800/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
+          <div className="absolute inset-y-0 left-0 w-1 bg-zinc-400/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Deviation/BOM</p>
-              <BarChart3 className="h-3 w-3 text-muted-foreground/70" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Deviation/BOM</p>
+              <BarChart3 className="h-3.5 w-3.5 text-muted-foreground/70" />
             </div>
-            <p className="text-base font-bold tabular-nums mt-0.5">{fmtPct(s.deviationToBom, false)}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">normalized ratio</p>
+            <p className="text-lg font-bold tabular-nums mt-0.5"><AnimatedValue value={s.deviationToBom} format={(v) => fmtPct(v, false)} /></p>
+            <p className="text-xs text-muted-foreground mt-0.5">normalized ratio</p>
           </CardContent>
         </Card>
       </div>
@@ -217,7 +302,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
   const dash = (healthScore / 100) * circ;
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center justify-between">
           <span className="flex items-center gap-2.5">
@@ -274,7 +359,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Abnormal Rate</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Abnormal Rate</p>
             <p className={`text-lg font-bold tabular-nums ${abnormalPct > 20 ? 'text-red-600 dark:text-red-400' : abnormalPct > 5 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
               {abnormalPct.toFixed(1)}%
             </p>
@@ -319,7 +404,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         {/* Top Issue Categories */}
         {categoryList.length > 0 && (
           <div className="space-y-1.5 pt-1">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Kategori Masalah Utama</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Kategori Masalah Utama</p>
             <div className="space-y-1.5">
               {categoryList.slice(0, 4).map(({ cat, count }) => {
                 const pct = total > 0 ? (count / total) * 100 : 0;
@@ -350,14 +435,14 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
         {/* Quick Financial Impact Summary */}
         <div className="grid grid-cols-2 gap-2 pt-2 border-t">
           <div className="rounded-md p-1.5">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total LOSS</p>
             <p className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-[10px] text-muted-foreground tabular-nums">{fmtPct(s.lossToSales, false)} of Sales</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{fmtPct(s.lossToSales, false)} of Sales</p>
           </div>
           <div className="rounded-md p-1.5">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
             <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-[10px] text-muted-foreground tabular-nums">{fmtPct(s.surplusToSales, false)} of Sales</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{fmtPct(s.surplusToSales, false)} of Sales</p>
           </div>
         </div>
 

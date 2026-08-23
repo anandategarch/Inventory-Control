@@ -50,13 +50,13 @@ export function AnomalyFlags({
   }
 
   if (flags.length === 0) {
-    return <span className="text-muted-foreground text-[10px]">—</span>;
+    return <span className="text-muted-foreground text-xs">—</span>;
   }
 
   return (
     <div className="flex flex-col items-center gap-0.5">
       {flags.map((f, i) => (
-        <span key={i} className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium ${f.color}`} title={f.text}>
+        <span key={i} className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium ${f.color}`} title={f.text}>
           <span>{f.emoji}</span>
           <span className="sr-only">{f.text}</span>
         </span>

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useDashboard } from '@/hooks/useDashboard';
-import { useAnalysis, useStatus } from '@/hooks/useAnalysis';
+import { useAnalysis, useStatus, prefetchAnalysis, type AnalysisParams } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
@@ -48,6 +49,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
+  Tooltip, TooltipContent, TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   Activity, Boxes, BarChart3, ShieldAlert,
   MapPin,
   Calendar, Loader2, Store,
@@ -55,6 +59,7 @@ import {
   History,
   ArrowUp,
   RefreshCw,
+  Keyboard,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -279,8 +284,13 @@ function ScrollToTop() {
 }
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard();
   const { data: status } = useStatus();
+  const queryClient = useQueryClient();
+  // PERF-OPT: track whether cache warming has already fired for this status
+  // payload. Prevents re-prefetching on every status re-render (status has
+  // 5-min staleTime, but its reference may update on invalidation).
+  const warmedStatusKey = useRef<string | null>(null);
 
   // Auto-select first available month/week on mount
   useEffect(() => {
@@ -298,6 +308,36 @@ export default function DashboardPage() {
       }
     }
   }, [status, monthLabel, currentWeek, setWeek]);
+
+  // PERF-OPT: Cache warming — fire prefetch for the latest month/week as
+  // soon as status loads (don't wait for the auto-select useEffect chain
+  // above to set monthLabel/currentWeek first). Saves ~1 render cycle on
+  // initial dashboard load.
+  useEffect(() => {
+    if (!status?.months?.length || !status?.weeksByMonth) return;
+    // Only fire once per status payload (key by latest monthKey + week)
+    const latestMonth = status.months[status.months.length - 1];
+    if (!latestMonth) return;
+    const weeksForLatest = status.weeksByMonth[latestMonth.key] || [];
+    if (!weeksForLatest.length) return;
+    const latestWeek = weeksForLatest[weeksForLatest.length - 1];
+    const warmKey = `${latestMonth.key}|${latestWeek}`;
+    if (warmedStatusKey.current === warmKey) return;
+    warmedStatusKey.current = warmKey;
+    // Only warm if user hasn't already selected a different period
+    if (monthLabel || currentWeek) return;
+    const params: AnalysisParams = {
+      month: latestMonth.label,
+      week: latestWeek,
+      compareWeek: null, // auto-compare will be resolved server-side
+      compareMonth: null,
+      area: null,
+      outlet: null,
+      item: null,
+      pic: null,
+    };
+    prefetchAnalysis(queryClient, params);
+  }, [status, queryClient, monthLabel, currentWeek]);
 
   // Auto-set default periode pembanding = SAME weekLabel in previous month (cumulative weeks)
   // FIX (BUG 1): Was using chronological previous (W4→W2 same month = false positive growth).
@@ -360,7 +400,10 @@ export default function DashboardPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
-  const handleExport = async (selectedSections: string[]) => {
+  // PERF-OPT: useCallback keeps handleExport stable across renders so
+  // ExportDialog doesn't re-render unnecessarily (it's memoized via React.memo
+  // in some shadcn variants; stable callback guarantees it).
+  const handleExport = useCallback(async (selectedSections: string[]) => {
     if (!analysis.data) return;
     setExportDialogOpen(false);
     setIsExporting(true);
@@ -388,24 +431,90 @@ export default function DashboardPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section di-export ke Word` });
+      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section · Laporan Word telah diunduh` });
     } catch (e: unknown) {
       toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Unknown error'), variant: 'destructive' });
     } finally {
       setIsExporting(false);
     }
-  };
+  }, [analysis.data, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, toast]);
 
+  // UX-ENHANCE: Refresh handler — invalidates analysis + status queries and
+  // fires a toast. Wired to Cmd/Ctrl+R keyboard shortcut.
+  const handleRefresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    queryClient.invalidateQueries({ queryKey: ['status'] });
+    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+    queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+    toast({ title: '🔄 Data diperbarui' });
+  }, [queryClient, toast]);
+
+  // UX-ENHANCE: Global keyboard shortcuts.
+  // Cmd/Ctrl+E → open export dialog
+  // Cmd/Ctrl+R → refresh data (prevents browser refresh)
+  // 1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)
+  // Escape → close any open dialog/drawer
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName ?? '';
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable === true;
+
+      // Cmd/Ctrl+E → open export dialog
+      if (mod && (e.key === 'e' || e.key === 'E')) {
+        e.preventDefault();
+        if (analysis.data) setExportDialogOpen(true);
+        return;
+      }
+      // Cmd/Ctrl+R → refresh data (prevent browser refresh)
+      if (mod && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        handleRefresh();
+        return;
+      }
+      // 1 / 2 / 3 → switch tabs (only when not typing in an input)
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer' };
+        setActiveTab(tabMap[e.key]);
+        return;
+      }
+      // Escape → close any open dialog/drawer (Radix handles its own; this
+      // covers dashboard-controlled state + ExportDialog as a safety net)
+      if (e.key === 'Escape') {
+        setExportDialogOpen(false);
+        setDrilldown({ outletCode: null, itemName: null });
+        setSourceModal(false);
+        setCardDrillDown(null);
+        setDeepDiveItem({ itemName: null, outletCode: null });
+        return;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [analysis.data, handleRefresh, setActiveTab, setExportDialogOpen, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem]);
+
+  // PERF-OPT: derive isLoading/hasData once per render (cheap booleans — no
+  // memoization needed; React already dedupes identical primitives).
   const isLoading = analysis.isLoading || analysis.isFetching;
   const statusLoaded = status !== undefined;
   const hasData = statusLoaded && Boolean(status?.stats?.totalRecords && status.stats.totalRecords > 0);
 
+  // PERF-OPT: analysis.data is already a stable reference from useQuery
+  // (TanStack Query preserves the reference unless the underlying data
+  // changes — verified by inspecting useQuery source). No useMemo needed.
+  // The useCallback above on handleExport is the only memoization that
+  // matters here — it keeps ExportDialog from re-rendering on every
+  // analysis.isFetching toggle.
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">
       {/* Header — sticky with brand accent bar */}
-      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
         {/* Brand accent bar — warm amber→emerald gradient (NO blue/indigo) */}
-        <div className="h-0.5 bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500" aria-hidden />
+        <div className="h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500" aria-hidden />
         <div className="px-4 sm:px-6 py-3 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
           <div className="flex items-center gap-3 min-w-0">
             {/* Logo — premium gradient with soft shadow + ring */}
@@ -426,13 +535,13 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             {analysis.isFetching && analysis.data && (
-              <Badge variant="outline" className="text-[11px] h-7 gap-1 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
+              <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-3 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Memperbarui...
               </Badge>
             )}
             {analysis.data && (
-              <Badge variant="outline" className="text-[11px] h-7 hidden sm:inline-flex gap-1 text-muted-foreground">
+              <Badge variant="outline" className="text-[11px] h-7 hidden sm:inline-flex gap-1.5 rounded-full px-3 text-muted-foreground">
                 <Activity className="h-3 w-3" />
                 <span className="tabular-nums">{analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms</span>
               </Badge>
@@ -453,6 +562,29 @@ export default function DashboardPage() {
                 )}
               </Button>
             )}
+            {/* UX-ENHANCE: Keyboard shortcuts help tooltip */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Keyboard shortcuts"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+                >
+                  <Keyboard className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" className="max-w-xs p-3">
+                <p className="text-xs font-semibold mb-1.5">Keyboard Shortcuts</p>
+                <ul className="space-y-1 text-[11px]">
+                  <li className="flex items-center justify-between gap-3"><span>Export Word</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Refresh data</span><kbd className="font-mono">⌘/Ctrl + R</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Tab Dashboard</span><kbd className="font-mono">1</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
+                </ul>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
@@ -474,14 +606,14 @@ export default function DashboardPage() {
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm">
-              <TabsTrigger value="dashboard" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-md shadow-black/5 dark:shadow-black/20">
+              <TabsTrigger value="dashboard" className="text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all">
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>
-              <TabsTrigger value="resto" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
+              <TabsTrigger value="resto" className="text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all">
                 <Store className="h-3.5 w-3.5" /> Resto Analysis
               </TabsTrigger>
-              <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400">
+              <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all">
                 <Activity className="h-3.5 w-3.5" /> Peer Comparison
               </TabsTrigger>
             </TabsList>

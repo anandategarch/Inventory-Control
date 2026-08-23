@@ -135,7 +135,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
   }, [rows]);
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-cyan-50 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 shrink-0">
@@ -213,7 +213,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
                   <button
                     key={area}
                     onClick={() => toggleArea(area)}
-                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[10px] transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ${
                       isSelected ? 'border-foreground/30 bg-muted/50' : 'border-border opacity-50 hover:opacity-100'
                     }`}
                   >
@@ -226,7 +226,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
             {selectedAreas.size > 0 && (
               <button
                 onClick={() => setSelectedAreas(new Set())}
-                className="mt-2 text-[10px] text-muted-foreground hover:text-foreground"
+                className="mt-2 text-xs text-muted-foreground hover:text-foreground"
               >
                 ✕ Reset ke 5 area terburuk
               </button>

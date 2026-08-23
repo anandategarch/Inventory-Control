@@ -77,7 +77,7 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
   const warningCount = items.filter(i => Math.abs(i.zScore) > 2 && Math.abs(i.zScore) <= 3).length;
 
   return (
-    <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 shrink-0">
@@ -112,24 +112,24 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
             <Table className="min-w-[900px]">
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 w-8">#</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('itemName')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 w-8">#</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('itemName')}>
                     Item <SortIcon col="itemName" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('area')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('area')}>
                     Area <SortIcon col="area" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('currentDevBom')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('currentDevBom')}>
                     Current Dev/BOM <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('historicalAvg')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('historicalAvg')}>
                     Historical Avg <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('zScore')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('zScore')}>
                     Z-Score <SortIcon col="zScore" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-center">Status</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('absNominal')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center">Status</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('absNominal')}>
                     |Nominal| <SortIcon col="absNominal" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                 </TableRow>
@@ -151,7 +151,7 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
                         {item.zScore.toFixed(2)}
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-center">
-                        <Badge variant={badge.variant} className="text-[9px] h-4 px-1 font-medium">{badge.label}</Badge>
+                        <Badge variant={badge.variant} className="text-[11px] h-4 px-1 font-medium">{badge.label}</Badge>
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums font-semibold">{fmtIDR(item.absNominal)}</TableCell>
                     </TableRow>

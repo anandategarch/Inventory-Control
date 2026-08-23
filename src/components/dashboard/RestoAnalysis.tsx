@@ -95,7 +95,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
 
   if (!activeOutlet) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="relative mb-4">
@@ -115,7 +115,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   // Bug 6.9 fix: show "select period" message instead of error when week not selected
   if (!monthLabel || !currentWeek) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="py-16 text-center">
           <div className="flex flex-col items-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50 mb-4">
@@ -130,7 +130,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
 
   if (isLoading) {
     return (
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="py-16 flex items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           <span className="ml-2.5 text-sm text-muted-foreground font-medium">Memuat Resto Analysis...</span>
@@ -175,7 +175,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   return (
     <div className="space-y-4">
       {/* Header */}
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
@@ -206,7 +206,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                 <span className={`text-sm font-bold tabular-nums ${scoreText}`}>{healthScore}</span>
               </div>
               <div>
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Health Score</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Health Score</p>
                 <p className={`text-xs font-semibold ${scoreText}`}>{healthScore < 30 ? 'Kritis' : healthScore < 50 ? 'Perhatian' : healthScore < 70 ? 'Cukup' : 'Sehat'}</p>
               </div>
             </div>
@@ -221,7 +221,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       {/* Resto Profile — 6 Sections */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* 1. Performance */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0"><TrendingUp className="h-3 w-3" /></span>Performance</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Sales" value={fmtIDR(profile.performance.sales)} />
@@ -235,7 +235,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </Card>
 
         {/* 2. Behavior */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0"><Activity className="h-3 w-3" /></span>Behavior</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Total LOSS" value={fmtIDR(profile.behavior.lossNominal)} sub={fmtPct(profile.behavior.lossPct)} />
@@ -249,7 +249,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </Card>
 
         {/* 3. Historical */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400 shrink-0"><Calendar className="h-3 w-3" /></span>Historical</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="BOM Growth" value={fmtGrowth(profile.historical.bomGrowth)} growthColor={growthColor(profile.historical.bomGrowth)} />
@@ -267,7 +267,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </Card>
 
         {/* 4. Benchmark */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400 shrink-0"><Gauge className="h-3 w-3" /></span>Benchmark</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Outlet Dev/BOM" value={fmtPct(profile.benchmark.outletDevBom)} />
@@ -278,7 +278,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </Card>
 
         {/* 5. Top Risk */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0"><AlertTriangle className="h-3 w-3" /></span>Top Risk (by Dev/BOM)</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             {profile.topRisk.byDevBom.slice(0, 5).map((r, i) => (
@@ -291,16 +291,16 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </Card>
 
         {/* 6. Investigation */}
-        <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0"><ShieldAlert className="h-3 w-3" /></span>Investigation</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Normal" value={profile.investigation.normal.toString()} />
             <Row label="Warning" value={profile.investigation.warning.toString()} />
             <Row label="Abnormal" value={profile.investigation.abnormal.toString()} />
             <div className="flex gap-1 mt-2">
-              <Badge variant="outline" className="text-[10px] text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">P1: {(data.allItems || []).filter((r) => r.priority === 'P1').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 font-medium tabular-nums">P2: {(data.allItems || []).filter((r) => r.priority === 'P2').length}</Badge>
-              <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 font-medium tabular-nums">P3: {(data.allItems || []).filter((r) => r.priority === 'P3').length}</Badge>
+              <Badge variant="outline" className="text-xs text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 font-medium tabular-nums">P1: {(data.allItems || []).filter((r) => r.priority === 'P1').length}</Badge>
+              <Badge variant="outline" className="text-xs text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 font-medium tabular-nums">P2: {(data.allItems || []).filter((r) => r.priority === 'P2').length}</Badge>
+              <Badge variant="outline" className="text-xs text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 font-medium tabular-nums">P3: {(data.allItems || []).filter((r) => r.priority === 'P3').length}</Badge>
             </div>
           </CardContent>
         </Card>
@@ -312,7 +312,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       )}
 
       {/* Bahan Analysis — 3 Rankings */}
-      <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
@@ -340,20 +340,20 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                 <Table>
                   <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                     <TableRow className="border-b hover:bg-transparent">
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">#</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Nama Bahan</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">BOM</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Deviasi</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Dev/BOM</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Nominal</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Dir</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">W</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">S</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">T</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">Resid%</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Hist</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-right">vs Area</TableHead>
-                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 text-center">Pri</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">#</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Nama Bahan</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">BOM</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">Deviasi</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">Dev/BOM</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">Nominal</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-center">Dir</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">W</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">S</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">T</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">Resid%</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-center">Hist</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-right">vs Area</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 text-center">Pri</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -384,7 +384,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                   </TableBody>
                 </Table>
               </div>
-              <p className="text-[10px] text-muted-foreground mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 W = Waste · S = Susut · T = Trial · Resid% = Residual Ratio · Hist = Historical Trend (↑ memburuk, ↓ membaik) · vs Area = Area Multiplier · Pri = Priority
               </p>
             </TabsContent>
