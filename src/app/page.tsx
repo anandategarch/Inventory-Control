@@ -11,7 +11,10 @@ import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
+// Phase 4 FIX: RestoAnalysis lazy-loaded — it pulls in PrioritySummaryCard →
+// SignalChart → recharts (5.4MB). Without lazy-load, Recharts is in the main
+// bundle despite the other dynamic() calls.
+const RestoAnalysis = dynamic(() => import('@/components/dashboard/RestoAnalysis').then(m => m.RestoAnalysis), { ssr: false, loading: () => <LoadingChart /> });
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 // CostAccounting components removed — tab Cost Accounting dihapus
@@ -38,7 +41,7 @@ const MultiPeriodComparisonCard = dynamic(() => import('@/components/dashboard/A
 const HistoricalZScoreCard = dynamic(() => import('@/components/dashboard/HistoricalZScoreCard').then(m => m.HistoricalZScoreCard), { ssr: false, loading: () => <LoadingChart /> });
 const AreaTrendChart = dynamic(() => import('@/components/dashboard/AreaTrendChart').then(m => m.AreaTrendChart), { ssr: false, loading: () => <LoadingChart /> });
 const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparison').then(m => m.PeerComparison), { ssr: false, loading: () => <LoadingChart /> });
-const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false });
+const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => null });
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';

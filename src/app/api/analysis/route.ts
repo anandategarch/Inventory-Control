@@ -26,7 +26,7 @@ import {
 import { evaluateRules } from '@/engine/rules/evaluator';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { calcGrowth, computeNominalDeviationGrowth, projectTrend } from '@/lib/metrics';
+import { computeNominalDeviationGrowth, projectTrend } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -48,7 +48,8 @@ import {
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
-import type { ExecutiveSummary } from '@/types/inventory';
+// Phase 3: ExecutiveSummary type no longer needed here — buildExecSummaryFromSql
+// moved to ./services/exec-summary.ts which imports it directly.
 // Phase 3: extracted services
 import { buildExecSummaryFromSql } from './services/exec-summary';
 import { computeGrowthDrivers } from './services/growth-drivers';
