@@ -53,6 +53,8 @@ import {
   Calendar, Loader2, Store,
   FileDown, Upload, CloudDownload, Sparkles,
   History,
+  ArrowUp,
+  RefreshCw,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -186,6 +188,25 @@ function ErrorState({ message }: { message: string }) {
             <p className={`text-sm mt-1 leading-relaxed ${isNoData ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
               {message}
             </p>
+            {/* Fix #12: Actionable empty state — CTA buttons */}
+            {isNoData && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition-all"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload File
+                </button>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Refresh
+                </button>
+              </div>
+            )}
             {!isNoData && (
               <p className="text-xs text-red-600/60 dark:text-red-400/50 mt-2">
                 Periksa koneksi jaringan atau coba refresh halaman. Jika berlanjut, hubungi administrator.
@@ -234,6 +255,26 @@ function FetchAware({ isFetching, children }: { isFetching: boolean; children: R
       )}
       {children}
     </div>
+  );
+}
+
+// Fix #10: Scroll to Top button — appears after scrolling down 300px
+function ScrollToTop() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => setVisible(window.scrollY > 300);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+  if (!visible) return null;
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      className="fixed bottom-6 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-all duration-200 group"
+      aria-label="Scroll to top"
+    >
+      <ArrowUp className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
+    </button>
   );
 }
 
@@ -418,7 +459,10 @@ export default function DashboardPage() {
 
       {/* Main content */}
       <main className="flex-1 px-4 sm:px-6 py-4 space-y-4 max-w-[1600px] w-full mx-auto">
-        <FilterBar />
+        {/* Fix #11: Sticky filter bar — stays visible when scrolling */}
+        <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-background/95 backdrop-blur-sm border-b border-border/40">
+          <FilterBar />
+        </div>
 
         {!statusLoaded ? (
           <LoadingState />
@@ -443,7 +487,7 @@ export default function DashboardPage() {
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
-            <TabsContent value="dashboard" className="space-y-4 mt-2">
+            <TabsContent value="dashboard" className="space-y-4 mt-2 animate-fade-in-up">
               {/* Section: Executive Summary */}
               <FetchAware isFetching={analysis.isFetching}>
                 <ExecutiveSummary data={analysis.data} />
@@ -565,12 +609,12 @@ export default function DashboardPage() {
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
-            <TabsContent value="resto" className="space-y-4 mt-2">
+            <TabsContent value="resto" className="space-y-4 mt-2 animate-fade-in-up">
               <RestoAnalysis analysisData={analysis.data} />
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
-            <TabsContent value="peer" className="space-y-4 mt-2">
+            <TabsContent value="peer" className="space-y-4 mt-2 animate-fade-in-up">
               <PeerComparison />
             </TabsContent>
           </Tabs>
@@ -616,6 +660,9 @@ export default function DashboardPage() {
         onExport={handleExport}
         isExporting={isExporting}
       />
+
+      {/* Fix #10: Scroll to Top button */}
+      <ScrollToTop />
     </div>
   );
 }
