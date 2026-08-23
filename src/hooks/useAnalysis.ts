@@ -165,6 +165,18 @@ export interface HistoricalAnalysisResult {
   criticalItems: Array<{ itemName: string; outletCode: string; area: string; currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number }>;
 }
 
+// NEW: Area trend row for AreaTrendChart (Dev/BOM% per area × period)
+export interface AreaTrendRow {
+  area: string;
+  monthLabel: string;
+  weekLabel: string;
+  monthKey: string | null;
+  sales: number;
+  avgDevBom: number;
+  totalAbsNominal: number;
+  outletCount: number;
+}
+
 export interface AnalysisData {
   success: boolean;
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -214,6 +226,8 @@ export interface AnalysisData {
   costImpact?: CostImpact;
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];
+  // NEW: area trend for AreaTrendChart
+  areaTrend?: AreaTrendRow[];
   growthDrivers?: GrowthDriverMetric[];
   durationMs: number;
   cached?: boolean;

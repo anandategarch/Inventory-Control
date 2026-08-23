@@ -412,5 +412,7 @@ export function computeHistoricalAnalysis(
   }
 
   criticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-  return { criticalItems: criticalItems.slice(0, 10) };
+  // FIX: return top 50 (was 10) — HistoricalZScoreCard displays a sortable table.
+  // 50 is manageable payload (~5KB) and gives users enough data to explore.
+  return { criticalItems: criticalItems.slice(0, 50) };
 }

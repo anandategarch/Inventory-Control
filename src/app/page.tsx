@@ -14,6 +14,8 @@ import {
 import {
   MultiPeriodComparisonCard,
 } from '@/components/dashboard/AnalysisCards';
+import { HistoricalZScoreCard } from '@/components/dashboard/HistoricalZScoreCard';
+import { AreaTrendChart } from '@/components/dashboard/AreaTrendChart';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PeerComparison } from '@/components/dashboard/PeerComparison';
@@ -34,6 +36,7 @@ import {
   MapPin,
   Calendar, Loader2, Store,
   FileDown, Upload, CloudDownload, Sparkles,
+  History,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -495,6 +498,21 @@ export default function DashboardPage() {
                 />
                 <FetchAware isFetching={analysis.isFetching}>
                   <ItemConsistencyAnalysis data={analysis.data} />
+                </FetchAware>
+              </section>
+
+              {/* Section: Historical Z-Score + Area Trend */}
+              <section>
+                <SectionHeader
+                  icon={<History className="h-4 w-4 text-muted-foreground" />}
+                  title="Analisis Historis (Z-Score + Trend per Area)"
+                  isFetching={analysis.isFetching}
+                />
+                <FetchAware isFetching={analysis.isFetching}>
+                  <div className="space-y-4">
+                    <HistoricalZScoreCard data={analysis.data} />
+                    <AreaTrendChart data={analysis.data} />
+                  </div>
                 </FetchAware>
               </section>
 

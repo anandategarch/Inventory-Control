@@ -39,6 +39,8 @@ import {
   queryDeviationBreakdownDrivers,
   queryLossVsSurplus,
   queryAreaAnalysis,
+  queryTrendByArea,
+  type AreaTrendRow,
   queryCostImpact,
   queryItemConsistency,
   queryHistoricalStats,
@@ -539,6 +541,7 @@ export async function GET(req: NextRequest) {
       dqIssuesRaw,
       topDeviasiRank,
       deviationDriverRows,
+      areaTrendRows,
     ] = await Promise.all([
       queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
       queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
@@ -554,18 +557,15 @@ export async function GET(req: NextRequest) {
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
       queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
       queryItemConsistency(week!, month!, filterOpts),
-      // OPTIMIZE-ANALYSIS: groupBy only by `severity` (was: code+severity+message).
-      // Frontend reads only dqStatus.errors + dqStatus.warnings counts — the
-      // per-issue code/message breakdown was unused since the DQ Issues section
-      // was removed from the export. Returning ≤3 rows instead of N unique
-      // (code,severity,message) tuples reduces DB→app transfer.
       db.dQIssue.groupBy({
         by: ['severity'],
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
-      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50), // FIX: limit 500→50 (-150KB payload)
-      queryDeviationBreakdownDrivers(week!, month!, filterOpts), // NEW: 80% Pareto per category
+      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50),
+      queryDeviationBreakdownDrivers(week!, month!, filterOpts),
+      // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
+      queryTrendByArea({ ...filterOpts, weekLabel: week }),
     ]);
 
     // Map results (same as before, just from parallel results)
@@ -1026,6 +1026,8 @@ export async function GET(req: NextRequest) {
       costImpact,
       itemConsistencyAnalysis,
       netCostTrend,
+      // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
+      areaTrend: areaTrendRows as AreaTrendRow[],
       // ANALYZE-BACKEND-2: trend projection + cross-outlet pattern detection
       trendProjection,
       patterns,
