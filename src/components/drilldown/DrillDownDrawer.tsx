@@ -78,15 +78,15 @@ export function DrillDownDrawer() {
                     {drill.data.records.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="text-xs">
-                          <div className="font-medium">{r.outlet.name}</div>
-                          <div className="text-[11px] text-muted-foreground">{r.outlet.code}</div>
+                          <div className="font-medium">{r.outlet?.name ?? '—'}</div>
+                          <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
                         </TableCell>
-                        <TableCell className="text-xs font-medium">{r.item.name}</TableCell>
-                        <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>
-                        <TableCell className={`text-xs text-right ${numberColor(r.qty.deviasi)}`}>{fmtNum(r.qty.deviasi)}</TableCell>
-                        <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal.deviasi)}`}>{fmtIDR(r.nominal.deviasi)}</TableCell>
-                        <TableCell className="text-xs text-right">{fmtPctAbs(r.derived.pctQtyDeviasiToBom)}</TableCell>
-                        <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived.direction)}`}>{r.derived.direction?.[0]}</TableCell>
+                        <TableCell className="text-xs font-medium">{r.item?.name ?? '—'}</TableCell>
+                        <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
+                        <TableCell className={`text-xs text-right ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
+                        <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
+                        <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
+                        <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>{r.derived?.direction?.[0] ?? '—'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -99,13 +99,13 @@ export function DrillDownDrawer() {
                       const r = drill.data.records[0];
                       return (
                         <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div><span className="text-muted-foreground">Direction:</span> <span className={`font-semibold ${directionColor(r.derived.direction)}`}>{r.derived.direction}</span></div>
-                          <div><span className="text-muted-foreground">Residual Qty:</span> <span className="font-medium">{fmtNum(r.derived.residualQty)}</span></div>
-                          <div><span className="text-muted-foreground">Residual Ratio:</span> <span className="font-medium">{fmtPctAbs(r.derived.residualRatio)}</span></div>
-                          <div><span className="text-muted-foreground">Avg Price:</span> <span className="font-medium">{fmtIDR(r.derived.avgPrice)}</span></div>
-                          <div><span className="text-muted-foreground">Tolerance:</span> <span className="font-medium">{r.derived.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : 'Not set'}</span></div>
-                          <div><span className="text-muted-foreground">Abs Nominal:</span> <span className="font-medium">{fmtIDR(r.derived.absNominalDeviasi)}</span></div>
-                          <div className="col-span-2"><span className="text-muted-foreground">Source File:</span> <span className="font-medium">{r.source.fileName}</span></div>
+                          <div><span className="text-muted-foreground">Direction:</span> <span className={`font-semibold ${directionColor(r.derived?.direction ?? null)}`}>{r.derived?.direction ?? '—'}</span></div>
+                          <div><span className="text-muted-foreground">Residual Qty:</span> <span className="font-medium">{fmtNum(r.derived?.residualQty ?? null)}</span></div>
+                          <div><span className="text-muted-foreground">Residual Ratio:</span> <span className="font-medium">{fmtPctAbs(r.derived?.residualRatio ?? null)}</span></div>
+                          <div><span className="text-muted-foreground">Avg Price:</span> <span className="font-medium">{fmtIDR(r.derived?.avgPrice ?? null)}</span></div>
+                          <div><span className="text-muted-foreground">Tolerance:</span> <span className="font-medium">{r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : 'Not set'}</span></div>
+                          <div><span className="text-muted-foreground">Abs Nominal:</span> <span className="font-medium">{fmtIDR(r.derived?.absNominalDeviasi ?? null)}</span></div>
+                          <div className="col-span-2"><span className="text-muted-foreground">Source File:</span> <span className="font-medium">{r.source?.fileName ?? '—'}</span></div>
                         </div>
                       );
                     })()}

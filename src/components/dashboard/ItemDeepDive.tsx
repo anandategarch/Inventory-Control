@@ -37,16 +37,18 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
   const open = Boolean(deepDiveItem?.itemName);
   const itemName = deepDiveItem?.itemName || null;
 
-  // Top 5 outlets with this item
+  // Top 5 outlets with this item (from topItemsByNominal — pre-sorted by absNominal)
   const topOutlets = (data?.topItemsByNominal || [])
     .filter((it: TopItemByNominal) => it.itemName === itemName)
     .slice(0, 5);
 
-  // All occurrences of this item (for direction distribution)
-  const allOccurrences = (data?.topItemsByNominal || []).filter((it: TopItemByNominal) => it.itemName === itemName);
-  const lossCount = allOccurrences.filter((it: TopItemByNominal) => it.direction === 'LOSS').length;
-  const surplusCount = allOccurrences.filter((it: TopItemByNominal) => it.direction === 'SURPLUS').length;
-  const totalAbsNominal = allOccurrences.reduce((s: number, it: TopItemByNominal) => s + (it.absNominal || 0), 0);
+  // FIX H6 (AUDIT-4): "Total Kemunculan" + LOSS/SURPLUS counts were derived from
+  // topItemsByNominal (capped at top-10 per thresholds.TOP_N_ITEMS). For an item
+  // in 50 outlets, only ≤10 entries were counted — wildly inaccurate.
+  // Now use drilldown data (which fetches ALL records for this item, up to 500)
+  // when available. Fall back to topItemsByNominal while loading.
+  // Use limit=500 only when drilling by itemName (no outletCode filter) to get all outlets.
+  const drilldownLimit = deepDiveItem?.outletCode ? 50 : 500;
 
   // Multi-period trend for this item (filter trend data)
   const trendData = (data?.trend || []).map((t) => ({
@@ -54,13 +56,32 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
     nominal: Math.abs(t.nominal || 0),
   }));
 
-  // Use drilldown hook to fetch detailed records if outletCode is also set
+  // Use drilldown hook to fetch detailed records — for ItemDeepDive, this fetches
+  // ALL outlets with this item (when outletCode is null) for accurate counts.
   const drilldownQuery = useDrilldown({
     outletCode: deepDiveItem?.outletCode ?? null,
     itemName: itemName,
     weekLabel: currentWeek,
     monthLabel: monthLabel,
+    limit: drilldownLimit,
   });
+
+  // Derive counts from drilldown data (true counts) or fall back to topItemsByNominal
+  const drilldownRecords = drilldownQuery.data?.records ?? [];
+  const hasDrilldown = drilldownRecords.length > 0;
+  // FIX H6: keep types separate — allOccurrences is DrilldownRecord[] OR TopItemByNominal[],
+  // not a union. Compute counts in two branches to avoid TS union-type errors.
+  const fallbackOccurrences: TopItemByNominal[] = (data?.topItemsByNominal || []).filter((it: TopItemByNominal) => it.itemName === itemName);
+  const lossCount = hasDrilldown
+    ? drilldownRecords.filter((r: DrilldownRecord) => r.derived?.direction === 'LOSS').length
+    : fallbackOccurrences.filter((it: TopItemByNominal) => it.direction === 'LOSS').length;
+  const surplusCount = hasDrilldown
+    ? drilldownRecords.filter((r: DrilldownRecord) => r.derived?.direction === 'SURPLUS').length
+    : fallbackOccurrences.filter((it: TopItemByNominal) => it.direction === 'SURPLUS').length;
+  const totalAbsNominal = hasDrilldown
+    ? drilldownRecords.reduce((s: number, r: DrilldownRecord) => s + (r.derived?.absNominalDeviasi ?? Math.abs(r.nominal?.deviasi ?? 0)), 0)
+    : fallbackOccurrences.reduce((s: number, it: TopItemByNominal) => s + (it.absNominal || 0), 0);
+  const totalCount = hasDrilldown ? drilldownRecords.length : fallbackOccurrences.length;
 
   const onClose = () => setDeepDiveItem({ itemName: null, outletCode: null });
 
@@ -96,7 +117,10 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-md border p-2.5">
                   <p className="text-[11px] text-muted-foreground">Total Kemunculan</p>
-                  <p className="text-base font-bold">{allOccurrences.length}</p>
+                  <p className="text-base font-bold">
+                    {totalCount}
+                    {drilldownQuery.isLoading && <span className="text-[10px] text-muted-foreground ml-1">…</span>}
+                  </p>
                 </div>
                 <div className="rounded-md border p-2.5">
                   <p className="text-[11px] text-muted-foreground">Total |NOMINAL|</p>
@@ -113,7 +137,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               </div>
 
               {/* Direction pie */}
-              {allOccurrences.length > 0 && (
+              {(lossCount > 0 || surplusCount > 0) && (
                 <div className="rounded-md border p-3">
                   <p className="text-xs font-semibold mb-2">Distribusi Arah</p>
                   <div className="h-40">

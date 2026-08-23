@@ -36,14 +36,14 @@ export function SourceDataModal() {
       'Bulan', 'Bulan 2',
     ];
     const rows = records.map((r) => [
-      r.outlet.code, r.outlet.name, r.outlet.area, r.item.name, r.item.satuan || '',
-      r.period.monthLabel, r.period.weekLabel, r.source.fileName,
-      r.qty.bom ?? '', r.qty.com ?? '', r.qty.deviasi ?? '',
-      r.qty.waste ?? '', r.qty.susut ?? '', r.qty.trial ?? '', r.qty.lossSurplus ?? '',
-      r.nominal.deviasi ?? '', r.nominal.waste ?? '', r.nominal.susut ?? '',
-      r.nominal.trial ?? '', r.nominal.lossSurplus ?? '', r.nominal.sales ?? '',
-      r.derived.direction ?? '', r.derived.pctQtyDeviasiToBom ?? '', r.derived.tolerancePct ?? '',
-      r.derived.residualQty ?? '', r.derived.residualRatio ?? '', r.derived.avgPrice ?? '',
+      r.outlet?.code ?? '', r.outlet?.name ?? '', r.outlet?.area ?? '', r.item?.name ?? '', r.item?.satuan || '',
+      r.period?.monthLabel ?? '', r.period?.weekLabel ?? '', r.source?.fileName ?? '',
+      r.qty?.bom ?? '', r.qty?.com ?? '', r.qty?.deviasi ?? '',
+      r.qty?.waste ?? '', r.qty?.susut ?? '', r.qty?.trial ?? '', r.qty?.lossSurplus ?? '',
+      r.nominal?.deviasi ?? '', r.nominal?.waste ?? '', r.nominal?.susut ?? '',
+      r.nominal?.trial ?? '', r.nominal?.lossSurplus ?? '', r.nominal?.sales ?? '',
+      r.derived?.direction ?? '', r.derived?.pctQtyDeviasiToBom ?? '', r.derived?.tolerancePct ?? '',
+      r.derived?.residualQty ?? '', r.derived?.residualRatio ?? '', r.derived?.avgPrice ?? '',
       r.bulan ?? '', r.bulan2 ?? '',
     ]);
     return [headers, ...rows]
@@ -158,36 +158,36 @@ export function SourceDataModal() {
                 {records.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="text-xs">
-                      <div className="font-medium">{r.outlet.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.outlet.code}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.outlet.area}</div>
+                      <div className="font-medium">{r.outlet?.name ?? '—'}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.outlet?.area ?? '—'}</div>
                     </TableCell>
                     <TableCell className="text-xs font-medium">
-                      {r.item.name}
-                      {r.item.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
+                      {r.item?.name ?? '—'}
+                      {r.item?.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
                     </TableCell>
                     <TableCell className="text-xs">
-                      <div>{r.period.weekLabel}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.period.monthLabel}</div>
+                      <div>{r.period?.weekLabel ?? '—'}</div>
+                      <div className="text-[11px] text-muted-foreground">{r.period?.monthLabel ?? '—'}</div>
                     </TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.bom)}`}>{fmtNum(r.qty.bom)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.com)}`}>{fmtNum(r.qty.com)}</TableCell>
-                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty.deviasi)}`}>{fmtNum(r.qty.deviasi)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.waste)}`}>{fmtNum(r.qty.waste)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.susut)}`}>{fmtNum(r.qty.susut)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.trial)}`}>{fmtNum(r.qty.trial)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty.lossSurplus)}`}>{fmtNum(r.qty.lossSurplus)}</TableCell>
-                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal.deviasi)}`}>{fmtIDR(r.nominal.deviasi)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtIDR(r.nominal.sales)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived.pctQtyDeviasiToBom)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
+                    <TableCell className="text-xs text-right">{fmtIDR(r.nominal?.sales ?? null)}</TableCell>
+                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
                     <TableCell className="text-xs text-right">
-                      {r.derived.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : '—'}
+                      {r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : '—'}
                     </TableCell>
-                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived.residualRatio)}</TableCell>
-                    <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived.direction)}`}>
-                      {r.derived.direction?.[0]}
+                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.residualRatio ?? null)}</TableCell>
+                    <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>
+                      {r.derived?.direction?.[0] ?? '—'}
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{r.source.fileName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{r.source?.fileName ?? '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

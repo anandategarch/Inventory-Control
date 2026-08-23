@@ -25,10 +25,16 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
     { name: 'Nominal Deviasi', growth: g.nominalDeviasiGrowth, key: 'nominalDeviasi' },
   ].filter((d) => d.growth != null);
 
+  // FIX H9 (AUDIT-2): mismatch badge was `salesGrowth > 0 && nominalDeviasiGrowth > 2*salesGrowth`
+  // — missed the worst case: sales SHRINKING while deviation magnitude GROWS. New condition:
+  // flag whenever deviation grows faster than sales, regardless of sales sign. Also catches
+  // negative-sales + positive-deviation (the most alarming divergence).
   const mismatchSales = g.salesGrowth != null && g.nominalDeviasiGrowth != null &&
-    g.nominalDeviasiGrowth > 2 * (g.salesGrowth > 0 ? g.salesGrowth : 0) && g.salesGrowth > 0;
+    g.nominalDeviasiGrowth > 0 &&
+    (g.salesGrowth < g.nominalDeviasiGrowth / 2);
   const mismatchBom = g.bomGrowth != null && g.qtyDeviasiGrowth != null &&
-    g.qtyDeviasiGrowth > 2 * (g.bomGrowth > 0 ? g.bomGrowth : 0) && g.bomGrowth > 0;
+    g.qtyDeviasiGrowth > 0 &&
+    (g.bomGrowth < g.qtyDeviasiGrowth / 2);
 
   const getTopDriver = (metricKey: string) => {
     const md = drivers.find(d => d.metric === metricKey);

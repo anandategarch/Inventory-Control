@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
 
     const where: any = {};
     if (outletCode) where.outlet = { code: outletCode };
-    if (itemName) where.item = { name: itemName };
+    // FIX H4 (AUDIT-4): itemName was case-sensitive — `itemName=bumbu pasta kuah` returned 0
+    // while `BUMBU PASTA KUAH (V.20)` existed. Use mode:'insensitive' (PostgreSQL-native).
+    if (itemName) where.item = { name: { equals: itemName, mode: 'insensitive' } };
     // Support comma-separated values for multi-period drilldown
     if (weekLabel) {
       const weeks = weekLabel.split(',').map((w) => w.trim()).filter(Boolean);
@@ -62,10 +64,12 @@ export async function GET(req: NextRequest) {
       count: records.length,
       records: records.map((r) => ({
         id: r.id,
-        outlet: { code: r.outlet.code, name: r.outlet.name, area: r.area },
-        item: { name: r.item.name, satuan: r.satuan },
-        period: { monthLabel: r.monthLabel, weekLabel: r.weekLabel },
-        source: { fileName: r.sourceFile.fileName },
+        // FIX H5 (AUDIT-4): null guards on nested relations — soft-deleted Outlet/Item
+        // or null sourceFile would crash the drawer/modal. Fallback to '—' / 0.
+        outlet: { code: r.outlet?.code ?? '—', name: r.outlet?.name ?? '—', area: r.area ?? '—' },
+        item: { name: r.item?.name ?? '—', satuan: r.satuan ?? null },
+        period: { monthLabel: r.monthLabel ?? '—', weekLabel: r.weekLabel ?? '—' },
+        source: { fileName: r.sourceFile?.fileName ?? '—' },
         qty: {
           bom: r.qtyBom,
           com: r.qtyCom,

@@ -352,11 +352,14 @@ export function useStatus() {
 // ============================================================
 export interface DrilldownRecord {
   id: number;
-  outlet: { code: string; name: string; area: string };
-  item: { name: string; satuan: string | null };
-  period: { monthLabel: string; weekLabel: string };
-  source: { fileName: string };
-  qty: {
+  // FIX H5 (AUDIT-4): nested objects made optional — API mapper now guards with
+  // `?? '—'` fallbacks, but frontend should also be type-safe against partial data
+  // (e.g. soft-deleted relations, future schema changes).
+  outlet?: { code: string; name: string; area: string };
+  item?: { name: string; satuan: string | null };
+  period?: { monthLabel: string; weekLabel: string };
+  source?: { fileName: string };
+  qty?: {
     bom: number | null;
     com: number | null;
     deviasi: number | null;
@@ -366,7 +369,7 @@ export interface DrilldownRecord {
     lossSurplus: number | null;
     wasteSusut: number | null;
   };
-  nominal: {
+  nominal?: {
     deviasi: number | null;
     waste: number | null;
     susut: number | null;
@@ -374,7 +377,7 @@ export interface DrilldownRecord {
     lossSurplus: number | null;
     sales: number | null;
   };
-  derived: {
+  derived?: {
     direction: string;
     residualQty: number | null;
     residualRatio: number | null;
@@ -397,15 +400,18 @@ export interface DrilldownData {
   records: DrilldownRecord[];
 }
 
-export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null }) {
+export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number }) {
   const p = new URLSearchParams();
   if (params.outletCode) p.set('outletCode', params.outletCode);
   if (params.itemName) p.set('itemName', params.itemName);
   if (params.weekLabel) p.set('weekLabel', params.weekLabel);
   if (params.monthLabel) p.set('monthLabel', params.monthLabel);
+  // FIX H6 (AUDIT-4): allow callers to request more records (default 50, max 500).
+  // ItemDeepDive needs up to 500 to count ALL outlets with an item, not just top-10.
+  if (params.limit) p.set('limit', String(params.limit));
 
   return useQuery({
-    queryKey: ['drilldown', params],
+    queryKey: ['drilldown', params.outletCode, params.itemName, params.weekLabel, params.monthLabel, params.limit],
     queryFn: async () => {
       const res = await fetch(`/api/drilldown?${p.toString()}`);
       // Guard: server crashes return HTML, not JSON
@@ -420,5 +426,7 @@ export function useDrilldown(params: { outletCode?: string | null; itemName?: st
       return res.json() as Promise<DrilldownData>;
     },
     enabled: Boolean(params.outletCode || params.itemName),
+    // FIX M6 (AUDIT-4): add staleTime so reopening the drawer for the same item doesn't refetch.
+    staleTime: 30_000,
   });
 }

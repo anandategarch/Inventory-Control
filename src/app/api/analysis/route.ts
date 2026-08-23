@@ -602,7 +602,10 @@ export async function GET(req: NextRequest) {
           sales: r.sales,
           bom: r.qtyBom ?? null, // FIX FLOW3-2: populate from SQL (was always null)
           deviation: r.nominal,
-          absDeviation: r.nominal,
+          // FIX H7 (AUDIT-2): was `absDeviation: r.nominal` (identical to deviation).
+          // Live data showed 4/8 rows with NEGATIVE "absDeviation" — mislabeled field.
+          // absDeviation must be the magnitude (always ≥ 0).
+          absDeviation: Math.abs(r.nominal),
           devBomRatio: r.devBom,
           growthPct: null as number | null,
         };
@@ -617,7 +620,9 @@ export async function GET(req: NextRequest) {
         return rest;
       });
     // Inject into growthMetrics
-    (growthMetrics as any).multiPeriodComparison = multiPeriodComparison;
+    // FIX M2 (AUDIT-2): removed `as any` cast — multiPeriodComparison is now a
+    // first-class typed field on growthMetrics (declared at line 565).
+    growthMetrics.multiPeriodComparison = multiPeriodComparison;
 
     // Net Cost Trend — built from same queryTrendAgg result (no extra query)
     const netCostTrend = trendAggRows
@@ -824,11 +829,16 @@ export async function GET(req: NextRequest) {
         const positive: Array<{ item: string; delta: number; pct: number }> = [];
         const negative: Array<{ item: string; delta: number; pct: number }> = [];
 
+        // FIX H8 (AUDIT-2): delta threshold was `Math.abs(delta) < 1` — too coarse.
+        // For sales/nominalDeviasi (rupiah, often in billions), 1 rupiah is noise.
+        // For bom/qtyDeviasi (kg/units, often fractional), 1 unit filters legit items.
+        // Scale threshold per-metric: currency → 1000, qty → 0.01.
+        const deltaThreshold = metric.key === 'sales' || metric.key === 'nominalDeviasi' ? 1000 : 0.01;
         for (const key of allKeys) {
           const curr = currByKey.get(key) ?? 0;
           const prev = prevByKey.get(key) ?? 0;
           const delta = curr - prev;
-          if (Math.abs(delta) < 1) continue;
+          if (Math.abs(delta) < deltaThreshold) continue;
           const pct = prev > 0 ? delta / prev : 0;
           if (delta > 0) positive.push({ item: key, delta, pct });
           else negative.push({ item: key, delta, pct });

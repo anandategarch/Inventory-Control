@@ -221,6 +221,9 @@ export async function GET(req: NextRequest) {
         GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian"
       ` : Promise.resolve([]),
       // Area benchmark — Phase 3: SUM(ABS)/SUM(ABS) matching computeDevBomAggregate
+      // FIX H1 (AUDIT-3): was `WHERE ir.area = ${outlet.area}` — silently returned 0
+      // when denormalized ir.area diverged from Outlet.area (e.g. MLGPAR: outlet="JAWA
+      // TIMUR 1" vs ir="BAKSO"). JOIN Outlet and filter by o.area for correctness.
       db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         SELECT
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
@@ -228,7 +231,8 @@ export async function GET(req: NextRequest) {
             ELSE 0 END as "avgDevBom",
           NULL as "lossToSales"
         FROM "InventoryRecord" ir
-        WHERE ir.area = ${outlet.area}
+        JOIN "Outlet" o ON ir."outletId" = o.id
+        WHERE o.area = ${outlet.area}
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
       `,
@@ -393,7 +397,11 @@ export async function GET(req: NextRequest) {
         bomGrowth: qtyBomGrowth,
         deviasiGrowth: qtyDeviasiGrowth,
         nominalGrowth: nominalDeviasiGrowth,
-        trend: devGrowthResult.trend === 'INCREASING' ? 'DETERIORATING'
+        // FIX H3 (AUDIT-3): when prevRecs is empty, devGrowthResult.trend='NEW' (computed
+        // from zero base) was mapped to 'DETERIORATING' — a false alarm with no baseline.
+        // Guard: if no prev period data, return 'INSUFFICIENT_DATA' instead.
+        trend: prevRecs.length === 0 ? 'INSUFFICIENT_DATA'
+          : devGrowthResult.trend === 'INCREASING' ? 'DETERIORATING'
           : devGrowthResult.trend === 'DECREASING' ? 'IMPROVING'
           : devGrowthResult.trend === 'NEW' ? 'DETERIORATING'  // onset from zero base
           : devGrowthResult.trend === 'RESOLVED' ? 'IMPROVING'

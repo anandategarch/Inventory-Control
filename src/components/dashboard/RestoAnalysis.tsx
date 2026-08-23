@@ -949,7 +949,11 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyWaste < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyWaste)}</TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyLossSurplus < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
-                  <TableCell className={`text-right text-xs tabular-nums ${it.pctLossSurplusToBom != null && it.pctLossSurplusToBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {/* FIX H2 (AUDIT-3): pctLossSurplusToBom is always ≥0 (SQL uses ABS), so
+                      `< 0` check was dead code — cell was always green, contradicting the
+                      subtitle "Negatif (merah) = rugi". Color by nominalDeviasi sign instead:
+                      negative nominal = LOSS (red), positive = SURPLUS (green). */}
+                  <TableCell className={`text-right text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {it.pctLossSurplusToBom != null ? `${Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` : '—'}
                   </TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyBom)}</TableCell>
