@@ -352,9 +352,9 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
             </div>
 
             {/* Outlet table */}
-            <div className="flex-1 min-h-0 border rounded-md overflow-y-auto">
+            <div className="flex-1 min-h-0 border rounded-md overflow-auto">
               <Table>
-                <TableHeader className="sticky top-0 bg-background z-10">
+                <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow>
                     <TableHead className="text-[11px] h-8">Kode</TableHead>
                     <TableHead className="text-[11px] h-8">Nama Outlet</TableHead>

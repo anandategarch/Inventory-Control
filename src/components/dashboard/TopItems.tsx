@@ -40,7 +40,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
                 <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
@@ -101,7 +101,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
                 <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Item</TableHead>
@@ -166,7 +166,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-72">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="w-8 h-8 text-[10px] font-semibold uppercase tracking-wider">#</TableHead>
                 <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider">Outlet</TableHead>

@@ -79,7 +79,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-8 h-8 px-2">#</TableHead>
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Outlet</TableHead>
@@ -212,7 +212,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">NAMA BAHAN</TableHead>
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Type</TableHead>
@@ -288,7 +288,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
       <CardContent className="p-0">
         <ScrollArea className="h-80">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Area</TableHead>
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Outlets</TableHead>

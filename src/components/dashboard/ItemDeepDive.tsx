@@ -223,9 +223,9 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
               {deepDiveItem?.outletCode && drilldownQuery.data && drilldownQuery.data.records?.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold mb-1.5">Detail Record (Outlet: {deepDiveItem.outletCode})</p>
-                  <div className="h-40 overflow-y-auto rounded-md border">
+                  <div className="h-40 overflow-auto rounded-md border">
                     <Table>
-                      <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                         <TableRow>
                           <TableHead className="text-[11px] h-7 px-2">Minggu</TableHead>
                           <TableHead className="text-[11px] h-7 px-2 text-right">QTY Deviasi</TableHead>

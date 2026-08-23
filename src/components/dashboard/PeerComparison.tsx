@@ -304,7 +304,7 @@ export function PeerComparison() {
           ) : (
             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <Table className="min-w-[1400px]">
-                <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+                <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow className="border-b hover:bg-transparent">
                     <TableHead className="text-[10px] font-semibold uppercase tracking-wider sticky left-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-20">Resto</TableHead>
                     <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Area</TableHead>

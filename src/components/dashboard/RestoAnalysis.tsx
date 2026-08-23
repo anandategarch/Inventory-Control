@@ -452,7 +452,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
             <TabsContent value={rankingTab} className="mt-3">
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto border rounded-lg">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+                  <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                     <TableRow className="border-b hover:bg-transparent">
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">#</TableHead>
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Nama Bahan</TableHead>
@@ -605,7 +605,7 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
               <CardContent>
                 <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
                   <Table>
-                    <TableHeader className="sticky top-0 bg-background z-10">
+                    <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                       <TableRow>
                         <TableHead className="text-[11px] h-8">Periode</TableHead>
                         <TableHead className="text-[11px] h-8 text-right">BOM</TableHead>
@@ -931,7 +931,7 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
       <CardContent className="p-0">
         <div className="max-h-[600px] overflow-auto">
           <Table className="min-w-[1200px]">
-            <TableHeader className="sticky top-0 bg-muted/40 dark:bg-zinc-900/40 backdrop-blur-sm z-10">
+            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank Nas</TableHead>
                 <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-8">Rank BOM</TableHead>

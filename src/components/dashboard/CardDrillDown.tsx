@@ -178,12 +178,12 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto border rounded-md">
+        <div className="flex-1 overflow-auto border rounded-md">
           {rows.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Tidak ada data</div>
           ) : (
             <Table>
-              <TableHeader className="sticky top-0 bg-background z-10">
+              <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow>
                   <TableHead className="text-xs w-8">#</TableHead>
                   {config?.columns.map((col) => (

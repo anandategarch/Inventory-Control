@@ -832,7 +832,7 @@ function SignalChart({ name, r, items }: { name: string; r: Recommendation; item
       return (
         <div className="h-[170px] overflow-auto rounded-md border border-border/60">
           <table className="w-full text-[10px]">
-            <thead className="bg-muted/40 sticky top-0">
+            <thead className="bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm sticky top-0 z-10">
               <tr>
                 <th className="text-left px-2 py-1 font-semibold text-muted-foreground">#</th>
                 <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Item</th>

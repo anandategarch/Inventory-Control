@@ -342,7 +342,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                 </Button>
               </div>
 
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-auto">
                 {files.length === 0 ? (
                   <div className="py-10 text-center text-xs text-muted-foreground">
                     Tidak ada file sumber. Import data terlebih dahulu.

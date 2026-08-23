@@ -8,7 +8,11 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      // FIX sticky header: removed overflow-x-auto — it created a nested scroll
+      // container that broke position:sticky on <thead>. The parent container
+      // (e.g. max-h-[500px] overflow-auto) now handles both horizontal + vertical
+      // scroll, so sticky top-0 sticks to the correct scroll ancestor.
+      className="relative w-full"
     >
       <table
         data-slot="table"
