@@ -23,8 +23,8 @@ export interface HistoricalStats {
 export interface HistoricalInput {
   /** Current period Dev/BOM (pctQtyDeviasiToBom) */
   currentValue: number | null;
-  /** Historical Dev/BOM values (EXCLUDING current period) */
-  historicalValues: number[];
+  /** Historical Dev/BOM values (EXCLUDING current period). Nulls are filtered. */
+  historicalValues: (number | null)[];
   /** Runtime thresholds (from Settings) */
   thresholds: Pick<RuntimeThresholds, 'HISTORICAL_MIN_WEEKS' | 'HISTORICAL_ZSCORE_WARN' | 'HISTORICAL_ZSCORE_HIGH'>;
 }
@@ -60,7 +60,7 @@ export function computeZScore(input: HistoricalInput): HistoricalResult {
 
   // Filter to absolute, non-null values
   const absValues = historicalValues
-    .filter((v) => v != null && !isNaN(v))
+    .filter((v): v is number => v != null && !isNaN(v))
     .map((v) => Math.abs(v));
 
   const n = absValues.length;

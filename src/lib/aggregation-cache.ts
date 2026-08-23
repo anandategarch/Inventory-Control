@@ -17,6 +17,7 @@
 //  the second awaits the first's result.
 // ============================================================
 import { db } from './db';
+import { logger } from './logger';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -66,7 +67,7 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
     if (ageMs > ttlMs) {
       // Expired — delete stale entry (fire-and-forget)
       db.aggregationCache.delete({ where: { cacheKey } }).catch((e) => {
-        console.error('[cache] expired entry delete failed:', e instanceof Error ? e.message : String(e));
+        logger.error('[cache] expired entry delete failed', { error: e instanceof Error ? e.message : String(e) });
       });
       return null;
     }
@@ -74,7 +75,7 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
   } catch (e) {
     // Non-blocking: if cache read fails (DB error, JSON parse error),
     // just return null and let the caller compute fresh.
-    console.error('[cache] getCached error (non-blocking):', e instanceof Error ? e.message : String(e));
+    logger.error('[cache] getCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }
@@ -93,11 +94,11 @@ export function setCached(cacheKey: string, payload: unknown): void {
       update: { payload: json, computedAt: new Date() },
     }).catch((e) => {
       // Non-blocking: if cache write fails, just log
-      console.error('[cache] setCached error (non-blocking):', e instanceof Error ? e.message : String(e));
+      logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     });
   } catch (e) {
     // Synchronous error (JSON.stringify failed) — non-blocking
-    console.error('[cache] setCached sync error (non-blocking):', e instanceof Error ? e.message : String(e));
+    logger.error('[cache] setCached sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
   }
 }
 
@@ -140,13 +141,13 @@ export async function invalidateCache(prefix?: string): Promise<void> {
       const result = await db.aggregationCache.deleteMany({
         where: { cacheKey: { startsWith: prefix } },
       });
-      console.log(`[cache] invalidated ${result.count} entries with prefix "${prefix}"`);
+      logger.info(`[cache] invalidated ${result.count} entries with prefix "${prefix}"`);
     } else {
       // Delete all entries
       const result = await db.aggregationCache.deleteMany({});
-      console.log(`[cache] invalidated ${result.count} entries (all)`);
+      logger.info(`[cache] invalidated ${result.count} entries (all)`);
     }
   } catch (e) {
-    console.error('[cache] invalidateCache error:', e instanceof Error ? e.message : String(e));
+    logger.error('[cache] invalidateCache error', { error: e instanceof Error ? e.message : String(e) });
   }
 }
