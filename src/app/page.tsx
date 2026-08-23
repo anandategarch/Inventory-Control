@@ -165,19 +165,32 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
 }
 
 function ErrorState({ message }: { message: string }) {
+  const isNoData = message.includes('Tidak ada data untuk periode ini');
   return (
-    <Card className="border-red-200/70 bg-gradient-to-br from-red-50 to-red-50/30 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/70 shadow-sm">
+    <Card className={isNoData
+      ? 'border-amber-200/70 bg-gradient-to-br from-amber-50 to-amber-50/30 dark:from-amber-950/40 dark:to-amber-950/10 dark:border-amber-900/70 shadow-sm'
+      : 'border-red-200/70 bg-gradient-to-br from-red-50 to-red-50/30 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/70 shadow-sm'}>
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <div className="shrink-0 flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400">
-            <ShieldAlert className="h-5 w-5" />
+          <div className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-lg ${
+            isNoData
+              ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
+              : 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400'
+          }`}>
+            {isNoData ? <Calendar className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-red-700 dark:text-red-400">Gagal Memuat Analisis</h3>
-            <p className="text-sm text-red-600/90 dark:text-red-400/80 mt-1 leading-relaxed">{message}</p>
-            <p className="text-xs text-red-600/60 dark:text-red-400/50 mt-2">
-              Periksa koneksi jaringan atau coba refresh halaman. Jika berlanjut, hubungi administrator.
+            <h3 className={`text-base font-semibold ${isNoData ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
+              {isNoData ? 'Data Belum Tersedia' : 'Gagal Memuat Analisis'}
+            </h3>
+            <p className={`text-sm mt-1 leading-relaxed ${isNoData ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
+              {message}
             </p>
+            {!isNoData && (
+              <p className="text-xs text-red-600/60 dark:text-red-400/50 mt-2">
+                Periksa koneksi jaringan atau coba refresh halaman. Jika berlanjut, hubungi administrator.
+              </p>
+            )}
           </div>
         </div>
       </CardContent>

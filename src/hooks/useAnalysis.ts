@@ -275,8 +275,14 @@ async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
     throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
   }
   if (!res.ok) {
-    const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string };
-    throw new Error(e.message || `HTTP ${res.status}`);
+    const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean };
+    // FIX: 404 with "No records found" is NOT an error — it means the selected
+    // month/week has no data uploaded yet. Return a friendly message instead of
+    // treating it as a server error.
+    if (res.status === 404 && e.message?.includes('No records found')) {
+      throw new Error(`Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih.`);
+    }
+    throw new Error(e.message || e.error || `HTTP ${res.status}`);
   }
   return res.json();
 }
