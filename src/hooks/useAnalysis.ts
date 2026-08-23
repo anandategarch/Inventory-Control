@@ -230,6 +230,7 @@ export interface GrowthDriver {
 export interface GrowthDriverMetric {
   metric: string;
   label: string;
+  groupBy: 'outlet' | 'item';
   up: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
   down: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
 }

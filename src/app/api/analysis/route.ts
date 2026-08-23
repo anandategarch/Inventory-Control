@@ -788,39 +788,47 @@ export async function GET(req: NextRequest) {
     // ============================================================
     const growthDrivers = (() => {
       const metrics = [
-        { key: 'sales', field: 'nominalSales' as const, label: 'Sales' },
-        { key: 'bom', field: 'qtyBom' as const, label: 'BOM' },
-        { key: 'qtyDeviasi', field: 'qtyDeviasi' as const, label: 'QTY Deviasi' },
-        { key: 'nominalDeviasi', field: 'nominalDeviasi' as const, label: 'Nominal Deviasi' },
+        { key: 'sales', field: 'nominalSales' as const, label: 'Sales', groupBy: 'outlet' as const },
+        { key: 'bom', field: 'qtyBom' as const, label: 'BOM', groupBy: 'item' as const },
+        { key: 'qtyDeviasi', field: 'qtyDeviasi' as const, label: 'QTY Deviasi', groupBy: 'item' as const },
+        { key: 'nominalDeviasi', field: 'nominalDeviasi' as const, label: 'Nominal Deviasi', groupBy: 'item' as const },
       ];
 
       return metrics.map(metric => {
-        const currByItem = new Map<string, number>();
-        const prevByItem = new Map<string, number>();
+        const currByKey = new Map<string, number>();
+        const prevByKey = new Map<string, number>();
+
+        // FIX: Sales grouped by outlet (outlet-level data), others by item (item-level data)
+        const getName = (r: RecWithRels): string => {
+          if (metric.groupBy === 'outlet') {
+            return r.outlet?.name || r.outlet?.code || `Outlet ${r.outletId}`;
+          }
+          return r.item?.name || `Item ${r.itemId}`;
+        };
 
         for (const r of currentRecs) {
-          const name = r.item?.name || `Item ${r.itemId}`;
+          const name = getName(r);
           const val = r[metric.field];
-          if (val != null) currByItem.set(name, (currByItem.get(name) ?? 0) + Math.abs(val));
+          if (val != null) currByKey.set(name, (currByKey.get(name) ?? 0) + Math.abs(val));
         }
         for (const r of prevRecs) {
-          const name = r.item?.name || `Item ${r.itemId}`;
+          const name = getName(r);
           const val = r[metric.field];
-          if (val != null) prevByItem.set(name, (prevByItem.get(name) ?? 0) + Math.abs(val));
+          if (val != null) prevByKey.set(name, (prevByKey.get(name) ?? 0) + Math.abs(val));
         }
 
-        const allItems = new Set([...currByItem.keys(), ...prevByItem.keys()]);
+        const allKeys = new Set([...currByKey.keys(), ...prevByKey.keys()]);
         const positive: Array<{ item: string; delta: number; pct: number }> = [];
         const negative: Array<{ item: string; delta: number; pct: number }> = [];
 
-        for (const item of allItems) {
-          const curr = currByItem.get(item) ?? 0;
-          const prev = prevByItem.get(item) ?? 0;
+        for (const key of allKeys) {
+          const curr = currByKey.get(key) ?? 0;
+          const prev = prevByKey.get(key) ?? 0;
           const delta = curr - prev;
           if (Math.abs(delta) < 1) continue;
           const pct = prev > 0 ? delta / prev : 0;
-          if (delta > 0) positive.push({ item, delta, pct });
-          else negative.push({ item, delta, pct });
+          if (delta > 0) positive.push({ item: key, delta, pct });
+          else negative.push({ item: key, delta, pct });
         }
 
         const computePareto = (arr: Array<{ item: string; delta: number; pct: number }>) => {
@@ -845,6 +853,7 @@ export async function GET(req: NextRequest) {
         return {
           metric: metric.key,
           label: metric.label,
+          groupBy: metric.groupBy, // 'outlet' or 'item' — frontend can label accordingly
           up: computePareto(positive),
           down: computePareto(negative),
         };
