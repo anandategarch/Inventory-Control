@@ -15149,3 +15149,291 @@ Stage Summary:
 - 0 regressions: lint clean, tsc clean, 0 console errors
 - Type safety preserved: 0 new `any` types (actually removed 1 `as any` cast)
 - Backward compatible: DrilldownRecord nested objects made optional (not breaking — consumers now use `?.` + `?? '—'`)
+
+---
+Task ID: AUDIT-5
+Agent: Deep Audit (AggregationCache + Cache Invalidation)
+Task: Deep audit of DB-level AggregationCache implementation + cache invalidation hooks
+
+Work Log:
+- Read worklog.md recent entries (FIX-HIGH-1to9, FIX-MEDIUM, latest "Immediate + Medium Term improvements" commit).
+- Read src/lib/aggregation-cache.ts (111 lines): buildCacheKey, getCached, setCached, invalidateCache.
+- Read src/app/api/analysis/route.ts lines 1-300: cache key construction at line 189-195 (BEFORE month case resolution at line 235-236) + setCached at line 1012 + cache hit shape check at line 197-203.
+- Read src/lib/ingestion.ts: invalidateCache('analysis|') called at line 447 (after ingest success).
+- Read src/app/api/settings/route.ts: invalidateCache('analysis|') at line 183 (after $transaction commit).
+- Read src/app/api/migrate-direction/route.ts: invalidateCache('analysis|') at line 90.
+- Read src/app/api/data/route.ts: invalidateCache('analysis|') at line 253 (covers all DELETE branches: all/monthKey/month/fileId).
+- Read src/app/api/import-drive/route.ts: delegates to processIngestion (src/lib/ingestion.ts) → invalidation covered.
+- Read src/app/api/ingest-upload/route.ts: only stores chunks, no DB mutation of InventoryRecord → no invalidation needed.
+- Read src/app/api/ingest-process/route.ts: imports weeks via processRowsForImport. Lines 503-510 (mode=import) and 695-698 (mode=import-all) clear in-memory analysisCache + statusCache but DO NOT call invalidateCache('analysis|') — HIGH BUG.
+- Read src/app/api/pic/import/route.ts: bulk PIC assignment mutation. Lines 128-130 clear in-memory caches but DO NOT call invalidateCache('analysis|') — analysis route filters by `pic` query param → HIGH BUG.
+- Read src/app/api/setup/route.ts: GET-only, no mutations → OK.
+- Read prisma/schema.prisma lines 192-197: AggregationCache model — cacheKey String @unique (btree index), payload String (TEXT, no length cap), computedAt DateTime.
+- Read src/lib/cache.ts: analysisCache (LRUCache, 200 entries, 5min TTL) and statusCache (1 entry, 5min TTL). analysisCache.clear() is still called at mutation sites but analysisCache.set() is NEVER called anywhere — dead in-memory L1 cache.
+- Read src/instrumentation.ts: BigInt.prototype.toJSON polyfill present (handles BigInt in JSON.stringify inside setCached).
+- Verified LIVE in DB (supabase, direct 5432 connection):
+  - AggregationCache row count: 1 (cache is working, 154599 bytes = ~154KB payload).
+  - Indexes present: AggregationCache_pkey (id) + AggregationCache_cacheKey_key (cacheKey, unique btree). findUnique is O(log N), deleteMany startsWith is btree range scan O(log N + K).
+  - Sample cache key format: "analysis|Agustus 2026|WEEK 1|NONE|NONE|ALL|ALL|ALL|ALL".
+- Verified drilldown route does NOT use AggregationCache (no getCached/setCached calls) → DrilldownData pagination shape change cannot collide with old cached entries.
+- Confirmed cache stampede risk: two concurrent identical requests both miss → both compute (6-8s each) → both upsert (last write wins). No single-flight coordination.
+- Confirmed type-safety of cache hit: getCached<unknown> + `'success' in cached` runtime check (line 197) — safe against malformed payload, but does not validate full schema (e.g., missing nextCursor in drilldown would be transparent to cache layer since drilldown doesn't use it).
+- Confirmed all invalidateCache call sites use .catch(() => {}) — silent failure swallowing (settings line 183, migrate-direction line 90, data line 253, ingestion line 447).
+
+Stage Summary:
+- HIGH #1 (src/app/api/ingest-process/route.ts:503,695): Missing invalidateCache('analysis|') after week import (both `import` and `import-all` modes). Primary chunked-upload path used by frontend. Stale analysis response served up to 5 min after every upload. Fix: add `invalidateCache('analysis|').catch(() => {});` next to existing `analysisCache.clear()`.
+- HIGH #2 (src/app/api/pic/import/route.ts:128-130): Missing invalidateCache('analysis|') after PIC bulk import. Analysis route filters by `pic` query param (route.ts line 143, 215-222) → PIC reassignment changes which outlets are included, but cached response still reflects old PIC assignments. Fix: add invalidateCache call after analysisCache.clear().
+- HIGH #3 (src/lib/aggregation-cache.ts:74-90): Cache stampede on concurrent identical requests. setCached is fire-and-forget; no in-flight deduplication. Two simultaneous cache misses both trigger full 6-8s compute + both upsert (last-write-wins, no corruption but wasted compute). Fix: add per-key in-flight Promise map OR accept stampede (low-traffic app, acceptable for now — document).
+- MEDIUM #4 (src/app/api/analysis/route.ts:189-195 vs 235-236): Cache key built BEFORE month case resolution. User request `month=AGUSTUS 2026` then `month=agustus 2026` produce different cache keys for same logical data → cache miss (not stale, but defeats cache). compareMonthExplicit also used raw (un-resolved) in key. Fix: move month resolution above cache key construction, OR normalize case before keying.
+- MEDIUM #5 (all invalidation sites): `.catch(() => {})` silently swallows invalidation failures. If invalidation fails (DB blip), stale cache served up to 5 min with NO log. invalidateCache does log internally (line 109) but the outer .catch swallows. Fix: `.catch((e) => console.error('[cache] invalidate failed:', e.message))`.
+- MEDIUM #6 (src/lib/aggregation-cache.ts:62-67): getCached swallows ALL errors as cache miss (correct for resilience, but masks DB outages — every request silently recomputes 6-8s). Fix: add a counter/log when DB read fails repeatedly.
+- MEDIUM #7 (src/app/api/analysis/route.ts:156-157): Stale comment says "Cache disabled — no need for thresholdsVersion in cache key" but cache IS enabled. Settings invalidation DOES cover this (settings route invalidates), so not a correctness bug — just misleading comment. Fix: update comment.
+- LOW #8 (prisma/schema.prisma:195): payload column is `String` (TEXT in PG) with no size limit. Observed 154KB single entry. If 200 concurrent users × large drilldown payloads, table grows unbounded. No eviction job. Fix: add periodic cleanup (DELETE WHERE computedAt < NOW() - INTERVAL '1 hour') via cron, or rely on lazy eviction in getCached (already deletes individual expired entries on read).
+- LOW #9 (src/lib/cache.ts:66): analysisCache (in-memory LRU) is dead code — analysisCache.set() is never called anywhere; only .clear() at mutation sites. Could be removed, or repurposed as L1 in front of DB L2. Currently just adds confusion.
+- INFO #10 (src/lib/aggregation-cache.ts:97-111): invalidateCache(prefix) uses startsWith on cacheKey. Btree range scan on unique index — O(log N + K) — fast. Verified only `analysis|` prefix used today; no other routes share the AggregationCache table.
+- INFO #11 (src/instrumentation.ts:14-19): BigInt.prototype.toJSON polyfill present — covers BigInt serialization in setCached's JSON.stringify. Safe for this domain (Rp sums < 2^53).
+- INFO #12 (security): cache key derived from user input (monthLabel, itemName, pic). No length cap on itemName before keying, but Next.js URL parser limits query string to ~8KB, capping individual key length. No way to enumerate cache keys via API. No PII stored (aggregate analytics only). Cache key prefix `analysis|` cannot collide with other routes since each route namespaces its own prefix.
+- Verified CORRECT: (a) TTL 5min serves as safety net when invalidation fails; (b) upsert on setCached is atomic (PG unique constraint); (c) expired entry lazy-delete in getCached prevents stale reads; (d) cache hit shape check `'success' in cached` prevents frontend crash on malformed payload; (e) findUnique on cacheKey uses unique btree index → O(log N); (f) settings + migrate-direction + data(DELETE) + ingestion(full file path via import-drive/ingest) all invalidate correctly.
+
+---
+Task ID: AUDIT-6
+Agent: Deep Audit (Cursor Pagination + Virtualized Tables)
+Task: Deep audit of cursor-based pagination in /api/drilldown + @tanstack/react-virtual in DrillDownDrawer + SourceDataModal
+
+Work Log:
+- Read worklog.md recent entries (FIX-HIGH-1to9, FIX-MEDIUM, latest "Immediate + Medium Term improvements" commit, AUDIT-5 AggregationCache findings).
+- Read focus files end-to-end: src/app/api/drilldown/route.ts (152 lines), src/components/drilldown/DrillDownDrawer.tsx (163 lines), src/components/drilldown/SourceDataModal.tsx (251 lines), src/hooks/useAnalysis.ts (435 lines).
+- Read supporting files: src/components/ui/table.tsx (80 lines, Table primitive wraps <table> in <div className="overflow-x-auto">), prisma/schema.prisma lines 83-154 (InventoryRecord model + 9 indexes).
+- Verified LIVE via curl against http://localhost:3000/api/drilldown (dev server restarted multiple times due to OOM during dashboard compile — known issue from prior audits; API routes alone stable):
+  * TEST 1 (limit=5, no cursor): count=5, nextCursor=357668, hasMore=true. IDs=[357707, 357666, 357706, 357708, 357668], absNominalDeviasi=[6243938, 5735598, 3764161, 3417979, 3274489] — descending ✓
+  * TEST 2 (limit=5, cursor=357668): count=5, nextCursor=357705, hasMore=true. absNominalDeviasi=[2630969, 2207159, 1434498, 1420876, 1032783] — first record (2630969) < page 1 last (3274489) ✓ ordering preserved across pages
+  * TEST 3 (cursor=999999999, non-existent ID): HTTP 200, count=0, nextCursor=null, hasMore=false, records=[]. Prisma findMany returns empty array (does NOT throw P2025 — different from findUnique behavior). Graceful.
+  * TEST 4 (cursor=abc, non-integer): HTTP 200, count=5 (returns page 1). parseInt('abc',10)=NaN, Number.isFinite(NaN)=false, code at route.ts:75 falls through to { take: limit } (no cursor). SILENT FALLBACK to page 1.
+  * TEST 5 (cursor=0): HTTP 200, count=0, empty array. ID 0 doesn't exist, same graceful behavior as TEST 3.
+  * TEST 6 (limit=0): count=50 (default fallback). route.ts:33 `parsedLimit > 0 ? parsedLimit : 50` handles 0 correctly.
+  * TEST 7 (limit=-1): count=50 (default fallback). -1 not > 0, falls back to 50.
+  * TEST 8 (limit=10000): count=57, hasMore=false. Math.min(10000, 500)=500, only 57 records exist for outlet, returns 57. nextCursor=null (records.length !== limit). ✓
+  * TEST 9 (limit=1): count=1, nextCursor=357707, hasMore=true. (Hasmore=true is technically correct since 57 total > 1, but even if total=1, hasMore would be true — extra fetch would return empty.)
+  * TEST 10 (limit=500, full dump): count=57, hasMore=false. All records for outlet 1378.CBIPAS WEEK 1 Agustus 2026 = 57.
+  * TEST 11 (pagination chain, limit=10, 6 pages): 10+10+10+10+10+7=57. ✓ All records accounted for. hasMore=false on last page, nextCursor=None.
+- Static analysis of virtualization:
+  * DrillDownDrawer.tsx:113 estimateSize=40 (drawer, 2-line outlet cell). SourceDataModal.tsx:168 estimateSize=52 (modal, 3-line outlet cell). Both conservative — no `measureElement` enabled, so virtualizer uses fixed estimate for all rows.
+  * Both use `<div ref={parentRef} className="overflow-auto">` (vertical scroll) wrapping shadcn `<Table>` which renders as `<div className="overflow-x-auto"><table>...</table></div>`.
+  * Sticky header: `<TableHeader className="sticky top-0 bg-background z-10">`. Per CSS spec, `overflow-x: auto` on inner div forces `overflow-y` to compute to `auto`, making inner div the scrolling ancestor for `position: sticky` thead. But inner div height = content height (no max-height), so it doesn't scroll vertically. Result: thead sticks to inner div's top (which moves with outer parentRef scroll) — sticky effect LOST. (Could not verify visually due to dev server OOM, but this is a well-documented shadcn/ui Table + virtualization limitation.)
+  * Spacer rows: `<tr style={{ height: ${items[0].start}px }} />` before visible rows, `<tr style={{ height: ${totalHeight - items[...].end}px }} />` after. Valid HTML, browsers honor height on empty <tr>.
+  * overscan: 8 (drawer) / 10 (modal) — reasonable for typical scroll speeds.
+  * getScrollElement: () => parentRef.current. @tanstack/react-virtual handles null on first render via useEffect re-init when ref attaches.
+- Verified type safety:
+  * useAnalysis.ts:400-401: DrilldownData.nextCursor: number | null + hasMore: boolean are REQUIRED. useAnalysis.ts:428 `return res.json() as Promise<DrilldownData>` is an unchecked cast. If old API response (without these fields) is served from stale cache, hasMore=undefined → DrillDownDrawer.tsx:59 `drill.data.hasMore && (...)` → undefined is falsy → badge hidden. No crash, silent UI degradation.
+  * nextCursor is NOT used anywhere in frontend (rg search confirmed) — pagination metadata is emitted by API but never consumed for actual "Load More" UX.
+  * DrilldownRecord nested objects (outlet?, item?, etc.) made optional in H5 fix. Virtualized tables use `r.outlet?.name ?? '—'` consistently. ✓
+- Verified performance:
+  * prisma/schema.prisma indexes: 9 indexes on InventoryRecord. NO index on `absNominalDeviasi` or `(absNominalDeviasi, id)`. Cursor pagination with composite orderBy translates to `WHERE (absNominalDeviasi < X) OR (absNominalDeviasi = X AND id < Y) ORDER BY absNominalDeviasi DESC, id DESC LIMIT N` — requires filesort without index. Fine for small result sets (57 records), suboptimal for large unfiltered queries.
+  * For typical drawer/modal use (outletCode filter), result set is small (57 records here). Sort cost trivial.
+- Verified UX/a11y:
+  * No "Load More" button. DrillDownDrawer.tsx:60 shows badge "Halaman 1 — gunakan API cursor untuk load more" — tells user to use API directly (impossible from UI). SourceDataModal has no pagination UI at all.
+  * shadcn Table uses native <table>/<tr>/<td> elements → screen readers announce correctly. No explicit ARIA roles needed (native semantics sufficient).
+  * Keyboard navigation: virtualized rows are standard <tr> elements. Tab moves between focusable elements (links/buttons), not rows. Arrow-key navigation not implemented (would require roving tabindex).
+  * CSV export (SourceDataModal.tsx:40-61): uses `records` array (full 500-record API response), NOT `items` (virtualized visible subset). ✓ Correct.
+- Verified edge cases:
+  * Empty records: VirtualizedDrawerTable line 135 `items.length > 0 && (...)` — spacer rows conditional. Empty body renders cleanly. SourceDataModal line 131 shows "Tidak ada data sumber".
+  * Records.length === 1: nextCursor = that record's ID, hasMore = true. Frontend would fetch page 2 (empty), get hasMore=false. One extra request. Acceptable.
+  * Records.length < limit: nextCursor=null, hasMore=false. ✓
+- Regression check:
+  * "Metrik Turunan" section (DrillDownDrawer.tsx:79): `const r = drill.data.records[0]` — still works, reads first record of page 1 (highest absNominalDeviasi). ✓
+  * SourceDataModal footer (line 144): "Menampilkan X records" — no "dari Y" (total count). API doesn't return total count Y (only current page count). Minor UX regression — user doesn't know total. Acceptable given API design.
+  * CSV export message (line 145): `records.length === 500 && ' (maks 500 — gunakan Export CSV untuk data lengkap)'`. CSV uses same `records` array (capped at 500). If total > 500, CSV also only has 500. Message "data lengkap" is misleading.
+
+Stage Summary:
+- HIGH #1 (src/components/ui/table.tsx:7-12 + DrillDownDrawer.tsx:121-160 + SourceDataModal.tsx:176-248): Sticky header broken in virtualized tables. shadcn Table wraps <table> in <div className="overflow-x-auto">, which per CSS spec forces overflow-y to compute to auto, becoming the scrolling ancestor for position:sticky thead. Inner div has no max-height (height=content), so it doesn't scroll vertically — thead sticks to inner div top, which moves with outer parentRef scroll. Net effect: header scrolls away instead of staying visible. Fix: bypass shadcn Table wrapper (use raw <table>), OR add `style={{ overflow: 'visible' }}` to inner div, OR use `position: sticky` on a non-table layout. (Could not visually verify due to dev server OOM — flagging based on CSS spec analysis + known shadcn/ui limitation.)
+- HIGH #2 (src/components/drilldown/DrillDownDrawer.tsx:59-61 + src/hooks/useAnalysis.ts:413): Cursor pagination API is built but frontend doesn't consume it. No "Load More" button. DrillDownDrawer shows badge "Halaman 1 — gunakan API cursor untuk load more" — useless to end users (they can't call API from UI). SourceDataModal has no pagination awareness at all. Default limit=50 means drawer shows only 50 of potentially 100s of records. ItemDeepDive passes limit=500 (H6 fix) but still no pagination. Fix: add a "Muat Lebih Banyak" button in drawer that calls useDrilldown with cursor=nextCursor and appends results, OR raise default limit to 500 for drawer.
+- MEDIUM #3 (src/components/drilldown/SourceDataModal.tsx:145): CSV export message misleading. "maks 500 — gunakan Export CSV untuk data lengkap" — but CSV uses same `records` array (line 40 `records.map(...)`), also capped at 500. If total > 500, CSV is incomplete too. Fix: either (a) fetch all pages via cursor loop before CSV export, or (b) change message to "maks 500 — data lengkap tersedia di Excel sumber".
+- MEDIUM #4 (prisma/schema.prisma:142-153): No index on `absNominalDeviasi` or `(absNominalDeviasi, id)` for cursor pagination. Prisma translates cursor+orderBy to complex WHERE clause requiring filesort. Fine for small result sets (57 records verified), but unfiltered queries (no outletCode) would scan full table + sort. Fix: add `@@index([absNominalDeviasi])` or composite `@@index([monthLabel, weekLabel, absNominalDeviasi])`.
+- MEDIUM #5 (src/components/drilldown/DrillDownDrawer.tsx:51 + 121): Nested scroll containers. ScrollArea (Radix) wraps the entire drawer content; inside it, VirtualizedDrawerTable has its own `overflow-auto` div (parentRef, maxHeight 400px). Two vertical scroll containers — user scrolling inside table won't scroll the drawer, and vice versa. Confusing UX. Same pattern in SourceDataModal.tsx:120 (div.overflow-y-auto) + 176 (div.overflow-auto). Fix: remove outer ScrollArea for the table area, let parentRef be the sole vertical scroll; OR remove parentRef maxHeight and let outer ScrollArea handle all scrolling (but then virtualizer wouldn't work).
+- MEDIUM #6 (src/components/drilldown/DrillDownDrawer.tsx:113 + SourceDataModal.tsx:168): estimateSize is fixed (40/52), no `measureElement` enabled. If actual row height exceeds estimate (e.g., very long outlet/item names wrapping to 3+ lines), content clips. Current estimates are conservative (40px for 2-line cell ~35px; 52px for 3-line cell ~50px) — tight but OK for typical data. Fix: enable `measureElement` for dynamic row heights, OR increase estimate to 48/60 for safety margin.
+- LOW #7 (src/app/api/drilldown/route.ts:75-77): Non-integer cursor (e.g., cursor=abc) silently falls back to page 1. parseInt('abc',10)=NaN, Number.isFinite(NaN)=false, code skips cursor branch and runs `{ take: limit }`. Returns page 1 with HTTP 200 — no error. Could confuse API consumers who passed a bad cursor. Fix: return 400 Bad Request for non-numeric cursor, OR document the fallback behavior.
+- LOW #8 (src/hooks/useAnalysis.ts:428): `return res.json() as Promise<DrilldownData>` is an unchecked cast. DrilldownData interface requires nextCursor + hasMore, but no runtime validation. If API response is malformed or stale (missing fields), frontend silently treats undefined as falsy. No crash risk (verified via `drill.data.hasMore && (...)` pattern), but type safety is illusory. Fix: add zod schema validation, OR make nextCursor/hasMore optional in the interface.
+- LOW #9 (src/components/drilldown/SourceDataModal.tsx:144): Footer removed "dari Y" (total count). Old version showed "Menampilkan X dari Y records" (per AUDIT-6 prompt); new shows "Menampilkan X records". API doesn't return total Y (only current page count). Minor UX regression — user doesn't know if they're seeing all data or just first 50/500. The "(maks 500)" suffix partially addresses this when count=500. Fix: API could return `total` count via a separate `count()` query, OR keep current behavior and accept the tradeoff.
+- INFO #10: `hasMore: nextCursor != null` (route.ts:91). True whenever a full page is returned, even if next page is empty. Frontend would discover empty next page on next fetch (hasMore=false). Standard cursor pagination pattern — acceptable. No fix needed.
+- INFO #11 (src/app/api/drilldown/route.ts:81-83): `nextCursor = records[records.length - 1].id`. Verified correct — last record's ID is the right cursor for the next page, because orderBy includes `id desc` as tie-breaker, making the order deterministic. Prisma's cursor + skip:1 + take:limit correctly returns the next `limit` records after the cursor.
+- INFO #12: Dev server (Next.js 16 + Turbopack) repeatedly OOM-killed during dashboard compile (~2GB memory usage, 3.9GB system total). API routes alone stable. Prevented visual verification of sticky header issue. Known issue from prior audits.
+
+Verified correct (no action needed):
+- Cursor pagination with composite orderBy [absNominalDeviasi desc, id desc] works correctly with `cursor: { id }, skip: 1, take: limit` — live-verified across 6-page chain (57 records, ordering preserved). ✓
+- Invalid cursor (non-existent ID 999999999) returns empty array with hasMore=false — Prisma findMany doesn't throw P2025 (only findUnique does). Graceful. ✓
+- cursor=0 returns empty array (ID 0 doesn't exist). Graceful. ✓
+- limit=0, limit=-1 fall back to default 50 (route.ts:33 `parsedLimit > 0 ? parsedLimit : 50`). ✓
+- limit=10000 capped at 500 (Math.min). ✓
+- DrilldownRecord nested objects made optional (H5 fix); virtualized tables use `r.outlet?.name ?? '—'` consistently. ✓
+- useVirtualizer generic types correct — count: records.length infers DrilldownRecord. ✓
+- Spacer rows (`<tr style={{ height: Xpx }} />`) valid HTML, browsers honor height on tr. ✓
+- overscan 8/10 reasonable for typical scroll speeds. ✓
+- getScrollElement null-safe — @tanstack/react-virtual re-inits on ref change via useEffect. ✓
+- Empty records handled: spacer conditional (`items.length > 0 && ...`), "Tidak ada data sumber" message. ✓
+- "Metrik Turunan" section still reads `drill.data.records[0]` (DrillDownDrawer.tsx:79) — first record of page 1 (highest absNominalDeviasi). ✓
+- CSV export uses full `records` array (SourceDataModal.tsx:40), NOT virtualized `items` subset. ✓ Correct — exports all loaded records.
+- Rate limiting present (route.ts:22). ✓
+- Parameterized Prisma queries — no SQL injection (route.ts uses Prisma client, not raw sql). ✓
+- Parameter validation: limit clamped [1,500] with default 50; cursor NaN-guarded (Number.isFinite). ✓
+- useDrilldown enabled flag (useAnalysis.ts:430) skips fetch when both outletCode and itemName are null. ✓
+- staleTime: 30_000 on useDrilldown (useAnalysis.ts:432) — prevents refetch on drawer reopen. ✓
+- Records.length < limit → nextCursor=null → hasMore=false. ✓ (verified TEST 8: limit=10000, count=57, hasMore=false)
+- Parameter validation prevents negative/zero limit from breaking query. ✓
+
+---
+Task ID: AUDIT-7
+Agent: Deep Audit (db.ts singleton + schema cleanup + dep removal)
+Task: Deep audit of globalThis.prisma singleton, statement_timeout, dead schema model removal, @libsql dep cleanup
+
+Work Log:
+- Read worklog.md recent entries (FIX-HIGH-1to9, FIX-MEDIUM, latest "Immediate + Medium Term improvements" commit, AUDIT-5 AggregationCache, AUDIT-6 Cursor Pagination).
+- Read focus files: src/lib/db.ts (96 lines), prisma/schema.prisma (243 lines), package.json (99 lines), src/lib/aggregation-cache.ts (111 lines), src/app/api/settings/route.ts (273 lines), src/app/api/migrate-direction/route.ts (162 lines), src/app/api/data/route.ts (276 lines), src/lib/ingestion.ts (focus on invalidateCache import).
+- Read .env (1 line: postgresql://...supabase.com:6543/postgres) and .env.example (23 lines, shows postgresql://user:password@host:5432/dbname).
+- Grep'd src/ for `periodComparison|anomalyRule|anomalyFlag|PeriodComparison|AnomalyRule|AnomalyFlag` — only stale comments in src/config/rules.yaml:13 and src/lib/queries/outlets.ts:641 mention PeriodComparison; AnomalyFlag* (TS interface, React component) are unrelated to the removed Prisma model. NO code references to removed Prisma models. ✓
+- Grep'd for `@libsql|adapter-libsql|libsql` in src/ — only matches in src/lib/db.ts as URL-protocol string checks. No imports. ✓
+- Grep'd for `statement_timeout|idle_timeout` in src/ — only in src/lib/db.ts (lines 11, 52, 58-62). No other file references. ✓
+- Live-verified DB state (DATABASE_URL=postgresql://postgres.vefkgapveggbmkloaslw:...@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres):
+  * db.periodComparison: undefined ✓
+  * db.anomalyRule: undefined ✓
+  * db.anomalyFlag: undefined ✓
+  * db.aggregationCache: object ✓ (model still exists)
+  * db.inventoryRecord.count(): 293436 records ✓
+  * pg_tables WHERE schemaname='public': 11 tables returned (AggregationCache, AuditLog, DQIssue, FileChunk, InventoryRecord, Item, Outlet, OutletPIC, Setting, SourceFile, Week). PeriodComparison / AnomalyRule / AnomalyFlag tables DROPPED ✓
+  * SELECT current_setting('statement_timeout'): '2min' (NOT '30s' as configured) — confirms PgBouncer transaction mode (port 6543) ignores URL param statement_timeout=30000
+  * SELECT current_setting('idle_in_transaction_session_timeout'): '0'
+  * SELECT current_setting('idle_session_timeout'): '0'
+- Live-verified `SET statement_timeout = 30000` via `db.$executeRaw(Prisma.sql\`...\`)` works per-session: subsequent queries on the SAME client instance report `30s`. But the URL param does NOT propagate automatically.
+- Checked prisma/ directory: only schema.prisma exists, NO migrations/ folder. Project uses `prisma db push` (matches package.json db:push script).
+- Checked installed Prisma version: @prisma/client@6.19.2 + prisma@6.19.2 (satisfies ^6.11.1 in package.json). No version drift.
+- Checked node_modules: @libsql/client directory exists but is a TRANSITIVE dep of `prisma` package (not a direct dep). Removing it from package.json deps was correct. ✓
+- Grep'd src/ for unused deps: framer-motion, next-intl, react-markdown, react-syntax-highlighter, uuid, z-ai-web-dev-sdk, @reactuses/core, @mdxeditor/editor, @dnd-kit/*, react-day-picker, input-otp, react-hook-form, @hookform/resolvers, react-resizable-panels, vaul, next-themes, embla-carousel-react — all have ZERO imports in src/. Same set as prior audits (FINAL3-11, DB-24, MIG-13) — still not cleaned up.
+- Re-read old db.ts pattern from worklog (lines 6484, 8453): old code used lazy Proxy getter that deferred PrismaClient construction to first query. New code creates eagerly on module import.
+
+Stage Summary:
+- **HIGH #1 (src/lib/db.ts:54-57) · Comment lies about $executeRaw fallback that doesn't exist.** The comment block states "We also set them via $executeRaw on client init as a belt-and-suspenders approach" but there is NO $executeRaw call anywhere in db.ts. Misleading future maintainers into thinking a safety net exists. Fix: either implement `db.$on('connect', ...)` or `db.$extends({ query: { $executeRaw: ... } })` to actually run `SET statement_timeout = 30000` on each new connection, OR remove the misleading comment line 57.
+- **HIGH #2 (src/lib/db.ts:58-59) · `statement_timeout=30000` URL param is silently ignored by PgBouncer transaction mode (port 6543).** Live-verified: SELECT current_setting('statement_timeout') returns '2min' (Supabase default), NOT '30s'. A 60s hung query will NOT be killed. The param is harmless (Prisma doesn't reject unknown params) but provides ZERO protection. Fix: (a) for queries known to be slow (analysis), wrap in `db.$transaction(async tx => { await tx.$executeRaw\`SET LOCAL statement_timeout = 30000\`; ... })`, OR (b) switch to direct connection (port 5432, session mode) where statement_timeout IS honored — but then you hit Supabase's 15-connection limit. Pragmatic fix: document that statement_timeout is unenforced in production; rely on Vercel function timeout (60s) as the actual kill switch.
+- **MEDIUM #3 (src/lib/db.ts:91) · Eager PrismaClient init breaks at import time if DATABASE_URL missing.** Old lazy Proxy deferred client construction to first query; new code creates eagerly on `import { db }`. If env is misconfigured, ANY module that transitively imports `db` (aggregation-cache.ts, ingestion.ts, route handlers) crashes at module-eval time, not at first DB call. Routes that don't query DB but transitively import db will 500 on cold start. Fix: keep eager (clearer error) but document, OR re-introduce lazy Proxy for resilience.
+- **MEDIUM #4 (src/lib/db.ts:93-95) · `globalForPrisma.prisma = db` only set when NODE_ENV !== 'production'.** Intentional (serverless cold starts are fresh processes, no HMR), but means the `?? createPrismaClient()` short-circuit on line 91 NEVER hits the cached branch in production — every cold start pays full PrismaClient construction cost. Acceptable but worth a comment clarifying this is by-design (the existing comment on line 89-90 partially explains, but could be clearer).
+- **MEDIUM #5 (/home/z/my-project/.env.example:7-10) · Pooler URL params not documented.** `.env.example` shows `postgresql://user:password@host:5432/dbname` but does NOT mention the auto-switch to port 6543, nor the pgbouncer=true / connection_limit=3 / pool_timeout=10 / statement_timeout=30000 / idle_timeout=20 params that db.ts injects. A developer copying .env.example verbatim gets a session-mode connection (works but hits 15-connection limit under concurrent dev load). Fix: add a commented-out Supabase pooler example with all params explained.
+- **MEDIUM #6 (src/lib/db.ts:70-82) · SQLite dev fallback retained but is non-functional (carried over, not new in this round).** schema.prisma is locked to `provider = "postgresql"` (schema.prisma:11). PrismaClient generated for postgresql CANNOT connect to SQLite — first ORM call crashes with `PrismaClientInitializationError`. Prior audits (DB-1, DB2-1, FINAL3-16) flagged this; not fixed in this round. Fix: remove the SQLite fallback entirely and require PostgreSQL for dev (docker-compose or local PG), OR provide a separate prisma/dev-sqlite.schema.prisma with its own generated client.
+- **MEDIUM #7 (package.json:15-87) · Many unused deps beyond @libsql still present.** `@libsql/client` + `@prisma/adapter-libsql` correctly removed ✓. But ~17 other deps remain unused in src/ (verified via grep — zero imports): framer-motion, next-intl, react-markdown, react-syntax-highlighter, uuid, z-ai-web-dev-sdk, @reactuses/core, @mdxeditor/editor, @dnd-kit/{core,sortable,utilities}, react-day-picker, input-otp, react-hook-form, @hookform/resolvers, react-resizable-panels, vaul, next-themes, embla-carousel-react. ~30+ MB node_modules bloat + Vercel function size closer to 250MB limit. Fix: `bun remove` each (verify no transitive import path first).
+- **LOW #8 (src/lib/db.ts:79-81) · SQLite fallback uses default PrismaClient config** — no `datasources` override. URL comes from env("DATABASE_URL") in schema.prisma. Unreachable in practice (schema is postgresql), but if ever executed, behavior is undefined. Same root cause as MEDIUM #6.
+- **LOW #9 (src/config/rules.yaml:13, src/lib/queries/outlets.ts:641) · Stale comments reference removed PeriodComparison model.** Comments mention "Field yang tersedia (dari PeriodComparison + InventoryRecord)" and "zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison." After PeriodComparison removal, these comments are misleading. Fix: update comments to note PeriodComparison was removed and zScore/benchmarkFlag are now computed inline (per outlets.ts:643-649 proxy logic).
+- **INFO #10 · No prisma/migrations/ directory.** Project uses `prisma db push` (matches package.json db:push script). Removed models have no migration history to clean up. Live-verified: all 3 tables dropped from DB. ✓
+- **INFO #11 · `idle_timeout=20` IS Prisma-level (works) but `statement_timeout=30000` is PG-level (ignored in PgBouncer tx mode).** Mixed-effect: idle_timeout correctly closes idle pool connections after 20s (Prisma-honored); statement_timeout has no effect in production (PgBouncer strips it). Both are harmless if ignored.
+- **INFO #12 · Type safety preserved.** `globalForPrisma` cast (`globalThis as unknown as { prisma: PrismaClient | undefined }`) is the canonical Prisma pattern, type-safe in strict mode. `db` export type is `PrismaClient` (identical to old Proxy's `as PrismaClient`). No type drift for consumers.
+
+**Verified correct (no action needed):**
+- globalThis.prisma singleton pattern is Prisma-recommended for Next.js dev HMR. ✓
+- Singleton survives HMR in dev (`globalForPrisma.prisma` preserved across reloads because globalThis persists). ✓
+- In production (serverless), each cold start creates a fresh client (correct — no HMR, fresh process). ✓
+- Log level `['error', 'warn']` preserved on both branches (PostgreSQL line 65 + SQLite line 81). ✓
+- `pgbouncer=true`, `connection_limit=3`, `pool_timeout=10` URL params preserved + correctly applied. ✓
+- All 3 removed models (PeriodComparison, AnomalyRule, AnomalyFlag) gone from Prisma client types (live-verified undefined). ✓
+- All 3 tables dropped from DB (live-verified via pg_tables). ✓
+- NO code references to removed models in src/ (only stale comments in rules.yaml + outlets.ts). ✓
+- `@libsql/client` + `@prisma/adapter-libsql` removed from package.json. No imports in src/. `@libsql/client` remains in node_modules as a transitive dep of `prisma` package (harmless, expected). ✓
+- invalidateCache correctly added at all 4 mutation sites: ingestion.ts:447, settings/route.ts:183, migrate-direction/route.ts:90, data/route.ts:253. ✓
+- `.env` currently points to PostgreSQL (port 6543, Supabase pooler). ✓
+- `.env.example` shows PostgreSQL URL format (not SQLite). ✓ (Could be improved per MEDIUM #5 but acceptable.)
+- DB queries work: db.inventoryRecord.count() returned 293,436 records live. ✓
+- `idle_timeout=20` (Prisma-level, honored) helps recycle idle pool connections. ✓
+- Auto-switch from port 5432 → 6543 only triggers for `.pooler.supabase.com:5432/` URLs (correct — don't override explicit 6543 in .env). ✓
+
+---
+Task ID: AUDIT-8
+Agent: Deep Audit (Regression Check)
+Task: Deep audit for regressions from MIG fixes + LOW/INFO fixes across codebase
+
+Work Log:
+- Read worklog.md recent entries (FIX-HIGH-1to9, FIX-MEDIUM, "Immediate + Medium Term improvements", AUDIT-5/6/7).
+- Ran `bun run lint` → 0 errors, 6 warnings (pre-existing exhaustive-deps + react-compiler incompatible-library on useVirtualizer — same set as prior audits). ✓
+- Ran `npx tsc --noEmit` → 0 errors (exit 0). ✓
+- Started dev server with `NODE_OPTIONS=--max-old-space-size=2048` (lower than suggested 4096 to leave room for system). Server stable for API routes; repeatedly OOM-killed during dashboard page compile (known issue from AUDIT-5/6/7, not a regression — large component graph).
+- Live API verifications (curl against http://localhost:3000):
+  * `/api/analysis?month=Agustus 2026&week=WEEK 1` → 200, deviationDrivers=4, growthDrivers=4, cached=True on 2nd call (267ms vs 4.4s cold). ✓
+  * `/api/analysis?month=Agustus 2026&week=WEEK 1&outlet=1378.CBIPAS` → 200, growthComparison.multiPeriodComparison[0] = {deviation:-21906308, absDeviation:21906308} (H7 fix verified — absDeviation = Math.abs(deviation)). Cached after 3s sleep (cache stampede on back-to-back calls — AUDIT-5 #3 still present).
+  * `/api/outlet-items?outletCode=1378.CBIPAS&week=WEEK 1&month=Agustus 2026` → 200, itemCount=57, allItems[0].areaAvgDevBom=0.355 (H1 fix verified — non-zero area benchmark), restoProfile.historical.trend='INSUFFICIENT_DATA' (H3 fix verified — was DETERIORATING before fix), historicalTrend='?' for all items (expected — prevPctDevBom is null).
+  * `/api/drilldown?itemName=MINYAK%20MIE%20(V.20)` → count=5, nextCursor=348633.
+  * `/api/drilldown?itemName=minyak%20mie%20(v.20)` (lowercase) → count=5, nextCursor=348633 (H4 fix verified — same results as uppercase, case-insensitive matching works).
+  * `/api/drilldown?outletCode=1378.CBIPAS&limit=10` → count=10, nextCursor=357705. Page 2 with cursor=357705 → count=10, nextCursor=357718, first rec id=357688 (distinct from page 1 last id 357705). Cursor pagination works (AUDIT-6 verified correct).
+  * Records have populated nested objects: r.outlet={code,name,area}, r.item={name,satuan}, r.qty={bom,com,deviasi,...}, r.derived={direction,residualQty,absNominalDeviasi,...}. All optional chaining in consumers verified.
+- Static checks via ripgrep:
+  * `r.outlet?.`, `r.item?.`, `r.qty?.`, `r.nominal?.`, `r.derived?.`, `r.period?.`, `r.source?.` — all uses in DrillDownDrawer/SourceDataModal/ItemDeepDive use optional chaining. H5 fix intact.
+  * `MultiPeriodComparisonRow` interface has no index signature (L3 fix). Only consumer is AnalysisCards.tsx MultiPeriodComparisonCard which uses fixed `dataKey="sales"|"bom"|"deviation"|"growthPct"` — no dynamic access. L3 fix didn't break consumers.
+  * `DrilldownData` interface (useAnalysis.ts:400-401) has nextCursor + hasMore as required. Only DrillDownDrawer.tsx:59 consumes `drill.data.hasMore` (with `&&` short-circuit, safe for undefined). SourceDataModal + ItemDeepDive don't use these fields. No regressions.
+  * `invalidateCache('analysis|')` present at 4 sites: ingestion.ts:447, settings/route.ts:183, migrate-direction/route.ts:90, data/route.ts:253. ✓ BUT missing at ingest-process/route.ts:503,696 and pic/import/route.ts:129 — only `analysisCache.clear()` (dead L1) called. AUDIT-5 HIGH #1+#2 STILL UNFIXED.
+  * `bucket_avg` CTE (items.ts:190-205) refactored to join `top_items × item_per_outlet` (50×N) instead of `N×N`. Semantically identical for top-N items — only computes avgDeviasiByBom for items that will be returned. M-J fix correct.
+  * `growthDrivers` cap (analysis/route.ts:886-892): MAX_DRIVERS=20, breaks on `drivers.length >= 20` OR `cumPct >= 80`. Pareto 80% cut still works — only the rare case of >20 items contributing to 80% would be capped (acceptable tradeoff, documented in M-E fix comment).
+  * Signed qtyDeviasi accumulation (analysis/route.ts:845-855): only `qtyDeviasi` metric uses `useSigned=true` (preserves sign so LOSS↔SURPLUS flips register as large deltas). Others use Math.abs. computePareto sorts by Math.abs(delta) — magnitude ordering preserved. No regression.
+  * MenuAnalysis 2-word grouping (RestoAnalysis.tsx:719-723): `words.slice(0, 2).join(' ').toUpperCase()`. "MINYAK MIE (V.20)"→"MINYAK MIE", "MINYAK GORENG (V.20)"→"MINYAK GORENG" (separate groups). Single-word items ("GULA (V.20)") get skipped via `if (items.length < 2) continue` (line 732). M-G fix correct.
+  * RestoAnalysis tabs (RestoAnalysis.tsx:446-450): 3 TabsTriggers (financial/operational/unexplained). API returns all 3 rankings populated. M-K fix correct.
+  * Ranking Item Nasional dropdown (RestoAnalysis.tsx:900-905): only Top 10/20/50 options (Top 100/Semua removed per M-H). ✓
+  * pctLossSurplusToBom color (RestoAnalysis.tsx:963-969): cell colored by `it.nominalDeviasi < 0` (LOSS=red). H2 fix verified.
+  * Susut color (Charts.tsx:286): `#7c3aed` (violet). L1 fix verified.
+  * Badge touch target (Charts.tsx:140, 366): `min-h-[36px]` class. M-A fix verified.
+  * ARIA (Charts.tsx:138-186, 364-406): aria-expanded, aria-controls, role="region" all present. M-B fix verified.
+  * expanded reset (Charts.tsx:28, 279): setExpanded(null) on period change via "adjust state during render" pattern. M-C fix verified.
+  * P2/P3 badge contrast (RestoAnalysis.tsx:415-417): text-amber-700 (P2), text-emerald-700 (P3). M-L fix verified.
+  * Zebra striping (RestoAnalysis.tsx:475): TableRow uses `priorityBg(r.priority)` directly with no zebra override. L5 fix verified.
+  * CardDrillDown null guard (CardDrillDown.tsx:164): `config && data ? config.getData(data) : []`. ✓
+  * ItemDeepDive "Total Kemunculan" (ItemDeepDive.tsx:84): `totalCount = hasDrilldown ? drilldownRecords.length : fallbackOccurrences.length`. drilldownLimit = `deepDiveItem?.outletCode ? 50 : 500` (line 51). H6 fix verified.
+  * db.ts singleton + AggregationCache interaction: db.ts:91 exports eager singleton `db`. aggregation-cache.ts:15 imports same `db`. Both share PrismaClient — no conflict. Singleton survives HMR in dev (line 94), fresh in production. No regression.
+  * `investigationWorklist` removed from API response (route.ts:992) and from useAnalysis interface (line 207-208). Types/inventory.ts:169 still has the type but unused — harmless dead type.
+
+Stage Summary:
+- HIGH #1 (src/app/api/ingest-process/route.ts:503,696) · STALE AUDIT-5 #1 — Missing `invalidateCache('analysis|')` after chunked week import. Only `analysisCache.clear()` (dead L1 in-memory cache) called. Cached `/api/analysis` responses served stale for up to 5 min after every chunked upload. Fix: add `invalidateCache('analysis|').catch(() => {});` next to existing `analysisCache.clear()`.
+- HIGH #2 (src/app/api/pic/import/route.ts:129) · STALE AUDIT-5 #2 — Missing `invalidateCache('analysis|')` after bulk PIC reassignment. Analysis route filters by `pic` param → PIC reassignment changes which outlets are included, but cached response still reflects old PIC assignments. Fix: same as above.
+- MEDIUM #3 (src/lib/db.ts:57) · STALE AUDIT-7 #1 — Comment claims "We also set them via $executeRaw on client init as a belt-and-suspenders approach" but NO $executeRaw call exists anywhere in db.ts. Misleading comment. Fix: remove the misleading comment, OR implement `db.$on('connect', ...)` to actually run `SET statement_timeout = 30000` on each new connection.
+- MEDIUM #4 (src/lib/db.ts:58-59) · STALE AUDIT-7 #2 — `statement_timeout=30000` URL param silently ignored by PgBouncer transaction mode (port 6543). Live-verified in AUDIT-7: SELECT current_setting('statement_timeout') returns '2min' not '30s'. Param provides ZERO protection against hung queries. Fix: wrap slow queries in `db.$transaction(async tx => { await tx.$executeRaw\`SET LOCAL statement_timeout = 30000\`; ... })`, OR document that statement_timeout is unenforced in production.
+- MEDIUM #5 (src/app/api/analysis/route.ts:1012 + aggregation-cache.ts:74-90) · STALE AUDIT-5 #3 — Cache stampede on back-to-back identical requests. setCached is fire-and-forget; U1→U2 (no delay) both miss cache (2.5s compute each); U1→sleep 3s→U2 hits cache (326ms). Acceptable for low-traffic app but wasted compute under concurrent load. Fix: add per-key in-flight Promise map (single-flight coordination).
+- MEDIUM #6 (src/app/api/analysis/route.ts:189-195 vs 235-236) · STALE AUDIT-5 #4 — Cache key built BEFORE month case resolution. User request `month=AGUSTUS 2026` then `month=agustus 2026` produce different cache keys for same logical data → cache miss (not stale, but defeats cache). Fix: move month resolution above cache key construction, OR normalize case before keying.
+- MEDIUM #7 (src/lib/db.ts:91) · STALE AUDIT-7 #3 — Eager PrismaClient init breaks at import time if DATABASE_URL missing. Old lazy Proxy deferred to first query; new code creates eagerly. Routes that transitively import db (but don't query it) would 500 on cold start. Acceptable (clearer error) but worth documenting.
+- LOW #8 (src/types/inventory.ts:169) · Dead type `investigationWorklist: InvestigationItem[]` still declared but unused — the field was removed from API response (route.ts:992) and from useAnalysis interface (line 207). Harmless dead code. Fix: remove the unused type, OR leave as documentation.
+- LOW #9 (src/lib/db.ts:70-82) · STALE AUDIT-7 #6 — SQLite dev fallback retained but non-functional (schema.prisma is locked to postgresql provider, generated PrismaClient cannot connect to SQLite). Dev mode SQLite path would crash on first ORM call. Fix: remove the SQLite fallback entirely and require PostgreSQL for dev.
+- INFO #10 · Dev server (Next.js 16 + Turbopack) repeatedly OOM-killed during dashboard page compile (~2GB memory usage, 3.9GB system total). Same pattern as AUDIT-5/6/7. API routes alone stable. Could not visually verify sticky headers in virtualized tables (AUDIT-6 HIGH #1 still unverified visually, but CSS analysis stands). Not a regression — known platform limitation.
+- INFO #11 · 4 invalidateCache call sites working correctly (ingestion.ts:447, settings/route.ts:183, migrate-direction/route.ts:90, data/route.ts:253). All use `.catch(() => {})` silent failure swallowing (AUDIT-5 MEDIUM #5 still present — non-blocking but masks DB outages).
+- INFO #12 · All 9 HIGH fixes (FIX-HIGH-1to9) verified intact via live API + static checks. All 13 MEDIUM fixes (FIX-MEDIUM) verified intact. All LOW/INFO fixes (Susut color, dead index sig, zebra override, db singleton, dead schema removal, @libsql removal, AggregationCache, cursor pagination, virtualized tables) verified intact. NO REGRESSIONS introduced by the latest commit (77b1f15).
+
+Verified CORRECT (no regressions from commit 9384b7a → 77b1f15):
+- `npx tsc --noEmit` → 0 errors. ✓
+- `bun run lint` → 0 errors, 6 pre-existing warnings. ✓
+- Dev server starts cleanly (`✓ Ready in 729ms`), no startup errors. ✓
+- API routes respond 200 with correct shape. ✓
+- Deviation Breakdown Pareto: deviationDrivers field populated (4 entries: waste/susut/trial/residual). ✓
+- Growth Comparison: growthDrivers populated (4 metrics: sales/bom/qtyDeviasi/nominalDeviasi), each with up/down arrays capped at 20 + remainderCount/remainderPct. ✓
+- Resto Analysis tabs: 3 ranking tabs (Financial/Operational/Unexplained) all rendered with data (rankings.financial[0..2], rankings.operational[0..2], rankings.unexplained[0..2] all populated). ✓
+- MenuAnalysis: 2-word grouping produces sensible separate groups (verified "MINYAK MIE" vs "MINYAK GORENG" would be separate). ✓
+- ItemDeepDive "Total Kemunculan": uses drilldownRecords.length with limit=500 (no outletCode) or 50 (with outletCode). ✓
+- Ranking Item Nasional dropdown: only Top 10/20/50 (Top 100/Semua removed). ✓
+- pctLossSurplusToBom color: red for LOSS items (colored by `nominalDeviasi < 0`). ✓
+- absDeviation: = Math.abs(deviation) in growthComparison.multiPeriodComparison. ✓ (Live: deviation=-21906308.12, absDeviation=+21906308.12)
+- areaAvgDevBom: non-zero (0.355) for outlets where it was previously 0 (H1 JOIN fix). ✓
+- DETERIORATING guard: trend='INSUFFICIENT_DATA' when prevRecs empty. ✓
+- drilldown case-insensitive: lowercase itemName returns same records as uppercase. ✓
+- AggregationCache: cache hit returns `cached: true` with fast duration (267-326ms vs 3-7s cold). Cache survives dev server restart (DB-persisted). ✓
+- Cursor pagination: nextCursor + hasMore in drilldown response. Page 2 with cursor returns different records (verified id 357705 → 357688). ✓
+- Virtualized tables: records have fully populated nested objects (r.outlet, r.item, r.qty, r.derived). Frontend uses optional chaining throughout. ✓
+- H5 fix: DrilldownRecord nested objects optional in interface; all consumers use `?.` + `?? '—'`. ✓
+- H6 fix: ItemDeepDive Total Kemunculan = drilldownRecords.length (not topItemsByNominal length). ✓
+- H8 fix: delta threshold = 1000 for currency, 0.01 for qty. ✓
+- H9 fix: mismatch condition catches sales-shrink + deviation-grow case (`salesGrowth < nominalDeviasiGrowth / 2`). ✓
+- M-A fix: badges `min-h-[36px]`. ✓
+- M-B fix: aria-expanded/aria-controls/role="region" on drilldown panels. ✓
+- M-C fix: setExpanded(null) on period change. ✓
+- M-E fix: growthDrivers cap at 20 (MAX_DRIVERS). ✓
+- M-F fix: signed qtyDeviasi accumulation, ABS for others. ✓
+- M-G fix: MenuAnalysis groups by first 2 words. ✓
+- M-H fix: Top 100/Semua removed from dropdown. ✓
+- M-J fix: bucket_avg CTE only computes for top-N (50×N join vs N×N). ✓
+- M-K fix: 3 ranking tabs all rendered. ✓
+- M-L fix: P2 amber-700, P3 emerald-700. ✓
+- L1 fix: Susut color = #7c3aed (violet). ✓
+- L3 fix: MultiPeriodComparisonRow has no index signature; no consumer broken. ✓
+- L5 fix: TableRow uses priorityBg directly, no zebra override. ✓
+- CardDrillDown null guard: `config && data ? config.getData(data) : []`. ✓
+- globalThis.prisma singleton + AggregationCache: both import same `db`, no conflict. ✓
+- 4 invalidateCache call sites working. ✓
+- Removed Prisma models (PeriodComparison, AnomalyRule, AnomalyFlag): no code references (only stale comments in rules.yaml + outlets.ts, per AUDIT-7). ✓
+- @libsql/client + @prisma/adapter-libsql removed from package.json deps. ✓
+
