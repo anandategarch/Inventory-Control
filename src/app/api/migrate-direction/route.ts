@@ -14,6 +14,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
+import { validateQuery, migrateDirectionQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // may take time on large DBs
@@ -24,6 +25,14 @@ export async function POST(req: NextRequest) {
     const rl = rateLimit(`migrate-direction:POST:${ip}`, 5, 60_000); // 5 req/min POST
     if (!rl.allowed) {
       return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
+    const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation (no params expected)
+    const validation = validateQuery(migrateDirectionQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
     // Count before
@@ -121,6 +130,14 @@ export async function GET(req: NextRequest) {
     const rl = rateLimit(`migrate-direction:GET:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
     if (!rl.allowed) {
       return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
+    const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation (no params expected)
+    const validation = validateQuery(migrateDirectionQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
     const total = await db.inventoryRecord.count();

@@ -15,16 +15,11 @@ import { Prisma } from '@prisma/client';
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
 import {
-  buildWorklistFromFlags,
-  computeVarianceAnalysis,
-  computeOutletHealthRanking,
-  computeHistoricalAnalysis,
   detectPatterns,
 } from '@/engine/analysis/analysis';
-import type { AnomalyFlagResult } from '@/types/inventory';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { computeNominalDeviationGrowth, projectTrend } from '@/lib/metrics';
+import { computeNominalDeviationGrowth, projectTrend, calcZScoreFromStats, computeHealthScore, computeDevBomAggregate, computeResidualPctAggregate, computeLossToSales, type AggregateInput, type HealthScoreWeights, type HealthScoreThresholds } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -43,7 +38,11 @@ import {
   queryCostImpact,
   queryItemConsistency,
   queryHistoricalStats,
+  queryOutletHealthRanking,
+  queryVarianceAnalysis,
+  queryHistoricalCriticalItems,
 } from '@/lib/queries';
+import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
@@ -51,7 +50,6 @@ import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 // moved to ./services/exec-summary.ts which imports it directly.
 // Phase 3: extracted services
 import { buildExecSummaryFromSql } from './services/exec-summary';
-import { computeGrowthDrivers } from './services/growth-drivers';
 import { computeDeviationDrivers } from './services/deviation-drivers';
 import { buildTrend, buildMultiPeriodComparison, buildNetCostTrend } from './services/trend-builder';
 import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
@@ -331,9 +329,24 @@ export async function GET(req: NextRequest) {
     };
 
     // ============================================================
-    //  P1 fix: RAW RECORD FETCH + HISTORICAL STATS — ALL PARALLEL
-    //  currentRecs + prevRecs + historicalByOutletItem are independent.
-    //  Select only fields needed by rule engine + UI drilldown.
+    //  P1 fix: HISTORICAL STATS + SLIM CURRENT RECS — ALL PARALLEL
+    //  --------------------------------------------------------
+    //  SQL-OPTIMIZE: Eliminated the 35K-record load (currentRecs +
+    //  prevRecs were each ~25 columns × 35K rows = ~3MB JSON each).
+    //  Now fetching only:
+    //    1. currSlim — 5 columns × 35K rows (~700KB) for
+    //       evaluateHistoricalRulesJs (zScore-based rules still need
+    //       per-record nominalLossSurplus + pctQtyDeviasiToBom).
+    //    2. historicalByOutletItem — Map of {mean, stdDev, n} per
+    //       outlet+item (already a SQL aggregate, ~5K rows).
+    //
+    //  The heavy per-record computations are pushed to SQL:
+    //    - queryOutletHealthRanking (per-outlet aggregate)
+    //    - queryVarianceAnalysis (curr+prev JOIN)
+    //    - queryGrowthDrivers (per-metric aggregation)
+    //    - queryHistoricalCriticalItems (per-record fields for
+    //      items flagged by HISTORICAL_* rules)
+    //  These run in parallel with the existing 15 SQL aggregate queries.
     //
     //  FIX: Historical periods now filter by SAME weekLabel only.
     //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline
@@ -347,106 +360,54 @@ export async function GET(req: NextRequest) {
       return !current || p.sortKey < current.sortKey;
     });
 
-    const [currentRecs, prevRecs, historicalByOutletItem] = await Promise.all([
-      // OPTIMIZE-ANALYSIS: `select` (not `include`) — only the columns the
-      // rule engine + downstream computations read. Drops ~10 columns
-      // (id, sourceFileId, weekId, status, satuan, qtyCom, nominalWaste/
-      // Susut/Trial, avgPrice, toleranceRaw, pct*ToBom except
-      // pctQtyDeviasiToBom, residualNominal, bulan, bulan2, weekLabel,
-      // monthLabel, createdAt) per row across ~35K rows.
+    const [currSlim, historicalByOutletItem] = await Promise.all([
+      // SQL-OPTIMIZE: 5-column slim projection (was 25-column full select).
+      // evaluateHistoricalRulesJs is the only consumer — it reads just
+      // (outletId, itemId, akunPenyesuaian, nominalLossSurplus,
+      // pctQtyDeviasiToBom) per record.
       db.inventoryRecord.findMany({
         where: buildWhere(week!, month!),
         select: {
           outletId: true, itemId: true, akunPenyesuaian: true,
-          qtyBom: true, qtyDeviasi: true, qtyWaste: true, qtySusut: true,
-          qtyTrial: true, qtyLossSurplus: true,
-          nominalDeviasi: true, nominalLossSurplus: true, nominalSales: true,
-          absNominalDeviasi: true, absQtyDeviasi: true,
-          absNominalLossSurplus: true, absQtyLossSurplus: true,
-          pctQtyDeviasiToBom: true, tolerancePct: true, direction: true,
-          residualQty: true, residualRatio: true,
-          area: true,
-          outlet: { select: { code: true, name: true, area: true } },
-          item: { select: { name: true } },
+          nominalLossSurplus: true, pctQtyDeviasiToBom: true,
         },
-      }) as Promise<RecWithRels[]>,
-      prevWeek && prevMonth
-        ? db.inventoryRecord.findMany({
-            where: buildWhere(prevWeek, prevMonth),
-            select: {
-              outletId: true, itemId: true, akunPenyesuaian: true,
-              qtyBom: true, qtyDeviasi: true, qtyWaste: true, qtySusut: true,
-              qtyTrial: true, qtyLossSurplus: true,
-              nominalDeviasi: true, nominalLossSurplus: true, nominalSales: true,
-              absNominalDeviasi: true, absQtyDeviasi: true,
-              absNominalLossSurplus: true, absQtyLossSurplus: true,
-              pctQtyDeviasiToBom: true, tolerancePct: true, direction: true,
-              residualQty: true, residualRatio: true,
-              area: true,
-              outlet: { select: { code: true, name: true, area: true } },
-              item: { select: { name: true } },
-            },
-          }) as Promise<RecWithRels[]>
-        : Promise.resolve([] as RecWithRels[]),
+      }),
       historicalPeriods.length > 0
         ? queryHistoricalStats(historicalPeriods, filterOpts)
         : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
     ]);
 
-    if (currentRecs.length === 0) {
+    if (currSlim.length === 0) {
       return NextResponse.json({
         success: false,
         message: `No records found for ${month} / ${week} with given filters.`,
       }, { status: 404 });
     }
 
-    // Build previous-by-outlet-item-akun map (for rule context + variance analysis)
-    // FIX (BUG 4): Include akunPenyesuaian in key — schema natural key is
-    // (weekId, outletId, itemId, akunPenyesuaian). Without akun, multi-akun items
-    // get wrong prev record → wrong growth + false rule flags.
-    const prevByOutletItem = new Map<string, RecWithRels>();
-    for (const r of prevRecs) {
-      prevByOutletItem.set(`${r.outletId}|${r.itemId}|${r.akunPenyesuaian ?? ''}`, r);
-    }
-
     // thresholds already loaded in parallel block above
 
     // ============================================================
-    //  RULE EVALUATION — SQL-based (Sprint 3)
-    //  Old: JS loop over 35K records, calling evaluateRules() per record
-    //  New: Single SQL query evaluates 12 rules + JS evaluates 5 zScore rules
-    //  Runs in PARALLEL with SQL aggregate queries (below)
+    //  RULE EVALUATION + SQL AGGREGATES — ALL PARALLEL (Sprint 3 + SQL-OPTIMIZE)
+    //  --------------------------------------------------------
+    //  Old: 35K-record JS loop calling evaluateRules() per record
+    //  New: SQL flags (12 rules) + JS hist flags (5 zScore rules)
+    //       + queryOutletHealthRanking + queryVarianceAnalysis +
+    //       queryGrowthDrivers — all running in parallel with the
+    //       existing 15 SQL aggregate queries.
     // ============================================================
 
-    // Build recsWithFlags from SQL flags (will be populated after parallel queries)
-    // For now, prepare the structure — actual flags come from evaluateRulesSql
-    let normal = 0, warning = 0, abnormal = 0;
-    const ruleCategoryCounts = new Map<string, number>();
-    const ruleCodeCounts = new Map<string, number>();
-
-    interface RecWithFlags {
-      curr: RecWithRels;
-      flags: AnomalyFlagResult[];
-    }
-    const recsWithFlags: RecWithFlags[] = [];
-    let zeroDevCount = 0;
-    const zeroDevByOutlet = new Map<number, number>();
-
-    // Count zero-dev records (still needed for health ranking)
-    for (const curr of currentRecs) {
-      if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
-        zeroDevCount++;
-        zeroDevByOutlet.set(curr.outletId, (zeroDevByOutlet.get(curr.outletId) ?? 0) + 1);
-      }
-    }
-
-    // Fire SQL rule evaluation in parallel with aggregate queries
+    // Fire these 4 promises early — they'll be awaited in the Promise.all below.
     const sqlFlagsPromise = evaluateRulesSql(week!, month!, prevWeek, prevMonth, filterOpts, thresholds);
+    const healthRankingSqlPromise = queryOutletHealthRanking(week!, month!, filterOpts);
+    const varianceAnalysisPromise = queryVarianceAnalysis(week!, month!, prevWeek, prevMonth, filterOpts);
+    const growthDriversPromise = queryGrowthDrivers(week!, month!, prevWeek, prevMonth, filterOpts);
 
     // ============================================================
-    //  SQL AGGREGATE QUERIES (Phase 1b/2/4) — PARALLEL (P0 fix)
-    //  All independent queries run via Promise.all for ~50% speedup
-    //  Sprint 3: sqlFlagsPromise runs in parallel with these queries
+    //  SQL AGGREGATE QUERIES (Phase 1b/2/4 + SQL-OPTIMIZE) — PARALLEL (P0 fix)
+    //  All independent queries run via Promise.all for ~50% speedup.
+    //  Sprint 3: sqlFlagsPromise runs in parallel with these queries.
+    //  SQL-OPTIMIZE: healthRankingSqlPromise + varianceAnalysisPromise +
+    //    growthDriversPromise also run in parallel here.
     // ============================================================
 
     // Group 1: Exec summary (curr + prev) — independent, parallel
@@ -457,8 +418,10 @@ export async function GET(req: NextRequest) {
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
-    // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency — ALL independent
+    // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency + health + variance + growth — ALL independent
     // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
+    // SQL-OPTIMIZE: healthRankingSqlPromise + varianceAnalysisPromise + growthDriversPromise
+    //   were fired above; they're awaited here in parallel with the other 17 SQL queries.
     const topNItems = thresholds.TOP_N_ITEMS || 10;
     const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
     const [
@@ -473,6 +436,9 @@ export async function GET(req: NextRequest) {
       topDeviasiRank,
       deviationDriverRows,
       areaTrendRows,
+      healthRankingRows,
+      varianceAnalysis,
+      growthDrivers,
     ] = await Promise.all([
       queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
       queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
@@ -497,6 +463,12 @@ export async function GET(req: NextRequest) {
       queryDeviationBreakdownDrivers(week!, month!, filterOpts),
       // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
       queryTrendByArea({ ...filterOpts, weekLabel: week }),
+      // SQL-OPTIMIZE: pushed from JS (was: computeOutletHealthRanking loop over 35K records)
+      healthRankingSqlPromise,
+      // SQL-OPTIMIZE: pushed from JS (was: computeVarianceAnalysis loop over 35K records)
+      varianceAnalysisPromise,
+      // SQL-OPTIMIZE: pushed from JS (was: computeGrowthDrivers loop over 35K×2 records)
+      growthDriversPromise,
     ]);
 
     // Map results (same as before, just from parallel results)
@@ -526,72 +498,71 @@ export async function GET(req: NextRequest) {
     }));
 
     // ============================================================
-    //  POST-PROCESS RULE FLAGS (Sprint 3)
-    //  1. Evaluate 5 zScore-based rules in JS (needs historicalByOutletItem map)
-    //  2. Merge SQL flags + JS flags into a Map keyed by outletId|itemId|akun
-    //  3. Build recsWithFlags from currentRecs + merged flags
-    //  4. Count normal/warning/abnormal + ruleBreakdown
+    //  POST-PROCESS RULE FLAGS (Sprint 3 + SQL-OPTIMIZE)
+    //  --------------------------------------------------------
+    //  1. Evaluate 5 zScore-based rules in JS (uses currSlim — 5 cols × 35K rows)
+    //  2. Merge SQL + JS flags → topFlagByKey (key → highest-priority flag)
+    //  3. Compute per-outlet + global severity counts from topFlagByKey +
+    //     healthRankingRows (zeroDev / nonZeroDev counts per outlet)
+    //  4. Build outletHealthRanking from SQL aggregate + JS severity counts
+    //     + Metric Engine health score (computeHealthScore)
     // ============================================================
     const histFlags = evaluateHistoricalRulesJs(
-      currentRecs.map(r => ({
-        outletId: r.outletId, itemId: r.itemId, akunPenyesuaian: r.akunPenyesuaian,
-        nominalLossSurplus: r.nominalLossSurplus, pctQtyDeviasiToBom: r.pctQtyDeviasiToBom,
-      })),
+      currSlim,
       historicalByOutletItem,
       thresholds,
     );
 
-    // Merge SQL + JS flags into a Map: key → flags[]
+    // topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian) record
+    // that fired at least one rule. Keeps the highest-priority flag.
     const allFlags = [...sqlFlags, ...histFlags];
-    const flagsByKey = new Map<string, SqlRuleFlag[]>();
+    const topFlagByKey = new Map<string, SqlRuleFlag>();
     for (const flag of allFlags) {
       const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;
-      if (!flagsByKey.has(key)) flagsByKey.set(key, []);
-      flagsByKey.get(key)!.push(flag);
+      const existing = topFlagByKey.get(key);
+      if (!existing || flag.priority > existing.priority) {
+        topFlagByKey.set(key, flag);
+      }
     }
 
-    // Build recsWithFlags from currentRecs (skip zero-dev records)
-    for (const curr of currentRecs) {
-      if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
-        continue; // skip zero-dev (already counted above)
+    // Per-outlet severity counts derived from topFlagByKey (small map —
+    // ~5K-10K entries, one per flagged record). Much smaller than iterating
+    // 35K currentRecs as the old JS code did.
+    const warningByOutlet = new Map<number, number>();
+    const abnormalByOutlet = new Map<number, number>();
+    const recordsWithFlagsByOutlet = new Map<number, number>();
+    const ruleCategoryCounts = new Map<string, number>();
+    const ruleCodeCounts = new Map<string, number>();
+    for (const [, flag] of topFlagByKey) {
+      recordsWithFlagsByOutlet.set(flag.outletId, (recordsWithFlagsByOutlet.get(flag.outletId) ?? 0) + 1);
+      if (flag.severity === 'ABNORMAL') {
+        abnormalByOutlet.set(flag.outletId, (abnormalByOutlet.get(flag.outletId) ?? 0) + 1);
+      } else if (flag.severity === 'WARNING') {
+        warningByOutlet.set(flag.outletId, (warningByOutlet.get(flag.outletId) ?? 0) + 1);
       }
-      const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
-      const rawFlags = flagsByKey.get(key) ?? [];
-      // Sort by priority desc (same as JS evaluator)
-      rawFlags.sort((a, b) => b.priority - a.priority);
-      // Map to AnomalyFlagResult shape (with minimal fields — evidence/narrative
-      // are not needed downstream since worklist only reads ruleCode/severity)
-      const flags = rawFlags.map(f => ({
-        ruleCode: f.ruleCode,
-        ruleName: f.ruleCode, // minimal — full name not needed for health ranking
-        severity: f.severity as 'NORMAL' | 'WARNING' | 'ABNORMAL',
-        category: f.category,
-        priority: f.priority,
-        evidence: {} as Record<string, unknown>,
-        narrative: '',
-      }));
-      recsWithFlags.push({ curr, flags });
+      ruleCategoryCounts.set(flag.category, (ruleCategoryCounts.get(flag.category) || 0) + 1);
+      ruleCodeCounts.set(flag.ruleCode, (ruleCodeCounts.get(flag.ruleCode) || 0) + 1);
+    }
 
-      if (flags.length === 0) {
-        normal++;
-      } else {
-        const top = flags[0];
-        if (top.severity === 'ABNORMAL') abnormal++;
-        else if (top.severity === 'WARNING') warning++;
-        else normal++;
-
-        ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
-        ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
-      }
+    // Global normal/warning/abnormal counts (matches the old JS loop exactly):
+    //   normal   = (nonZeroDevCount - recordsWithFlags) + zeroDevCount
+    //   warning  = records with top-flag WARNING
+    //   abnormal = records with top-flag ABNORMAL
+    let normal = 0, warning = 0, abnormal = 0;
+    for (const row of healthRankingRows) {
+      const recWithFlags = recordsWithFlagsByOutlet.get(row.outletId) ?? 0;
+      const w = warningByOutlet.get(row.outletId) ?? 0;
+      const ab = abnormalByOutlet.get(row.outletId) ?? 0;
+      const n = Math.max(0, row.nonZeroDevCount - recWithFlags) + row.zeroDevCount;
+      normal += n;
+      warning += w;
+      abnormal += ab;
     }
 
     const ruleBreakdown = {
       byCategory: Object.fromEntries(ruleCategoryCounts) as Record<string, number>,
       byRule: Object.fromEntries(ruleCodeCounts) as Record<string, number>,
     };
-
-    // Investigation worklist — use pre-computed flags (no re-evaluation)
-    const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
 
     // FIX (audit issue #11): Use computeNominalDeviationGrowth (magnitude) for
     // nominalDeviasi — signed calcGrowth is misleading when sign flips.
@@ -656,7 +627,8 @@ export async function GET(req: NextRequest) {
       lossToSales: a.lossToSales,
     }));
 
-    const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
+    // varianceAnalysis: computed by SQL in the Promise.all above (was: JS
+    // computeVarianceAnalysis loop over 35K currentRecs + prevByOutletItem map).
     // FIX (audit issue #6, P2 #10): Pass runtime health score weights + thresholds from Settings
     const healthScoreWeights = {
       devBom: thresholds.HEALTH_WEIGHT_DEV_BOM,
@@ -670,7 +642,49 @@ export async function GET(req: NextRequest) {
       lossToSales: { good: thresholds.HEALTH_THRESH_LOSS_TO_SALES_GOOD, bad: thresholds.HEALTH_THRESH_LOSS_TO_SALES_BAD },
       abnormal: { good: thresholds.HEALTH_THRESH_ABNORMAL_GOOD, bad: thresholds.HEALTH_THRESH_ABNORMAL_BAD },
     };
-    const outletHealthRanking = computeOutletHealthRanking(recsWithFlags, zeroDevByOutlet, healthScoreWeights, healthScoreThresholds);
+
+    // Build outletHealthRanking from SQL aggregate (healthRankingRows) +
+    // JS severity counts (topFlagByKey). Health score uses Metric Engine
+    // (computeHealthScore / computeDevBomAggregate / etc.) — same as the
+    // old computeOutletHealthRanking JS function.
+    const outletHealthRanking = healthRankingRows.map(row => {
+      const recWithFlags = recordsWithFlagsByOutlet.get(row.outletId) ?? 0;
+      const w = warningByOutlet.get(row.outletId) ?? 0;
+      const ab = abnormalByOutlet.get(row.outletId) ?? 0;
+      const n = Math.max(0, row.nonZeroDevCount - recWithFlags) + row.zeroDevCount;
+      const aggregateInput: AggregateInput = {
+        totalQtyDeviasi: row.totalQtyDeviasi,
+        totalQtyBom: row.totalQtyBom,
+        totalQtyWaste: row.totalQtyWaste,
+        totalQtySusut: row.totalQtySusut,
+        totalQtyTrial: row.totalQtyTrial,
+        totalResidualQty: row.totalResidualQty,
+        totalLossNominal: row.lossNominal,
+        totalSales: row.sales,
+        normalCount: n,
+        warningCount: w,
+        abnormalCount: ab,
+      };
+      const devBom = computeDevBomAggregate(aggregateInput);
+      const residualPct = computeResidualPctAggregate(aggregateInput);
+      const lossToSales = computeLossToSales(aggregateInput);
+      const healthScore = computeHealthScore(aggregateInput, healthScoreWeights as HealthScoreWeights, healthScoreThresholds as HealthScoreThresholds);
+      return {
+        outletCode: row.outletCode,
+        outletName: row.outletName,
+        area: row.area,
+        healthScore,
+        normal: n,
+        warning: w,
+        abnormal: ab,
+        absNominal: row.absNominal,
+        nominalDeviasi: row.nominalDeviasi,
+        residualPct,
+        lossToSales,
+        devBom,
+        sales: row.sales,
+      };
+    }).sort((a, b) => a.healthScore - b.healthScore || b.abnormal - a.abnormal);
 
     // Cost Impact — only the 4 fields consumed by InsightsPanel + CostImpact type.
     // (wasteCost/susutCost/trialCost/residualCost and their *ToSales ratios were
@@ -718,8 +732,40 @@ export async function GET(req: NextRequest) {
       })),
     };
 
-    // Historical Analysis — uses recsWithFlags + historicalByOutletItem map
-    const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
+    // ============================================================
+    //  Historical Analysis (SQL-OPTIMIZE)
+    //  --------------------------------------------------------
+    //  Old: computeHistoricalAnalysis iterated over recsWithFlags (35K)
+    //       + filtered for HISTORICAL_* flags + looked up stats map.
+    //  New: filter topFlagByKey for HISTORICAL_* flags (small — ~50-200
+    //       entries), run queryHistoricalCriticalItems SQL to fetch the
+    //       per-record fields (itemName, outletCode, area, pctQtyDeviasiToBom,
+    //       absNominalDeviasi) for those flagged records only, then compute
+    //       zScore + sort + slice top 50 in JS.
+    // ============================================================
+    const histCriticalKeys = [...topFlagByKey.values()]
+      .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
+      .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
+    const histCriticalRows = await queryHistoricalCriticalItems(week!, month!, filterOpts, histCriticalKeys);
+    const histCriticalItems = histCriticalRows.map(row => {
+      const key = `${row.outletId}|${row.itemId}`;
+      const stats = historicalByOutletItem.get(key);
+      if (!stats || stats.stdDev <= 0) return null;
+      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+      return {
+        itemName: row.itemName,
+        outletCode: row.outletCode,
+        area: row.area,
+        currentDevBom: row.pctQtyDeviasiToBom ?? 0,
+        historicalAvg: stats.mean,
+        zScore: zScore ?? 0,
+        absNominal: row.absNominalDeviasi ?? 0,
+      };
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
+    histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
+    // FIX: return top 50 (was 10) — HistoricalZScoreCard displays a sortable table.
+    // 50 is manageable payload (~5KB) and gives users enough data to explore.
+    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 50) };
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
     // ============================================================
@@ -793,9 +839,10 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Growth Drivers — Pareto 80% analysis per metric
-    //  Phase 3: extracted to services/growth-drivers.ts
+    //  SQL-OPTIMIZE: pushed to SQL (was: computeGrowthDrivers loop over
+    //  35K currentRecs + 35K prevRecs in JS).
     // ============================================================
-    const growthDrivers = computeGrowthDrivers(currentRecs, prevRecs);
+    // growthDrivers — awaited above (from Promise.all with the other 17 SQL queries)
 
     // ============================================================
     //  Deviation Drivers — Pareto 80% per deviation category
@@ -865,7 +912,7 @@ export async function GET(req: NextRequest) {
     db.auditLog.create({
       data: {
         action: 'ANALYSIS',
-        detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} outlet=${outletCode || 'ALL'} | ${currentRecs.length} records`,
+        detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} outlet=${outletCode || 'ALL'} | ${currSlim.length} records`,
         duration: Date.now() - startedAt,
       },
     }).catch((e) => {

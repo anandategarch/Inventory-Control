@@ -8,13 +8,22 @@
 //  database-agnostic and reads schema.prisma. This endpoint only verifies
 //  connectivity and returns guidance.
 // ============================================================
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { validateQuery, statusQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+
+  // Sprint 1: Zod input validation (no params expected — reuses empty statusQuerySchema)
+  const validation = validateQuery(statusQuerySchema, url.searchParams);
+  if (!validation.success) {
+    return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+  }
+
   const results: string[] = [];
 
   try {

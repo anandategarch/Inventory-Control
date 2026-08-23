@@ -17,6 +17,7 @@ import { validateManualFileName } from '@/lib/filename';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { summarizeDQ } from '@/engine/validator';
 import { processRowsForImport } from '@/lib/ingestion';
+import { validateBody, ingestProcessBodySchema } from '@/lib/validation';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -96,6 +97,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+
+    // Sprint 1: Zod input validation (mode/fileName/fileHash required by route)
+    const validation = validateBody(ingestProcessBodySchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName, numberLocale } = body;
 
     if (!mode || !rawFileName || !fileHash) {

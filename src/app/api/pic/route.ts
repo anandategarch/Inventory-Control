@@ -16,23 +16,24 @@ import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { z } from 'zod';
+import { validateQuery, validateBody, picQuerySchema, picPostBodySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
-const picPostSchema = z
-  .object({
-    outletCode: z.string().trim().min(1).max(50),
-    pic: z.string().trim().min(1, 'PIC tidak boleh kosong').max(100),
-  })
-  .strict();
-
 // ------------------------------------------------------------
 //  GET /api/pic — list all PIC assignments
 // ------------------------------------------------------------
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation (outletCode optional — allows filtering)
+    const validation = validateQuery(picQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const pics = await db.outletPIC.findMany({
       orderBy: [{ outletCode: 'asc' }],
       select: { id: true, outletCode: true, pic: true, updatedAt: true },
@@ -59,14 +60,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const parsed = picPostSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: parsed.error.message },
-        { status: 400 }
-      );
+
+    // Sprint 1: Zod input validation (replaces inline picPostSchema)
+    const validation = validateBody(picPostBodySchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
-    const { outletCode, pic } = parsed.data;
+    const { outletCode, pic } = validation.data;
 
     const result = await db.outletPIC.upsert({
       where: { outletCode },
@@ -108,6 +108,13 @@ export async function DELETE(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation (outletCode required by route logic)
+    const validation = validateQuery(picQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const outletCode = url.searchParams.get('outletCode');
     if (!outletCode || outletCode.length > 50) {
       return NextResponse.json(

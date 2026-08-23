@@ -73,12 +73,121 @@ export const itemHistoryQuerySchema = z.object({
   week: weekLabelSchema,
 });
 
-// /api/settings PUT body: { settings: [{ key, value }] }
+// /api/settings POST body: { values: { key: value, ... }, updatedBy? }
+// `values` is a map of setting key → string value (server-side type-checks per def).
 export const settingsUpdateSchema = z.object({
-  settings: z.array(z.object({
-    key: z.string().min(1).max(100),
-    value: z.union([z.string(), z.number(), z.boolean()]),
-  })).min(0).max(100),
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+  updatedBy: z.string().max(100).optional(),
+});
+
+// /api/recommendations?month=&week=&prevWeek=&prevMonth=&limit=
+export const recommendationsQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  prevWeek: weekLabelSchema,
+  prevMonth: monthLabelSchema,
+  limit: limitSchema,
+});
+
+// /api/peer-comparison?outletCode=&month=&week=&mode=&limit=
+export const peerComparisonQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  mode: z.enum(['week', 'month']).optional(),
+  limit: limitSchema,
+});
+
+// /api/peer-comparison/items?outletCode=&month=&week=
+export const peerComparisonItemsQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+});
+
+// /api/peer-comparison/trend?outletCode=&month=&week=
+export const peerComparisonTrendQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+});
+
+// /api/export-report?month=&week=&sections=
+export const exportReportQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  sections: z.string().optional(),
+});
+
+// /api/data (GET — optional ?fileId=N, DELETE — ?month=&monthKey=&fileId=&all=&confirm=)
+// DELETE supports cascade delete by month / fileId / all (with confirm).
+export const dataDeleteQuerySchema = z.object({
+  month: z.string().max(50).optional(),       // legacy: monthLabel (resolved to monthKey server-side)
+  monthKey: z.string().max(10).optional(),     // preferred: "YYYY-MM" (case-insensitive)
+  fileId: z.coerce.number().int().optional(),
+  all: z.enum(['true', '1', 'yes']).optional(),
+  confirm: z.enum(['true', '1', 'yes']).optional(),
+});
+
+// /api/migrate-direction (POST — no body params needed, but add for completeness)
+export const migrateDirectionQuerySchema = z.object({}).optional();
+
+// /api/status (GET — no params)
+export const statusQuerySchema = z.object({}).optional();
+
+// /api/pic?outletCode= (GET/DELETE)
+export const picQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50).optional(),
+});
+
+// /api/pic POST body: { outletCode, pic }
+export const picPostBodySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  pic: z.string().min(1).max(100),
+});
+
+// /api/ingest POST body: flexible shape passed to processIngestion.
+// Body can be {} (auto-scan DATA_DIR) or { filePath, dir, fileName, manualFileName, numberLocale }.
+// All fields optional — processIngestion handles defaults.
+export const ingestPostBodySchema = z.object({
+  filePath: z.string().max(1024).optional(),
+  dir: z.string().max(1024).optional(),
+  fileName: z.string().max(255).optional(),
+  fileHash: z.string().max(128).optional(),
+  totalChunks: z.number().int().min(1).max(1000).optional(),
+  monthLabel: z.string().max(30).optional(),
+  manualFileName: z.string().max(255).optional(),
+  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
+}).optional().default({});
+
+// /api/ingest-upload POST: form-data fields (validated as object after extraction).
+// `chunk` (File) is validated separately by size checks in the route.
+export const ingestUploadBodySchema = z.object({
+  fileHash: z.string().min(1).max(128),
+  chunkIndex: z.coerce.number().int().min(0),
+  totalChunks: z.coerce.number().int().min(1).max(1000),
+  fileName: z.string().min(1).max(255),
+  fileSize: z.coerce.number().int().min(0).optional(),
+});
+
+// /api/ingest-process POST body: { mode, fileName, fileHash, fileSize?, ext?, manualFileName?, numberLocale?, weekLabel?, monthLabel? }
+export const ingestProcessBodySchema = z.object({
+  mode: z.string().min(1).max(50),
+  fileName: z.string().min(1).max(255),
+  fileHash: z.string().min(1).max(128),
+  fileSize: z.number().int().min(0).optional(),
+  ext: z.string().max(20).optional(),
+  manualFileName: z.string().max(255).optional(),
+  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
+  weekLabel: z.string().max(30).optional(),
+  monthLabel: z.string().max(30).optional(),
+});
+
+// /api/import-drive POST body: { url, manualFileName?, numberLocale? }
+export const importDriveBodySchema = z.object({
+  url: z.string().url(),
+  manualFileName: z.string().optional(),
+  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
 });
 
 // ============================================================
@@ -88,19 +197,33 @@ export function validateQuery<T extends z.ZodType>(
   schema: T,
   params: URLSearchParams
 ): { success: true; data: z.infer<T> } | { success: false; error: string } {
-  // Convert URLSearchParams to plain object
   const obj: Record<string, string> = {};
   params.forEach((value, key) => {
     obj[key] = value;
   });
-
   const result = schema.safeParse(obj);
   if (result.success) {
     return { success: true, data: result.data };
   }
-  // Format errors
   const errors = result.error.issues
     .map(i => `${i.path.join('.')}: ${i.message}`)
     .join('; ');
   return { success: false, error: `Invalid query params: ${errors}` };
+}
+
+// ============================================================
+//  Helper: validate POST/PUT body, return 400 on failure
+// ============================================================
+export function validateBody<T extends z.ZodType>(
+  schema: T,
+  body: unknown
+): { success: true; data: z.infer<T> } | { success: false; error: string } {
+  const result = schema.safeParse(body);
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+  const errors = result.error.issues
+    .map(i => `${i.path.join('.')}: ${i.message}`)
+    .join('; ');
+  return { success: false, error: `Invalid body: ${errors}` };
 }

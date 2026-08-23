@@ -19,6 +19,7 @@ import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildSqlFilters } from '@/lib/queries/shared';
+import { validateQuery, peerComparisonItemsQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -32,6 +33,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(peerComparisonItemsQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     let outletCode = url.searchParams.get('outletCode');
     let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');

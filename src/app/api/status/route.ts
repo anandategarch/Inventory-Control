@@ -4,9 +4,10 @@
 //  Resilient to missing tables (returns empty state, not 500)
 // ============================================================
 import { logger } from '@/lib/logger';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
+import { validateQuery, statusQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -26,8 +27,16 @@ const EMPTY_STATE = {
   warning: 'Database tables not created yet. Visit /api/setup to initialize.',
 };
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation (no params expected)
+    const validation = validateQuery(statusQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     // Phase 1c: check cache first
     const cached = statusCache.get('status');
     if (cached) {

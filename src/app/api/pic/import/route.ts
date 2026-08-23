@@ -14,6 +14,7 @@ import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
+import { validateBody } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,14 +37,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const parsed = importSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: parsed.error.message },
-        { status: 400 }
-      );
+
+    // Sprint 1: Zod input validation (uses validateBody helper, keeps existing schema)
+    const validation = validateBody(importSchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
-    const { csvContent } = parsed.data;
+    const { csvContent } = validation.data;
 
     // Strip BOM, normalize line endings, drop empty lines
     const lines = csvContent

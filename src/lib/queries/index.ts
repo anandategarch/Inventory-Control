@@ -9,3 +9,10 @@ export * from './items';
 export * from './outlets';
 export * from './areas';
 export * from './historical';
+// SQL-OPTIMIZE: pushed computeOutletHealthRanking + computeVarianceAnalysis +
+// computeGrowthDrivers + computeHistoricalAnalysis to SQL — eliminates 35K
+// record load to RAM. See health-ranking.ts + growth-drivers.ts.
+// (growth-drivers.ts not re-exported here to avoid GrowthDriverMetric name
+// collision with src/app/api/analysis/services/growth-drivers.ts — callers
+// import directly from '@/lib/queries/growth-drivers' instead.)
+export * from './health-ranking';

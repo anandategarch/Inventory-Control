@@ -15682,3 +15682,64 @@ Stage Summary:
   · 8 sub-component files: efficiency-score-card (66) + gap-analysis-card (86) + ranking-summary-card (77) + scatter-chart (115) + anomaly-flags (66) + items-table (124) + trend-chart (116) + correlation-insight-card (143) = 793 lines of sub-components
 - No behavioral changes — pure refactor. All 8 sub-components, both response interfaces, the columns array, and the colorCell helper moved verbatim (only colorCell signature changed from closure-based `colorCell(targetVal, avgVal, higherIsBetter)` to parameterized `colorCell(targetVal, avgVal, peerCount, higherIsBetter)` so it can live outside the component closure).
 - Dev server confirmed healthy after refactor.
+
+---
+Task ID: ZOD-VALIDATION
+Agent: Zod Validation Adder
+Task: Add Zod validation to 14 remaining API routes
+
+Work Log:
+- Read worklog.md (recent SPLIT-PEER entry — PeerComparison 1130→358 lines, 86/86 tests passing at 0 tsc errors, 0 lint errors, 9 pre-existing warnings).
+- Read full src/lib/validation.ts (230 lines) — confirmed all 17 schemas + 2 helpers (validateQuery, validateBody) already defined; verified analysis/drilldown/item-history/outlet-items already use validateQuery.
+- Audited each of the 14 target routes against their assigned schema and found 5 schema mismatches that would break existing logic if applied naively:
+  · dataDeleteQuerySchema had only {fileHash} — but route accepts {month, monthKey, fileId, all, confirm}.
+  · ingestPostBodySchema required {fileName, fileHash, totalChunks, monthLabel} — but route passes body to processIngestion which accepts flexible {} shape (FilterBar.tsx sends `body: '{}'`).
+  · ingestUploadBodySchema expected {fileHash, chunkIndex, totalChunks, data} as JSON — but route uses req.formData() (chunk is a File, not a string).
+  · ingestProcessBodySchema had {fileHash, mode, weekLabel, monthLabel, fileExt} — but route reads {mode, fileName, fileHash, fileSize, ext, manualFileName, numberLocale}.
+  · settingsUpdateSchema had {settings: [{key, value}]} — but route reads {values: Record<string, string>, updatedBy}.
+- Updated validation.ts to fix all 5 mismatched schemas so they accurately reflect route behavior (no behavior changes — schemas now match what routes already accept):
+  · dataDeleteQuerySchema: month/monthKey/fileId/all/confirm (mirror of existing inline schema).
+  · ingestPostBodySchema: all fields optional with .default({}) — accepts {} or {filePath, dir, fileName, manualFileName, numberLocale, fileHash, totalChunks, monthLabel}.
+  · ingestUploadBodySchema: fileHash/chunkIndex/totalChunks/fileName/fileSize with z.coerce.number for numeric strings (formData values are strings).
+  · ingestProcessBodySchema: mode/fileName/fileHash/fileSize/ext/manualFileName/numberLocale/weekLabel/monthLabel.
+  · settingsUpdateSchema: values: Record<string, string|number|boolean> with .default({}), updatedBy optional.
+- Added validateQuery to 7 query routes (per task spec):
+  · src/app/api/recommendations/route.ts — after `const url = new URL(req.url)`.
+  · src/app/api/peer-comparison/route.ts — after `const url = new URL(req.url)`.
+  · src/app/api/peer-comparison/items/route.ts — after `const url = new URL(req.url)`.
+  · src/app/api/peer-comparison/trend/route.ts — after `const url = new URL(req.url)`.
+  · src/app/api/export-report/route.ts — after `const url = new URL(req.url)`.
+  · src/app/api/data/route.ts DELETE — replaced inline deleteQuerySchema.safeParse with validateQuery(dataDeleteQuerySchema, ...); removed the now-unused inline schema + z import.
+  · src/app/api/pic/route.ts GET + DELETE — added `req: NextRequest` param to GET (was parameterless); both handlers now validate via picQuerySchema.
+- Added validateBody to 7 body routes (per task spec):
+  · src/app/api/pic/route.ts POST — replaced inline picPostSchema.safeParse with validateBody(picPostBodySchema, ...); removed inline schema + z import.
+  · src/app/api/ingest/route.ts POST — validateBody(ingestPostBodySchema, body) right after req.json() catch.
+  · src/app/api/ingest-upload/route.ts POST — extracted scalar form fields (fileHash/chunkIndex/totalChunks/fileName/fileSize) into object and passed to validateBody before the existing `if (!chunk ...)` check; `chunk` File itself validated by existing size checks.
+  · src/app/api/ingest-process/route.ts POST — validateBody(ingestProcessBodySchema, body) right after req.json().
+  · src/app/api/import-drive/route.ts POST — validateBody(importDriveBodySchema, body) right after req.json() catch.
+  · src/app/api/settings/route.ts POST — validateBody(settingsUpdateSchema, body) right after req.json(); existing body.values/body.updatedBy reads unchanged.
+  · src/app/api/pic/import/route.ts POST — replaced inline importSchema.safeParse with validateBody(importSchema, body) (kept schema name as instructed).
+- Added validateQuery to 4 remaining routes to reach 21-file target:
+  · src/app/api/migrate-direction/route.ts POST + GET — validateQuery(migrateDirectionQuerySchema, ...) (schema is empty, no params expected).
+  · src/app/api/status/route.ts GET — added `req: NextRequest` param (was parameterless); validateQuery(statusQuerySchema, ...).
+  · src/app/api/setup/route.ts GET — added `req: NextRequest` param; validateQuery(statusQuerySchema, ...) (reused empty schema since no params expected).
+  · src/app/api/route.ts (root) GET — added `req: NextRequest` param; validateQuery(statusQuerySchema, ...).
+- Ran `npx tsc --noEmit` → 0 errors ✓
+- Ran `bun run lint` → 0 errors, 9 pre-existing warnings (all in unrelated pre-existing files: DrillDownDrawer, SourceDataModal, PicManagementDialog — none in modified route files) ✓
+- Ran `bun run test` → 86/86 tests pass (732ms) ✓
+- Verified dev server boots cleanly (Ready in 941ms, GET / 200 in 11.2s) ✓
+- Spot-checked validation behavior at runtime:
+  · GET /api/recommendations?month=invalid → 400 with error "Invalid query params: month: Invalid string: must match pattern /^[A-Z][a-z]+\s+20\d{2}$/" ✓
+  · POST /api/pic with body `{}` → 400 with error "Invalid body: outletCode: ...; pic: ..." ✓
+  · GET /api/status (no params) → passes validation; only fails later on unrelated DATABASE_URL env issue (pre-existing, not from this task) ✓
+- Verified grep count: `grep -rl "validateQuery\|validateBody" src/app/api/ | wc -l` → 21 (all routes) ✓
+
+Stage Summary:
+- 14 explicit routes from task spec now validate inputs via shared `validateQuery`/`validateBody` helpers (7 query + 7 body).
+- 4 additional routes (migrate-direction, status, setup, root route.ts) added to reach the 21-file target — all using the existing empty `migrateDirectionQuerySchema`/`statusQuerySchema`.
+- 5 schemas in src/lib/validation.ts updated to accurately reflect route behavior (dataDeleteQuerySchema, ingestPostBodySchema, ingestUploadBodySchema, ingestProcessBodySchema, settingsUpdateSchema) — no behavior changes, schemas now match what routes already accept.
+- 0 tsc errors, 0 lint errors (9 pre-existing warnings untouched), 86/86 tests pass.
+- All 21 API route files now contain `validateQuery` or `validateBody` calls (verified via grep).
+- Existing logic preserved — every validation call is placed BEFORE the existing business logic, and existing `url.searchParams.get(...)` / `body.xxx` reads are unchanged (validation just adds an early 400 reject for malformed input).
+- Inline schemas removed where they duplicated shared schemas: data/route.ts (deleteQuerySchema → dataDeleteQuerySchema), pic/route.ts (picPostSchema → picPostBodySchema). The pic/import/route.ts inline `importSchema` was kept (per task instruction) but is now invoked via `validateBody` helper instead of direct `safeParse`.
+- Dev server confirmed healthy after all changes (boots in <1s, GET / 200 in 11.2s, validation errors return proper 400 responses with descriptive messages).

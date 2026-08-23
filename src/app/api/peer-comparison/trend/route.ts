@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets';
+import { validateQuery, peerComparisonTrendQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -40,6 +41,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(peerComparisonTrendQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const outletCode = url.searchParams.get('outletCode');
     let month = url.searchParams.get('month');
     const peersParam = url.searchParams.get('peers'); // optional comma-separated outlet codes

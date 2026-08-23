@@ -16,6 +16,7 @@ import {
 } from '@/lib/settings';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { validateBody, settingsUpdateSchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -84,6 +85,13 @@ export async function POST(req: NextRequest) {
 
     await ensureDefaultSettings();
     const body = await req.json();
+
+    // Sprint 1: Zod input validation (values map + optional updatedBy)
+    const validation = validateBody(settingsUpdateSchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const values: Record<string, string> = body.values || {};
     const updatedBy: string | undefined = body.updatedBy;
 

@@ -8,6 +8,7 @@ import { importFromDriveUrl } from '@/lib/drive-import';
 import { processIngestion } from '@/lib/ingestion';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { resolveManualFileName } from '@/lib/filename';
+import { validateBody, importDriveBodySchema } from '@/lib/validation';
 import path from 'path';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // Sprint 1: Zod input validation (url required, manualFileName/numberLocale optional)
+    const validation = validateBody(importDriveBodySchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const url = body.url;
     // Resolve manual filename via shared validator (sanitize + format check + extension).
     // Throws on invalid input → caught by outer try/catch → 400 response.

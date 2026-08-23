@@ -8,6 +8,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { validateBody, ingestUploadBodySchema } from '@/lib/validation';
 import path from 'path';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,18 @@ export async function POST(req: NextRequest) {
     // fileSizeStr kept for backward-compat with the client, but is NO LONGER TRUSTED
     // for size enforcement (see FIX-A-3). Actual size is computed server-side below.
     const fileSizeStr = formData.get('fileSize') as string | null;
+
+    // Sprint 1: Zod input validation (scalar form fields; `chunk` File validated by size checks below)
+    const validation = validateBody(ingestUploadBodySchema, {
+      fileHash: fileHash ?? undefined,
+      chunkIndex: chunkIndexStr ?? undefined,
+      totalChunks: totalChunksStr ?? undefined,
+      fileName: fileName ?? undefined,
+      fileSize: fileSizeStr ?? undefined,
+    });
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
 
     if (!chunk || chunkIndexStr === null || totalChunksStr === null || !fileName || !fileHash) {
       return NextResponse.json(

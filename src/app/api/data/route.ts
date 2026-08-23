@@ -15,20 +15,10 @@ import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
-import { z } from 'zod';
+import { validateQuery, dataDeleteQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
-
-const deleteQuerySchema = z
-  .object({
-    month: z.string().max(50).optional(),       // legacy: monthLabel (resolved to monthKey server-side)
-    monthKey: z.string().max(10).optional(),     // preferred: "YYYY-MM" (case-insensitive)
-    fileId: z.coerce.number().int().optional(),
-    all: z.enum(['true', '1', 'yes']).optional(),
-    confirm: z.enum(['true', '1', 'yes']).optional(),
-  })
-  .strict();
 
 // ------------------------------------------------------------
 //  GET /api/data — list all SourceFiles grouped by month
@@ -120,15 +110,13 @@ export async function DELETE(req: NextRequest) {
     }
 
     const url = new URL(req.url);
-    const params = Object.fromEntries(url.searchParams.entries());
-    const parsed = deleteQuerySchema.safeParse(params);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: parsed.error.message },
-        { status: 400 }
-      );
+
+    // Sprint 1: Zod input validation (replaces inline schema — kept behavior identical)
+    const validation = validateQuery(dataDeleteQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
-    const data = parsed.data;
+    const data = validation.data;
 
     let deletedRecords = 0;
     let deletedFiles = 0;

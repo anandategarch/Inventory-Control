@@ -35,6 +35,7 @@ import {
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
+import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -237,6 +238,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(exportReportQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     // BUG FIX (BUG-NORECORDS-4/5): use `let` for month so we can reassign after
     // case-insensitive resolution (DB may have different case than URL param).
     let month = url.searchParams.get('month');

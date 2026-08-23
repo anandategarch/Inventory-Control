@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processIngestion } from '@/lib/ingestion';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { validateBody, ingestPostBodySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -23,6 +24,12 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // Sprint 1: Zod input validation (body shape passed to processIngestion)
+    const validation = validateBody(ingestPostBodySchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
 
     const results = await processIngestion(body);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
