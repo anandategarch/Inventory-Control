@@ -15632,3 +15632,53 @@ Stage Summary:
   · RestoAnalysis.tsx re-exports `type { OutletItemsResponse, RecommendationResponse, RestoProfile, ItemRow, ItemHistoryTimelineRow, ItemHistoryResponse }`
 - No behavioral changes — pure refactor (all 15 chart data builders, all 15 SignalChart switch cases, all 5 helper functions, all 4 sub-components moved verbatim).
 - Pushed to remote main branch successfully.
+
+---
+Task ID: SPLIT-PEER
+Agent: PeerComparison Splitter
+Task: Split PeerComparison.tsx (1130 lines → <500)
+
+Work Log:
+- Read worklog.md (recent SPLIT-COMPONENTS entry — PrioritySummaryCard 1238→383 + RestoAnalysis 985→412, 62/62 tests passing at that point).
+- Read full PeerComparison.tsx (1130 lines) in 3 chunks via offset/limit (Read tool kept truncating the full-file output at 60KB).
+- Identified structure:
+  · Imports (lines 1-16) — recharts, shadcn/ui, lucide, useDashboard, format, a11y, react.
+  · 2 interfaces: PeerRow (lines 21-43), MetricDef (lines 45-50).
+  · Main PeerComparison component (lines 59-407) — 3 parallel useQuery hooks (main/items/trend), peer avg computations, peerAverages object, columns array, colorCell closure, full JSX render (header card + 4-card analysis grid + peer table + items + trend + correlation).
+  · 8 sub-components: EfficiencyScoreCard (412-460), GapAnalysisCard (465-538), RankingSummaryCard (543-608), ScatterPlotCard (613-699), AnomalyFlags (704-748), ItemLevelComparison+ItemComparisonBlock (776-885), TrendChartCard (900-1000), CorrelationInsightCard (1005-1129).
+  · 2 response interfaces: ItemComparisonResponse (753-774), TrendResponse (890-898).
+- Verified external imports via grep `from ['"].*PeerComparison`:
+  · Only `src/app/page.tsx:43` imports `{ PeerComparison }` via dynamic() (named export only — no type imports).
+  · Other "PeerComparison" matches in src/app/api/peer-comparison/* and src/lib/queries/outlets.ts are comments referencing `queryPeerComparison` (a backend query function, not this component).
+  · Conclusion: only the `PeerComparison` named export needs to be preserved. Still re-exported shared types (PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages) for forward-compat with future importers.
+- Created 10 new files under src/components/dashboard/peer-comparison/:
+  · types.ts (74 lines) — PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages type alias
+  · helpers.ts (53 lines) — COLUMNS constant (11 MetricDef entries) + colorCell helper (parameterized by peerCount instead of using closure)
+  · efficiency-score-card.tsx (66 lines) — EfficiencyScoreCard (uses Gauge icon, useMemo for composite 0-100 score)
+  · gap-analysis-card.tsx (86 lines) — GapAnalysisCard (uses Target icon, 4 gap metrics: devBom/totalLoss/residualQty/sales); kept `columns: _columns` prop in signature for backward-compat (unused inside — gap metrics re-defined locally as in original)
+  · ranking-summary-card.tsx (77 lines) — RankingSummaryCard (uses Award icon, rankColor helper, 6 key metrics)
+  · scatter-chart.tsx (115 lines) — ScatterPlotCard (uses Sparkles + recharts ScatterChart/Scatter/XAxis/YAxis/CartesianGrid/Tooltip/ResponsiveContainer/Cell)
+  · anomaly-flags.tsx (66 lines) — AnomalyFlags (no icon imports, emoji-based badges)
+  · items-table.tsx (124 lines) — ItemLevelComparison + ItemComparisonBlock (uses BarChart3 + Loader2, fmtIDR/fmtNum)
+  · trend-chart.tsx (116 lines) — TrendChartCard (uses TrendingUp + Loader2, recharts LineChart/Line/Legend/XAxis/YAxis/CartesianGrid/Tooltip/ResponsiveContainer)
+  · correlation-insight-card.tsx (143 lines) — CorrelationInsightCard (uses Lightbulb, useMemo for 7 auto-detected insight rules)
+- Rewrote PeerComparison.tsx as thin wrapper (358 lines, down from 1130, -772, -68%):
+  · Imports sub-components from ./peer-comparison/* and types/helpers.
+  · Keeps main PeerComparison component (queries, peerAverages, peer table render).
+  · colorCell now called as `colorCell(val, peerAverages[col.key], peerCount, col.higherBetter)` (explicit peerCount arg instead of closure).
+  · Re-exports `type { PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages }` for any future importers.
+- Ran `npx tsc --noEmit` → 0 errors ✓ (no output = success)
+- Ran `bun run lint` → 0 errors, 9 pre-existing warnings (none in new files; all 9 warnings are in unrelated pre-existing files: DrillDownDrawer, SourceDataModal, PicManagementDialog — same as before this task) ✓
+- Ran `bun run test` → 86/86 tests pass (758ms): evaluator 24, format 23, growth 21, historical 18 ✓
+- Verified dev server healthy: GET / 200 in 10.8s (initial compile), GET /api/status 200 in 2.8s, no errors/warnings/fail lines in dev.log ✓
+
+Stage Summary:
+- PeerComparison.tsx: 1130 → 358 lines (-772, -68%) ✓ well under 500 target
+- 0 tsc errors, 0 lint errors (9 pre-existing warnings untouched), 86/86 tests pass
+- Only existing external import (src/app/page.tsx:43 → `{ PeerComparison }`) preserved as named export ✓
+- Backward-compat re-export added: `export type { PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages }` from PeerComparison.tsx for forward-compat
+- New module structure under src/components/dashboard/peer-comparison/ (920 lines split out across 10 files):
+  · types.ts (74) + helpers.ts (53) = 127 lines of shared infra
+  · 8 sub-component files: efficiency-score-card (66) + gap-analysis-card (86) + ranking-summary-card (77) + scatter-chart (115) + anomaly-flags (66) + items-table (124) + trend-chart (116) + correlation-insight-card (143) = 793 lines of sub-components
+- No behavioral changes — pure refactor. All 8 sub-components, both response interfaces, the columns array, and the colorCell helper moved verbatim (only colorCell signature changed from closure-based `colorCell(targetVal, avgVal, higherIsBetter)` to parameterized `colorCell(targetVal, avgVal, peerCount, higherIsBetter)` so it can live outside the component closure).
+- Dev server confirmed healthy after refactor.
