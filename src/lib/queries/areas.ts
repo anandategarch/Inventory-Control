@@ -168,7 +168,13 @@ export async function queryTrendByArea(filters: {
     FROM area_period_aggs apa
     LEFT JOIN area_period_sales aps
       ON apa.area = aps.area AND apa."monthLabel" = aps."monthLabel" AND apa."weekLabel" = aps."weekLabel"
-    LEFT JOIN "SourceFile" sf ON sf."monthLabel" = apa."monthLabel"
+    -- FIX BUG 6: LATERAL join to get exactly 1 monthKey per monthLabel
+    -- (prevents duplicate rows if multiple SourceFiles have same monthLabel)
+    LEFT JOIN LATERAL (
+      SELECT "monthKey" FROM "SourceFile"
+      WHERE "monthLabel" = apa."monthLabel"
+      LIMIT 1
+    ) sf ON true
     ORDER BY apa.area, COALESCE(sf."monthKey", '0000-00'), apa."weekLabel"
   `;
   return rows;

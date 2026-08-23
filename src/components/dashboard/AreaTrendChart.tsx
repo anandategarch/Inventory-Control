@@ -74,11 +74,17 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
     if (selectedAreas.size > 0) return [...selectedAreas].sort();
     // Auto-select top 5 worst areas (highest avg Dev/BOM across all periods)
     const areaAvg = new Map<string, number>();
+    const areaPeriodCount = new Map<string, number>();
     for (const r of rows) {
-      const prev = areaAvg.get(r.area) ?? 0;
-      areaAvg.set(r.area, prev + (Number(r.avgDevBom) || 0));
+      areaAvg.set(r.area, (areaAvg.get(r.area) ?? 0) + (Number(r.avgDevBom) || 0));
+      areaPeriodCount.set(r.area, (areaPeriodCount.get(r.area) ?? 0) + 1);
     }
-    const sorted = [...areaAvg.entries()].sort((a, b) => b[1] - a[1]);
+    // FIX BUG 4: Only include areas with ≥2 periods (can't draw trend with 1 point)
+    // Compute average (not sum) for fair comparison
+    const sorted = [...areaAvg.entries()]
+      .filter(([area]) => (areaPeriodCount.get(area) ?? 0) >= 2)
+      .map(([area, sum]) => [area, sum / (areaPeriodCount.get(area) ?? 1)] as [string, number])
+      .sort((a, b) => b[1] - a[1]);
     return sorted.slice(0, 5).map(([area]) => area);
   }, [selectedAreas, rows]);
 
@@ -91,21 +97,38 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
     });
   };
 
-  // Find worst + best area for summary
+  // FIX BUG 2: Summary logic was broken — compared avgDevBom (decimal) against
+  // sortKey number (20260801). Now stores {sortKey, avgDevBom} separately.
+  // Also uses AVERAGE across all periods (not just latest) for fairer comparison.
   const summary = useMemo(() => {
     if (rows.length === 0) return { worst: null, best: null, avgDevBom: 0 };
-    const areaLatest = new Map<string, number>();
+    const areaStats = new Map<string, { totalDevBom: number; count: number; latestDevBom: number; latestSortKey: string }>();
     for (const r of rows) {
-      // Use the latest period for each area
       const mk = r.monthKey || '0000-00';
       const wkNum = String(parseInt(r.weekLabel?.replace(/\D/g, '') || '0') || 0).padStart(2, '0');
       const sortKey = `${mk}|${wkNum}`;
-      const existing = areaLatest.get(r.area);
-      if (!existing || existing < Number(sortKey.replace(/\D/g, ''))) {
-        areaLatest.set(r.area, Number(r.avgDevBom) || 0);
+      const existing = areaStats.get(r.area);
+      if (!existing) {
+        areaStats.set(r.area, {
+          totalDevBom: Number(r.avgDevBom) || 0,
+          count: 1,
+          latestDevBom: Number(r.avgDevBom) || 0,
+          latestSortKey: sortKey,
+        });
+      } else {
+        existing.totalDevBom += Number(r.avgDevBom) || 0;
+        existing.count += 1;
+        // Track latest period
+        if (sortKey > existing.latestSortKey) {
+          existing.latestSortKey = sortKey;
+          existing.latestDevBom = Number(r.avgDevBom) || 0;
+        }
       }
     }
-    const sorted = [...areaLatest.entries()].sort((a, b) => b[1] - a[1]);
+    // Use AVERAGE Dev/BOM for worst/best ranking
+    const sorted = [...areaStats.entries()]
+      .map(([area, s]) => [area, s.totalDevBom / s.count] as [string, number])
+      .sort((a, b) => b[1] - a[1]);
     const avg = sorted.length > 0 ? sorted.reduce((s, [, v]) => s + v, 0) / sorted.length : 0;
     return { worst: sorted[0] || null, best: sorted[sorted.length - 1] || null, avgDevBom: avg };
   }, [rows]);
@@ -156,27 +179,35 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
                     wrapperStyle={{ fontSize: 10, paddingTop: 8 }}
                     onClick={(e: { value?: string }) => e.value && toggleArea(e.value)}
                   />
-                  {displayAreas.map((area, i) => (
-                    <Line
-                      key={area}
-                      type="monotone"
-                      dataKey={area}
-                      stroke={AREA_COLORS[i % AREA_COLORS.length]}
-                      strokeWidth={2}
-                      dot={{ r: 2, fill: AREA_COLORS[i % AREA_COLORS.length] }}
-                      activeDot={{ r: 4 }}
-                      connectNulls
-                    />
-                  ))}
+                  {displayAreas.map((area) => {
+                    // FIX BUG 3: Use allAreas index (not displayAreas index) for consistent colors
+                    const colorIdx = allAreas.indexOf(area);
+                    const color = AREA_COLORS[colorIdx % AREA_COLORS.length];
+                    return (
+                      <Line
+                        key={area}
+                        type="monotone"
+                        dataKey={area}
+                        stroke={color}
+                        strokeWidth={2}
+                        dot={{ r: 2, fill: color }}
+                        activeDot={{ r: 4 }}
+                        connectNulls
+                      />
+                    );
+                  })}
                 </LineChart>
               </ResponsiveContainer>
             </div>
 
             {/* Area selector chips */}
+            {/* FIX BUG 3: Chip colors now match line colors by using a shared color map */}
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {allAreas.map((area, i) => {
+              {allAreas.map((area) => {
                 const isSelected = displayAreas.includes(area);
-                const color = AREA_COLORS[allAreas.indexOf(area) % AREA_COLORS.length];
+                // Use consistent color index based on allAreas order
+                const colorIdx = allAreas.indexOf(area);
+                const color = AREA_COLORS[colorIdx % AREA_COLORS.length];
                 return (
                   <button
                     key={area}

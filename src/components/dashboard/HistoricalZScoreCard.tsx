@@ -2,7 +2,6 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -35,7 +34,16 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 }
 
 export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
-  const items = data.growthComparison?.historicalAnalysis?.criticalItems || [];
+  // FIX BUG 1: Filter out items with |Dev/BOM| > 500% — these are data anomalies
+  // where BOM ≈ 0 (division by near-zero produces extreme pctQtyDeviasiToBom).
+  // Z-Scores of 680.99 are meaningless and pollute the table.
+  // Also filter out items with zScore = 0 (no historical baseline).
+  const allItems = data.growthComparison?.historicalAnalysis?.criticalItems || [];
+  const items = allItems.filter(i =>
+    Math.abs(i.currentDevBom) <= 5 &&  // ≤ 500% Dev/BOM
+    Math.abs(i.zScore) > 0 &&          // has valid Z-Score
+    i.historicalAvg > 0                 // has historical baseline
+  );
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -84,7 +92,9 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          <span className="font-medium tabular-nums">{items.length}</span> item dengan Z-Score tertinggi ·{' '}
+          <span className="font-medium tabular-nums">{items.length}</span> item dengan Z-Score tertinggi
+          {allItems.length !== items.length && <span className="text-muted-foreground/60"> ({allItems.length - items.length} difilter: BOM≈0)</span>}
+          {' · '}
           <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{abnormalCount} abnormal</span> ·{' '}
           <span className="text-amber-600 dark:text-amber-400 font-medium tabular-nums">{warningCount} warning</span>
           {' · klik header untuk sort'}
