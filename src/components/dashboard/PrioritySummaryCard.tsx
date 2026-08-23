@@ -444,7 +444,7 @@ function buildBenchmarkData(r: Recommendation) {
   return [
     { name: 'Outlet', value: Number((outletDev * 100).toFixed(1)), fill: CHART.red },
     { name: 'Area Avg', value: Number((outletDev * 0.65 * 100).toFixed(1)), fill: CHART.amber },
-    { name: 'Network', value: Number((outletDev * 0.45 * 100).toFixed(1)), fill: CHART.zinc },
+    { name: 'Semua Resto', value: Number((outletDev * 0.45 * 100).toFixed(1)), fill: CHART.zinc },
   ];
 }
 
@@ -508,7 +508,7 @@ const SIGNAL_EXPLANATIONS: Record<string, string> = {
   'Over-Explained': 'Item dimana penjelasan (Waste+Susut+Trial) > 100% deviasi. Indikasi kesalahan input data atau pencatatan ganda.',
   'High Loss Nominal': 'Item dengan nominal loss >Rp 10jt. Prioritas investigasi berdasarkan dampak finansial.',
   'No Tolerance': 'Item-item tanpa setup toleransi di master data. Tidak bisa di-evaluasi breach — setup toleransi segera.',
-  'Benchmark High': 'Deviasi outlet lebih tinggi dari rata-rata area/network. Investigasi gap praktik antar outlet.',
+  'Benchmark High': 'Deviasi outlet lebih tinggi dari rata-rata area/semua resto. Investigasi gap praktik antar outlet.',
   'Residual Nominal': 'Nominal deviasi yang tidak terjelaskan. Semakin tinggi, semakin besar "uang hilang" yang perlu dijelaskan.',
   'Tolerance Breach': 'Item dengan deviasi >toleransi (breach reguler). Review penyebab dan corrective action.',
 };

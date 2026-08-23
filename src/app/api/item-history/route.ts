@@ -278,11 +278,14 @@ export async function GET(req: NextRequest) {
         outletDevBom: currentDevBom,
         areaAvgDevBom,
         networkAvgDevBom,
+        allRestoAvgDevBom: networkAvgDevBom, // FIX: clearer name
         bestDevBom,
         areaMultiplier,
         networkMultiplier,
+        allRestoMultiplier: networkMultiplier, // FIX: clearer name
         areaOutletCount,
         networkOutletCount,
+        allRestoOutletCount: networkOutletCount, // FIX: clearer name
       },
       historical: {
         mean: historicalResult.mean,

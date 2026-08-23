@@ -413,10 +413,12 @@ export async function GET(req: NextRequest) {
         const status = isAboveNetwork ? 'ABOVE_NETWORK' : isAboveArea ? 'ABOVE_AREA' : 'NORMAL';
         return {
           areaAvgDevBom,
-          networkAvgDevBom,
+          networkAvgDevBom, // backward compat
+          allRestoAvgDevBom: networkAvgDevBom, // FIX: clearer name
           outletDevBom: devBomAggregate,
           areaMultiplier,
-          networkMultiplier,
+          networkMultiplier, // backward compat
+          allRestoMultiplier: networkMultiplier, // FIX: clearer name
           isAboveArea,
           isAboveNetwork,
           status,
@@ -537,9 +539,10 @@ export async function GET(req: NextRequest) {
         prevPctDevBom: prevPctDevBom,
         devBomGrowth: devBomGrowth,
         historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
-        // Benchmark
+        // Benchmark — FIX: renamed network → allResto for clarity (both returned for compat)
         areaAvgDevBom: areaAvgDevBom,
-        networkAvgDevBom: networkAvgDevBom,
+        networkAvgDevBom: networkAvgDevBom, // backward compat
+        allRestoAvgDevBom: networkAvgDevBom, // FIX: clearer name
         areaMultiplier: areaMultiplier,
         // Priority
         priority,

@@ -227,7 +227,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                 <div>
                   <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
                     <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
-                    Trend Multi-Periode (Network)
+                    Trend Multi-Periode (Semua Resto)
                   </p>
                   <div className="space-y-1">
                     {trendData.map((t, i) => (

@@ -31,7 +31,7 @@ interface RestoProfile {
     trend: string;
   };
   benchmark: {
-    areaAvgDevBom: number; networkAvgDevBom: number; outletDevBom: number; areaMultiplier: number | null;
+    areaAvgDevBom: number; allRestoAvgDevBom: number; outletDevBom: number; areaMultiplier: number | null;
   };
   topRisk: {
     byNominal: Array<{ itemName: string; value: number; direction: string }>;
@@ -98,12 +98,12 @@ interface ItemHistoryResponse {
   benchmark?: {
     outletDevBom: number | null;
     areaAvgDevBom: number | null;
-    networkAvgDevBom: number | null;
+    allRestoAvgDevBom: number | null;
     bestDevBom: number | null;
     areaMultiplier: number | null;
-    networkMultiplier: number | null;
+    allRestoMultiplier: number | null;
     areaOutletCount: number;
-    networkOutletCount: number;
+    allRestoOutletCount: number;
   };
   historical?: {
     mean: number | null;
@@ -384,7 +384,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Outlet Dev/BOM" value={fmtPct(profile.benchmark.outletDevBom)} />
             <Row label="Area Avg Dev/BOM" value={fmtPct(profile.benchmark.areaAvgDevBom)} />
-            <Row label="Network Avg Dev/BOM" value={fmtPct(profile.benchmark.networkAvgDevBom)} />
+            <Row label="Semua Resto Avg Dev/BOM" value={fmtPct(profile.benchmark.allRestoAvgDevBom)} />
             <Row label="Area Multiplier" value={profile.benchmark.areaMultiplier != null ? `${profile.benchmark.areaMultiplier.toFixed(2)}×` : '—'} />
           </CardContent>
         </Card>
@@ -583,12 +583,12 @@ function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
               <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 <Row label="Outlet Dev/BOM" value={fmtPct(data.benchmark?.outletDevBom)} />
                 <Row label="Area Avg Dev/BOM" value={fmtPct(data.benchmark?.areaAvgDevBom)} />
-                <Row label="Network Avg" value={fmtPct(data.benchmark?.networkAvgDevBom)} />
+                <Row label="Semua Resto Avg" value={fmtPct(data.benchmark?.allRestoAvgDevBom)} />
                 <Row label="Best Outlet" value={fmtPct(data.benchmark?.bestDevBom)} />
                 <Row label="Area Multiplier" value={data.benchmark?.areaMultiplier != null ? `${data.benchmark.areaMultiplier.toFixed(2)}×` : '—'} />
-                <Row label="Network Multiplier" value={data.benchmark?.networkMultiplier != null ? `${data.benchmark.networkMultiplier.toFixed(2)}×` : '—'} />
+                <Row label="Semua Resto Multiplier" value={data.benchmark?.allRestoMultiplier != null ? `${data.benchmark.allRestoMultiplier.toFixed(2)}×` : '—'} />
                 <Row label="Area Outlets" value={String(data.benchmark?.areaOutletCount ?? 0)} />
-                <Row label="Network Outlets" value={String(data.benchmark?.networkOutletCount ?? 0)} />
+                <Row label="Total Resto" value={String(data.benchmark?.allRestoOutletCount ?? 0)} />
               </CardContent>
             </Card>
 
@@ -853,10 +853,10 @@ function Row({ label, value, growth, sub, growthColor: gc }: {
 function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: string; analysisData?: AnalysisData }) {
   const [topN, setTopN] = useState<string>('50');
   const [filterPic, setFilterPic] = useState<string>('all');
-  // Auto-filter by focusOutlet — ranking hanya menampilkan item untuk resto yang dipilih
-  // User can still override via dropdown. Sync happens via key prop on component
-  // (component remounts when focusOutlet changes → initial state resets).
-  const [filterResto, setFilterResto] = useState<string>(focusOutlet || 'all');
+  // FIX: default 'all' (was focusOutlet) — topDeviasiRank only has 50 items,
+  // most outlets won't have items in top 50 → table shows empty.
+  // User can manually filter by resto via dropdown if needed.
+  const [filterResto, setFilterResto] = useState<string>('all');
 
   const allItems: DeviasiRankItem[] = analysisData?.topDeviasiRank || [];
   const picOptions = [...new Set(allItems.map((it) => it.pic).filter((v): v is string => Boolean(v)))].sort();

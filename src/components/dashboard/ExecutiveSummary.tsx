@@ -31,7 +31,7 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   TOLERANCE: 'Deviation/BOM melebihi tolerance yang diset',
   RESIDUAL: 'Sisa deviation setelah dikurangi Waste/Susut/Trial tinggi',
   DIRECTION: 'Nominal loss absolut tinggi',
-  BENCHMARK: 'Outlet menyimpang dari rata-rata area/network',
+  BENCHMARK: 'Outlet menyimpang dari rata-rata area/semua resto',
   HISTORICAL: 'Pola deviation abnormal vs historical behavior',
 };
 
