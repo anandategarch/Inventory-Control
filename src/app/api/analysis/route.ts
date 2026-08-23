@@ -48,6 +48,11 @@ import {
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import type { ExecutiveSummary } from '@/types/inventory';
+// Phase 3: extracted services
+import { buildExecSummaryFromSql } from './services/exec-summary';
+import { computeGrowthDrivers } from './services/growth-drivers';
+import { computeDeviationDrivers } from './services/deviation-drivers';
+import { buildTrend, buildMultiPeriodComparison, buildNetCostTrend } from './services/trend-builder';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX MIG-3/FUNC-1: heaviest route, needs >10s on Vercel Hobby
@@ -63,64 +68,7 @@ const ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
 // ~10 fewer columns × ~35K rows = meaningful payload + memory reduction.
 type RecWithRels = import('@/engine/analysis/types').RecWithRels;
 
-// ============================================================
-//  Build ExecutiveSummary from SQL aggregate rows
-//  (replaces JS buildExecutiveSummary that looped 35K records)
-// ============================================================
-function buildExecSummaryFromSql(
-  curr: {
-    sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
-    qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
-    totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
-    qtyDeviasiLoss: number;
-  } | null,
-  prev: {
-    sales: number; nominalDeviasi: number; qtyBom: number; qtyDeviasi: number;
-    qtyWaste: number; qtySusut: number; qtyTrial: number; qtyLossSurplus: number;
-    totalLoss: number; totalSurplus: number; residualLossQty: number; residualLossNominal: number;
-    qtyDeviasiLoss: number;
-  } | null,
-  monthLabel: string,
-  weekLabel: string,
-  prevWeekLabel: string | null,
-): ExecutiveSummary {
-  const c = curr ?? {
-    sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0,
-    qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0,
-    residualLossQty: 0, residualLossNominal: 0, qtyDeviasiLoss: 0,
-  };
-  const salesPrev = prev?.sales ?? null;
-  const nominalDeviasiPrev = prev?.nominalDeviasi ?? null;
-  const qtyBomPrev = prev?.qtyBom ?? null;
-  const qtyDeviasiPrev = prev?.qtyDeviasi ?? null;
-  const qtyWastePrev = prev?.qtyWaste ?? null;
-  const qtySusutPrev = prev?.qtySusut ?? null;
-  const qtyTrialPrev = prev?.qtyTrial ?? null;
-  const qtyLossSurplusPrev = prev?.qtyLossSurplus ?? null;
-
-  return {
-    period: { monthLabel, weekLabel, comparisonWeek: prevWeekLabel },
-    sales: { current: c.sales, previous: salesPrev, growth: calcGrowth(c.sales, salesPrev) },
-    nominalDeviasi: { current: c.nominalDeviasi, previous: nominalDeviasiPrev, growth: computeNominalDeviationGrowth(c.nominalDeviasi, nominalDeviasiPrev) },
-    qtyBom: { current: c.qtyBom, previous: qtyBomPrev, growth: calcGrowth(c.qtyBom, qtyBomPrev) },
-    qtyDeviasi: { current: c.qtyDeviasi, previous: qtyDeviasiPrev, growth: calcGrowth(c.qtyDeviasi, qtyDeviasiPrev) },
-    qtyWaste: { current: c.qtyWaste, previous: qtyWastePrev, growth: calcGrowth(c.qtyWaste, qtyWastePrev) },
-    qtySusut: { current: c.qtySusut, previous: qtySusutPrev, growth: calcGrowth(c.qtySusut, qtySusutPrev) },
-    qtyTrial: { current: c.qtyTrial, previous: qtyTrialPrev, growth: calcGrowth(c.qtyTrial, qtyTrialPrev) },
-    qtyLossSurplus: { current: c.qtyLossSurplus, previous: qtyLossSurplusPrev, growth: calcGrowth(c.qtyLossSurplus, qtyLossSurplusPrev) },
-    totalLoss: c.totalLoss,
-    totalSurplus: c.totalSurplus,
-    lossToSales: c.sales > 0 ? c.totalLoss / c.sales : null,
-    surplusToSales: c.sales > 0 ? c.totalSurplus / c.sales : null,
-    deviationToBom: c.qtyBom !== 0 ? c.qtyDeviasi / Math.abs(c.qtyBom) : null,
-    residualLossQty: c.residualLossQty,
-    // Bug 6 fix: use qtyDeviasiLoss (LOSS items only) as denominator, not
-    // qtyDeviasi (ALL items incl SURPLUS). Previously, surplus items inflated
-    // the denominator, making residual loss % appear smaller (healthier) than
-    // reality. Now: residualLossPct = residualLossQty / qtyDeviasiLoss.
-    residualLossPct: c.qtyDeviasiLoss > 0 ? c.residualLossQty / c.qtyDeviasiLoss : null,
-  };
-}
+// Phase 3: buildExecSummaryFromSql moved to ./services/exec-summary.ts
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -616,6 +564,8 @@ export async function GET(req: NextRequest) {
       // ===== Multi-Period Comparison =====
       // Built from trendAggRows (computed below, injected into growthComparison after)
       multiPeriodComparison: [] as Array<Record<string, unknown>>,
+      // Phase 3: actual type is MultiPeriodPoint[] from services/trend-builder.ts.
+      // Using Record<string, unknown> for forward-compat with the growthMetrics object.
     };
 
     // OPTIMIZE-ANALYSIS: DQ groupBy changed from `by: ['code','severity','message']`
@@ -630,68 +580,17 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Trend — from parallel queryTrendAgg result above
+    //  Phase 3: extracted to services/trend-builder.ts
     // ============================================================
-    const trend = trendAggRows
-      .map((r) => {
-        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-        return {
-          weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
-          devBom: r.devBom,
-          sales: r.sales,
-          nominal: r.nominal,
-        };
-      })
-      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-      .map(({ sortKey, ...rest }) => rest);
+    const trend = buildTrend(trendAggRows, monthKeyByLabel);
 
     // ===== Multi-Period Comparison — built from trendAggRows =====
-    const multiPeriodComparison = trendAggRows
-      .map((r) => {
-        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-        return {
-          period: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
-          sales: r.sales,
-          bom: r.qtyBom ?? null, // FIX FLOW3-2: populate from SQL (was always null)
-          deviation: r.nominal,
-          // FIX H7 (AUDIT-2): was `absDeviation: r.nominal` (identical to deviation).
-          // Live data showed 4/8 rows with NEGATIVE "absDeviation" — mislabeled field.
-          // absDeviation must be the magnitude (always ≥ 0).
-          absDeviation: Math.abs(r.nominal),
-          devBomRatio: r.devBom,
-          growthPct: null as number | null,
-        };
-      })
-      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-      .map((row, i, arr) => {
-        // Calculate growth vs previous period (magnitude — handles negative deviation)
-        if (i > 0) {
-          row.growthPct = computeNominalDeviationGrowth(row.deviation, arr[i - 1].deviation);
-        }
-        const { sortKey, ...rest } = row;
-        return rest;
-      });
+    const multiPeriodComparison = buildMultiPeriodComparison(trendAggRows, monthKeyByLabel);
     // Inject into growthMetrics
-    // FIX M2 (AUDIT-2): removed `as any` cast — multiPeriodComparison is now a
-    // first-class typed field on growthMetrics (declared at line 565).
-    growthMetrics.multiPeriodComparison = multiPeriodComparison;
+    growthMetrics.multiPeriodComparison = multiPeriodComparison as unknown as Array<Record<string, unknown>>;
 
     // Net Cost Trend — built from same queryTrendAgg result (no extra query)
-    const netCostTrend = trendAggRows
-      .map((r) => {
-        const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-        return {
-          weekLabel: `${r.weekLabel} ${r.monthLabel.split(' ')[0].slice(0, 3)}`,
-          sortKey: `${mk}|${String(parseInt(r.weekLabel.replace(/\D/g, "")) || 0).padStart(2, "0")}`,
-          netCostRatio: r.sales > 0 ? (r.lossNominal - r.surplusNominal) / r.sales : 0,
-          lossNominal: r.lossNominal,
-          surplusNominal: r.surplusNominal,
-          sales: r.sales,
-        };
-      })
-      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-      .map(({ sortKey, ...rest }) => rest);
+    const netCostTrend = buildNetCostTrend(trendAggRows, monthKeyByLabel);
 
     // ============================================================
     //  CPU computations (LLM narrative removed — Task REMOVE-AI).
@@ -846,150 +745,15 @@ export async function GET(req: NextRequest) {
 
     // ============================================================
     //  Growth Drivers — Pareto 80% analysis per metric
-    //  Computes top items contributing to growth/decline for each of 4 metrics
+    //  Phase 3: extracted to services/growth-drivers.ts
     // ============================================================
-    const growthDrivers = (() => {
-      const metrics = [
-        { key: 'sales', field: 'nominalSales' as const, label: 'Sales', groupBy: 'outlet' as const },
-        { key: 'bom', field: 'qtyBom' as const, label: 'BOM', groupBy: 'item' as const },
-        { key: 'qtyDeviasi', field: 'qtyDeviasi' as const, label: 'QTY Deviasi', groupBy: 'item' as const },
-        { key: 'nominalDeviasi', field: 'nominalDeviasi' as const, label: 'Nominal Deviasi', groupBy: 'item' as const },
-      ];
-
-      return metrics.map(metric => {
-        const currByKey = new Map<string, number>();
-        const prevByKey = new Map<string, number>();
-
-        // FIX: Sales grouped by outlet (outlet-level data), others by item (item-level data)
-        const getName = (r: RecWithRels): string => {
-          if (metric.groupBy === 'outlet') {
-            return r.outlet?.name || r.outlet?.code || `Outlet ${r.outletId}`;
-          }
-          return r.item?.name || `Item ${r.itemId}`;
-        };
-
-        for (const r of currentRecs) {
-          const name = getName(r);
-          const val = r[metric.field];
-          // FIX M-F (AUDIT-2): use SIGNED accumulation for qtyDeviasi (so LOSS↔SURPLUS
-          // flips are visible as large deltas). Keep ABS for sales, bom, nominalDeviasi
-          // (magnitude tracking — per FIX audit#11 for nominalDeviasi).
-          const useSigned = metric.key === 'qtyDeviasi';
-          if (val != null) currByKey.set(name, (currByKey.get(name) ?? 0) + (useSigned ? val : Math.abs(val)));
-        }
-        for (const r of prevRecs) {
-          const name = getName(r);
-          const val = r[metric.field];
-          const useSigned = metric.key === 'qtyDeviasi';
-          if (val != null) prevByKey.set(name, (prevByKey.get(name) ?? 0) + (useSigned ? val : Math.abs(val)));
-        }
-
-        const allKeys = new Set([...currByKey.keys(), ...prevByKey.keys()]);
-        const positive: Array<{ item: string; delta: number; pct: number }> = [];
-        const negative: Array<{ item: string; delta: number; pct: number }> = [];
-
-        // FIX H8 (AUDIT-2): delta threshold was `Math.abs(delta) < 1` — too coarse.
-        // For sales/nominalDeviasi (rupiah, often in billions), 1 rupiah is noise.
-        // For bom/qtyDeviasi (kg/units, often fractional), 1 unit filters legit items.
-        // Scale threshold per-metric: currency → 1000, qty → 0.01.
-        const deltaThreshold = metric.key === 'sales' || metric.key === 'nominalDeviasi' ? 1000 : 0.01;
-        for (const key of allKeys) {
-          const curr = currByKey.get(key) ?? 0;
-          const prev = prevByKey.get(key) ?? 0;
-          const delta = curr - prev;
-          if (Math.abs(delta) < deltaThreshold) continue;
-          const pct = prev > 0 ? delta / prev : 0;
-          if (delta > 0) positive.push({ item: key, delta, pct });
-          else negative.push({ item: key, delta, pct });
-        }
-
-        const computePareto = (arr: Array<{ item: string; delta: number; pct: number }>) => {
-          arr.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-          const totalDelta = arr.reduce((s, d) => s + Math.abs(d.delta), 0);
-          if (totalDelta === 0) return { drivers: [], remainderCount: 0, remainderPct: 0 };
-          let cumPct = 0;
-          const drivers: Array<{ item: string; delta: number; pct: number; cumPct: number; sharePct: number }> = [];
-          // FIX M-E (AUDIT-2): cap at top-20 drivers to avoid payload bloat.
-          // Live data showed sales.down emitting 119 driver objects (19KB / 10.8%
-          // of total payload). Nobody scrolls past 20 — the remainder is summarized.
-          const MAX_DRIVERS = 20;
-          for (const d of arr) {
-            if (drivers.length >= MAX_DRIVERS) break;
-            const sharePct = (Math.abs(d.delta) / totalDelta) * 100;
-            cumPct += sharePct;
-            drivers.push({ ...d, cumPct: Number(cumPct.toFixed(1)), sharePct: Number(sharePct.toFixed(1)) });
-            if (cumPct >= 80) break;
-          }
-          return {
-            drivers,
-            remainderCount: arr.length - drivers.length,
-            remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
-          };
-        };
-
-        return {
-          metric: metric.key,
-          label: metric.label,
-          groupBy: metric.groupBy, // 'outlet' or 'item' — frontend can label accordingly
-          up: computePareto(positive),
-          down: computePareto(negative),
-        };
-      });
-    })();
+    const growthDrivers = computeGrowthDrivers(currentRecs, prevRecs);
 
     // ============================================================
-    //  Deviation Drivers — Pareto 80% analysis per deviation category
-    //  (waste / susut / trial / residual). Powers the drill-down on
-    //  the Deviation Breakdown card (mirrors GrowthComparison's pattern).
-    //  Source: deviationDriverRows (single SQL GROUP BY item across all 4
-    //  categories). JS computes the 80% cumulative-share cut per category.
+    //  Deviation Drivers — Pareto 80% per deviation category
+    //  Phase 3: extracted to services/deviation-drivers.ts
     // ============================================================
-    const deviationDrivers = (() => {
-      const categories = [
-        { key: 'waste' as const, label: 'Waste', qtyField: 'wasteQty' as const, nomField: 'wasteNominal' as const },
-        { key: 'susut' as const, label: 'Susut', qtyField: 'susutQty' as const, nomField: 'susutNominal' as const },
-        { key: 'trial' as const, label: 'Trial', qtyField: 'trialQty' as const, nomField: 'trialNominal' as const },
-        { key: 'residual' as const, label: 'Residual', qtyField: 'residualQty' as const, nomField: 'residualNominal' as const },
-      ];
-
-      return categories.map(cat => {
-        // Build (item, qty, nominal) tuples — skip items with zero qty in this category
-        const rows = deviationDriverRows
-          .map(r => ({ item: r.itemName, qty: Number(r[cat.qtyField]) || 0, nominal: Number(r[cat.nomField]) || 0 }))
-          .filter(r => r.qty > 0);
-
-        // Sort descending by qty (Pareto order)
-        rows.sort((a, b) => b.qty - a.qty);
-
-        const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-        if (totalQty === 0) {
-          return { category: cat.key, label: cat.label, drivers: [], remainderCount: 0, remainderPct: 0 };
-        }
-
-        let cumPct = 0;
-        const drivers: Array<{ item: string; qty: number; nominal: number; sharePct: number; cumPct: number }> = [];
-        for (const r of rows) {
-          const sharePct = (r.qty / totalQty) * 100;
-          cumPct += sharePct;
-          drivers.push({
-            item: r.item,
-            qty: Number(r.qty.toFixed(2)),
-            nominal: Number(r.nominal.toFixed(0)),
-            sharePct: Number(sharePct.toFixed(1)),
-            cumPct: Number(cumPct.toFixed(1)),
-          });
-          if (cumPct >= 80) break;
-        }
-
-        return {
-          category: cat.key,
-          label: cat.label,
-          drivers,
-          remainderCount: rows.length - drivers.length,
-          remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
-        };
-      });
-    })();
+    const deviationDrivers = computeDeviationDrivers(deviationDriverRows);
 
     const result = {
       success: true,
