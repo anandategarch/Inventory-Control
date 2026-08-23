@@ -14837,3 +14837,232 @@ Stage Summary:
 - Mobile-responsive: badges wrap in 2-column grid, panel content fits narrow viewports.
 - Backward compatible: `deviationDrivers` is optional (`?`), so any consumer that doesn't read it still works.
 - Files changed: 4 (src/lib/queries/dashboard.ts, src/app/api/analysis/route.ts, src/hooks/useAnalysis.ts, src/components/dashboard/Charts.tsx).
+
+---
+Task ID: AUDIT-1
+Agent: Deep Audit (Deviation Breakdown Pareto)
+Task: Deep audit of newly-pushed Deviation Breakdown Pareto feature (commit 9384b7a)
+
+Work Log:
+- Read worklog.md prior entries (MIG-16 disabled analysisCache, FIX-TYPE-SAFETY eliminated `any`, OPTIMIZE-ANALYSIS trimmed payloads)
+- Read all 4 in-scope files: src/lib/queries/dashboard.ts (lines 207-259), src/app/api/analysis/route.ts (lines 489-516, 866-918), src/hooks/useAnalysis.ts (lines 240-254, 206), src/components/dashboard/Charts.tsx (lines 249-422)
+- Cross-referenced prisma/schema.prisma: confirmed `residualQty` (L125), `residualNominal` (L126), `nominalWaste/Susut/Trial` (L106-108), `qtyWaste/Susut/Trial` (L101-103) all exist as Float?
+- Confirmed `InventoryRecord_monthLabel_weekLabel_idx` index exists (schema L145)
+- Verified buildSqlFilters (src/lib/queries/shared.ts) uses Prisma.sql tagged templates — no raw interpolation
+- Compared against GrowthComparison (Charts.tsx L16-247) and queryTopItemsByCategory (items.ts L228-275) for pattern consistency
+- Hit live dev server: curl http://localhost:3000/api/analysis?month=Agustus%202026&week=WEEK%201 → HTTP 200, 165KB, 6.7s
+- Inspected actual `deviationDrivers` payload: 4 categories, all populated. Waste: 3 drivers cum 83.9%, Susut: 3 drivers cum 83.6%, Trial: 19 drivers cum 81.3%, Residual: 11 drivers cum 81.6%. deviationDrivers=3.7KB vs growthDrivers=17.6KB.
+- Verified Pareto "AT-or-past-80%" semantics: loop pushes item THEN checks `cumPct >= 80` → breaks. First-item>80% case handled (single-item drivers array).
+- Verified div-by-zero guard: `if (totalQty === 0) return {drivers:[], remainderCount:0, remainderPct:0}` (route.ts L891-893)
+- Verified COALESCE wraps every SUM in SQL (dashboard.ts L244-251) — NULL→0 safe
+- Verified ABS() sign handling matches queryDeviationBreakdown (L195-198) and queryTopItemsByCategory (L256-257)
+- Verified 4 category keys ('waste'/'susut'/'trial'/'residual') match between backend categories array (route.ts L874-878) and frontend chartData (Charts.tsx L255-258)
+- Verified DeviationDriver interface (useAnalysis.ts L241-247) matches backend emit shape {item, qty, nominal, sharePct, cumPct}
+- Verified `data.deviationDrivers || []` fallback handles both undefined and null
+- Verified query is inside the main Promise.all (route.ts L515, same block as 16 other queries) — parallel, no extra latency
+- Verified analysisCache is disabled (route.ts L962) — no stale-cache risk
+- Confirmed no `any` types introduced: dynamic prop access uses `as const` (route.ts L875-878), Recharts onClick cast is narrow `{ key?: string }` (Charts.tsx L317)
+
+Stage Summary (severity-ranked, file:line refs):
+- MEDIUM · Charts.tsx:330-352 · Badge click target ~20px tall (`px-2 py-1 text-[10px]`) — below 44px WCAG 2.5.5 touch target on mobile. Fix: bump to `py-2 min-h-[36px]` or wrap in larger hit area.
+- MEDIUM · Charts.tsx:317,332 · No ARIA attributes on expandable panel: badges lack `aria-expanded`/`aria-controls`, panel lacks `role="region"`. Fix: add `aria-expanded={isExpanded}` `aria-controls={`panel-${d.key}`}` on button, `id`+`role="region"` on panel.
+- MEDIUM · Charts.tsx:381 · Close button `✕ Tutup` has no `aria-label` — screen readers read "multiplication sign Tutup". Fix: `aria-label="Tutup panel Pareto"`.
+- MEDIUM · dashboard.ts:241-258 · SQL query has NO LIMIT — returns 1 row per Item. Currently ~109 items (fine), but no safeguard if catalog grows. Fix: append `LIMIT 500`.
+- MEDIUM · Charts.tsx:252 · `expanded` state not reset when `data` changes (no useEffect). If user expands 'waste' in week A then switches to week B with 0 waste, panel shows stale "Tidak ada data" instead of closing. NOTE: GrowthComparison has the same pattern — consistent but both share the minor UX issue. Fix: `useEffect(() => setExpanded(null), [data])`.
+- LOW · Charts.tsx:255-258 · Waste (`#f59e0b`) and Susut (`#a16207`) are both amber variants — may be visually confusable for color-blind users. Fix: use distinct hues (e.g., Susut → `#0891b2` cyan-600).
+- LOW · Charts.tsx:317 · Recharts Bar `onClick` cast `(d: { key?: string })` is narrow but unsafe — Recharts passes a `MouseEvent`-shaped object; `d.key` works because payload is merged, but type doesn't reflect that. Fix: type as `(d: { key?: string } & { payload?: { key?: string } })` and read `d.key ?? d.payload?.key`.
+- LOW · dashboard.ts:256 · GROUP BY `i.name` (string) merges two Item rows that share a name (different IDs). Intentional per comment ("cross-outlet aggregation") but inconsistent with queryTopItemsByCategory which groups by `i.name, o.code`. Acceptable but worth a code comment.
+- INFO · route.ts:884 · `Number(r[cat.qtyField]) || 0` correctly handles Prisma Decimal return + NaN, but `DeviationDriverItemRow` interface declares fields as `number` (slight lie — actual runtime is Decimal until coerced). Pre-existing pattern across codebase.
+- INFO · Charts.tsx:261-274 · `formatQty`/`formatRp` defined inside component (recreated each render) — negligible perf, could hoist with useCallback. Mirrors GrowthComparison's `formatDelta` pattern.
+
+Verified correct (no action needed):
+- Pareto 80% cut semantics: stops AT or just past 80% (push-then-break). First-item>80% → single-item drivers array. ✓
+- Division-by-zero: totalQty=0 returns empty drivers array gracefully. ✓
+- NULL propagation: COALESCE(SUM(ABS(...)),0) on all 8 columns. ✓
+- Sign handling: SUM(ABS(...)) matches queryDeviationBreakdown + queryTopItemsByCategory. ✓
+- residualQty/residualNominal columns exist (schema L125-126) and are populated (live: 205M residual). ✓
+- 4 category colors/keys match between backend (route.ts L874-878) and frontend (Charts.tsx L255-258). ✓
+- No `any` types — `as const` used for category keys, narrow casts elsewhere. ✓
+- DeviationDriver interface matches backend emit shape exactly. ✓
+- `data.deviationDrivers || []` handles undefined AND null. ✓
+- Query uses existing `InventoryRecord_monthLabel_weekLabel_idx` index (filter on monthLabel+weekLabel). ✓
+- Query runs inside main Promise.all (parallel, no extra latency). ✓
+- Pareto JS is O(n log n) sort + O(n) reduce — no O(n²). ✓
+- Payload size: deviationDrivers=3.7KB vs growthDrivers=17.6KB — reasonable, smaller. ✓
+- Single-panel-open behavior: `setExpanded(expanded === d.key ? null : d.key)` correctly closes A when B opens. ✓
+- Empty-state: 0 drivers → "Tidak ada data untuk kategori ini" (Charts.tsx L387). ✓
+- Single-item-100% case: loop pushes item, cum=100, breaks. drivers=[item], remainderCount=0, remainderPct=0. ✓
+- 0 records case: deviationDriverRows=[] → all 4 categories return empty drivers; breakdown total=0 → `b.total || 1` guards chart pct. ✓
+- SQL injection: buildSqlFilters uses Prisma.sql tagged templates (parameterized). ✓
+- Response not cached (analysisCache disabled per MIG-16). ✓
+- Badge layout grid-cols-2 gap-1.5 — identical to GrowthComparison. ✓
+- Residual>50% warning badge mirrors GrowthComparison's mismatch badges. ✓
+
+---
+Task ID: AUDIT-2
+Agent: Deep Audit (Growth Comparison + Multi-Period + Pareto)
+Task: Deep audit of Growth Comparison card, growthDrivers Pareto 80%, multiPeriodComparison
+
+Work Log:
+- Read worklog.md prior entries (FIX-TYPE-SAFETY, AUDIT-1, DEV-BREAKDOWN-PARETO, FLOW3-2)
+- Read 5 in-scope files end-to-end: Charts.tsx L1-247 (GrowthComparison), route.ts L555-864 (growthMetrics + growthDrivers + multiPeriodComparison), useAnalysis.ts L84-94 + L169-238 (interfaces), dashboard.ts L33-97 (queryTrendAgg), AnalysisCards.tsx L1-93 (MultiPeriodComparisonCard)
+- Read growth.ts L1-126 to verify computeNominalDeviationGrowth = calcGrowthAbs (magnitude-based)
+- Read route.ts L285-308 (buildWhere) to confirm currentRecs/prevRecs are filter-aware (area/outlet/item all applied)
+- Hit live dev server: curl /api/analysis?month=Agustus%202026&week=WEEK%201 → 200, 179KB, 6.8s
+- Inspected actual growthDrivers payload: 4 metrics, sales.up=3 drivers (cum 99.6%), sales.down=119 drivers (cum 80.1%, 64 remainder), bom/qtyDeviasi/nominalDeviasi reasonable (5-13 drivers each)
+- Inspected multiPeriodComparison payload: 8 rows. Verified bom populated (FLOW3-2 fix active, 0 null). Verified growthPct uses magnitude formula (W1→W2 nominal -82M→-506M yields growthPct=+5.16 = +516% magnitude increase — semantically correct)
+- Confirmed `absDeviation` field bug: 4/8 rows have NEGATIVE absDeviation (identical to signed `deviation` field) — field name is a lie
+- Confirmed `pct` field on GrowthDriver is dead: never read by UI (only delta/sharePct/cumPct rendered, Charts.tsx L191-194 + L220-223)
+- Confirmed all 3 sales.up drivers have pct=0 (new outlets where prev=0 → fallback to 0 per route.ts L832)
+- Confirmed `(growthMetrics as any).multiPeriodComparison = multiPeriodComparison` cast still present (route.ts L620) — type-safety regression survived FIX-TYPE-SAFETY sweep
+- Cross-referenced AUDIT-1 findings: GrowthComparison shares identical a11y gaps (badge py-1 ~20px, no aria-expanded/aria-controls, no role="region", "✕ Tutup" no aria-label, expanded not reset on data change)
+- Verified computeNominalDeviationGrowth semantics: magnitude formula (|curr|-|prev|)/|prev| — applied consistently to growthDrivers nominalDeviasi (route.ts L815,820 use Math.abs(val))
+- Verified no O(n²): 4 metrics × 2 passes × Map.get/set (O(1) amortized) = 8 linear passes over ~35K rows = ~280K iterations
+
+Stage Summary (severity-ranked, file:line refs):
+
+HIGH:
+- HIGH · route.ts:831 · `if (Math.abs(delta) < 1) continue` filter is too coarse for QTY — fractional deltas (0.5 kg) dropped. Combined with no per-metric threshold tuning, small-but-real QTY items vanish from Pareto. Fix: scale threshold by metric (sales/nominal → 1000, bom/qty → 0.01).
+- HIGH · Charts.tsx:28-31 · Mismatch badge condition `g.salesGrowth > 0 && g.nominalDeviasiGrowth > 2 * g.salesGrowth` MISSES the critical case: sales shrinking (salesGrowth<0) while deviation magnitude grows (nominalDeviasiGrowth>0). This is the worst mismatch scenario and is never surfaced. Fix: `g.nominalDeviasiGrowth > 0 && (g.salesGrowth == null || g.salesGrowth < g.nominalDeviasiGrowth / 2)`.
+- HIGH · route.ts:604-605 · `absDeviation: r.nominal` is identical to `deviation: r.nominal` — field is mislabeled. Live data: 4/8 rows have NEGATIVE "absDeviation". Frontend type `MultiPeriodComparisonRow.absDeviation: number` doesn't enforce non-negative. Fix: `absDeviation: Math.abs(r.nominal)`.
+
+MEDIUM:
+- MEDIUM · route.ts:837-854 · No cap on drivers array length. Live: sales.down emits 119 driver objects (cumPct crawls 1.7→80.1 across ~1% share outlets), bloating payload 19KB / 10.8% of total response. Fix: cap drivers at top-20, push remainder into remainderCount/remainderPct.
+- MEDIUM · route.ts:620 · `(growthMetrics as any).multiPeriodComparison = multiPeriodComparison` — `as any` cast survived FIX-TYPE-SAFETY sweep (worklog claimed 0 `any`). Fix: declare `growthMetrics` with `multiPeriodComparison?: MultiPeriodComparisonRow[]` upfront (the empty-array placeholder on L565 already telegraphs the late-injection pattern).
+- MEDIUM · Charts.tsx:121 · Badges `px-2 py-1 text-[10px]` ~20px tall — below 44px WCAG 2.5.5 touch target. Identical to AUDIT-1's DeviationBreakdown finding. Fix: `py-2 min-h-[36px]`.
+- MEDIUM · Charts.tsx:118-138 · Badges lack `aria-expanded`/`aria-controls`; expandable panel (L166) lacks `role="region"`/`aria-labelledby`; close button "✕ Tutup" (L171) has no `aria-label`. Screen-reader users get no state feedback. Fix: add ARIA triad + `aria-label="Tutup panel Pareto"`.
+- MEDIUM · Charts.tsx:105,128,156,188,218 · Color contrast fails WCAG AA for small text: emerald `#10b981` 2.46:1 on white, amber `#f59e0b` 2.0:1 — both below 4.5:1 for text-[10px]. Only `#dc2626` (4.5:1) passes. Fix: darken to emerald-700 `#047857` (5.0:1) + amber-700 `#b45309` (4.5:1) for text usage.
+- MEDIUM · route.ts:815,820 (qtyDeviasi metric) · `Math.abs(val)` applied uniformly to all 4 metrics, but qtyDeviasi is SIGNED (positive=surplus, negative=loss). Magnitude aggregation merges loss→surplus flip into delta=0, hiding sign-flip drivers. Same semantic concern as nominalDeviasi (which is intentionally magnitude-based per FIX audit#11). Fix: keep ABS for nominalDeviasi (consistent w/ computeNominalDeviationGrowth), but use SIGNED accumulation for qtyDeviasi so flips surface as large deltas.
+- MEDIUM · Charts.tsx:19 · `expanded` state not reset when `data` changes (no useEffect). User expands 'sales' in week A → switches to week B with no prev → chartData empty but stale `expanded='sales'` keeps panel open showing stale drivers. Same issue as AUDIT-1's DeviationBreakdown. Fix: `useEffect(() => setExpanded(null), [data])`.
+
+LOW / INFO:
+- LOW · route.ts:832 · `pct = prev > 0 ? delta / prev : 0` — for new outlets (prev=0), pct silently becomes 0. UI doesn't render pct (dead field), but the type `GrowthDriver.pct: number` lies about semantics. Fix: set `pct: null` and update type to `pct: number | null`, OR remove the field entirely.
+- LOW · route.ts:807 · `getName` for groupBy='outlet' falls back to `r.outlet?.code` when name is empty — live data shows 100% of sales drivers are codes (CBIPAS, TJSSEN, MLGPAR), suggesting outlet.name is sparsely populated. UI label "item" (GrowthDriver.item) is misleading for outlets. Fix: rename to `name` or add `groupBy` indicator in UI badge.
+- LOW · Charts.tsx:145-149 · Mismatch badge is not dismissible — always rendered when condition true. Acceptable for an alert but can't be silenced by users who already saw it. INFO.
+- INFO · useAnalysis.ts:93 · `MultiPeriodComparisonRow.[key: string]: unknown` index signature is dead — actual emitted object has exactly 7 known keys. Worklog says "forward-compat" but no future fields are planned. Safe to remove.
+- INFO · useAnalysis.ts:88 · `bom: number | null` — backend always emits `r.qtyBom ?? null` (route.ts L603), but queryTrendAgg uses `COALESCE(SUM(ABS(qtyBom)),0)` (dashboard.ts L75) so bom is NEVER null in practice. Type is overly permissive but harmless.
+- INFO · route.ts:792-864 · Performance verified O(n): 4 metrics × 2 linear passes × Map O(1) ops = ~280K iterations over 35K rows. No hidden quadratic. 8ms measured CPU time. ✓
+- INFO · Charts.tsx:97 · Bar `onClick={(d: { key?: string }) => ...}` cast — same narrow-type fragility as AUDIT-1 flagged for DeviationBreakdown. Recharts merges payload, so `d.key` works at runtime but the type doesn't reflect it. Same fix: `(d: { key?: string } & { payload?: { key?: string } })`.
+- INFO · route.ts:614 · `computeNominalDeviationGrowth` for multiPeriodComparison growthPct is magnitude-based — sign-flips (LOSS→SURPLUS) only show as magnitude change, losing direction info. Semantically intentional per code comment (L612) and consistent with nominalDeviasiGrowth in growthMetrics. Document or surface as separate "direction flip" badge if needed.
+- INFO · Cross-feature consistency: MultiPeriodComparisonCard (AnalysisCards.tsx L82-85) uses #10b981 (Sales), #71717a (BOM), #f59e0b (Deviasi), #dc2626 (Growth line). GrowthComparison uses #10b981/#f59e0b/#dc2626 for positive/amber/mismatch. Color scheme is consistent across both cards. ✓
+
+Verified correct (no action needed):
+- Filter-awareness: currentRecs + prevRecs use buildWhere(week, month) with area/outletCode/itemName/PIC — growthDrivers respects all filters. ✓
+- queryTrendAgg uses buildSqlFilters (parameterized, no SQL injection) and applies same filterOpts as growthDrivers. multiPeriodComparison is filter-consistent. ✓
+- multiPeriodComparison.bom is now populated (FLOW3-2 fix verified live — 0/8 null). ✓
+- growthPct null on first row (i=0) — handled gracefully by Recharts Line (gap rendered). ✓
+- Empty currentRecs → API returns 404 (route.ts L384-389). ✓
+- Empty prevRecs → all deltas positive, chartData filters `d.growth != null` (salesGrowth=null when prev=0), so empty-state message shows. growthDrivers still computed but unreachable (no badges rendered). ✓
+- Single-period case (1 trend row): multiPeriodComparison has 1 row, growthPct=null, chart renders single bar. ✓
+- Empty growthDrivers: `drivers.length > 0` guard (Charts.tsx L161) prevents panel render. ✓
+- Pareto 80% cut: push-then-break, first-item>80% → single-item array. ✓
+- Div-by-zero: totalDelta=0 → returns empty drivers (route.ts L840). ✓
+- Response not cached (analysisCache disabled per MIG-16). ✓
+- No new `any` introduced in GrowthComparison UI (4 prior `any` already eliminated by FIX-TYPE-SAFETY). ✓
+- growthDrivers interface (useAnalysis.ts L225-238) matches backend emit shape {metric,label,groupBy,up:{drivers,remainderCount,remainderPct},down:{...}}. ✓
+
+---
+Task ID: AUDIT-3
+Agent: Deep Audit (Ranking Nasional + Resto Analysis + Outlet Focus)
+Task: Deep audit of RankingNasionalCard, RestoAnalysis, /api/outlet-items, /api/item-history, /api/recommendations
+
+Work Log:
+- Read worklog.md prior entries mentioning RankingNasional / RestoAnalysis / OutletFocus / outlet-items / DEV-BREAKDOWN-PARETO / FLOW3 / FIX-TYPE-SAFETY (especially lines 5176-5228, 5475-5632, 9148-9476, 12970-13160, 14695-14779, 14843-14897).
+- Read end-to-end: src/components/dashboard/RestoAnalysis.tsx (971 lines: RestoAnalysis + ItemDetailModal + MenuAnalysis + RankingNasionalCard + Row helper), src/app/api/outlet-items/route.ts (591 lines), src/app/api/item-history/route.ts (311 lines), src/app/api/recommendations/route.ts (110 lines), src/lib/queries/items.ts:109-223 (queryTopItemsByDeviasiRank), src/lib/queries/outlets.ts:577-998 (queryRestoRecommendations), src/lib/queries/shared.ts (buildSqlFilters), src/lib/a11y.ts (clickableRowProps), src/lib/metrics/growth.ts:80-106 (computeGrowthResult).
+- Read src/hooks/useAnalysis.ts:67-94 (DeviasiRankItem + MultiPeriodComparisonRow interfaces), src/components/dashboard/PrioritySummaryCard.tsx:31-67,871-884 (Recommendation + OutletItem interfaces), src/components/dashboard/RestoRecommendationCard.tsx:1-48 (RestoRecommendation divergent interface).
+- Read prisma/schema.prisma:74,97 (satuan String? — nullable).
+- Hit live dev server (localhost:3000): /api/status (8 months Januari–Agustus 2026), /api/outlet-items?outletCode=B.1001.MLGPAR&month=Agustus%202026&week=WEEK%201 (returned areaAvgDevBom=0 + areaMultiplier=null for outlet whose Outlet.area="JAWA TIMUR 1" but InventoryRecord.area="BAKSO"), /api/outlet-items?outletCode=1203.CBICIL (area benchmark works fine — areaMultiplier=1.06×), /api/item-history?outletCode=1203.CBICIL&itemName=MINYAK%20MIE%20(V.20) (22 timeline rows, priority P1, zScore 0.98, trend DETERIORATING), /api/item-history with nonexistent item (404 with availablePeriods list), /api/recommendations?...&limit=5 (5 recs, 15 signalScores each, top outlet 1205.BKSMUT score=88), /api/analysis (topDeviasiRank returns 50 items, all 14 fields match DeviasiRankItem interface).
+- Confirmed 0 `any` in RestoAnalysis.tsx via grep, and `npx tsc --noEmit` passes clean.
+- Confirmed `queryTopItemsByDeviasiRank` SQL applies `LIMIT ${limit}` (items.ts:208) — not JS truncation. But the `bucket_avg` CTE self-join computes over ALL ~36K (item,outlet) pairs, not just top 50 — wasted work.
+- Confirmed `pctLossSurplusToBom` SQL uses `ABS(SUM(qtyLossSurplus))` (always non-negative) but the UI (RestoAnalysis.tsx:952) checks `it.pctLossSurplusToBom < 0 ? 'red' : 'green'` — dead code branch, always renders green.
+- Confirmed historical.trend='DETERIORATING' when prevRecs is empty (B.1001.MLGPAR live response: prevQtyBom=0, prevQtyDeviasi=0, bomGrowth=null, deviasiGrowth=null, trend=DETERIORATING). Root cause: computeGrowthResult(curr, 0, 0.1) returns trend='NEW' when prev=0 → mapped to DETERIORATING at route.ts:396-400.
+- Confirmed investigationWorklist removed from /api/analysis response (route.ts:946-947) and 0 dangling refs in RestoAnalysis.tsx.
+- Confirmed MenuAnalysis groups by first word of itemName (RestoAnalysis.tsx:710) — would merge "AYAM CINCANG" and "AYAM GORENG" into same group, breaking outlier detection semantics.
+- Cross-checked: outlet-items route uses `ir.area = ${outlet.area}` (lines 231, 187, 218) — relies on denormalized ir.area matching Outlet.area. For outlets where these diverge (MLGPAR), area bench returns 0 silently. MIG-7 in worklog flagged this as a data issue but did not address the silent-0 benchmark behavior in the API.
+- Verified all SQL injection paths: buildSqlFilters uses Prisma.sql tagged templates (parameterized); outlet-items/item-history/recommendations routes interpolate via Prisma.sql tagged templates — no raw string concatenation.
+- Verified all 5 outlet-items queries in Promise.all (route.ts:138-247) — parallel, none sequential.
+- Verified /api/recommendations is pure SQL+JS (no LLM call) — `grep -rn "z-ai-web-dev-sdk\|llm\|LLM" /api/recommendations/ /lib/queries/outlets.ts` returned 0 matches. maxDuration=30 is safety net only.
+
+Stage Summary (severity-ranked, with file:line refs):
+
+HIGH:
+- HIGH · src/app/api/outlet-items/route.ts:231 (also 187, 218) · Area benchmark SQL `WHERE ir.area = ${outlet.area}` silently returns 0 when Outlet.area (e.g. "JAWA TIMUR 1") diverges from denormalized InventoryRecord.area (e.g. "BAKSO"). Live: B.1001.MLGPAR returns areaAvgDevBom=0, areaMultiplier=null, item-level areaMultiplier=null for ALL 55 items. UI shows "—" with no warning. Affects entire Benchmark card + "vs Area" column. Fix: JOIN Outlet on outletId and filter by `o.area = ${outlet.area}`, OR query ir.area separately and use that.
+- HIGH · src/components/dashboard/RestoAnalysis.tsx:952 · `pctLossSurplusToBom < 0 ? 'red' : 'green'` is dead code — SQL (items.ts:154) uses `ABS(SUM(qtyLossSurplus))` which is always ≥0. The "%LS to BOM" column ALWAYS renders green, contradicting the card subtitle "Negatif (merah) = rugi. Positif (hijau) = untung." LOSS items are not visually distinguished. Fix: use `it.direction === 'LOSS'` for color, OR remove ABS in SQL to keep signed value.
+- HIGH · src/app/api/outlet-items/route.ts:396-400 · `historical.trend = 'DETERIORATING'` is incorrectly returned when no previous period exists (prevRecs=[] → prevQtyDeviasi=0). computeGrowthResult(curr, 0, 0.1) returns trend='NEW' → mapped to DETERIORATING. Live: B.1001.MLGPAR returns trend=DETERIORATING with bomGrowth=null, deviasiGrowth=null, nominalGrowth=null. UI shows red TrendingUp icon with no comparison baseline. Fix: guard with `prevWeek && prevMonth` (or `prevRecs.length > 0`) before mapping; default to 'STABLE' or 'INSUFFICIENT_DATA' when no prev data.
+
+MEDIUM:
+- MEDIUM · src/components/dashboard/RestoAnalysis.tsx:710 · MenuAnalysis groups by `(item.itemName || 'LAINNYA').split(/\s+/)[0]` — merges different items sharing a first word (e.g. "AYAM CINCANG" + "AYAM GORENG" → group "AYAM"). avg+2σ outlier detection across different items is statistically meaningless. Fix: group by full itemName (no grouping), or by a real menu taxonomy field, or use Item.code prefix.
+- MEDIUM · src/lib/queries/items.ts:175-190 · `bucket_avg` CTE self-join computes per-(item,outlet) bucket averages over ALL ~36K (item,outlet) pairs, but only top 50 by rankNominal are returned. O(N×M) wasted work (~720× more than needed for top-50 use case). Fix: chain CTEs to compute bucket_avg only for top-50 items (e.g. wrap main SELECT in a subquery, JOIN bucket_avg only on the top-50 result).
+- MEDIUM · src/app/api/outlet-items/route.ts:559-568 · Rankings `operational` and `unexplained` are computed (sort+slice+map) and serialized in every response, but UI Tabs only renders 'financial' (RestoAnalysis.tsx:442). ~10KB wasted payload + 2 extra sorts per request. Fix: remove operational+unexplained from API response, OR add TabsTriggers for them.
+- MEDIUM · src/components/dashboard/RestoAnalysis.tsx:148-150 · Priority badge color contrast fails WCAG AA for small text (12px): `text-amber-600` on `bg-amber-100` ≈ 3.5:1, `text-emerald-600` on `bg-emerald-100` ≈ 3.8:1 (need 4.5:1). Only P1 (red-600 on red-100 ≈ 4.5:1) passes. Fix: use amber-700/emerald-700 (darker text), or amber-200/emerald-200 (lighter bg).
+- MEDIUM · src/components/dashboard/RestoAnalysis.tsx:893-894, 868 + src/lib/queries/items.ts:208 · Top N dropdown offers "Top 100" / "Semua" but SQL caps at 50. User selecting those options silently sees only 50 items. Fix: remove the Top 100/Semua options, OR lift the SQL LIMIT when those options are selected (would require passing topN to the analysis query).
+- MEDIUM · src/components/dashboard/RestoAnalysis.tsx:504, 861 + src/app/page.tsx:512 · RankingNasionalCard receives `analysisData` from the parent's filtered analysis (filtered by FilterBar's `outletCode`), NOT by `focusOutlet`. When user clicks a table row (sets focusOutlet=B) while FilterBar has outletCode=A, the card shows ranking for outlet A but the RestoAnalysis header shows outlet B. Inconsistent. Fix: separately fetch unfiltered topDeviasiRank for the card, OR filter the array by `focusOutlet` in the card.
+
+LOW / INFO:
+- LOW · src/components/dashboard/RestoRecommendationCard.tsx:12-48 vs src/components/dashboard/PrioritySummaryCard.tsx:31-67 · Two divergent interfaces (`RestoRecommendation` has `area`, no `signalScores`; `Recommendation` has `signalScores`, no `area`) for the same `/api/recommendations` response. Future field additions risk drift. Fix: extract a shared `RecommendationResponse` type to `@/hooks/useAnalysis` or `@/types`.
+- LOW · src/lib/queries/items.ts:201 · `rankBom` uses ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ABS(qtyBom) DESC) — ties (identical qtyBom) get arbitrary sequential ranks based on row order, not "tied". Use RANK() or DENSE_RANK() if tie semantics matter. In practice qtyBom ties are rare.
+- LOW · src/components/dashboard/RestoAnalysis.tsx:468 · Zebra striping `idx % 2 === 1 ? 'bg-muted/10' : ''` overrides `priorityBg(r.priority)` on odd rows. P1/P2/P3 priority background color is lost on every other row. Fix: use opacity-based zebra (`even:bg-...`) OR apply priority bg with higher specificity.
+- INFO · src/lib/queries/items.ts:179-180 · `avgDeviasiByBom` field name is misleading — SQL averages `absQtyDeviasi` (QTY), not `pctQtyDeviasiToBom` (ratio). UI uses fmtNum (QTY display) which is correct given the actual value, but column header "AVG Dev By BOM" implies a ratio. (Already noted in worklog line 5191.)
+- INFO · src/components/dashboard/RestoAnalysis.tsx:55 · `ItemRow.[key: string]: unknown` index signature is overly permissive — the actual API emits exactly 28 known fields. The index signature masks missing-field bugs at compile time. (Same pattern flagged in AUDIT-2 for MultiPeriodComparisonRow.)
+- INFO · src/lib/queries/items.ts:154 · `pctLossSurplusToBom = ABS(SUM(qtyLossSurplus)) / SUM(ABS(qtyBom))` — when a (item,outlet) group has mixed-sign qtyLossSurplus (some LOSS, some SURPLUS rows), ABS(SUM) understates the true magnitude. SUM(ABS) would be more conservative. (Design choice documented in worklog as "FIX Bug 3A".)
+
+Verified correct (no action needed):
+- `queryTopItemsByDeviasiRank` applies SQL `LIMIT ${limit}` (items.ts:208) — not JS truncation. ✓
+- `pctLossSurplusToBom` returns NULL when qtyBom=0 via `CASE WHEN SUM(ABS(qtyBom))>0 ... ELSE NULL END` (items.ts:153-155). ✓
+- `avgDeviasiByBom` returns NULL when no peer outlets in bucket via `CASE WHEN otherCount>0 ... ELSE NULL` (items.ts:197). ✓
+- `rankNominal` + `rankBom` computed via SQL `ROW_NUMBER() OVER(...)` — not JS (items.ts:198-202). ✓
+- `/api/outlet-items` returns 404 for unknown outletCode (route.ts:84-86). ✓
+- `/api/item-history` returns 404 with availablePeriods list when period not found (route.ts:154-161). ✓
+- All 5 outlet-items queries in Promise.all (route.ts:138-247) — parallel, none sequential. ✓
+- MenuAnalysis uses parent's data (no duplicate fetch) — BUG 6.10 fix verified (RestoAnalysis.tsx:691). ✓
+- No LLM call in /api/recommendations — pure SQL+JS. maxDuration=30 is safety net only. ✓
+- /api/item-history fetches ALL periods (no LIMIT) — capped at ~24 rows for current 8-month data, fine. ✓
+- Empty states: topDeviasiRank=[] → "Tidak ada data" (line 940-941); menuGroups=[] → "Tidak ada data menu" (line 771-775); item-history no records → 404 with helpful message. ✓
+- SQL injection: all params via Prisma.sql tagged templates (parameterized) in buildSqlFilters + all 3 routes. ✓
+- `direction` computed on-the-fly from nominalLossSurplus sign (FLOW3-1/3 fix verified in all 3 routes). ✓
+- 0 `any` types in RestoAnalysis.tsx (FIX-TYPE-SAFETY clean); `npx tsc --noEmit` passes. ✓
+- clickableRowProps on Bahan Analysis rows (RestoAnalysis.tsx:468) — keyboard accessible (tabIndex=0, role=button, onKeyDown). ✓
+- RankingNasionalCard has `key={activeOutlet}` — remounts on outlet change, resets filterResto state. ✓
+- investigationWorklist removed from API response + 0 dangling refs in RestoAnalysis.tsx. ✓
+- DeviasiRankItem interface (14 fields, useAnalysis.ts:67-82) matches live API emit shape exactly. ✓
+- OutletItemsResponse + ItemHistoryResponse local interfaces match actual API payloads. ✓
+- Recommendations `limit` clamped to [1,50] (route.ts:22). ✓
+- /api/recommendations validates filter params (limit clamped, area/outletCode/pic passed via buildSqlFilters parameterized). ✓
+- Health score, residualPct, explainedPct, lossToSales, priority all routed through Metric Engine (computeHealthScore, computeResidualPctAggregate, etc.) — single source of truth. ✓
+- RestoAnalysis null guards (lines 273-276) protect against partial API responses. ✓
+- ItemDetailModal handles loading/error/empty states with helpful messages. ✓
+
+
+---
+Task ID: AUDIT-4
+Agent: Deep Audit (Card DrillDown + Item Deep Dive + Peer Comparison)
+Task: Deep audit of CardDrillDown, ItemDeepDive, PeerComparison, DrillDownDrawer, SourceDataModal
+
+Work Log:
+- Read worklog.md for context: found prior BUG-4-8/BUG-4-11 fixes (useDrilldown guards, clickableRowProps), AUDIT-FLOW3 (direction calc), DEEP-AUDIT-API-2 (resolveMonthLabel) + DEEP-AUDIT-API-7 (drilldown case-sensitive itemName) + DEEP-AUDIT-API-13 (multi-period array cap), and BUG-6-8 (ItemDeepDive top-N misleading counts).
+- Read all 5 in-scope component files end-to-end: CardDrillDown.tsx (229 lines), ItemDeepDive.tsx (248 lines), PeerComparison.tsx (1131 lines), DrillDownDrawer.tsx (121 lines), SourceDataModal.tsx (212 lines).
+- Read 3 in-scope API/hook files: /api/drilldown/route.ts (120 lines), /api/peer-comparison/items/route.ts (216 lines), /hooks/useAnalysis.ts (424 lines).
+- Read supporting files: format.ts (95 lines, null/NaN guards verified), useDashboard.ts (75 lines, zustand store), sheet.tsx (140 lines, Radix Dialog primitive), prisma schema lines 113-146 (bulan/bulan2/direction/residualQty/toleranceRaw).
+- Verified `as any` / `: any` count in 5 frontend components: ZERO matches in CardDrillDown/ItemDeepDive/PeerComparison/DrillDownDrawer/SourceDataModal (only `as unknown as DrillRow[]` casts in CardDrillDown for union row shape, and `: unknown` formatter params per ColumnDef interface).
+- Verified live APIs via curl on http://localhost:3000:
+  * GET /api/drilldown?outletCode=1378.CBIPAS&weekLabel=WEEK 1&monthLabel=Agustus 2026 → 50 records, success=true. Sample record derived.direction=LOSS (computed from nominalLossSurplus=-15229<0), residualQty=-15229 (negative = over-explained, math correct: -15233-(-4+0+0)=-15229), bulan="201.AGUSTUS 26", bulan2="20.AGUSTUS".
+  * GET /api/drilldown?itemName=bumbu pasta kuah (v.20) (lowercase) → 0 records. Same item "BUMBU PASTA KUAH (V.20)" (uppercase) → 1 record. CONFIRMED case-sensitivity bug at route.ts:43 (Prisma default mode=case-sensitive). resolveMonthLabel is applied (route.ts:35-39) for month but NOT for itemName.
+  * GET /api/peer-comparison?outletCode=1378.CBIPAS&month=Agustus 2026&week=WEEK 1 → 11 peers (target + 10). Peer selection by sales ±10% (NOT by area/category). Peers span 5 different areas (BANTEN, JAKARTA, JAWA BARAT 1/2, KALIMANTAN 2). Sales range 478M-507M (target 492M). Consistent with route docstring.
+  * GET /api/peer-comparison/items?outletCode=1378.CBIPAS&month=Agustus 2026&week=WEEK 1 → 5 items, each with 32 peers (target + 31). Item[0]=STEROFOAM DIMSUM (V.20), peerAvg + peerBest + gap computed correctly.
+- Cross-checked BUG-6-8 status: ItemDeepDive.tsx:46-49 still derives allOccurrences/lossCount/surplusCount/totalAbsNominal from `data.topItemsByNominal` (top-N=10 per thresholds.ts:32 TOP_N_ITEMS=10). NOT FIXED.
+- Cross-checked FIX-TYPE-SAFETY pattern from RestoAnalysis.tsx:273-274 (`data.restoProfile ?? ({} as RestoProfile)`, `data.outlet ?? {...}`) — DrillDownDrawer.tsx:81-89 and SourceDataModal.tsx:160-191 do NOT have the same null guards on `r.outlet.name`, `r.item.name`, `r.qty.bom`, `r.derived.direction`, `r.source.fileName` etc.
+- Verified CardDrillDown color function: line 46 `color: (v) => (v as number) < 0 ? 'text-red-600' : 'text-emerald-600'` — when v=null, `null < 0 === false` so returns emerald. Combined with `fmtIDR(null) → '—'` produces green dash. Reproduced on `devToSalesRatio: number | null` field (line 47 has `v != null` guard, but lines 46/57/68/79 color functions don't).
+- Verified drawer is Radix Sheet (sheet.tsx uses `@radix-ui/react-dialog` primitive) — focus trap + ESC + pointer-down-outside are all default behaviors. Same for Dialog (CardDrillDown/ItemDeepDive/SourceDataModal).
+- Verified ItemDeepDive tooltip: line 142-152 has `active && payload && payload[0] && payload[0].payload` guard before `payload[0].payload!.name` (line 147). The `!` is redundant given the guard but not crash-prone.
+- Verified useDrilldown hook (useAnalysis.ts:400-424): enabled flag `Boolean(params.outletCode || params.itemName)` correctly skips fetch when both are null. No staleTime set (defaults to 0 — refetches on every mount).
+- Verified drilldown API limit: route.ts:29 caps at `Math.min(parsedLimit || 50, 500)`. Drawer/Modal don't pass `limit` so default 50 is used. DrillDownDrawer renders all returned records without virtualization (max 500).
+- Verified peer-comparison/items SQL: parameterized via Prisma.sql tagged template (no injection vector). topItems capped at 20 (line 38).
+- Verified column format signature: CardDrillDown.tsx:27 `format?: (v: unknown, row: DrillRow) => string` matches the actual usage in configs (e.g., line 47 `format: (v) => v != null ? fmtPctAbs(v as number) : '—'`). Consistent.
+- Verified TipPayload type in ItemDeepDive.tsx:23-29 — `TipPayloadEntry` allows `payload?: { name?: string; value?: number }` optional, matches Recharts' `Payload<ValueType, NameType>` shape (which is also optional). Sufficient for safe access via `payload[0].payload!.name`.
+- Verified DrilldownRecord.derived index signature `[key: string]: unknown` (useAnalysis.ts:388) — NOT dead. Allows server-side forward-compat (server can emit new derived fields like `residualRatio`, `toleranceRaw` without breaking TS). Used by DrillDownDrawer.tsx:103-108 + SourceDataModal.tsx:182-188 to access fields like `residualRatio`, `tolerancePct`, `avgPrice` that aren't in the explicit type.
+
+Stage Summary:
+- HIGH: 3 issues (case-sensitive itemName in drilldown API confirmed live; missing null guards on nested objects in DrillDownDrawer/SourceDataModal; ItemDeepDive top-N misleading counts BUG-6.8 still unfixed).
+- MEDIUM: 5 issues (CardDrillDown color returns emerald for null; drawer/modal table not virtualized with 500-row cap; useDrilldown staleTime=0 causes refetch-on-mount; drilldown API no pagination; ItemDeepDive non-null `!` assertions fragile).
+- LOW/INFO: 5 issues (`where: any` + `e: any` in route; ScatterPlot tooltip over-cast type; `key={i}` array-index keys in CardDrillDown; `derived` index signature is intentional not dead; CSV "maks 50" message hardcodes default limit).
+- Verified correct: 0 `any` types in 5 frontend files; rate limit + limit cap + resolveMonthLabel in drilldown route; parameterized SQL in peer-comparison items; Radix focus trap/ESC for all dialogs/sheet; fmtIDR/fmtNum/fmtPctAbs null/NaN/Infinity guards; derived.direction computed on-the-fly from nominalLossSurplus sign with qtyDeviasi fallback (consistent with global LOSS=negative/SURPLUS=positive); derived.residualQty math correct (qtyDeviasi - (waste+susut+trial)); peer selection by sales ±10% (verified live across 5 areas); useDrilldown enabled flag correctly skips null params; clickableRowProps applied to ItemDeepDive + PeerComparison rows for keyboard a11y.
