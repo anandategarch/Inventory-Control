@@ -472,7 +472,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                   </TableHeader>
                   <TableBody>
                     {currentRanking.map((r, idx) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all ${idx % 2 === 1 ? 'bg-muted/10' : ''}`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-[11px] py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
                         <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>

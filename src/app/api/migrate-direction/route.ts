@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { statusCache, analysisCache } from '@/lib/cache';
+import { invalidateCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
@@ -85,6 +86,8 @@ export async function POST(req: NextRequest) {
     // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
     statusCache.clear();
     analysisCache.clear();
+    // FIX Medium #1: invalidate DB-level AggregationCache too.
+    invalidateCache('analysis|').catch(() => {});
     clearMonthResolverCache();
 
     return NextResponse.json({

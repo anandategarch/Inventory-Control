@@ -7,8 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
+import type { DrilldownRecord } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { ExternalLink, X } from 'lucide-react';
+import { useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function DrillDownDrawer() {
   const { drilldown, setDrilldown, monthLabel, currentWeek, sourceModalOpen, setSourceModal } = useDashboard();
@@ -53,8 +56,8 @@ export function DrillDownDrawer() {
               <>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="text-xs">{drill.data.count} record</Badge>
-                  {drill.data.count > 100 && (
-                    <Badge variant="secondary" className="text-[10px]">Menampilkan 100 teratas</Badge>
+                  {drill.data.hasMore && (
+                    <Badge variant="secondary" className="text-[10px]">Halaman 1 — gunakan API cursor untuk load more</Badge>
                   )}
                   <Button
                     size="sm"
@@ -65,37 +68,9 @@ export function DrillDownDrawer() {
                   </Button>
                 </div>
 
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Outlet</TableHead>
-                      <TableHead className="text-xs">Item</TableHead>
-                      <TableHead className="text-xs text-right">QTY BOM</TableHead>
-                      <TableHead className="text-xs text-right">QTY Dev</TableHead>
-                      <TableHead className="text-xs text-right">Nom Dev</TableHead>
-                      <TableHead className="text-xs text-right">Dev/BOM</TableHead>
-                      <TableHead className="text-xs text-center">Dir</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {/* FIX M-N (AUDIT-4): cap visible rows at 100 to prevent jank
-                        when outlet has 500 items. Full data available via SourceDataModal. */}
-                    {drill.data.records.slice(0, 100).map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-xs">
-                          <div className="font-medium">{r.outlet?.name ?? '—'}</div>
-                          <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
-                        </TableCell>
-                        <TableCell className="text-xs font-medium">{r.item?.name ?? '—'}</TableCell>
-                        <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
-                        <TableCell className={`text-xs text-right ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
-                        <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
-                        <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
-                        <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>{r.derived?.direction?.[0] ?? '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                {/* FIX Medium #3: virtualized table — renders only visible rows.
+                    Was capped at 100 (M-N fix), now renders all 500 smoothly. */}
+                <VirtualizedDrawerTable records={drill.data.records} />
 
                 {drill.data.records.length > 0 && (
                   <div className="rounded-lg border p-3 space-y-2">
@@ -122,5 +97,66 @@ export function DrillDownDrawer() {
         </ScrollArea>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ============================================================
+//  VirtualizedDrawerTable — virtualized table for drawer.
+//  FIX Medium #3: renders only visible rows via @tanstack/react-virtual.
+//  Handles 500 records smoothly (was janky at 100+).
+// ============================================================
+function VirtualizedDrawerTable({ records }: { records: DrilldownRecord[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: records.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 40, // row height (single-line cells)
+    overscan: 8,
+  });
+
+  const items = rowVirtualizer.getVirtualItems();
+  const totalHeight = rowVirtualizer.getTotalSize();
+
+  return (
+    <div ref={parentRef} className="overflow-auto border rounded-md" style={{ maxHeight: '400px' }}>
+      <Table>
+        <TableHeader className="sticky top-0 bg-background z-10">
+          <TableRow>
+            <TableHead className="text-xs">Outlet</TableHead>
+            <TableHead className="text-xs">Item</TableHead>
+            <TableHead className="text-xs text-right">QTY BOM</TableHead>
+            <TableHead className="text-xs text-right">QTY Dev</TableHead>
+            <TableHead className="text-xs text-right">Nom Dev</TableHead>
+            <TableHead className="text-xs text-right">Dev/BOM</TableHead>
+            <TableHead className="text-xs text-center">Dir</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.length > 0 && (
+            <tr style={{ height: `${items[0].start}px` }} />
+          )}
+          {items.map((virtualRow) => {
+            const r = records[virtualRow.index];
+            return (
+              <TableRow key={r.id} style={{ height: `${virtualRow.size}px` }}>
+                <TableCell className="text-xs">
+                  <div className="font-medium">{r.outlet?.name ?? '—'}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
+                </TableCell>
+                <TableCell className="text-xs font-medium">{r.item?.name ?? '—'}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
+                <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
+                <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>{r.derived?.direction?.[0] ?? '—'}</TableCell>
+              </TableRow>
+            );
+          })}
+          {items.length > 0 && (
+            <tr style={{ height: `${totalHeight - items[items.length - 1].end}px` }} />
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

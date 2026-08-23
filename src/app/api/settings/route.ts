@@ -14,6 +14,7 @@ import {
   type SettingDefinition,
 } from '@/lib/settings';
 import { analysisCache } from '@/lib/cache';
+import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -178,6 +179,8 @@ export async function POST(req: NextRequest) {
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     analysisCache.clear();
+    // FIX Medium #1: invalidate DB-level AggregationCache too.
+    invalidateCache('analysis|').catch(() => {});
 
     return NextResponse.json({
       success: true,

@@ -281,7 +281,9 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   const total = b.total || 1;
   const chartData = [
     { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: '#f59e0b', key: 'waste' },
-    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#a16207', key: 'susut' },
+    // FIX L1 (AUDIT-1): Susut was #a16207 (amber variant) — too similar to Waste #f59e0b.
+    // Changed to violet #7c3aed for color-blind accessibility (distinct hue).
+    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#7c3aed', key: 'susut' },
     { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: '#65a30d', key: 'trial' },
     { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? '#dc2626' : '#71717a', key: 'residual' },
   ];

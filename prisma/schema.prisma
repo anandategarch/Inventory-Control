@@ -154,32 +154,6 @@ model InventoryRecord {
 }
 
 // ------------------------------------------------------------
-//  Period comparison (curr vs prev week, per outlet × item)
-// ------------------------------------------------------------
-model PeriodComparison {
-  id                    Int      @id @default(autoincrement())
-  outletId              Int
-  itemId                Int
-  currentWeekId         Int
-  previousWeekId        Int?
-  salesGrowth           Float?
-  bomGrowth             Float?
-  qtyDeviasiGrowth      Float?
-  nominalDeviasiGrowth  Float?
-  priceGrowth           Float?
-  deviationToSalesRatio Float?
-  deviationToBomRatio   Float?
-  historicalAvgDevBom   Float?
-  historicalStdDev      Float?
-  benchmarkFlag         String? // ABOVE_AREA_AVG | ABOVE_NETWORK_AVG | NORMAL
-  zScore                Float?
-
-  @@unique([outletId, itemId, currentWeekId])
-  @@index([currentWeekId])
-  @@index([outletId])
-}
-
-// ------------------------------------------------------------
 //  Data Quality issues
 // ------------------------------------------------------------
 model DQIssue {
@@ -199,42 +173,6 @@ model DQIssue {
 
   @@index([sourceFileId])
   @@index([code, severity])
-}
-
-// ------------------------------------------------------------
-//  Anomaly rule definitions (config mirror; source of truth = rules.yaml)
-// ------------------------------------------------------------
-model AnomalyRule {
-  id          Int      @id @default(autoincrement())
-  code        String   @unique
-  name        String
-  category    String   // SALES | BOM | WASTE | TOLERANCE | BENCHMARK | RESIDUAL | DIRECTION
-  condition   String   // JSON DSL expression
-  severity    String   // NORMAL | WARNING | ABNORMAL
-  priority    Int      @default(50)
-  active      Boolean  @default(true)
-  narrativeTemplate String?
-}
-
-// ------------------------------------------------------------
-//  Anomaly flags (evaluated per record) — uses ruleCode string for decoupling
-// ------------------------------------------------------------
-model AnomalyFlag {
-  id          Int      @id @default(autoincrement())
-  ruleCode    String
-  outletId    Int
-  itemId      Int
-  weekId      Int
-  monthKey    String
-  severity    String
-  evidence    String   // JSON: {metric, value, threshold, growth, ...}
-  narrative   String?
-  createdAt   DateTime @default(now())
-
-  @@index([outletId, weekId])
-  @@index([itemId, weekId])
-  @@index([ruleCode])
-  @@index([monthKey])
 }
 
 // ------------------------------------------------------------

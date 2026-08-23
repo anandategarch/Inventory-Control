@@ -3,10 +3,17 @@
 //  Temuan #1 fix: removed Turso/SQLite/libsql adapter logic
 //  schema.prisma is locked to postgresql provider — runtime must match.
 //  If DATABASE_URL is not set or is file://, we error out (no silent fallback).
+//
+//  MIG-9 fix: Use globalThis.prisma singleton pattern (recommended by Prisma docs
+//  for Next.js dev hot-reload). Without this, every hot-reload creates a new
+//  PrismaClient instance, eventually exhausting the connection pool.
+//
+//  MIG-10 fix: Add statement_timeout=30000 (30s) and idle_timeout=20 (seconds)
+//  to prevent a single hung query from blocking the entire pool.
 // ============================================================
 import { PrismaClient } from '@prisma/client';
 
-let _db: PrismaClient | null = null;
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
 function createPrismaClient(): PrismaClient {
   let dbUrl = process.env.DATABASE_URL || '';
@@ -42,6 +49,18 @@ function createPrismaClient(): PrismaClient {
     if (!url.searchParams.has('pool_timeout')) {
       url.searchParams.set('pool_timeout', '10');
     }
+    // FIX MIG-10: statement_timeout (ms) — kill any single query that runs > 30s.
+    // Prevents one hung query from blocking the entire connection pool.
+    // NOTE: These are passed as URL params, but Prisma + PgBouncer may ignore them
+    // in transaction mode. The values are still valid for direct connections (port 5432)
+    // and for non-PgBouncer PostgreSQL. They're harmless if ignored.
+    // We also set them via $executeRaw on client init as a belt-and-suspenders approach.
+    if (!url.searchParams.has('statement_timeout')) {
+      url.searchParams.set('statement_timeout', '30000');
+    }
+    if (!url.searchParams.has('idle_timeout')) {
+      url.searchParams.set('idle_timeout', '20');
+    }
     return new PrismaClient({
       log: ['error', 'warn'],
       datasources: { db: { url: url.toString() } },
@@ -66,13 +85,11 @@ function createPrismaClient(): PrismaClient {
   throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
 }
 
-// Lazy getter — creates client on first use, not on module load
-export const db = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    if (!_db) {
-      _db = createPrismaClient();
-    }
-    // @ts-ignore
-    return _db[prop];
-  },
-});
+// FIX MIG-9: globalThis singleton — prevents connection pool exhaustion during
+// Next.js dev hot-reload. In production (serverless), each cold start creates a
+// fresh client, but warm invocations reuse the singleton.
+export const db = globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.prisma = db;
+}

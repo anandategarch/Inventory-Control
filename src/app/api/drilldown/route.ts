@@ -1,8 +1,12 @@
 // ============================================================
 //  /api/drilldown — raw records for traceability
-//  Query: ?outletCode=&itemName=&weekLabel=&monthLabel=&limit=
+//  Query: ?outletCode=&itemName=&weekLabel=&monthLabel=&limit=&cursor=
 //  Also supports multi-period via comma-separated weekLabel/monthLabel
 //  (for cross-month compare drilldown)
+//
+//  FIX Medium #2: cursor-based pagination. Pass `cursor` (record ID) to fetch
+//  the next page. Response includes `nextCursor` for the next page.
+//  Default limit 50, max 500. Frontend can implement "Load More" button.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -27,6 +31,11 @@ export async function GET(req: NextRequest) {
     const monthLabel = url.searchParams.get('monthLabel');
     const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
     const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50, 500);
+    // FIX Medium #2: cursor-based pagination.
+    // cursor = record ID (int). When provided, fetch records AFTER this ID
+    // (ordered by absNominalDeviasi DESC, then id DESC for stable tie-break).
+    const cursorParam = url.searchParams.get('cursor');
+    const cursor = cursorParam ? parseInt(cursorParam, 10) : null;
 
     // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
     // monthLabel may be a single value or comma-separated list (multi-period compare).
@@ -55,13 +64,31 @@ export async function GET(req: NextRequest) {
     const records = await db.inventoryRecord.findMany({
       where,
       include: { outlet: true, item: true, week: true, sourceFile: true },
-      orderBy: { absNominalDeviasi: 'desc' },
-      take: limit,
+      orderBy: [
+        { absNominalDeviasi: 'desc' },
+        { id: 'desc' }, // FIX Medium #2: stable tie-break for cursor pagination
+      ],
+      // FIX Medium #2: cursor-based pagination.
+      // When cursor is provided, skip 1 record (the cursor record itself) and
+      // take `limit` records after it. This gives stable pagination even when
+      // new records are inserted between requests.
+      ...(cursor != null && Number.isFinite(cursor)
+        ? { cursor: { id: cursor }, skip: 1, take: limit }
+        : { take: limit }),
     });
+
+    // Determine nextCursor for the next page (last record's ID, if we got a full page)
+    const nextCursor = records.length === limit && records.length > 0
+      ? records[records.length - 1].id
+      : null;
 
     return NextResponse.json({
       success: true,
       count: records.length,
+      // FIX Medium #2: pagination metadata. Frontend can use nextCursor to fetch
+      // the next page via `?cursor=${nextCursor}`. hasMore=false means last page.
+      nextCursor,
+      hasMore: nextCursor != null,
       records: records.map((r) => ({
         id: r.id,
         // FIX H5 (AUDIT-4): null guards on nested relations — soft-deleted Outlet/Item

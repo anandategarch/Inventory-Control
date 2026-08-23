@@ -44,10 +44,16 @@ import {
   queryHistoricalStats,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 import type { ExecutiveSummary } from '@/types/inventory';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX MIG-3/FUNC-1: heaviest route, needs >10s on Vercel Hobby
+
+// FIX Medium #1: DB-level caching via AggregationCache table.
+// TTL 5 minutes. Cache hit skips all 16 parallel SQL queries (~7s → <100ms).
+// Cache invalidated on: ingest, settings change, direction migration (see those routes).
+const ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // OPTIMIZE-ANALYSIS: RecWithRels is the slim record shape declared in
 // src/engine/analysis/types.ts. Both findMany queries below use `select`
@@ -175,6 +181,25 @@ export async function GET(req: NextRequest) {
       }
       month = month || latest.monthLabel;
       week = week || latest.weekLabel;
+    }
+
+    // FIX Medium #1: DB-level cache check.
+    // Try to read cached result BEFORE running the 16 parallel SQL queries.
+    // Cache hit: <100ms response (vs 6-8s cold). TTL 5 min.
+    const cacheKey = buildCacheKey({
+      route: 'analysis',
+      month, week,
+      compareWeek: compareWeek ?? compareMonthExplicit,
+      compareMonth: compareMonthExplicit,
+      area, outletCode, itemName, pic,
+    });
+    const cached = await getCached<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
+    if (cached && typeof cached === 'object' && 'success' in cached) {
+      // Cache hit — return immediately with cached flag
+      const cachedResult = cached as Record<string, unknown>;
+      cachedResult.cached = true;
+      cachedResult.durationMs = Date.now() - startedAt;
+      return NextResponse.json(cachedResult);
     }
 
     // ===== P1 fix: Pre-SQL metadata queries — ALL PARALLEL =====
@@ -981,6 +1006,10 @@ export async function GET(req: NextRequest) {
 
     // DISABLED: analysisCache.set — in-memory cache unreliable in serverless
     // Client-side TanStack Query handles caching (staleTime 60s)
+
+    // FIX Medium #1: Store result in DB cache (fire-and-forget, non-blocking).
+    // Next request with same filter params will hit cache (<100ms vs 6-8s).
+    setCached(cacheKey, result);
 
     // ============================================================
     //  P2 fix: Fire-and-forget audit log — don't block response on DB write.

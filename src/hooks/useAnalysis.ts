@@ -90,7 +90,6 @@ export interface MultiPeriodComparisonRow {
   absDeviation: number;
   devBomRatio: number;
   growthPct: number | null;
-  [key: string]: unknown;
 }
 
 export interface AreaAnalysis {
@@ -397,6 +396,9 @@ export interface DrilldownRecord {
 export interface DrilldownData {
   success: boolean;
   count: number;
+  // FIX Medium #2: pagination metadata from cursor-based pagination.
+  nextCursor: number | null;
+  hasMore: boolean;
   records: DrilldownRecord[];
 }
 

@@ -8,9 +8,11 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useDrilldown } from '@/hooks/useAnalysis';
+import type { DrilldownRecord } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { Database, Download, X } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function SourceDataModal() {
   const { sourceModalOpen, setSourceModal, drilldown, monthLabel, currentWeek } = useDashboard();
@@ -132,76 +134,15 @@ export function SourceDataModal() {
             </div>
           )}
           {drill.data && records.length > 0 && (
-            <Table>
-              <TableHeader className="sticky top-0 bg-background z-10">
-                <TableRow>
-                  <TableHead className="text-xs">Outlet</TableHead>
-                  <TableHead className="text-xs">Item</TableHead>
-                  <TableHead className="text-xs">Period</TableHead>
-                  <TableHead className="text-xs text-right">QTY BOM</TableHead>
-                  <TableHead className="text-xs text-right">QTY COM</TableHead>
-                  <TableHead className="text-xs text-right">QTY Dev</TableHead>
-                  <TableHead className="text-xs text-right">QTY Waste</TableHead>
-                  <TableHead className="text-xs text-right">QTY Susut</TableHead>
-                  <TableHead className="text-xs text-right">QTY Trial</TableHead>
-                  <TableHead className="text-xs text-right">QTY LS</TableHead>
-                  <TableHead className="text-xs text-right">Nom Dev</TableHead>
-                  <TableHead className="text-xs text-right">Nom Sales</TableHead>
-                  <TableHead className="text-xs text-right">Dev/BOM</TableHead>
-                  <TableHead className="text-xs text-right">Tol</TableHead>
-                  <TableHead className="text-xs text-right">Resid Ratio</TableHead>
-                  <TableHead className="text-xs text-center">Dir</TableHead>
-                  <TableHead className="text-xs">Source File</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* FIX M-N (AUDIT-4): cap visible rows at 100 to prevent jank.
-                    Full data available via Export CSV button. */}
-                {records.slice(0, 100).map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="text-xs">
-                      <div className="font-medium">{r.outlet?.name ?? '—'}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.outlet?.area ?? '—'}</div>
-                    </TableCell>
-                    <TableCell className="text-xs font-medium">
-                      {r.item?.name ?? '—'}
-                      {r.item?.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      <div>{r.period?.weekLabel ?? '—'}</div>
-                      <div className="text-[11px] text-muted-foreground">{r.period?.monthLabel ?? '—'}</div>
-                    </TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtIDR(r.nominal?.sales ?? null)}</TableCell>
-                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
-                    <TableCell className="text-xs text-right">
-                      {r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : '—'}
-                    </TableCell>
-                    <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.residualRatio ?? null)}</TableCell>
-                    <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>
-                      {r.derived?.direction?.[0] ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{r.source?.fileName ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <VirtualizedRecordsTable records={records} />
           )}
         </div>
 
         {drill.data && records.length > 0 && (
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
-              Menampilkan {Math.min(records.length, 100)} dari {records.length} record{records.length !== 1 ? 's' : ''}
-              {records.length > 100 && ' — gunakan Export CSV untuk data lengkap'}
+              Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
+              {records.length === 500 && ' (maks 500 — gunakan Export CSV untuk data lengkap)'}
             </span>
             <Badge variant="outline" className="text-[11px]">
               Dapat ditelusuri ke Excel sumber
@@ -210,5 +151,100 @@ export function SourceDataModal() {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ============================================================
+//  VirtualizedRecordsTable — virtualized table for 100+ records.
+//  FIX Medium #3: uses @tanstack/react-virtual to render only visible rows.
+//  Renders 500 records smoothly (was janky at 100+ with native table).
+//  Keeps sticky header + horizontal scroll for 17 columns.
+// ============================================================
+function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: records.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 52, // row height (2-line cells)
+    overscan: 10, // render 10 extra rows above/below viewport
+  });
+
+  const items = rowVirtualizer.getVirtualItems();
+  const totalHeight = rowVirtualizer.getTotalSize();
+
+  return (
+    <div ref={parentRef} className="overflow-auto" style={{ maxHeight: '60vh' }}>
+      <Table>
+        <TableHeader className="sticky top-0 bg-background z-10">
+          <TableRow>
+            <TableHead className="text-xs">Outlet</TableHead>
+            <TableHead className="text-xs">Item</TableHead>
+            <TableHead className="text-xs">Period</TableHead>
+            <TableHead className="text-xs text-right">QTY BOM</TableHead>
+            <TableHead className="text-xs text-right">QTY COM</TableHead>
+            <TableHead className="text-xs text-right">QTY Dev</TableHead>
+            <TableHead className="text-xs text-right">QTY Waste</TableHead>
+            <TableHead className="text-xs text-right">QTY Susut</TableHead>
+            <TableHead className="text-xs text-right">QTY Trial</TableHead>
+            <TableHead className="text-xs text-right">QTY LS</TableHead>
+            <TableHead className="text-xs text-right">Nom Dev</TableHead>
+            <TableHead className="text-xs text-right">Nom Sales</TableHead>
+            <TableHead className="text-xs text-right">Dev/BOM</TableHead>
+            <TableHead className="text-xs text-right">Tol</TableHead>
+            <TableHead className="text-xs text-right">Resid Ratio</TableHead>
+            <TableHead className="text-xs text-center">Dir</TableHead>
+            <TableHead className="text-xs">Source File</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {/* Spacer row above */}
+          {items.length > 0 && (
+            <tr style={{ height: `${items[0].start}px` }} />
+          )}
+          {items.map((virtualRow) => {
+            const r = records[virtualRow.index];
+            return (
+              <TableRow key={r.id} style={{ height: `${virtualRow.size}px` }}>
+                <TableCell className="text-xs">
+                  <div className="font-medium">{r.outlet?.name ?? '—'}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.outlet?.area ?? '—'}</div>
+                </TableCell>
+                <TableCell className="text-xs font-medium">
+                  {r.item?.name ?? '—'}
+                  {r.item?.satuan && <div className="text-[11px] text-muted-foreground">{r.item.satuan}</div>}
+                </TableCell>
+                <TableCell className="text-xs">
+                  <div>{r.period?.weekLabel ?? '—'}</div>
+                  <div className="text-[11px] text-muted-foreground">{r.period?.monthLabel ?? '—'}</div>
+                </TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</TableCell>
+                <TableCell className={`text-xs text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</TableCell>
+                <TableCell className="text-xs text-right">{fmtIDR(r.nominal?.sales ?? null)}</TableCell>
+                <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</TableCell>
+                <TableCell className="text-xs text-right">
+                  {r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : '—'}
+                </TableCell>
+                <TableCell className="text-xs text-right">{fmtPctAbs(r.derived?.residualRatio ?? null)}</TableCell>
+                <TableCell className={`text-xs text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>
+                  {r.derived?.direction?.[0] ?? '—'}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">{r.source?.fileName ?? '—'}</TableCell>
+              </TableRow>
+            );
+          })}
+          {/* Spacer row below */}
+          {items.length > 0 && (
+            <tr style={{ height: `${totalHeight - items[items.length - 1].end}px` }} />
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
