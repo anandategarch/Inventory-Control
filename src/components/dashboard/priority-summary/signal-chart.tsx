@@ -356,19 +356,19 @@ export function SignalChart({ name, r, items }: { name: string; r: Recommendatio
           <table className="w-full text-[10px]">
             <thead className="bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm sticky top-0 z-10">
               <tr>
-                <th className="text-left px-2 py-1 font-semibold text-muted-foreground">#</th>
-                <th className="text-left px-2 py-1 font-semibold text-muted-foreground">Item</th>
-                <th className="text-right px-2 py-1 font-semibold text-muted-foreground">% Deviasi</th>
-                <th className="text-right px-2 py-1 font-semibold text-muted-foreground">Nominal</th>
+                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">#</th>
+                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Item</th>
+                <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground">% Deviasi</th>
+                <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground">Nominal</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.idx} className="border-t border-border/40">
-                  <td className="px-2 py-1 text-muted-foreground">{row.idx}</td>
-                  <td className="px-2 py-1 truncate" title={row.name}>{row.name}</td>
-                  <td className="px-2 py-1 text-right tabular-nums text-amber-600 dark:text-amber-400">{row.pct}%</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{fmtIDR(row.nominal)}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{row.idx}</td>
+                  <td className="px-3 py-1.5 truncate" title={row.name}>{row.name}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-amber-600 dark:text-amber-400">{row.pct}%</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtIDR(row.nominal)}</td>
                 </tr>
               ))}
             </tbody>

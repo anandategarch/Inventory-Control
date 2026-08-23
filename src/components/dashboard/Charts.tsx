@@ -6,6 +6,7 @@ import { fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
+import { getTooltipStyle } from '@/lib/chart-constants';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ComposedChart, Line, Legend, Cell,
@@ -109,7 +110,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" className="opacity-60" />
                   <XAxis type="number" tickFormatter={(v) => fmtPct(v, true, 0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="name" width={90} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
+                  <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={getTooltipStyle()} />
                   <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                     {chartData.map((d, i) => {
                       const mismatch =
@@ -342,7 +343,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
               <Tooltip
                 cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
                 formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
-                contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                contentStyle={getTooltipStyle()}
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
@@ -488,7 +489,7 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" className="opacity-60" />
               <XAxis dataKey="name" fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
+              <Tooltip cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={getTooltipStyle()} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]} maxBarSize={56}>
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
@@ -497,11 +498,11 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
           </ResponsiveContainer>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-md border bg-red-50/40 dark:bg-red-950/20 px-2 py-1">
+          <div className="rounded-md border bg-red-50/40 dark:bg-red-950/20 px-3 py-1.5">
             <span className="text-muted-foreground">LOSS nominal:</span>{' '}
             <span className="font-semibold text-red-600 dark:text-red-400 tabular-nums">Rp {(l.lossNominal / 1_000_000).toFixed(2)}Jt</span>
           </div>
-          <div className="rounded-md border bg-emerald-50/40 dark:bg-emerald-950/20 px-2 py-1">
+          <div className="rounded-md border bg-emerald-50/40 dark:bg-emerald-950/20 px-3 py-1.5">
             <span className="text-muted-foreground">SURPLUS nominal:</span>{' '}
             <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">Rp {(l.surplusNominal / 1_000_000).toFixed(2)}Jt</span>
           </div>
@@ -567,7 +568,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
               <Tooltip
                 cursor={{ stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3 3' }}
                 formatter={(v: number | string, n: string) => n === 'Dev/BOM' ? `${(Number(v) * 100).toFixed(2)}%` : Number(v).toLocaleString()}
-                contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                contentStyle={getTooltipStyle()}
               />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Line yAxisId="left" type="monotone" dataKey="devBom" name="Dev/BOM" stroke="#dc2626" strokeWidth={2.5} dot={{ r: 3, fill: '#dc2626' }} activeDot={{ r: 5 }} />

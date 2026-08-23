@@ -190,10 +190,10 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[11px] h-7 px-2">#</TableHead>
-                      <TableHead className="text-[11px] h-7 px-2">Outlet</TableHead>
-                      <TableHead className="text-[11px] h-7 px-2 text-right">|NOMINAL|</TableHead>
-                      <TableHead className="text-[11px] h-7 px-2 text-center">Dir</TableHead>
+                      <TableHead className="text-[11px] h-9 px-3">#</TableHead>
+                      <TableHead className="text-[11px] h-9 px-3">Outlet</TableHead>
+                      <TableHead className="text-[11px] h-9 px-3 text-right">|NOMINAL|</TableHead>
+                      <TableHead className="text-[11px] h-9 px-3 text-center">Dir</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -209,10 +209,10 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                           setDrilldown({ outletCode: it.outletCode, itemName: it.itemName });
                         })}
                       >
-                        <TableCell className="text-[11px] text-muted-foreground px-2 py-1">{i + 1}</TableCell>
-                        <TableCell className="text-[11px] px-2 py-1 font-medium">{it.outletCode}</TableCell>
-                        <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
-                        <TableCell className={`text-[11px] px-2 py-1 text-center font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
+                        <TableCell className="text-[11px] text-muted-foreground px-3 py-1.5">{i + 1}</TableCell>
+                        <TableCell className="text-[11px] px-3 py-1.5 font-medium">{it.outletCode}</TableCell>
+                        <TableCell className="text-[11px] px-3 py-1.5 text-right font-semibold">{fmtIDR(it.absNominal)}</TableCell>
+                        <TableCell className={`text-[11px] px-3 py-1.5 text-center font-semibold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -227,17 +227,17 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                     <Table>
                       <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                         <TableRow>
-                          <TableHead className="text-[11px] h-7 px-2">Minggu</TableHead>
-                          <TableHead className="text-[11px] h-7 px-2 text-right">QTY Deviasi</TableHead>
-                          <TableHead className="text-[11px] h-7 px-2 text-right">NOMINAL</TableHead>
+                          <TableHead className="text-[11px] h-9 px-3">Minggu</TableHead>
+                          <TableHead className="text-[11px] h-9 px-3 text-right">QTY Deviasi</TableHead>
+                          <TableHead className="text-[11px] h-9 px-3 text-right">NOMINAL</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {drilldownQuery.data.records.slice(0, 8).map((r: DrilldownRecord, i: number) => (
                           <TableRow key={i}>
-                            <TableCell className="text-[11px] px-2 py-1 text-muted-foreground">{r.period?.weekLabel || '—'}</TableCell>
-                            <TableCell className="text-[11px] px-2 py-1 text-right">{fmtNum(r.qty?.deviasi)}</TableCell>
-                            <TableCell className="text-[11px] px-2 py-1 text-right font-semibold">{fmtIDR(r.nominal?.deviasi ?? r.derived?.absNominalDeviasi)}</TableCell>
+                            <TableCell className="text-[11px] px-3 py-1.5 text-muted-foreground">{r.period?.weekLabel || '—'}</TableCell>
+                            <TableCell className="text-[11px] px-3 py-1.5 text-right">{fmtNum(r.qty?.deviasi)}</TableCell>
+                            <TableCell className="text-[11px] px-3 py-1.5 text-right font-semibold">{fmtIDR(r.nominal?.deviasi ?? r.derived?.absNominalDeviasi)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -255,7 +255,7 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                   </p>
                   <div className="space-y-1">
                     {trendData.map((t, i) => (
-                      <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-2 py-1">
+                      <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-3 py-1.5">
                         <span className="text-muted-foreground">{t.weekLabel}</span>
                         <span className="font-semibold">{fmtIDR(t.nominal)}</span>
                       </div>

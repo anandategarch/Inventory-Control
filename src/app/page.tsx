@@ -28,8 +28,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import dynamic from 'next/dynamic';
 
 const LoadingChart = () => (
-  <div className="flex items-center justify-center h-48">
-    <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+  <div className="flex flex-col items-center justify-center h-48 space-y-3">
+    <Skeleton className="h-full w-full rounded-lg" />
   </div>
 );
 
@@ -200,8 +200,8 @@ function ErrorState({ message }: { message: string }) {
 
 function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNode; title: string; badge?: string; isFetching?: boolean }) {
   return (
-    <div className="flex items-center gap-2.5 mb-3">
-      <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+    <div className="flex items-center gap-2.5 mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
         {icon}
       </span>
       <h2 className="text-base font-semibold tracking-tight">{title}</h2>
@@ -223,9 +223,9 @@ function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNo
 // Wrapper that shows loading overlay when fetching
 function FetchAware({ isFetching, children }: { isFetching: boolean; children: React.ReactNode }) {
   return (
-    <div className={`relative transition-all duration-200 ${isFetching ? 'opacity-95' : 'opacity-100'}`}>
+    <div className={`relative transition-all duration-200 ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
       {isFetching && (
-        <div className="absolute -top-1 right-1 z-10">
+        <div className="absolute inset-0 z-10 flex items-start justify-end p-2">
           <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-background/85 backdrop-blur-sm h-5 shadow-sm">
             <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
             Memperbarui

@@ -201,19 +201,19 @@ export function RestoRecommendationCard() {
 
             {/* Quick metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2 text-[11px]">
-              <div className="rounded-md border bg-background/60 px-2 py-1">
+              <div className="rounded-md border bg-background/60 px-3 py-1.5">
                 <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Dev/BOM</p>
                 <p className="font-mono font-semibold tabular-nums">{fmtPctAbs(r.metrics.devBom)}</p>
               </div>
-              <div className="rounded-md border bg-background/60 px-2 py-1">
+              <div className="rounded-md border bg-background/60 px-3 py-1.5">
                 <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Nominal</p>
                 <p className={`font-mono font-semibold tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(r.metrics.nominalDeviasi)}</p>
               </div>
-              <div className="rounded-md border bg-background/60 px-2 py-1">
+              <div className="rounded-md border bg-background/60 px-3 py-1.5">
                 <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Items</p>
                 <p className="font-mono font-semibold tabular-nums">{r.metrics.itemCount}</p>
               </div>
-              <div className="rounded-md border bg-background/60 px-2 py-1 min-w-0">
+              <div className="rounded-md border bg-background/60 px-3 py-1.5 min-w-0">
                 <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Top Item</p>
                 <p className="font-medium truncate" title={r.metrics.topItem || ''}>{r.metrics.topItem || '—'}</p>
               </div>

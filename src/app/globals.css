@@ -76,6 +76,15 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Fix #7: Semantic chart colors for consistent palette across components */
+  --chart-loss: #dc2626;
+  --chart-surplus: #10b981;
+  --chart-waste: #f59e0b;
+  --chart-susut: #7c3aed;
+  --chart-trial: #65a30d;
+  --chart-residual: #71717a;
+  --chart-neutral: #64748b;
+  --chart-warning: #eab308;
 }
 
 .dark {
@@ -110,6 +119,15 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  /* Fix #7: Dark mode semantic chart colors — brighter for visibility */
+  --chart-loss: #f87171;
+  --chart-surplus: #34d399;
+  --chart-waste: #fbbf24;
+  --chart-susut: #a78bfa;
+  --chart-trial: #84cc16;
+  --chart-residual: #a1a1aa;
+  --chart-neutral: #94a3b8;
+  --chart-warning: #facc15;
 }
 
 @layer base {

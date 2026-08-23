@@ -112,24 +112,24 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
             <Table className="min-w-[900px]">
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 w-8">#</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('itemName')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 w-8">#</TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('itemName')}>
                     Item <SortIcon col="itemName" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('area')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('area')}>
                     Area <SortIcon col="area" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('currentDevBom')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('currentDevBom')}>
                     Current Dev/BOM <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('historicalAvg')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('historicalAvg')}>
                     Historical Avg <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('zScore')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('zScore')}>
                     Z-Score <SortIcon col="zScore" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-center">Status</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('absNominal')}>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-center">Status</TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('absNominal')}>
                     |Nominal| <SortIcon col="absNominal" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                 </TableRow>
@@ -139,21 +139,21 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
                   const badge = zScoreBadge(item.zScore);
                   return (
                     <TableRow key={`${item.itemName}-${item.outletCode}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
-                      <TableCell className="text-[11px] text-muted-foreground px-2 py-1.5 tabular-nums">{i + 1}</TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5">
+                      <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
+                      <TableCell className="text-[11px] px-3 py-2">
                         <div className="font-medium leading-tight whitespace-normal max-w-[180px]" title={item.itemName}>{item.itemName}</div>
                         <div className="text-[11px] text-muted-foreground">{item.outletCode}</div>
                       </TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5 text-muted-foreground">{item.area}</TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
-                      <TableCell className={`text-[11px] px-2 py-1.5 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
+                      <TableCell className="text-[11px] px-3 py-2 text-muted-foreground">{item.area}</TableCell>
+                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
+                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
+                      <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
                         {item.zScore.toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5 text-center">
+                      <TableCell className="text-[11px] px-3 py-2 text-center">
                         <Badge variant={badge.variant} className="text-[9px] h-4 px-1 font-medium">{badge.label}</Badge>
                       </TableCell>
-                      <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums font-semibold">{fmtIDR(item.absNominal)}</TableCell>
+                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums font-semibold">{fmtIDR(item.absNominal)}</TableCell>
                     </TableRow>
                   );
                 })}

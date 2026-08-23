@@ -6,6 +6,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData, AreaTrendRow } from '@/hooks/useAnalysis';
 import { fmtPct } from '@/lib/format';
 import { TrendingUp } from 'lucide-react';
+import { getTooltipStyle } from '@/lib/chart-constants';
 import { useState, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -170,7 +171,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
                   <XAxis dataKey="period" fontSize={10} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} angle={-30} textAnchor="end" height={50} />
                   <YAxis tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
                   <Tooltip
-                    contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 11 }}
+                    contentStyle={getTooltipStyle()}
                     formatter={(v: number | string) => fmtPct(Number(v), false)}
                     labelStyle={{ fontWeight: 600, marginBottom: 4 }}
                   />
@@ -212,7 +213,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
                   <button
                     key={area}
                     onClick={() => toggleArea(area)}
-                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[10px] transition-colors ${
                       isSelected ? 'border-foreground/30 bg-muted/50' : 'border-border opacity-50 hover:opacity-100'
                     }`}
                   >

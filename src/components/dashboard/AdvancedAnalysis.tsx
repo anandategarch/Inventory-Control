@@ -81,12 +81,12 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-8 h-8 px-2">#</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Outlet</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Skor</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">% DEV TO BOM</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Masalah</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">NOMINAL DEVIASI</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-8 h-10 px-3">#</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Outlet</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Skor</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Masalah</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">NOMINAL DEVIASI</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -98,20 +98,20 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                   className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${o.healthScore < 30 ? 'bg-red-50/30 dark:bg-red-950/10' : ''}`}
                   {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                 >
-                  <TableCell className="text-[11px] text-muted-foreground px-2 py-1.5 tabular-nums">{i + 1}</TableCell>
-                  <TableCell className="px-2 py-1.5">
+                  <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
+                  <TableCell className="px-3 py-2">
                     <div className="text-[11px] font-medium leading-tight whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
-                  <TableCell className="px-2 py-1.5">
+                  <TableCell className="px-3 py-2">
                     <div className="flex items-center gap-1.5 min-w-[80px]">
                       <Progress value={o.healthScore} className="h-1.5" indicatorClassName={healthScoreBg(o.healthScore)} />
                       <span className={`text-[11px] font-semibold tabular-nums ${healthScoreColor(o.healthScore)}`}>{o.healthScore}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(o.devBom)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">
+                  <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(o.devBom)}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">
                     {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
                     {/* Sort still uses absNominal (ABS of sum) — set in rankingService */}
                     <span className={(o.nominalDeviasi ?? o.absNominal) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
@@ -220,13 +220,13 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">NAMA BAHAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Type</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">LOSS</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">SURPLUS</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Rata-rata % DEV TO BOM</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">NAMA BAHAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Type</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">SURPLUS</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Rata-rata % DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -238,15 +238,15 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
                   className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                   {...clickableRowProps(() => onClick(row))}
                 >
-                  <TableCell className="text-[11px] px-2 py-1.5 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
-                  <TableCell className="px-2 py-1.5">
+                  <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
+                  <TableCell className="px-3 py-2">
                     <Badge variant="outline" className={`text-[9px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{row.type}</Badge>
                   </TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{row.outletCount}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{row.lossOutlets}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">{row.surplusOutlets}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(row.absNominal)}</TableCell>
-                  <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(row.avgDevBom)}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">{row.outletCount}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{row.lossOutlets}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">{row.surplusOutlets}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">{fmtIDR(row.absNominal)}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(row.avgDevBom)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -296,12 +296,12 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2">Area</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">Outlets</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">PENJUALAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">|NOMINAL DEVIASI|</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">LOSS/PENJUALAN</TableHead>
-                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8 px-2 text-right">% DEV TO BOM</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3">Area</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">Outlets</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">PENJUALAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">|NOMINAL DEVIASI|</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">LOSS/PENJUALAN</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-10 px-3 text-right">% DEV TO BOM</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -316,18 +316,18 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
                     className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                     {...clickableRowProps(() => setArea(a.area))}
                   >
-                    <TableCell className="text-[11px] px-2 py-1.5 font-medium">
+                    <TableCell className="text-[11px] px-3 py-2 font-medium">
                       <div className="flex items-center gap-1.5">
                         {isWorst && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" title="Terburuk" />}
                         {isBest && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title="Terbaik" />}
                         <span className="truncate" title={a.area}>{a.area}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-[11px] px-2 py-1.5 text-right text-muted-foreground tabular-nums">{a.outletCount}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtIDR(a.totalSales)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums">{fmtIDR(a.totalAbsNominal)}</TableCell>
-                    <TableCell className={`text-[11px] px-2 py-1.5 text-right font-semibold tabular-nums ${lossToSalesColor(a.lossToSales)}`}>{fmtPct(a.lossToSales, false)}</TableCell>
-                    <TableCell className="text-[11px] px-2 py-1.5 text-right tabular-nums">{fmtPctAbs(a.avgDevBom)}</TableCell>
+                    <TableCell className="text-[11px] px-3 py-2 text-right text-muted-foreground tabular-nums">{a.outletCount}</TableCell>
+                    <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtIDR(a.totalSales)}</TableCell>
+                    <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">{fmtIDR(a.totalAbsNominal)}</TableCell>
+                    <TableCell className={`text-[11px] px-3 py-2 text-right font-semibold tabular-nums ${lossToSalesColor(a.lossToSales)}`}>{fmtPct(a.lossToSales, false)}</TableCell>
+                    <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(a.avgDevBom)}</TableCell>
                   </TableRow>
                 );
               })}
