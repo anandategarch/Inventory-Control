@@ -56,6 +56,7 @@ import { buildExecSummaryFromSql } from './services/exec-summary';
 import { computeGrowthDrivers } from './services/growth-drivers';
 import { computeDeviationDrivers } from './services/deviation-drivers';
 import { buildTrend, buildMultiPeriodComparison, buildNetCostTrend } from './services/trend-builder';
+import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX MIG-3/FUNC-1: heaviest route, needs >10s on Vercel Hobby
@@ -413,10 +414,14 @@ export async function GET(req: NextRequest) {
     // thresholds already loaded in parallel block above
 
     // ============================================================
-    //  RULE EVALUATION LOOP (per-record, single pass)
-    //  Still needs raw records — flags drive worklist, priorities,
-    //  health ranking, historical analysis. Cannot be SQL-aggregated.
+    //  RULE EVALUATION — SQL-based (Sprint 3)
+    //  Old: JS loop over 35K records, calling evaluateRules() per record
+    //  New: Single SQL query evaluates 12 rules + JS evaluates 5 zScore rules
+    //  Runs in PARALLEL with SQL aggregate queries (below)
     // ============================================================
+
+    // Build recsWithFlags from SQL flags (will be populated after parallel queries)
+    // For now, prepare the structure — actual flags come from evaluateRulesSql
     let normal = 0, warning = 0, abnormal = 0;
     const ruleCategoryCounts = new Map<string, number>();
     const ruleCodeCounts = new Map<string, number>();
@@ -429,58 +434,28 @@ export async function GET(req: NextRequest) {
     let zeroDevCount = 0;
     const zeroDevByOutlet = new Map<number, number>();
 
+    // Count zero-dev records (still needed for health ranking)
     for (const curr of currentRecs) {
-      // Bug fix: use && (AND) instead of || (OR) so items with price-only variance
-      // (qtyDeviasi=0 but absNominalDeviasi>0) are NOT skipped as "normal".
-      // Previously: if ANY field was 0/null, item was skipped → price anomalies missed.
-      // Now: only skip if BOTH qty AND nominal are 0/null (truly no deviation).
       if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
-        normal++;
         zeroDevCount++;
         zeroDevByOutlet.set(curr.outletId, (zeroDevByOutlet.get(curr.outletId) ?? 0) + 1);
-        continue;
-      }
-
-      const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
-      const prev = prevByOutletItem.get(key) ?? null;
-      // Phase 4: historicalByOutletItem now contains precomputed stats (mean + stdDev)
-      // FIX: historicalByOutletItem map key is outletId|itemId (NOT outletId|itemId|akun
-      // — historical stats are per outlet+item, not per akun). Previous code used the
-      // same key as prevByOutletItem (which includes akun), causing lookup to ALWAYS
-      // return null → zScore always null → all HISTORICAL_* rules never fired.
-      const historicalStats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`) ?? null;
-      const ctx = buildRuleContext(curr, prev, historicalStats, thresholds);
-      const flags = evaluateRules(ctx);
-
-      recsWithFlags.push({ curr, flags });
-
-      if (flags.length === 0) {
-        normal++;
-      } else {
-        const top = flags[0];
-        if (top.severity === 'ABNORMAL') abnormal++;
-        else if (top.severity === 'WARNING') warning++;
-        else normal++;
-
-        ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
-        ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
       }
     }
 
-    const ruleBreakdown = {
-      byCategory: Object.fromEntries(ruleCategoryCounts) as Record<string, number>,
-      byRule: Object.fromEntries(ruleCodeCounts) as Record<string, number>,
-    };
+    // Fire SQL rule evaluation in parallel with aggregate queries
+    const sqlFlagsPromise = evaluateRulesSql(week!, month!, prevWeek, prevMonth, filterOpts, thresholds);
 
     // ============================================================
     //  SQL AGGREGATE QUERIES (Phase 1b/2/4) — PARALLEL (P0 fix)
     //  All independent queries run via Promise.all for ~50% speedup
+    //  Sprint 3: sqlFlagsPromise runs in parallel with these queries
     // ============================================================
 
     // Group 1: Exec summary (curr + prev) — independent, parallel
-    const [currSummary, prevSummary] = await Promise.all([
+    const [currSummary, prevSummary, sqlFlags] = await Promise.all([
       queryExecSummary(week!, month!, filterOpts),
       prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+      sqlFlagsPromise,
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
@@ -551,6 +526,71 @@ export async function GET(req: NextRequest) {
       sales: o.sales, absNominal: o.absNominal, nominalDeviasi: o.nominalDeviasi ?? 0,
       devToSalesRatio: o.sales > 0 ? o.absNominal / o.sales : null,
     }));
+
+    // ============================================================
+    //  POST-PROCESS RULE FLAGS (Sprint 3)
+    //  1. Evaluate 5 zScore-based rules in JS (needs historicalByOutletItem map)
+    //  2. Merge SQL flags + JS flags into a Map keyed by outletId|itemId|akun
+    //  3. Build recsWithFlags from currentRecs + merged flags
+    //  4. Count normal/warning/abnormal + ruleBreakdown
+    // ============================================================
+    const histFlags = evaluateHistoricalRulesJs(
+      currentRecs.map(r => ({
+        outletId: r.outletId, itemId: r.itemId, akunPenyesuaian: r.akunPenyesuaian,
+        nominalLossSurplus: r.nominalLossSurplus, pctQtyDeviasiToBom: r.pctQtyDeviasiToBom,
+      })),
+      historicalByOutletItem,
+      thresholds,
+    );
+
+    // Merge SQL + JS flags into a Map: key → flags[]
+    const allFlags = [...sqlFlags, ...histFlags];
+    const flagsByKey = new Map<string, SqlRuleFlag[]>();
+    for (const flag of allFlags) {
+      const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;
+      if (!flagsByKey.has(key)) flagsByKey.set(key, []);
+      flagsByKey.get(key)!.push(flag);
+    }
+
+    // Build recsWithFlags from currentRecs (skip zero-dev records)
+    for (const curr of currentRecs) {
+      if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
+        continue; // skip zero-dev (already counted above)
+      }
+      const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
+      const rawFlags = flagsByKey.get(key) ?? [];
+      // Sort by priority desc (same as JS evaluator)
+      rawFlags.sort((a, b) => b.priority - a.priority);
+      // Map to AnomalyFlagResult shape (with minimal fields — evidence/narrative
+      // are not needed downstream since worklist only reads ruleCode/severity)
+      const flags = rawFlags.map(f => ({
+        ruleCode: f.ruleCode,
+        ruleName: f.ruleCode, // minimal — full name not needed for health ranking
+        severity: f.severity as 'NORMAL' | 'WARNING' | 'ABNORMAL',
+        category: f.category,
+        priority: f.priority,
+        evidence: {} as Record<string, unknown>,
+        narrative: '',
+      }));
+      recsWithFlags.push({ curr, flags });
+
+      if (flags.length === 0) {
+        normal++;
+      } else {
+        const top = flags[0];
+        if (top.severity === 'ABNORMAL') abnormal++;
+        else if (top.severity === 'WARNING') warning++;
+        else normal++;
+
+        ruleCategoryCounts.set(top.category, (ruleCategoryCounts.get(top.category) || 0) + 1);
+        ruleCodeCounts.set(top.ruleCode, (ruleCodeCounts.get(top.ruleCode) || 0) + 1);
+      }
+    }
+
+    const ruleBreakdown = {
+      byCategory: Object.fromEntries(ruleCategoryCounts) as Record<string, number>,
+      byRule: Object.fromEntries(ruleCodeCounts) as Record<string, number>,
+    };
 
     // Investigation worklist — use pre-computed flags (no re-evaluation)
     const worklist = buildWorklistFromFlags(recsWithFlags, thresholds);
