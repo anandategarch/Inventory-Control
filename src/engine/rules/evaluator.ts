@@ -28,10 +28,42 @@ export function loadRules(): Rule[] {
   const filePath = join(process.cwd(), 'src/config/rules.yaml');
   const raw = readFileSync(filePath, 'utf8');
   const parsed = yamlParse(raw) as { rules: Omit<Rule, 'narrativeTemplate'>[] };
-  _rules = (parsed.rules || []).map((r) => ({
-    ...r,
-    narrativeTemplate: (r as any).narrative_template,
-  }));
+
+  // FIX: validate each rule has required fields — catch typos/silent failures at startup
+  const VALID_SEVERITIES = new Set(['NORMAL', 'WARNING', 'ABNORMAL']);
+  const VALID_CATEGORIES = new Set(['TOLERANCE', 'RESIDUAL', 'DIRECTION', 'OVER_EXPLAINED', 'GROWTH', 'HISTORICAL', 'BENCHMARK', 'OPERATIONAL']);
+  const seenCodes = new Set<string>();
+
+  _rules = (parsed.rules || []).map((r, i) => {
+    // Validate required fields
+    if (!r.code || typeof r.code !== 'string') {
+      throw new Error(`[rules.yaml] Rule #${i + 1}: missing or invalid 'code' field`);
+    }
+    if (seenCodes.has(r.code)) {
+      console.warn(`[rules.yaml] Rule "${r.code}": DUPLICATE code (will override)`);
+    }
+    seenCodes.add(r.code);
+
+    if (!r.name || typeof r.name !== 'string') {
+      throw new Error(`[rules.yaml] Rule "${r.code}": missing or invalid 'name' field`);
+    }
+    if (!r.severity || !VALID_SEVERITIES.has(r.severity)) {
+      throw new Error(`[rules.yaml] Rule "${r.code}": invalid severity "${r.severity}". Must be one of: ${[...VALID_SEVERITIES].join(', ')}`);
+    }
+    if (typeof r.priority !== 'number' || r.priority < 0 || r.priority > 100) {
+      console.warn(`[rules.yaml] Rule "${r.code}": priority ${r.priority} outside 0-100 range`);
+    }
+    if (!r.condition || typeof r.condition !== 'object') {
+      throw new Error(`[rules.yaml] Rule "${r.code}": missing or invalid 'condition' field`);
+    }
+
+    return {
+      ...r,
+      narrativeTemplate: (r as Record<string, unknown>).narrative_template as string | undefined,
+    };
+  });
+
+  console.log(`[rules] Loaded ${_rules.length} rules: ${_rules.map(r => r.code).join(', ')}`);
   _rulesByCode = new Map(_rules.map((r) => [r.code, r]));
   return _rules;
 }

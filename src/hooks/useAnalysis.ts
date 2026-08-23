@@ -203,7 +203,8 @@ export interface AnalysisData {
   topDeviasiRank?: DeviasiRankItem[];
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
-  investigationWorklist: InvestigationItem[];
+  // FIX: removed investigationWorklist (dead field — not consumed by any component)
+  // investigationWorklist: InvestigationItem[];
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
   // Extended analytical fields (computed server-side, optional for backward compat)
   areaAnalysis?: AreaAnalysis[];

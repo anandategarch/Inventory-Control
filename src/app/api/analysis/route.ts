@@ -509,7 +509,7 @@ export async function GET(req: NextRequest) {
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
-      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 500),
+      queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50), // FIX: limit 500→50 (-150KB payload)
     ]);
 
     // Map results (same as before, just from parallel results)
@@ -806,7 +806,8 @@ export async function GET(req: NextRequest) {
       topDeviasiRank,
       deviationBreakdown: breakdown,
       lossVsSurplus: lvs,
-      investigationWorklist: worklist,
+      // FIX: removed investigationWorklist (56KB dead field — never consumed by frontend)
+      // investigationWorklist: worklist,
       trend,
       // Extended analytics (Task 5)
       areaAnalysis,
