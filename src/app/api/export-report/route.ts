@@ -3,6 +3,7 @@
 //  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=
 //  Fetches analysis data server-side, generates .docx, returns as download.
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
@@ -265,7 +266,7 @@ export async function GET(req: NextRequest) {
         const pics = await db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`;
         picOutletCodes = pics.map(p => p.outletCode);
       } catch (e) {
-        console.error('[export-report] OutletPIC query failed:', e instanceof Error ? e.message : String(e));
+        logger.error("[export-report] OutletPIC query failed:", { error: e instanceof Error ? e.message : String(e) });
         picOutletCodes = [];
       }
       // FIX FILTER-4: sentinel for empty list (was: skipped filter → showed ALL outlets)
@@ -744,7 +745,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (e: unknown) {
-    console.error('[export-report] error:', e);
+    logger.error("[export-report] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 // ============================================================
 //  Rule Engine — YAML loader + AST evaluator
 // ============================================================
+import { logger } from '@/lib/logger';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { parse as yamlParse } from 'yaml';
@@ -40,7 +41,7 @@ export function loadRules(): Rule[] {
       throw new Error(`[rules.yaml] Rule #${i + 1}: missing or invalid 'code' field`);
     }
     if (seenCodes.has(r.code)) {
-      console.warn(`[rules.yaml] Rule "${r.code}": DUPLICATE code (will override)`);
+      logger.warn(`Rule "${r.code}": DUPLICATE code (will override)`);
     }
     seenCodes.add(r.code);
 
@@ -51,7 +52,7 @@ export function loadRules(): Rule[] {
       throw new Error(`[rules.yaml] Rule "${r.code}": invalid severity "${r.severity}". Must be one of: ${[...VALID_SEVERITIES].join(', ')}`);
     }
     if (typeof r.priority !== 'number' || r.priority < 0 || r.priority > 100) {
-      console.warn(`[rules.yaml] Rule "${r.code}": priority ${r.priority} outside 0-100 range`);
+      logger.warn(`Rule "${r.code}": priority ${r.priority} outside 0-100 range`);
     }
     if (!r.condition || typeof r.condition !== 'object') {
       throw new Error(`[rules.yaml] Rule "${r.code}": missing or invalid 'condition' field`);
@@ -63,7 +64,7 @@ export function loadRules(): Rule[] {
     };
   });
 
-  console.log(`[rules] Loaded ${_rules.length} rules: ${_rules.map(r => r.code).join(', ')}`);
+  logger.info(`[rules] Loaded ${_rules.length} rules: ${_rules.map(r => r.code).join(', ')}`);
   _rulesByCode = new Map(_rules.map((r) => [r.code, r]));
   return _rules;
 }
@@ -479,7 +480,7 @@ export function evaluateRules(ctx: RuleContext): AnomalyFlagResult[] {
     } catch (e) {
       // Bug 6 fix: log per-rule errors instead of silent swallow
       // Silent failures hide bugs in rule engine (type errors, null refs)
-      console.error(`[rule-engine] Rule "${rule.code}" failed:`, e instanceof Error ? e.message : String(e));
+      logger.error(`Rule "${rule.code}" failed`, { error: e instanceof Error ? e.message : String(e) });
     }
   }
 

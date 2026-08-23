@@ -5,6 +5,7 @@
 //  2. mode='import' → import ONE specific week (partial commit)
 //  3. DELETE → cleanup chunks + temp file
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
       }
       effectiveRawFileName = result.cleaned;
       manualMode = true;
-      console.log(`[ingest-process] manual rename: "${rawFileName}" → "${effectiveRawFileName}"`);
+      logger.info(`[ingest-process] manual rename: "${rawFileName}" → "${effectiveRawFileName}"`);
     }
 
     // FIX-A-1 (BUG-5-1): validate fileHash + ext BEFORE reassembleFile to prevent
@@ -232,7 +233,7 @@ export async function POST(req: NextRequest) {
         if (extractedMonth) {
           fileName = `${extractedMonth}.xlsx`;
           monthInfo = parseMonthFromFilename(fileName);
-          console.log(`[ingest-process] placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
+          logger.info(`[ingest-process] placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
         }
       }
 
@@ -320,15 +321,15 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      console.log(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${safeFileHash})`);
+      logger.info(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${safeFileHash})`);
 
       // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
       let filePath: string;
       try {
         filePath = await reassembleFile(safeFileHash, fileExt);
-        console.log(`[ingest-process] reassembled to ${filePath}`);
+        logger.info(`[ingest-process] reassembled to ${filePath}`);
       } catch (e: unknown) {
-        console.error('[ingest-process] reassemble failed:', e);
+        logger.error("[ingest-process] reassemble failed", { error: e });
         return NextResponse.json(
           { success: false, error: `Gagal reassemble file: ${e instanceof Error ? e.message : String(e)}` },
           { status: 500 }
@@ -339,9 +340,9 @@ export async function POST(req: NextRequest) {
       let parsed;
       try {
         parsed = await parseExcelFile(filePath);
-        console.log(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
+        logger.info(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
       } catch (e: unknown) {
-        console.error('[ingest-process] parse failed:', e);
+        logger.error("[ingest-process] parse failed", { error: e });
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
           { success: false, error: `Gagal parse Excel: ${e instanceof Error ? e.message : String(e)}` },
@@ -360,7 +361,7 @@ export async function POST(req: NextRequest) {
         if (extractedMonth) {
           fileName = `${extractedMonth}.xlsx`;
           monthInfo = parseMonthFromFilename(fileName);
-          console.log(`[ingest-process] import mode: placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
+          logger.info(`[ingest-process] import mode: placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
         }
       }
 
@@ -504,7 +505,7 @@ export async function POST(req: NextRequest) {
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after week import.
       // Without this, /api/analysis serves stale data for up to 5 min (TTL).
-      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this import. Without this, getMonthResolver() would
       // keep returning the pre-import resolver and the new month's case might
@@ -539,16 +540,16 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      console.log(`[ingest-process] import-all ${weeksToImport.length} weeks for ${fileName}`);
+      logger.info(`[ingest-process] import-all ${weeksToImport.length} weeks for ${fileName}`);
 
       // Reassemble ONCE
       let filePath: string;
       try {
         filePath = await reassembleFile(safeFileHash, fileExt);
-        console.log(`[ingest-process] reassembled to ${filePath}`);
+        logger.info(`[ingest-process] reassembled to ${filePath}`);
       } catch (e: unknown) {
         const err = e as Error;
-        console.error('[ingest-process] reassemble failed:', err);
+        logger.error("[ingest-process] reassemble failed", { error: err });
         return NextResponse.json(
           { success: false, error: `Gagal reassemble file: ${err?.message}` },
           { status: 500 }
@@ -559,10 +560,10 @@ export async function POST(req: NextRequest) {
       let parsed;
       try {
         parsed = await parseExcelFile(filePath);
-        console.log(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
+        logger.info(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
       } catch (e: unknown) {
         const err = e as Error;
-        console.error('[ingest-process] parse failed:', err);
+        logger.error("[ingest-process] parse failed", { error: err });
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
           { success: false, error: `Gagal parse Excel: ${err?.message}` },
@@ -692,13 +693,13 @@ export async function POST(req: NextRequest) {
           durationMs: Date.now() - weekStart,
         });
 
-        console.log(`[ingest-process] ${weekLabel}: ${result.inserted} rows (${((Date.now() - weekStart) / 1000).toFixed(1)}s)`);
+        logger.info(`[ingest-process] ${weekLabel}: ${result.inserted} rows (${((Date.now() - weekStart) / 1000).toFixed(1)}s)`);
       }
 
       // Clear caches
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after import-all.
-      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       clearMonthResolverCache();
 
       // Cleanup chunks
@@ -727,7 +728,7 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   } catch (e: unknown) {
-    console.error('[ingest-process] error:', e);
+    logger.error("[ingest-process] error", { error: e });
     return NextResponse.json(
       { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }

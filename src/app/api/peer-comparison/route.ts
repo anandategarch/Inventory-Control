@@ -3,6 +3,7 @@
 //  Returns outlets with similar sales (±10%) for side-by-side comparison.
 //  GET: ?outletCode=X&month=Y&week=Z&mode=week|month&limit=N
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
       peers,
     });
   } catch (e: unknown) {
-    console.error('[peer-comparison] error:', e);
+    logger.error("[peer-comparison] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

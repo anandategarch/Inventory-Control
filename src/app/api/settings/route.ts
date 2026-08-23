@@ -4,6 +4,7 @@
 //  POST : bulk update settings { values: { key: value, ... } }
 //  DELETE : reset to defaults (?key=specific or all)
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
     return NextResponse.json({
       success: true,

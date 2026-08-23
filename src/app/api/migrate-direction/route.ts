@@ -7,6 +7,7 @@
 //
 //  Protected by ADMIN_TOKEN (same as other destructive endpoints).
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
     // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
     clearMonthResolverCache();
 
     return NextResponse.json({
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (e: unknown) {
-    console.error('[migrate-direction] error:', e);
+    logger.error("[migrate-direction] error", { error: e });
     return NextResponse.json(
       { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
@@ -151,7 +152,7 @@ export async function GET(req: NextRequest) {
       current: { LOSS: beforeLoss, SURPLUS: beforeSurplus },
     });
   } catch (e: unknown) {
-    console.error('[migrate-direction] GET error:', e);
+    logger.error("[migrate-direction] GET error", { error: e });
     return NextResponse.json(
       { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }

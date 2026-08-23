@@ -48,6 +48,7 @@ import {
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
+import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 // Phase 3: ExecutiveSummary type no longer needed here — buildExecSummaryFromSql
 // moved to ./services/exec-summary.ts which imports it directly.
 // Phase 3: extracted services
@@ -86,6 +87,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(analysisQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const monthLabel = url.searchParams.get('month');
     const currentWeek = url.searchParams.get('week');
     const compareWeekRaw = url.searchParams.get('compareWeek');

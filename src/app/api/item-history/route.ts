@@ -10,7 +10,9 @@
 //  2. Benchmark per period: area avg devBom for this item, network avg devBom for this item
 //  3. Summary: deterioration/improvement, zScore, priority
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
+import { validateQuery, itemHistoryQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds } from '@/lib/settings';
@@ -38,6 +40,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(itemHistoryQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const outletCode = url.searchParams.get('outletCode');
     const itemName = url.searchParams.get('itemName');
     // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
@@ -300,7 +309,7 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     });
   } catch (e: unknown) {
-    console.error('[item-history] error:', e);
+    logger.error("[item-history] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

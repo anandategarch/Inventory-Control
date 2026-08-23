@@ -9,6 +9,7 @@
 //  Default limit 50, max 500. Frontend can implement "Load More" button.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { validateQuery, drilldownQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -26,6 +27,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(drilldownQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const outletCode = url.searchParams.get('outletCode');
     const itemName = url.searchParams.get('itemName');
     const weekLabel = url.searchParams.get('weekLabel');

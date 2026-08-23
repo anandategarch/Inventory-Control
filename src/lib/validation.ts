@@ -1,83 +1,106 @@
 // ============================================================
-//  Zod validation schemas for API endpoints
-//  Bug #3 fix: Input validation
-//  Prevents malformed input from crashing API routes
+//  Shared Zod validation schemas for API routes.
+//  Phase 4 / Sprint 1: input validation for critical routes.
 // ============================================================
 import { z } from 'zod';
 
-// ============================================================
-//  /api/ingest — POST body
-//  manualFileName: optional override for the basename-derived filename
-//  numberLocale: optional — 'auto' | 'id' | 'us' for CSV number parsing
-// ============================================================
-export const ingestBodySchema = z.object({
-  filePath: z.string().max(500).optional(),
-  dir: z.string().max(500).optional(),
-  fileName: z.string().max(255).optional(),
-  manualFileName: z.string().max(255).optional(),
-  precomputedHash: z.string().max(128).optional(),
-  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
-}).strict().optional().default({});
+// Month label: "Januari 2026", "Mei 2026", etc. — Title Case + 4-digit year
+export const monthLabelSchema = z.string().min(3).max(30).optional();
+
+// Week label: "WEEK 1", "WEEK 2", "WEEK 4"
+export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).optional();
+
+// Outlet code: "1016.MLGJAK", "1251.CBIPAS" — alphanumeric + dot
+export const outletCodeSchema = z.string().min(1).max(50).optional();
+
+// Item name: free text, max 200 chars
+export const itemNameSchema = z.string().min(1).max(200).optional();
+
+// Area name: "JAWA TIMUR 1", "BANTEN" — uppercase + optional number
+export const areaSchema = z.string().min(1).max(50).optional();
+
+// PIC name: free text, max 100 chars
+export const picSchema = z.string().min(1).max(100).optional();
+
+// Compare week: "WEEK 1" or "WEEK 1|||Juli 2026" (cross-month)
+export const compareWeekSchema = z.string().min(3).max(100).optional();
+
+// Limit: positive integer, max 500
+export const limitSchema = z.coerce.number().int().min(1).max(500).optional();
+
+// Cursor: positive integer (record ID)
+export const cursorSchema = z.coerce.number().int().positive().optional();
 
 // ============================================================
-//  /api/import-drive — POST body
-//  manualFileName: optional override — when set, server uses this name
-//  instead of the downloaded filename (fixes "Loading Google Sheet").
-//  numberLocale: optional — 'auto' | 'id' | 'us' (default 'us' for Google exports)
+//  Route-specific schemas
 // ============================================================
-export const importDriveBodySchema = z.object({
-  url: z.string().url().max(2000),
-  manualFileName: z.string().max(255).optional(),
-  numberLocale: z.enum(['auto', 'id', 'us']).optional(),
-}).strict();
 
-// ============================================================
-//  /api/settings — POST body (bulk update)
-// ============================================================
-export const settingsPostBodySchema = z.object({
-  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-  updatedBy: z.string().max(100).optional(),
-}).strict();
-
-// ============================================================
-//  /api/settings — DELETE (query params handled in route)
-// ============================================================
-export const settingsDeleteQuerySchema = z.object({
-  key: z.string().max(100).optional(),
-}).strict().optional();
-
-// ============================================================
-//  /api/analysis — GET query params
-// ============================================================
+// /api/analysis?month=&week=&compareWeek=&area=&outlet=&item=&pic=
 export const analysisQuerySchema = z.object({
-  month: z.string().max(50).optional(),
-  week: z.string().max(20).optional(),
-  compareWeek: z.string().max(100).optional(), // may contain ||| for cross-month
-  area: z.string().max(100).optional(),
-  outlet: z.string().max(50).optional(),
-  item: z.string().max(200).optional(),
-  pic: z.string().max(100).optional(),
-}).strict().partial();
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  compareWeek: compareWeekSchema,
+  area: areaSchema,
+  outlet: outletCodeSchema,
+  item: itemNameSchema,
+  pic: picSchema,
+});
 
-// ============================================================
-//  /api/drilldown — GET query params
-// ============================================================
+// /api/drilldown?outletCode=&itemName=&weekLabel=&monthLabel=&limit=&cursor=
 export const drilldownQuerySchema = z.object({
-  outletCode: z.string().max(50).optional(),
-  itemName: z.string().max(200).optional(),
-  weekLabel: z.string().max(200).optional(), // may be comma-separated
-  monthLabel: z.string().max(200).optional(), // may be comma-separated
-  limit: z.coerce.number().int().min(1).max(500).optional(),
-}).strict().partial();
+  outletCode: outletCodeSchema,
+  itemName: itemNameSchema,
+  weekLabel: weekLabelSchema,
+  monthLabel: monthLabelSchema,
+  limit: limitSchema,
+  cursor: cursorSchema,
+});
+
+// /api/outlet-items?outletCode=&month=&week=&compareWeek=
+export const outletItemsQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50), // required
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  compareWeek: compareWeekSchema,
+  compareMonth: monthLabelSchema,
+});
+
+// /api/item-history?outletCode=&itemName=&month=&week=
+export const itemHistoryQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50), // required
+  itemName: z.string().min(1).max(200), // required
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+});
+
+// /api/settings PUT body: { settings: [{ key, value }] }
+export const settingsUpdateSchema = z.object({
+  settings: z.array(z.object({
+    key: z.string().min(1).max(100),
+    value: z.union([z.string(), z.number(), z.boolean()]),
+  })).min(0).max(100),
+});
 
 // ============================================================
-//  Safe parse helper — returns { data, error }
+//  Helper: validate query params, return 400 on failure
 // ============================================================
-export function safeParse<T>(schema: z.ZodSchema<T>, input: unknown): { data: T | null; error: string | null } {
-  const result = schema.safeParse(input);
+export function validateQuery<T extends z.ZodType>(
+  schema: T,
+  params: URLSearchParams
+): { success: true; data: z.infer<T> } | { success: false; error: string } {
+  // Convert URLSearchParams to plain object
+  const obj: Record<string, string> = {};
+  params.forEach((value, key) => {
+    obj[key] = value;
+  });
+
+  const result = schema.safeParse(obj);
   if (result.success) {
-    return { data: result.data, error: null };
+    return { success: true, data: result.data };
   }
-  const errMessages = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-  return { data: null, error: errMessages };
+  // Format errors
+  const errors = result.error.issues
+    .map(i => `${i.path.join('.')}: ${i.message}`)
+    .join('; ');
+  return { success: false, error: `Invalid query params: ${errors}` };
 }

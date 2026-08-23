@@ -12,6 +12,7 @@
 //    }]
 //  }
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -210,7 +211,7 @@ export async function GET(req: NextRequest) {
       items,
     });
   } catch (e: unknown) {
-    console.error('[peer-comparison-items] error:', e);
+    logger.error("[peer-comparison-items] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

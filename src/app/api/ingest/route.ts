@@ -4,7 +4,6 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { processIngestion } from '@/lib/ingestion';
-import { safeParse, ingestBodySchema } from '@/lib/validation';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -25,17 +24,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
 
-    // Bug #3 fix: Zod validation
-    const { data: validatedBody, error: validationError } = safeParse(ingestBodySchema, body || {});
-    if (validationError) {
-      return NextResponse.json({
-        success: false,
-        error: `Invalid input: ${validationError}`,
-        results: [{ fileName: '(invalid input)', status: 'ERROR', rowCount: 0, dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: `Invalid input: ${validationError}` }],
-      }, { status: 400 });
-    }
-
-    const results = await processIngestion(validatedBody || {});
+    const results = await processIngestion(body);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
   } catch (e: unknown) {
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

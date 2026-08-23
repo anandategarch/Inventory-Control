@@ -13,6 +13,7 @@
 //                     (auto-exported as .xlsx via /export?format=xlsx)
 //    - Raw ID:        {FILE_ID} (44 chars typical)
 // ============================================================
+import { logger } from './logger';
 import path from 'path';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
@@ -357,7 +358,7 @@ async function getSheetsTitle(sheetId: string): Promise<string | null> {
 
     return null;
   } catch (e) {
-    console.error('[drive-import] getSheetsTitle failed:', e instanceof Error ? e.message : String(e));
+    logger.error("[drive-import] getSheetsTitle failed", { error: e instanceof Error ? e.message : String(e) });
   }
   return null;
 }

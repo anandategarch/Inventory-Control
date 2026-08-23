@@ -4,6 +4,7 @@
 //  store each chunk in FileChunk table. Last chunk returns
 //  metadata so frontend can call /api/ingest-process.
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
       message: 'Upload selesai. Siap untuk processing.',
     });
   } catch (e: unknown) {
-    console.error('[ingest-upload] error:', e);
+    logger.error("[ingest-upload] error:", { error: e });
     return NextResponse.json(
       { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }

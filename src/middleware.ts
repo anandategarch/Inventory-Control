@@ -16,6 +16,7 @@
 //  TODO: Add auth UI (login page) then re-enable fail-closed.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 // FIX: `crypto.timingSafeEqual` is a Node.js module not available in Edge Runtime.
 // Implement a runtime-agnostic constant-time string comparison (XOR + accumulate).
@@ -64,7 +65,7 @@ export function middleware(req: NextRequest) {
   // Frontend has no auth UI, so fail-closed breaks all imports/mutations.
   // Rate limiting on each route provides DoS protection.
   if (!adminToken) {
-    console.warn(`[middleware] ADMIN_TOKEN not set — ${pathname} accessible without auth. Set ADMIN_TOKEN + add auth UI for production security.`);
+    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth`);
     return NextResponse.next();
   }
 

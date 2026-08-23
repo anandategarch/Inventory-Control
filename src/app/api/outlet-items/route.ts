@@ -10,7 +10,9 @@
 //  2. Bahan Analysis (3 rankings: Financial, Operational, Unexplained)
 //  3. Per-item breakdown: BOM, Deviasi, Dev/BOM, Nominal, Direction, W/S/T, Residual
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
+import { validateQuery, outletItemsQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getRuntimeThresholds, type RuntimeThresholds } from '@/lib/settings';
@@ -49,6 +51,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // Sprint 1: Zod input validation
+    const validation = validateQuery(outletItemsQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const outletCode = url.searchParams.get('outletCode');
     // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
     let month = url.searchParams.get('month');
@@ -589,7 +598,7 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     });
   } catch (e: unknown) {
-    console.error('[outlet-items] error:', e);
+    logger.error("[outlet-items] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

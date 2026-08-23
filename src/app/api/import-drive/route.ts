@@ -6,7 +6,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { importFromDriveUrl } from '@/lib/drive-import';
 import { processIngestion } from '@/lib/ingestion';
-import { safeParse, importDriveBodySchema } from '@/lib/validation';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { resolveManualFileName } from '@/lib/filename';
 import path from 'path';
@@ -33,16 +32,12 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { data: validatedBody, error: validationError } = safeParse(importDriveBodySchema, body);
-    if (validationError || !validatedBody) {
-      return NextResponse.json({ success: false, error: `Invalid input: ${validationError}` }, { status: 400 });
-    }
-    const url = validatedBody.url;
+    const url = body.url;
     // Resolve manual filename via shared validator (sanitize + format check + extension).
     // Throws on invalid input → caught by outer try/catch → 400 response.
     let manualFileName: string | null = null;
     try {
-      manualFileName = resolveManualFileName(validatedBody.manualFileName);
+      manualFileName = resolveManualFileName(body.manualFileName);
     } catch (e: unknown) {
       return NextResponse.json(
         { success: false, error: (e instanceof Error ? e.message : String(e)) || 'manualFileName tidak valid.' },
@@ -52,7 +47,7 @@ export async function POST(req: NextRequest) {
     // Number locale for parsing CSV string values.
     // Default 'us' for Google Drive/Sheets exports (Google uses US format: 1,234.56).
     // User can override to 'id' if their Google Sheet is configured with Indonesian locale.
-    const numberLocale: 'auto' | 'id' | 'us' = validatedBody.numberLocale || 'us';
+    const numberLocale: 'auto' | 'id' | 'us' = body.numberLocale || 'us';
 
     // SSRF protection
     const ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];

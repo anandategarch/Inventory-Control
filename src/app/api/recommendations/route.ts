@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
           SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
         `;
       } catch (e) {
-        console.error('[recommendations] OutletPIC query failed:', e instanceof Error ? e.message : String(e));
+        logger.error("[recommendations] OutletPIC query failed", { error: e instanceof Error ? e.message : String(e) });
         pics = [];
       }
       picOutletCodes = pics.map((p) => p.outletCode);
@@ -103,7 +104,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, recommendations });
   } catch (e: unknown) {
-    console.error('[recommendations] error:', e);
+    logger.error("[recommendations] error", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

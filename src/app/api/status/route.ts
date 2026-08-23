@@ -3,6 +3,7 @@
 //  Phase 1c: server-side cache (5 min TTL) to reduce DB queries
 //  Resilient to missing tables (returns empty state, not 500)
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
@@ -122,7 +123,7 @@ export async function GET() {
     if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table') || errMsg.includes('no such table')) {
       return NextResponse.json(EMPTY_STATE);
     }
-    console.error('[/api/status] Error:', errMsg);
+    logger.error("[/api/status] Error:", { error: errMsg });
     return NextResponse.json({ success: false, error: errMsg, hint: 'Try visiting /api/setup to create database tables.' }, { status: 500 });
   }
 }

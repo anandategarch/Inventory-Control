@@ -1,5 +1,6 @@
 'use client';
 
+import { logger } from '@/lib/logger';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,7 +66,7 @@ export function DrillDownDrawer() {
         setNextCursor(data.nextCursor);
       }
     } catch (e) {
-      console.error('[drilldown] Load More failed:', e);
+      logger.error("[drilldown] Load More failed:", { error: e });
     } finally {
       setLoadingMore(false);
     }

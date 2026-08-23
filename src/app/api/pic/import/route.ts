@@ -7,6 +7,7 @@
 //
 //  Returns: { success: true, imported: N, errors: [...] }
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
     // FIX H2 (AUDIT-5/8): invalidate DB-level AggregationCache after PIC bulk import.
     // Analysis route filters by `pic` param → cached response would reflect old PIC
     // assignments for up to 5 min (TTL) without this invalidation.
-    invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
     await db.auditLog.create({
       data: {

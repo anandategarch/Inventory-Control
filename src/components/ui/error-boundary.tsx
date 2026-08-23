@@ -3,6 +3,7 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { Button } from '@/components/ui/button';
 import { AlertTriangle } from 'lucide-react';
+import { logger } from '@/lib/logger';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -38,7 +39,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error(`[ErrorBoundary${this.props.label ? `: ${this.props.label}` : ''}]`, error, errorInfo);
+    logger.error(`ErrorBoundary${this.props.label ? ': ' + this.props.label : ''}`, { error: error.message, stack: errorInfo.componentStack?.split('\\n')[0] });
   }
 
   handleReset = (): void => {

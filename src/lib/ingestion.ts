@@ -4,6 +4,7 @@
 //
 //  Both routes now call this shared function instead of duplicating ~250 lines.
 // ============================================================
+import { logger } from './logger';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
@@ -49,7 +50,7 @@ export function safePath(inputPath: string): string | null {
     return resolved;
   }
   if (inputPath.includes('..') || inputPath.startsWith('~') || path.isAbsolute(inputPath) && !resolved.startsWith(dataDirResolved)) {
-    console.error('[ingest] Path traversal blocked:', inputPath);
+    logger.error("[ingest] Path traversal blocked", { error: inputPath });
     return null;
   }
   return path.join(dataDirResolved, inputPath);
@@ -291,7 +292,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
             // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
             const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
             p = { start: 1, end: Math.min(weekNum * 7, 31) };
-            console.warn(`[ingest] Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
+            logger.warn(`Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
           }
           const w = await db.week.upsert({
             where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
@@ -443,7 +444,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       statusCache.clear();
       // FIX Medium #1: invalidate DB-level AggregationCache for analysis route.
       // New data means all cached analysis results are stale.
-      invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
+      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       // sees fresh data immediately after ingestion.
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this ingestion. Without this, getMonthResolver() would

@@ -22,6 +22,7 @@
 //    `queryPeerComparison` (MAX weekLabel = month aggregate) so
 //    the ±10% sales band matches the main peer table.
 // ============================================================
+import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (e: unknown) {
-    console.error('[peer-comparison-trend] error:', e);
+    logger.error("[peer-comparison-trend] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
