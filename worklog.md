@@ -15582,3 +15582,53 @@ VERIFIED CORRECT (no action needed):
 - vitest path alias `@` → `./src` matches tsconfig.json `paths`. ✓
 - `src/engine/` directory exists (analysis/, rules/) — coverage include is valid, not pointing at missing dir. ✓
 - Type-safety fix in historical.ts (historicalValues: (number|null)[]) — only caller is src/app/api/item-history/route.ts:216, which already passes an array; the relaxed type is forward-compatible. ✓
+
+---
+Task ID: SPLIT-COMPONENTS
+Agent: Component Splitter
+Task: Split PrioritySummaryCard (1238 lines) + RestoAnalysis (985 lines) into sub-components
+
+Work Log:
+- Read worklog.md (Phase 3 entries — 61→62 tests, audit findings, type-safety fixes).
+- Read PrioritySummaryCard.tsx (1238 lines) in full — identified structure: imports / interfaces / SIGNAL_GROUPS / SIGNAL_ICONS / CHART palette / TOOLTIP_STYLE / priorityBadge / seededRand / 15 build*Data functions / SIGNAL_EXPLANATIONS / ChartEmptyState / SignalChart (350 lines, 15 switch cases) / main PrioritySummaryCard component.
+- Read RestoAnalysis.tsx (985 lines) in full — identified structure: 6 interfaces (RestoProfile, ItemRow, OutletItemsResponse, ItemHistoryTimelineRow, ItemHistoryResponse, RecommendationResponse) / 5 helper functions (fmtGrowth, growthColor, priorityColor, priorityBg, directionColor) / RestoAnalysis main component (369 lines) / ItemDetailModal (145 lines) / SummaryCard (9 lines) / MenuAnalysis (149 lines) / Row (16 lines) / RankingNasionalCard (123 lines).
+- Verified external imports via grep:
+  · Only RestoAnalysis.tsx imports from PrioritySummaryCard.tsx (PrioritySummaryCard + type OutletItem + type Recommendation).
+  · Only src/app/page.tsx imports from RestoAnalysis.tsx (just the RestoAnalysis component — no types).
+- Created 5 new files under src/components/dashboard/priority-summary/:
+  · types.ts (67 lines) — SignalScore, Recommendation, OutletItem
+  · constants.ts (128 lines) — SIGNAL_GROUPS, SIGNAL_ICONS, CHART, CHART_TEXT, CHART_TEXT_MUTED, TOOLTIP_STYLE, SIGNAL_EXPLANATIONS
+  · helpers.ts (41 lines) — priorityBadge, seededRand
+  · chart-data-builders.ts (296 lines) — all 15 build*Data functions (buildDevBomData, buildDeviasiGrowthData, buildTrendMemburukData, buildZScoreData, buildResidualRatioData, buildLossSalesData, buildDirectionFlipData, buildItemConcentrationData, buildTolBreachHighData, buildTolBreachData, buildOverExplainedData, buildHighLossData, buildBenchmarkData, buildResidualNominalData, buildNoToleranceRows)
+  · signal-chart.tsx (386 lines) — ChartEmptyState + SignalChart (extracted shared fmtNominalLabel helper for nominal label formatters)
+- Rewrote PrioritySummaryCard.tsx as thin wrapper (383 lines, down from 1238): imports from ./priority-summary/*, keeps main PrioritySummaryCard component, re-exports Recommendation + OutletItem types for backward compat with RestoAnalysis.tsx import.
+- Created 5 new files under src/components/dashboard/resto-analysis/:
+  · types.ts (127 lines) — RestoProfile, ItemRow, OutletItemsResponse, ItemHistoryTimelineRow, ItemHistoryResponse, RecommendationResponse (also re-exports OutletItem + Recommendation from PrioritySummaryCard for one-stop convenience)
+  · helpers.tsx (79 lines) — fmtGrowth, growthColor, priorityColor, priorityBg, directionColor, Row, SummaryCard (file is .tsx because Row + SummaryCard are React components)
+  · item-detail-modal.tsx (167 lines) — ItemDetailModal (was inline in RestoAnalysis.tsx lines 531-675)
+  · menu-analysis.tsx (167 lines) — MenuAnalysis (was inline in RestoAnalysis.tsx lines 692-840)
+  · ranking-nasional.tsx (140 lines) — RankingNasionalCard (was inline in RestoAnalysis.tsx lines 863-985)
+- Rewrote RestoAnalysis.tsx as main component (412 lines, down from 985): imports sub-components from ./resto-analysis/*, re-exports types for backward compat.
+- Removed explicit `(r: OutletItem)` cast in two filter calls since `data.allItems` is already typed `OutletItem[]` (cleaner inference).
+- Ran `npx tsc --noEmit` → 0 errors ✓
+- Ran `bun run lint` → 0 errors, 9 pre-existing warnings (none in new files; all warnings are in unrelated pre-existing files: DrillDownDrawer, SourceDataModal, PicManagementDialog) ✓
+- Ran `bun run test` → 62/62 tests pass (482ms) ✓
+- Verified dev server is healthy: GET / 200 in 9.9s, GET /api/analysis 200 in 8.5s ✓
+- Committed: "refactor: Phase 3 — split PrioritySummaryCard (1238→<500) + RestoAnalysis (985→<500)" (commit c7f247f)
+- Pushed to github.com/anandategarch/Inventory-Control.git main (ef1dabf..c7f247f)
+
+Stage Summary:
+- PrioritySummaryCard.tsx: 1238 → 383 lines (-855, -69%) ✓ under 500
+- RestoAnalysis.tsx: 985 → 412 lines (-573, -58%) ✓ under 500
+- 0 tsc errors, 0 lint errors (9 pre-existing warnings untouched), 62/62 tests pass.
+- All existing imports preserved:
+  · src/components/dashboard/RestoAnalysis.tsx:14 still imports { PrioritySummaryCard, type OutletItem, type Recommendation } from '@/components/dashboard/PrioritySummaryCard' ✓
+  · src/app/page.tsx:20 still imports { RestoAnalysis } from '@/components/dashboard/RestoAnalysis' ✓
+- New module structure:
+  · priority-summary/ — types.ts (67) + constants.ts (128) + helpers.ts (41) + chart-data-builders.ts (296) + signal-chart.tsx (386) = 918 lines split out
+  · resto-analysis/ — types.ts (127) + helpers.tsx (79) + item-detail-modal.tsx (167) + menu-analysis.tsx (167) + ranking-nasional.tsx (140) = 680 lines split out
+- Backward-compat re-exports:
+  · PrioritySummaryCard.tsx re-exports `type Recommendation` + `type OutletItem`
+  · RestoAnalysis.tsx re-exports `type { OutletItemsResponse, RecommendationResponse, RestoProfile, ItemRow, ItemHistoryTimelineRow, ItemHistoryResponse }`
+- No behavioral changes — pure refactor (all 15 chart data builders, all 15 SignalChart switch cases, all 5 helper functions, all 4 sub-components moved verbatim).
+- Pushed to remote main branch successfully.
