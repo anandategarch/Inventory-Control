@@ -40,7 +40,21 @@ function shouldLog(level: LogLevel): boolean {
 function format(entry: LogEntry): string {
   const { level, msg, data, timestamp } = entry;
   if (data && Object.keys(data).length > 0) {
-    return `[${timestamp}] ${level.toUpperCase()}: ${msg} ${JSON.stringify(data)}`;
+    // FIX H3 (AUDIT-P2): guard against circular refs, BigInt, Symbol, Function
+    // — JSON.stringify throws on these. Fall back to string representation.
+    let dataStr: string;
+    try {
+      dataStr = JSON.stringify(data, (_key, value) => {
+        if (typeof value === 'bigint') return value.toString() + 'n';
+        if (typeof value === 'symbol') return value.toString();
+        if (typeof value === 'function') return '[Function]';
+        if (value instanceof Error) return { name: value.name, message: value.message, stack: value.stack?.split('\n')[0] };
+        return value;
+      });
+    } catch {
+      dataStr = String(data);
+    }
+    return `[${timestamp}] ${level.toUpperCase()}: ${msg} ${dataStr}`;
   }
   return `[${timestamp}] ${level.toUpperCase()}: ${msg}`;
 }

@@ -8,14 +8,18 @@
 
 /**
  * Safely coerce a value to number or null.
- * Handles: null, undefined, NaN, Infinity, Prisma Decimal, BigInt.
+ * Handles: null, undefined, empty string, NaN, Infinity, BigInt.
  * Deduplicated — was previously copied in 4 files (transform.ts, deviation.ts,
  * item-history/route.ts, outlet-items/route.ts).
  */
 export function toNum(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
+  if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
-  return isNaN(n) ? null : n;
+  // FIX H4 (AUDIT-P2): isNaN('')===false, Number('')===0 — empty string returns 0
+  // without the explicit check above. Now returns null (correct for empty Excel cells).
+  // FIX H5 (AUDIT-P2): isNaN(Infinity)===false — Infinity poisons aggregations.
+  // Now returns null for non-finite values.
+  return (isNaN(n) || !isFinite(n)) ? null : n;
 }
 
 // Format number with Indonesian decimal separator
@@ -42,6 +46,8 @@ export function fmtNum(v: number | null | undefined, unit = '', compact = true):
   if (compact) {
     const abs = Math.abs(v);
     const sign = v < 0 ? '-' : '';
+    // FIX MEDIUM (AUDIT-P2): add billions (M) branch — was missing, returned '1000,00Jt'
+    if (abs >= 1_000_000_000) return `${sign}${fmtDecimal(abs / 1_000_000_000, 2)}M${unit}`;
     if (abs >= 1_000_000) return `${sign}${fmtDecimal(abs / 1_000_000, 2)}Jt${unit}`;
     if (abs >= 1_000) return `${sign}${fmtDecimal(abs / 1_000, 1)}Rb${unit}`;
     return `${sign}${abs.toFixed(0)}${unit}`;

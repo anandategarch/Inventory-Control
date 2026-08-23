@@ -11,8 +11,13 @@ describe('toNum', () => {
     expect(toNum('abc')).toBe(null);
   });
 
-  it('returns 0 for empty string (Number("") === 0)', () => {
-    expect(toNum('')).toBe(0);
+  it('returns null for empty string (FIX H4: was 0, now null)', () => {
+    expect(toNum('')).toBe(null);
+  });
+
+  it('returns null for Infinity (FIX H5: was Infinity, now null)', () => {
+    expect(toNum(Infinity)).toBe(null);
+    expect(toNum(-Infinity)).toBe(null);
   });
 
   it('coerces valid numbers', () => {
@@ -76,8 +81,8 @@ describe('fmtNum', () => {
   it('formats with compact abbreviations', () => {
     expect(fmtNum(1_000_000)).toContain('Jt');
     expect(fmtNum(1_000)).toContain('Rb');
-    // 1 billion = 1000Jt (Indonesian M = Miliar, but fmtNum uses Jt for millions)
-    expect(fmtNum(1_000_000_000)).toContain('Jt');
+    // FIX MEDIUM (AUDIT-P2): billions now formatted as M (was '1000,00Jt')
+    expect(fmtNum(1_000_000_000)).toContain('M');
   });
 
   it('appends unit when provided', () => {

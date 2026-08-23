@@ -15437,3 +15437,148 @@ Verified CORRECT (no regressions from commit 9384b7a → 77b1f15):
 - Removed Prisma models (PeriodComparison, AnomalyRule, AnomalyFlag): no code references (only stale comments in rules.yaml + outlets.ts, per AUDIT-7). ✓
 - @libsql/client + @prisma/adapter-libsql removed from package.json deps. ✓
 
+
+---
+Task ID: AUDIT-P1
+Agent: Deep Audit (Phase 1 Changes)
+Task: Deep audit of Phase 1 changes for bugs
+
+Work Log:
+- Read worklog.md recent entries (AUDIT-8, FIX-HIGH-1to9, FIX-MEDIUM, Phase 1 commit 1b7fc32 context).
+- Reviewed Phase 1 commit (1b7fc32) — 32 files changed, +221/-136 lines, 5 quick wins (dead cache, toNum dedup, catch unknown, maxDuration, ErrorBoundary).
+- Ran `npx tsc --noEmit` → EXIT 0 (no type errors). ✓
+- Ran `bun run lint` → 0 errors, 9 warnings (all pre-existing react-hooks: exhaustive-deps + incompatible-library on useVirtualizer — same set as AUDIT-8). ✓
+- Ran `bun run test` → 61/61 tests pass (format, growth, historical) in 526ms. ✓ Includes new `toNum` tests covering null/undefined/NaN/''/BigInt.
+- Started dev server (`next dev -p 3000`, NODE_OPTIONS=--max-old-space-size=2048). Known OOM-during-page-compile pattern from prior audits (server dies between bash commands). Successfully tested 7 maxDuration routes via combined bash invocation: status=200 (9ms), data=200 (992ms), drilldown=200 (3.8s), settings=200 (546ms), setup=200 (301ms), ingest=200 (2.1s), pic=200 (437ms).
+- Live-verified the malformed template literal bug by POSTing valid-hex-but-nonexistent fileHash to /api/ingest-process: server returned literally `{"success":false,"error":"Gagal reassemble file: $(e instanceof Error ? e.message : String(e))"}` — the `$(...)` is NOT a template literal interpolation (should be `${...}`), so the actual error message is never shown to the user.
+- Searched all .ts/.tsx files for: `catch (e: any)` → 0 matches. `e?.message` → 0 matches. `e?.code/meta/response/status` → 0 matches (only `e.code` in evaluator.ts but that's `rule.code` data field, not error). All `e.message` accesses are guarded by `e instanceof Error ? e.message : String(e)`.
+- Searched for sed-mangled `$(` patterns → 2 instances found (both in ingest-process/route.ts:333,347). All other template literal interpolations in the codebase use proper `${...}` syntax.
+- Verified `analysisCache` references: 5 remaining, ALL in comments (cache.ts:5, ingest-process:501, pic/route.ts:11, analysis/route.ts:1039, data/route.ts:9). NO actual imports or `.clear()` calls remain. ✓ statusCache imports survived in all 7 sites.
+- Verified `invalidateCache('analysis|')` was added as replacement for `analysisCache.clear()` in 6 of 7 mutation sites: ingestion.ts:446, data/route.ts:253, migrate-direction/route.ts:89, pic/import/route.ts:134, settings/route.ts:182, ingest-process/route.ts:507,701. **MISSING in pic/route.ts** (single POST + DELETE mutations).
+- Verified new `toNum` in format.ts:15-19 has identical behavior to old local copies (null/undefined→null, Number(v)→isNaN→null). `Number('') === 0` returns 0 (same as old). `Number(Infinity) === Infinity`, `isNaN(Infinity) === false` → returns Infinity (comment claims "Handles ... Infinity" but it doesn't filter — minor doc inconsistency, behavior matches old).
+- Verified no circular imports: format.ts has zero imports (pure functions). deviation.ts → format.ts is one-way. ✓
+- Verified item-history/route.ts:25 has clean `import { toNum } from '@/lib/format';` (no Placeholder text, no broken syntax). Has cosmetic double-blank line at lines 29-30 (was where old toNum was).
+- Verified outlet-items/route.ts:35 has clean toNum import; line 40 has comment "// toNum imported from @/lib/format (deduplicated)" — slightly redundant with the import on line 35 but harmless.
+- Verified deviation.ts:14 has clean toNum import; line 11 comment "FIX: toNum imported from @/lib/format (deduplicated)." — accurate.
+- Verified maxDuration placement: all 7 routes (data, drilldown, ingest, pic, settings, setup, status) have `export const maxDuration = 30;` on the line IMMEDIATELY AFTER `export const dynamic = 'force-dynamic';`. No duplicates. Other routes already had maxDuration (analysis=60, export-report=60, import-drive=300, ingest-process=300, ingest-upload=60, item-history=60, outlet-items=60, migrate-direction=60, peer-comparison/trend/items=30, recommendations=30).
+- Verified ErrorBoundary component: class component with getDerivedStateFromError + componentDidCatch. 'use client' directive. handleReset sets hasError=false (re-renders children). "Coba lagi" button wired to handleReset. Optional `fallback` prop. Clean implementation.
+- Verified ErrorBoundary nesting: ErrorBoundary is INSIDE FetchAware (correct — FetchAware handles loading badge, ErrorBoundary handles render errors). Both wrap individual cards/sections, not the entire page.
+- Verified 5 wraps in page.tsx: HealthAlert (435), GrowthComparison (438), DeviationBreakdownChart (441), HistoricalZScoreCard (520), AreaTrendChart (523). NOT wrapped: ExecutiveSummary, RestoRecommendationCard, InsightsPanel, MultiPeriodComparisonCard, TopItemsByNominal/DevBom/TopOutlets, AreaComparison, OutletHealthRanking, ItemConsistencyAnalysis, LossVsSurplusChart, TrendChart, RestoAnalysis, PeerComparison (~12 components that receive analysis.data — could crash without boundary).
+
+Stage Summary:
+
+CRITICAL / HIGH (must-fix):
+
+- HIGH #1 (src/app/api/ingest-process/route.ts:333, 347) · SED MANGLED TEMPLATE LITERAL — `error: \`Gagal reassemble file: $(e instanceof Error ? e.message : String(e))\`` uses `$(...)` (parenthesis) instead of `${...}` (curly brace). The entire `$(...)` is treated as LITERAL TEXT, not template interpolation. User sees `"Gagal reassemble file: $(e instanceof Error ? e.message : String(e))"` instead of the actual error. LIVE-VERIFIED: POSTed valid-hex-but-nonexistent fileHash → got literally `"Gagal reassemble file: $(e instanceof Error ? e.message : String(e))"`. Same bug on line 347 for "Gagal parse Excel" path. Affects both `mode='import'` reassemble failures and Excel parse failures — when users upload a corrupt Excel file, they cannot tell what went wrong. Fix: replace `$(e instanceof Error ? e.message : String(e))` with `${e instanceof Error ? e.message : String(e)}` (add `{`, remove `(`).
+
+- HIGH #2 (src/app/api/pic/route.ts:76, 117) · STALE DB-LEVEL CACHE after single PIC mutation — Phase 1 removed `analysisCache.clear()` (dead, but called) from POST `/api/pic` (line 76) and DELETE `/api/pic` (line 117) WITHOUT adding replacement `invalidateCache('analysis|')`. The 6 OTHER mutation sites (ingestion, data, migrate-direction, pic/import, settings, ingest-process) all got `invalidateCache('analysis|')` added. Single PIC mutations (one outlet upsert/delete) leave cached `/api/analysis?pic=...` responses stale for up to 5 min (AggregationCache TTL). Header comment at line 11 still says "After mutation: clear statusCache + analysisCache (filters may change)" — but only `statusCache.clear()` is called. Fix: add `invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));` after `statusCache.clear()` at lines 76 and 117, and add `import { invalidateCache } from '@/lib/aggregation-cache';` to imports.
+
+MEDIUM:
+
+- MEDIUM #3 (src/app/api/ingest-process/route.ts:501) · MISLEADING COMMENT — "analysisCache was already cleared; statusCache must also be cleared" but `analysisCache.clear()` is no longer called anywhere (removed in Phase 1). Comment is leftover from pre-Phase-1 code. `invalidateCache('analysis|')` IS called at line 507 (so cache IS invalidated, just not via `analysisCache`). Fix: rewrite comment to "statusCache must be cleared because /api/status returns month/file/row counts...; DB-level AggregationCache is invalidated below via invalidateCache('analysis|')".
+
+- MEDIUM #4 (src/app/api/data/route.ts:9) · MISLEADING HEADER COMMENT — "After delete: clear analysisCache + statusCache + audit log entry" but `analysisCache` no longer exists; `invalidateCache('analysis|')` is what's actually called (line 253). Fix: rewrite to "After delete: invalidate DB-level AggregationCache + clear statusCache + audit log entry".
+
+- MEDIUM #5 (src/app/api/pic/route.ts:11) · MISLEADING HEADER COMMENT — same pattern as #4: header says "clear statusCache + analysisCache" but only `statusCache.clear()` is called (and `invalidateCache` is NOT imported). Fix: either add the missing `invalidateCache` call (HIGH #2 above) OR rewrite comment to drop "analysisCache" mention.
+
+- MEDIUM #6 (src/lib/format.ts:11-12) · DOC/COMMENT INACCURACY — toNum JSDoc says "Handles: null, undefined, NaN, Infinity, Prisma Decimal, BigInt" but `isNaN(Infinity) === false` so `toNum(Infinity)` returns `Infinity` (NOT filtered to null). Same applies to large Prisma Decimal values that Number() converts to Infinity. Behavior is identical to old local copies (so no regression), but the comment overpromises. Fix: change comment to "Handles: null, undefined, NaN, non-numeric strings. NOTE: returns Infinity for Infinity input (does NOT filter — use isFinite check at call site if needed)."
+
+LOW / INFO:
+
+- LOW #7 (src/app/api/item-history/route.ts:29-30) · COSMETIC DOUBLE BLANK LINE — two consecutive blank lines where the old `const toNum = ...` declaration was removed. Lint passes (no rule violation). Fix: delete one blank line for tidiness.
+
+- LOW #8 (src/app/api/outlet-items/route.ts:40) · REDUNDANT COMMENT — "// toNum imported from @/lib/format (deduplicated)" sits directly below `import { toNum } from '@/lib/format';` on line 35. Self-explanatory. Fix: remove the comment.
+
+- LOW #9 (src/components/ui/error-boundary.tsx — no tests) · ErrorBoundary has no unit test coverage. Could test: (a) renders children when no error, (b) renders fallback on throw, (c) handleReset clears hasError state, (d) custom fallback prop overrides default UI. Tests would need `react-test-renderer` or `@testing-library/react`. Not blocking.
+
+- INFO #10 · ErrorBoundary coverage is intentionally scoped (per commit message) to 5 wraps: Health Alert, Growth Comparison, Deviation Breakdown, Historical Z-Score, Area Trend. ~12 other components that receive `analysis.data` are NOT wrapped (ExecutiveSummary, InsightsPanel, MultiPeriodComparisonCard, TopItems*, AreaComparison, OutletHealthRanking, ItemConsistencyAnalysis, LossVsSurplusChart, TrendChart, RestoAnalysis, PeerComparison). A crash in any of these would still blank the entire tab. Not a regression — pre-Phase-1 had zero ErrorBoundaries.
+
+- INFO #11 · `pic/import/route.ts:103` has `catch {}` (optional catch binding, no parameter) — TypeScript 4.4+ syntax, valid. Lint/tsc pass. Fine.
+
+- INFO #12 · Server OOM-during-page-compile issue persists (Next.js 16 + Turbopack, ~2GB heap usage, 4GB system). Same as AUDIT-5/6/7/8. API routes alone are stable. Not a regression.
+
+VERIFIED CORRECT (no regressions from Phase 1):
+
+- `npx tsc --noEmit` → 0 errors. ✓
+- `bun run lint` → 0 errors, 9 pre-existing warnings. ✓
+- `bun run test` → 61/61 tests pass (includes new toNum tests). ✓
+- All 7 maxDuration routes return HTTP 200 with fast response times (status=9ms, data=992ms, drilldown=3.8s, settings=546ms, setup=301ms, ingest=2.1s, pic=437ms). ✓
+- Dead analysisCache fully removed: 0 imports, 0 .clear() calls. Only 5 comment references remain (some misleading — see #3/#4/#5). statusCache imports intact in all 7 mutation sites. ✓
+- New `toNum` in format.ts:15-19 has identical runtime behavior to old local copies in item-history, outlet-items, deviation.ts (all: null/undefined→null, Number(v)→isNaN→null). transform.ts kept its own toNum (different signature with locale param). ✓
+- No circular imports: format.ts has 0 imports. ✓
+- catch(e:any) → catch(e:unknown): 0 remaining `catch (e: any)`, 0 remaining `e?.message`, 0 remaining `e.code/meta/response/status` on caught errors. All `e.message` accesses are guarded by `e instanceof Error ? e.message : String(e)`. ✓ EXCEPT for the sed-mangled `$(e instanceof Error...)` on lines 333,347 of ingest-process (HIGH #1).
+- `pic/import/route.ts` complex sed replacement manually fixed — verified clean: `catch (e: unknown)` at line 124, `e instanceof Error ? e.message : String(e)` at line 125. ✓
+- 7 routes have `maxDuration = 30` placed AFTER `export const dynamic = 'force-dynamic'`. ✓
+- ErrorBoundary class component correctly implements getDerivedStateFromError + componentDidCatch + handleReset. 'use client' directive. Optional fallback prop. ✓
+- ErrorBoundary is nested INSIDE FetchAware (correct order: FetchAware=loading, ErrorBoundary=errors). ✓
+- 5 ErrorBoundary wraps in page.tsx wrap individual cards (not entire sections). ✓
+- AUDIT-8 HIGH #1 (ingest-process:503,696 stale cache) FIXED — `invalidateCache('analysis|')` added at lines 507 and 701. ✓
+- AUDIT-8 HIGH #2 (pic/import:129 stale cache) FIXED — `invalidateCache('analysis|')` added at line 134. ✓
+- New tests added in src/lib/format.test.ts:22 cover toNum edge cases (null/undefined/'/abc/BigInt/numbers). ✓
+
+---
+Task ID: AUDIT-P2
+Agent: Deep Audit (Phase 2 Changes)
+Task: Deep audit of Phase 2 changes (commits a208b2c + d9f28df) for bugs
+
+Work Log:
+- Read worklog.md (Phase 2 entries: 61 unit tests, logger, CI/CD, type-safety fix).
+- Read all Phase 2 files: src/lib/logger.ts, src/lib/aggregation-cache.ts, .github/workflows/ci.yml, vitest.config.ts, src/lib/metrics/historical.ts, src/lib/format.ts, format.test.ts, historical.test.ts, growth.test.ts, growth.ts.
+- Ran `bun run test` — all 61 tests pass (493ms).
+- Ran live logger smoke test — info/error/debug all emit correctly.
+- Ran live circular-reference test — logger THROWS ("JSON.stringify cannot serialize cyclic structures"). Bug confirmed.
+- Ran live `toNum(Infinity)` — returns `Infinity` (not null). Bug confirmed (docstring claims it handles Infinity).
+- Ran live `toNum('')` — returns 0. Behavior test passes but is semantically wrong for Excel empty cells.
+- Ran live `toNum(true/false/{}/[]/[42])` — returns 1/0/null/0/42 (JS coercion quirks, untested).
+- Ran live `fmtNum(1_000_000_000)` — returns '1000,00Jt' (not '1M'). Billions not handled. Test passes only because it uses toContain('Jt').
+- Ran live WARNING zScore test — zScore = 2.449 (between 2 and 3) → warningLevel='WARNING'. Test assertion correct.
+- Ran live `calcGrowth(50, -100)` → 1.5. Test assertion correct.
+- Ran live `computeGrowthResult(null, 100, 0.1)` → trend='RESOLVED'. Test assertion correct.
+- Verified `aggregation-cache.ts` has 0 remaining console.* calls (all migrated to logger).
+- Verified 40+ console.* calls remain in OTHER files (analysis/route.ts, ingest-process/route.ts, etc.) — logger migration was scope-limited to aggregation-cache.ts only.
+- Verified migration signatures: old `console.error(msg, value)` → new `logger.error(msg, { error: value })`. Correct shape, no broken template literals.
+- Ran `bun run lint` — 9 warnings, 0 errors. CI will pass (eslint exits 0 on warnings-only).
+- Verified `bun.lock` is committed (264KB) — `bun install --frozen-lockfile` will work.
+- Verified `tsconfig.json` paths `"@/*": ["./src/*"]` matches vitest alias `@` → `./src`. ✓
+- Verified `src/engine/` directory exists (analysis/, rules/) — coverage include is valid.
+- Verified CI step order: install → prisma generate → tsc --noEmit → lint → test. Correct (tsc needs @prisma/client).
+- Verified `DATABASE_URL: postgresql://placeholder...` works for `prisma generate` (only needs schema, not live DB).
+
+Stage Summary:
+
+CRITICAL/HIGH (must-fix):
+1. HIGH · src/lib/logger.ts:43 · logger.format() throws on circular references — JSON.stringify crashes. Any caller passing a request object, DOM element, or self-referential payload crashes the process. Fix: wrap in try/catch with safe fallback, OR use a replacer that detects cycles (`JSON.stringify(data, (k,v)=>typeof v==='object'&&v?/* seen check */:v)`).
+2. HIGH · src/lib/format.ts:17-18 · toNum('') returns 0 (not null). Empty Excel cells silently become 0, biasing SUM/AVG aggregations downward. Test at format.test.ts:14-16 documents this as "desired" but it is NOT — 'abc' returns null, '' returns 0, inconsistent. Fix: `if (v === '') return null;` before `Number(v)`.
+3. HIGH · src/lib/format.ts:17-18 · toNum(Infinity) and toNum(-Infinity) return Infinity (not null). Docstring line 12 claims "Handles: ... Infinity" but implementation does not filter it. Infinity poisons downstream aggregations (mean→Infinity, sum→Infinity). Fix: change to `return (isNaN(n) || !isFinite(n)) ? null : n;`.
+
+MEDIUM:
+4. MEDIUM · src/lib/format.ts:40-50 · fmtNum does not handle billions. fmtNum(1_000_000_000) → '1000,00Jt' (should be '1,00M' like fmtIDR). Test at format.test.ts:80 only checks `toContain('Jt')` so it passes but masks the bug. Fix: add `if (abs >= 1_000_000_000) return \`${sign}${fmtDecimal(abs / 1_000_000_000, 2)}M${unit}\`;` as first branch.
+5. MEDIUM · src/lib/logger.ts:43 · logger.format() also throws on BigInt, Function, Symbol — JSON.stringify throws on these. Same fix as #1.
+6. MEDIUM · src/lib/aggregation-cache.ts (whole file) + 20 other files · logger migration was scope-limited to aggregation-cache.ts only. 40+ console.* calls remain across analysis/route.ts, ingest-process/route.ts, db.ts, ingestion.ts, engine/rules/evaluator.ts, etc. The "single source of truth" claim in logger.ts header is aspirational, not actual. Fix: schedule Phase 3 to migrate remaining files (or accept partial adoption).
+7. MEDIUM · .github/workflows/ci.yml · No node_modules cache, no .next cache. Each CI run re-installs + re-builds from scratch (~60-90s wasted). Fix: add `actions/cache@v4` for `~/.bun/install/cache` and `node_modules`.
+8. MEDIUM · .github/workflows/ci.yml:6-10 · CI only triggers on push/PR to main. Feature branches and `develop` bypass CI entirely until PR. Fix: add `branches: [main, develop, 'feature/**']` or trigger on all pushes.
+
+LOW/INFO:
+9. LOW · src/lib/logger.ts:60 · logger.info uses console.log not console.info. Functionally equivalent in Node (console.info is alias for console.log), but stylistically inconsistent with logger.debug→console.debug, logger.warn→console.warn, logger.error→console.error.
+10. LOW · src/lib/logger.ts:49-55 · Redundant check in logger.debug: `if (!shouldLog('debug')) return;` already filters in production, then `if (process.env.NODE_ENV !== 'production')` is dead code in production. Not a bug, just noise.
+11. LOW · src/lib/format.test.ts · Missing edge case tests for toNum(true)→1, toNum(false)→0, toNum([])→0, toNum([42])→42, toNum({})→null. These JS coercion quirks are untested. Add tests to lock in desired behavior (or fix the behavior — toNum(true) returning 1 is surprising).
+12. LOW · vitest.config.ts:1 · Vite warns "ESM syntax in CJS file". Fix: add `"type": "module"` to package.json or rename to vitest.config.mjs. Non-blocking (tests pass).
+13. LOW · .github/workflows/ci.yml:38 · `npx tsc --noEmit` instead of `bun run tsc` — works but spawns npm subprocess. Use `bun x tsc --noEmit` for consistency.
+14. LOW · vitest.config.ts:9-13 · Coverage `include: ['src/lib/**', 'src/engine/**']` excludes `src/app/**` and `src/components/**` — major surface area untested. Acceptable for Phase 2 scope but should be expanded in Phase 3.
+
+VERIFIED CORRECT (no action needed):
+- All 61 tests pass (format:22, historical:18, growth:21). ✓
+- calcGrowth(50, -100) = 1.5 — math verified. ✓
+- computeGrowthResult(null, 100, 0.1).trend = 'RESOLVED' — verified. ✓
+- WARNING zScore test — zScore=2.449 (2 < z ≤ 3) → warningLevel='WARNING'. Math correct. ✓
+- Type guard `(v): v is number => v != null && !isNaN(v)` correctly narrows `(number|null)[]` to `number[]`. ✓
+- aggregation-cache.ts migration — 0 remaining console.* calls, all 7 migrated with correct `{ error: value }` shape, no broken template literals (`${...}` intact). ✓
+- CI step order (install → prisma generate → tsc → lint → test) is correct. ✓
+- CI `oven-sh/setup-bun@v2` is the current correct action. ✓
+- CI `bun install --frozen-lockfile` works — bun.lock (264KB) is committed. ✓
+- CI `DATABASE_URL: postgresql://placeholder...` works — prisma generate only needs schema, not live DB. ✓
+- CI lint step will pass — `bun run lint` = `eslint .` exits 0 on 9 warnings (no errors). ✓
+- vitest `environment: 'node'` is correct — no DOM APIs used in any test file. ✓
+- vitest path alias `@` → `./src` matches tsconfig.json `paths`. ✓
+- `src/engine/` directory exists (analysis/, rules/) — coverage include is valid, not pointing at missing dir. ✓
+- Type-safety fix in historical.ts (historicalValues: (number|null)[]) — only caller is src/app/api/item-history/route.ts:216, which already passes an array; the relaxed type is forward-compatible. ✓

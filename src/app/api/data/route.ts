@@ -6,7 +6,7 @@
 //  Cascade order (respects FK constraints):
 //    DQIssue → InventoryRecord → Week → SourceFile
 //
-//  After delete: clear analysisCache + statusCache + audit log entry
+//  After delete: clear statusCache + invalidateCache + audit log entry
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';

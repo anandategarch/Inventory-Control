@@ -330,7 +330,7 @@ export async function POST(req: NextRequest) {
       } catch (e: unknown) {
         console.error('[ingest-process] reassemble failed:', e);
         return NextResponse.json(
-          { success: false, error: `Gagal reassemble file: $(e instanceof Error ? e.message : String(e))` },
+          { success: false, error: `Gagal reassemble file: ${e instanceof Error ? e.message : String(e)}` },
           { status: 500 }
         );
       }
@@ -344,7 +344,7 @@ export async function POST(req: NextRequest) {
         console.error('[ingest-process] parse failed:', e);
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
-          { success: false, error: `Gagal parse Excel: $(e instanceof Error ? e.message : String(e))` },
+          { success: false, error: `Gagal parse Excel: ${e instanceof Error ? e.message : String(e)}` },
           { status: 500 }
         );
       }
