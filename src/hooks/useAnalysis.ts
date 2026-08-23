@@ -202,6 +202,8 @@ export interface AnalysisData {
   topItemsByLossSurplus: TopItemByCategory[];
   topDeviasiRank?: DeviasiRankItem[];
   deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
+  // NEW: 80% Pareto per deviation category — powers Deviation Breakdown drill-down
+  deviationDrivers?: DeviationDriverCategory[];
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
   // FIX: removed investigationWorklist (dead field — not consumed by any component)
   // investigationWorklist: InvestigationItem[];
@@ -233,6 +235,22 @@ export interface GrowthDriverMetric {
   groupBy: 'outlet' | 'item';
   up: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
   down: { drivers: GrowthDriver[]; remainderCount: number; remainderPct: number };
+}
+
+// NEW: Deviation Drivers — Pareto 80% per deviation category (waste/susut/trial/residual)
+export interface DeviationDriver {
+  item: string;
+  qty: number;
+  nominal: number;
+  sharePct: number;
+  cumPct: number;
+}
+export interface DeviationDriverCategory {
+  category: 'waste' | 'susut' | 'trial' | 'residual';
+  label: string;
+  drivers: DeviationDriver[];
+  remainderCount: number;
+  remainderPct: number;
 }
 
 async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {

@@ -205,6 +205,60 @@ export async function queryDeviationBreakdown(
 }
 
 // ============================================================
+//  Deviation Breakdown Drivers — per-item aggregates across
+//  4 categories (waste / susut / trial / residual) in a single
+//  query. Used by the Deviation Breakdown card to power the
+//  80% Pareto drill-down (mirrors GrowthComparison's growthDrivers).
+//
+//  Groups by item name (cross-outlet aggregation) so the user sees
+//  "Ayam Fillet contributes 30% of total waste" regardless of which
+//  outlet generated it. Returns ALL items — JS computes the Pareto
+//  cut at 80% cumulative share.
+// ============================================================
+export interface DeviationDriverItemRow {
+  itemName: string;
+  wasteQty: number;
+  wasteNominal: number;
+  susutQty: number;
+  susutNominal: number;
+  trialQty: number;
+  trialNominal: number;
+  residualQty: number;
+  residualNominal: number;
+}
+
+export async function queryDeviationBreakdownDrivers(
+  week: string,
+  month: string,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  }
+): Promise<DeviationDriverItemRow[]> {
+  const f = buildSqlFilters(filters);
+  const rows = await db.$queryRaw<DeviationDriverItemRow[]>`
+    SELECT
+      i.name as "itemName",
+      COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
+      COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "wasteNominal",
+      COALESCE(SUM(ABS(ir."qtySusut")), 0) as "susutQty",
+      COALESCE(SUM(ABS(ir."nominalSusut")), 0) as "susutNominal",
+      COALESCE(SUM(ABS(ir."qtyTrial")), 0) as "trialQty",
+      COALESCE(SUM(ABS(ir."nominalTrial")), 0) as "trialNominal",
+      COALESCE(SUM(ABS(ir."residualQty")), 0) as "residualQty",
+      COALESCE(SUM(ABS(ir."residualNominal")), 0) as "residualNominal"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+      ${f}
+    GROUP BY i.name
+  `;
+  return rows;
+}
+
+// ============================================================
 //  Loss vs Surplus — single row (Phase 2)
 // ============================================================
 export async function queryLossVsSurplus(

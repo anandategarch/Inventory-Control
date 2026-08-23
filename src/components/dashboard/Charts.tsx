@@ -248,13 +248,36 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
 
 export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   const b = data.deviationBreakdown;
+  const drivers = data.deviationDrivers || [];
+  const [expanded, setExpanded] = useState<string | null>(null);
   const total = b.total || 1;
   const chartData = [
-    { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: '#f59e0b' },
-    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#a16207' },
-    { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: '#65a30d' },
-    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? '#dc2626' : '#71717a' },
+    { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: '#f59e0b', key: 'waste' },
+    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#a16207', key: 'susut' },
+    { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: '#65a30d', key: 'trial' },
+    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? '#dc2626' : '#71717a', key: 'residual' },
   ];
+
+  const formatQty = (v: number) => {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+    return v.toFixed(0);
+  };
+
+  const formatRp = (v: number) => {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000_000) return `Rp ${(v / 1_000_000_000).toFixed(2)}M`;
+    if (abs >= 1_000_000) return `Rp ${(v / 1_000_000).toFixed(1)}Jt`;
+    if (abs >= 1_000) return `Rp ${(v / 1_000).toFixed(0)}Rb`;
+    return `Rp ${v.toFixed(0)}`;
+  };
+
+  const getTopDriver = (catKey: string) => {
+    const cd = drivers.find(d => d.category === catKey);
+    if (!cd || cd.drivers.length === 0) return null;
+    return { name: cd.drivers[0].item, share: cd.drivers[0].sharePct };
+  };
 
   return (
     <Card className="overflow-hidden shadow-sm dark:shadow-black/20">
@@ -266,7 +289,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
           Deviation Breakdown
           <FormulaInfo
             formula="QTY Deviasi = |Waste| + |Susut| + |Trial| + |Residual|"
-            description="Dekomposisi total deviation. Residual = |QTY Deviasi| - |Waste + Susut + Trial|. Residual tinggi (>50%) = sebagian besar deviation tidak terjelaskan oleh Waste/Susut/Trial."
+            description="Dekomposisi total deviation. Residual = |QTY Deviasi| - |Waste + Susut + Trial|. Residual tinggi (>50%) = sebagian besar deviation tidak terjelaskan oleh Waste/Susut/Trial. Klik bar/badge untuk lihat Pareto 80% — item penyebab terbesar."
             example="Deviasi 60K = Waste 8K + Susut 6K + Trial 4K + Residual 42K (70%)"
             side="bottom"
           />
@@ -277,7 +300,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">QTY Deviasi composition</p>
+        <p className="text-xs text-muted-foreground ml-9">QTY Deviasi composition — klik kategori untuk detail Pareto 80%</p>
       </CardHeader>
       <CardContent>
         <div className="h-48">
@@ -291,22 +314,108 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                 formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
                 contentStyle={{ borderRadius: '8px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
               />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48}>
+              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-1.5 text-xs">
-          {chartData.map((d) => (
-            <div key={d.name} className="flex items-center gap-1.5 rounded-md border bg-muted/20 px-2 py-1">
-              <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
-              <span className="text-muted-foreground shrink-0">{d.name}</span>
-              <span className="font-medium tabular-nums ml-auto">{d.value.toLocaleString()}</span>
-              <span className="text-muted-foreground tabular-nums">({d.pct.toFixed(1)}%)</span>
-            </div>
-          ))}
+
+        {/* Category badges — clickable to expand Pareto detail */}
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          {chartData.map((d) => {
+            const top = getTopDriver(d.key);
+            const isExpanded = expanded === d.key;
+            return (
+              <button
+                key={d.key}
+                onClick={() => setExpanded(isExpanded ? null : d.key)}
+                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                  isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
+                }`}
+              >
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color }} />
+                  <span className="text-muted-foreground font-medium">{d.name}</span>
+                </span>
+                {top ? (
+                  <span className="flex items-center gap-1 min-w-0">
+                    <span className="truncate max-w-[80px] text-foreground/80">{top.name}</span>
+                    <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                      {top.share.toFixed(0)}%
+                    </Badge>
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground/50">—</span>
+                )}
+              </button>
+            );
+          })}
         </div>
+
+        {/* Residual warning badge */}
+        {b.residual / total > 0.5 && (
+          <div className="mt-2">
+            <Badge variant="destructive" className="text-[10px] h-5 font-medium">
+              Residual {((b.residual / total) * 100).toFixed(0)}% — sebagian besar deviation tidak terjelaskan
+            </Badge>
+          </div>
+        )}
+
+        {/* Pareto 80% detail — expandable */}
+        {expanded && drivers.length > 0 && (() => {
+          const cd = drivers.find(d => d.category === expanded);
+          if (!cd) return null;
+          const catRow = chartData.find(c => c.key === expanded);
+          const catColor = catRow?.color || '#71717a';
+          return (
+            <div className="mt-3 rounded-lg border p-3 space-y-2 bg-muted/20">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: catColor }} />
+                  {cd.label} — {catRow ? formatQty(catRow.value) : '—'}
+                  <span className="text-muted-foreground font-normal">
+                    ({catRow ? catRow.pct.toFixed(1) : '0'}% dari total)
+                  </span>
+                </p>
+                <button onClick={() => setExpanded(null)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                  ✕ Tutup
+                </button>
+              </div>
+
+              {cd.drivers.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground text-center py-2">Tidak ada data untuk kategori ini</p>
+              ) : (
+                <>
+                  <p className="text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                    80% Pareto ({cd.drivers.length} item)
+                  </p>
+                  <div className="space-y-1">
+                    {cd.drivers.map((d, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[10px]">
+                        <span className="w-4 text-muted-foreground">{i + 1}.</span>
+                        <span className="flex-1 truncate" title={d.item}>{d.item}</span>
+                        <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full" style={{ width: `${Math.min(100, d.sharePct)}%`, background: catColor }} />
+                        </div>
+                        <span className="w-14 text-right tabular-nums font-medium" title={formatRp(d.nominal)}>
+                          {formatQty(d.qty)}
+                        </span>
+                        <span className="w-10 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
+                        <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  {cd.remainderCount > 0 && (
+                    <p className="text-[9px] text-muted-foreground/60 pl-6">
+                      Sisa {cd.remainderPct.toFixed(0)}%: {cd.remainderCount} item kecil
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
       </CardContent>
     </Card>
   );

@@ -36,6 +36,7 @@ import {
   queryTopOutlets,
   queryTopOutletsBySales,
   queryDeviationBreakdown,
+  queryDeviationBreakdownDrivers,
   queryLossVsSurplus,
   queryAreaAnalysis,
   queryCostImpact,
@@ -484,6 +485,7 @@ export async function GET(req: NextRequest) {
       consistencyItems,
       dqIssuesRaw,
       topDeviasiRank,
+      deviationDriverRows,
     ] = await Promise.all([
       queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
       queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
@@ -510,6 +512,7 @@ export async function GET(req: NextRequest) {
         _count: { _all: true },
       }),
       queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50), // FIX: limit 500→50 (-150KB payload)
+      queryDeviationBreakdownDrivers(week!, month!, filterOpts), // NEW: 80% Pareto per category
     ]);
 
     // Map results (same as before, just from parallel results)
@@ -860,6 +863,60 @@ export async function GET(req: NextRequest) {
       });
     })();
 
+    // ============================================================
+    //  Deviation Drivers — Pareto 80% analysis per deviation category
+    //  (waste / susut / trial / residual). Powers the drill-down on
+    //  the Deviation Breakdown card (mirrors GrowthComparison's pattern).
+    //  Source: deviationDriverRows (single SQL GROUP BY item across all 4
+    //  categories). JS computes the 80% cumulative-share cut per category.
+    // ============================================================
+    const deviationDrivers = (() => {
+      const categories = [
+        { key: 'waste' as const, label: 'Waste', qtyField: 'wasteQty' as const, nomField: 'wasteNominal' as const },
+        { key: 'susut' as const, label: 'Susut', qtyField: 'susutQty' as const, nomField: 'susutNominal' as const },
+        { key: 'trial' as const, label: 'Trial', qtyField: 'trialQty' as const, nomField: 'trialNominal' as const },
+        { key: 'residual' as const, label: 'Residual', qtyField: 'residualQty' as const, nomField: 'residualNominal' as const },
+      ];
+
+      return categories.map(cat => {
+        // Build (item, qty, nominal) tuples — skip items with zero qty in this category
+        const rows = deviationDriverRows
+          .map(r => ({ item: r.itemName, qty: Number(r[cat.qtyField]) || 0, nominal: Number(r[cat.nomField]) || 0 }))
+          .filter(r => r.qty > 0);
+
+        // Sort descending by qty (Pareto order)
+        rows.sort((a, b) => b.qty - a.qty);
+
+        const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+        if (totalQty === 0) {
+          return { category: cat.key, label: cat.label, drivers: [], remainderCount: 0, remainderPct: 0 };
+        }
+
+        let cumPct = 0;
+        const drivers: Array<{ item: string; qty: number; nominal: number; sharePct: number; cumPct: number }> = [];
+        for (const r of rows) {
+          const sharePct = (r.qty / totalQty) * 100;
+          cumPct += sharePct;
+          drivers.push({
+            item: r.item,
+            qty: Number(r.qty.toFixed(2)),
+            nominal: Number(r.nominal.toFixed(0)),
+            sharePct: Number(sharePct.toFixed(1)),
+            cumPct: Number(cumPct.toFixed(1)),
+          });
+          if (cumPct >= 80) break;
+        }
+
+        return {
+          category: cat.key,
+          label: cat.label,
+          drivers,
+          remainderCount: rows.length - drivers.length,
+          remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
+        };
+      });
+    })();
+
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -878,6 +935,7 @@ export async function GET(req: NextRequest) {
       topOutlets: topOut,
       topOutletsBySales: topOutletsSales,
       growthDrivers, // FIX: Pareto 80% drivers per metric
+      deviationDrivers, // NEW: 80% Pareto per deviation category (waste/susut/trial/residual)
       topItemsByWaste: topWaste,
       topItemsBySusut: topSusut,
       topItemsByTrial: topTrial,

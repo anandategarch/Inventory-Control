@@ -14778,3 +14778,62 @@ Stage Summary:
 - **Side-effect fixes** (consumers of `DrilldownRecord`): the expanded `DrilldownRecord.derived` shape now includes `pctQtyDeviasiToBom`, `tolerancePct`, `avgPrice`, `absQtyDeviasi`, `pctWasteSusut`, `toleranceRaw` + `bulan`/`bulan2` fields — these were already being read by `SourceDataModal.tsx` and `DrillDownDrawer.tsx` but were invisible to TypeScript when `records` was typed `any[]`. Now both files type-check clean without any code changes.
 - **Files touched:** 7 (per task spec). No other files modified.
 
+
+---
+Task ID: DEV-BREAKDOWN-PARETO
+Agent: Main (Z.ai Code)
+Task: Make Deviation Breakdown card drillable + 80% Pareto (mirror Growth Comparison pattern)
+
+Work Log:
+- Read worklog.md + Charts.tsx (GrowthComparison + DeviationBreakdownChart) + analysis/route.ts + queries/dashboard.ts to understand current state
+- Found: DeviationBreakdownChart was non-interactive (static bars + static legend). GrowthComparison already had the pattern: clickable bars/badges → expandable panel showing top items contributing to 80% cumulative share
+- Found: existing `topItemsByWaste/Susut/Trial/LossSurplus` arrays are capped at top-N (10) and don't compute cumulative %, so they can't power a true Pareto 80% cut
+- Decision: Add a new single SQL query that aggregates ALL items across all 4 categories (waste/susut/trial/residual) in one GROUP BY, then compute Pareto 80% per category in JS (same pattern as growthDrivers)
+
+Backend:
+- Added `queryDeviationBreakdownDrivers()` in `src/lib/queries/dashboard.ts` — single SQL query grouping by `i.name`, returning 9 columns (4 categories × qty+nominal + itemName). Filter-aware (uses buildSqlFilters).
+- Added `DeviationDriverItemRow` interface exported from same file.
+- Imported `queryDeviationBreakdownDrivers` in `src/app/api/analysis/route.ts`.
+- Added the query to the existing Promise.all (parallel with other 16 queries — no extra latency).
+- Computed `deviationDrivers` array (4 category objects) with Pareto 80% cut in JS:
+  - Each category: { category, label, drivers: [{item, qty, nominal, sharePct, cumPct}], remainderCount, remainderPct }
+  - Sort by qty descending, accumulate cumPct, break at ≥80%
+- Added `deviationDrivers` to the API response payload.
+
+Types:
+- Added `DeviationDriver` + `DeviationDriverCategory` interfaces to `src/hooks/useAnalysis.ts`.
+- Added `deviationDrivers?: DeviationDriverCategory[]` to `AnalysisData` (optional for backward compat).
+
+Frontend (Charts.tsx → DeviationBreakdownChart):
+- Added `expanded` state (mirrors GrowthComparison pattern).
+- Added `key` field to chartData (waste/susut/trial/residual).
+- Made Bar cells clickable: `onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)}` with `cursor="pointer"`.
+- Replaced the 4 static legend cards with 4 clickable badges (color swatch + category name + top driver name + share% badge).
+- Added "Residual > 50%" warning badge (was previously implicit in the legend color, now explicit).
+- Added expandable Pareto 80% detail panel: header (category color + label + qty + % of total), close button, ordered list of drivers (rank, item name, share bar, qty, share%, cum%), remainder footer ("Sisa X%: N item kecil").
+- Updated FormulaInfo description to mention the new drill-down.
+- Updated subtitle: "QTY Deviasi composition — klik kategori untuk detail Pareto 80%".
+
+Verification (Agent Browser end-to-end):
+- Opened http://localhost:3000/ on desktop (1280×800) — page loaded, no console errors, no page errors.
+- Verified all 4 badges show top-driver info: "Waste KULIT PANGSIT (V.20) 65%", "Susut AYAM CINCANG (V.20) 45%", "Trial ADONAN PANGSIT (V.20) 14%", "Residual MINYAK MIE (V.20) 31%".
+- Clicked Waste badge → panel expanded showing "80% Pareto (3 item)" with KULIT PANGSIT (12.2M, 65%, cum 65%), ADONAN PANGSIT (2.2M, 12%, cum 77%), SURAI NAGA (1.5M, 8%, cum 85%), footer "Sisa 15%: 84 item kecil". Clicked "✕ Tutup" → panel closed.
+- Clicked Residual badge → panel expanded showing "80% Pareto (11 item)" with MINYAK MIE (95.3M, 31%, cum 31%), MINYAK MIE SHALLOT OIL (52.2M, 17%, cum 49%), ADONAN PANGSIT (21.7M, 7%, cum 56%), etc. All 11 items visible, cumulative % accumulating correctly.
+- Clicked Trial badge → panel expanded showing "80% Pareto (19 item)" — verified first 4 items (ADONAN PANGSIT 14%, KULIT PANGSIT 13%, SUSU KENTAL MANIS 7%, GULA...) sorted descending by qty.
+- Cross-verified API response: `curl /api/analysis?month=Agustus%202026&week=WEEK%201` returns `deviationDrivers: [{category: 'waste', drivers: [3 items]}, {category: 'susut', drivers: [3 items]}, {category: 'trial', drivers: [19 items]}, {category: 'residual', drivers: [11 items]}]` — all counts match what the UI displays.
+- Tested mobile viewport (375×812 iPhone X size): scrolled to Deviation Breakdown card, clicked Waste badge → panel expanded correctly with the same 3 items. Layout responsive (grid-cols-2 badges wrap properly).
+- Dev log: 0 errors. All API calls return 200. Analysis route still completes in ~7s (no measurable latency increase from the extra GROUP BY query, since it runs in parallel with the other 16 queries).
+
+Lint + TypeScript:
+- `bun run lint`: 0 errors, 4 pre-existing warnings (unchanged from before).
+- `npx tsc --noEmit`: 0 errors (clean).
+
+Stage Summary:
+- Deviation Breakdown card now has the same drill-down + 80% Pareto treatment as Growth Comparison.
+- Click any of the 4 category badges (Waste/Susut/Trial/Residual) or the corresponding bar → expandable panel shows the items contributing to 80% of that category's total qty, with share% and cumulative%.
+- New API field: `deviationDrivers: DeviationDriverCategory[]` (4 objects, one per category).
+- New SQL query: `queryDeviationBreakdownDrivers()` — single GROUP BY item across 4 categories, runs in parallel with existing queries (no latency impact).
+- Type-safe: 0 `any` types added. New `DeviationDriver` + `DeviationDriverCategory` interfaces exported from `@/hooks/useAnalysis`.
+- Mobile-responsive: badges wrap in 2-column grid, panel content fits narrow viewports.
+- Backward compatible: `deviationDrivers` is optional (`?`), so any consumer that doesn't read it still works.
+- Files changed: 4 (src/lib/queries/dashboard.ts, src/app/api/analysis/route.ts, src/hooks/useAnalysis.ts, src/components/dashboard/Charts.tsx).
