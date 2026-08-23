@@ -151,6 +151,16 @@ Buka `src/config/thresholds.ts` — ubah tolerance, growth factor, priority weig
 - Field `nominalDeviasi` (signed) = nilai yang ditampilkan; `absNominal` (ABS) = nilai untuk sorting
 - Warna: negatif → merah (LOSS), positif → hijau (SURPLUS)
 
+### Periode Pembanding — Hybrid Approach
+- **Layer 1 (MoM)**: previous month same week — untuk detection cepat (Direction Flip, Trend)
+- **Layer 2 (Historical)**: rata-rata same weekLabel across ALL previous months — untuk validasi
+- Signal 2 (Deviasi Growth): ambil **WORST CASE** dari MoM vs Historical
+- Signal 7 (Trend Memburuk): fire jika **EITHER** MoM atau Historical > 20%
+- Minimum 2 historical periods (months) untuk historical comparison valid
+- Analysis bullet: "Naik X% vs bulan lalu, Y% vs rata-rata historis (N bulan)"
+- Jika hanya MoM yang naik (historical OK): mungkin seasonal, tidak panic
+- Jika historical naik (regardless MoM): trend jangka panjang memburuk
+
 ### NULL vs 0
 - `NULL` = tidak ada record/input → `KOSONG`
 - `0` = ada input tapi nol → `ADA` (configurable via `CFG_RECON_SETTINGS.TREAT_ZERO_AS`)

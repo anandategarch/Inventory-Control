@@ -589,8 +589,9 @@ export async function queryRestoRecommendations(
 ): Promise<RestoRecommendation[]> {
   const f = buildSqlFilters(filters);
 
-  // Fetch current period outlet aggregates
-  const [currRows, prevRows] = await Promise.all([
+  // Fetch current period outlet aggregates + previous period + historical avg
+  // FIX: add historical comparison (same weekLabel across ALL previous months)
+  const [currRows, prevRows, histRows] = await Promise.all([
     db.$queryRaw<any[]>`
       WITH sales_counts AS (
         SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
@@ -737,12 +738,35 @@ export async function queryRestoRecommendations(
         GROUP BY o.code
       `
       : Promise.resolve([]),
+    // FIX: Historical average — same weekLabel across ALL months BEFORE current month
+    // Computes mean + count of historical periods for each outlet
+    db.$queryRaw<any[]>`
+      SELECT
+        o.code as "outletCode",
+        AVG(ABS(ir."nominalDeviasi")) as "histAvgNominalDeviasi",
+        COUNT(DISTINCT ir."monthLabel") as "histPeriodCount"
+      FROM "InventoryRecord" ir
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."weekLabel" = ${week}
+        AND ir."monthLabel" != ${month}
+        ${f}
+      GROUP BY o.code
+    `,
   ]);
 
   // Build prev lookup
   const prevMap = new Map<string, any>();
   for (const r of prevRows) {
     prevMap.set(r.outletCode, r);
+  }
+
+  // Build historical lookup
+  const histMap = new Map<string, { avgNominalDeviasi: number; periodCount: number }>();
+  for (const r of histRows) {
+    histMap.set(r.outletCode, {
+      avgNominalDeviasi: Number(r.histAvgNominalDeviasi) || 0,
+      periodCount: Number(r.histPeriodCount) || 0,
+    });
   }
 
   // Compute network averages for ratio
@@ -781,12 +805,29 @@ export async function queryRestoRecommendations(
     const devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0;
     const s1Score = Math.min(100, devBomRatio * 33);
 
-    // Signal 2: Deviasi Growth (10%)
+    // Signal 2: Deviasi Growth (10%) — HYBRID: MoM + Historical
+    // FIX: compare vs BOTH previous month AND historical average, take worst case
     const prevNominal = prev ? Number(prev.prevNominalDeviasi) : null;
     const deviasiGrowth = prevNominal != null && Math.abs(prevNominal) > 0
       ? (Math.abs(nominalDeviasi) - Math.abs(prevNominal)) / Math.abs(prevNominal)
       : null;
-    const s2Score = deviasiGrowth != null ? Math.min(100, Math.max(0, deviasiGrowth * 100)) : 0;
+
+    // Historical comparison: current vs avg of same week across all previous months
+    const histData = histMap.get(outletCode);
+    const histAvgNominal = histData?.avgNominalDeviasi ?? null;
+    const histPeriodCount = histData?.periodCount ?? 0;
+    const deviasiGrowthHistorical = histAvgNominal != null && histAvgNominal > 0 && histPeriodCount >= 2
+      ? (Math.abs(nominalDeviasi) - histAvgNominal) / histAvgNominal
+      : null;
+
+    // HYBRID: take the WORST (higher) of MoM vs Historical
+    const deviasiGrowthHybrid = [deviasiGrowth, deviasiGrowthHistorical]
+      .filter((g): g is number => g != null)
+      .reduce((max, g) => Math.max(max, g), 0);
+
+    const s2Score = deviasiGrowthHybrid > 0
+      ? Math.min(100, deviasiGrowthHybrid * 100)
+      : 0;
 
     // Signal 3: Z-Score Abnormal Count (10%) — items with z-score > 2
     const abnormalCount = zScoreAbnormalCount;
@@ -812,8 +853,9 @@ export async function queryRestoRecommendations(
     const directionFlip = prevDirection != null && direction !== prevDirection && direction !== 'NEUTRAL' && prevDirection !== 'NEUTRAL';
     const s6Score = directionFlip ? 100 : 0;
 
-    // Signal 7: Trend (8%)
-    const trendDeteriorating = deviasiGrowth != null && deviasiGrowth > 0.2;
+    // Signal 7: Trend (8%) — HYBRID: deteriorating if EITHER MoM or Historical shows deterioration
+    const trendDeteriorating = (deviasiGrowth != null && deviasiGrowth > 0.2)
+      || (deviasiGrowthHistorical != null && deviasiGrowthHistorical > 0.2);
     const s7Score = trendDeteriorating ? 100 : 0;
 
     // Signal 8: Item Concentration (5%)
@@ -861,7 +903,17 @@ export async function queryRestoRecommendations(
     // Auto-generate analysis bullets
     const analysis: string[] = [];
     if (devBomRatio > 2) analysis.push(`Dev/BOM ${(devBom * 100).toFixed(1)}% adalah ${devBomRatio.toFixed(1)}× peer average (${(networkAvgDevBom * 100).toFixed(1)}%)`);
-    if (deviasiGrowth != null && deviasiGrowth > 0.2) analysis.push(`Nominal Deviasi naik ${(deviasiGrowth * 100).toFixed(0)}% vs periode sebelumnya`);
+    if (deviasiGrowth != null && deviasiGrowth > 0.2) {
+      const momPct = (deviasiGrowth * 100).toFixed(0);
+      const histPct = deviasiGrowthHistorical != null ? (deviasiGrowthHistorical * 100).toFixed(0) : null;
+      if (histPct != null) {
+        analysis.push(`Nominal Deviasi naik ${momPct}% vs bulan lalu, ${histPct}% vs rata-rata historis (${histPeriodCount} bulan)`);
+      } else {
+        analysis.push(`Nominal Deviasi naik ${momPct}% vs periode sebelumnya`);
+      }
+    } else if (deviasiGrowthHistorical != null && deviasiGrowthHistorical > 0.2) {
+      analysis.push(`Nominal Deviasi naik ${(deviasiGrowthHistorical * 100).toFixed(0)}% vs rata-rata historis (${histPeriodCount} bulan) — trend jangka panjang memburuk`);
+    }
     if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 50% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
     // FIX: removed residual ratio bullet per user request
     // if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
@@ -920,7 +972,7 @@ export async function queryRestoRecommendations(
       // FIX DRILLDOWN: expose signal scores + weights for Priority Summary breakdown
       signalScores: [
         { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.12, value: `${devBomRatio.toFixed(2)}×` },
-        { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: deviasiGrowth != null ? `${(deviasiGrowth * 100).toFixed(0)}%` : '—' },
+        { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: `MoM: ${deviasiGrowth != null ? (deviasiGrowth * 100).toFixed(0) + '%' : '—'} | Hist: ${deviasiGrowthHistorical != null ? (deviasiGrowthHistorical * 100).toFixed(0) + '%' : '—'}` },
         { name: 'Deviasi >50% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
         { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
         { name: 'Loss/Sales', score: Math.round(s5Score), weight: 0.08, value: `${(lossToSales * 100).toFixed(1)}%` },
