@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 export async function GET() {
   const results: string[] = [];
@@ -22,8 +23,8 @@ export async function GET() {
     results.push(`✅ Database connection OK. SourceFile count: ${count}`);
     results.push('All tables are managed by Prisma schema (prisma/schema.prisma).');
     results.push('To reset/recreate schema, run: `bun run db:push` (local) or ensure CI/CD runs `prisma db push` on deploy.');
-  } catch (e: any) {
-    const msg = e?.message || String(e);
+  } catch (e: unknown) {
+    const msg = (e instanceof Error ? e.message : String(e));
     results.push(`❌ Database error: ${msg}`);
     results.push('');
     results.push('To fix:');

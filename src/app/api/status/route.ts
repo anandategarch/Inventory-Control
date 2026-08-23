@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 // Phase 1c: cache status response for 5 minutes (shared instance from lib/cache)
 // so that other routes (/api/data, /api/pic) can clear it after mutations.
@@ -115,8 +116,8 @@ export async function GET() {
     statusCache.set('status', result);
 
     return NextResponse.json(result);
-  } catch (e: any) {
-    const errMsg = e?.message || String(e);
+  } catch (e: unknown) {
+    const errMsg = (e instanceof Error ? e.message : String(e));
     // If tables don't exist, return empty state (not error 500)
     if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table') || errMsg.includes('no such table')) {
       return NextResponse.json(EMPTY_STATE);

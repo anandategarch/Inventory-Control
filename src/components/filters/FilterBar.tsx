@@ -142,8 +142,8 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
       }
-    } catch (e: any) {
-      setIngestMsg(`Error: ${e?.message || String(e)}`);
+    } catch (e: unknown) {
+      setIngestMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
     } finally {
       setIngesting(false);
       setTimeout(() => setIngestMsg(null), 8000);
@@ -203,10 +203,10 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       clearInterval(stepInterval);
       setProgressLog([]);
-      setDriveResult({ success: false, error: e?.message || String(e) });
+      setDriveResult({ success: false, error: (e instanceof Error ? e.message : String(e)) });
     } finally {
       setDriveImporting(false);
     }

@@ -43,8 +43,8 @@ export async function GET(req: NextRequest) {
       mode,
       peers,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[peer-comparison] error:', e);
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

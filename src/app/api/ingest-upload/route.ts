@@ -123,10 +123,10 @@ export async function POST(req: NextRequest) {
       ext,
       message: 'Upload selesai. Siap untuk processing.',
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[ingest-upload] error:', e);
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }

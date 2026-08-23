@@ -137,7 +137,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal menghapus', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal menghapus', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 
@@ -158,7 +158,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal menghapus', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal menghapus', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 
@@ -179,7 +179,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal reset', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal reset', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 

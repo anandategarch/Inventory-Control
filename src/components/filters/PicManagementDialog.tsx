@@ -145,7 +145,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal menyimpan', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal menyimpan', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 
@@ -162,7 +162,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal menghapus', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal menghapus', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 
@@ -188,7 +188,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
       }
     },
     onError: (e: any) => {
-      toast({ title: '❌ Gagal import', description: e?.message || 'Network error', variant: 'destructive' });
+      toast({ title: '❌ Gagal import', description: (e instanceof Error ? e.message : 'Network error'), variant: 'destructive' });
     },
   });
 

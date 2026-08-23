@@ -743,8 +743,8 @@ export async function GET(req: NextRequest) {
         'Content-Disposition': `attachment; filename="${fileName}"`,
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[export-report] error:', e);
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

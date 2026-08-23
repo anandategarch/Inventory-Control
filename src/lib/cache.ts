@@ -1,6 +1,12 @@
 // ============================================================
 //  LRU cache with TTL for expensive computations
 //  Bug 4 fix: add TTL (default 5 min) + explicit clear()
+//
+//  NOTE: analysisCache (in-memory LRU for /api/analysis) was REMOVED.
+//  It was unreliable in serverless (each cold start = fresh memory).
+//  /api/analysis now uses DB-level AggregationCache (src/lib/aggregation-cache.ts)
+//  which persists across cold starts and is shared across instances.
+//  Keep statusCache — it's still used by /api/status for fast dropdown responses.
 // ============================================================
 
 interface CacheEntry<V> {
@@ -21,12 +27,10 @@ export class LRUCache<K, V> {
   get(key: K): V | undefined {
     const entry = this.map.get(key);
     if (entry === undefined) return undefined;
-    // Bug 4 fix: check TTL — expired entries are treated as miss
     if (Date.now() > entry.expiresAt) {
       this.map.delete(key);
       return undefined;
     }
-    // refresh recency
     this.map.delete(key);
     this.map.set(key, entry);
     return entry.value;
@@ -48,7 +52,6 @@ export class LRUCache<K, V> {
       this.map.delete(key);
       return false;
     }
-    // Bug 5.8 fix: refresh recency to maintain LRU invariant
     this.map.delete(key);
     this.map.set(key, entry);
     return true;
@@ -62,8 +65,6 @@ export class LRUCache<K, V> {
     return this.map.size;
   }
 }
-
-export const analysisCache = new LRUCache<string, unknown>(200, 5 * 60 * 1000);
 
 // Shared status cache — used by /api/status to avoid re-querying DB on every request.
 // Exported so other routes (/api/data, /api/pic) can clear it after mutations

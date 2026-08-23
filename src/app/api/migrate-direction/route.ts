@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { statusCache, analysisCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 
@@ -85,7 +85,6 @@ export async function POST(req: NextRequest) {
 
     // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
     statusCache.clear();
-    analysisCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
     invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
     clearMonthResolverCache();
@@ -105,10 +104,10 @@ export async function POST(req: NextRequest) {
         total: lossUpdated + surplusUpdated + neutralUpdated + lossFallback + surplusFallback,
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[migrate-direction] error:', e);
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }
@@ -151,10 +150,10 @@ export async function GET(req: NextRequest) {
       invertedCount,
       current: { LOSS: beforeLoss, SURPLUS: beforeSurplus },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[migrate-direction] GET error:', e);
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }

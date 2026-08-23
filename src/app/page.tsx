@@ -16,6 +16,7 @@ import {
 } from '@/components/dashboard/AnalysisCards';
 import { HistoricalZScoreCard } from '@/components/dashboard/HistoricalZScoreCard';
 import { AreaTrendChart } from '@/components/dashboard/AreaTrendChart';
+import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { RestoAnalysis } from '@/components/dashboard/RestoAnalysis';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PeerComparison } from '@/components/dashboard/PeerComparison';
@@ -319,8 +320,8 @@ export default function DashboardPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section di-export ke Word` });
-    } catch (e: any) {
-      toast({ title: '❌ Export gagal', description: e?.message || 'Unknown error', variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Unknown error'), variant: 'destructive' });
     } finally {
       setIsExporting(false);
     }
@@ -431,9 +432,15 @@ export default function DashboardPage() {
               {/* Section: Health + Growth */}
               <FetchAware isFetching={analysis.isFetching}>
                 <section className="grid lg:grid-cols-3 gap-4">
-                  <HealthAlert data={analysis.data} />
-                  <GrowthComparison data={analysis.data} />
-                  <DeviationBreakdownChart data={analysis.data} />
+                  <ErrorBoundary label="Health Alert">
+                    <HealthAlert data={analysis.data} />
+                  </ErrorBoundary>
+                  <ErrorBoundary label="Growth Comparison">
+                    <GrowthComparison data={analysis.data} />
+                  </ErrorBoundary>
+                  <ErrorBoundary label="Deviation Breakdown">
+                    <DeviationBreakdownChart data={analysis.data} />
+                  </ErrorBoundary>
                 </section>
               </FetchAware>
 
@@ -510,8 +517,12 @@ export default function DashboardPage() {
                 />
                 <FetchAware isFetching={analysis.isFetching}>
                   <div className="space-y-4">
-                    <HistoricalZScoreCard data={analysis.data} />
-                    <AreaTrendChart data={analysis.data} />
+                    <ErrorBoundary label="Historical Z-Score">
+                      <HistoricalZScoreCard data={analysis.data} />
+                    </ErrorBoundary>
+                    <ErrorBoundary label="Area Trend">
+                      <AreaTrendChart data={analysis.data} />
+                    </ErrorBoundary>
                   </div>
                 </FetchAware>
               </section>

@@ -9,7 +9,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
@@ -121,13 +121,12 @@ export async function POST(req: NextRequest) {
         // FIX (BUG 10): Use actual created count, not picRecords.length
         // (skipDuplicates may silently drop race-condition collisions)
         imported = actuallyCreated + toUpdate.length;
-      } catch (e: any) {
-        errors.push(`Batch error: ${e?.message || 'gagal batch insert'}`);
+      } catch (e: unknown) {
+        errors.push(`Batch error: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
     // Clear caches — bulk PIC change affects status + analysis filters
-    analysisCache.clear();
     statusCache.clear();
     // FIX H2 (AUDIT-5/8): invalidate DB-level AggregationCache after PIC bulk import.
     // Analysis route filters by `pic` param → cached response would reflect old PIC
@@ -147,7 +146,7 @@ export async function POST(req: NextRequest) {
       errors: errors.slice(0, 10),
       errorCount: errors.length,
     });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

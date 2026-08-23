@@ -12,11 +12,12 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 const picPostSchema = z
   .object({
@@ -35,8 +36,8 @@ export async function GET() {
       select: { id: true, outletCode: true, pic: true, updatedAt: true },
     });
     return NextResponse.json({ success: true, pics });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
 
@@ -72,7 +73,6 @@ export async function POST(req: NextRequest) {
     });
 
     // Clear caches — PIC affects /api/status response and analysis filters
-    analysisCache.clear();
     statusCache.clear();
 
     await db.auditLog.create({
@@ -83,8 +83,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true, pic: result });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
 
@@ -114,7 +114,6 @@ export async function DELETE(req: NextRequest) {
 
     await db.outletPIC.deleteMany({ where: { outletCode } });
 
-    analysisCache.clear();
     statusCache.clear();
 
     await db.auditLog.create({
@@ -125,7 +124,7 @@ export async function DELETE(req: NextRequest) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

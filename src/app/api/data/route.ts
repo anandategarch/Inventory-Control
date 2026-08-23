@@ -10,13 +10,14 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 const deleteQuerySchema = z
   .object({
@@ -97,8 +98,8 @@ export async function GET(req: NextRequest) {
       files,
       months: Object.values(byMonth).sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
 
@@ -247,7 +248,6 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Clear caches so subsequent reads see fresh state
-    analysisCache.clear();
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
     invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
@@ -269,7 +269,7 @@ export async function DELETE(req: NextRequest) {
       success: true,
       deleted: { sourceFiles: deletedFiles, records: deletedRecords, weeks: deletedWeeks },
     });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

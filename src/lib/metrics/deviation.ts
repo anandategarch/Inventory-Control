@@ -8,13 +8,10 @@
 //
 //  FIX (audit issue #4, #18): No DB/Prisma imports — pure functions only.
 //  DB access stays in queries.ts/repository layer.
+//  FIX: toNum imported from @/lib/format (deduplicated).
 // ============================================================
 
-const toNum = (v: unknown): number | null => {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return isNaN(n) ? null : n;
-};
+import { toNum } from '@/lib/format';
 
 const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;
 

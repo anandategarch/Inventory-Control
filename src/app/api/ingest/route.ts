@@ -8,6 +8,7 @@ import { safeParse, ingestBodySchema } from '@/lib/validation';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -36,8 +37,8 @@ export async function POST(req: NextRequest) {
 
     const results = await processIngestion(validatedBody || {});
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }
 
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
     const fastMode = req.nextUrl.searchParams.get('fast') === 'true';
     const results = await processIngestion({}, fastMode);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt, fastMode });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

@@ -394,13 +394,13 @@ export async function importFromDriveUrl(
       try {
         const { localPath, size } = await downloadDriveFile(file.id, file.name, destDir);
         downloadedFiles.push({ fileName: file.name, localPath, size, success: true });
-      } catch (e: any) {
+      } catch (e: unknown) {
         downloadedFiles.push({
           fileName: file.name,
           localPath: '',
           size: 0,
           success: false,
-          error: e?.message || String(e),
+          error: (e instanceof Error ? e.message : String(e)),
         });
       }
     }
@@ -420,13 +420,13 @@ export async function importFromDriveUrl(
 
       const { localPath, size } = await downloadGoogleSheetsAsCsv(parsed.id, fileName, destDir);
       downloadedFiles.push({ fileName, localPath, size, success: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
       downloadedFiles.push({
         fileName: '',
         localPath: '',
         size: 0,
         success: false,
-        error: e?.message || String(e),
+        error: (e instanceof Error ? e.message : String(e)),
       });
     }
 
@@ -454,13 +454,13 @@ export async function importFromDriveUrl(
 
       const { localPath, size } = await downloadDriveFile(parsed.id, fileName, destDir);
       downloadedFiles.push({ fileName, localPath, size, success: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
       downloadedFiles.push({
         fileName: '',
         localPath: '',
         size: 0,
         success: false,
-        error: e?.message || String(e),
+        error: (e instanceof Error ? e.message : String(e)),
       });
     }
 

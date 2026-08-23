@@ -7,7 +7,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
@@ -327,10 +327,10 @@ export async function POST(req: NextRequest) {
       try {
         filePath = await reassembleFile(safeFileHash, fileExt);
         console.log(`[ingest-process] reassembled to ${filePath}`);
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error('[ingest-process] reassemble failed:', e);
         return NextResponse.json(
-          { success: false, error: `Gagal reassemble file: ${e?.message}` },
+          { success: false, error: `Gagal reassemble file: $(e instanceof Error ? e.message : String(e))` },
           { status: 500 }
         );
       }
@@ -340,11 +340,11 @@ export async function POST(req: NextRequest) {
       try {
         parsed = await parseExcelFile(filePath);
         console.log(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error('[ingest-process] parse failed:', e);
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
-          { success: false, error: `Gagal parse Excel: ${e?.message}` },
+          { success: false, error: `Gagal parse Excel: $(e instanceof Error ? e.message : String(e))` },
           { status: 500 }
         );
       }
@@ -501,7 +501,6 @@ export async function POST(req: NextRequest) {
       // analysisCache was already cleared; statusCache must also be cleared because
       // /api/status returns month/file/row counts in its dropdown payload — without
       // this, the dashboard month dropdown stays stale for up to 5 min after upload.
-      analysisCache.clear();
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after week import.
       // Without this, /api/analysis serves stale data for up to 5 min (TTL).
@@ -697,7 +696,6 @@ export async function POST(req: NextRequest) {
       }
 
       // Clear caches
-      analysisCache.clear();
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after import-all.
       invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
@@ -728,10 +726,10 @@ export async function POST(req: NextRequest) {
       { success: false, error: `Unknown mode: ${mode}. Use 'detect', 'import', or 'import-all'.` },
       { status: 400 }
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[ingest-process] error:', e);
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }
@@ -752,7 +750,7 @@ export async function DELETE(req: NextRequest) {
       await db.fileChunk.deleteMany({ where: { fileHash } });
     }
     return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

@@ -14,6 +14,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 export async function GET(req: NextRequest) {
   try {
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
         bulan2: r.bulan2,
       })),
     });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

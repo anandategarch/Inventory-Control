@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
     let manualFileName: string | null = null;
     try {
       manualFileName = resolveManualFileName(validatedBody.manualFileName);
-    } catch (e: any) {
+    } catch (e: unknown) {
       return NextResponse.json(
-        { success: false, error: e?.message || 'manualFileName tidak valid.' },
+        { success: false, error: (e instanceof Error ? e.message : String(e)) || 'manualFileName tidak valid.' },
         { status: 400 }
       );
     }
@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
       ingestResults,
       durationMs: Date.now() - startedAt,
     });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

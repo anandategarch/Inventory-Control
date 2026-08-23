@@ -6,6 +6,18 @@
 //  Decimal separator: comma (,) — Indonesian style
 // ============================================================
 
+/**
+ * Safely coerce a value to number or null.
+ * Handles: null, undefined, NaN, Infinity, Prisma Decimal, BigInt.
+ * Deduplicated — was previously copied in 4 files (transform.ts, deviation.ts,
+ * item-history/route.ts, outlet-items/route.ts).
+ */
+export function toNum(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
 // Format number with Indonesian decimal separator
 function fmtDecimal(n: number, digits: number): string {
   return n.toFixed(digits).replace('.', ',');

@@ -148,7 +148,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onError: (e: any) => {
       toast({
         title: '❌ Gagal menyimpan',
-        description: e?.message || 'Network error',
+        description: (e instanceof Error ? e.message : 'Network error'),
         variant: 'destructive',
       });
     },
@@ -228,7 +228,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onError: (e: any) => {
       toast({
         title: '✗ Migration gagal',
-        description: e?.message || 'Network error',
+        description: (e instanceof Error ? e.message : 'Network error'),
         variant: 'destructive',
       });
     },

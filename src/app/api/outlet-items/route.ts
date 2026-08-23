@@ -32,15 +32,12 @@ import {
   computeNominalDeviationGrowth,
 } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { toNum } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const toNum = (v: unknown): number | null => {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return isNaN(n) ? null : n;
-};
+// toNum imported from @/lib/format (deduplicated)
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -591,8 +588,8 @@ export async function GET(req: NextRequest) {
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[outlet-items] error:', e);
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
 }

@@ -341,12 +341,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
       setStatusLog(prev => [...prev, '⏸️ Konfirmasi nama & week sebelum import.']);
       setUploading(false);
       // Keep progress at 55% — import will fill 60-100%
-    } catch (e: any) {
-      setError(e?.message || 'Upload gagal');
-      setStatusLog(prev => [...prev, `❌ Error: ${e?.message || 'unknown'}`]);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : 'Upload gagal'));
+      setStatusLog(prev => [...prev, `❌ Error: ${(e instanceof Error ? e.message : 'unknown')}`]);
       toast({
         title: '❌ Upload gagal',
-        description: e?.message || 'Unknown error',
+        description: (e instanceof Error ? e.message : 'Unknown error'),
         variant: 'destructive',
       });
       setUploading(false);
@@ -466,12 +466,12 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         title: '✅ Import berhasil',
         description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,
       });
-    } catch (e: any) {
-      setError(e?.message || 'Import gagal');
-      setStatusLog(prev => [...prev, `❌ Error: ${e?.message || 'unknown'}`]);
+    } catch (e: unknown) {
+      setError((e instanceof Error ? e.message : 'Import gagal'));
+      setStatusLog(prev => [...prev, `❌ Error: ${(e instanceof Error ? e.message : 'unknown')}`]);
       toast({
         title: '❌ Import gagal',
-        description: e?.message || 'Unknown error',
+        description: (e instanceof Error ? e.message : 'Unknown error'),
         variant: 'destructive',
       });
     } finally {

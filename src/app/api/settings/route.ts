@@ -13,11 +13,11 @@ import {
   invalidateSettingsCache,
   type SettingDefinition,
 } from '@/lib/settings';
-import { analysisCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
 interface SettingWithMeta extends SettingDefinition {
   value: string;
@@ -61,9 +61,9 @@ export async function GET() {
         'Expires': '0',
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }
@@ -178,7 +178,6 @@ export async function POST(req: NextRequest) {
     });
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
-    analysisCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
     invalidateCache('analysis|').catch((e) => console.error('[cache] invalidate failed:', e instanceof Error ? e.message : String(e)));
 
@@ -187,9 +186,9 @@ export async function POST(req: NextRequest) {
       updated: updates.length,
       errors: errors.length > 0 ? errors : undefined,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }
@@ -250,7 +249,6 @@ export async function DELETE(req: NextRequest) {
     invalidateSettingsCache();
 
     // Bug 4 fix: clear analysis cache on settings reset
-    analysisCache.clear();
 
     await db.auditLog.create({
       data: {
@@ -263,9 +261,9 @@ export async function DELETE(req: NextRequest) {
       success: true,
       message: key ? `Reset ${key} to default` : 'All settings reset to defaults',
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: e?.message || String(e) },
+      { success: false, error: (e instanceof Error ? e.message : String(e)) },
       { status: 500 }
     );
   }

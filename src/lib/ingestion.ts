@@ -5,7 +5,7 @@
 //  Both routes now call this shared function instead of duplicating ~250 lines.
 // ============================================================
 import { db } from '@/lib/db';
-import { analysisCache, statusCache } from '@/lib/cache';
+import { statusCache } from '@/lib/cache';
 import { invalidateCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
@@ -438,7 +438,6 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       });
 
       // Phase 3: invalidate analysis cache when new data is ingested
-      analysisCache.clear();
       // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.
       // Previously statusCache had 5-min TTL → user couldn't see newly imported months for 5 min.
       statusCache.clear();
@@ -456,11 +455,11 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
         fileName, status: 'INGESTED', rowCount: totalInserted,
         dqStatus: dq.status, dqErrors: dq.severityCounts.ERROR, dqWarnings: dq.severityCounts.WARNING,
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       results.push({
         fileName: path.basename(filePath), status: 'ERROR', rowCount: 0,
         dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0,
-        error: e?.message || String(e),
+        error: (e instanceof Error ? e.message : String(e)),
       });
     } finally {
       // Bug 3 fix: always release lock
