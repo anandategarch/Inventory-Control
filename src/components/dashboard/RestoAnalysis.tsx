@@ -141,8 +141,10 @@ function growthColor(v: number | null | undefined, inverse = false): string {
   return v > 0 ? 'text-emerald-600' : v < 0 ? 'text-red-600' : 'text-muted-foreground';
 }
 
+// FIX M-L (AUDIT-3): P2/P3 badge colors failed WCAG AA (amber-600/emerald-600 on
+// 100 bg ≈ 3.5:1, need 4.5:1 for 12px text). Use 700 variants for contrast.
 function priorityColor(p: string): string {
-  return p === 'P1' ? 'text-red-600' : p === 'P2' ? 'text-amber-600' : 'text-emerald-600';
+  return p === 'P1' ? 'text-red-700 dark:text-red-400' : p === 'P2' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400';
 }
 
 function priorityBg(p: string): string {
@@ -430,16 +432,21 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5" />
             </span>
-            Bahan Analysis — Financial Impact
+            Bahan Analysis
           </CardTitle>
           <p className="text-xs text-muted-foreground ml-9">
-            Financial Impact (dampak uang)
+            3 ranking: Financial (dampak uang) · Operational (Dev/BOM) · Unexplained (residual ratio)
           </p>
         </CardHeader>
         <CardContent>
           <Tabs value={rankingTab} onValueChange={setRankingTab}>
-            <TabsList className="grid w-full grid-cols-1">
-              <TabsTrigger value="financial" className="text-xs">A. Financial Impact</TabsTrigger>
+            {/* FIX M-K (AUDIT-3): operational + unexplained rankings were computed
+                server-side but never rendered (only financial tab existed). Added
+                the 2 missing tabs so the data is actually usable. */}
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="financial" className="text-xs">A. Financial</TabsTrigger>
+              <TabsTrigger value="operational" className="text-xs">B. Operational</TabsTrigger>
+              <TabsTrigger value="unexplained" className="text-xs">C. Unexplained</TabsTrigger>
             </TabsList>
 
             <TabsContent value={rankingTab} className="mt-3">
@@ -704,10 +711,13 @@ function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allIt
       allItems.set(item.itemName, item);
     }
 
-    // Group by first word (menu name)
+    // FIX M-G (AUDIT-2/3): was grouping by first word only — "AYAM CINCANG" +
+    // "AYAM GORENG" merged into group "AYAM", making outlier detection meaningless.
+    // Now group by first 2 words (catches "MINYAK MIE" vs "MINYAK GORENG").
     const groups = new Map<string, OutletItem[]>();
     for (const item of allItems.values()) {
-      const menuName = (item.itemName || 'LAINNYA').split(/\s+/)[0].toUpperCase();
+      const words = (item.itemName || 'LAINNYA').split(/\s+/);
+      const menuName = words.slice(0, 2).join(' ').toUpperCase();
       if (!groups.has(menuName)) groups.set(menuName, []);
       groups.get(menuName)!.push(item);
     }
@@ -890,8 +900,9 @@ function RankingNasionalCard({ focusOutlet, analysisData }: { focusOutlet: strin
             <option value="10">Top 10</option>
             <option value="20">Top 20</option>
             <option value="50">Top 50</option>
-            <option value="100">Top 100</option>
-            <option value="all">Semua</option>
+            {/* FIX M-H (AUDIT-2/3): removed "Top 100" / "Semua" — SQL caps at 50
+                (queryTopItemsByDeviasiRank LIMIT 50). Showing those options silently
+                truncated, misleading users. */}
           </select>
           <select
             value={filterPic}

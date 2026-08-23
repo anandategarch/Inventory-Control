@@ -817,12 +817,17 @@ export async function GET(req: NextRequest) {
         for (const r of currentRecs) {
           const name = getName(r);
           const val = r[metric.field];
-          if (val != null) currByKey.set(name, (currByKey.get(name) ?? 0) + Math.abs(val));
+          // FIX M-F (AUDIT-2): use SIGNED accumulation for qtyDeviasi (so LOSS↔SURPLUS
+          // flips are visible as large deltas). Keep ABS for sales, bom, nominalDeviasi
+          // (magnitude tracking — per FIX audit#11 for nominalDeviasi).
+          const useSigned = metric.key === 'qtyDeviasi';
+          if (val != null) currByKey.set(name, (currByKey.get(name) ?? 0) + (useSigned ? val : Math.abs(val)));
         }
         for (const r of prevRecs) {
           const name = getName(r);
           const val = r[metric.field];
-          if (val != null) prevByKey.set(name, (prevByKey.get(name) ?? 0) + Math.abs(val));
+          const useSigned = metric.key === 'qtyDeviasi';
+          if (val != null) prevByKey.set(name, (prevByKey.get(name) ?? 0) + (useSigned ? val : Math.abs(val)));
         }
 
         const allKeys = new Set([...currByKey.keys(), ...prevByKey.keys()]);
@@ -850,7 +855,12 @@ export async function GET(req: NextRequest) {
           if (totalDelta === 0) return { drivers: [], remainderCount: 0, remainderPct: 0 };
           let cumPct = 0;
           const drivers: Array<{ item: string; delta: number; pct: number; cumPct: number; sharePct: number }> = [];
+          // FIX M-E (AUDIT-2): cap at top-20 drivers to avoid payload bloat.
+          // Live data showed sales.down emitting 119 driver objects (19KB / 10.8%
+          // of total payload). Nobody scrolls past 20 — the remainder is summarized.
+          const MAX_DRIVERS = 20;
           for (const d of arr) {
+            if (drivers.length >= MAX_DRIVERS) break;
             const sharePct = (Math.abs(d.delta) / totalDelta) * 100;
             cumPct += sharePct;
             drivers.push({ ...d, cumPct: Number(cumPct.toFixed(1)), sharePct: Number(sharePct.toFixed(1)) });

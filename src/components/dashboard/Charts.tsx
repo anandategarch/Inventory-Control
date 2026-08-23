@@ -17,6 +17,16 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
   const g = data.growthComparison;
   const drivers = data.growthDrivers || [];
   const [expanded, setExpanded] = useState<string | null>(null);
+  // FIX M-C (AUDIT-2): reset expanded state when period changes (e.g. user picks
+  // a different week/month). Uses "adjust state during render" pattern per React docs
+  // (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+  // instead of useEffect to avoid setState-in-effect lint error.
+  const periodKey = `${data.period.monthLabel}|${data.period.weekLabel}`;
+  const [prevPeriod, setPrevPeriod] = useState(periodKey);
+  if (prevPeriod !== periodKey) {
+    setPrevPeriod(periodKey);
+    setExpanded(null);
+  }
 
   const chartData = [
     { name: 'Sales', growth: g.salesGrowth, key: 'sales' },
@@ -120,18 +130,21 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
               {chartData.map((d) => {
                 const top = getTopDriver(d.key);
                 const isExpanded = expanded === d.key;
+                const panelId = `growth-pareto-${d.key}`;
                 return (
                   <button
                     key={d.key}
                     onClick={() => setExpanded(isExpanded ? null : d.key)}
-                    className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                    aria-expanded={isExpanded}
+                    aria-controls={panelId}
+                    className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-[10px] transition-colors ${
                       isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
                     }`}
                   >
                     <span className="text-muted-foreground font-medium">{d.name}</span>
                     {top ? (
                       <span className="flex items-center gap-1 min-w-0">
-                        <span className={`truncate max-w-[80px] ${top.dir === 'up' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                        <span className={`truncate max-w-[80px] ${top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
                           {top.name}
                         </span>
                         <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
@@ -168,13 +181,14 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
               const md = drivers.find(d => d.metric === expanded);
               if (!md) return null;
               const growthVal = chartData.find(c => c.key === expanded)?.growth;
+              const panelId = `growth-pareto-${expanded}`;
               return (
-                <div className="mt-3 rounded-lg border p-3 space-y-3 bg-muted/20">
+                <div id={panelId} role="region" aria-label={`${md.label} Pareto 80% detail`} className="mt-3 rounded-lg border p-3 space-y-3 bg-muted/20">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold">
                       {md.label} — {growthVal != null ? `${(growthVal * 100).toFixed(1)}%` : '—'}
                     </p>
-                    <button onClick={() => setExpanded(null)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                    <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-[10px] text-muted-foreground hover:text-foreground">
                       ✕ Tutup
                     </button>
                   </div>
@@ -256,6 +270,14 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   const b = data.deviationBreakdown;
   const drivers = data.deviationDrivers || [];
   const [expanded, setExpanded] = useState<string | null>(null);
+  // FIX M-C (AUDIT-1): reset expanded state when period changes.
+  // Uses "adjust state during render" pattern (same as GrowthComparison).
+  const periodKey = `${data.period.monthLabel}|${data.period.weekLabel}`;
+  const [prevPeriod, setPrevPeriod] = useState(periodKey);
+  if (prevPeriod !== periodKey) {
+    setPrevPeriod(periodKey);
+    setExpanded(null);
+  }
   const total = b.total || 1;
   const chartData = [
     { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: '#f59e0b', key: 'waste' },
@@ -332,11 +354,14 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
           {chartData.map((d) => {
             const top = getTopDriver(d.key);
             const isExpanded = expanded === d.key;
+            const panelId = `devbreak-pareto-${d.key}`;
             return (
               <button
                 key={d.key}
                 onClick={() => setExpanded(isExpanded ? null : d.key)}
-                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                aria-expanded={isExpanded}
+                aria-controls={panelId}
+                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-2 min-h-[36px] text-[10px] transition-colors ${
                   isExpanded ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border hover:bg-muted/50'
                 }`}
               >
@@ -374,8 +399,9 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
           if (!cd) return null;
           const catRow = chartData.find(c => c.key === expanded);
           const catColor = catRow?.color || '#71717a';
+          const panelId = `devbreak-pareto-${expanded}`;
           return (
-            <div className="mt-3 rounded-lg border p-3 space-y-2 bg-muted/20">
+            <div id={panelId} role="region" aria-label={`${cd.label} Pareto 80% detail`} className="mt-3 rounded-lg border p-3 space-y-2 bg-muted/20">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: catColor }} />
@@ -384,7 +410,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                     ({catRow ? catRow.pct.toFixed(1) : '0'}% dari total)
                   </span>
                 </p>
-                <button onClick={() => setExpanded(null)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-[10px] text-muted-foreground hover:text-foreground">
                   ✕ Tutup
                 </button>
               </div>

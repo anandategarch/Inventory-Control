@@ -254,6 +254,9 @@ export async function queryDeviationBreakdownDrivers(
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
     GROUP BY i.name
+    -- FIX M-D (AUDIT-1): cap at 500 items to prevent unbounded payload if
+    -- catalog grows. Currently ~109 items, but no safeguard existed.
+    LIMIT 500
   `;
   return rows;
 }

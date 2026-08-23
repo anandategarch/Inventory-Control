@@ -168,8 +168,8 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
                             active && payload && payload[0] && payload[0].payload
                               ? (
                                 <div className="rounded-md border bg-background p-2 shadow-md text-xs">
-                                  <p className="font-medium">{payload[0].payload!.name}</p>
-                                  <p className="text-muted-foreground">{Number(payload[0].payload!.value ?? 0).toLocaleString()} outlet</p>
+                                  <p className="font-medium">{payload[0].payload?.name ?? ''}</p>
+                                  <p className="text-muted-foreground">{Number(payload[0].payload?.value ?? 0).toLocaleString()} outlet</p>
                                 </div>
                               )
                               : null

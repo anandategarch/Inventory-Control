@@ -155,7 +155,9 @@ export function SourceDataModal() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {records.map((r) => (
+                {/* FIX M-N (AUDIT-4): cap visible rows at 100 to prevent jank.
+                    Full data available via Export CSV button. */}
+                {records.slice(0, 100).map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="text-xs">
                       <div className="font-medium">{r.outlet?.name ?? '—'}</div>
@@ -198,8 +200,8 @@ export function SourceDataModal() {
         {drill.data && records.length > 0 && (
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
-              Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
-              {records.length === 50 && ' (maks 50 — gunakan Export CSV untuk data lengkap)'}
+              Menampilkan {Math.min(records.length, 100)} dari {records.length} record{records.length !== 1 ? 's' : ''}
+              {records.length > 100 && ' — gunakan Export CSV untuk data lengkap'}
             </span>
             <Badge variant="outline" className="text-[11px]">
               Dapat ditelusuri ke Excel sumber

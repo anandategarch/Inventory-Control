@@ -137,6 +137,11 @@ export async function queryTopItemsByDeviasiRank(
   // per-row) with a single CTE + LEFT JOIN. The CTE computes per-(item,outlet)
   // bucket averages in ONE pass; the main SELECT just reads them via JOIN.
   // Old query ran ~500 sub-executions per call; new query is 1 hash-join.
+  //
+  // FIX M-J (AUDIT-3): bucket_avg CTE was self-joining item_per_outlet × item_per_outlet
+  // (ALL ~36K pairs) but only top-50 were returned. Refactored to compute bucket_avg
+  // only for the top-50 (ranked CTE + top_items filter). Reduces self-join from
+  // N×N to 50×N — ~720× less work for the bucket_avg step.
   const rows = await db.$queryRaw<any[]>`
     WITH item_per_outlet AS (
       SELECT
@@ -166,46 +171,52 @@ export async function queryTopItemsByDeviasiRank(
         ${f}
       GROUP BY i.name, o.code, o.name, pic.pic
     ),
-    -- Pre-compute dynamic-bucket average per (item, outlet).
-    -- Self-join: for each row, average ABS(qtyDeviasi) of OTHER outlets with
-    -- same itemName AND qtyBom within ±50% range. COUNT tracks how many OTHER
-    -- outlets are in the bucket — if 0, avgDeviasiByBom is NULL.
-    -- FIX CALC-7: Exclude BOM=0 items from bucket — the ±50% range becomes
-    -- degenerate (BETWEEN 0 AND 0) and the "Dev By BOM" concept doesn't apply.
+    -- Add rank to each row (rankNominal = by ABS(nominalDeviasi) DESC)
+    ranked AS (
+      SELECT ipo.*,
+        ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
+        CASE WHEN ipo."qtyBom" != 0
+          THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
+          ELSE NULL END as "rankBom"
+      FROM item_per_outlet ipo
+    ),
+    -- FIX M-J: only compute bucket_avg for top-N items (not all 36K pairs)
+    top_items AS (
+      SELECT * FROM ranked WHERE "rankNominal" <= ${limit}
+    ),
+    -- Bucket average: for each top-N item, average ABS(qtyDeviasi) of OTHER outlets
+    -- with same itemName AND qtyBom within ±50% range. Self-join is now top_items ×
+    -- item_per_outlet (50 × N) instead of N × N.
     bucket_avg AS (
       SELECT
-        ipo."itemName",
-        ipo."outletCode",
-        AVG(CASE WHEN ipo2."outletCode" != ipo."outletCode"
+        ti."itemName",
+        ti."outletCode",
+        AVG(CASE WHEN ipo2."outletCode" != ti."outletCode"
                  THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
-        SUM(CASE WHEN ipo2."outletCode" != ipo."outletCode"
+        SUM(CASE WHEN ipo2."outletCode" != ti."outletCode"
                  THEN 1 ELSE 0 END) as "otherCount"
-      FROM item_per_outlet ipo
+      FROM top_items ti
       JOIN item_per_outlet ipo2
-        ON ipo2."itemName" = ipo."itemName"
-        AND ABS(ipo."qtyBom") > 0  -- FIX CALC-7: skip BOM=0 items
+        ON ipo2."itemName" = ti."itemName"
+        AND ABS(ti."qtyBom") > 0  -- FIX CALC-7: skip BOM=0 items
         AND ABS(ipo2."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") BETWEEN ABS(ipo."qtyBom") * 0.5 AND ABS(ipo."qtyBom") * 1.5
-      GROUP BY ipo."itemName", ipo."outletCode"
+        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
+      GROUP BY ti."itemName", ti."outletCode"
     )
     SELECT
-      ipo."itemName", ipo."outletCode", ipo."outletName", ipo.pic, ipo."satuan",
-      ipo."qtyDeviasi", ipo."qtyWaste", ipo."qtyLossSurplus", ipo."pctLossSurplusToBom",
-      ipo."qtyBom", ipo."nominalDeviasi",
+      ti."itemName", ti."outletCode", ti."outletName", ti.pic, ti."satuan",
+      ti."qtyDeviasi", ti."qtyWaste", ti."qtyLossSurplus", ti."pctLossSurplusToBom",
+      ti."qtyBom", ti."nominalDeviasi",
       -- avgDeviasiByBom: only if at least 1 OTHER resto exists in the bucket
       -- FIX CALC-7: BOM=0 items get NULL (bucket concept doesn't apply)
-      CASE WHEN ipo."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
-      ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
-      -- FIX CALC-6: BOM=0 items get NULL rankBom (not ranked last — concept doesn't apply)
-      CASE WHEN ipo."qtyBom" != 0
-        THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
-        ELSE NULL END as "rankBom"
-    FROM item_per_outlet ipo
+      CASE WHEN ti."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
+      ti."rankNominal",
+      ti."rankBom"
+    FROM top_items ti
     LEFT JOIN bucket_avg ba
-      ON ipo."itemName" = ba."itemName"
-     AND ipo."outletCode" = ba."outletCode"
-    ORDER BY "rankNominal"
-    LIMIT ${limit}
+      ON ti."itemName" = ba."itemName"
+     AND ti."outletCode" = ba."outletCode"
+    ORDER BY ti."rankNominal"
   `;
   // Coerce BigInt/Decimal to Number
   return rows.map((r: any) => ({

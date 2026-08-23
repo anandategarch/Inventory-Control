@@ -53,6 +53,9 @@ export function DrillDownDrawer() {
               <>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="text-xs">{drill.data.count} record</Badge>
+                  {drill.data.count > 100 && (
+                    <Badge variant="secondary" className="text-[10px]">Menampilkan 100 teratas</Badge>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -75,7 +78,9 @@ export function DrillDownDrawer() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {drill.data.records.map((r) => (
+                    {/* FIX M-N (AUDIT-4): cap visible rows at 100 to prevent jank
+                        when outlet has 500 items. Full data available via SourceDataModal. */}
+                    {drill.data.records.slice(0, 100).map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="text-xs">
                           <div className="font-medium">{r.outlet?.name ?? '—'}</div>
