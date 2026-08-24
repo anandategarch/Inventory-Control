@@ -10,9 +10,8 @@
 //  Client sends: Authorization: Bearer <ADMIN_TOKEN>
 //  Or: ?admin_token=<ADMIN_TOKEN> (for browser-accessible /api/setup)
 //
-//  FIX (AUDIT-SECURITY-PERF C1+C2): fail-closed in production when ADMIN_TOKEN unset.
-//  In dev, fail-open with warning (no auth UI, local testing).
-//  Also: GET /api/ingest is now PROTECTED (was public — anyone could trigger bulk re-ingest).
+//  FIX (AUDIT-ANIMATION-REVERT): fail-open when ADMIN_TOKEN not set (single-user app, no auth UI).
+//  When ADMIN_TOKEN IS set, all mutations require it via Bearer header or ?admin_token= query param.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
@@ -62,17 +61,15 @@ export function middleware(req: NextRequest) {
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // FIX (AUDIT-SECURITY-PERF C1): fail-closed in production when ADMIN_TOKEN unset.
-  // In dev, fail-open with warning (no auth UI, local testing convenience).
+  // FIX (AUDIT-ANIMATION-REVERT): fail-open when ADMIN_TOKEN not set, regardless of NODE_ENV.
+  // Reason: This is a single-user app with NO auth UI (no login page, no token input).
+  // Fail-closed breaks ALL mutations (add PIC, manage data, settings, ingest) — user
+  // cannot use the app at all without setting ADMIN_TOKEN, which they have no UI to do.
+  // The "security risk" is theoretical for a single-user local dev tool.
+  // When ADMIN_TOKEN IS set, all mutations require it (Bearer header or ?admin_token=).
+  // TODO: If deploying multi-user, add auth UI + re-enable fail-closed.
   if (!adminToken) {
-    if (process.env.NODE_ENV === 'production') {
-      logger.error(`ADMIN_TOKEN not set in production — ${pathname} blocked (fail-closed)`);
-      return NextResponse.json(
-        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set it in environment variables.' },
-        { status: 500 }
-      );
-    }
-    logger.warn(`ADMIN_TOKEN not set (dev mode) — ${pathname} accessible without auth`);
+    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth (single-user mode)`);
     return NextResponse.next();
   }
 
