@@ -430,7 +430,13 @@ export default function DashboardPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Laporan_Analisis_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}.docx`;
+      // FIX: filename include periode + nama resto (jika outlet dipilih)
+      // Format: Laporan_[OutletName]_[Month]_[Week]_[comparePeriod?].docx
+      const outletName = outletCode
+        ? status?.outlets?.find(o => o.code === outletCode)?.name?.replace(/\s+/g, '_') || outletCode
+        : 'Semua_Resto';
+      const compareSuffix = comparisonWeek ? `_vs_${comparisonWeek.replace(/\s+/g, '')}` : '';
+      a.download = `Laporan_${outletName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}${compareSuffix}.docx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -441,7 +447,7 @@ export default function DashboardPage() {
     } finally {
       setIsExporting(false);
     }
-  }, [analysis.data, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, toast]);
+  }, [analysis.data, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, toast, status]);
 
   // UX-ENHANCE: Refresh handler — invalidates analysis + status queries and
   // fires a toast. Wired to Cmd/Ctrl+R keyboard shortcut.

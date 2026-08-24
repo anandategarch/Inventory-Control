@@ -40,6 +40,8 @@ import {
   queryDeviationBreakdown,
   queryAreaAnalysis,
   queryHistoricalStats,
+  queryOutletHealthRanking,
+  queryGlobalItemSearch,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
@@ -516,6 +518,21 @@ export async function GET(req: NextRequest) {
     const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
     const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
+
+    // FIX: fetch additional data for new export sections (restoPriority + itemCrossOutlet)
+    const [outletHealthRanking, topItemForCrossOutlet] = await Promise.all([
+      queryOutletHealthRanking(week, month, filterOpts),
+      // For itemCrossOutlet: find the top item by total abs nominal, then query its cross-outlet data
+      (async () => {
+        const topNom = topNominal[0];
+        if (!topNom) return [];
+        return queryGlobalItemSearch(week, month, topNom.itemName, {
+          area: filterOpts.area,
+          picOutletCodes: filterOpts.picOutletCodes,
+        }, 50);
+      })(),
+    ]);
+
     // Build data object for document
     const data = {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
@@ -732,6 +749,67 @@ export async function GET(req: NextRequest) {
       } else {
         children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
         children.push(paragraph('✅ Tidak ada item dengan anomali historical signifikan pada periode ini (z-score semua ≤ 1.0).'));
+        children.push(divider());
+      }
+    }
+
+    // ============================================================
+    // NEW SECTIONS — fitur terbaru
+    // ============================================================
+
+    // 2. Resto Prioritas Analisa — outlet health ranking by priority score
+    if (hasSection('restoPriority')) {
+      const hr = outletHealthRanking || [];
+      if (hr.length > 0) {
+        children.push(heading('2. RESTO PRIORITAS ANALISA'));
+        children.push(paragraph('Top resto by priority score. Score = weighted combination of Dev/BOM, Residual, Loss/Sales, Abnormal rate. Level: TINGGI (≥55), SEDANG (≥30), RENDAH (<30).'));
+        children.push(makeTable(['#', 'Outlet', 'Area', 'Level', 'Health Score', 'Abnormal', 'Warning', 'Normal', 'Abs Nominal', 'Dev/BOM'],
+          hr.slice(0, 15).map((it: any, i: number) => [
+            String(i + 1),
+            `${it.outletCode} · ${it.outletName}`,
+            it.area,
+            it.healthScore >= 55 ? 'TINGGI' : it.healthScore >= 30 ? 'SEDANG' : 'RENDAH',
+            String(it.healthScore),
+            String(it.abnormal),
+            String(it.warning),
+            String(it.normal),
+            fmtIDR(it.absNominal),
+            fmtPct(it.devBom, false),
+          ])));
+        children.push(divider());
+      }
+    }
+
+    // 14. Item Cross-Outlet Analysis — top item across all outlets + z-score
+    if (hasSection('itemCrossOutlet')) {
+      const co = topItemForCrossOutlet || [];
+      if (co.length > 0) {
+        const itemName = topNominal[0]?.itemName || 'Item';
+        children.push(heading('14. ITEM CROSS-OUTLET ANALYSIS'));
+        children.push(paragraph(`Analisa "${itemName}" di ${co.length} outlet. Z-Score = (outlet Dev/BOM - peer mean) / stdDev. |Z|>2 = ABNORMAL (outlier), |Z|>1 = ELEVATED.`));
+
+        // Compute z-scores
+        const validRows = co.filter((r: any) => r.devBom != null);
+        const values = validRows.map((r: any) => r.devBom);
+        const mean = values.length > 0 ? values.reduce((s: number, v: number) => s + v, 0) / values.length : 0;
+        const variance = values.length > 1 ? values.reduce((s: number, v: number) => s + (v - mean) ** 2, 0) / (values.length - 1) : 0;
+        const stdDev = Math.sqrt(variance);
+
+        children.push(makeTable(['#', 'Outlet', 'Area', 'Dev/BOM', 'Z-Score', 'Level', 'Nominal Deviasi', 'Direction'],
+          co.slice(0, 20).map((it: any, i: number) => {
+            const z = stdDev > 0 && it.devBom != null ? (it.devBom - mean) / stdDev : null;
+            const level = z != null ? (Math.abs(z) > 2 ? 'ABNORMAL' : Math.abs(z) > 1 ? 'ELEVATED' : 'NORMAL') : '—';
+            return [
+              String(i + 1),
+              `${it.outletCode} · ${it.outletName}`,
+              it.area,
+              it.devBom != null ? fmtPct(it.devBom, false) : '—',
+              z != null ? z.toFixed(2) : '—',
+              level,
+              fmtIDR(it.nominalDeviasi),
+              it.direction || '—',
+            ];
+          })));
         children.push(divider());
       }
     }
