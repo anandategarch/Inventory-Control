@@ -33,8 +33,14 @@ function createPrismaClient(): PrismaClient {
     }
     const url = new URL(dbUrl);
     if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
-    if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', '3');
-    if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', '10');
+    // FIX: connection_limit=3 was too low — analysis route fires ~20 parallel queries
+    // (3 via withStatementTimeout $transaction + 17 regular). Pool exhaustion caused
+    // "Unable to start a transaction in the given time" on first load.
+    // Increased to 10 to handle parallel queries safely.
+    if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', '10');
+    // FIX: pool_timeout=10 was too short for cold starts (query compilation + DB roundtrip).
+    // Increased to 30 to allow queries to wait for a free connection.
+    if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', '30');
     // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
     if (!url.searchParams.has('statement_timeout')) url.searchParams.set('statement_timeout', '30000');
     if (!url.searchParams.has('idle_timeout')) url.searchParams.set('idle_timeout', '20');
