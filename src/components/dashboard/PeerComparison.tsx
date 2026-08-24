@@ -282,7 +282,7 @@ export function PeerComparison() {
                       </TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">{p.pic || '—'}</TableCell>
-                      <TableCell className="text-[11px] max-w-[120px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
+                      <TableCell className="text-[11px] max-w-[160px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
                       {columns.map(col => {
                         const val = p[col.key] as number;
                         const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, peerCount, col.higherBetter) : '';

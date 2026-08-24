@@ -283,7 +283,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           <CardContent className="space-y-1 text-xs pt-3">
             {profile.topRisk.byDevBom.slice(0, 5).map((r, i) => (
               <div key={i} className="flex justify-between items-center gap-2">
-                <span className="truncate max-w-[140px]" title={r.itemName}>{r.itemName}</span>
+                <span className="break-words leading-tight max-w-[180px]" title={r.itemName}>{r.itemName}</span>
                 <span className="font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums shrink-0">{fmtPct(r.value)}</span>
               </div>
             ))}
@@ -360,7 +360,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                     {currentRanking.map((r, idx) => (
                       <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-[11px] py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 font-medium max-w-[180px] truncate" title={r.itemName}>{r.itemName}</TableCell>
+                        <TableCell className="text-[11px] py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyDeviasi)}</TableCell>
                         <TableCell className="text-[11px] py-1.5 text-right font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>

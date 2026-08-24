@@ -145,7 +145,7 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                     <span className="text-muted-foreground font-medium">{d.name}</span>
                     {top ? (
                       <span className="flex items-center gap-1 min-w-0">
-                        <span className={`truncate max-w-[80px] ${top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+                        <span className={`truncate max-w-[140px] ${top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`} title={top.name}>
                           {top.name}
                         </span>
                         <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
@@ -204,11 +204,11 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                         {md.up.drivers.map((d, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs">
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
-                            <span className="flex-1 truncate" title={d.item}>{d.item}</span>
-                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                            <span className="flex-1 min-w-0 break-words leading-tight" title={d.item}>{d.item}</span>
+                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
                               <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-12 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">
+                            <span className="w-12 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
                               +{formatDelta(d.delta)}
                             </span>
                             <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
@@ -234,11 +234,11 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
                         {md.down.drivers.map((d, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs">
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
-                            <span className="flex-1 truncate" title={d.item}>{d.item}</span>
-                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                            <span className="flex-1 min-w-0 break-words leading-tight" title={d.item}>{d.item}</span>
+                            <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
                               <div className="h-full bg-red-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-12 text-right tabular-nums text-red-600 dark:text-red-400 font-medium">
+                            <span className="w-12 text-right tabular-nums text-red-600 dark:text-red-400 font-medium shrink-0">
                               {formatDelta(d.delta)}
                             </span>
                             <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
@@ -374,7 +374,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                 </span>
                 {top ? (
                   <span className="flex items-center gap-1 min-w-0">
-                    <span className="truncate max-w-[80px] text-foreground/80">{top.name}</span>
+                    <span className="truncate max-w-[140px] text-foreground/80" title={top.name}>{top.name}</span>
                     <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
                       {top.share.toFixed(0)}%
                     </Badge>
@@ -429,11 +429,11 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
                     {cd.drivers.map((d, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className="w-4 text-muted-foreground">{i + 1}.</span>
-                        <span className="flex-1 truncate" title={d.item}>{d.item}</span>
-                        <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
+                        <span className="flex-1 min-w-0 break-words leading-tight" title={d.item}>{d.item}</span>
+                        <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
                           <div className="h-full" style={{ width: `${Math.min(100, d.sharePct)}%`, background: catColor }} />
                         </div>
-                        <span className="w-14 text-right tabular-nums font-medium" title={formatRp(d.nominal)}>
+                        <span className="w-14 text-right tabular-nums font-medium shrink-0" title={formatRp(d.nominal)}>
                           {formatQty(d.qty)}
                         </span>
                         <span className="w-10 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>

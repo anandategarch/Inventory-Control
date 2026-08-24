@@ -218,7 +218,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
                     }`}
                   >
                     <span className="h-2 w-2 rounded-full shrink-0" style={{ background: color }} />
-                    <span className="truncate max-w-[100px]">{area}</span>
+                    <span className="truncate max-w-[120px]" title={area}>{area}</span>
                   </button>
                 );
               })}

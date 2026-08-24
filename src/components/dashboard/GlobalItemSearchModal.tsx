@@ -211,7 +211,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                         <Package className="h-4 w-4" />
                       </span>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{r.itemName}</p>
+                        <p className="text-sm font-medium truncate" title={r.itemName}>{r.itemName}</p>
                         <p className="text-xs text-muted-foreground tabular-nums">
                           {r.outletCount} outlet · {fmtIDR(r.totalAbsNominal)} total impact
                         </p>
