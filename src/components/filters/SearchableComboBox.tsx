@@ -80,7 +80,7 @@ export function SearchableComboBox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          className={cn('justify-between font-normal h-9 text-xs', buttonClassName)}
+          className={cn('justify-between font-normal h-8 text-xs', buttonClassName)}
         >
           <span className={cn('truncate', isAll && 'text-muted-foreground')}>
             {currentLabel}

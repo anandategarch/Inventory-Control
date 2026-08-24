@@ -524,29 +524,30 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">
-      {/* Header — sticky with brand accent bar */}
-      <header className="sticky top-0 z-40 border-b border-border/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
-        {/* Brand accent bar — warm amber→emerald gradient (NO blue/indigo) */}
-        <div className="h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500" aria-hidden />
-        <div className="px-4 sm:px-6 py-3 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Logo — premium gradient with soft shadow + ring */}
-            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-400 dark:to-orange-500 text-white shadow-md shadow-amber-500/20 ring-1 ring-amber-500/20 shrink-0">
-              <Boxes className="h-5 w-5" />
+      {/* REDesign-HEADER: Single sticky container (z-40) with 2 compact tiers.
+          Tier 1: logo + title + actions (h-9, ~36px)
+          Tier 2: FilterBar bare content (h-8 dropdowns, ~36px)
+          Saves ~110px vertical vs previous 2-container layout. */}
+      <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
+        {/* Tier 1: Brand + actions */}
+        <div className="px-4 sm:px-6 py-1.5 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {/* Logo — compact 28px (was 40px) */}
+            <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-400 dark:to-orange-500 text-white shadow-sm shadow-amber-500/20 ring-1 ring-amber-500/20 shrink-0">
+              <Boxes className="h-4 w-4" />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-[15px] font-semibold tracking-tight truncate leading-tight text-foreground">
-                Inventory Control Intelligence
+            <div className="min-w-0 flex items-center gap-2">
+              <h1 className="text-sm font-semibold tracking-tight truncate leading-tight text-foreground">
+                Inventory Control
               </h1>
-              <p className="text-[11px] text-muted-foreground/80 truncate font-normal">
-                {status?.stats ? (
-                  <span className="tabular-nums font-medium text-muted-foreground">{status.stats.totalOutlets} Outlet · </span>
-                ) : null}
-                F&amp;B Network · Rekonsiliasi &amp; Deteksi Anomali
-              </p>
+              {status?.stats && (
+                <Badge variant="outline" className="text-[10px] h-5 hidden sm:inline-flex gap-1 px-1.5 tabular-nums text-muted-foreground shrink-0">
+                  {status.stats.totalOutlets} outlet
+                </Badge>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {/* GLOBAL-ITEM-SEARCH: Cmd+K trigger button (always available when data exists) */}
             {hasData && (
               <Button
@@ -558,17 +559,17 @@ export default function DashboardPage() {
               >
                 <Search className="h-3.5 w-3.5" />
                 <span className="hidden md:inline">Cari Item</span>
-                <kbd className="hidden md:inline ml-1 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
+                <kbd className="hidden md:inline ml-0.5 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
               </Button>
             )}
             {analysis.isFetching && analysis.data && (
-              <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-3 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
+              <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Memperbarui...
+                <span className="hidden sm:inline">Memperbarui...</span>
               </Badge>
             )}
             {analysis.data && (
-              <Badge variant="outline" className="text-[11px] h-7 hidden sm:inline-flex gap-1.5 rounded-full px-3 text-muted-foreground">
+              <Badge variant="outline" className="text-[11px] h-7 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground">
                 <Activity className="h-3 w-3" />
                 <span className="tabular-nums">{analysis.data.cached ? 'cache' : 'langsung'} · {analysis.data.durationMs}ms</span>
               </Badge>
@@ -585,7 +586,7 @@ export default function DashboardPage() {
                 {isExporting ? (
                   <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="hidden sm:inline">Exporting...</span></>
                 ) : (
-                  <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export Word</span></>
+                  <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export</span></>
                 )}
               </Button>
             )}
@@ -615,15 +616,17 @@ export default function DashboardPage() {
             </Tooltip>
           </div>
         </div>
+
+        {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists */}
+        {hasData && (
+          <div className="px-4 sm:px-6 pb-1.5 max-w-[1600px] mx-auto">
+            <FilterBar />
+          </div>
+        )}
       </header>
 
       {/* Main content */}
-      <main className="flex-1 px-4 sm:px-6 py-4 space-y-4 max-w-[1600px] w-full mx-auto">
-        {/* Fix #11: Sticky filter bar — stays visible when scrolling */}
-        <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-background/95 backdrop-blur-sm border-b border-border/40">
-          <FilterBar />
-        </div>
-
+      <main className="flex-1 px-4 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto">
         {!statusLoaded ? (
           <LoadingState />
         ) : !hasData ? (

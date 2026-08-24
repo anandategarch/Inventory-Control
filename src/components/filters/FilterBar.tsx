@@ -1,6 +1,6 @@
 'use client';
 
-import { Card, CardContent } from '@/components/ui/card';
+// REDesign: Card import removed — FilterBar renders bare content now (parent wraps in sticky container)
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
@@ -221,25 +221,21 @@ export function FilterBar() {
 
   return (
     <>
-      <Card id="filter-bar" className="mb-4 rounded-xl border-border/60 shadow-sm overflow-hidden">
-        <CardContent className="p-3 sm:p-4">
-          {isLoading && (
-            <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
-              <span>Memuat filter...</span>
-            </div>
-          )}
-          {/* Filters row — left side: dropdowns, right side: actions */}
-          <div className="flex flex-col lg:flex-row lg:items-end gap-3 lg:gap-4">
-            {/* Filter dropdowns — grouped visually */}
-            <div className="flex flex-wrap items-end gap-2 flex-1 min-w-0">
-              <span className="hidden lg:inline-flex text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80 self-end mb-2.5 mr-1 shrink-0">
-                Filter
-              </span>
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Bulan</label>
-                <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
-                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Pilih bulan" /></SelectTrigger>
+      {/* REDesign-HEADER: FilterBar now renders BARE content (no Card wrapper).
+          The parent in page.tsx wraps this in a single sticky container with
+          the header — saves ~100px vertical (no double padding, no labels, no stats row). */}
+      {isLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+          <span>Memuat filter...</span>
+        </div>
+      )}
+      {/* Filters row — left side: dropdowns, right side: actions */}
+      <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
+        {/* Filter dropdowns — no labels (placeholder in dropdown is clear enough) */}
+        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+          <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
+            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[120px]"><SelectValue placeholder="Bulan" /></SelectTrigger>
                   <SelectContent>
                     {months.map((m) => (
                       <SelectItem
@@ -271,12 +267,10 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+          </div>
 
-              <div className="flex flex-col gap-1 min-w-[100px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Minggu</label>
-                <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
-                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue placeholder="Minggu" /></SelectTrigger>
+          <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
+            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[90px]"><SelectValue placeholder="Minggu" /></SelectTrigger>
                   <SelectContent>
                     {weeks.map((w) => (
                       <SelectItem
@@ -306,23 +300,21 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+          </div>
 
-              <div className="flex flex-col gap-1 min-w-[160px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Periode Pembanding</label>
-                <Select
-                  value={compareValue}
-                  onValueChange={(v) => {
-                    if (v === 'auto') {
-                      setCompareWeek(null, null);
-                    } else {
-                      const [wk, ml] = v.split('|||');
-                      setCompareWeek(wk, ml);
-                    }
-                  }}
-                  disabled={!currentWeek}
-                >
-                  <SelectTrigger className="h-9 text-xs bg-background hover:bg-muted/40 transition-colors"><SelectValue /></SelectTrigger>
+          <Select
+            value={compareValue}
+            onValueChange={(v) => {
+              if (v === 'auto') {
+                setCompareWeek(null, null);
+              } else {
+                const [wk, ml] = v.split('|||');
+                setCompareWeek(wk, ml);
+              }
+            }}
+            disabled={!currentWeek}
+          >
+            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[150px]"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="auto" className="text-xs">Otomatis (periode sebelumnya)</SelectItem>
                     {allComparePeriods.map((p) => (
@@ -336,175 +328,154 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+          </div>
 
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">PIC</label>
-                <SearchableComboBox
-                  options={pics.map((p) => ({ value: p, label: p }))}
-                  value={pic}
-                  onValueChange={setPic}
-                  placeholder="Semua PIC"
-                  searchPlaceholder="Cari PIC..."
-                  emptyText="PIC tidak ditemukan."
-                  allOptionLabel={`Semua PIC (${pics.length})`}
-                  buttonClassName="w-full"
-                />
-              </div>
+          <SearchableComboBox
+            options={pics.map((p) => ({ value: p, label: p }))}
+            value={pic}
+            onValueChange={setPic}
+            placeholder="Semua PIC"
+            searchPlaceholder="Cari PIC..."
+            emptyText="PIC tidak ditemukan."
+            allOptionLabel={`Semua PIC (${pics.length})`}
+            buttonClassName="min-w-[120px]"
+          />
 
-              <div className="flex flex-col gap-1 min-w-[140px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Area</label>
-                <SearchableComboBox
-                  options={areas.map((a) => ({ value: a, label: a }))}
-                  value={area}
-                  onValueChange={setArea}
-                  placeholder="Semua Area"
-                  searchPlaceholder="Cari area..."
-                  emptyText="Area tidak ditemukan."
-                  allOptionLabel={`Semua Area (${areas.length})`}
-                  buttonClassName="w-full"
-                />
-              </div>
+          <SearchableComboBox
+            options={areas.map((a) => ({ value: a, label: a }))}
+            value={area}
+            onValueChange={setArea}
+            placeholder="Semua Area"
+            searchPlaceholder="Cari area..."
+            emptyText="Area tidak ditemukan."
+            allOptionLabel={`Semua Area (${areas.length})`}
+            buttonClassName="min-w-[120px]"
+          />
 
-              <div className="flex flex-col gap-1 min-w-[160px]">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Outlet</label>
-                <SearchableComboBox
-                  options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
-                  value={outletCode}
-                  onValueChange={setOutlet}
-                  placeholder="Semua Outlet"
-                  searchPlaceholder="Cari outlet (kode/nama)..."
-                  emptyText="Outlet tidak ditemukan."
-                  allOptionLabel={`Semua Outlet (${outlets.length})`}
-                  buttonClassName="w-full"
-                />
-              </div>
+          <SearchableComboBox
+            options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
+            value={outletCode}
+            onValueChange={setOutlet}
+            placeholder="Semua Outlet"
+            searchPlaceholder="Cari outlet (kode/nama)..."
+            emptyText="Outlet tidak ditemukan."
+            allOptionLabel={`Semua Outlet (${outlets.length})`}
+            buttonClassName="min-w-[150px]"
+          />
 
-              {hasActiveFilter && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-9 px-2.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors active:scale-95"
-                      onClick={reset}
-                      aria-label="Reset filter aktif"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span className="ml-1 hidden sm:inline">Reset</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Reset filter aktif</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
+          {hasActiveFilter && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors active:scale-95"
+                  onClick={reset}
+                  aria-label="Reset filter aktif"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span className="ml-1 hidden sm:inline">Reset</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Reset filter aktif</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
 
-            {/* Vertical divider on desktop */}
-            <div className="hidden lg:block w-px self-stretch bg-border/60 my-1" aria-hidden />
+        {/* Vertical divider on desktop */}
+        <div className="hidden lg:block w-px self-stretch bg-border/60 my-0.5" aria-hidden />
 
-            {/* Actions — secondary icon-only (with tooltips) + primary actions */}
-            <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0">
-              <span className="hidden lg:inline-flex text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80 mr-0.5">
-                Aksi
-              </span>
-
-              {/* Secondary icon-only buttons with tooltips */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
-                    onClick={() => setSettingsOpen(true)}
-                    aria-label="Pengaturan"
-                  >
-                    <Settings className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Pengaturan</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
-                    onClick={() => setDataMgmtOpen(true)}
-                    aria-label="Kelola Data"
-                  >
-                    <Database className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Kelola Data</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 w-9 p-0 shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
-                    onClick={() => setPicMgmtOpen(true)}
-                    aria-label="Kelola PIC"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Kelola PIC</TooltipContent>
-              </Tooltip>
-
-              {/* Primary actions — Import dari Drive, Upload File, Refresh Data */}
-              <div className="h-6 w-px bg-border/60 mx-0.5 hidden sm:block" aria-hidden />
-
+        {/* Actions — secondary icon-only (with tooltips) + primary actions */}
+        <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0">
+          {/* Secondary icon-only buttons with tooltips */}
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
-                onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
+                className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Pengaturan"
               >
-                <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                <span className="hidden md:inline">Import Drive</span>
+                <Settings className="h-3.5 w-3.5" />
               </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Pengaturan</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow hover:bg-muted/50 transition-all active:scale-95"
-                onClick={() => setUploadDialogOpen(true)}
+                className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+                onClick={() => setDataMgmtOpen(true)}
+                aria-label="Kelola Data"
               >
-                <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span className="hidden md:inline">Upload File</span>
+                <Database className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                variant="default"
-                size="sm"
-                className="h-9 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
-                onClick={handleIngest}
-                disabled={ingesting}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Refresh Data'}</span>
-              </Button>
-            </div>
-          </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Kelola Data</TooltipContent>
+          </Tooltip>
 
-          {/* Status badges row */}
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-            {status?.stats && (
-              <Badge variant="outline" className="text-[11px] gap-1 bg-muted/30 font-medium">
-                <Database className="h-3 w-3 text-muted-foreground" />
-                <span className="tabular-nums">{status.stats.totalFiles}</span> file · <span className="tabular-nums">{status.stats.totalOutlets}</span> outlet · <span className="tabular-nums">{status.stats.totalItems}</span> item · <span className="tabular-nums">{status.stats.totalRecords.toLocaleString()}</span> record
-              </Badge>
-            )}
-            {ingestMsg && (
-              <Badge variant="outline" className="text-[11px] gap-1 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 font-medium">
-                <AlertTriangle className="h-3 w-3" />
-                {ingestMsg}
-              </Badge>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+                onClick={() => setPicMgmtOpen(true)}
+                aria-label="Kelola PIC"
+              >
+                <Users className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Kelola PIC</TooltipContent>
+          </Tooltip>
+
+          {/* Primary actions — Import dari Drive, Upload File, Refresh Data */}
+          <div className="h-5 w-px bg-border/60 mx-0.5 hidden sm:block" aria-hidden />
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+            onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
+          >
+            <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+            <span className="hidden md:inline">Import Drive</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+            onClick={() => setUploadDialogOpen(true)}
+          >
+            <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden md:inline">Upload File</span>
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
+            onClick={handleIngest}
+            disabled={ingesting}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Refresh Data'}</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Ingest message (inline, no separate stats row — stats already in footer) */}
+      {ingestMsg && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+          <Badge variant="outline" className="text-[11px] gap-1 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 font-medium">
+            <AlertTriangle className="h-3 w-3" />
+            {ingestMsg}
+          </Badge>
+        </div>
+      )}
 
       {/* Google Drive Import Dialog — with Folder/File/Sheets tabs */}
       <Dialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen}>
