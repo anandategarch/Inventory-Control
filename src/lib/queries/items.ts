@@ -907,3 +907,80 @@ export async function queryItemAutocomplete(
     totalAbsNominal: Number(r.totalAbsNominal),
   }));
 }
+
+// ============================================================
+//  Item Trend Analysis — per-(period, outlet) for 1 item across ALL periods
+//  --------------------------------------------------------
+//  Returns the item's deviation across ALL months × weeks in the DB,
+//  grouped by outlet. Used for trend line chart in GlobalItemSearchModal.
+//
+//  Each row = 1 period × 1 outlet:
+//    - monthLabel, weekLabel (for X-axis sorting)
+//    - outletCode, outletName, area (for line identification)
+//    - nominalDeviasi (signed, for Y-axis)
+//    - devBom (signed, for alternative Y-axis)
+//    - direction (LOSS/SURPLUS/NEUTRAL)
+//
+//  Sorted by period (chronological) then outlet.
+//  Uses index @@index([monthLabel, weekLabel, outletId]) for fast scan.
+// ============================================================
+export interface ItemTrendRow {
+  monthLabel: string;
+  weekLabel: string;
+  outletCode: string;
+  outletName: string;
+  area: string;
+  nominalDeviasi: number;
+  devBom: number | null;
+  direction: string;
+}
+
+export async function queryItemTrend(
+  itemNameFilter: string,
+  filters: {
+    area?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 500
+): Promise<ItemTrendRow[]> {
+  // No month/week filter — we want ALL periods. Only area + PIC filters apply.
+  const f = buildSqlFilters({
+    area: filters.area,
+    outletCode: null,
+    itemName: null, // handled by exact match below
+    picOutletCodes: filters.picOutletCodes,
+  });
+  const rows = await db.$queryRaw<Array<ItemTrendRow>>`
+    SELECT
+      ir."monthLabel",
+      ir."weekLabel",
+      o.code as "outletCode",
+      o.name as "outletName",
+      o.area,
+      COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+        ELSE NULL END as "devBom",
+      CASE
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+        ELSE 'NEUTRAL'
+      END as "direction"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    WHERE LOWER(i.name) = LOWER(${itemNameFilter})
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      ${f}
+    GROUP BY ir."monthLabel", ir."weekLabel", o.code, o.name, o.area
+    ORDER BY ir."monthLabel", ir."weekLabel", o.code
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => ({
+    ...r,
+    nominalDeviasi: Number(r.nominalDeviasi),
+    devBom: r.devBom != null ? Number(r.devBom) : null,
+  }));
+}

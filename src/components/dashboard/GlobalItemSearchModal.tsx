@@ -11,16 +11,23 @@
 //  Closes on Escape / backdrop click / item clear.
 // ============================================================
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import dynamic from 'next/dynamic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Search, Package, X } from 'lucide-react';
+import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+import type { ItemTrendRow } from '@/lib/queries/items';
+
+// Lazy-load trend chart (Recharts = 5.4MB) — only loaded when user switches to Trend view
+const ItemTrendChart = dynamic(() => import('./ItemTrendChart').then(m => m.ItemTrendChart), { ssr: false, loading: () => (
+  <div className="flex items-center justify-center h-72"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
+) });
 
 interface AutocompleteResult {
   itemName: string;
@@ -60,6 +67,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
   const { monthLabel, currentWeek, area, pic, setFocusOutlet, setActiveTab } = useDashboard();
   const [query, setQuery] = useState('');
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'cross-outlet' | 'trend'>('cross-outlet');
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Focus input + reset state when modal opens.
@@ -74,6 +82,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
       // Modal just opened — reset search state
       setQuery('');
       setSelectedItem(null);
+      setViewMode('cross-outlet');
     }
   }
 
@@ -123,20 +132,62 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
     staleTime: 120_000,
   });
 
+  // #1 TREND ANALYSIS: fetch per-(period, outlet) data across ALL periods for trend chart.
+  // Only fires when user switches to Trend view (enabled: viewMode === 'trend').
+  const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery<{ results: ItemTrendRow[] }>({
+    queryKey: ['item-search', 'trend', selectedItem, area, pic],
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        mode: 'trend',
+        item: selectedItem!,
+      });
+      if (area && area !== 'all') p.set('area', area);
+      if (pic) p.set('pic', pic);
+      const res = await fetch(`/api/item-search?${p.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: Boolean(selectedItem && viewMode === 'trend'),
+    staleTime: 300_000, // 5 min — trend data spans all periods, rarely changes
+  });
+
+  const trendResults = trendData?.results || [];
+
   const results = crossData?.results || [];
 
-  // Summary stats
-  const summary = useCallback((rows: CrossOutletRow[]) => {
-    if (rows.length === 0) return null;
-    const totalNominal = rows.reduce((s, r) => s + r.nominalDeviasi, 0);
-    const totalAbs = rows.reduce((s, r) => s + r.absNominalDeviasi, 0);
-    const lossOutlets = rows.filter((r) => r.direction === 'LOSS').length;
-    const surplusOutlets = rows.filter((r) => r.direction === 'SURPLUS').length;
-    const avgDevBom = rows.reduce((s, r) => s + (r.devBom ?? 0), 0) / rows.length;
-    return { totalNominal, totalAbs, lossOutlets, surplusOutlets, avgDevBom, outletCount: rows.length };
-  }, []);
+  // #4 Z-SCORE OUTLIER DETECTION (cross-sectional):
+  // Compare each outlet's devBom against the distribution of ALL outlets for this item.
+  // z-score = (outlet.devBom - mean) / stdDev
+  // |z| > 2 = ABNORMAL (red badge), |z| > 1 = ELEVATED (amber badge)
+  const zScores = new Map<string, number>();
+  {
+    const validRows = results.filter((r) => r.devBom != null);
+    if (validRows.length >= 2) {
+      const values = validRows.map((r) => r.devBom as number);
+      const mean = values.reduce((s, v) => s + v, 0) / values.length;
+      const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
+      const stdDev = Math.sqrt(variance);
+      if (stdDev > 0) {
+        for (const r of validRows) {
+          zScores.set(r.outletCode, (r.devBom! - mean) / stdDev);
+        }
+      }
+    }
+  }
 
-  const stats = summary(results);
+  // Summary stats (computed inline — no useCallback needed, not passed to children)
+  const stats = results.length === 0 ? null : (() => {
+    const totalNominal = results.reduce((s, r) => s + r.nominalDeviasi, 0);
+    const totalAbs = results.reduce((s, r) => s + r.absNominalDeviasi, 0);
+    const lossOutlets = results.filter((r) => r.direction === 'LOSS').length;
+    const surplusOutlets = results.filter((r) => r.direction === 'SURPLUS').length;
+    const avgDevBom = results.reduce((s, r) => s + (r.devBom ?? 0), 0) / results.length;
+    const abnormalCount = results.filter((r) => {
+      const z = zScores.get(r.outletCode);
+      return z != null && Math.abs(z) > 2;
+    }).length;
+    return { totalNominal, totalAbs, lossOutlets, surplusOutlets, avgDevBom, outletCount: results.length, abnormalCount };
+  })();
 
   const handleOutletClick = (outletCode: string) => {
     setFocusOutlet(outletCode);
@@ -229,20 +280,35 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
             ) : null}
           </div>
         ) : (
-          // Stage 2: Cross-outlet table
+          // Stage 2: Cross-outlet table OR Trend chart (toggle)
           <div className="flex-1 overflow-hidden flex flex-col">
-            {/* Item header + summary */}
+            {/* Item header + view toggle */}
             <div className="pb-3 border-b">
               <div className="flex items-center gap-2 mb-2">
                 <Package className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                 <h3 className="font-semibold text-sm">{selectedItem}</h3>
+                {/* View toggle: Cross-Outlet vs Trend */}
+                <div className="ml-auto flex items-center gap-0.5 rounded-md border bg-muted/40 p-0.5">
+                  <button
+                    onClick={() => setViewMode('cross-outlet')}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${viewMode === 'cross-outlet' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <TableIcon className="h-3 w-3" /> Cross-Outlet
+                  </button>
+                  <button
+                    onClick={() => setViewMode('trend')}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${viewMode === 'trend' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <TrendingUp className="h-3 w-3" /> Trend
+                  </button>
+                </div>
               </div>
-              {crossLoading ? (
+              {viewMode === 'cross-outlet' && (crossLoading ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" /> Memuat data cross-outlet...
                 </div>
               ) : stats ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                   <div className="rounded-md border p-2">
                     <p className="text-xs text-muted-foreground">Total Outlet</p>
                     <p className="text-sm font-bold tabular-nums">{stats.outletCount}</p>
@@ -263,10 +329,17 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                     <p className="text-xs text-muted-foreground">Avg Dev/BOM</p>
                     <p className="text-sm font-bold tabular-nums">{fmtPct(stats.avgDevBom)}</p>
                   </div>
+                  <div className="rounded-md border p-2 bg-red-50/40 dark:bg-red-950/20">
+                    <p className="text-xs text-muted-foreground">⚠️ Abnormal</p>
+                    <p className="text-sm font-bold tabular-nums text-red-600 dark:text-red-400">{stats.abnormalCount} <span className="text-xs font-normal text-muted-foreground">outlet</span></p>
+                  </div>
                 </div>
-              ) : null}
+              ) : null)}
             </div>
 
+            {/* Content: Cross-Outlet table OR Trend chart based on viewMode */}
+            {viewMode === 'cross-outlet' ? (
+            <>
             {/* Cross-outlet table */}
             <div className="flex-1 overflow-auto mt-2">
               {crossError ? (
@@ -282,7 +355,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                   Item ini tidak memiliki data deviasi di periode terpilih
                 </div>
               ) : (
-                <Table className="min-w-[900px]">
+                <Table className="min-w-[1000px]">
                   <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                     <TableRow className="border-b hover:bg-transparent">
                       <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">#</TableHead>
@@ -292,15 +365,24 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY Deviasi</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Dev/BOM</TableHead>
+                      <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Z-Score</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Nominal Deviasi</TableHead>
                       <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Dir</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.map((r, i) => (
+                    {results.map((r, i) => {
+                      const z = zScores.get(r.outletCode);
+                      const zAbs = z != null ? Math.abs(z) : 0;
+                      const zCls = zAbs > 2
+                        ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+                        : zAbs > 1
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400'
+                          : 'bg-muted text-muted-foreground';
+                      return (
                       <TableRow
                         key={`${r.outletCode}-${i}`}
-                        className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
+                        className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${zAbs > 2 ? 'border-l-2 border-l-red-500' : zAbs > 1 ? 'border-l-2 border-l-amber-500' : ''}`}
                         {...clickableRowProps(() => handleOutletClick(r.outletCode))}
                       >
                         <TableCell className="text-center text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
@@ -315,6 +397,15 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                         <TableCell className={`text-right text-xs tabular-nums ${numberColor(r.devBom ?? 0)}`}>
                           {r.devBom != null ? fmtPct(r.devBom) : '—'}
                         </TableCell>
+                        <TableCell className="text-center text-xs">
+                          {z != null ? (
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums ${zCls}`} title={`Z-score: ${z.toFixed(2)} (mean vs peer outlets)`}>
+                              {z > 0 ? '+' : ''}{z.toFixed(1)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className={`text-right font-semibold text-xs tabular-nums ${numberColor(r.nominalDeviasi)}`}>
                           {fmtIDR(r.nominalDeviasi)}
                         </TableCell>
@@ -322,7 +413,8 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                           {r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '—'}
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -330,6 +422,26 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
             <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
               💡 Klik baris outlet untuk deep dive ke Resto Analysis outlet tersebut
             </p>
+            </>
+            ) : (
+              /* Trend view — line chart across ALL periods */
+              <div className="flex-1 overflow-auto mt-2">
+                {trendError ? (
+                  <div className="text-center text-red-600 dark:text-red-400 text-sm py-8">
+                    Gagal memuat tren: {trendError.message}
+                  </div>
+                ) : trendLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+                  </div>
+                ) : (
+                  <ItemTrendChart data={trendResults} />
+                )}
+                <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                  📈 Tren nominal deviasi per outlet — top 5 by total impact. Negatif (LOSS) = rugi, positif (SURPLUS) = untung.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </DialogContent>

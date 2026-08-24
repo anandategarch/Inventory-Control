@@ -16,17 +16,17 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryGlobalItemSearch, queryItemAutocomplete } from '@/lib/queries/items';
+import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const itemSearchQuerySchema = z.object({
-  mode: z.enum(['autocomplete', 'cross-outlet']).default('autocomplete'),
+  mode: z.enum(['autocomplete', 'cross-outlet', 'trend']).default('autocomplete'),
   q: z.string().min(1).max(200).optional(),
   item: z.string().min(1).max(200).optional(),
-  month: z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i),
+  month: z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/).optional(),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
   area: z.string().max(100).optional(),
   pic: z.string().max(100).optional(),
 });
@@ -49,12 +49,16 @@ export async function GET(req: NextRequest) {
     const { mode, q, item, month: monthRaw, week, area, pic } = parse.data;
 
     // Resolve month label case (DB may have "AGUSTUS 2026" vs "Agustus 2026")
+    // Only resolve if monthRaw is provided (trend mode doesn't need month)
     const monthResolver = await getMonthResolver();
-    const month = resolveMonthLabel(monthRaw, monthResolver) || monthRaw;
+    const month = monthRaw ? (resolveMonthLabel(monthRaw, monthResolver) || monthRaw) : undefined;
 
     if (mode === 'autocomplete') {
       if (!q) {
         return NextResponse.json({ success: false, error: 'q is required for autocomplete mode' }, { status: 400 });
+      }
+      if (!month || !week) {
+        return NextResponse.json({ success: false, error: 'month and week required for autocomplete mode' }, { status: 400 });
       }
       const results = await queryItemAutocomplete(week, month, q, 10);
       return NextResponse.json({
@@ -66,12 +70,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // mode === 'cross-outlet'
+    // mode === 'cross-outlet' OR 'trend' — both need `item` param
     if (!item) {
-      return NextResponse.json({ success: false, error: 'item is required for cross-outlet mode' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'item is required for cross-outlet/trend mode' }, { status: 400 });
     }
 
-    // Resolve PIC → outletCodes (if pic filter is set)
+    // Resolve PIC → outletCodes (if pic filter is set) — shared by cross-outlet + trend
     let picOutletCodes: string[] | null = null;
     if (pic) {
       const picRows = await db.$queryRaw<Array<{ outletCode: string }>>`
@@ -79,15 +83,36 @@ export async function GET(req: NextRequest) {
       `;
       picOutletCodes = picRows.map((r) => r.outletCode);
       if (picOutletCodes.length === 0) {
-        // PIC has no outlets → return empty (matches analysis route behavior)
+        // PIC has no outlets → return empty
         return NextResponse.json({
           success: true,
-          mode: 'cross-outlet',
+          mode,
           item,
           results: [],
           durationMs: Date.now() - startedAt,
         });
       }
+    }
+
+    // mode === 'trend' — return per-(period, outlet) data across ALL periods
+    if (mode === 'trend') {
+      const results = await queryItemTrend(item, {
+        area: area || null,
+        picOutletCodes,
+      }, 500);
+      return NextResponse.json({
+        success: true,
+        mode: 'trend',
+        item,
+        filters: { area: area || null, pic: pic || null },
+        results,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    // mode === 'cross-outlet' — needs month + week (already resolved above)
+    if (!month || !week) {
+      return NextResponse.json({ success: false, error: 'month and week required for cross-outlet mode' }, { status: 400 });
     }
 
     const results = await queryGlobalItemSearch(week, month, item, {
