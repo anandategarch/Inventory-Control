@@ -758,3 +758,152 @@ export async function queryNetworkItemRisk(
   );
   return results.slice(0, limit);
 }
+
+// ============================================================
+//  Global Item Search — cross-outlet view for a single item
+//  --------------------------------------------------------
+//  When user searches "CABAI" and selects an item, this query
+//  returns that item's deviation across ALL outlets (not just
+//  the selected one). Surfaces systemic patterns: which outlets
+//  have the worst deviation for this specific item.
+//
+//  Returns per-(item, outlet) rows with:
+//    - outlet code/name/area/pic
+//    - signed qtyDeviasi, qtyBom, nominalDeviasi (for display)
+//    - abs(qtyDeviasi) for sorting
+//    - devBom ratio (signed)
+//    - direction (LOSS/SURPLUS/NEUTRAL)
+//
+//  Note: `itemNameFilter` is the EXACT item name (already resolved
+//  by the caller via /api/item-search?q=...). We filter by exact
+//  match on i.name (case-insensitive via LOWER) to avoid partial
+//  matches crossing items (e.g. "CABAI" matching "CABAI FROZEN"
+//  AND "CABAI MERAH" — caller should pick one).
+// ============================================================
+export interface GlobalItemSearchRow {
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  area: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyBom: number;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  qtyLossSurplus: number;
+  nominalDeviasi: number;
+  nominalLossSurplus: number;
+  absNominalDeviasi: number;
+  devBom: number | null;
+  direction: string;
+}
+
+export async function queryGlobalItemSearch(
+  week: string,
+  month: string,
+  itemNameFilter: string,
+  filters: {
+    area?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 100
+): Promise<GlobalItemSearchRow[]> {
+  // Filter by exact item name (case-insensitive). Outlet filter is intentionally
+  // NOT applied — this is a CROSS-OUTLET view (user wants to see the item in
+  // ALL outlets). Area + PIC filters are still respected (narrow the outlet scope).
+  const f = buildSqlFilters({
+    area: filters.area,
+    outletCode: null, // cross-outlet: no outlet filter
+    itemName: null,   // itemName handled by exact match below
+    picOutletCodes: filters.picOutletCodes,
+  });
+  const rows = await db.$queryRaw<Array<GlobalItemSearchRow>>`
+    SELECT
+      i.name as "itemName",
+      o.code as "outletCode",
+      o.name as "outletName",
+      o.area,
+      pic.pic,
+      MAX(ir."satuan") as "satuan",
+      COALESCE(SUM(ir."qtyBom"), 0) as "qtyBom",
+      COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasi",
+      COALESCE(SUM(ir."qtyWaste"), 0) as "qtyWaste",
+      COALESCE(SUM(ir."qtySusut"), 0) as "qtySusut",
+      COALESCE(SUM(ir."qtyTrial"), 0) as "qtyTrial",
+      COALESCE(SUM(ir."qtyLossSurplus"), 0) as "qtyLossSurplus",
+      COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+      COALESCE(SUM(ir."nominalLossSurplus"), 0) as "nominalLossSurplus",
+      COALESCE(SUM(ir."absNominalDeviasi"), 0) as "absNominalDeviasi",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+        ELSE NULL END as "devBom",
+      CASE
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+        ELSE 'NEUTRAL'
+      END as "direction"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
+    WHERE ir."monthLabel" = ${month}
+      AND ir."weekLabel" = ${week}
+      AND LOWER(i.name) = LOWER(${itemNameFilter})
+      ${f}
+    GROUP BY i.name, o.code, o.name, o.area, pic.pic
+    ORDER BY "absNominalDeviasi" DESC
+    LIMIT ${limit}
+  `;
+  // Coerce BigInt/Decimal to Number (PostgreSQL SUM returns bigint for integer columns)
+  return rows.map((r: any) => ({
+    ...r,
+    qtyBom: Number(r.qtyBom),
+    qtyDeviasi: Number(r.qtyDeviasi),
+    qtyWaste: Number(r.qtyWaste),
+    qtySusut: Number(r.qtySusut),
+    qtyTrial: Number(r.qtyTrial),
+    qtyLossSurplus: Number(r.qtyLossSurplus),
+    nominalDeviasi: Number(r.nominalDeviasi),
+    nominalLossSurplus: Number(r.nominalLossSurplus),
+    absNominalDeviasi: Number(r.absNominalDeviasi),
+    devBom: r.devBom != null ? Number(r.devBom) : null,
+  }));
+}
+
+// ============================================================
+//  Item Autocomplete — for the global search bar (Cmd+K)
+//  Returns up to `limit` item names matching `q` (case-insensitive).
+//  Ranked by total absNominalDeviasi DESC so high-impact items
+//  surface first.
+// ============================================================
+export async function queryItemAutocomplete(
+  week: string,
+  month: string,
+  q: string,
+  limit: number = 10
+): Promise<Array<{ itemName: string; outletCount: number; totalAbsNominal: number }>> {
+  const rows = await db.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number | bigint }>>`
+    SELECT
+      i.name as "itemName",
+      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+      COALESCE(SUM(ir."absNominalDeviasi"), 0) as "totalAbsNominal"
+    FROM "Item" i
+    JOIN "InventoryRecord" ir ON ir."itemId" = i.id
+    WHERE ir."monthLabel" = ${month}
+      AND ir."weekLabel" = ${week}
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      AND LOWER(i.name) LIKE LOWER(${'%' + q + '%'})
+    GROUP BY i.name
+    ORDER BY "totalAbsNominal" DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => ({
+    itemName: r.itemName,
+    outletCount: Number(r.outletCount),
+    totalAbsNominal: Number(r.totalAbsNominal),
+  }));
+}

@@ -17,6 +17,7 @@ import { ErrorBoundary } from '@/components/ui/error-boundary';
 // bundle despite the other dynamic() calls.
 const RestoAnalysis = dynamic(() => import('@/components/dashboard/RestoAnalysis').then(m => m.RestoAnalysis), { ssr: false, loading: () => <LoadingChart /> });
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
+import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 // CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
@@ -60,6 +61,7 @@ import {
   ArrowUp,
   RefreshCw,
   Keyboard,
+  Search,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -451,9 +453,13 @@ export default function DashboardPage() {
     toast({ title: '🔄 Data diperbarui' });
   }, [queryClient, toast]);
 
+  // GLOBAL-ITEM-SEARCH: Cmd+K opens the global item search modal (cross-outlet view).
+  const [itemSearchOpen, setItemSearchOpen] = useState(false);
+
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
+  // Cmd/Ctrl+K → open global item search (cross-outlet analysis)
   // 1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)
   // Escape → close any open dialog/drawer
   useEffect(() => {
@@ -475,6 +481,12 @@ export default function DashboardPage() {
         handleRefresh();
         return;
       }
+      // Cmd/Ctrl+K → open global item search
+      if (mod && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setItemSearchOpen(true);
+        return;
+      }
       // 1 / 2 / 3 → switch tabs (only when not typing in an input)
       if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
         const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer' };
@@ -485,6 +497,7 @@ export default function DashboardPage() {
       // covers dashboard-controlled state + ExportDialog as a safety net)
       if (e.key === 'Escape') {
         setExportDialogOpen(false);
+        setItemSearchOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
         setSourceModal(false);
         setCardDrillDown(null);
@@ -534,6 +547,20 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* GLOBAL-ITEM-SEARCH: Cmd+K trigger button (always available when data exists) */}
+            {hasData && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-medium transition-all active:scale-95"
+                onClick={() => setItemSearchOpen(true)}
+                aria-label="Cari item di semua outlet (Cmd+K)"
+              >
+                <Search className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Cari Item</span>
+                <kbd className="hidden md:inline ml-1 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
+              </Button>
+            )}
             {analysis.isFetching && analysis.data && (
               <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-3 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -578,6 +605,7 @@ export default function DashboardPage() {
                 <ul className="space-y-1 text-[11px]">
                   <li className="flex items-center justify-between gap-3"><span>Export Word</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Refresh data</span><kbd className="font-mono">⌘/Ctrl + R</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Cari item (cross-outlet)</span><kbd className="font-mono">⌘/Ctrl + K</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tab Dashboard</span><kbd className="font-mono">1</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
@@ -792,6 +820,8 @@ export default function DashboardPage() {
         onExport={handleExport}
         isExporting={isExporting}
       />
+      {/* GLOBAL-ITEM-SEARCH: cross-outlet item analysis modal (Cmd+K) */}
+      <GlobalItemSearchModal open={itemSearchOpen} onOpenChange={setItemSearchOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />

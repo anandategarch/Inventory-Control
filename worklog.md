@@ -16120,3 +16120,61 @@ Stage Summary:
 - Root cause of "angka 0 semua": (1) `ir` alias bug caused 500 with any filter active, (2) in-flight Promise leak caused concurrent requests to hang forever, (3) connection_limit=3 (from .env, not overridden) caused pool exhaustion.
 - All 3 issues fixed. Backend returns real data (verified: Sales=153B without filter).
 - Remaining: filtered queries take 60s (Supabase PgBouncer pool cap). This is a performance issue, not a correctness bug. Data IS returned correctly.
+
+---
+Task ID: GLOBAL-ITEM-SEARCH + SERIAL-QUERIES
+Agent: Main Agent
+Task: Global Item Search (Cmd+K cross-outlet analysis) + Serialize queries for Supabase free plan
+
+Work Log:
+- Read worklog.md (recent DEEP-AUDIT-IR-ZEROS entry — alias fix + connection pool + inflight reject).
+- Confirmed Supabase free plan limits: PgBouncer ~10 concurrent connections practical. Analysis route fires 20+ parallel queries → pool exhaustion → 60s timeout.
+- Confirmed 152 unique items, 341 outlets, 272K records — data volume manageable for cross-outlet item query.
+
+Changes:
+1. src/lib/queries/items.ts — Added 2 new query functions:
+   - queryGlobalItemSearch(week, month, itemNameFilter, filters, limit=100): cross-outlet view for ONE item. Returns per-(item,outlet) rows with signed qty/nominal + devBom + direction. Outlet filter intentionally NOT applied (cross-outlet view). Area + PIC filters respected.
+   - queryItemAutocomplete(week, month, q, limit=10): returns item names matching `q` (case-insensitive LIKE), ranked by total absNominalDeviasi DESC. Used by the search bar dropdown.
+
+2. src/app/api/item-search/route.ts — NEW endpoint with 2 modes:
+   - mode=autocomplete: returns up to 10 item names matching `q`. Zod validated. Month case resolved via getMonthResolver.
+   - mode=cross-outlet: returns the selected item's deviation across ALL outlets. PIC → outletCodes resolved. Rate-limited.
+
+3. src/components/dashboard/GlobalItemSearchModal.tsx — NEW modal component:
+   - Two-stage UI: autocomplete search → cross-outlet table.
+   - Stage 1: search input with debounced autocomplete (React Query staleTime 60s).
+   - Stage 2: cross-outlet table with 4 summary KPIs (Total Outlet, Net Nominal, LOSS/SURPLUS count, Avg Dev/BOM) + sortable table.
+   - Click outlet row → setFocusOutlet + setActiveTab('resto') → deep dive to Resto Analysis.
+   - "adjust state during render" pattern for reset on open (lint-safe, no setState in effect body).
+
+4. src/app/page.tsx — Wired the modal:
+   - Added "Cari Item" button in header (visible when hasData) with ⌘K kbd hint.
+   - Added Cmd/Ctrl+K keyboard shortcut (opens modal).
+   - Added GlobalItemSearchModal render at bottom.
+   - Updated keyboard shortcuts tooltip to include ⌘K.
+   - Escape now also closes item search modal.
+
+5. src/app/api/analysis/route.ts — Serialized queries (DEEP-AUDIT-SERIAL):
+   - Split single 20-query Promise.all into 4 serial batches of ~5 queries each.
+   - Batch 1: topItems (nominal, devBom, waste, susut, trial) — 5 queries.
+   - Batch 2: lossSurplus + area + 2 topOutlets + breakdown — 5 queries.
+   - Batch 3: lvs + trendAgg + costImpact + consistency + DQ issues — 5 queries.
+   - Batch 4: deviasiRank + deviationDrivers + areaTrend + healthRanking + variance + growth — 6 queries (3 are pre-fired promises awaited here).
+   - Each batch stays within PgBouncer pool cap (~10) → no queue wait → no timeout.
+
+Verification:
+- npx tsc --noEmit → 0 errors ✓
+- bun run lint → 0 errors, 9 pre-existing warnings ✓
+- bun run test → 115/115 pass ✓
+- API test — item-search autocomplete: "CABAI" → "CABAI FROZEN" (10 outlet, 135M impact), 494ms ✓
+- API test — item-search cross-outlet: CABAI FROZEN → 10 outlets, all LOSS, sorted by nominal DESC, 286ms ✓
+- API test — analysis cold (cache cleared): 10s (was 30-60s) ✓ — 3-6x speedup from serialization
+- API test — analysis warm: 4.9s ✓
+- Dev server compiles cleanly (GET / 200) ✓
+
+Stage Summary:
+- 5 files modified: items.ts (+2 query functions), item-search/route.ts (NEW endpoint), GlobalItemSearchModal.tsx (NEW component), page.tsx (modal + Cmd+K shortcut), analysis/route.ts (serialized batches).
+- Global Item Search: user presses Cmd+K → types "CABAI" → sees autocomplete dropdown → selects "CABAI FROZEN" → sees cross-outlet table (10 outlets, all LOSS, sorted by impact). Click any outlet → deep dive to Resto Analysis. Detects systemic patterns (item appearing in many outlets with same direction).
+- Serialized Queries: 20 parallel → 4 serial batches of 5. Cold analysis: 60s → 10s (6x speedup). No more pool exhaustion / timeout errors.
+- 0 tsc errors, 0 lint errors, 115/115 tests pass.
+- Supabase free plan: BISA — no upgrade needed. Serialization keeps each batch within pool cap.

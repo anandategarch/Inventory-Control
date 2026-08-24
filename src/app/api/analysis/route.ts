@@ -439,38 +439,44 @@ export async function GET(req: NextRequest) {
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
-    // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency + health + variance + growth — ALL independent
+    // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency + health + variance + growth
     // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
     // SQL-OPTIMIZE: healthRankingSqlPromise + varianceAnalysisPromise + growthDriversPromise
-    //   were fired above; they're awaited here in parallel with the other 17 SQL queries.
+    //   were fired above; they're awaited here in serial batches.
+    //
+    // FIX (DEEP-AUDIT-SERIAL): Split the single 20-query Promise.all into 4 serial
+    // batches of ~5 queries each. Supabase free plan PgBouncer caps concurrent
+    // connections at ~10 (practical). Firing 20 queries in parallel causes pool
+    // exhaustion → 30-60s queue + "Unable to start a transaction" errors.
+    // Serial batches keep each batch within the pool cap → faster overall
+    // (no queue wait) and no timeout errors.
+    //   Batch 1 (5 queries): top items by nominal + devBom + 3 category (waste/susut/trial)
+    //   Batch 2 (5 queries): lossSurplus category + area + 2 top outlets + deviation breakdown
+    //   Batch 3 (5 queries): loss vs surplus + trend agg + cost impact + item consistency + DQ issues
+    //   Batch 4 (5 queries): deviasi rank + deviation drivers + area trend + health ranking + variance + growth
     const topNItems = thresholds.TOP_N_ITEMS || 10;
     const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
-    const [
-      topNominal, topDevBom,
-      topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows,
-      areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw,
-      breakdown, lvs,
-      trendAggRows,
-      costImpactSql,
-      consistencyItems,
-      dqIssuesRaw,
-      topDeviasiRank,
-      deviationDriverRows,
-      areaTrendRows,
-      healthRankingRows,
-      varianceAnalysis,
-      growthDrivers,
-    ] = await Promise.all([
+
+    // Batch 1: top items (nominal, devBom, waste, susut, trial)
+    const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows] = await Promise.all([
       queryTopItemsByNominal(week!, month!, filterOpts, topNItems),
       queryTopItemsByDevBom(week!, month!, filterOpts, topNItems),
       queryTopItemsByCategory(week!, month!, filterOpts, 'waste', topNItems),
       queryTopItemsByCategory(week!, month!, filterOpts, 'susut', topNItems),
       queryTopItemsByCategory(week!, month!, filterOpts, 'trial', topNItems),
+    ]);
+
+    // Batch 2: lossSurplus category + area analysis + top outlets + breakdown
+    const [topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, breakdown] = await Promise.all([
       queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', topNItems),
       queryAreaAnalysis(week!, month!, filterOpts),
       queryTopOutlets(week!, month!, filterOpts, topNOutlets),
       queryTopOutletsBySales(week!, month!, filterOpts, topNOutlets),
       queryDeviationBreakdown(week!, month!, filterOpts),
+    ]);
+
+    // Batch 3: loss vs surplus + trend + cost + consistency + DQ issues
+    const [lvs, trendAggRows, costImpactSql, consistencyItems, dqIssuesRaw] = await Promise.all([
       queryLossVsSurplus(week!, month!, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
       queryCostImpact(week!, month!, execSummary.sales.current, filterOpts),
@@ -480,6 +486,10 @@ export async function GET(req: NextRequest) {
         where: { sourceFile: { monthLabel: month! } },
         _count: { _all: true },
       }),
+    ]);
+
+    // Batch 4: deviasi rank + deviation drivers + area trend + health ranking + variance + growth
+    const [topDeviasiRank, deviationDriverRows, areaTrendRows, healthRankingRows, varianceAnalysis, growthDrivers] = await Promise.all([
       queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50),
       queryDeviationBreakdownDrivers(week!, month!, filterOpts),
       // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
