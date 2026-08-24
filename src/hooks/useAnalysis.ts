@@ -350,6 +350,16 @@ export function useAnalysis(params: AnalysisParams) {
     queryFn: () => fetchAnalysis(searchParams),
     enabled: Boolean(params.month && params.week),
     placeholderData: keepPreviousData,
+    // FIX (504-RETRY): retry once on 504/timeout — gateway proxy may timeout
+    // before the heavy query (with outlet filter) completes. The 2nd attempt
+    // usually hits the in-flight cache or completes faster (DB warm).
+    retry: (failureCount, error) => {
+      if (failureCount >= 2) return false; // max 2 retries
+      const msg = error instanceof Error ? error.message : '';
+      // Retry on 504, 502, 503, or timeout messages
+      return msg.includes('504') || msg.includes('502') || msg.includes('503') || msg.includes('timeout') || msg.includes('Server error');
+    },
+    retryDelay: (attemptIndex) => Math.min(1000 * (attemptIndex + 1), 3000), // 1s, 2s, 3s
     // PERF-OPT: staleTime 60s → 120s. Analysis is expensive (6-8s cold,
     // 100ms warm). 2 min keeps the data fresh enough for filter toggles
     // without re-fetching on every tab switch.

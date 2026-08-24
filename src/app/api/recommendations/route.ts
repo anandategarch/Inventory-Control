@@ -6,7 +6,7 @@ import { queryRestoRecommendations } from '@/lib/queries';
 import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // FIX: 30→60 — queryRestoRecommendations is heavy (3 parallel CTEs)
 
 export async function GET(req: NextRequest) {
   try {

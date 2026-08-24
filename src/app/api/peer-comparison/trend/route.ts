@@ -30,7 +30,7 @@ import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets';
 import { validateQuery, peerComparisonTrendQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // FIX: 30→60 — trend across multiple weeks can be slow
 
 export async function GET(req: NextRequest) {
   try {

@@ -21,7 +21,7 @@ import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // FIX: 30→60 — cross-outlet + trend queries scan full table
 
 const itemSearchQuerySchema = z.object({
   mode: z.enum(['autocomplete', 'cross-outlet', 'trend']).default('autocomplete'),

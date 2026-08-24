@@ -22,7 +22,7 @@ import { buildSqlFilters } from '@/lib/queries/shared';
 import { validateQuery, peerComparisonItemsQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // FIX: 30→60 — item comparison can be slow with many items
 
 export async function GET(req: NextRequest) {
   try {

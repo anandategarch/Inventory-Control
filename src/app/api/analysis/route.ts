@@ -55,7 +55,7 @@ import { buildTrend, buildMultiPeriodComparison, buildNetCostTrend } from './ser
 import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // FIX MIG-3/FUNC-1: heaviest route, needs >10s on Vercel Hobby
+export const maxDuration = 120; // FIX: 60→120 — heavy queries with outlet filter can take 40-60s
 
 // FIX Medium #1: DB-level caching via AggregationCache table.
 // TTL 5 minutes. Cache hit skips all 16 parallel SQL queries (~7s → <100ms).

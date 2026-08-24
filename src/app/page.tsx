@@ -177,6 +177,12 @@ function LoadingState({ text = 'Memuat data analisis...' }: { text?: string }) {
 
 function ErrorState({ message }: { message: string }) {
   const isNoData = message.includes('Tidak ada data untuk periode ini');
+  const isTimeout = message.includes('504') || message.includes('timeout') || message.includes('Server error');
+  // FIX (504-RETRY): invalidate analysis query to trigger refetch
+  const queryClient = useQueryClient();
+  const handleRetry = () => {
+    queryClient.invalidateQueries({ queryKey: ['analysis'] });
+  };
   return (
     <Card className={isNoData
       ? 'border-amber-200/70 bg-gradient-to-br from-amber-50 to-amber-50/30 dark:from-amber-950/40 dark:to-amber-950/10 dark:border-amber-900/70 shadow-sm'
@@ -217,9 +223,20 @@ function ErrorState({ message }: { message: string }) {
               </div>
             )}
             {!isNoData && (
-              <p className="text-xs text-red-600/60 dark:text-red-400/50 mt-2">
-                Periksa koneksi jaringan atau coba refresh halaman. Jika berlanjut, hubungi administrator.
-              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleRetry}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-red-600 text-white shadow-sm hover:bg-red-700 transition-all active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Coba Lagi
+                </button>
+                <p className="text-xs text-red-600/60 dark:text-red-400/50">
+                  {isTimeout
+                    ? 'Server timeout (query berat dengan filter). Mencoba ulang biasanya berhasil.'
+                    : 'Periksa koneksi jaringan atau coba refresh halaman.'}
+                </p>
+              </div>
             )}
           </div>
         </div>

@@ -11,7 +11,7 @@ import { queryPeerComparison } from '@/lib/queries';
 import { validateQuery, peerComparisonQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+export const maxDuration = 60; // FIX: 30→60 — peer comparison CROSS JOIN can be slow
 
 export async function GET(req: NextRequest) {
   try {
