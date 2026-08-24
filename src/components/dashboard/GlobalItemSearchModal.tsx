@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { ItemTrendRow } from '@/lib/queries/items';
 
@@ -334,7 +334,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                   </div>
                   <div className="rounded-md border p-2">
                     <p className="text-xs text-muted-foreground">Avg Dev/BOM</p>
-                    <p className="text-sm font-bold tabular-nums">{fmtPct(stats.avgDevBom)}</p>
+                    <p className="text-sm font-bold tabular-nums">{fmtPctAbs(stats.avgDevBom)}</p>
                   </div>
                   <div className="rounded-md border p-2 bg-red-50/40 dark:bg-red-950/20">
                     <p className="text-xs text-muted-foreground">⚠️ Abnormal</p>
@@ -402,7 +402,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                         <TableCell className="text-right text-xs tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
                         <TableCell className={`text-right text-xs tabular-nums ${numberColor(r.qtyDeviasi)}`}>{fmtNum(r.qtyDeviasi)}</TableCell>
                         <TableCell className={`text-right text-xs tabular-nums ${numberColor(r.devBom ?? 0)}`}>
-                          {r.devBom != null ? fmtPct(r.devBom) : '—'}
+                          {r.devBom != null ? fmtPctAbs(r.devBom) : '—'}
                         </TableCell>
                         <TableCell className="text-center text-xs">
                           {z != null ? (

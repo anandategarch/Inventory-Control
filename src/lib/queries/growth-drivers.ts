@@ -205,7 +205,12 @@ export async function queryGrowthDrivers(
       const { curr, prev } = map.get(name)!;
       const delta = curr - prev;
       if (Math.abs(delta) < deltaThreshold) continue;
-      const pct = prev > 0 ? delta / prev : 0;
+      // FIX (AUDIT-CALC-SQL BUG-2): was `prev > 0 ? delta / prev : 0` — breaks for signed
+      // metrics (qtyDeviasi, nominalDeviasi) where prev can be negative. When prev=-50,
+      // curr=-25 (LOSS improving, delta=+25), old formula gave pct = 25/-50 = -0.5 (wrong
+      // sign). Now uses |prev| as denominator and |delta| for magnitude pct.
+      const absPrev = Math.abs(prev);
+      const pct = absPrev > 0 ? Math.abs(delta) / absPrev : 0;
       if (delta > 0) positive.push({ item: name, delta, pct });
       else negative.push({ item: name, delta, pct });
     }

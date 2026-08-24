@@ -83,8 +83,14 @@ export interface TrendProjection {
 /** Minimum number of weekly observations required to attempt a regression. */
 const MIN_DATA_POINTS = 2;
 
-/** Slope thresholds for direction classification (in absolute-deviation units). */
-const SLOPE_THRESHOLD = 0.1;
+/**
+ * FIX (AUDIT-CALC-METRICS BUG-CALC-1): was SLOPE_THRESHOLD = 0.1 (absolute IDR/week).
+ * For F&B data where nominalDeviasi is in millions of rupiah, ANY non-zero slope
+ * exceeds 0.1 → trend was virtually always DETERIORATING/IMPROVING, never STABLE.
+ * Now uses TREND_STRENGTH_THRESHOLD = normalized ratio (|slope| / mean(|y|)).
+ * 0.05 = 5% change per week relative to average magnitude — sensible threshold.
+ */
+const TREND_STRENGTH_THRESHOLD = 0.05;
 
 /** Projected magnitude vs current magnitude ratio above which we warn. */
 const WARNING_RATIO = 1.2;
@@ -152,17 +158,16 @@ function classifyConfidence(n: number, rSquared: number): 'HIGH' | 'MEDIUM' | 'L
 }
 
 /**
- * Classify trend direction from slope sign.
+ * Classify trend direction from normalized trend strength.
  *
- * Slope is in units of |nominalDeviasi| per week — it is NOT a ratio,
- * so the ±0.1 threshold is a small-magnitude heuristic. For very large
- * nominal scales (e.g., Rp billions), even a tiny slope is meaningful,
- * but trendStrength (normalized) carries the magnitude information.
+ * FIX (AUDIT-CALC-METRICS BUG-CALC-1): was using raw slope (IDR/week) with
+ * SLOPE_THRESHOLD=0.1 — too sensitive for F&B data in millions. Now uses
+ * trendStrength (|slope| / mean(|y|)) which is a normalized 0-1 ratio.
+ * >5% weekly change relative to average = DETERIORATING/IMPROVING, else STABLE.
  */
-function classifyTrendDirection(slope: number): 'IMPROVING' | 'DETERIORATING' | 'STABLE' {
-  if (slope > SLOPE_THRESHOLD) return 'DETERIORATING';
-  if (slope < -SLOPE_THRESHOLD) return 'IMPROVING';
-  return 'STABLE';
+function classifyTrendDirection(trendStrength: number, slope: number): 'IMPROVING' | 'DETERIORATING' | 'STABLE' {
+  if (trendStrength < TREND_STRENGTH_THRESHOLD) return 'STABLE';
+  return slope > 0 ? 'DETERIORATING' : 'IMPROVING';
 }
 
 /**
@@ -241,15 +246,16 @@ export function projectTrend(
   // Current period = last observation
   const currentNominalDeviasi = Math.abs(clean[n - 1].nominalDeviasi);
 
-  // Trend direction from slope sign
-  const trendDirection = classifyTrendDirection(nominalFit.slope);
-
   // Trend strength = |slope| normalized against the mean of |y|.
   // 0 = no movement, 1 = slope magnitude equals the historical mean.
   const meanAbsNominal = nominalPoints.reduce((s, p) => s + p.y, 0) / n;
   const trendStrength = clamp01(
     meanAbsNominal > 0 ? Math.abs(nominalFit.slope) / meanAbsNominal : 0,
   );
+
+  // FIX (AUDIT-CALC-METRICS BUG-CALC-1): classify by trendStrength (normalized),
+  // not raw slope. Moved trendStrength computation BEFORE classifyTrendDirection.
+  const trendDirection = classifyTrendDirection(trendStrength, nominalFit.slope);
 
   // Confidence
   const confidence = classifyConfidence(n, nominalFit.rSquared);

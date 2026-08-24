@@ -55,9 +55,12 @@ export async function queryTopOutlets(
     ),
     outlet_aggs AS (
       SELECT ir."outletId",
-        SUM(ir."absNominalLossSurplus") as "absNominal",
-        -- FIX: add signed SUM(nominalLossSurplus) for display (ABS only for sorting)
-        SUM(ir."nominalLossSurplus") as "nominalDeviasi",
+        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(absNominalLossSurplus) — should be SUM(absNominalDeviasi)
+        -- to match all other queries (ExecSummary, TopItems, PeerComparison use absNominalDeviasi).
+        SUM(ir."absNominalDeviasi") as "absNominal",
+        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(nominalLossSurplus) (NET) — should be SUM(nominalDeviasi) (GROSS)
+        -- to match all other queries. nominalDeviasi is GROSS financial impact.
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
@@ -122,9 +125,10 @@ export async function queryTopOutletsBySales(
     ),
     outlet_nominal AS (
       SELECT ir."outletId",
-        SUM(ir."absNominalLossSurplus") as "absNominal",
-        -- FIX: add signed SUM for display
-        SUM(ir."nominalLossSurplus") as "nominalDeviasi"
+        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(absNominalLossSurplus) — should be SUM(absNominalDeviasi)
+        SUM(ir."absNominalDeviasi") as "absNominal",
+        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(nominalLossSurplus) (NET) — should be SUM(nominalDeviasi) (GROSS)
+        SUM(ir."nominalDeviasi") as "nominalDeviasi"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}

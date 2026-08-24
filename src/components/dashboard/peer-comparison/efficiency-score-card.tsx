@@ -26,7 +26,10 @@ export function EfficiencyScoreCard({
     return Math.max(0, Math.min(100, raw));
   }, [target, peerAvg]);
 
-  const peerAvgScore = 50; // peer avg by definition sits at ~50 (no penalty no bonus)
+  // FIX (AUDIT-CALC-FRONTEND P0-4): peerAvgScore was hardcoded 50, but when target === peerAvg,
+  // all penalties = 0 → score = 100 (not 50). The peer avg actually sits at 100 (best possible)
+  // because it has zero deviation from itself. Move marker to 100% and update label.
+  const peerAvgScore = 100;
   const color = score > 70 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-500' : 'bg-red-500';
   const textColor = score > 70 ? 'text-emerald-600' : score >= 50 ? 'text-amber-600' : 'text-red-600';
   const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
@@ -48,14 +51,14 @@ export function EfficiencyScoreCard({
             <span className="text-sm text-muted-foreground ml-0.5">/100</span>
           </div>
           <div className="text-right text-xs">
-            <div className="text-muted-foreground tabular-nums">Peer Avg: ~{peerAvgScore}/100</div>
+            <div className="text-muted-foreground tabular-nums">Peer Avg: {peerAvgScore}/100 (baseline)</div>
             <div className={`font-medium ${textColor}`}>{label}</div>
           </div>
         </div>
         <div className="relative h-3 w-full rounded-full bg-muted overflow-hidden" role="progressbar" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100}>
           <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${score}%` }} />
-          {/* Peer average marker */}
-          <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ left: '50%' }} title="Peer avg ~50" />
+          {/* Peer average marker — at 100% (peer has zero deviation from itself = perfect score) */}
+          <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ right: '0%' }} title="Peer avg baseline (100)" />
         </div>
         <p className="text-xs text-muted-foreground">
           Komposit dari Dev/BOM (50%), LOSS (25%), Residual (15%), Sales (10%). Higher = better.
