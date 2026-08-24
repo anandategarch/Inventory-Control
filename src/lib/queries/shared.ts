@@ -33,28 +33,38 @@ export async function withStatementTimeout<T>(
 //  Returns an empty Prisma.sql fragment when no filters apply
 //  (Prisma.join requires ≥1 element, so handle empty case explicitly)
 // ============================================================
-export function buildSqlFilters(opts: {
-  area?: string | null;
-  outletCode?: string | null;
-  itemName?: string | null;
-  picOutletCodes?: string[] | null;
-}): Prisma.Sql {
+export function buildSqlFilters(
+  opts: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  alias: string = 'ir'
+): Prisma.Sql {
+  // FIX (DEEP-AUDIT-IR): `alias` param allows callers that use a different
+  // table alias (e.g. `c` for current-period records in self-join queries)
+  // to generate filter fragments with the correct alias. Default 'ir' keeps
+  // all existing callers backward-compatible.
+  // NOTE: `alias` is an internal string literal ('ir' | 'c' | 'p'), never
+  // user input — safe to interpolate via Prisma.raw (no SQL injection risk).
+  const a = Prisma.raw(alias);
   const parts: Prisma.Sql[] = [];
   if (opts.area) {
-    parts.push(Prisma.sql`AND ir.area = ${opts.area}`);
+    parts.push(Prisma.sql`AND ${a}.area = ${opts.area}`);
   }
   if (opts.outletCode) {
-    parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);
+    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);
   }
   if (opts.picOutletCodes && opts.picOutletCodes.length > 0) {
-    parts.push(Prisma.sql`AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code IN (${Prisma.join(opts.picOutletCodes)}))`);
+    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code IN (${Prisma.join(opts.picOutletCodes)}))`);
   }
   if (opts.itemName) {
     // FIX (BUG-1-7): Wrap both sides in LOWER() so matching is case-insensitive
     // on BOTH SQLite (default case-insensitive LIKE) and PostgreSQL (default
     // case-sensitive LIKE). Without this, "ayam" matches "Ayam Goreng" in
     // local SQLite testing but NOT in production PostgreSQL.
-    parts.push(Prisma.sql`AND ir."itemId" IN (SELECT id FROM "Item" WHERE LOWER(name) LIKE LOWER(${'%' + opts.itemName + '%'}))`);
+    parts.push(Prisma.sql`AND ${a}."itemId" IN (SELECT id FROM "Item" WHERE LOWER(name) LIKE LOWER(${'%' + opts.itemName + '%'}))`);
   }
   // Prisma.join requires ≥1 element; return empty fragment when no filters
   if (parts.length === 0) return Prisma.sql``;

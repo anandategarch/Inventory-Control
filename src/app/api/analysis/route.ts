@@ -72,6 +72,10 @@ type RecWithRels = import('@/engine/analysis/types').RecWithRels;
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
+  // FIX (DEEP-AUDIT-ZEROS): declare outside try so catch block can access it.
+  // If the computation throws, we reject the in-flight Promise so concurrent
+  // requests don't hang forever.
+  let rejectComputation: ((e: unknown) => void) | undefined;
   try {
     // Bug #10 fix: Rate limiting
     const ip = getClientIP(req);
@@ -185,8 +189,15 @@ export async function GET(req: NextRequest) {
     // FIX M3 (AUDIT-5): Register in-flight Promise to prevent cache stampede.
     // Concurrent requests for the same key will await this Promise (checked
     // at the top of the handler via getInflight) instead of computing in parallel.
+    // FIX (DEEP-AUDIT-ZEROS): also capture reject — if the computation throws,
+    // the in-flight Promise must reject so concurrent requests don't hang forever
+    // (previously only resolve was captured, so errors left the Promise pending
+    // indefinitely → concurrent requests waited forever → dashboard stuck/0s).
     let resolveComputation!: (v: unknown) => void;
-    const computationPromise = new Promise<unknown>((resolve) => { resolveComputation = resolve; });
+    const computationPromise = new Promise<unknown>((resolve, reject) => {
+      resolveComputation = resolve;
+      rejectComputation = reject;
+    });
     setInflight(cacheKey, computationPromise);
 
     // ===== P1 fix: Pre-SQL metadata queries — ALL PARALLEL =====
@@ -931,6 +942,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (e: unknown) {
+    // FIX (DEEP-AUDIT-ZEROS): reject the in-flight Promise so concurrent
+    // requests awaiting it don't hang forever. Previously only resolve was
+    // called (on success), so errors left the Promise pending indefinitely.
+    rejectComputation?.(e);
     logger.error('Analysis error', { error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }

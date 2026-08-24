@@ -203,7 +203,11 @@ export async function queryVarianceAnalysis(
   if (!prevWeek || !prevMonth) {
     return { topWorsened: [], topImproved: [] };
   }
-  const f = buildSqlFilters(filters);
+  // FIX (DEEP-AUDIT-IR): pass alias='c' — this query uses "InventoryRecord" c
+  // (current) JOIN "InventoryRecord" p (prev). buildSqlFilters defaults to 'ir'
+  // which doesn't exist in this query's FROM clause → "missing FROM-clause entry
+  // for table ir" error when any filter (area/outlet/pic/item) is active.
+  const f = buildSqlFilters(filters, 'c');
 
   const rows = await db.$queryRaw<VarianceRow[]>`
     SELECT
@@ -300,7 +304,9 @@ export async function queryHistoricalCriticalItems(
   flaggedKeys: Array<{ outletId: number; itemId: number; akunPenyesuaian: string | null }>,
 ): Promise<HistoricalCriticalRow[]> {
   if (flaggedKeys.length === 0) return [];
-  const f = buildSqlFilters(filters);
+  // FIX (DEEP-AUDIT-IR): pass alias='c' — this query uses "InventoryRecord" c
+  // (current). buildSqlFilters defaults to 'ir' which doesn't exist here.
+  const f = buildSqlFilters(filters, 'c');
 
   // Build a VALUES list of (outletId, itemId, akunPenyesuaian) tuples.
   // PostgreSQL supports IS NOT DISTINCT FROM for NULL-safe equality on akun.
