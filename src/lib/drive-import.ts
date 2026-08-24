@@ -188,6 +188,20 @@ export async function downloadDriveFile(
     const confirmMatch = html.match(/action="([^"]{0,500}confirm=([^"&]{1,100})[^"]{0,500})"/);
     if (confirmMatch) {
       const confirmUrl = confirmMatch[1].replace(/&amp;/g, '&');
+      // FIX (AUDIT-SECURITY-PERF H2): validate confirmUrl hostname against Google
+      // domains before fetching — prevents SSRF via malicious confirm-token URL
+      // (attacker could craft a form action pointing to internal services).
+      const ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];
+      let confirmParsed: URL;
+      try {
+        confirmParsed = new URL(confirmUrl);
+      } catch {
+        throw new Error(`Invalid confirm URL from Google response`);
+      }
+      const confirmAllowed = ALLOWED_DOMAINS.some(d => confirmParsed.hostname === d || confirmParsed.hostname.endsWith('.' + d));
+      if (!confirmAllowed) {
+        throw new Error(`Confirm URL hostname "${confirmParsed.hostname}" not in Google allowlist — possible SSRF`);
+      }
       res = await fetch(confirmUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',

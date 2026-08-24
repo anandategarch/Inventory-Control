@@ -214,3 +214,14 @@
   background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.06) 50%, transparent 100%);
   background-size: 200% 100%;
 }
+
+/* FIX (AUDIT-FRONTEND-V2): prefers-reduced-motion — respect user's OS setting.
+   Disables all animations/transitions for users who set reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

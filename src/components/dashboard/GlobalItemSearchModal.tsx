@@ -11,7 +11,7 @@
 //  Closes on Escape / backdrop click / item clear.
 // ============================================================
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useDeferredValue } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -66,6 +66,8 @@ function numberColor(v: number): string {
 export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { monthLabel, currentWeek, area, pic, setFocusOutlet, setActiveTab } = useDashboard();
   const [query, setQuery] = useState('');
+  // FIX (AUDIT-FRONTEND-V2): debounce autocomplete input — was firing query on every keystroke.
+  const deferredQuery = useDeferredValue(query);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'cross-outlet' | 'trend'>('cross-outlet');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,13 +96,13 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
     }
   }, [open]);
 
-  // Stage 1: autocomplete (debounced via React Query staleTime)
+  // Stage 1: autocomplete (debounced via useDeferredValue — fires after user stops typing)
   const { data: acData, isLoading: acLoading } = useQuery<{ results: AutocompleteResult[] }>({
-    queryKey: ['item-search', 'autocomplete', monthLabel, currentWeek, query],
+    queryKey: ['item-search', 'autocomplete', monthLabel, currentWeek, deferredQuery],
     queryFn: async () => {
       const p = new URLSearchParams({
         mode: 'autocomplete',
-        q: query,
+        q: deferredQuery,
         month: monthLabel!,
         week: currentWeek!,
       });
@@ -108,7 +110,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    enabled: Boolean(open && query.length >= 2 && monthLabel && currentWeek && !selectedItem),
+    enabled: Boolean(open && deferredQuery.length >= 2 && monthLabel && currentWeek && !selectedItem),
     staleTime: 60_000, // cache autocomplete for 1 min (item list rarely changes)
   });
 

@@ -12,6 +12,7 @@
 // ============================================================
 
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -79,10 +80,12 @@ export function PeerComparison() {
   // Derive peer set from main query result (empty while loading).
   // `peerCodes` is consumed by the trend query below for a stable
   // peer set across weeks (avoids per-week auto-compute drift).
-  const peers: PeerRow[] = mainData?.peers || [];
-  const targetRow = peers.find((p) => p.isTarget);
-  const otherPeers = peers.filter((p) => !p.isTarget);
-  const peerCodes = otherPeers.map((p) => p.outletCode);
+  // FIX (AUDIT-FRONTEND-V2): memoize derived state — was recomputed on every render.
+  const peers: PeerRow[] = useMemo(() => mainData?.peers || [], [mainData]);
+  const targetRow = useMemo(() => peers.find((p) => p.isTarget), [peers]);
+  const otherPeers = useMemo(() => peers.filter((p) => !p.isTarget), [peers]);
+  const peerCodes = useMemo(() => otherPeers.map((p) => p.outletCode), [otherPeers]);
+  const peerCodesKey = useMemo(() => peerCodes.join(','), [peerCodes]);
 
   // Items query — independent inputs, fires in parallel with main.
   const { data: itemsData, isLoading: itemsLoading, error: itemsError } = useQuery({
@@ -105,7 +108,7 @@ export function PeerComparison() {
   // Trend query — depends on peerCodes from main for stable peer
   // set across weeks. `enabled` waits for peerCodes.
   const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
-    queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodes.join(',')],
+    queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodesKey],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
@@ -118,6 +121,27 @@ export function PeerComparison() {
     },
     enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0),
   });
+
+  // Peer averages object (used by subcomponents) — memoized
+  // FIX (rules-of-hooks): moved BEFORE early return so hooks are called unconditionally.
+  const peerAverages: PeerAverages = useMemo(() => {
+    const cnt = otherPeers.length;
+    const avg = (field: keyof PeerRow) =>
+      cnt > 0 ? otherPeers.reduce((s, p) => s + (p[field] as number), 0) / cnt : 0;
+    return {
+      sales: avg('sales'),
+      nominalDeviasi: avg('nominalDeviasi'),
+      devBom: avg('devBom'),
+      totalLoss: avg('totalLoss'),
+      totalSurplus: avg('totalSurplus'),
+      qtyWaste: avg('qtyWaste'),
+      qtySusut: avg('qtySusut'),
+      qtyTrial: avg('qtyTrial'),
+      qtyLossSurplus: avg('qtyLossSurplus'),
+      residualQty: avg('residualQty'),
+      itemCount: avg('itemCount'),
+    };
+  }, [otherPeers]);
 
   if (!activeOutlet) {
     return (
@@ -138,26 +162,6 @@ export function PeerComparison() {
     );
   }
 
-  // Compute peer averages (excluding target)
-  const peerCount = otherPeers.length;
-  const avg = (field: keyof PeerRow) =>
-    peerCount > 0 ? otherPeers.reduce((s, p) => s + (p[field] as number), 0) / peerCount : 0;
-
-  // Peer averages object (used by subcomponents)
-  const peerAverages: PeerAverages = {
-    sales: avg('sales'),
-    nominalDeviasi: avg('nominalDeviasi'),
-    devBom: avg('devBom'),
-    totalLoss: avg('totalLoss'),
-    totalSurplus: avg('totalSurplus'),
-    qtyWaste: avg('qtyWaste'),
-    qtySusut: avg('qtySusut'),
-    qtyTrial: avg('qtyTrial'),
-    qtyLossSurplus: avg('qtyLossSurplus'),
-    residualQty: avg('residualQty'),
-    itemCount: avg('itemCount'),
-  };
-
   const columns: MetricDef[] = COLUMNS;
 
   return (
@@ -173,7 +177,7 @@ export function PeerComparison() {
               <div>
                 <CardTitle className="text-base">Peer Comparison</CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
-                  <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{peerCount}</span> resto dengan sales ±10%{currentWeek ? ` (WEEK ${currentWeek})` : ''}
+                  <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{otherPeers.length}</span> resto dengan sales ±10%{currentWeek ? ` (WEEK ${currentWeek})` : ''}
                 </p>
               </div>
             </div>
@@ -183,16 +187,16 @@ export function PeerComparison() {
 
       {/* ============ 2-5. ANALYSIS CARDS (grid 2 cols on desktop) ============ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {targetRow && peerCount > 0 && (
+        {targetRow && otherPeers.length > 0 && (
           <EfficiencyScoreCard target={targetRow} peerAvg={peerAverages} />
         )}
-        {targetRow && peerCount > 0 && (
+        {targetRow && otherPeers.length > 0 && (
           <GapAnalysisCard target={targetRow} peers={otherPeers} columns={columns} />
         )}
-        {targetRow && peerCount > 0 && (
+        {targetRow && otherPeers.length > 0 && (
           <RankingSummaryCard target={targetRow} peers={peers} columns={columns} />
         )}
-        {peerCount > 0 && (
+        {otherPeers.length > 0 && (
           <ScatterPlotCard peers={peers} targetCode={targetRow?.outletCode} />
         )}
       </div>
@@ -205,7 +209,7 @@ export function PeerComparison() {
               <BarChart3 className="h-3.5 w-3.5" />
             </span>
             Peer Table
-            {peerCount > 0 && <span className="text-muted-foreground text-xs font-normal">dengan Anomaly Flags</span>}
+            {otherPeers.length > 0 && <span className="text-muted-foreground text-xs font-normal">dengan Anomaly Flags</span>}
             {mainFetching && !mainLoading && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
             )}
@@ -250,7 +254,7 @@ export function PeerComparison() {
                 </TableHeader>
                 <TableBody>
                   {/* Peer Average Row */}
-                  {peerCount > 0 && (
+                  {otherPeers.length > 0 && (
                     <TableRow className="border-b-2 border-foreground/20 bg-muted/50 dark:bg-zinc-900/50 font-medium">
                       <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50 dark:bg-zinc-900/50 z-10">📊 Peer Avg</TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
@@ -285,7 +289,7 @@ export function PeerComparison() {
                       <TableCell className="text-[11px] max-w-[160px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
                       {columns.map(col => {
                         const val = p[col.key] as number;
-                        const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, peerCount, col.higherBetter) : '';
+                        const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, otherPeers.length, col.higherBetter) : '';
                         return (
                           <TableCell key={col.key} className={`text-[11px] text-right font-mono tabular-nums ${colorClass}`}>
                             {col.format(val)}
@@ -330,7 +334,7 @@ export function PeerComparison() {
       />
 
       {/* ============ 9. CORRELATION INSIGHT (Feature 9) ============ */}
-      {targetRow && peerCount > 0 && (
+      {targetRow && otherPeers.length > 0 && (
         <CorrelationInsightCard target={targetRow} peers={otherPeers} peerAvg={peerAverages} />
       )}
     </div>

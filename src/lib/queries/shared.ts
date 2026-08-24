@@ -19,13 +19,24 @@ export async function withStatementTimeout<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
   timeoutMs: number = 30000
 ): Promise<T> {
-  return db.$transaction(async (tx) => {
-    // FIX: SET LOCAL doesn't accept parameterized values in Prisma ($1).
-    // Use Prisma.raw to interpolate the integer safely (it's a hardcoded int,
-    // not user input — no SQL injection risk).
-    await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(String(timeoutMs))}`;
-    return fn(tx);
-  });
+  // FIX (DEEP-AUDIT-TX-TIMEOUT): Prisma $transaction default timeout is 5000ms,
+  // but our heavy queries (variance self-join, rule evaluation LATERAL) can take
+  // 10s+. The `statement_timeout` SET LOCAL only limits per-query execution time,
+  // NOT the transaction wrapper timeout. Pass `timeout` option to $transaction
+  // to increase the interactive transaction timeout to match statement_timeout.
+  return db.$transaction(
+    async (tx) => {
+      // FIX: SET LOCAL doesn't accept parameterized values in Prisma ($1).
+      // Use Prisma.raw to interpolate the integer safely (it's a hardcoded int,
+      // not user input — no SQL injection risk).
+      await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(String(timeoutMs))}`;
+      return fn(tx);
+    },
+    {
+      timeout: timeoutMs, // interactive transaction timeout (was default 5000ms)
+      maxWait: 10000, // max time to wait for a connection from the pool
+    }
+  );
 }
 
 // ============================================================

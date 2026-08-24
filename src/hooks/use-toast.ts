@@ -8,8 +8,9 @@ import type {
   ToastProps,
 } from "@/components/ui/toast"
 
-const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+// FIX (AUDIT-FRONTEND-V2): was TOAST_LIMIT=1 (silent replacement) + DELAY=1000000 (16.7min memory leak)
+const TOAST_LIMIT = 3
+const TOAST_REMOVE_DELAY = 5000
 
 type ToasterToast = ToastProps & {
   id: string
@@ -182,7 +183,7 @@ function useToast() {
         listeners.splice(index, 1)
       }
     }
-  }, [state])
+  }, []) // FIX (AUDIT-FRONTEND-V2): was [state] — re-subscribed on every state change
 
   return {
     ...state,

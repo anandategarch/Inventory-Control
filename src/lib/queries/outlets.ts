@@ -6,7 +6,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 
 // ============================================================
 //  Top Outlets — GROUP BY outletId (Phase 2)

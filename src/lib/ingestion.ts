@@ -46,8 +46,13 @@ export function safePath(inputPath: string): string | null {
   if (resolved.startsWith(dataDirResolved + path.sep) || resolved === dataDirResolved) {
     return resolved;
   }
-  if (process.env.VERCEL && resolved.startsWith('/tmp/')) {
-    return resolved;
+  if (process.env.VERCEL) {
+    // FIX (AUDIT-SECURITY-PERF H3): was `resolved.startsWith('/tmp/')` — too broad,
+    // attacker could access ANY file under /tmp/. Restrict to allowed subdirs only.
+    const ALLOWED_TMP_SUBDIRS = ['/tmp/inventory/', '/tmp/ingest-process/'];
+    if (ALLOWED_TMP_SUBDIRS.some(d => resolved.startsWith(d))) {
+      return resolved;
+    }
   }
   if (inputPath.includes('..') || inputPath.startsWith('~') || path.isAbsolute(inputPath) && !resolved.startsWith(dataDirResolved)) {
     logger.error("[ingest] Path traversal blocked", { error: inputPath });
