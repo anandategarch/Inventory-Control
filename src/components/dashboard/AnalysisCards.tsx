@@ -57,12 +57,12 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={multi} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
-                <XAxis dataKey="period" fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString()} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
+                <XAxis dataKey="period" fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString()} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
+                <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                 <Tooltip
-                  cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
+                  cursor={{ fill: 'var(--muted)', opacity: 0.4 }}
                   content={({ active, payload, label }: { active?: boolean; payload?: TipPayload; label?: string }) =>
                     active && payload && payload.length
                       ? (

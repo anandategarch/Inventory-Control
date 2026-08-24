@@ -167,9 +167,9 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ left: 0, right: 20, top: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
-                  <XAxis dataKey="period" fontSize={10} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} angle={-30} textAnchor="end" height={50} />
-                  <YAxis tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
+                  <XAxis dataKey="period" fontSize={10} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} angle={-30} textAnchor="end" height={50} />
+                  <YAxis tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={getTooltipStyle()}
                     formatter={(v: number | string) => fmtPct(Number(v), false)}

@@ -46,12 +46,13 @@ export const COLORS = {
 };
 
 // Shared tooltip style for all Recharts components
+// FIX (AUDIT-ANIMATION): hsl(var(--X)) is INVALID CSS — var already contains hsl value.
 export const TOOLTIP_STYLE: React.CSSProperties = {
   backgroundColor: 'rgba(255, 255, 255, 0.97)',
-  border: '1px solid hsl(var(--border))',
+  border: '1px solid var(--border)',
   borderRadius: '8px',
   fontSize: '11px',
-  color: 'hsl(var(--foreground))',
+  color: 'var(--foreground)',
   padding: '8px 10px',
   boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
 };

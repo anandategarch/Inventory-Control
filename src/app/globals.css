@@ -215,13 +215,20 @@
   background-size: 200% 100%;
 }
 
-/* FIX (AUDIT-FRONTEND-V2): prefers-reduced-motion — respect user's OS setting.
-   Disables all animations/transitions for users who set reduced-motion preference. */
+/* FIX (AUDIT-ANIMATION): prefers-reduced-motion — respect user's OS setting.
+   Disables DECORATIVE animations for users who set reduced-motion preference.
+   BUT exempts essential status indicators (spinners, skeletons) — WCAG 2.3.3
+   "essential motion exception": loading spinners are essential status feedback. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  /* Exempt essential status indicators — spinners + skeletons must keep animating */
+  :is([class*="animate-spin"], [class*="animate-pulse"], [class*="animate-ping"]) {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
   }
 }

@@ -51,14 +51,14 @@ export function ScatterPlotCard({
         <div className="h-[280px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={{ top: 10, right: 16, bottom: 24, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
               <XAxis
                 type="number"
                 dataKey="sales"
                 name="Sales"
                 tickFormatter={(v) => fmtIDR(v)}
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
+                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+                stroke="var(--border)"
                 tickLine={false}
                 axisLine={false}
               >
@@ -68,8 +68,8 @@ export function ScatterPlotCard({
                 dataKey="devBom"
                 name="Dev/BOM"
                 unit="%"
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
+                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+                stroke="var(--border)"
                 tickLine={false}
                 axisLine={false}
                 width={48}

@@ -62,11 +62,11 @@ export function TrendChartCard({
           <div className="h-[260px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="opacity-60" />
-                <XAxis dataKey="week" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" tickLine={false} axisLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
+                <XAxis dataKey="week" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} stroke="var(--border)" tickLine={false} axisLine={false} />
                 <YAxis
-                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                  stroke="hsl(var(--border))"
+                  tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+                  stroke="var(--border)"
                   tickLine={false}
                   axisLine={false}
                   width={40}

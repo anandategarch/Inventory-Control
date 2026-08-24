@@ -9,6 +9,7 @@
 //  X = period (monthLabel + weekLabel), Y = nominalDeviasi (signed).
 // ============================================================
 
+import { useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { fmtIDR } from '@/lib/format';
 import { getTooltipStyle } from '@/lib/chart-constants';
@@ -24,50 +25,51 @@ interface ChartRow {
 }
 
 export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
-  if (data.length === 0) {
+  // FIX (AUDIT-ANIMATION): memoize all derived chart data — 3 loops + sort + slice
+  // were running on every render, causing frame drops during animation.
+  // NOTE: useMemo must be called BEFORE any early return (rules-of-hooks).
+  const { chartData, topOutlets, outletNames } = useMemo(() => {
+    // Group by period → build chart rows
+    const periodMap = new Map<string, ChartRow>();
+    for (const r of data) {
+      const periodKey = `${r.monthKey}|${r.weekLabel}`;
+      if (!periodMap.has(periodKey)) {
+        periodMap.set(periodKey, {
+          period: `${r.monthLabel.slice(0, 3)} ${r.weekLabel.replace('WEEK ', 'W')}`,
+          sortKey: `${r.monthKey}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+        });
+      }
+      periodMap.get(periodKey)![r.outletCode] = r.nominalDeviasi;
+    }
+
+    // Sort periods chronologically
+    const sorted = Array.from(periodMap.values()).sort((a, b) =>
+      (a.sortKey as string).localeCompare(b.sortKey as string)
+    );
+
+    // Find top 5 outlets by total abs nominalDeviasi
+    const outletTotals = new Map<string, number>();
+    const names = new Map<string, string>();
+    for (const r of data) {
+      outletTotals.set(r.outletCode, (outletTotals.get(r.outletCode) || 0) + Math.abs(r.nominalDeviasi));
+      if (!names.has(r.outletCode)) {
+        names.set(r.outletCode, r.outletName);
+      }
+    }
+    const top = Array.from(outletTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([code]) => code);
+
+    return { chartData: sorted, topOutlets: top, outletNames: names };
+  }, [data]);
+
+  if (data.length === 0 || chartData.length === 0) {
     return (
       <div className="text-center text-muted-foreground text-sm py-12">
         Tidak ada data tren untuk item ini
       </div>
     );
-  }
-
-  // Group by period → build chart rows
-  const periodMap = new Map<string, ChartRow>();
-  for (const r of data) {
-    const periodKey = `${r.monthKey}|${r.weekLabel}`;
-    if (!periodMap.has(periodKey)) {
-      periodMap.set(periodKey, {
-        period: `${r.monthLabel.slice(0, 3)} ${r.weekLabel.replace('WEEK ', 'W')}`,
-        // FIX (AUDIT-NEWFEATURES C1): use monthKey (ISO "2026-08") for chronological sort.
-        // Indonesian monthLabel ("Agustus", "Juli") sorts alphabetically — wrong order.
-        sortKey: `${r.monthKey}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-      });
-    }
-    periodMap.get(periodKey)![r.outletCode] = r.nominalDeviasi;
-  }
-
-  // Sort periods chronologically
-  const chartData = Array.from(periodMap.values()).sort((a, b) =>
-    (a.sortKey as string).localeCompare(b.sortKey as string)
-  );
-
-  // Find top 5 outlets by total abs nominalDeviasi
-  const outletTotals = new Map<string, number>();
-  for (const r of data) {
-    outletTotals.set(r.outletCode, (outletTotals.get(r.outletCode) || 0) + Math.abs(r.nominalDeviasi));
-  }
-  const topOutlets = Array.from(outletTotals.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([code]) => code);
-
-  // Build outlet → name mapping for legend
-  const outletNames = new Map<string, string>();
-  for (const r of data) {
-    if (!outletNames.has(r.outletCode)) {
-      outletNames.set(r.outletCode, r.outletName);
-    }
   }
 
   return (
@@ -78,11 +80,11 @@ export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ left: 0, right: 16, top: 5, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" className="opacity-60" />
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
             <XAxis
               dataKey="period"
               fontSize={10}
-              stroke="hsl(var(--muted-foreground))"
+              stroke="var(--muted-foreground)"
               tickLine={false}
               axisLine={false}
               angle={-30}
@@ -98,7 +100,7 @@ export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
                 return v.toFixed(0);
               }}
               fontSize={10}
-              stroke="hsl(var(--muted-foreground))"
+              stroke="var(--muted-foreground)"
               tickLine={false}
               axisLine={false}
               width={50}
