@@ -1,0 +1,80 @@
+// ============================================================
+//  /api/pareto — Pareto 80/20 analysis across dimensions
+//  GET: ?month=&week=&area=&pic=
+//  Returns: Pareto by Item, Outlet, Area, PIC + nested Item→Outlet
+// ============================================================
+import { logger } from '@/lib/logger';
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByPIC, queryParetoNestedItemOutlet } from '@/lib/queries/pareto';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
+  try {
+    const ip = getClientIP(req);
+    const rl = rateLimit(`pareto:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+    }
+
+    const url = new URL(req.url);
+    let month = url.searchParams.get('month') || '';
+    const week = url.searchParams.get('week') || '';
+    const area = url.searchParams.get('area');
+    const pic = url.searchParams.get('pic');
+
+    if (!month || !week) {
+      return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
+    }
+
+    const monthResolver = await getMonthResolver();
+    month = resolveMonthLabel(month, monthResolver) || month;
+
+    // Resolve PIC → outletCodes
+    let picOutletCodes: string[] | null = null;
+    if (pic) {
+      const picRows = await db.$queryRaw<Array<{ outletCode: string }>>`
+        SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
+      `;
+      picOutletCodes = picRows.map((r) => r.outletCode);
+      if (picOutletCodes.length === 0) {
+        return NextResponse.json({ success: true, byItem: { drivers: [] }, byOutlet: { drivers: [] }, byArea: { drivers: [] }, byPIC: { drivers: [] }, nested: { items: [] }, durationMs: Date.now() - startedAt });
+      }
+    }
+
+    const filters = {
+      area: area && area !== 'all' ? area : null,
+      outletCode: null,
+      picOutletCodes,
+    };
+
+    // Run all 5 Pareto queries in parallel
+    const [byItem, byOutlet, byArea, byPIC, nested] = await Promise.all([
+      queryParetoByItem(week, month, filters),
+      queryParetoByOutlet(week, month, { area: filters.area, picOutletCodes }),
+      queryParetoByArea(week, month, { picOutletCodes }),
+      queryParetoByPIC(week, month, { area: filters.area, picOutletCodes }),
+      queryParetoNestedItemOutlet(week, month, filters, 10),
+    ]);
+
+    return NextResponse.json({
+      success: true,
+      period: { month, week },
+      filters: { area: area || null, pic: pic || null },
+      byItem,
+      byOutlet,
+      byArea,
+      byPIC,
+      nested,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e: unknown) {
+    logger.error('[pareto] error:', { error: e instanceof Error ? e.message : String(e) });
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+  }
+}

@@ -18,6 +18,7 @@ import { ErrorBoundary } from '@/components/ui/error-boundary';
 const RestoAnalysis = dynamic(() => import('@/components/dashboard/RestoAnalysis').then(m => m.RestoAnalysis), { ssr: false, loading: () => <LoadingChart /> });
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
+import { ParetoDashboard } from '@/components/dashboard/ParetoDashboard';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 // CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
@@ -64,6 +65,7 @@ import {
   RefreshCw,
   Keyboard,
   Search,
+  TrendingDown,
 } from 'lucide-react';
 
 function EmptyState() {
@@ -498,6 +500,7 @@ export default function DashboardPage() {
 
   // GLOBAL-ITEM-SEARCH: Cmd+K opens the global item search modal (cross-outlet view).
   const [itemSearchOpen, setItemSearchOpen] = useState(false);
+  const [paretoOpen, setParetoOpen] = useState(false);
 
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
@@ -541,6 +544,7 @@ export default function DashboardPage() {
       if (e.key === 'Escape') {
         setExportDialogOpen(false);
         setItemSearchOpen(false);
+        setParetoOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
         setSourceModal(false);
         setCardDrillDown(null);
@@ -603,6 +607,19 @@ export default function DashboardPage() {
                 <Search className="h-3.5 w-3.5" />
                 <span className="hidden md:inline">Cari Item</span>
                 <kbd className="hidden md:inline ml-0.5 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
+              </Button>
+            )}
+            {/* PARETO: 80/20 analysis button */}
+            {hasData && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-medium transition-all active:scale-95"
+                onClick={() => setParetoOpen(true)}
+                aria-label="Pareto 80/20 Analysis"
+              >
+                <TrendingDown className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Pareto</span>
               </Button>
             )}
             {analysis.isFetching && analysis.data && (
@@ -868,6 +885,8 @@ export default function DashboardPage() {
       />
       {/* GLOBAL-ITEM-SEARCH: cross-outlet item analysis modal (Cmd+K) */}
       <GlobalItemSearchModal open={itemSearchOpen} onOpenChange={setItemSearchOpen} />
+      {/* PARETO: 80/20 analysis modal (items, outlets, areas, PICs + nested) */}
+      <ParetoDashboard open={paretoOpen} onOpenChange={setParetoOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />
