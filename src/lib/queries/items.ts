@@ -237,6 +237,133 @@ export async function queryTopItemsByDeviasiRank(
 }
 
 // ============================================================
+//  Top Items by Deviasi Rank — PER OUTLET (top N for a specific outlet)
+//  Returns the selected outlet's top-N items (by ABS(nominalDeviasi)),
+//  enriched with:
+//  - rankNominal: NATIONAL rank (across ALL outlets) — so the user sees
+//    where this item ranks nationally, not just within the outlet
+//  - rankBom: NATIONAL rank by ABS(qtyBom)
+//  - avgDeviasiByBom: peer benchmark (other outlets with same item + BOM ±50%)
+//  - All signed qty/nominal fields for display
+//
+//  Used by RankingNasionalCard when a resto is selected for analysis.
+//  Differs from queryTopItemsByDeviasiRank (national top-50 across all
+//  outlets) — this returns the selected outlet's top-N items, with
+//  national rank + peer benchmark attached.
+// ============================================================
+export async function queryTopItemsByDeviasiRankForOutlet(
+  week: string,
+  month: string,
+  outletCode: string,
+  limit: number = 30
+): Promise<Array<{
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtyLossSurplus: number;
+  pctLossSurplusToBom: number | null;
+  qtyBom: number;
+  avgDeviasiByBom: number | null;
+  nominalDeviasi: number;
+  rankNominal: number;
+  rankBom: number;
+}>> {
+  // Compute per-(item,outlet) aggregates for ALL outlets (needed for national
+  // rank + peer benchmark), then filter to the target outlet's top-N.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+    WITH all_item_per_outlet AS (
+      SELECT
+        i.name as "itemName",
+        o.code as "outletCode",
+        o.name as "outletName",
+        pic.pic,
+        MAX(ir."satuan") as "satuan",
+        SUM(ir."qtyDeviasi") as "qtyDeviasi",
+        SUM(ir."qtyWaste") as "qtyWaste",
+        SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
+          ELSE NULL END as "pctLossSurplusToBom",
+        SUM(ir."qtyBom") as "qtyBom",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        ABS(SUM(ir."qtyDeviasi")) as "absQtyDeviasi"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      GROUP BY i.name, o.code, o.name, pic.pic
+    ),
+    -- National rank across ALL outlets
+    ranked_all AS (
+      SELECT ipo.*,
+        ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
+        CASE WHEN ipo."qtyBom" != 0
+          THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
+          ELSE NULL END as "rankBom"
+      FROM all_item_per_outlet ipo
+    ),
+    -- Target outlet's top-N items (ranked within outlet by ABS(nominalDeviasi))
+    outlet_top AS (
+      SELECT * FROM (
+        SELECT ra.*,
+          ROW_NUMBER() OVER (PARTITION BY ra."outletCode" ORDER BY ABS(ra."nominalDeviasi") DESC) as "outletRank"
+        FROM ranked_all ra
+        WHERE ra."outletCode" = ${outletCode}
+      ) t WHERE "outletRank" <= ${limit}
+    ),
+    -- Peer benchmark: for each outlet_top item, average ABS(qtyDeviasi) of OTHER
+    -- outlets with same itemName AND qtyBom within ±50% range.
+    bucket_avg AS (
+      SELECT
+        ti."itemName",
+        ti."outletCode",
+        AVG(CASE WHEN ipo2."outletCode" != ti."outletCode"
+                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
+        SUM(CASE WHEN ipo2."outletCode" != ti."outletCode"
+                 THEN 1 ELSE 0 END) as "otherCount"
+      FROM outlet_top ti
+      JOIN all_item_per_outlet ipo2
+        ON ipo2."itemName" = ti."itemName"
+        AND ABS(ti."qtyBom") > 0
+        AND ABS(ipo2."qtyBom") > 0
+        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
+      GROUP BY ti."itemName", ti."outletCode"
+    )
+    SELECT
+      ti."itemName", ti."outletCode", ti."outletName", ti.pic, ti."satuan",
+      ti."qtyDeviasi", ti."qtyWaste", ti."qtyLossSurplus", ti."pctLossSurplusToBom",
+      ti."qtyBom", ti."nominalDeviasi",
+      CASE WHEN ti."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
+      ti."rankNominal",
+      ti."rankBom"
+    FROM outlet_top ti
+    LEFT JOIN bucket_avg ba
+      ON ti."itemName" = ba."itemName"
+     AND ti."outletCode" = ba."outletCode"
+    ORDER BY ti."outletRank"
+  `);
+  // Coerce BigInt/Decimal to Number (matches queryTopItemsByDeviasiRank coercion)
+  return rows.map((r: any) => ({
+    ...r,
+    qtyDeviasi: Number(r.qtyDeviasi),
+    qtyWaste: Number(r.qtyWaste),
+    qtyLossSurplus: Number(r.qtyLossSurplus),
+    pctLossSurplusToBom: r.pctLossSurplusToBom != null ? Number(r.pctLossSurplusToBom) : null,
+    qtyBom: Number(r.qtyBom),
+    avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
+    nominalDeviasi: Number(r.nominalDeviasi),
+    rankNominal: Number(r.rankNominal),
+    rankBom: Number(r.rankBom),
+  }));
+}
+
+// ============================================================
 //  Top Items by Waste/Susut/Trial/LossSurplus (Phase 2)
 // ============================================================
 export async function queryTopItemsByCategory(

@@ -35,6 +35,7 @@ import {
 } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
+import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -141,6 +142,10 @@ export async function GET(req: NextRequest) {
     //  outlets aren't dominated by small ones. This is a design choice,
     //  documented here for clarity.
     // ============================================================
+    // Fire top deviasi rank for this outlet in PARALLEL with the main queries
+    // (powers RankingNasionalCard — top 30 items for this outlet with national rank).
+    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, 30);
+
     const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
       // Current period records for this outlet.
       // FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
@@ -582,6 +587,9 @@ export async function GET(req: NextRequest) {
         .map((r, i) => ({ rank: i + 1, ...r })),
     };
 
+    // Await the top deviasi rank (fired in parallel with the main Promise.all above).
+    const topDeviasiRank = await topDeviasiRankPromise;
+
     return NextResponse.json({
       success: true,
       outlet: {
@@ -594,6 +602,7 @@ export async function GET(req: NextRequest) {
       restoProfile,
       rankings,
       allItems: itemBreakdown,
+      topDeviasiRank,
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
     });

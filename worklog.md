@@ -15937,3 +15937,72 @@ Stage Summary:
   - Crosshair cursor on all 4 Charts.tsx tooltips (premium analytics feel)
   - Count-up animation on all 10 ExecutiveSummary KPI values (0 → target over 500ms, first load only)
 - **No regressions**: all 115 tests pass, tsc clean, lint clean (9 pre-existing warnings untouched). No structural changes — only additive UX enhancements. Existing functionality (drill-down, filters, tab switching, export, prefetch) untouched. The count-up animation is purely visual and doesn't affect data flow — the final displayed value is always the exact target from `analysis.data`.
+
+---
+Task ID: RANKING-PEER-FIX
+Agent: Main Agent
+Task: Ranking Item Nasional default tampilkan 30 item outlet terfilter (tanpa filter Top N/PIC/Resto). Peer Comparison fixed Top 50 tanpa filter mode/limit.
+
+Work Log:
+- Read worklog.md (recent UX-ENHANCE entry — keyboard shortcuts, shimmer, count-up animation, 115 tests passing).
+- Read ranking-nasional.tsx (had Top 10/20/50 dropdown + PIC filter + Resto filter + Reset button).
+- Read PeerComparison.tsx (had mode='week'/'month' dropdown + peerLimit 5/10/20/50 dropdown).
+- Read queryTopItemsByDeviasiRank in items.ts (national top-50, can't reuse for per-outlet — filtering by outletCode would break national rank + peer benchmark).
+- Read outlet-items route.ts (already fetched by RestoAnalysis via useQuery — no extra request needed).
+- Read DeviasiRankItem type in useAnalysis.ts + OutletItemsResponse in resto-analysis/types.ts.
+
+Changes:
+1. src/lib/queries/items.ts — NEW function queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, limit=30):
+   - CTE all_item_per_outlet: per-(item,outlet) aggregates for ALL outlets (needed for national rank + peer benchmark).
+   - CTE ranked_all: adds rankNominal (national, by ABS(nominalDeviasi) DESC) + rankBom (national, by ABS(qtyBom) DESC).
+   - CTE outlet_top: filters to target outletCode, ranks within outlet by ABS(nominalDeviasi), takes top N.
+   - CTE bucket_avg: peer benchmark (other outlets with same item + BOM ±50%).
+   - Final SELECT: outlet's top N items with national rank + peer benchmark.
+   - Uses withStatementTimeout (PgBouncer tx mode strips statement_timeout).
+   - Coercion matches queryTopItemsByDeviasiRank exactly (BigInt/Decimal → Number).
+
+2. src/components/dashboard/resto-analysis/types.ts — Added topDeviasiRank?: DeviasiRankItem[] to OutletItemsResponse (imported DeviasiRankItem type from @/hooks/useAnalysis — no circular dependency).
+
+3. src/app/api/outlet-items/route.ts — Fires queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, 30) in PARALLEL with the main Promise.all (topDeviasiRankPromise). Awaits after main computation. Adds topDeviasiRank to JSON response.
+
+4. src/components/dashboard/RestoAnalysis.tsx — Passes outletDeviasiRank={data?.topDeviasiRank} to RankingNasionalCard.
+
+5. src/components/dashboard/resto-analysis/ranking-nasional.tsx — REWROTE:
+   - Removed: useState for topN, filterPic, filterResto (all 3 state variables).
+   - Removed: Top N dropdown (Top 10/20/50), PIC dropdown, Resto dropdown, Reset button.
+   - Removed: Badge import (still used for count), Button import (Reset gone), useState import.
+   - Added: outletDeviasiRank prop (DeviasiRankItem[]).
+   - Data source: outletDeviasiRank (from /api/outlet-items — 30 items for this outlet). Fallback: analysisData.topDeviasiRank filtered to focusOutlet, sliced to 30.
+   - rankBom display: shows '—' if rankBom is 0 or null (was showing 0 for null-coerced values — minor display fix).
+   - Subtitle updated: "Top 30 item deviasi untuk {focusOutlet}".
+   - Badge: fixed "30 item" (or actual count).
+
+6. src/components/dashboard/PeerComparison.tsx — REWROTE:
+   - Removed: useState import, mode state, peerLimit state.
+   - Removed: mode dropdown (Per Week/Per Bulan), peerLimit dropdown (Top 5/10/20/50).
+   - Hardcoded: const mode: 'week' | 'month' = 'week'; const peerLimit = 50;
+   - Simplified query keys (removed mode from items query key since it's always 'week').
+   - Simplified enabled conditions: Boolean(activeOutlet && monthLabel && currentWeek) (was mode === 'month' || currentWeek — mode is always 'week' now).
+   - Simplified week param: if (currentWeek) p.set('week', currentWeek) (was if (mode === 'week' && currentWeek)).
+   - Header subtitle: shows currentWeek inline (was mode-dependent).
+
+Verification:
+- npx tsc --noEmit → 0 errors ✓
+- bun run lint → 0 errors, 9 pre-existing warnings (unchanged) ✓
+- bun run test → 115/115 tests pass (1.18s) ✓
+- Dev server compiles successfully (GET / 200) ✓
+- API verification (curl /api/outlet-items?outletCode=B.1001.MLGPAR&month=Agustus 2026&week=WEEK 2):
+  - topDeviasiRank count: 30 ✓
+  - All outletCode == B.1001.MLGPAR: True ✓
+  - Count <= 30: True ✓
+  - Has rankNominal (national rank): True ✓ (items show rank 1, 2, 18, 156, 244 — true national ranking)
+  - Has avgDeviasiByBom (peer benchmark): True ✓
+  - nominalDeviasi signed (negative=LOSS, positive=SURPLUS) ✓
+- Browser verification: Dashboard tab renders with Executive Summary KPIs (agent-browser snapshot confirmed). Resto Analysis + Peer Comparison tab browser verification blocked by sandbox Chrome resource limits (pthread_create: Resource temporarily unavailable — Chrome can't fork zygote). Backend API verification confirms the data pipeline works end-to-end.
+
+Stage Summary:
+- 6 files modified: items.ts (new query function), types.ts (new field), outlet-items/route.ts (parallel query + response field), RestoAnalysis.tsx (prop pass), ranking-nasional.tsx (removed all filters, fixed 30), PeerComparison.tsx (removed mode/limit dropdowns, fixed week+50).
+- Ranking Item Nasional now shows top 30 deviasi items for the selected outlet, with national rank + peer benchmark. No filters — clean, focused view.
+- Peer Comparison now fixed to mode='week' (follows main FilterBar's currentWeek) + peerLimit=50. No dropdowns — follows the main periode filter.
+- 0 tsc errors, 0 lint errors, 115/115 tests pass.
+- Backend API verified: /api/outlet-items returns topDeviasiRank with 30 items, all for the selected outlet, with national rank + peer benchmark fields.

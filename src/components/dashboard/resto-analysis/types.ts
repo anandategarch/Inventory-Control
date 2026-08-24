@@ -5,6 +5,7 @@
 
 import type { OutletItem } from '@/components/dashboard/PrioritySummaryCard';
 import type { Recommendation } from '@/components/dashboard/PrioritySummaryCard';
+import type { DeviasiRankItem } from '@/hooks/useAnalysis';
 
 /** Server-side resto profile (perf + behavior + historical + benchmark + top risk + investigation). */
 export interface RestoProfile {
@@ -56,6 +57,9 @@ export interface OutletItemsResponse {
   restoProfile: RestoProfile;
   rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] };
   allItems: OutletItem[];
+  /** Top 30 deviasi items for THIS outlet (with national rank + peer benchmark).
+   *  Powers RankingNasionalCard when a resto is selected for analysis. */
+  topDeviasiRank?: DeviasiRankItem[];
   itemCount?: number;
   durationMs?: number;
   error?: string;

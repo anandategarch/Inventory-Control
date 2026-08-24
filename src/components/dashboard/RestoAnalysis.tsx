@@ -392,9 +392,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         </CardContent>
       </Card>
 
-      {/* Ranking Item Nasional — new section */}
+      {/* Ranking Item Nasional — top 30 deviasi items for this outlet (national rank + peer benchmark) */}
       {activeOutlet && (
-        <RankingNasionalCard key={activeOutlet} focusOutlet={activeOutlet} analysisData={analysisData} />
+        <RankingNasionalCard key={activeOutlet} focusOutlet={activeOutlet} analysisData={analysisData} outletDeviasiRank={data?.topDeviasiRank} />
       )}
 
       {/* Item Detail Modal — Phase 2: Historical + Benchmark per bahan */}

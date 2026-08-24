@@ -19,7 +19,6 @@ import { Users, Loader2, BarChart3 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
-import { useState } from 'react';
 
 import type {
   PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
@@ -42,8 +41,11 @@ export type {
 export function PeerComparison() {
   const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet } = useDashboard();
   const activeOutlet = focusOutlet || outletCode;
-  const [mode, setMode] = useState<'week' | 'month'>('week');
-  const [peerLimit, setPeerLimit] = useState(10);
+  // Fixed: mode='week' (follows currentWeek from main FilterBar), peerLimit=50.
+  // No dropdowns — peer scope is always top 50 by sales proximity for the
+  // selected week.
+  const mode: 'week' | 'month' = 'week';
+  const peerLimit = 50;
 
   // ============================================================
   //  P1 PARALLEL QUERIES — all 3 useQuery hooks fire on mount.
@@ -58,12 +60,12 @@ export function PeerComparison() {
   //  then immediately refetch).
   // ============================================================
   const { data: mainData, isLoading: mainLoading, isFetching: mainFetching, error: mainError } = useQuery({
-    queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, mode, peerLimit],
+    queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, peerLimit],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
       p.set('month', monthLabel!);
-      if (mode === 'week' && currentWeek) p.set('week', currentWeek);
+      if (currentWeek) p.set('week', currentWeek);
       p.set('mode', mode);
       p.set('limit', String(peerLimit));
       const res = await fetch(`/api/peer-comparison?${p.toString()}`);
@@ -71,7 +73,7 @@ export function PeerComparison() {
       if (!ct.includes('application/json')) throw new Error('Server error');
       return res.json();
     },
-    enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek)),
+    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
   });
 
   // Derive peer set from main query result (empty while loading).
@@ -84,12 +86,12 @@ export function PeerComparison() {
 
   // Items query — independent inputs, fires in parallel with main.
   const { data: itemsData, isLoading: itemsLoading, error: itemsError } = useQuery({
-    queryKey: ['peer-comparison', 'items', activeOutlet, monthLabel, currentWeek, mode],
+    queryKey: ['peer-comparison', 'items', activeOutlet, monthLabel, currentWeek],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
       p.set('month', monthLabel!);
-      if (mode === 'week' && currentWeek) p.set('week', currentWeek);
+      if (currentWeek) p.set('week', currentWeek);
       p.set('mode', mode);
       p.set('topItems', '5');
       const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
@@ -97,7 +99,7 @@ export function PeerComparison() {
       if (!ct.includes('application/json')) throw new Error('Server error');
       return res.json() as Promise<ItemComparisonResponse>;
     },
-    enabled: Boolean(activeOutlet && monthLabel && (mode === 'month' || currentWeek)),
+    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
   });
 
   // Trend query — depends on peerCodes from main for stable peer
@@ -171,31 +173,9 @@ export function PeerComparison() {
               <div>
                 <CardTitle className="text-base">Peer Comparison</CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
-                  <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{peerCount}</span> resto dengan sales ±10% ({mode === 'week' ? `WEEK ${currentWeek}` : 'Bulan'})
+                  <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{peerCount}</span> resto dengan sales ±10%{currentWeek ? ` (WEEK ${currentWeek})` : ''}
                 </p>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as 'week' | 'month')}
-                className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
-                aria-label="Mode periode"
-              >
-                <option value="week">Per Week</option>
-                <option value="month">Per Bulan</option>
-              </select>
-              <select
-                value={String(peerLimit)}
-                onChange={(e) => setPeerLimit(parseInt(e.target.value))}
-                className="h-7 text-xs border rounded-md px-2 bg-background hover:bg-muted/40 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-foreground/20"
-                aria-label="Jumlah peer"
-              >
-                <option value="5">Top 5</option>
-                <option value="10">Top 10</option>
-                <option value="20">Top 20</option>
-                <option value="50">Top 50</option>
-              </select>
             </div>
           </div>
         </CardHeader>
