@@ -17692,3 +17692,659 @@ Priority ranking (fix first):
 - P2 — Fix invalid CSS color syntax: Replace `hsl(var(--X))` with `var(--X)` in chart-constants.ts:51,54 and ItemTrendChart.tsx:81,85,101.
 - P3 — Delete inert tailwind.config.ts (cleanup, no functional impact).
 - P3 — Filter GlobalLoadingBar's useIsFetching to specific query keys.
+
+---
+Task ID: AUDIT-CALC-FRONTEND
+Agent: Frontend Calculation Audit Agent
+Task: Audit perhitungan di frontend components
+
+Work Log:
+- Read /home/z/my-project/worklog.md (last ~95 lines, 17600-17694) for context — prior audits: AUDIT-FRONTEND-V2 (memoization fixes applied to PeerComparison + ItemTrendChart), AUDIT-ANIMATION (prefers-reduced-motion + transition-all + useDashboard over-subscription), DEEP-AUDIT-FRONTEND #1 (useCountUp removed — confirmed no-op at ExecutiveSummary.tsx:45-47).
+- Read all 8 in-scope files end-to-end:
+  * src/components/dashboard/GlobalItemSearchModal.tsx (458 lines)
+  * src/components/dashboard/ItemTrendChart.tsx (134 lines)
+  * src/components/dashboard/PeerComparison.tsx (342 lines)
+  * src/components/dashboard/ExecutiveSummary.tsx (416 lines)
+  * src/components/dashboard/Charts.tsx (582 lines)
+  * src/components/dashboard/AdvancedAnalysis.tsx (340 lines)
+  * src/components/dashboard/resto-analysis/helpers.tsx (79 lines)
+  * src/lib/format.ts (112 lines)
+- Cross-referenced sub-components in src/components/dashboard/peer-comparison/{helpers,anomaly-flags,efficiency-score-card,gap-analysis-card,ranking-summary-card,scatter-chart,correlation-insight-card,items-table,trend-chart,types}.tsx (10 files).
+- Verified backend SQL at src/lib/queries/dashboard.ts:154-156 to confirm qtyWaste/qtySusut/qtyTrial are SUM(ABS(...)) (already absolute) — affects Explained (W+S+T) formula correctness.
+- Verified ExecutiveSummary type at src/types/inventory.ts:140-157 to confirm field shapes (current/previous/growth objects).
+- Verified residualLossQty/residualLossPct computation at src/lib/queries/dashboard.ts:162-164 and src/app/api/export-report/route.ts:80,90 (ratio = residualLossQty / qtyDeviasiLoss, both ABS — correct).
+- Grep'd numberColor/directionColor across src/ to confirm 3 divergent implementations (format.ts, helpers.tsx, GlobalItemSearchModal.tsx local).
+- Grep'd fmtPct/fmtPctAbs usage to find inconsistent devBom display (with sign vs without).
+
+Stage Summary:
+
+======================================================================
+1. CRITICAL FRONTEND BUGS (wrong formula / wrong sign / wrong filter)
+======================================================================
+
+BUG C1 — EfficiencyScoreCard "Peer Avg: ~50" marker is mathematically WRONG
+  File: src/components/dashboard/peer-comparison/efficiency-score-card.tsx:29 + :58
+  Code:
+    :29   `const peerAvgScore = 50; // peer avg by definition sits at ~50 (no penalty no bonus)`
+    :58   `<div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ left: '50%' }} title="Peer avg ~50" />`
+  Analysis: The penalty formula is `100 - (devBomPenalty + lossPenalty + residualPenalty + salesPenalty)`.
+  When target === peerAvg (all four deltas = 0), each penalty term = `safeDiv(0, peerAvg.X) * factor = 0`, so raw = 100 - 0 = 100.
+  Therefore peer avg actually scores 100, NOT 50. The hardcoded `peerAvgScore = 50` and the marker at `left: '50%'` are both WRONG — the marker should be at `left: '100%'`.
+  Users see "Peer Avg: ~50/100" + a marker at 50% on the progress bar, both of which lie about where peer avg sits.
+  Correct fix: either (a) move marker to `left: '100%'` and update label to "Peer Avg: 100/100", or (b) redesign formula so peer avg maps to 50 (e.g. `(target - peerAvg)` → bipolar penalty around 50).
+  Severity: HIGH (misleading KPI displayed to operators).
+
+BUG C2 — GlobalItemSearchModal displays devBom with `+` sign (treats magnitude as growth)
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:337 + :405
+  Code:
+    :337  `<p className="text-sm font-bold tabular-nums">{fmtPct(stats.avgDevBom)}</p>`
+    :405  `{r.devBom != null ? fmtPct(r.devBom) : '—'}`
+  Analysis: `fmtPct(v)` defaults to `withSign=true`, so avgDevBom=0.18 renders as "+18,0%".
+  But devBom is a RATIO (|QTY Deviasi| / |QTY BOM|), not a delta/growth — adding `+` is misleading.
+  Compare with AdvancedAnalysis.tsx:112,249,330 which correctly use `fmtPctAbs(o.devBom)` (no sign).
+  Correct fix: change both lines to `fmtPctAbs(stats.avgDevom)` / `fmtPctAbs(r.devBom)` — OR pass `false` as 2nd arg: `fmtPct(stats.avgDevBom, false)`.
+  Severity: MEDIUM-HIGH (display bug, operator may misread avg deviation as "growth").
+
+BUG C3 — OutletHealthRanking colors nominalDeviasi as green when backend returns null (falls back to absNominal)
+  File: src/components/dashboard/AdvancedAnalysis.tsx:117-119
+  Code:
+    `<span className={(o.nominalDeviasi ?? o.absNominal) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>`
+    `  {fmtIDR(o.nominalDeviasi ?? o.absNominal)}`
+    `</span>`
+  Analysis: `o.absNominal` is by definition always ≥ 0 (it is ABS of sum, per backend rankingService).
+  When `o.nominalDeviasi` is null, fallback yields a positive value → color = emerald (green).
+  But this row is in the WORST ranking (sorted by healthScore ascending, low score = bad).
+  Showing green text for a worst-ranking outlet is misleading.
+  Correct fix: when nominalDeviasi is null, use neutral color (`text-muted-foreground`) — or better, require backend to always populate nominalDeviasi (it's the SIGNED sum, more meaningful than absNominal).
+  Severity: MEDIUM (edge case but visible in production if backend omits nominalDeviasi).
+
+======================================================================
+2. EDGE CASE BUGS (NaN / undefined / division by zero)
+======================================================================
+
+BUG E1 — AnomalyFlags `checkRatio` returns 0 when peer avg = 0 (missed anomaly)
+  File: src/components/dashboard/peer-comparison/anomaly-flags.tsx:26
+  Code: `const checkRatio = (targetVal: number, avg: number) => (avg > 0 ? targetVal / avg : 0);`
+  Analysis: If peerAvg.devBom = 0 (e.g. all 49 peers have 0 deviation) but target has devBom = 0.50 (50% deviation), checkRatio returns 0, so `0 > 1.5 = false` → no "Dev/BOM tinggi" flag fires.
+  The target IS an outlier (peers = 0, target = 0.50) but is not flagged.
+  Correct fix: when avg = 0 AND target > some absolute threshold, flag it. E.g. `if (avg > 0 ? targetVal / avg > 1.5 : targetVal > 0.10)`.
+  Severity: LOW-MEDIUM (rare in practice — usually at least one peer has non-zero devBom).
+
+BUG E2 — ItemConsistencyAnalysis fallback classifies 2-4 occurrences as WIDESPREAD (should be ISOLATED)
+  File: src/components/dashboard/AdvancedAnalysis.tsx:177
+  Code: `type: (s.occurrences >= 10 ? 'SYSTEMIC' : 'WIDESPREAD') as 'SYSTEMIC' | 'WIDESPREAD',`
+  Analysis: FormulaInfo (line 209) states "SYSTEMIC (≥10 outlet), WIDESPREAD (5-9), ISOLATED (2-4)".
+  But the fallback only checks `>= 10`. An item with 3 occurrences in the systemic list would be marked WIDESPREAD, when spec says ISOLATED.
+  Primary path (ca.items with i.consistency) is correct — only the legacy fallback (when `ca.items` is empty) has this bug.
+  Correct fix: `type: s.occurrences >= 10 ? 'SYSTEMIC' : s.occurrences >= 5 ? 'WIDESPREAD' : 'ISOLATED'`.
+  Severity: LOW (fallback path only — backend should always populate `ca.items`).
+
+BUG E3 — EfficiencyScoreCard `safeDiv` masks zero-peer-avg edge case
+  File: src/components/dashboard/peer-comparison/efficiency-score-card.tsx:20-24
+  Code:
+    `const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);`
+    `const devBomPenalty = Math.min(50, safeDiv(target.devBom - peerAvg.devBom, peerAvg.devBom) * 25);`
+  Analysis: If peerAvg.devBom = 0 and target.devBom = 0.50 (huge deviation vs zero peer avg), safeDiv returns 0 → no penalty.
+  Combined with salesPenalty which uses same safeDiv, target could score 100 despite being a clear outlier.
+  Mitigated by parent guard `otherPeers.length > 0` (PeerComparison.tsx:190), but if all peers have 0 devBom the bug still fires.
+  Severity: LOW (requires all-zero peerAvg.devBom, unlikely).
+
+======================================================================
+3. DISPLAY BUGS (wrong format / wrong color / wrong label)
+======================================================================
+
+BUG D1 — LossVsSurplusChart Y-axis uses English "K" suffix instead of Indonesian "Rb"
+  File: src/components/dashboard/Charts.tsx:491
+  Code: `<YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} ... />`
+  Same issue at: src/components/dashboard/Charts.tsx:342 (DeviationBreakdownChart Y-axis).
+  Analysis: Rest of codebase uses "Rb" (Ribu) for thousands in fmtIDR/fmtNum (src/lib/format.ts:38,52).
+  Mixing "K" (English kilo) with "Rb" (Indonesian ribu) in the same dashboard is inconsistent.
+  Correct fix: replace "K" with "Rb" in both Y-axis tickFormatters, OR use the shared `fmtNum(v, '')` helper.
+  Severity: LOW (consistency issue, no functional impact).
+
+BUG D2 — LossVsSurplusChart tooltip uses `Number(v).toLocaleString()` without locale
+  File: src/components/dashboard/Charts.tsx:492 (and :345, :570)
+  Code: `formatter={(v: number | string) => Number(v).toLocaleString()}`
+  Analysis: `toLocaleString()` without arg uses browser default locale. In en-US → "1,234" (comma thousands). In id-ID → "1.234" (dot thousands).
+  Rest of codebase uses `v.toLocaleString('id-ID', { maximumFractionDigits: 0 })` (src/lib/format.ts:41,55).
+  Server-side rendering may produce different format than client (hydration mismatch risk).
+  Correct fix: `Number(v).toLocaleString('id-ID')`.
+  Severity: LOW-MEDIUM (potential hydration mismatch, locale-dependent display).
+
+BUG D3 — GlobalItemSearchModal z-score tooltip text is misleading
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:409
+  Code: `title={`Z-score: ${z.toFixed(2)} (mean vs peer outlets)`}`
+  Analysis: The phrase "mean vs peer outlets" suggests the z-score COMPARES the mean against peer outlets — but the z-score is `(outlet.devBom - mean) / stdDev`, i.e. the OUTLET vs the peer MEAN.
+  Correct text: `"Z-score: ${z.toFixed(2)} (outlet vs peer mean)"` or `"Z-score: ${z.toFixed(2)} (deviation from peer mean)"`.
+  Severity: LOW (cosmetic tooltip).
+
+BUG D4 — Charts GrowthComparison expanded panel manually multiplies growth by 100 (bypasses fmtPct)
+  File: src/components/dashboard/Charts.tsx:190
+  Code: `{growthVal != null ? `${(growthVal * 100).toFixed(1)}%` : '—'}`
+  Analysis: Manual `* 100` instead of `fmtPct(growthVal, false, 1)`. Produces "54.0%" with DOT decimal separator.
+  Rest of codebase uses `fmtPct` which produces Indonesian comma separator "54,0%".
+  Same panel uses `d.sharePct.toFixed(0)` (line 214) and `d.cumPct.toFixed(0)` (line 215) — also bypass fmtPct.
+  Correct fix: use `fmtPct(growthVal, false, 1)` for consistency.
+  Severity: LOW (decimal separator inconsistency).
+
+BUG D5 — ExecutiveSummary "Explained (W+S+T)" uses `Math.abs(sum)` instead of `sum of Math.abs`
+  File: src/components/dashboard/ExecutiveSummary.tsx:160
+  Code: `value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))}`
+  Analysis: The correct decomposition formula (per Charts.tsx:322 FormulaInfo) is `|Waste| + |Susut| + |Trial| + |Residual|` — sum of absolute values.
+  Current code takes abs AFTER summing: `|Waste + Susut + Trial|`. This is mathematically equivalent ONLY IF all three have the same sign.
+  Verified backend (src/lib/queries/dashboard.ts:154-156) returns these as `SUM(ABS(...))` — already positive, so currently produces correct result.
+  But this is a LATENT BUG: if backend ever changes to return signed sums (e.g. for direction-aware display), the formula breaks silently.
+  Correct fix: `value={Math.abs(s.qtyWaste.current || 0) + Math.abs(s.qtySusut.current || 0) + Math.abs(s.qtyTrial.current || 0)}`.
+  Severity: LOW (latent — currently works due to backend contract).
+
+======================================================================
+4. CONSISTENCY ISSUES (same metric displayed differently)
+======================================================================
+
+BUG S1 — THREE divergent `numberColor` implementations
+  Files:
+    src/lib/format.ts:100-103
+      `export function numberColor(v: number | null | undefined): string {`
+      `  if (v == null || isNaN(v)) return '';`
+      `  return v < 0 ? 'text-red-600' : '';`   // ONLY red for negative, empty for positive/zero, NO dark mode
+    src/components/dashboard/GlobalItemSearchModal.tsx:62-64
+      `function numberColor(v: number): string {`
+      `  return v < 0 ? 'text-red-600 dark:text-red-400' : v > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';`  // red + emerald + muted, WITH dark
+  Analysis: Same function name, THREE different behaviors:
+    - format.ts: only red for negative, no dark mode, no positive color.
+    - GlobalItemSearchModal (local): red+emerald+muted, dark mode.
+  DrillDownDrawer.tsx:225-227 + SourceDataModal.tsx:225-232 use the format.ts version (only red).
+  GlobalItemSearchModal uses its local version (red+emerald+muted).
+  Same `nominalDeviasi = +5M` shows BLACK in DrillDownDrawer but EMERALD in GlobalItemSearchModal.
+  Correct fix: consolidate into one canonical `numberColor` in lib/format.ts with dark variants + emerald-for-positive (matching GlobalItemSearchModal behavior). Delete the local copy.
+  Severity: MEDIUM (visually inconsistent across drilldown vs search modal).
+
+BUG S2 — TWO divergent `directionColor` implementations
+  Files:
+    src/lib/format.ts:88-94 — returns 'text-red-600' / 'text-emerald-600' / 'text-muted-foreground' (NO dark variants).
+    src/components/dashboard/resto-analysis/helpers.tsx:35-37 — same colors but WITH dark variants.
+    src/components/dashboard/GlobalItemSearchModal.tsx:58-60 — same as helpers.tsx (WITH dark).
+  Analysis: `directionColor` is exported from TWO locations (format.ts + helpers.tsx) with different dark-mode behavior. In dark mode, format.ts version falls back to default text color (loses red/green distinction).
+  Correct fix: keep ONE canonical `directionColor` in lib/format.ts with dark variants. Delete helpers.tsx and GlobalItemSearchModal local copies.
+  Severity: LOW-MEDIUM (dark mode rendering inconsistency).
+
+BUG S3 — `trendColor` (format.ts:70-76) and `growthColor` (helpers.tsx:19-23) are duplicate logic
+  Files:
+    src/lib/format.ts:70-76 `trendColor(v, inverse=false)` — returns 'text-emerald-600' / 'text-red-600' / 'text-muted-foreground' (NO dark).
+    src/components/dashboard/resto-analysis/helpers.tsx:19-23 `growthColor(v, inverse=false)` — same logic WITH dark variants.
+  Analysis: Two functions with identical semantics but different names + different dark-mode handling. trendColor is not used anywhere (grep'd — 0 call sites in src/components).
+  Correct fix: delete unused `trendColor` from format.ts. Keep `growthColor` as canonical.
+  Severity: LOW (dead code + naming inconsistency).
+
+BUG S4 — ItemTrendChart `connectNulls={true}` can mislead users about missing periods
+  File: src/components/dashboard/ItemTrendChart.tsx:126
+  Code: `<Line ... connectNulls />`
+  Analysis: When an outlet has data in week 1 and week 3 but not week 2, the chart draws a straight line from week 1 → week 3, making it look like a smooth transition.
+  User cannot visually distinguish "value stayed flat through week 2" from "no data in week 2".
+  For a trend chart of deviations, this can hide data gaps that might indicate upload/entry issues.
+  Correct fix: remove `connectNulls` (default is false) — Recharts will show gaps for missing periods. Or add a subtle "no data" indicator (e.g. dotted line + tooltip note).
+  Severity: LOW-MEDIUM (visual misleading, not a calc bug).
+
+======================================================================
+5. PRIORITY RANKING (fix first)
+======================================================================
+
+P0 (HIGH — operator-facing misinformation):
+  - BUG C1 — EfficiencyScoreCard peerAvgScore=50 marker is mathematically wrong. Single file, 2-line fix. Affects every Peer Comparison view.
+  - BUG C2 — GlobalItemSearchModal devBom shown with `+` sign. 2-line fix (change `fmtPct` → `fmtPctAbs` at lines 337, 405).
+
+P1 (MEDIUM — inconsistency + edge cases):
+  - BUG C3 — OutletHealthRanking green color when nominalDeviasi is null. 3-line fix.
+  - BUG S1 — Consolidate 3 divergent `numberColor` implementations into 1 canonical in lib/format.ts. Refactor: update DrillDownDrawer + SourceDataModal + GlobalItemSearchModal to import from lib/format.ts.
+  - BUG S2 — Consolidate 2 divergent `directionColor` implementations.
+  - BUG D2 — LossVsSurplusChart tooltip locale mismatch (hydration risk).
+
+P2 (LOW — cosmetic + latent):
+  - BUG E1 — AnomalyFlags `checkRatio` returns 0 when peerAvg=0 (missed anomaly).
+  - BUG E2 — ItemConsistencyAnalysis fallback WIDESPREAD vs ISOLATED boundary.
+  - BUG E3 — EfficiencyScoreCard `safeDiv` masks zero-peer-avg edge case.
+  - BUG D1 — "K" vs "Rb" suffix inconsistency in chart Y-axes.
+  - BUG D3 — Z-score tooltip text "mean vs peer outlets" misleading.
+  - BUG D4 — Manual `* 100` in expanded panel bypasses fmtPct (decimal separator).
+  - BUG D5 — `Math.abs(sum)` vs `sum of Math.abs` in Explained (W+S+T) — latent.
+  - BUG S3 — Delete unused `trendColor` from format.ts.
+  - BUG S4 — ItemTrendChart connectNulls=true can mislead (consider removing).
+
+======================================================================
+VERIFIED CORRECT (no bugs):
+======================================================================
+- GlobalItemSearchModal z-score (lines 158-178): mean, sample variance (N-1), stdDev, z=(x-mean)/stdDev — all correct. Edge cases (length<2, stdDev=0) correctly skip. avgDevBom correctly filters nulls (line 188-191). abnormalCount threshold |z|>2 correct.
+- GlobalItemSearchModal summary stats (lines 181-197): totalNominal=SIGNED sum (correct), totalAbs=ABS sum (correct), lossOutlets/surplusOutlets counts by direction (correct).
+- ItemTrendChart data transformation (lines 31-65): periodMap key=`monthKey|weekLabel` correct, sortKey=`monthKey|padded weekNum` chronological correct, topOutlets by SUM(|nominalDeviasi|) correct. Now properly memoized.
+- PeerComparison peerAverages (lines 127-144): correctly excludes target, returns 0 for empty peer set. Memoized.
+- ExecutiveSummary useCountUp (lines 45-47): correctly returns target immediately (no-op). AnimatedValue just formats.
+- ExecutiveSummary growth pill color (lines 72-78): inverse flag correctly flips emerald/red for "bad when up" metrics (nominalDeviasi, qtyDeviasi, qtyLossSurplus).
+- ExecutiveSummary healthScore (line 220): `Math.round((normal / total) * 100)` with total>0 guard. Correct.
+- Charts DeviationBreakdownChart pct (line 284): `(value / total) * 100` with `total = b.total || 1` guard. Correct.
+- Charts GrowthComparison mismatch logic (lines 43-48): correctly catches sales-shrinking + deviation-growing case.
+- Charts TrendChart Y-axis (line 560): `${(v * 100).toFixed(0)}%` — input is 0-1 decimal, correct.
+- format.ts fmtIDR (lines 30-42): handles negatives with sign prefix, guards Infinity/NaN.
+- format.ts fmtNum (lines 44-56): billions branch added (M), handles negatives.
+- format.ts fmtPct (lines 58-63): v*100, withSign flag, comma decimal separator.
+- helpers.tsx fmtGrowth (lines 13-17): `+` prefix for positive, includes minus for negative via toFixed. Correct.
+- helpers.tsx growthColor (lines 19-23): inverse flag correctly flips colors. With dark variants.
+- AdvancedAnalysis AreaComparison (lines 264-340): sort by totalAbsNominal desc, lossToSalesColor thresholds (>10% red, >5% amber), fmtPct for lossToSales, fmtPctAbs for avgDevBom. All correct.
+- AdvancedAnalysis OutletHealthRanking sort (line 48): `a.healthScore - b.healthScore` ascending (worst first). Correct.
+- PeerComparison colorCell (helpers.ts:42-53): correct better/worse logic with higherIsBetter flag, 0.001 abs threshold for "≈ avg".
+- PeerComparison GapAnalysisCard (gap-analysis-card.tsx:30-40): correct best=min for bad metrics, best=max for good metrics, pctAboveBest calculation guards bestVal=0.
+- PeerComparison RankingSummaryCard (ranking-summary-card.tsx:23-35): correct sort direction by higherBetter flag, rank=findIndex+1.
+- PeerComparison CorrelationInsightCard (correlation-insight-card.tsx:27-98): safeRatio guards div-by-zero, thresholds (1.5x for warn, 2x for residual, 0.8x for low sales) all reasonable.
+- PeerComparison ScatterPlotCard (scatter-chart.tsx:30-35): correctly converts devBom ratio → % (* 100) for Y-axis.
+- PeerComparison TrendChartCard (trend-chart.tsx:25-29): correctly converts devBomTarget/devBomPeerAvg from 0-1 → %.
+- PeerComparison ItemLevelComparison (items-table.tsx:100-107): correctly handles signed vs unsigned metrics for isWorse logic (FIX FE-26 applied).
+
+---
+Task ID: AUDIT-CALC-SQL
+Agent: SQL Calculation Audit Agent
+Task: Audit perhitungan di SQL queries
+
+Work Log:
+- Read worklog tail (~50 lines) for context — prior audits (AUDIT-FRONTEND, AUDIT-LOGIC, AUDIT-FRONTEND-V2) verified.
+- READ-ONLY audit of 6 SQL query modules (no edits made, scope is read-only):
+  * src/lib/queries/dashboard.ts (345 lines) — queryExecSummary, queryDeviationBreakdown, queryLossVsSurplus, queryTrendAgg, queryCostImpact, queryDeviationBreakdownDrivers
+  * src/lib/queries/items.ts (990 lines) — queryTopItemsByNominal, queryTopItemsByDeviasiRank, queryGlobalItemSearch, queryItemTrend, queryNetworkItemRisk, etc.
+  * src/lib/queries/outlets.ts (1004 lines) — queryTopOutlets, queryPeerComparison, queryRestoRecommendations (15 signals), queryPeerTrend
+  * src/lib/queries/health-ranking.ts (363 lines) — queryOutletHealthRanking, queryVarianceAnalysis, queryHistoricalCriticalItems
+  * src/lib/queries/growth-drivers.ts (221 lines) — queryGrowthDrivers
+  * src/lib/queries/rule-evaluation.ts (246 lines) — evaluateRulesSql, evaluateHistoricalRulesJs
+- Verified schema.prisma InventoryRecord model (lines 80-154) for column semantics: qtyBom/qtyWaste/qtySusut/qtyTrial are SIGNED (negative per Excel convention); nominalDeviasi is GROSS deviation cost; nominalLossSurplus is NET loss/surplus; absNominalDeviasi/absNominalLossSurplus are pre-computed ABS columns.
+- Verified shared.ts buildSqlFilters (alias-aware, NULL-safe picOutletCodes) and withStatementTimeout (SET LOCAL statement_timeout, 30s default, with $transaction timeout override).
+- Cross-checked every aggregation in queryExecSummary (lines 149-167) — all 12 KPIs correct (signed/ABS as appropriate, LOSS-only filters consistent).
+- Audited all 14 priority signals in queryRestoRecommendations (lines 779-996) — verified each formula, threshold, weight. Weight sum verified = 100% (15+10+10+10+8+8+8+5+8+7+5+3+2+1).
+- Audited queryVarianceAnalysis self-join key (outletId, itemId, akunPenyesuaian with IS NOT DISTINCT FROM for NULL-safe), delta computation, WORSENED/IMPROVED/STABLE classification, direction-flip override.
+- Audited all 12 SQL rule conditions in evaluateRulesSql (lines 109-120) — verified ABS usage on signed columns, NULL guards, threshold references.
+- Audited growth-drivers FULL OUTER JOIN + Pareto 80% logic (computePareto lines 142-167).
+- Cross-referenced column usage across all 6 files via Grep — discovered semantic inconsistency in outlets.ts (nominalDeviasi field labeled but actually SUM(nominalLossSurplus) NET vs SUM(nominalDeviasi) GROSS used elsewhere).
+
+Stage Summary:
+
+== CRITICAL SQL BUGS (P0 — wrong formula / wrong aggregation) ==
+
+BUG-1 [outlets.ts:60, outlets.ts:127] — `nominalDeviasi` field semantic mismatch
+  In queryTopOutlets + queryTopOutletsBySales:
+    SUM(ir."nominalLossSurplus") as "nominalDeviasi",   -- WRONG: this is NET loss/surplus
+  But every other query (items.ts:38, items.ts:165, items.ts:292, items.ts:836, items.ts:962, health-ranking.ts:116, dashboard.ts:151, outlets.ts:234, outlets.ts:429, outlets.ts:506, outlets.ts:615) uses the CORRECT column:
+    SUM(ir."nominalDeviasi") as "nominalDeviasi",        -- GROSS deviation
+  Impact: TopOutlets list shows "nominalDeviasi" = NET (LOSS-SURPLUS cancellation, e.g. -20M for outlet with 100M LOSS + 80M SURPLUS), while TopItemsByNominal, ExecSummary, PeerComparison all show GROSS (-180M for same outlet). UI displays apples vs oranges. absNominal also mismatched: outlets.ts:58 uses SUM(absNominalLossSurplus) while items.ts:37 uses SUM(absNominalDeviasi).
+  Fix:
+    -- outlets.ts:60 (queryTopOutlets)
+    SUM(ir."nominalDeviasi") as "nominalDeviasi",
+    -- outlets.ts:58
+    SUM(ir."absNominalDeviasi") as "absNominal",
+    -- outlets.ts:127 (queryTopOutletsBySales)
+    SUM(ir."nominalDeviasi") as "nominalDeviasi"
+    -- outlets.ts:125 (the outlet_nominal CTE)
+    SUM(ir."absNominalDeviasi") as "absNominal",
+
+BUG-2 [growth-drivers.ts:208] — pct calculation broken for signed metrics
+  Current:
+    const pct = prev > 0 ? delta / prev : 0;
+  Problem: For signed metric `qtyDeviasi` (signed=true), `prev` can be negative (LOSS items). When prev=-50 and curr=-100 (LOSS worsened), delta=curr-prev=-50, pct=(-50)/(-50)=+1.0 — sign is RIGHT by accident. But when prev=-50 and curr=-25 (LOSS improved), delta=+25, pct=+25/-50=-0.5 — the magnitude shrank 50% (improvement) but pct shows -50% (looks like a decrease). The `if (delta > 0) positive.push` classification then puts an IMPROVEMENT into the `positive` (drivers up) bucket.
+  Fix: use magnitude-based pct for all metrics (consistent with the |delta| sort + totalDelta accumulation):
+    const absPrev = Math.abs(prev);
+    const pct = absPrev > 0 ? Math.abs(delta) / absPrev : 0;
+  Or split: pct = signed-pct for directionality, but bucket by `Math.sign(delta) * Math.sign(prev)` semantics (e.g. LOSS worsening vs LOSS improving are different categories). At minimum, document the current behavior or align qtyDeviasi to signed=false (use ABS).
+
+BUG-3 [outlets.ts:889] — S11 hardcoded threshold, not runtime-configurable
+  Current (S11 High Loss Nominal):
+    COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem",
+  But the SQL rule-evaluation.ts:115 correctly uses the runtime threshold:
+    CASE WHEN c."nominalLossSurplus" < 0 AND ABS(c."nominalLossSurplus") > ${thresholds.HIGH_LOSS_NOMINAL_THRESHOLD} THEN 1 ELSE 0 END
+  Impact: If user changes HIGH_LOSS_NOMINAL_THRESHOLD in Settings (e.g. to 5jt or 25jt), the priority score signal S11 still uses the hardcoded 10jt. S11 score and the actual HIGH_LOSS_NOMINAL rule flag will diverge — an outlet can show "5 high-loss items" in the rule flags but only 2 in S11 (or vice versa).
+  Fix: thread `thresholds` param into queryRestoRecommendations (currently only takes month/week/prevWeek/prevMonth/filters/limit) and use:
+    COUNT(CASE WHEN ir."nominalLossSurplus" < 0 AND ABS(ir."nominalLossSurplus") > ${thresholds.HIGH_LOSS_NOMINAL_THRESHOLD} THEN 1 END) as "highLossItem",
+  Caller (api/analysis/route.ts or service) must pass thresholds through.
+
+== SIGN CONVENTION ISSUES (P1) ==
+
+SIGN-1 [outlets.ts:60 + outlets.ts:127] — see BUG-1 above. Same root cause: mislabeled NET as GROSS.
+
+SIGN-2 [items.ts:620] — queryNetworkItemRisk uses `SUM(ir."absNominalDeviasi") as "nominalDeviasi"` (ABS, not signed). Then JSON output emits `nominalDeviasi` as a magnitude. Everywhere else `nominalDeviasi` is SIGNED. The downstream JS (line 735) coerces via `Number(o.nominalDeviasi ?? 0)` but cannot recover the sign. Top-deviating-outlets list inside NetworkItemRisk will show all-positive values even for SURPLUS outlets. Cosmetic but inconsistent. Fix: rename JSON key to `absNominalDeviasi` or also select signed `SUM(ir."nominalDeviasi")` and emit both.
+
+SIGN-3 [growth-drivers.ts qtyDeviasi signed=true] — `up`/`down` buckets lose meaning for signed metrics. delta>0 for qtyDeviasi means "signed qtyDeviasi increased" — could be LOSS shrinking (improvement) OR SURPLUS growing (deterioration). UI labels "Drivers Naik/Turun" are ambiguous. Fix: for qtyDeviasi, either switch to signed=false (use ABS like nominalDeviasi) OR add a `direction` field per driver row so UI can disambiguate.
+
+== EDGE CASE BUGS (P2) ==
+
+EDGE-1 [outlets.ts:824-826] — S2 hybrid `reduce` initialization to 0
+  Current:
+    const deviasiGrowthHybrid = [deviasiGrowth, deviasiGrowthHistorical]
+      .filter((g): g is number => g != null)
+      .reduce((max, g) => Math.max(max, g), 0);
+  When BOTH growths are negative (outlet improving MoM AND vs historical), reduce returns 0 (not the actual higher value, e.g. -0.3). Then `deviasiGrowthHybrid > 0` is false → s2Score=0. Score is correct, but `deviasiGrowthHybrid` itself is misleading if ever surfaced in UI/logs. Currently only used for s2Score, so functional impact is nil. Recommend: `.reduce((max, g) => Math.max(max, g), -Infinity)` then `Math.max(0, result)` for the score, keeping the true worst-case for any future display.
+
+EDGE-2 [health-ranking.ts:238-241] — Variance direction-flip always classified WORSENED
+  Current:
+    WHEN (
+      (c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) OR
+      (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0)
+    ) THEN 'WORSENED'
+  Going from LOSS=-100M to SURPLUS=+100M (a recovery, abs delta=0) is classified WORSENED. Code comment says "significant operational change — surface for investigation" — defensible for fraud-detection purposes, but conflicts with the IMPROVED bucket semantics. An outlet that fully recovered from a loss gets surfaced in "top worsened" list. Recommend: split into two cases:
+    -- LOSS→SURPLUS with magnitude drop = IMPROVED (recovered)
+    WHEN (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0
+          AND c."absNominalDeviasi" < p."absNominalDeviasi") THEN 'IMPROVED'
+    -- All other flips (magnitude grew or SURPLUS→LOSS) = WORSENED
+    WHEN ((c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) OR
+          (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0)) THEN 'WORSENED'
+
+EDGE-3 [health-ranking.ts:277-278] — Sort tie-break not deterministic
+  Current:
+    const topWorsened = [...typed].sort((a, b) => b.delta - a.delta).slice(0, 5);
+    const topImproved = [...typed].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  When two rows have equal `delta`, JS sort is not stable across engines. Recommend secondary sort key (e.g. itemName) for deterministic output:
+    .sort((a, b) => b.delta - a.delta || a.itemName.localeCompare(b.itemName))
+
+EDGE-4 [dashboard.ts:200] — queryDeviationBreakdown residual includes BOTH LOSS and SURPLUS
+  Current:
+    COALESCE(SUM(ABS(ir."residualQty")), 0) as residual,
+  Exec Summary residualLossQty (dashboard.ts:162) is LOSS-only:
+    SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END)
+  Different semantics: queryDeviationBreakdown.residual ≥ queryExecSummary.residualLossQty always. UI cards "Deviation Breakdown: Residual=X" vs "Exec Summary: Residual (LOSS)=Y" can confuse users. Recommend: align by either (a) making breakdown LOSS-only to match exec summary, or (b) documenting the distinction in the UI label ("Residual (Net)" vs "Residual LOSS-only").
+
+EDGE-5 [rule-evaluation.ts:92-105] — `hist` CTE is dead placeholder
+  The `hist` CTE returns nothing (WHERE 1=0). z-score rules (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING, BENCHMARK_ABOVE_AREA, BENCHMARK_ABOVE_NETWORK) are evaluated in JS via evaluateHistoricalRulesJs. This is documented (comment lines 95-100) but the dead CTE adds visual noise. Recommend: remove the hist CTE entirely OR inline the historical stats query (acceptable performance trade-off since it's a single GROUP BY scan with index on [weekLabel, outletId, itemId]).
+
+EDGE-6 [rule-evaluation.ts:49-59] — `t` Prisma.join is dead code
+  `const t = Prisma.join([...], ', ');` is computed but never used in the SQL. Individual `${thresholds.X}` interpolations are used instead. Dead code, remove.
+
+== WEIGHT / CALIBRATION ISSUES (P3) ==
+
+CAL-1 [outlets.ts:804] — S1 stale comment says "(12%)" but actual weight is 15% (S13 was removed and 3% redistributed to S1). Cosmetic.
+
+CAL-2 [outlets.ts:535] — header comment says "8 signals weighted into Priority Score (0-100)" but actually 14 signals (S1-S12, S14, S15). Cosmetic.
+
+CAL-3 [outlets.ts:832-834] — S3 named "Z-Score Abnormal" but actually counts items with `ABS(pctQtyDeviasiToBom) > 0.50` (a deviation-ratio threshold, NOT a z-score). Real z-score rules are evaluated in JS. The signalScores UI label "Deviasi >50% BOM" is correct, but the field name `zScoreAbnormalCount` and signal name "Z-Score Abnormal" are misleading. Recommend: rename to `highDevRatioCount` / "Deviasi Tinggi (>50% BOM)".
+
+CAL-4 [outlets.ts:823-826] — S2 hybrid MAX can mask MoM recovery. An outlet with MoM=-50% (improving) but Historical=+200% (still way above historical avg) gets score 100. Intentional (catches long-term deterioration) but may over-prioritize outlets that are actually recovering. Consider: weighted average (0.6*MoM + 0.4*Historical) OR show both signals separately in signalScores (currently signalScores[1] shows "MoM: X% | Hist: Y%" which is good — the priorityScore just uses MAX).
+
+CAL-5 [rule-evaluation.ts:158] — DIRECTION_FLIP rule categorized as 'HISTORICAL' but it's a MoM comparison (current vs prev period), not historical. Recommend: category 'DIRECTION' or 'MOM' for taxonomic accuracy.
+
+== AUDIT VERIFICATION RESULTS (CONFIRMED CORRECT) ==
+
+✓ queryExecSummary (dashboard.ts:149-167): all 12 KPIs correct.
+  - nominalDeviasi = SUM(nominalDeviasi) SIGNED ✓
+  - qtyBom = SUM(ABS(qtyBom)) ✓
+  - qtyDeviasi = SUM(absQtyDeviasi) ✓ (uses pre-computed ABS column)
+  - totalLoss = SUM(ABS(nominalLossSurplus) WHERE < 0) ✓
+  - totalSurplus = SUM(nominalLossSurplus WHERE > 0) — since >0, ABS not needed; SUM is positive ✓
+  - residualLossQty = SUM(ABS(residualQty) WHERE nominalLossSurplus < 0) — LOSS-only ✓
+  - residualLossNominal = SUM(ABS(residualNominal) WHERE nominalLossSurplus < 0) — LOSS-only ✓
+  - qtyDeviasiLoss = SUM(absQtyDeviasi WHERE nominalLossSurplus < 0) — LOSS-only ✓
+
+✓ Priority Score weight sum = 100% (15+10+10+10+8+8+8+5+8+7+5+3+2+1 = 100) ✓
+
+✓ S1 handles networkAvg=0: `devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0` ✓
+
+✓ S4 residualRatio uses LOSS/LOSS: residualQty (LOSS-only) / qtyDeviasiLoss (LOSS-only) ✓
+
+✓ S5 saturates at 10%: lossToSales * 1000 = 100 when lossToSales=0.10 ✓
+
+✓ S9 saturates at 4 items: toleranceBreachHighCount * 25 = 100 at 4 ✓
+
+✓ S10 saturates at 2 items: overExplainedCount * 50 = 100 at 2 ✓
+
+✓ S11 saturates at 5 items: highLossItem * 20 = 100 at 5 ✓ (but threshold hardcoded, see BUG-3)
+
+✓ S12 saturates at 5 items: hasNoTolerance * 20 = 100 at 5 ✓
+
+✓ S14 saturates at 20jt: (residualNominal / 1M) * 5 = 100 at 20M ✓
+
+✓ S15 saturates at 20 items: regularBreachCount * 5 = 100 at 20, and correctly excludes high-breach items (S9) ✓
+
+✓ S15 de-duplication: `regularBreachCount = max(0, toleranceBreachCount - toleranceBreachHighCount)` ✓
+
+✓ Variance self-join key: (outletId, itemId, akunPenyesuaian) with IS NOT DISTINCT FROM for NULL-safe akun equality ✓
+
+✓ Variance delta = currentAbsNominal - previousAbsNominal (signed difference of absolutes) ✓
+
+✓ f_tol_breach_high: ABS(pctQtyDeviasiToBom) > 2 * ABS(tolerancePct) — handles signed columns ✓
+
+✓ f_over_explained: |W|+|S|+|T| > |qtyDeviasi| AND |qtyDeviasi| > 0 (guard against div-by-zero / qtyDeviasi=0 false-positive) ✓
+
+✓ f_dir_flip: NULL checks on both c. and p. nominalLossSurplus, sign-flip detection correct ✓
+
+✓ Growth calc LATERAL: salesGrowth uses raw (sales always positive); bomGrowth/qtyDeviasiGrowth/nominalDeviasiGrowth use ABS (consistent with magnitude comparison) ✓
+
+✓ Growth FULL OUTER JOIN: handles new + disappeared items; COALESCE(c.name, p.name) + COALESCE(c.val, 0) + COALESCE(p.val, 0) ✓
+
+✓ Growth Pareto 80%: sort by |delta| DESC, totalDelta = sum|delta|, sharePct = |delta_i|/totalDelta*100, stop at 80% OR 20 drivers, remainderCount + remainderPct correct ✓
+
+✓ queryGlobalItemSearch + queryItemTrend: devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) SIGNED ✓; direction CASE handles NULL nominalLossSurplus via qtyDeviasi fallback ✓; nominalDeviasi = SUM(nominalDeviasi) SIGNED ✓; trend GROUP BY (month, week, outlet) ✓; absNominalDeviasi > 0 filter excludes zero-deviation ✓
+
+✓ queryOutletHealthRanking: zeroDevCount + nonZeroDevCount via COUNT(*) FILTER (WHERE zeroDevExpr) ✓; absNominal = ABS(SUM(nominalDeviasi)) ✓; totalQtyDeviasi = SUM(ABS(qtyDeviasi)) and totalQtyBom = SUM(ABS(qtyBom)) so JS-computed devBom = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) ✓
+
+== PRIORITY RANKING (FIX FIRST) ==
+
+1. P0 — BUG-1 (outlets.ts:60, 127): nominalDeviasi field uses wrong column. UI shows inconsistent numbers between TopOutlets list and rest of dashboard. Single-file fix, ~4 line changes.
+2. P0 — BUG-2 (growth-drivers.ts:208): pct calc broken for signed qtyDeviasi. Affects Growth Drivers "Drivers Naik/Turun" accuracy. Single-line fix.
+3. P1 — BUG-3 (outlets.ts:889): S11 hardcoded 10jt threshold. Thread `thresholds` param through queryRestoRecommendations. Requires caller change too.
+4. P1 — SIGN-2 (items.ts:620): NetworkItemRisk nominalDeviasi is ABS, not signed. Rename or add signed field.
+5. P2 — SIGN-3 (growth-drivers.ts qtyDeviasi): up/down buckets ambiguous for signed metrics. Either switch to signed=false or add direction field.
+6. P2 — EDGE-2 (health-ranking.ts:238): LOSS→SURPLUS flip classified WORSENED. Split into IMPROVED (magnitude drop) vs WORSENED.
+7. P2 — EDGE-4 (dashboard.ts residual): Align queryDeviationBreakdown residual semantics with Exec Summary, OR document distinction.
+8. P3 — CAL-1, CAL-2, CAL-3, CAL-5: stale comments, misleading signal name, wrong category. Cosmetic.
+9. P3 — EDGE-5, EDGE-6: dead code (hist CTE, t variable). Cleanup.
+10. P3 — EDGE-1, EDGE-3: reduce init 0 (functional nil), sort tie-break non-deterministic. Minor robustness.
+
+
+---
+Task ID: AUDIT-CALC-METRICS
+Agent: Metrics Calculation Audit Agent
+Task: Audit perhitungan di metrics engine
+
+Work Log:
+- Read /home/z/my-project/worklog.md lines 17600-17694 (prior AUDIT-ANIMATION context).
+- Read all 7 metrics engine files fully: deviation.ts (293 lines), historical.ts (190 lines), growth.ts (126 lines), sales.ts (111 lines), benchmark.ts (103 lines), forecast.ts (280 lines), definitions.ts (241 lines).
+- Read index.ts barrel + 2 test files (historical.test.ts, growth.test.ts) to understand intended behavior.
+- Read queryHistoricalStats (lib/queries/historical.ts) to verify SQL ↔ JS consistency for z-score mean/stdDev computation.
+- Read callers: item-history/route.ts (lines 80-260) for computeZScore usage, analysis/route.ts (lines 680-825) for computeHealthScore + projectTrend + calcZScoreFromStats usage, outlet-items/route.ts (lines 490-569) for computePriority usage, rankingService.ts (lines 25-420) for duplicate direction/sales helpers, ruleService.ts (lines 40-124) for calcZScoreFromStats usage.
+- Read settings.ts threshold defaults (HIGH_LOSS_NOMINAL=50M, P2_NOMINAL=10M, STD_DEVIASI_BOM_PCT=0.05, RESIDUAL_LOSS_HIGH=0.70, RESIDUAL_LOSS_WARN=0.50, HISTORICAL_ZSCORE_WARN=1.5, HISTORICAL_ZSCORE_HIGH=2.0, HISTORICAL_MIN_WEEKS=4).
+- Read rule-evaluation.ts SQL (lines 96-145) to verify growth formulas (salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth) — all use ABS in SQL, consistent with calcGrowthAbs.
+- Read ruleService.ts lines 60-86 to verify isOverExplained + computeDirectionFromData duplicate.
+- Read rankingService.ts lines 50-74 (dedupSalesByOutlet) — duplicate of computeSalesModePerOutlet.
+- Ran sanity script (/tmp/audit_test.ts) verifying forecast SLOPE_THRESHOLD behavior, health score abnormal edge cases (0 items → score 100, 100% abnormal → score 0), trend ratio (IMPROVING when current=0, mean>0).
+
+Stage Summary:
+
+======================================================================
+1. CRITICAL CALCULATION BUGS (wrong formula / wrong threshold)
+======================================================================
+
+BUG-CALC-1 [HIGH] — forecast.ts:87,162-166 — SLOPE_THRESHOLD = 0.1 is meaningless for IDR-scale data
+  Code:
+    const SLOPE_THRESHOLD = 0.1;  // line 87
+    function classifyTrendDirection(slope: number) {
+      if (slope > SLOPE_THRESHOLD) return 'DETERIORATING';
+      if (slope < -SLOPE_THRESHOLD) return 'IMPROVING';
+      return 'STABLE';
+    }
+  Problem: `slope` is in units of |nominalDeviasi| per week. For F&B data where nominalDeviasi is in IDR (millions of rupiah), ANY non-zero slope exceeds 0.1 IDR/week → trend is ALWAYS DETERIORATING or IMPROVING, never STABLE. Verified with test: slope=500_000 IDR/week → DETERIORATING (correct by accident); slope=0.01 (ratio scale) → STABLE (wrong — 15% per week is meaningful).
+  Fix: Use the already-computed `trendStrength` (which is |slope|/mean(|y|), a normalized ratio) instead of raw slope:
+    if (trendStrength > 0.1) return 'DETERIORATING';
+    if (trendStrength < -0.1) return 'IMPROVING'; // NOTE: trendStrength is always ≥0; need signed version
+  Or compute a signed normalized slope: `signedStrength = slope / meanAbsNominal` and threshold on that.
+  Impact: Trend direction shown in InsightsPanel/forecast card is unreliable for IDR-scale data — virtually every forecast shows DETERIORATING/IMPROVING.
+
+BUG-CALC-2 [MEDIUM] — historical.ts:62-64 vs queryHistoricalStats (lib/queries/historical.ts:43-51) — inconsistent "1 week = 1 observation" rule for z-score
+  JS path (item-history/route.ts:219-221):
+    const historicalValues = timeline
+      .filter(t => t.devBom != null && !t.isCurrent && t.weekLabel === currentWeek)
+      .map(t => t.devBom as number);
+  Problem: `timeline` contains ONE ROW PER RECORD (including multiple akunPenyesuaian per week). So if an item has 3 akunPenyesuaian entries for W4 May + 3 for W4 Jun, JS path gets n=6 historical values. SQL path aggregates to 1 weekly Dev/BOM per (outlet,item,month,week) → n=2. The HISTORICAL_MIN_WEEKS=4 check then PASSES in JS (6≥4) but FAILS in SQL (2<4). zScores are computed on different data shapes and can have different signs/magnitudes.
+  definitions.ts:128 explicitly says "Each week = 1 observation (aggregate Dev/BOM = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)))" — JS path violates this.
+  Fix: In item-history/route.ts, aggregate timeline by (monthLabel, weekLabel) BEFORE passing to computeZScore:
+    const weeklyAgg = new Map<string, {sumDev: number, sumBom: number}>();
+    for (const t of timeline) {
+      if (t.devBom == null || t.isCurrent || t.weekLabel !== currentWeek) continue;
+      const k = `${t.monthLabel}|${t.weekLabel}`;
+      const e = weeklyAgg.get(k) ?? {sumDev: 0, sumBom: 0};
+      e.sumDev += Math.abs(t.qtyDeviasi ?? 0);
+      e.sumBom += Math.abs(t.qtyBom ?? 0);
+      weeklyAgg.set(k, e);
+    }
+    const historicalValues = [...weeklyAgg.values()]
+      .filter(e => e.sumBom > 0)
+      .map(e => e.sumDev / e.sumBom);
+  Impact: z-score shown in item-history detail view diverges from z-score used for HISTORICAL_* rule flags + criticalItems table. Same metric, two values.
+
+======================================================================
+2. EDGE CASE BUGS (div-by-zero, NaN, undefined)
+======================================================================
+
+EDGE-1 [LOW] — deviation.ts:234-236 — abnormalRate=0 when totalItemCount=0 → abnormalScore=100 (misleading perfect score)
+  Code:
+    const totalItemCount = input.normalCount + input.warningCount + input.abnormalCount;
+    const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : 0;
+    const abnormalScore = componentScore(abnormalRate, th.abnormal);  // 0 → 100 (perfect)
+  Problem: An outlet with ZERO evaluated items gets abnormalScore=100 (perfect), inflating its health score. Rare in practice (outlets usually have items) but possible for outlets with all-zero-deviation items filtered out.
+  Fix: Return neutralScore when totalItemCount=0:
+    const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : null;
+    const abnormalScore = abnormalRate != null ? componentScore(abnormalRate, th.abnormal) : neutralScore;
+  Impact: Low — edge case, but produces misleading "healthy" score for empty outlets.
+
+EDGE-2 [LOW] — historical.ts:156 — calcZScoreFromStats doesn't guard NaN/Infinity stdDev
+  Code:
+    if (value == null || stdDev === 0) return null;
+    return (Math.abs(value) - mean) / stdDev;
+  Problem: If caller passes stdDev=NaN or Infinity (from a buggy SQL aggregate), the check `stdDev === 0` is false, and the result is NaN/Infinity. Downstream comparisons (zScore > 2) silently fail (NaN > 2 is false).
+  Fix: `if (value == null || !isFinite(stdDev) || stdDev === 0) return null;`
+  Impact: Low — defensive only, no observed bad data path.
+
+EDGE-3 [LOW] — forecast.ts:236 — projectedNominal can be negative before clamp if slope is strongly negative
+  Code: `const projectedNominal = Math.max(0, nominalFit.intercept + nominalFit.slope * n);`
+  Status: Already clamped via Math.max(0, ...). OK. No bug — just confirming.
+
+EDGE-4 [LOW] — deviation.ts:16 — safeDiv checks `den > 0` not `den !== 0`
+  Code: `const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;`
+  Problem: For non-ABS aggregates, a negative denominator would silently return 0 (incorrect). All current callers pass ABS-based non-negative denominators, so no live bug. But the guard is asymmetric with safeRatio in growth.ts:112 (`denom === 0` → null).
+  Fix: `den !== 0 ? num / den : 0` (or align with safeRatio semantics).
+  Impact: None currently (all callers pass non-negative), but trap for future use.
+
+======================================================================
+3. CONSISTENCY ISSUES (same metric, different implementations)
+======================================================================
+
+CONS-1 [HIGH] — definitions.ts:164 STALE — documents OLD abnormalRate formula
+  Code (definitions.ts:164):
+    Abnormal: abnormal / (warning + abnormal), 0% → 100, >50% → 0 (linear)
+  Actual implementation (deviation.ts:234):
+    const totalItemCount = input.normalCount + input.warningCount + input.abnormalCount;
+    const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : 0;
+  Problem: definitions.ts is supposed to be the "Single Source of Truth" but still documents the OLD (already-fixed per DEEP-AUDIT-LOGIC #7) formula `abnormal / (warning + abnormal)`. The fix was applied to deviation.ts but the documentation was never updated.
+  Fix: Update definitions.ts:164 to:
+    Abnormal: abnormal / (normal + warning + abnormal), 0% → 100, >50% → 0 (linear)
+  Impact: Future developers reading definitions.ts will implement the wrong formula.
+
+CONS-2 [MEDIUM] — duplicate computeDirectionFromData in ruleService.ts:68-81 + rankingService.ts:28-41
+  Problem: Both files implement the same `computeDirectionFromData(rec)` helper inline instead of calling the canonical `computeDirection(qtyLossSurplus, qtyDeviasi)` from metrics/deviation.ts. Logic is identical (sign of nominalLossSurplus, fallback to qtyDeviasi), but signature differs (takes a record vs. takes two numbers). Three copies of direction logic exist (deviation.ts + ruleService.ts + rankingService.ts).
+  Fix: Replace both helpers with:
+    function computeDirectionFromData(rec: RecWithRels | null): Direction {
+      if (!rec) return 'NEUTRAL';
+      return computeDirection(rec.nominalLossSurplus, rec.qtyDeviasi);
+    }
+  Impact: Future direction logic changes (e.g., handling 0 vs null) must be applied in 3 places. Risk of divergence.
+
+CONS-3 [MEDIUM] — duplicate dedupSalesByOutlet in rankingService.ts:50-74 vs computeSalesModePerOutlet in sales.ts:26-62
+  Problem: Identical MODE-with-tiebreak-smaller-wins logic implemented twice. Logic is byte-for-byte equivalent (Infinity init, count>bestCount OR tie&&val<bestVal). rankingService.ts even has the same comments ("BUG-07 fix: start with Infinity...").
+  Fix: Delete dedupSalesByOutlet in rankingService.ts and call `computeSalesModePerOutlet(recsWithFlags.map(r => r.curr))` directly. The function is already generic (accepts `T extends SalesRecord`).
+  Impact: Code duplication. Risk: if MODE tiebreak rule changes (e.g., switch to "larger value wins"), it must be applied in 2 places.
+
+CONS-4 [LOW] — item-history/route.ts:237-240 overrides computeZScore's trend with deterioration
+  Code:
+    const trend = deterioration != null
+      ? deterioration > 0.02 ? 'DETERIORATING' : deterioration < -0.02 ? 'IMPROVING' : 'STABLE'
+      : historicalResult.trend === 'INSUFFICIENT_DATA' ? 'INSUFFICIENT_DATA'
+      : 'STABLE';
+  Problem: computeZScore computes `trend` from `|current|/mean` ratio (thresholds 1.1/0.9). The route then DISCARDS this and uses `deterioration` = `|current| - |earliest|` (threshold 0.02 absolute). These are DIFFERENT metrics:
+    - computeZScore trend: current vs historical MEAN (ratio)
+    - Route trend: current vs EARLIEST single period (absolute delta)
+  Example: historical=[0.5, 0.1, 0.1, 0.1], current=0.2:
+    - computeZScore: mean=0.2, ratio=1.0 → STABLE
+    - Route: earliest=0.5, deterioration=-0.3 → IMPROVING
+  Different answers. The route wins (displayed trend = IMPROVING). computeZScore's `trend` field is wasted compute.
+  Fix: Either (a) use historicalResult.trend directly, or (b) remove the trend computation from computeZScore and document that trend is caller-derived.
+  Impact: Wasted compute + two different "trend" definitions in codebase. No user-visible bug because route overrides, but confusing for maintainers.
+
+CONS-5 [LOW] — safeDiv (deviation.ts:16) vs safeRatio (growth.ts:111) — different zero-denominator semantics
+  - safeDiv(num, den): returns 0 if den <= 0
+  - safeRatio(num, den): returns null if den == 0 (allows negative den)
+  Both are "safe division" but with different contracts. Callers must remember which is which.
+  Fix: Pick one convention (recommend null-returning safeRatio) and replace safeDiv usages. Or rename safeDiv → safeDivOrZero for clarity.
+  Impact: Low — current usages are correct, but trap for future code.
+
+======================================================================
+4. THRESHOLD CALIBRATION ISSUES
+======================================================================
+
+CALIB-1 [HIGH] — forecast.ts:87 SLOPE_THRESHOLD=0.1 — see BUG-CALC-1 above. Absolute threshold on IDR-scale slope is meaningless. Should be relative (ratio of slope to mean).
+
+CALIB-2 [MEDIUM] — deviation.ts:287 P2 `isP2HighDevBom` uses STD_DEVIASI_BOM_PCT=0.05 (5%) as P2 trigger
+  Code: `const isP2HighDevBom = input.devBom != null && Math.abs(input.devBom) > t.STD_DEVIASI_BOM_PCT;`
+  Problem: 5% Dev/BOM is a very low bar for F&B — most items will exceed 5% deviation in normal operations. This means P2 bucket is overly inclusive: virtually any item with > 5% Dev/BOM gets P2 (unless it qualifies for P1). P3 bucket becomes nearly empty.
+  Impact: Priority distribution is skewed — too many P2, too few P3. Worklist gets cluttered with items that don't真正 need investigation.
+  Recommendation: Either (a) raise the P2 devBom threshold to 0.10 or 0.15 (separate from STD_DEVIASI_BOM_PCT which is the rule-evaluation threshold), or (b) add a separate P2_DEVBOM_PCT threshold. Current: same threshold used for "abnormal rule flag" and "P2 priority" — different semantics.
+
+CALIB-3 [LOW] — historical.ts:99-100 trend ratio thresholds 1.1/0.9 hardcoded
+  Code:
+    if (ratio > 1.1) trend = 'DETERIORATING';
+    else if (ratio < 0.9) trend = 'IMPROVING';
+  Problem: 10% deviation from mean is the STABLE↔CHANGE boundary. Not configurable via Settings (unlike HISTORICAL_ZSCORE_WARN/HIGH which ARE configurable). Inconsistent with the settings-driven threshold pattern elsewhere.
+  Impact: Low — 10% is a reasonable default, but should be configurable for tuning.
+
+CALIB-4 [LOW] — item-history/route.ts:238 deterioration threshold 0.02 hardcoded
+  Code: `deterioration > 0.02 ? 'DETERIORATING' : deterioration < -0.02 ? 'IMPROVING' : 'STABLE'`
+  Problem: 0.02 (2% absolute Dev/BOM delta) is hardcoded. For pctQtyDeviasiToBom values in 0-1 range, 0.02 = 2 percentage points. Reasonable but not configurable.
+  Impact: Low — same as CALIB-3.
+
+======================================================================
+5. PRIORITY RANKING — FIX FIRST
+======================================================================
+
+P0 (Critical, user-visible):
+  1. BUG-CALC-1 (forecast SLOPE_THRESHOLD) — forecast trend direction is unreliable for all IDR-scale data. Single-file fix (forecast.ts:87, 162-166). Replace absolute slope threshold with normalized trendStrength threshold.
+  2. CONS-1 (definitions.ts stale abnormalRate doc) — Single-line fix. Prevents future re-introduction of the bug that was already fixed in deviation.ts.
+
+P1 (Important, correctness/consistency):
+  3. BUG-CALC-2 (z-score 1-week-1-observation inconsistency between JS and SQL paths) — Item-detail z-score can diverge from dashboard z-score. Medium-effort fix in item-history/route.ts:219-221 (aggregate by week before passing to computeZScore).
+  4. CALIB-2 (P2 devBom threshold too low at 5%) — Skews priority distribution. Either raise to 10-15% or introduce separate P2_DEVBOM_PCT threshold.
+  5. CONS-2 (duplicate computeDirectionFromData) — Refactor to call canonical computeDirection. Low-effort, prevents divergence.
+  6. CONS-3 (duplicate dedupSalesByOutlet) — Delete in rankingService.ts, use computeSalesModePerOutlet. Low-effort.
+
+P2 (Nice-to-have, defensive):
+  7. EDGE-1 (abnormalScore=100 when 0 items) — Return neutralScore for empty outlets. Low-effort.
+  8. CONS-4 (item-history overrides computeZScore.trend with deterioration) — Either use historicalResult.trend or remove the wasted computation. Low-effort.
+  9. EDGE-2 (calcZScoreFromStats NaN guard) — Defensive `isFinite` check. Trivial.
+  10. EDGE-4 (safeDiv den > 0 vs den !== 0) — Align with safeRatio. Trivial.
+  11. CONS-5 (safeDiv vs safeRatio semantics) — Rename or merge. Trivial.
+
+P3 (Polish, no functional impact):
+  12. CALIB-3, CALIB-4 (hardcoded trend thresholds 1.1/0.9 and 0.02) — Make configurable via Settings. Low priority.
+
+======================================================================
+VERIFIED CORRECT (no bugs found)
+======================================================================
+- computeDevBomAggregate: SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) — correct, matches definitions.ts.
+- computeResidual: Math.max(0, absDev - explained) with isOverExplained flag — correct per three-layer model. ABS-based magnitude approach is correct (W/S/T EXPLAIN deviation, not add to it).
+- computeResidualRatio: residualQty / |qtyDeviasi| — correct (applies to both LOSS and SURPLUS, not LOSS-only).
+- computeExplainedPct: (|W|+|S|+|T|) / |qtyDeviasi| — can exceed 100% (over-explained case), which is informative. isOverExplained flag catches it. No clamp needed.
+- computeDirection: NET (qtyLossSurplus) with GROSS (qtyDeviasi) fallback — correct sign convention (LOSS < 0, SURPLUS > 0).
+- computeHealthScore linear interpolation: `100 - ((value-good)/(bad-good))*100` — direction correct (lower devBom = higher score). All 4 components have zero-denominator guards returning neutralScore. Final clamp to [0,100].
+- computeHealthScore weights: normalized via wSum, falls back to defaults if wSum=0. Correct.
+- computePriority: OR logic for P1 (high nominal OR high residual OR high zScore OR over-explained) and P2 (medium nominal OR warn residual OR high devBom). Correct.
+- computeZScore: (|current| - mean(|historical|)) / STDDEV_SAMP(|historical|) — correct. Sample variance (N-1, Bessel's). stdDev=0 → null. n < minWeeks → INSUFFICIENT_DATA. ABS applied to both current and historical. Correct.
+- queryHistoricalStats SQL: two-level CTE (weekly_dev → final stats) correctly aggregates to 1 observation per (outlet,item,week). Sample variance formula (sumSq - n*mean²)/(n-1) with Math.max(0, ...) guard for floating-point cancellation. Correct.
+- calcZScoreFromStats: (|value| - mean) / stdDev — correct, takes ABS of value.
+- calcGrowth: (curr - prev) / |prev| — correct. prev=0 → null (or 0 if both 0). Direction flip handled separately in computeGrowthResult.
+- calcGrowthAbs: (|curr| - |prev|) / |prev| — correct magnitude growth. Handles LOSS→DEEPER-LOSS correctly (positive growth = worse).
+- computeNominalDeviationGrowth: delegates to calcGrowthAbs — correct fix for the -10M→-20M signed-growth confusion.
+- computeSalesModePerOutlet: MODE with smaller-value-wins tiebreak — correct, matches SQL ORDER BY cnt DESC, nominalSales ASC. Tie-break documented and consistent.
+- computeTotalSales: sum of per-outlet MODE — correct.
+- computeBenchmark: areaMultiplier = outletDevBom / areaAvgDevBom with div-by-zero guard (areaAvgDevBom > 0 ? ... : null). Correct.
+- projectTrend: OLS linear regression formula correct (slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)). R² formula correct. Degenerate cases (n<2, denom=0, yDenom=0) handled. Projection at x=n correct. Confidence classification (HIGH/MEDIUM/LOW based on n + R²) reasonable.
+- computeDeterioration: |current| - |earliest| — correct signed delta (positive = worsening).
+- SQL lossNominal = SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END) — consistent across dashboard.ts, health-ranking.ts, areas.ts, items.ts. Matches deviation.ts comment.
+- Sign convention (LOSS = negative nominalLossSurplus) — consistent across all SQL queries, JS helpers, and rule-evaluation.ts.
