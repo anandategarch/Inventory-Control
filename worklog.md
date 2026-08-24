@@ -16178,3 +16178,572 @@ Stage Summary:
 - Serialized Queries: 20 parallel → 4 serial batches of 5. Cold analysis: 60s → 10s (6x speedup). No more pool exhaustion / timeout errors.
 - 0 tsc errors, 0 lint errors, 115/115 tests pass.
 - Supabase free plan: BISA — no upgrade needed. Serialization keeps each batch within pool cap.
+
+---
+Task ID: AUDIT-LOGIC
+Agent: Business Logic Audit Agent
+Task: Deep audit metric calculations, rule engine, priority scoring
+
+Work Log:
+- Read prior worklog (DEEP-AUDIT-IR-ZEROS, GLOBAL-ITEM-SEARCH + SERIAL-QUERIES entries) to understand recent fixes (alias bug, connection pool, serialized batches).
+- Read metric definitions: src/lib/metrics/{definitions,deviation,historical,growth,sales,benchmark,index}.ts — verified formulas against Master Context.
+- Read rule engine: src/engine/rules/evaluator.ts (491 lines) + src/config/rules.yaml (249 lines, 17 rules).
+- Read SQL rule push-down: src/lib/queries/rule-evaluation.ts (246 lines) — evaluateRulesSql + evaluateHistoricalRulesJs.
+- Read transform/validator: src/engine/transform.ts + src/engine/validator.ts — residual, direction, DQ checks.
+- Read priority score: src/lib/queries/outlets.ts:770-998 (queryRestoRecommendations — 15 signals).
+- Read variance analysis: src/lib/queries/health-ranking.ts (queryVarianceAnalysis + queryHistoricalCriticalItems).
+- Read growth drivers: src/lib/queries/growth-drivers.ts (aggregateMetric + computePareto).
+- Read peer comparison: src/lib/queries/outlets.ts:1-535 (queryTopOutlets, queryPeerComparison, queryPeerItemComparison, queryPeerTrend).
+- Read thresholds: src/config/thresholds.ts + src/config/settings.ts + src/lib/settings.ts (RuntimeThresholds).
+- Read shared filter builder: src/lib/queries/shared.ts (buildSqlFilters with alias param).
+- Read historical stats SQL: src/lib/queries/historical.ts (two-level CTE: weekly_dev → final stats).
+- Cross-referenced growth metric usage: src/engine/analysis/ruleService.ts:34 (calcGrowthAbs for qtyDeviasiGrowth) vs src/app/api/outlet-items/route.ts:368 (calcGrowth for qtyDeviasiGrowth — SIGNED, different!).
+- Verified rule conditions in rules.yaml match SQL implementation in rule-evaluation.ts (12 rules in SQL, 5 zScore-based in JS post-process).
+- Verified z-score sample variance (N-1 Bessel's) in both JS (historical.ts:86) and SQL (historical.ts:70 — computational formula).
+- Verified Sales MODE per outlet CTE pattern (duplicated in 6+ queries).
+
+Stage Summary:
+
+=== 1. CRITICAL LOGIC BUGS (wrong calculations, misleading results) ===
+
+[A] **Variance analysis misses direction flips** — `src/lib/queries/health-ranking.ts:222`
+   - Formula: `delta = c."absNominalDeviasi" - p."absNominalDeviasi"` (magnitude only).
+   - varianceDirection: `> 0 → WORSENED, < 0 → IMPROVED, else STABLE`.
+   - BUG: An item going from +100M (SURPLUS) to -100M (LOSS) has delta = |100M| - |100M| = 0 → STABLE. But this is a critical direction flip!
+   - The `direction` column shows the per-period direction, but `varianceDirection` says STABLE.
+   - FIX: Add a fourth variance category `DIRECTION_FLIP` when `sign(curr.nominalLossSurplus) !== sign(prev.nominalLossSurplus)` and both are non-zero. Include these in topWorsened.
+
+[B] **S3 and S13 use identical SQL — full duplication** — `src/lib/queries/outlets.ts:645` and `:649`
+   - S3 (zScoreAbnormalCount, weight 10%): `ABS(ir."pctQtyDeviasiToBom") > 0.50`
+   - S13 (benchmarkHighCount, weight 3%): `ABS(ir."pctQtyDeviasiToBom") > 0.50`
+   - Both columns compute the SAME count. Every item with DevBom > 50% contributes 1 to BOTH signals.
+   - Combined weight per such item = 13% (10% + 3%). S13's "benchmark high" label is misleading — it's not a peer benchmark, just the same threshold.
+   - FIX: Either remove S13 (deduplicate), or compute real benchmark = outlet DevBom vs network avg (using computeBenchmark from metrics/benchmark.ts).
+
+[C] **S9 and S15 overlap (Tolerance Breach High vs Tolerance Breach)** — `src/lib/queries/outlets.ts:639-640`
+   - S9 fires when `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct) * 2` (weight 8%)
+   - S15 fires when `ABS(pctQtyDeviasiToBom) > ABS(tolerancePct)` (weight 1%)
+   - Any item triggering S9 ALSO triggers S15. Combined weight per such item = 9%.
+   - The layering (ABNORMAL vs WARNING severity) is intentional in rule engine, but in priority score it's double-counting.
+   - FIX: Make S15 = `toleranceBreachCount - toleranceBreachHighCount` (only "regular" breaches, excluding high ones). OR remove S15 entirely (S9 captures the more severe case).
+
+[D] **HISTORICAL_ABNORMAL + BENCHMARK_ABOVE_NETWORK fire together** — `src/lib/queries/rule-evaluation.ts:219-241`
+   - When zScore > HISTORICAL_ZSCORE_HIGH, BOTH rules push a flag (priority 78 + 72 = same item flagged twice).
+   - Same for HISTORICAL_WARNING + BENCHMARK_ABOVE_AREA (zScore > warn, priority 58 + 50).
+   - The two flag types have different semantics in naming but identical trigger conditions.
+   - FIX: Either remove BENCHMARK_ABOVE_* rules (they're duplicates of HISTORICAL_*), or change BENCHMARK rules to use area/network comparison (computeBenchmark) instead of zScore.
+
+[E] **Peer comparison fallback returns ALL outlets as peers** — `src/lib/queries/outlets.ts:220-230, 301`
+   - When target outlet has no sales (nominalSales null/0), `target_fallback` CTE returns sales=0.
+   - WHERE clause: `ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END`
+   - With t.sales = 0, the bound becomes 999999999 → EVERY outlet with sales > 0 matches.
+   - Result: target with no sales gets 11 "peers" that are completely unrelated (highest-sales outlets win LIMIT).
+   - FIX: When target has no sales, return empty peers with a clear message ("Target outlet has no sales data — peer comparison unavailable"). Don't use 999999999 sentinel.
+
+[F] **growth-drivers.ts `pct = prev > 0 ? delta / prev : 0`** — `src/lib/queries/growth-drivers.ts:208`
+   - For signed qtyDeviasi field, when prev is negative (LOSS items), `prev > 0` is false → pct = 0.
+   - Example: qtyDeviasi goes from -100 to -150 (magnitude grew 50%, got worse). delta = -50, prev = -100. pct = 0 (misleading — shows no change).
+   - Bypasses metrics/growth.ts:calcGrowth which correctly uses `(curr - prev) / |prev|`.
+   - FIX: Replace with `pct = prev !== 0 ? delta / Math.abs(prev) : 0`, OR import calcGrowth from metrics/growth.ts.
+
+[G] **Health Score abnormalRate denominator dilutes by warnings** — `src/lib/metrics/deviation.ts:228-229`
+   - Formula: `activeItems = warningCount + abnormalCount; abnormalRate = abnormalCount / activeItems`.
+   - Outlet A: 100 items, 0 warnings, 5 abnormals → abnormalRate = 5/5 = 100% → score = 0.
+   - Outlet B: 100 items, 50 warnings, 5 abnormals → abnormalRate = 5/55 = 9% → score = 82.
+   - Outlet B is WORSE (more total issues) but gets a HIGHER health score. The formula rewards outlets with many warnings.
+   - FIX: Use `abnormalRate = abnormalCount / totalItemCount` (all items, not just active). Or use `abnormalCount / max(1, totalItemCount)`.
+
+[H] **Health Score false positive when BOM/deviation = 0** — `src/lib/metrics/deviation.ts:130-131, 214-215`
+   - `computeDevBomAggregate` uses `safeDiv(num, den)` which returns 0 when den = 0.
+   - When outlet has 0 BOM data (missing data), devBom = 0 → devBomScore = `100 - ((0 - 0.05)/(0.50 - 0.05))*100` = `100 - (-11.1)` = clamped to 100.
+   - Same for `computeResidualPctAggregate` when totalQtyDeviasi = 0 → residualScore = 100.
+   - Outlet with MISSING data gets PERFECT health score (false positive).
+   - FIX: When denominator = 0, return `neutralScore = 50` instead of 0 (same pattern as lossToSales null check on line 223-225).
+
+[I] **S2 hybrid MAX masks recovery** — `src/lib/queries/outlets.ts:823-826`
+   - Formula: `deviasiGrowthHybrid = [MoM, Historical].filter(non-null).reduce(Math.max, 0)`.
+   - Scenario: Outlet had one-time fraud last month (dev=1B), now back to normal (dev=100M), historical avg=50M.
+     - MoM = (100M - 1B) / 1B = -90% (improving)
+     - Historical = (100M - 50M) / 50M = +100% (worse than history)
+     - MAX = +100% → S2 score = 100 (max priority).
+   - But the outlet is RECOVERING. The hybrid masks this.
+   - FIX: Use weighted average (e.g., 0.7 * MoM + 0.3 * Historical) instead of MAX, OR flag both signals separately instead of combining.
+
+=== 2. CALIBRATION ISSUES (thresholds/weights need tuning) ===
+
+[a] **Signal saturation points inconsistent** — `src/lib/queries/outlets.ts:804-890`
+   - S3: 5 items = 100 (multiplier 20)
+   - S9: 4 items = 100 (multiplier 25)
+   - S10: 2 items = 100 (multiplier 50) ← over-explained/fraud saturates fastest
+   - S11: 5 items = 100 (multiplier 20)
+   - S12: 5 items = 100 (multiplier 20)
+   - S13: 4 items = 100 (multiplier 25)
+   - S15: 20 items = 100 (multiplier 5)
+   - FIX: Normalize to a common saturation point (e.g., 10 items = 100 for all count-based signals). Use multiplier = 10 consistently. This makes cross-signal comparison meaningful.
+
+[b] **S5 Loss/Sales saturates before Health Score says "critical"** — `src/lib/queries/outlets.ts:848`
+   - S5 formula: `Math.min(100, lossToSales * 1000)` → saturates at lossToSales = 0.10 (10%).
+   - Health Score threshold: `lossToSales BAD = 0.15` (15% critical).
+   - Inconsistent: S5 maxes out at 10%, but Health Score says 15% is critical. An outlet at 12% Loss/Sales gets S5=100 (max priority) but Health Score = 27 (not yet 0).
+   - FIX: Align S5 saturation with Health Score BAD threshold: `Math.min(100, (lossToSales / 0.15) * 100)`.
+
+[c] **S6 Direction Flip binary 0/100 — no materiality scaling** — `src/lib/queries/outlets.ts:854`
+   - A small item (Rp 100K) flipping direction = full 8% weight.
+   - The outlet's main item (Rp 50M) flipping = same 8% weight.
+   - FIX: Scale by materiality: `s6Score = directionFlip ? Math.min(100, (flippedItemNominal / totalNominal) * 100 * 2) : 0`. Or weight by the flipped item's % of outlet deviation.
+
+[d] **Priority level thresholds (TINGGI≥55, SEDANG≥30, RENDAH<30) not calibrated** — `src/lib/queries/outlets.ts:900-901`
+   - No evidence these were calibrated against real outlet distribution.
+   - With 15 signals and many saturating easily, most outlets may score > 55 → all TINGGI.
+   - FIX: Run distribution analysis on production data. Compute percentile (e.g., top 20% = TINGGI, next 30% = SEDANG, bottom 50% = RENDAH). Or use z-score of priority score across outlets.
+
+[e] **zScore trend ratio threshold hardcoded** — `src/lib/metrics/historical.ts:99-100`
+   - `ratio > 1.1 → DETERIORATING, ratio < 0.9 → IMPROVING`.
+   - Not configurable via Settings (unlike HISTORICAL_ZSCORE_WARN/HIGH).
+   - FIX: Add HISTORICAL_TREND_RATIO_UP/DOWN to RuntimeThresholds (defaults 1.1 / 0.9).
+
+[f] **Peer comparison ±10% sales range may be too tight** — `src/lib/queries/outlets.ts:301, 418`
+   - For target sales = Rp 100M, peer range = Rp 90M-110M.
+   - In areas with few outlets, may return 0-2 peers.
+   - FIX: Make configurable (PEER_SALES_TOLERANCE_PCT, default 0.10). Consider adaptive: widen range if <5 peers found.
+
+[g] **HISTORICAL_MIN_WEEKS = 4 may be too strict** — `src/config/settings.ts:131`
+   - For new outlets (< 4 weeks of history), zScore = null → no historical anomaly detection.
+   - With monthly data, 4 weeks = 1 month. Most outlets won't have 4 weeks of SAME weekLabel history (only 4 weeks per month, and we need same weekLabel across months).
+   - FIX: Consider lowering to 3, OR allow interpolation / weighted average for short history.
+
+=== 3. CONSISTENCY ISSUES (same metric computed differently) ===
+
+[i] **`computeResidual` duplicated with different sign convention** — `src/engine/transform.ts:239-283` vs `src/lib/metrics/deviation.ts:64-79`
+   - transform.ts: returns `residualQty = sign * absResidual` (SIGNED — negative for LOSS, positive for SURPLUS).
+   - metrics/deviation.ts: returns `residualQty = Math.max(0, absDev - explained)` (UNSIGNED — always >= 0).
+   - Both functions named `computeResidual`. Caller must know which one to use.
+   - SQL aggregate uses `SUM(ABS(ir."residualQty"))` — works for both, but the stored DB value comes from transform.ts (signed).
+   - FIX: Rename one. transform.ts version → `computeResidualSigned` (used for storage). metrics/deviation.ts → keep as `computeResidual` (pure metric, used for aggregates). Document the difference.
+
+[ii] **`qtyDeviasiGrowth` computed 2 different ways** — `src/engine/analysis/ruleService.ts:34` vs `src/app/api/outlet-items/route.ts:368`
+   - ruleService.ts (rule context): `calcGrowthAbs(curr.qtyDeviasi, prev.qtyDeviasi)` — magnitude (correct for BOM_DEVIATION_MISMATCH rule).
+   - outlet-items/route.ts (display): `calcGrowth(totalQtyDeviasi, prevQtyDeviasi)` — SIGNED.
+   - Display shows -50% for -100→-150 (signed decrease), but rule engine sees +50% (magnitude increase).
+   - Users see one number, rule engine uses another. Confusing for debugging.
+   - FIX: Use `calcGrowthAbs` everywhere for qtyDeviasiGrowth (matches the rule semantics). Or split into two fields: `qtyDeviasiGrowthSigned` (display) + `qtyDeviasiGrowthMagnitude` (rules).
+
+[iii] **Direction computation pattern duplicated in 5+ SQL queries** — `src/lib/queries/outlets.ts:75-77, 290-292, 435-439, 658-664, 727-733` + `src/lib/queries/health-ranking.ts:223-229`
+   - queryTopOutlets uses `lossAmount > surplusAmount` (net magnitude comparison).
+   - queryRestoRecommendations uses `SUM(nominalLossSurplus) < 0` (signed sum).
+   - queryPeerItemComparison uses the same SUM(nominalLossSurplus) pattern.
+   - health-ranking.ts uses per-row `nominalLossSurplus` sign.
+   - Mathematically equivalent for net = loss - surplus, but different SQL patterns. Fragile to future changes.
+   - FIX: Extract to a SQL function `outlet_direction(outletId, month, week)` or a computed column on Outlet table. Or use a shared CTE.
+
+[iv] **Sales MODE CTE duplicated in 6+ SQL queries** — `src/lib/queries/outlets.ts:40-54, 107-121, 195-208, 380-393, 596-610` + `src/lib/queries/health-ranking.ts:82-97`
+   - Same `sales_counts → ranked_sales → sales_mode` CTE pattern copy-pasted.
+   - Any change to MODE logic (e.g., tie-break rule) requires updating 6+ places.
+   - FIX: Create a SQL view `v_outlet_sales_mode` (materialized per month/week) or use a Prisma reusable CTE builder.
+
+[v] **`evaluateRulesSql` + `evaluateHistoricalRulesJs` + `evaluateRules` (YAML) = 3 implementations of 17 rules** — `src/lib/queries/rule-evaluation.ts` + `src/engine/rules/evaluator.ts`
+   - SQL implements 12 rules inline (CASE WHEN ... THEN 1 ELSE 0 END).
+   - JS post-process implements 5 zScore-based rules.
+   - YAML defines all 17 rules for the JS evaluator.
+   - No automated test verifies SQL and YAML produce identical results.
+   - Currently aligned (verified qtyDeviasiGrowth uses ABS in both), but fragile.
+   - FIX: Add a parity test: run both paths on the same dataset, assert flag sets are equal. OR eliminate one path (use YAML for all rules, drop SQL push-down — performance cost).
+
+=== 4. MISSING EDGE CASES ===
+
+[a] **Variance analysis direction flip with same magnitude** — see Critical Bug [A] above.
+
+[b] **Peer comparison target with no sales** — see Critical Bug [E] above.
+
+[c] **Health Score with zero BOM/deviation** — see Critical Bug [H] above.
+
+[d] **`directionFlip` excludes NEUTRAL transitions** — `src/lib/queries/outlets.ts:853`
+   - `direction !== 'NEUTRAL' && prevDirection !== 'NEUTRAL'`.
+   - An outlet transitioning from NEUTRAL (last month) to LOSS (this month) is NOT flagged as a flip.
+   - New outlets becoming problematic are missed.
+   - FIX: Flag `prevDirection === 'NEUTRAL' && direction === 'LOSS'` as `directionOnset` (a new problem, possibly more severe than a flip).
+
+[e] **z-score unbounded when stdDev is very small** — `src/lib/metrics/historical.ts:92`
+   - Formula: `(Math.abs(currentValue) - mean) / stdDev`.
+   - If stdDev = 0.001 and current = 0.5, mean = 0.2 → zScore = 300. No upper clamp.
+   - Such extreme z-scores distort priority scoring.
+   - FIX: Clamp zScore to [-10, 10] or similar reasonable bound.
+
+[f] **Growth unbounded when prev is very small** — `src/lib/metrics/growth.ts:34`
+   - `(curr - prev) / Math.abs(prev)`. If prev = 0.001, curr = 100 → growth = 99,900 = 9,990,000%.
+   - No clamp. Distorts S2 priority score.
+   - FIX: Clamp growth to [-10, 10] (±1000%) or similar.
+
+[g] **`deviasiGrowthHybrid` initial accumulator = 0** — `src/lib/queries/outlets.ts:824-826`
+   - `.reduce((max, g) => Math.max(max, g), 0)`.
+   - If both MoM and Historical are negative (outlet improving), result = 0 (not negative).
+   - S2 score = 0 (correct — no priority for improving).
+   - BUT: the signal loses information. An outlet improving by -90% MoM gets same S2=0 as an outlet with no change.
+   - Not a bug per se, but consider exposing `deviasiGrowthImprovement` as a separate signal for "outlets doing well" (could be used for positive reinforcement).
+
+[h] **`computePareto` remainderCount may be inaccurate** — `src/lib/queries/growth-drivers.ts:147-166`
+   - `arr` is already filtered (delta threshold applied). `remainderCount = arr.length - drivers.length`.
+   - But "remainder" should logically include items BELOW delta threshold (filtered out before Pareto).
+   - Current: remainder = items above threshold but below 80% cumPct. Misleading label.
+   - FIX: Rename to `excludedCount` (items above threshold but not in top 20/80%). OR compute total item count separately for a true remainder.
+
+=== 5. REFACTORING OPPORTUNITIES ===
+
+[r1] **Unify `computeResidual`** — see Consistency [i]. Single source of truth in metrics/deviation.ts, transform.ts imports and adds sign wrapper.
+
+[r2] **Extract Sales MODE CTE to SQL view** — see Consistency [iv]. Reduces duplication in 6+ queries.
+
+[r3] **Extract direction CASE WHEN to SQL function** — see Consistency [iii]. Single formula, used by 5+ queries.
+
+[r4] **Use metrics/growth.ts in growth-drivers.ts** — replace inline `pct = prev > 0 ? delta / prev : 0` with `calcGrowth(curr, prev)`.
+
+[r5] **Remove dead code `HISTORICAL_STATS_SQL`** — `src/lib/metrics/historical.ts:172-189` is documented as "REFERENCE ONLY" and "NOT used". Either delete or move to a documentation file.
+
+[r6] **Consolidate rule implementations** — see Consistency [v]. Add parity test or eliminate one path.
+
+[r7] **Extract priority signal formulas to YAML** — `src/lib/queries/outlets.ts:804-890` has 15 inline signal formulas. Should be a `signals.yaml` (like rules.yaml) so business analysts can tune weights/thresholds without code changes. Each signal = { code, name, weight, formula, saturationPoint }.
+
+[r8] **Centralize outlier clamping** — z-score, growth, residual ratio all need clamping. Add a `clampMetric(value, min, max)` utility in metrics/deviation.ts and use everywhere.
+
+=== 6. PRIORITY RANKING (which to fix first) ===
+
+**P0 — Correctness (fix immediately, affects every dashboard load):**
+1. Critical Bug [B] — S3/S13 duplication (13% weight inflation per high-DevBom item).
+2. Critical Bug [C] — S9/S15 overlap (9% weight inflation per tolerance breach).
+3. Critical Bug [G] — Health Score abnormalRate dilution (rewards outlets with many warnings).
+4. Critical Bug [H] — Health Score false positive on missing BOM data.
+5. Critical Bug [A] — Variance analysis misses direction flips (STABLE when sign changed).
+
+**P1 — Misleading results (fix soon, affects user decisions):**
+6. Critical Bug [E] — Peer comparison fallback returns all outlets.
+7. Critical Bug [F] — growth-drivers.ts pct = 0 for negative prev (signed qtyDeviasi).
+8. Critical Bug [I] — S2 hybrid MAX masks recovery.
+9. Consistency [ii] — qtyDeviasiGrowth signed vs magnitude (display vs rule engine).
+10. Critical Bug [D] — HISTORICAL_ABNORMAL + BENCHMARK_ABOVE_NETWORK duplicate flags.
+
+**P2 — Calibration (tune with real data):**
+11. Calibration [a] — Signal saturation normalization.
+12. Calibration [b] — S5 Loss/Sales align with Health Score BAD threshold.
+13. Calibration [c] — S6 Direction Flip materiality scaling.
+14. Calibration [d] — Priority level thresholds distribution analysis.
+15. Calibration [g] — HISTORICAL_MIN_WEEKS lower to 3 or add interpolation.
+
+**P3 — Consistency / Refactoring (technical debt):**
+16. Consistency [i] — Unify computeResidual.
+17. Consistency [iii] — Extract direction SQL.
+18. Consistency [iv] — Extract Sales MODE CTE.
+19. Consistency [v] — Rule engine parity test.
+20. Refactoring [r7] — signals.yaml for priority weights.
+
+**P4 — Missing edge cases (low frequency but high impact):**
+21. Edge [d] — directionOnset for NEUTRAL→LOSS transitions.
+22. Edge [e] — z-score clamp [-10, 10].
+23. Edge [f] — growth clamp [-10, 10].
+24. Edge [h] — computePareto remainderCount label fix.
+
+Verification: No code changes made (READ-ONLY audit per task scope). All findings reference specific file:line. Formulas quoted verbatim from source. Recommendations are specific (file:line + correct formula).
+
+---
+Task ID: AUDIT-FRONTEND
+Agent: Frontend Audit Agent
+Task: Deep audit frontend components, hooks, UX patterns
+
+Work Log:
+- Read worklog.md (last ~180 lines) to understand prior work: DEEP-AUDIT-ZEROS (useCountUp bug documented but NOT fixed), DEEP-AUDIT-IR-ZEROS (ir alias + pool + inflight reject fixed), GLOBAL-ITEM-SEARCH + SERIAL-QUERIES (Cmd+K modal + serialized API batches).
+- READ-ONLY audit of: src/app/page.tsx (833 lines), src/app/layout.tsx, src/hooks/useAnalysis.ts (535 lines), src/hooks/useDashboard.ts (75 lines), src/hooks/use-toast.ts, src/components/providers.tsx, next.config.ts, src/components/dashboard/{ExecutiveSummary,Charts,RestoAnalysis,PeerComparison,GlobalItemSearchModal,TopItems,AdvancedAnalysis,AnalysisCards,InsightsPanel,PrioritySummaryCard,RestoRecommendationCard,CardDrillDown,HistoricalZScoreCard,AreaTrendChart,ItemDeepDive,ExportDialog}.tsx, src/components/drilldown/{DrillDownDrawer,SourceDataModal}.tsx, src/components/filters/{FilterBar,SearchableComboBox}.tsx, src/components/ui/{error-boundary,global-loading-bar,toaster,toast}.tsx, src/lib/{format,a11y}.ts, src/components/dashboard/resto-analysis/{helpers,ranking-nasional,menu-analysis,item-detail-modal}.tsx.
+- Verified useCountUp bug (ExecutiveSummary.tsx:44-92) is STILL present despite DEEP-AUDIT-ZEROS recommendation. Line 73 has `Math.min((now - start) / duration, 1)` — no Math.max clamp on lower bound, so negative progress produces negative eased → negative display values. Line 85-87 microtask `setHasAnimated(true)` still fires before rAF, causing effect re-run that cancels rAF. Combined with reactStrictMode:true (next.config.ts:7), all 10 KPI values display as large negative numbers on every dev-mode dashboard load.
+- Cross-checked Zustand usage: 11 files use destructured `useDashboard()` (over-subscribe to whole store → re-render on ANY state change); only 3 files (TopItems, AdvancedAnalysis, InsightsPanel) use the correct selector pattern `useDashboard((s) => s.field)`.
+- Verified ErrorBoundary coverage: wraps only HealthAlert, GrowthComparison, DeviationBreakdown, HistoricalZScore, AreaTrend (5 components). 10+ critical components (ExecutiveSummary with useCountUp, TopItems*, InsightsPanel, RestoRecommendationCard, MultiPeriodComparisonCard, AreaComparison, OutletHealthRanking, ItemConsistencyAnalysis, LossVsSurplusChart, TrendChart) are NOT wrapped — a render crash in any of them blanks the entire dashboard.
+- Verified toast config issues: TOAST_LIMIT=1 (only 1 toast at a time, silent replacement), TOAST_REMOVE_DELAY=1000000 (16.7 min — dismissed toasts linger in memory). useToast useEffect re-subscribes listener on every state change (inefficient).
+- Verified dynamic() import ordering: page.tsx:18 uses `dynamic` before `import dynamic` at line 30 — works at runtime (ES module imports hoisted) but stylistically awkward.
+- Verified ItemDeepDive dynamic import at page.tsx:46 has `loading: () => null` — blank dialog during chunk load.
+- Verified no `prefers-reduced-motion` support anywhere (useCountUp, animate-spin, hover transforms all ignore motion sensitivity).
+- Verified no `prefers-color-scheme` — ThemeProvider forces `defaultTheme="light" enableSystem={false}`.
+- Verified `<html lang="id">` but many card titles are English ("Executive Summary", "Growth Comparison", "Deviation Breakdown", "Loss vs Surplus", "Weekly Trend", "Peer Comparison", "Top Outlets") — screen readers will mispronounce.
+- Verified numberColor/directionColor helpers are duplicated across 3 files with inconsistent dark-mode support (lib/format.ts has no dark variants; resto-analysis/helpers.tsx has dark variants; GlobalItemSearchModal has a local copy).
+- Verified PeerComparison derived state (peers, otherPeers, peerCodes, peerAverages at lines 82-159) is NOT memoized — recomputed on every render.
+- Verified GlobalItemSearchModal.summary useCallback (line 129) is invoked inline (line 139) — useCallback provides zero benefit; should be useMemo or plain function.
+- Verified GlobalItemSearchModal autocomplete has NO debounce — each keystroke fires a new query (TanStack dedupes by key, but URLSearchParams building + fetch call execute).
+- Verified touch target sizes: FilterBar dropdowns h-8 (32px), icon buttons h-8 w-8 (32px), ScrollToTop h-10 (40px) — all below WCAG 2.5.5 AAA minimum (44px).
+- Verified no frontend component tests exist (only src/lib/*.test.ts and engine rules tests). No RTL/Vitest component tests.
+- Verified toast viewport position: `top-0` on mobile (covers sticky header), `sm:bottom-0 sm:right-0` on desktop.
+- Verified Escape key handler (page.tsx:498-506) closes ALL overlays simultaneously — may conflict with Radix Dialog/Sheet's own Escape handling.
+
+Stage Summary:
+
+CRITICAL UX BUGS (broken interactions / crashes):
+- **ExecutiveSummary.tsx:73,85-87** — `useCountUp` timing bug STILL unfixed (DEEP-AUDIT-ZEROS recommended removal/clamp). `Math.min((now - start) / duration, 1)` lacks Math.max(0, ...) lower bound → negative progress → negative eased → display values like "-Rp 164,19M" instead of "Rp 153,92M" for Sales. Microtask `Promise.resolve().then(() => setHasAnimated(true))` fires before rAF, cancels rAF, re-runs effect with later `start` timestamp. Combined with `reactStrictMode: true` (next.config.ts:7), ALL 10 KPI cards display negative numbers on every dev-mode dashboard load. Fix: REMOVE useCountUp entirely (replace `useCountUp(value)` calls with direct `value`), OR apply `Math.max(0, Math.min((now - start) / duration, 1))` AND remove microtask (move `setHasAnimated(true)` inside tick when `progress >= 1`).
+- **page.tsx:46** — `ItemDeepDive` dynamic import `loading: () => null` renders blank dialog during chunk load. Fix: `loading: () => <div className="p-8 text-center text-sm text-muted-foreground">Memuat...</div>`.
+- **page.tsx:498-506** — Escape handler closes ALL overlays at once (exportDialog, itemSearch, drilldown, sourceModal, cardDrillDown, deepDiveItem). Conflicts with Radix's own Escape handling — may cause double-dismissal or unexpected state. Fix: Remove manual Escape handler, rely on Radix Dialog/Sheet/Popover internal Escape.
+
+PERFORMANCE ISSUES:
+- **useDashboard over-subscription** (11 files: page.tsx, ExecutiveSummary.tsx, RestoAnalysis.tsx, PeerComparison.tsx, FilterBar.tsx, GlobalItemSearchModal.tsx, RestoRecommendationCard.tsx, CardDrillDown.tsx, ItemDeepDive.tsx, DrillDownDrawer.tsx, SourceDataModal.tsx) — all use `const { field1, field2, ... } = useDashboard()`. ANY store change (focusOutlet, drilldown, activeTab) re-renders ALL 11 components. Only 3 files (TopItems, AdvancedAnalysis, InsightsPanel) use the correct selector pattern. Fix: convert all 11 to `useDashboard((s) => s.field)` per field, or use `useShallow` from `zustand/react/shallow`.
+- **Missing ErrorBoundary** — only 5 of 15+ dashboard components are wrapped. ExecutiveSummary (with useCountUp crash risk), TopItems*, InsightsPanel, RestoRecommendationCard, MultiPeriodComparisonCard, AreaComparison, OutletHealthRanking, ItemConsistencyAnalysis, LossVsSurplusChart, TrendChart — all unwrapped. A null-deref or malformed-data crash in any of them blanks the entire dashboard.
+- **PeerComparison derived state not memoized** (PeerComparison.tsx:82-159) — `peers`, `otherPeers`, `peerCodes`, `peerAverages` recomputed on every render. `peerCodes.join(',')` in queryKey (line 108) creates new string each render. Fix: wrap in useMemo with [mainData] dep.
+- **GlobalItemSearchModal useCallback misuse** (line 129-139) — `summary` wrapped in useCallback but invoked inline at line 139 (`const stats = summary(results)`). useCallback provides zero benefit. Should be useMemo or plain function. `stats` recomputed on every render even when `results` unchanged.
+- **GlobalItemSearchModal no debounce** (line 89-104) — each keystroke fires new useQuery (TanStack dedupes by key, but URLSearchParams + fetch execute). Fix: 300ms debounce on input.
+- **FilterBar hover-prefetch fires excessively** (FilterBar.tsx:249-263, 283-295) — `onMouseEnter` on each SelectItem fires prefetch. Rapid mouse movement across dropdown triggers many prefetch calls. TanStack dedupes, but URLSearchParams building + queryClient.prefetchQuery call still execute. Fix: debounce or only prefetch on focus.
+- **FetchAware re-renders all children on isFetching toggle** (page.tsx:252-266) — 6+ FetchAware wrappers with `isFetching={analysis.isFetching}` cause all children to re-render on every fetch start/end. By design (loading UI), but means ExecutiveSummary etc. re-render on every refetch.
+
+ACCESSIBILITY ISSUES:
+- **Touch targets too small** — FilterBar dropdowns h-8 (32px), icon buttons h-8 w-8 (32px), Tabs ~32px, ScrollToTop h-10 (40px). WCAG 2.5.5 AAA minimum is 44px. Fix: increase to h-9 (36px) min, h-10 (40px) preferred.
+- **No prefers-reduced-motion support** — useCountUp (500ms), animate-spin, transition-all duration-200, hover:-translate-y-0.5 — none respect motion sensitivity. Fix: add `@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }` to globals.css.
+- **`<html lang="id">` mixed-language content** (layout.tsx:29) — many card titles are English ("Executive Summary", "Growth Comparison", "Deviation Breakdown", "Loss vs Surplus", "Weekly Trend", "Peer Comparison", "Top Outlets", "Top 10 by Nominal Deviasi"). Screen readers pronounce English with Indonesian phonetics. Fix: wrap English titles in `<span lang="en">...</span>` or translate to Indonesian.
+- **TOAST_LIMIT=1** (use-toast.ts:11) — only 1 toast visible. New toasts silently replace old. Fix: increase to 3.
+- **TOAST_REMOVE_DELAY=1000000** (use-toast.ts:12) — 16.7 minutes. Dismissed toasts linger in memory. Fix: 5000-10000ms.
+- **useToast useEffect dep** (use-toast.ts:177-185) — `useEffect(..., [state])` re-subscribes listener on every state change. Fix: use `[]` dep (listener pattern is module-level).
+- **Color-only differentiation** — LOSS (red) vs SURPLUS (green) is primary signal in many tables. Direction letter "L"/"S" shown in TopItems, RestoAnalysis, GlobalItemSearchModal — but NOT in ExecutiveSummary KPI cards (rely on `inverse` flag + color). Deviation Breakdown chart bars use color alone (legend present but bars rely on color). Fix: always include text/icon alongside color.
+- **prefers-color-scheme ignored** (providers.tsx:19) — `defaultTheme="light" enableSystem={false}`. Users with dark OS settings get forced light mode. May be intentional; document or make toggleable.
+- **Toast viewport covers sticky header on mobile** (toast.tsx) — `top-0` on mobile, header is `sticky top-0 z-40`, toast `z-[100]`. Toast appears ON TOP of filter bar. Fix: mobile toast at `bottom-0`.
+- **No aria-live verification** — Radix Toast provides aria-live by default, but with TOAST_LIMIT=1 + 16-min remove delay, screen readers may announce stale toasts.
+
+ARCHITECTURE IMPROVEMENTS:
+- **Split page.tsx (833 lines)** — DashboardPage is 545 lines. Extract: `useKeyboardShortcuts()` hook (lines 465-510), `useAutoSelectPeriod(status)` hook (lines 298-388), `useCacheWarming(status)` hook (lines 318-342), `<DashboardTab data isFetching />` component (lines 653-772).
+- **Split FilterBar.tsx (771 lines)** — 11 useState hooks for dialogs. Extract each dialog (Drive import, Settings, Data management, PIC management, Upload) into its own file. Move Drive import logic into `useDriveImport()` hook.
+- **Deduplicate helpers** — `numberColor`: lib/format.ts:100 (no green for positive) vs GlobalItemSearchModal.tsx:55 (red/green/muted). `directionColor`: lib/format.ts:88 (no dark variant) vs resto-analysis/helpers.tsx:35 (with dark variant). Consolidate into one canonical helper.
+- **Split useDashboard store** — mixes 3 concerns: filters (monthLabel, area, outletCode, pic), UI state (activeTab, sourceModalOpen, cardDrillDown), navigation (drilldown, deepDiveItem, focusOutlet, scorecardOutlet). Split into 3 stores OR move filter state to URL searchParams (shareable/bookmarkable — currently refresh loses all filters).
+- **Add persist middleware** — useDashboard has no persistence. User's last-selected month/week is lost on refresh. Add `persist` for filter prefs only.
+- **ErrorBoundary doesn't refetch on retry** (error-boundary.tsx:45-47) — `handleReset` just clears `hasError`. If underlying data unchanged, crash recurs. Fix: accept `onRetry` callback prop to invalidate query.
+- **ItemDeepDive pagination mismatch** (ItemDeepDive.tsx:51) — `drilldownLimit = outletCode ? 50 : 500`. Different key from DrillDownDrawer/SourceDataModal (limit 50). Doesn't conflict (different cache key) but wasteful — fetches 500 records when 50 might suffice.
+
+UX POLISH OPPORTUNITIES:
+- **Add viewport export** (layout.tsx) — no explicit viewport meta. Add `export const viewport: Viewport = { width: 'device-width', initialScale: 1, maximumScale: 5 };`.
+- **Empty states inconsistent** — TopItems/OutletHealthRanking/ItemConsistencyAnalysis/AreaComparison show "Tidak ada data" row only. RestoAnalysis/PeerComparison/GlobalItemSearchModal have nice illustrations + guidance. Standardize with a reusable `<EmptyState icon title message cta? />` component.
+- **Error states lack retry** — RestoAnalysis.tsx:142-156, PeerComparison.tsx:225-229, GlobalItemSearchModal.tsx:272-275, ItemDetailModal.tsx:65-68 — all show error text, no retry button. User must close/reopen or refresh. Fix: add "Coba lagi" button calling `refetch()`.
+- **tabular-nums not universal** — missing in some RestoAnalysis profile card values (Row component at helpers.tsx:50 uses `font-mono font-semibold` but no `tabular-nums`).
+- **KPI hint truncation** (ExecutiveSummary.tsx:171) — `line-clamp-1` truncates hint to 1 line. `title` attribute shows full on hover, but mobile users can't hover. Fix: `line-clamp-2`.
+- **PeerComparison sub-cards no skeleton** — EfficiencyScoreCard, GapAnalysisCard, RankingSummaryCard, ScatterPlotCard all conditionally rendered (`targetRow && peerCount > 0`). While loading, absent → layout shift when they appear. Fix: skeleton placeholders.
+- **Inconsistent table min-widths** — PeerComparison `min-w-[1400px]`, RankingNasional `min-w-[1200px]`, GlobalItemSearchModal `min-w-[900px]`, RestoAnalysis Bahan table no min-width. Standardize.
+- **Mixed language in titles** — see accessibility issue above.
+- **No frontend tests** — only backend/lib tests exist. No RTL/Vitest component tests for the dashboard. Critical components (ExecutiveSummary with useCountUp, PeerComparison with 3 parallel queries, GlobalItemSearchModal) have no test coverage.
+
+PRIORITY RANKING (fix order):
+1. **CRITICAL** — Fix useCountUp timing bug (ExecutiveSummary.tsx:44-92). Still unfixed from DEEP-AUDIT-ZEROS. Causes ALL KPI values to display as negative numbers in dev mode. Simplest fix: remove useCountUp, replace `useCountUp(value)` with direct `value`.
+2. **HIGH** — Add ErrorBoundary around 10+ unwrapped components (ExecutiveSummary, TopItems*, InsightsPanel, RestoRecommendationCard, MultiPeriodComparisonCard, AreaComparison, OutletHealthRanking, ItemConsistencyAnalysis, LossVsSurplusChart, TrendChart).
+3. **HIGH** — Convert 11 files from `useDashboard()` destructured to selector pattern. Major re-render reduction on filter/state changes.
+4. **HIGH** — Add retry buttons to error states (RestoAnalysis, PeerComparison, GlobalItemSearchModal, ItemDetailModal).
+5. **MEDIUM** — Increase touch targets to ≥40px (FilterBar buttons, dropdowns, Tabs).
+6. **MEDIUM** — Fix toast config (TOAST_LIMIT=3, TOAST_REMOVE_DELAY=5000, useToast effect dep=[]).
+7. **MEDIUM** — Add prefers-reduced-motion support to globals.css.
+8. **MEDIUM** — Memoize PeerComparison derived state + GlobalItemSearchModal stats.
+9. **MEDIUM** — Add 300ms debounce to GlobalItemSearchModal autocomplete input.
+10. **LOW** — Deduplicate numberColor/directionColor helpers.
+11. **LOW** — Move filter state to URL searchParams (shareable/bookmarkable).
+12. **LOW** — Add persist middleware to useDashboard for filter prefs.
+13. **LOW** — Split page.tsx (extract DashboardTab, keyboard shortcuts hook, auto-select hook).
+14. **LOW** — Split FilterBar.tsx (extract each dialog).
+15. **LOW** — Fix `<html lang="id">` mixed-language (wrap English titles in `<span lang="en">`).
+16. **LOW** — Add viewport export to layout.tsx.
+17. **LOW** — Fix toast viewport position on mobile (bottom instead of top).
+18. **LOW** — Add frontend component tests (Vitest + RTL for ExecutiveSummary, PeerComparison, GlobalItemSearchModal).
+
+---
+Task ID: AUDIT-BACKEND
+Agent: Backend Audit Agent
+Task: Deep audit backend API routes + SQL queries
+
+Work Log:
+- Read worklog.md tail (DEEP-AUDIT-IR-ZEROS, GLOBAL-ITEM-SEARCH + SERIAL-QUERIES) to understand prior fixes (alias bug, connection pool, inflight reject, serialized batches, global item search).
+- Read prisma/schema.prisma — 9 indexes on InventoryRecord, Float for all nominal fields, denormalized area on InventoryRecord vs Outlet.
+- Read src/lib/db.ts — forced connection_limit=10, pool_timeout=30, statement_timeout=30000 (PgBouncer strips this — relies on withStatementTimeout). Lazy Proxy singleton pattern. Port 5432→6543 auto-switch for Supabase.
+- Read src/lib/aggregation-cache.ts — DB-backed cache (5min TTL), in-flight Promise dedup via Map, getCached/setCached/invalidateCache('analysis|').
+- Read all 8 query files in src/lib/queries/ (shared.ts, dashboard.ts, items.ts, outlets.ts, areas.ts, historical.ts, health-ranking.ts, growth-drivers.ts, rule-evaluation.ts). Verified buildSqlFilters alias param fix is correct and all callers pass safe string literals.
+- Read all 8 metrics files in src/lib/metrics/ (definitions.ts, deviation.ts, historical.ts, growth.ts, sales.ts, benchmark.ts, forecast.ts, index.ts). Pure functions, no DB access — clean separation.
+- Read all 17 API route files in src/app/api/. Checked error handling, rate limiting, Zod validation, response shape consistency, cache usage, maxDuration.
+- Read src/middleware.ts (ADMIN_TOKEN protection, fail-open if unset), src/lib/validation.ts (Zod schemas), src/lib/rate-limit.ts (in-memory fixed-window).
+- Checked dev.log for query durations: analysis cold 10.2s, warm 4.9s, recommendations 2.3s, status 4.0s. No pool exhaustion errors in recent log.
+- Grep'd for hardcoded secrets — none found. ADMIN_TOKEN is env-var only.
+- Grep'd for N+1 patterns — found 1 in pic/import fallback (line 100-105: sequential createMany fallback).
+
+Stage Summary:
+
+### 1. Critical Bugs (will cause wrong data or crashes)
+
+  **C1. `queryHistoricalCategoryAvg` (items.ts:451-463) — weekLabel assumed constant across historical periods.**
+  - Code: `WHERE ir."weekLabel" = ${historicalPeriods[0].weekLabel} AND ir."monthLabel" IN (${monthClauses})`
+  - Bug: Only uses the FIRST period's weekLabel. If a caller passes historical periods with DIFFERENT weekLabels (e.g., [W2 Mei, W3 Juni]), only W2 is queried — W3 Juni data is silently dropped.
+  - Current impact: LOW (analysis route line 377-382 filters historicalPeriods to same weekLabel before calling, so it works today). But the function is brittle — any future caller passing mixed weeks gets wrong historical averages silently.
+  - Fix: Either (a) document the precondition "all historicalPeriods must share the same weekLabel", or (b) change to `WHERE (ir."monthLabel", ir."weekLabel") IN (...)` using a VALUES list of (month, week) tuples (like queryHistoricalStats does).
+
+  **C2. `export-report` uses OLD JS rule evaluator, not the new SQL one.**
+  - export-report/route.ts:21 imports `evaluateRules` from `@/engine/rules/evaluator` (the legacy JS loop over raw records).
+  - export-report/route.ts:22 imports `buildRuleContext, computeVarianceAnalysis, computeHistoricalAnalysis` from `@/engine/analysis/analysis`.
+  - analysis/route.ts:55 imports `evaluateRulesSql, evaluateHistoricalRulesJs` from `@/lib/queries/rule-evaluation` (the SQL-pushed version).
+  - Impact: The Word export report may show DIFFERENT rule flags / variance analysis / historical analysis than the dashboard for the same data. Users comparing the export to the screen will see inconsistencies.
+  - Fix: Refactor export-report to call `evaluateRulesSql` + `evaluateHistoricalRulesJs` + `queryVarianceAnalysis` + `queryHistoricalCriticalItems` (the SQL versions), matching the analysis route.
+
+  **C3. monthLabelSchema rejects uppercase month names — manual URL crafting fails.**
+  - validation.ts:8: `z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/)` — requires Title Case (e.g., "Agustus 2026").
+  - validation.test.ts:77 explicitly tests that "AGUSTUS 2026" is REJECTED.
+  - Impact: If DB has "AGUSTUS 2026" (e.g., from upload-data.ts script) and a user types that in a URL, they get 400. The month-resolver handles DB-case resolution AFTER validation, but validation blocks the input first.
+  - Fix: Relax regex to `/^[A-Za-z]+\s+20\d{2}$/` (accept any case) — let month-resolver handle case normalization. OR validate AFTER month resolution.
+
+  **C4. `withStatementTimeout` NOT applied to 6 heavy queries — can hang indefinitely under PgBouncer.**
+  - PgBouncer transaction mode (port 6543) strips the `statement_timeout` URL param (db.ts:46 comment). Only `withStatementTimeout` enforces real per-query timeout.
+  - Queries WITH timeout (4): queryTrendAgg, queryExecSummary, queryTopItemsByDeviasiRank, queryTopItemsByDeviasiRankForOutlet (dashboard.ts + items.ts).
+  - Queries WITHOUT timeout (at risk): queryOutletHealthRanking (health-ranking.ts:81), queryVarianceAnalysis (health-ranking.ts:212 — self-join on 272K rows), queryHistoricalCriticalItems (health-ranking.ts:320), queryGrowthDrivers (growth-drivers.ts — 4 parallel sub-queries), queryRestoRecommendations (outlets.ts:577 — 3 parallel complex CTEs), queryPeerComparison (outlets.ts:176), queryPeerItemComparison (outlets.ts:358), queryNetworkItemRisk (items.ts:616 — json_agg with window functions), evaluateRulesSql (rule-evaluation.ts:66 — LATERAL joins on 35K rows).
+  - Impact: If any of these queries hang (e.g., due to a bad query plan or lock contention), there is NO timeout to kill them. They hold a connection until the Prisma client times out (~30s from pool_timeout, but the query itself keeps running on the DB side).
+  - Fix: Wrap each in `withStatementTimeout`. Simplest: create a `db.$queryRawTimeout` helper that wraps any raw query.
+
+### 2. Performance Issues (slow but works)
+
+  **P1. Float type for monetary fields — aggregation rounding errors.**
+  - schema.prisma:98-131 — all `nominal*` and `qty*` fields are `Float?` (IEEE 754 double).
+  - SUM of 272K Float rows accumulates rounding errors. E.g., SUM of 272K rows each with 0.1 gives ~27200.0000001 instead of 27200.0.
+  - Impact: KPI values may differ by a few rupiah between SQL SUM and JS re-aggregation. Cosmetic for large values, but breaks exact-match tests.
+  - Fix: Migrate to `Decimal(18,2)` for nominal fields. Requires schema migration + JS code to handle Prisma Decimal objects (Number() coercion). Major refactor — schedule for next sprint.
+
+  **P2. queryTopItemsByDeviasiRankForOutlet (items.ts:277) scans ALL outlets for one outlet's top-30.**
+  - The CTE `all_item_per_outlet` computes per-(item, outlet) aggregates for ALL outlets (~5K rows), then filters to the target outlet's top-30.
+  - Impact: For an outlet with 200 items, the query computes 5K rows but only returns 30. Wasted work.
+  - Fix: Pre-filter `all_item_per_outlet` to only items that exist in the target outlet (subquery: `WHERE itemId IN (SELECT itemId FROM InventoryRecord WHERE outletCode = $target)`). This reduces the CTE from 5K to ~200×(N outlets) rows.
+
+  **P3. queryRestoRecommendations fires 3 parallel complex queries without statement timeout.**
+  - outlets.ts:594 — Promise.all of [currRows (huge CTE with 15 COUNT conditions), prevRows, histRows].
+  - dev.log shows /api/recommendations takes 2.3s — acceptable, but no timeout guard.
+  - Fix: Wrap each in `withStatementTimeout` (30s).
+
+  **P4. queryPeerComparison CROSS JOIN target_combined then filters — scans all outlets.**
+  - outlets.ts:299 `CROSS JOIN target_combined t WHERE COALESCE(sm.sales, 0) > 0 AND ABS(...) <= ...`
+  - For 341 outlets, this is fine. For 1000+ outlets, the CROSS JOIN produces 1000 rows then filters.
+  - Fix: Move the filter into a subquery: `JOIN (SELECT id, code, name, sales FROM sales_mode WHERE ABS(sales - t.sales) <= t.sales * 0.1) filtered ON ...`.
+
+  **P5. pic/import/route.ts:100-105 — N+1 fallback if createMany fails.**
+  - If `db.outletPIC.createMany({ skipDuplicates: true })` throws (e.g., on SQLite), the catch block loops through `toCreate` and calls `db.outletPIC.create` one by one — N sequential DB round-trips.
+  - Impact: For a 339-row PIC import, that's 339 sequential INSERTs. On PostgreSQL, createMany never fails, so this path is dead code in production. But the fallback exists for "SQLite compatibility" — which is dead code since db.ts rejects SQLite.
+  - Fix: Remove the SQLite fallback entirely (db.ts:57 throws on non-PostgreSQL URLs). Use `createMany` with `skipDuplicates: true` unconditionally.
+
+  **P6. analysis/route.ts:484-489 — DQ groupBy uses `where: { sourceFile: { monthLabel: month! } }` (relation filter).**
+  - This joins DQIssue → SourceFile on sourceFileId, then filters by monthLabel. Could be slow if DQIssue has many rows.
+  - Fix: Add `@@index([sourceFileId])` on DQIssue (already exists, schema.prisma:174). Consider also `@@index([code, severity])` (already exists, schema.prisma:175). Indexes are adequate — no change needed.
+
+### 3. Security Concerns
+
+  **S1. ADMIN_TOKEN middleware fails OPEN if env var is unset (middleware.ts:67-70).**
+  - If `ADMIN_TOKEN` is not set, ALL destructive endpoints (ingest, delete, settings, migrate-direction) are accessible without auth.
+  - Impact: On Vercel, if the env var is accidentally unset during deploy, anyone can delete all data via `DELETE /api/data?all=true&confirm=true`.
+  - Mitigation: The code documents this as intentional ("Frontend has no auth UI"). Rate limiting provides DoS protection. But for production, this is a risk.
+  - Fix: Add a startup check that logs a CRITICAL warning if ADMIN_TOKEN is unset in production. Or add a Vercel build-time check that fails the build if ADMIN_TOKEN is missing.
+
+  **S2. GET /api/ingest is PUBLIC (middleware.ts:57) — triggers bulk re-ingest.**
+  - Anyone can call `GET /api/ingest?fast=true` to trigger a full re-scan of DATA_DIR, parse all Excel files, and re-insert 272K records.
+  - Rate limited (5/min per IP), but a distributed attack could bypass this.
+  - Impact: CPU + DB load. Could cause denial of service.
+  - Fix: Require ADMIN_TOKEN for GET /api/ingest as well (it's a heavy operation regardless of being GET).
+
+  **S3. Rate limiter is in-memory (rate-limit.ts:12 `const buckets = new Map`).**
+  - In serverless (Vercel), each cold start creates a new Map. Rate limits reset on every cold start.
+  - Impact: An attacker can wait for a cold start (or trigger one by hitting a different instance) to reset their quota. Effective rate limit is N × (instances) per window.
+  - Fix: Use Redis-backed rate limiter (e.g., @upstash/ratelimit). Code comment already notes this TODO.
+
+  **S4. `constantTimeEqual` (middleware.ts:24-31) leaks token length via early return.**
+  - `if (a.length !== b.length) return false;` — returns immediately if lengths differ, leaking the token length via timing.
+  - Impact: Low (token is a fixed-length env var). But a sophisticated attacker could determine token length by measuring response time across many requests.
+  - Fix: Pad shorter string to match longer, then compare. Or use Web Crypto API `crypto.subtle.timingSafeEqual` if available in the runtime.
+
+  **S5. No path traversal in ingest-process (VERIFIED SAFE).**
+  - ingest-process/route.ts:31 `SAFE_FILEHASH_RE = /^[a-f0-9]{8,128}$/i` — rejects non-hex.
+  - ingest-process/route.ts:32 `SAFE_EXT_ALLOWLIST = new Set(['.xlsx', '.xls', '.csv'])` — rejects non-allowed extensions.
+  - validateFileMetadata (line 34-52) checks both before reassembleFile.
+  - path.join(tmpDir, `${fileHash}${ext}`) is safe because both components are validated.
+  - Verdict: NO path traversal risk. Well-mitigated.
+
+  **S6. SSRF protection in import-drive (VERIFIED SAFE).**
+  - import-drive/route.ts:61 `ALLOWED_DOMAINS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com']`.
+  - Line 68 checks hostname exact match OR ends with `.domain`.
+  - Verdict: NO SSRF risk. Well-mitigated.
+
+### 4. Schema Improvements
+
+  **I1. Redundant index: `@@index([monthLabel, weekLabel])` is a prefix of `@@index([monthLabel, weekLabel, outletId])`.**
+  - schema.prisma:145 + 149. PostgreSQL can use the 3-column index for 2-column prefix queries. The 2-column index wastes space + write time.
+  - Fix: Remove `@@index([monthLabel, weekLabel])` (line 145).
+
+  **I2. Missing index for `ORDER BY absNominalDeviasi DESC` (drilldown + top items).**
+  - drilldown/route.ts:76-79 orders by `absNominalDeviasi DESC, id DESC`. No index on absNominalDeviasi.
+  - queryTopItemsByNominal (items.ts:35-54) orders by `SUM(ir."absNominalDeviasi") DESC` — can't use a row-level index for an aggregate.
+  - But drilldown is a row-level ORDER BY — a DESC index on absNominalDeviasi would help.
+  - Fix: Add `@@index([absNominalDeviasi])` — but only if drilldown is called frequently. Currently drilldown is used for the "Source Data" modal (user-initiated, not on every dashboard load). Low priority.
+
+  **I3. Missing index for self-join in queryVarianceAnalysis (health-ranking.ts:235-241).**
+  - `JOIN "InventoryRecord" p ON p."outletId" = c."outletId" AND p."itemId" = c."itemId" AND p."akunPenyesuaian" IS NOT DISTINCT FROM c."akunPenyesuaian" AND p."monthLabel" = $prevMonth AND p."weekLabel" = $prevWeek`.
+  - The prev side filters by (monthLabel, weekLabel) — covered by `@@index([monthLabel, weekLabel, outletId])`. Then joins on (outletId, itemId, akunPenyesuaian) — partially covered by the unique constraint `@@unique([weekId, outletId, itemId, akunPenyesuaian])` (but weekId != weekLabel).
+  - Fix: Consider `@@index([monthLabel, weekLabel, outletId, itemId])` — helps the self-join. But this is a 4-column index; evaluate if the query is hot enough.
+
+  **I4. Denormalized `area` on InventoryRecord can drift from Outlet.area.**
+  - schema.prisma:133 `area String // denormalized for fast filtering`.
+  - buildSqlFilters (shared.ts:54) filters by `ir.area`. But outlet-items/route.ts:246 filters by `o.area` (JOIN Outlet). If they diverge, different queries filter differently.
+  - The MASTER_CONTEXT notes this denormalization is intentional for performance (avoids JOIN on every filter).
+  - Fix: No schema change needed, but add a DQ check on ingest: `if (ir.area !== outlet.area) log warning`. Or add a periodic consistency check script.
+
+  **I5. OutletPIC.outletCode is a string, NOT a FK to Outlet.code.**
+  - schema.prisma:227 `outletCode String @unique` — no FK relation to Outlet.
+  - This allows PIC assignments for outlets not yet in the Outlet table (intentional per pic/route.ts comment).
+  - But it also allows typos: `outletCode = "1030.BDGSETT"` (extra T) would create a phantom PIC assignment that never matches any InventoryRecord.
+  - Fix: Add a DQ warning on PIC import: `if outletCode NOT IN (SELECT code FROM Outlet) log warning`. Not a blocking error — just a warning.
+
+  **I6. FileChunk has no TTL / auto-cleanup.**
+  - schema.prisma:238-248. Chunks are stored in DB and deleted after processing (ingest-process route calls `db.fileChunk.deleteMany` on completion).
+  - But if the user abandons the upload mid-way (closes browser after chunk 2 of 5), the chunks remain in DB forever.
+  - Fix: Add a scheduled cleanup (cron or on-next-ingest) that deletes FileChunk rows older than 1 hour. Or add `@@index([createdAt])` and a cleanup query `DELETE WHERE createdAt < NOW() - INTERVAL '1 hour'`.
+
+### 5. Refactoring Opportunities
+
+  **R1. export-report duplicates buildExecSummaryFromSql (route.ts:48-82) — already exists in services/exec-summary.ts.**
+  - export-report/route.ts:48 defines its own `buildExecSummaryFromSql` with `_prevMetrics` extension.
+  - analysis/services/exec-summary.ts:15 defines the canonical version without `_prevMetrics`.
+  - Fix: Move `_prevMetrics` into the canonical version (it's useful for the export's "prev column" display), then import from services/exec-summary.ts.
+
+  **R2. Duplicated "auto-compute prevWeek/prevMonth" logic across 4 routes.**
+  - analysis/route.ts:246-304, outlet-items/route.ts:96-130, recommendations/route.ts:47-79, export-report/route.ts:337-353.
+  - All 4 implement the same "find same weekLabel in previous month" algorithm with subtle variations.
+  - Fix: Extract to `@/lib/period-resolver` with a function `findPreviousPeriod(allPeriods, month, week)` returning `{ prevWeek, prevMonth }`. Import in all 4 routes.
+
+  **R3. Duplicated "resolve PIC → outletCodes" logic across 4 routes.**
+  - analysis/route.ts:213-220, recommendations/route.ts:81-103, item-search/route.ts:75-91, export-report/route.ts:272-285.
+  - All 4 run `db.$queryRaw\`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})\`` with try/catch and sentinel `['__NO_MATCH__']` for empty results.
+  - Fix: Extract to `@/lib/pic-resolver` with `async function resolvePicOutlets(pic: string | null): Promise<string[] | null>` returning null (no filter) or string[] (with sentinel applied). Import in all 4 routes.
+
+  **R4. Dead code in rule-evaluation.ts:49-59 — `Prisma.join` of thresholds is built but never used.**
+  - Line 49: `const t = Prisma.join([...thresholds...], ', ');` — variable `t` is never referenced in the SQL template.
+  - Lines 110-119 use `${thresholds.STD_DEVIASI_BOM_PCT}` etc. directly (each as a separate parameter).
+  - Fix: Remove the dead `t` variable (lines 49-59).
+
+  **R5. queryNetworkItemRisk (items.ts:616) uses `json_agg(json_build_object(...))` — PostgreSQL-only, breaks the "portable SQL" comment.**
+  - The function comment says "keeps SQL portable + testable" but json_agg is PostgreSQL-specific.
+  - Since db.ts rejects non-PostgreSQL URLs, this is fine in practice. But the comment is misleading.
+  - Fix: Update the comment to "PostgreSQL-only (json_agg) — schema is locked to postgresql provider".
+
+  **R6. ingest-process/route.ts has 3 nearly-identical "extract month from rows" blocks (lines 185-198, 235-246, 361-374).**
+  - The `extractMonthFromRows` function is defined once (line 185) but called in 3 places with the same pattern.
+  - Fix: Already deduplicated — the function is reused. But the 3 call sites each have the same "if placeholder, extract, re-parse" logic. Consider extracting `resolveMonthFromExcelData(parsed, fileName, monthInfo)` helper.
+
+### 6. Priority Ranking (fix first)
+
+  **P0 (correctness — fix immediately):**
+  1. **C2**: export-report uses old JS rule evaluator — produces inconsistent results vs dashboard. (Refactor to use SQL evaluators.)
+  2. **C3**: monthLabelSchema rejects uppercase — breaks manual URL crafting and any frontend that sends uppercase. (Relax regex.)
+  3. **C1**: queryHistoricalCategoryAvg assumes constant weekLabel — silent data loss if precondition violated. (Document or fix with VALUES list.)
+
+  **P1 (reliability — fix this sprint):**
+  4. **C4**: 9 heavy queries lack `withStatementTimeout` — can hang indefinitely under PgBouncer. (Wrap each.)
+  5. **S1**: ADMIN_TOKEN fail-open in production — add startup warning or build-time check.
+  6. **S2**: GET /api/ingest is public — require ADMIN_TOKEN.
+  7. **S3**: Rate limiter is in-memory — use Redis for serverless. (Already TODO'd in code.)
+
+  **P2 (performance — fix next sprint):**
+  8. **P1**: Float → Decimal for monetary fields. (Major migration — schedule.)
+  9. **P2**: queryTopItemsByDeviasiRankForOutlet scans all outlets. (Pre-filter by target outlet's items.)
+  10. **P4**: queryPeerComparison CROSS JOIN then filter. (Move filter into subquery.)
+  11. **P5**: pic/import N+1 fallback. (Remove dead SQLite fallback.)
+
+  **P3 (cleanup — fix when touching related code):**
+  12. **R1-R6**: Refactoring opportunities (dedup, dead code removal).
+  13. **I1**: Remove redundant `@@index([monthLabel, weekLabel])`.
+  14. **I6**: Add FileChunk TTL cleanup.
+  15. **S4**: constantTimeEqual length leak — minor, low priority.
+
+### Summary
+Backend is in good shape after the prior DEEP-AUDIT fixes (alias bug, connection pool, serialized batches). No SQL injection found — all raw queries use Prisma tagged templates with parameterized values; the only `Prisma.raw()` uses are for internal string literals (aliases, column names from hardcoded switch statements). Path traversal and SSRF are properly mitigated.
+
+Main concerns: (1) export-report uses stale JS rule logic inconsistent with the dashboard, (2) 9 heavy queries lack statement timeouts (PgBouncer strips the URL param), (3) Float monetary fields accumulate rounding errors, (4) in-memory rate limiter is ineffective in serverless, (5) ADMIN_TOKEN fails open if unset. These are all fixable without architectural changes.
