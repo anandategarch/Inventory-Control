@@ -926,6 +926,7 @@ export async function queryItemAutocomplete(
 // ============================================================
 export interface ItemTrendRow {
   monthLabel: string;
+  monthKey: string; // FIX (AUDIT-NEWFEATURES C1): ISO format "2026-08" for chronological sort (monthLabel alphabetical sort is wrong for Indonesian month names)
   weekLabel: string;
   outletCode: string;
   outletName: string;
@@ -953,6 +954,7 @@ export async function queryItemTrend(
   const rows = await db.$queryRaw<Array<ItemTrendRow>>`
     SELECT
       ir."monthLabel",
+      sf."monthKey",
       ir."weekLabel",
       o.code as "outletCode",
       o.name as "outletName",
@@ -971,11 +973,12 @@ export async function queryItemTrend(
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id
+    JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
     WHERE LOWER(i.name) = LOWER(${itemNameFilter})
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
-    GROUP BY ir."monthLabel", ir."weekLabel", o.code, o.name, o.area
-    ORDER BY ir."monthLabel", ir."weekLabel", o.code
+    GROUP BY ir."monthLabel", sf."monthKey", ir."weekLabel", o.code, o.name, o.area
+    ORDER BY sf."monthKey", ir."weekLabel", o.code
     LIMIT ${limit}
   `;
   return rows.map((r: any) => ({

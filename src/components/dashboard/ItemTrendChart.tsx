@@ -35,11 +35,13 @@ export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
   // Group by period → build chart rows
   const periodMap = new Map<string, ChartRow>();
   for (const r of data) {
-    const periodKey = `${r.monthLabel}|${r.weekLabel}`;
+    const periodKey = `${r.monthKey}|${r.weekLabel}`;
     if (!periodMap.has(periodKey)) {
       periodMap.set(periodKey, {
         period: `${r.monthLabel.slice(0, 3)} ${r.weekLabel.replace('WEEK ', 'W')}`,
-        sortKey: `${r.monthLabel}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+        // FIX (AUDIT-NEWFEATURES C1): use monthKey (ISO "2026-08") for chronological sort.
+        // Indonesian monthLabel ("Agustus", "Juli") sorts alphabetically — wrong order.
+        sortKey: `${r.monthKey}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
       });
     }
     periodMap.get(periodKey)![r.outletCode] = r.nominalDeviasi;

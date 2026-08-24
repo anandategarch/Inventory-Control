@@ -181,7 +181,12 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
     const totalAbs = results.reduce((s, r) => s + r.absNominalDeviasi, 0);
     const lossOutlets = results.filter((r) => r.direction === 'LOSS').length;
     const surplusOutlets = results.filter((r) => r.direction === 'SURPLUS').length;
-    const avgDevBom = results.reduce((s, r) => s + (r.devBom ?? 0), 0) / results.length;
+    // FIX (AUDIT-NEWFEATURES C2): filter null devBom before averaging — null-as-0
+    // drags average down (outlet with qtyBom=0 has null devBom, shouldn't count as 0%).
+    const validDevBomRows = results.filter((r) => r.devBom != null);
+    const avgDevBom = validDevBomRows.length > 0
+      ? validDevBomRows.reduce((s, r) => s + (r.devBom as number), 0) / validDevBomRows.length
+      : 0;
     const abnormalCount = results.filter((r) => {
       const z = zScores.get(r.outletCode);
       return z != null && Math.abs(z) > 2;

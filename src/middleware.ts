@@ -3,17 +3,16 @@
 //
 //  Auth model: simple token-based via ADMIN_TOKEN env var
 //  - Dashboard & GET endpoints (read-only): PUBLIC (no auth)
-//  - /api/setup, POST /api/ingest, POST /api/import-drive, POST/DELETE /api/settings,
-//    DELETE /api/data, POST/DELETE /api/pic, POST /api/migrate-direction: requires ADMIN_TOKEN
+//  - /api/setup, POST /api/ingest, GET /api/ingest (Refresh Data), POST /api/import-drive,
+//    POST/DELETE /api/settings, DELETE /api/data, POST/DELETE /api/pic,
+//    POST /api/migrate-direction: requires ADMIN_TOKEN
 //
 //  Client sends: Authorization: Bearer <ADMIN_TOKEN>
 //  Or: ?admin_token=<ADMIN_TOKEN> (for browser-accessible /api/setup)
 //
-//  FIX API-5-REVERT: If ADMIN_TOKEN not set → ALLOW (fail-open) with warning.
-//  Reason: Frontend has no auth UI (no login page, no token input).
-//  Fail-closed breaks all imports/mutations in production without auth UI.
-//  Rate limiting on each route provides DoS protection.
-//  TODO: Add auth UI (login page) then re-enable fail-closed.
+//  FIX (AUDIT-SECURITY-PERF C1+C2): fail-closed in production when ADMIN_TOKEN unset.
+//  In dev, fail-open with warning (no auth UI, local testing).
+//  Also: GET /api/ingest is now PROTECTED (was public — anyone could trigger bulk re-ingest).
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
@@ -54,18 +53,26 @@ export function middleware(req: NextRequest) {
 
   // GET on /api/settings, /api/data, /api/pic (read-only listings) is public;
   // /api/setup is always protected (destructive DDL);
-  // GET /api/ingest (Refresh Data) is PUBLIC — rate limiter provides DoS protection.
+  // FIX (AUDIT-SECURITY-PERF C2): GET /api/ingest (Refresh Data) is now PROTECTED —
+  // was public, anyone could trigger bulk re-ingest of 272K records.
   const isProtectedMethod =
     pathname === '/api/setup' ||
+    pathname === '/api/ingest' || // protect GET too (Refresh Data)
     PROTECTED_METHODS.includes(method);
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // FIX API-5-REVERT: If ADMIN_TOKEN not set → ALLOW (fail-open) with warning.
-  // Frontend has no auth UI, so fail-closed breaks all imports/mutations.
-  // Rate limiting on each route provides DoS protection.
+  // FIX (AUDIT-SECURITY-PERF C1): fail-closed in production when ADMIN_TOKEN unset.
+  // In dev, fail-open with warning (no auth UI, local testing convenience).
   if (!adminToken) {
-    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth`);
+    if (process.env.NODE_ENV === 'production') {
+      logger.error(`ADMIN_TOKEN not set in production — ${pathname} blocked (fail-closed)`);
+      return NextResponse.json(
+        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set it in environment variables.' },
+        { status: 500 }
+      );
+    }
+    logger.warn(`ADMIN_TOKEN not set (dev mode) — ${pathname} accessible without auth`);
     return NextResponse.next();
   }
 

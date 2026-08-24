@@ -4,8 +4,10 @@
 // ============================================================
 import { z } from 'zod';
 
-// Month label: "Januari 2026", "Mei 2026", etc. — Indonesian month name + 4-digit year
-export const monthLabelSchema = z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/).optional();
+// Month label: "Januari 2026", "Mei 2026", "AGUSTUS 2026", etc. — Indonesian month name + 4-digit year
+// FIX (AUDIT-SECURITY-PERF C4): was /^[A-Z][a-z]+\s+20\d{2}$/ — rejected uppercase "AGUSTUS 2026".
+// monthResolver normalizes case AFTER validation, so validation must accept any case.
+export const monthLabelSchema = z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional();
 
 // Week label: "WEEK 1", "WEEK 2", "WEEK 4"
 export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).optional();

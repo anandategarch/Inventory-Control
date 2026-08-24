@@ -69,12 +69,15 @@ describe('validation helpers', () => {
       }
     });
 
-    it('rejects lowercase month', () => {
-      expect(monthLabelSchema.safeParse('januari 2026').success).toBe(false);
+    it('accepts lowercase month (monthResolver normalizes)', () => {
+      // FIX (AUDIT-SECURITY-PERF C4): regex now accepts any case — monthResolver
+      // uses toLowerCase() lookup, so any case input is valid and normalized to DB case.
+      expect(monthLabelSchema.safeParse('januari 2026').success).toBe(true);
     });
 
-    it('rejects all uppercase month', () => {
-      expect(monthLabelSchema.safeParse('AGUSTUS 2026').success).toBe(false);
+    it('accepts all uppercase month', () => {
+      // FIX (AUDIT-SECURITY-PERF C4): uppercase now ACCEPTED — monthResolver normalizes to DB case.
+      expect(monthLabelSchema.safeParse('AGUSTUS 2026').success).toBe(true);
     });
 
     it('rejects non-20xx year', () => {

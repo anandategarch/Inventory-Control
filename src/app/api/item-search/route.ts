@@ -17,6 +17,8 @@ import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items';
+// FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
+import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -25,8 +27,8 @@ const itemSearchQuerySchema = z.object({
   mode: z.enum(['autocomplete', 'cross-outlet', 'trend']).default('autocomplete'),
   q: z.string().min(1).max(200).optional(),
   item: z.string().min(1).max(200).optional(),
-  month: z.string().regex(/^[A-Z][a-z]+\s+20\d{2}$/).optional(),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
   area: z.string().max(100).optional(),
   pic: z.string().max(100).optional(),
 });
