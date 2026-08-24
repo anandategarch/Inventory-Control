@@ -231,9 +231,11 @@ export function computeHealthScore(
   // FIX (DEEP-AUDIT-LOGIC #7): was abnormal / (warning + abnormal) which dilutes by
   // warnings — an outlet with 50 warnings + 5 abnormals scored HIGHER than one
   // with 0 warnings + 5 abnormals. Now uses total item count as denominator.
+  // FIX (AUDIT-CALC-METRICS EDGE-1): when totalItemCount=0 (empty outlet), abnormalRate=0
+  // → abnormalScore=100 (misleading perfect score). Now returns neutralScore.
   const totalItemCount = input.normalCount + input.warningCount + input.abnormalCount;
-  const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : 0;
-  const abnormalScore = componentScore(abnormalRate, th.abnormal);
+  const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : null;
+  const abnormalScore = abnormalRate != null ? componentScore(abnormalRate, th.abnormal) : neutralScore;
 
   // FIX (BUG-2-3): clamp the final weighted sum to [0, 100] so negative
   // weights or extreme inputs cannot push the score outside the valid range.

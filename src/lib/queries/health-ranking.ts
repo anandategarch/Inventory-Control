@@ -231,14 +231,12 @@ export async function queryVarianceAnalysis(
         ELSE 'NEUTRAL'
       END as "direction",
       CASE
-        -- FIX (DEEP-AUDIT-LOGIC #4): detect direction flip (LOSS↔SURPLUS).
-        -- When direction flips, abs delta can be 0 (e.g. +100M→-100M has delta=0)
-        -- but this is a significant operational change — classify as WORSENED
-        -- to surface for investigation.
-        WHEN (
-          (c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) OR
-          (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0)
-        ) THEN 'WORSENED'
+        -- FIX (DEEP-AUDIT-LOGIC #4 + AUDIT-CALC-SQL EDGE-2): detect direction flip.
+        -- SURPLUS→LOSS = deterioration (WORSENED) — was positive, now negative.
+        -- LOSS→SURPLUS = recovery (IMPROVED) — was negative, now positive.
+        -- Previously both flips were WORSENED — recovery was misclassified.
+        WHEN (c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) THEN 'WORSENED'
+        WHEN (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0) THEN 'IMPROVED'
         WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") > 0 THEN 'WORSENED'
         WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") < 0 THEN 'IMPROVED'
         ELSE 'STABLE'

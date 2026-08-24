@@ -805,7 +805,7 @@ export async function queryRestoRecommendations(
     const topItem = r.topItem;
     const topItemNominal = Number(r.topItemNominal);
 
-    // Signal 1: Dev/BOM vs Peer (12%)
+    // Signal 1: Dev/BOM vs Peer (15%) — FIX: was 12%, increased after S13 removal
     const devBomRatio = networkAvgDevBom > 0 ? devBom / networkAvgDevBom : 0;
     const s1Score = Math.min(100, devBomRatio * 33);
 
@@ -833,7 +833,8 @@ export async function queryRestoRecommendations(
       ? Math.min(100, deviasiGrowthHybrid * 100)
       : 0;
 
-    // Signal 3: Z-Score Abnormal Count (10%) — items with z-score > 2
+    // Signal 3: High Deviation Item Count (10%) — items with |devBom| > 0.50 (proxy for z-score abnormal)
+    // NOTE: not a true z-score — uses fixed threshold 0.50 as proxy. See queryNetworkItemRisk for true z-score.
     const abnormalCount = zScoreAbnormalCount;
     const s3Score = Math.min(100, zScoreAbnormalCount * 20);
 

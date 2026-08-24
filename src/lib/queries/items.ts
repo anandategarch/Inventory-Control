@@ -617,7 +617,11 @@ export async function queryNetworkItemRisk(
     WITH item_per_outlet AS (
       SELECT i.id as "itemId", i.name as "itemName", MAX(ir."satuan") as "satuan",
         ir."outletId",
-        SUM(ir."absNominalDeviasi") as "nominalDeviasi",
+        -- FIX (AUDIT-CALC-SQL SIGN-2): was SUM(absNominalDeviasi) (ABS, always positive)
+        — labeled as "nominalDeviasi" which should be SIGNED everywhere else.
+        Now uses SUM(nominalDeviasi) for consistency. absNominalDeviasi still available
+        for sorting via the separate absDevBom column.
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
         -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (consistent with other queries)
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))

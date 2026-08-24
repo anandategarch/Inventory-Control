@@ -161,7 +161,9 @@ export const BENCHMARK_FLAG = 'from zScore vs historical — HISTORICAL_HIGH/HIS
  * DevBOM: <5% → 100, >50% → 0 (linear)
  * Residual: <20% → 100, >80% → 0 (linear)
  * Loss/Sales: <2% → 100, >15% → 0 (linear)
- * Abnormal: abnormal / (warning + abnormal), 0% → 100, >50% → 0 (linear)
+ * Abnormal: abnormal / totalItems, 0% → 100, >50% → 0 (linear)
+ * FIX (AUDIT-CALC-METRICS CONS-1): was 'abnormal / (warning + abnormal)' — stale
+ * comment after fix in deviation.ts to use totalItemCount as denominator.
  */
 export const HEALTH_SCORE_WEIGHTS = {
   devBom: 0.30,

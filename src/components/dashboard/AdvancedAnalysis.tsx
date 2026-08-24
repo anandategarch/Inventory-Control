@@ -113,9 +113,12 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
                   <TableCell className="text-[11px] px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
                   <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">
                     {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
-                    {/* Sort still uses absNominal (ABS of sum) — set in rankingService */}
-                    <span className={(o.nominalDeviasi ?? o.absNominal) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
-                      {fmtIDR(o.nominalDeviasi ?? o.absNominal)}
+                    {/* FIX (AUDIT-CALC-FRONTEND P1-3): was fallback to o.absNominal (always ≥0) when
+                        nominalDeviasi is null → worst-ranking outlets colored green. Now show '—' if null. */}
+                    <span className={o.nominalDeviasi != null
+                      ? (o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')
+                      : 'text-muted-foreground'}>
+                      {o.nominalDeviasi != null ? fmtIDR(o.nominalDeviasi) : '—'}
                     </span>
                   </TableCell>
                 </TableRow>
