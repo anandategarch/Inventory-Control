@@ -21,6 +21,9 @@ interface ParetoRow {
   nominalDeviasi: number;
   sharePct: number;
   cumPct: number;
+  histAvg?: number | null; // historical average of totalAbsNominal
+  zScore?: number | null; // z-score vs historical
+  histN?: number; // number of historical observations
 }
 interface ParetoResult {
   drivers: ParetoRow[];
@@ -81,13 +84,34 @@ function QuadrantCard({ title, icon, data, color }: { title: string; icon: React
         {!data || data.drivers.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada data</p>
         ) : (
-          <div className="space-y-0.5 max-h-[280px] overflow-y-auto">
+          <div className="space-y-0.5">
+            {/* Column headers */}
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40">
+              <span className="w-5 shrink-0">#</span>
+              <span className="flex-1 shrink-0">Nama</span>
+              <span className="w-28 text-right shrink-0">Nominal</span>
+              <span className="w-24 text-right shrink-0 hidden lg:block">Hist Avg</span>
+              <span className="w-14 text-right shrink-0 hidden lg:block">Z-Score</span>
+              <span className="w-10 text-right shrink-0">Share</span>
+              <span className="w-10 text-right shrink-0">Cum</span>
+            </div>
+            <div className="max-h-[260px] overflow-y-auto">
             {data.drivers.map((d, i) => (
               <div key={`${d.name}-${i}`} className="flex items-center gap-2 text-xs py-1 border-b border-border/30 last:border-0">
                 <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                 <span className="flex-1 truncate font-medium" title={d.name}>{d.name}</span>
                 {d.outletCount != null && <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{d.outletCount} outlet</span>}
-                <span className="w-24 text-right tabular-nums font-medium shrink-0">{fmtIDR(d.totalAbsNominal)}</span>
+                {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
+                <span className={`w-28 text-right tabular-nums font-medium shrink-0 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</span>
+                {/* Historical avg + z-score */}
+                <span className="w-24 text-right tabular-nums text-muted-foreground shrink-0 hidden lg:block" title={d.histN ? `${d.histN} periode historis` : ''}>
+                  {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
+                </span>
+                <span className={`w-14 text-right tabular-nums font-medium shrink-0 hidden lg:block ${
+                  d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                }`} title={d.zScore != null ? `Z-score: ${d.zScore.toFixed(2)} (${d.histN} periode)` : ''}>
+                  {d.zScore != null ? (d.zScore > 0 ? '+' : '') + d.zScore.toFixed(1) : '—'}
+                </span>
                 <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{d.sharePct.toFixed(0)}%</span>
                 <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{d.cumPct.toFixed(0)}%</span>
               </div>
@@ -97,6 +121,7 @@ function QuadrantCard({ title, icon, data, color }: { title: string; icon: React
                 Sisa {data.remainderPct.toFixed(0)}%: {data.remainderCount} lainnya
               </p>
             )}
+            </div>
           </div>
         )}
       </CardContent>

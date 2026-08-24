@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByPIC, queryParetoNestedItemOutlet } from '@/lib/queries/pareto';
+import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoHistorical, mergeHistoricalIntoPareto } from '@/lib/queries/pareto';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -62,14 +62,28 @@ export async function GET(req: NextRequest) {
       queryParetoNestedItemOutlet(week, month, filters, 10),
     ]);
 
+    // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
+    // + merge histAvg + zScore into Pareto results
+    const [histItem, histOutlet, histArea, histPIC] = await Promise.all([
+      queryParetoHistorical(week, month, 'item', filters),
+      queryParetoHistorical(week, month, 'outlet', { area: filters.area, picOutletCodes }),
+      queryParetoHistorical(week, month, 'area', { picOutletCodes }),
+      queryParetoHistorical(week, month, 'pic', { area: filters.area, picOutletCodes }),
+    ]);
+
+    const byItemMerged = mergeHistoricalIntoPareto(byItem, histItem);
+    const byOutletMerged = mergeHistoricalIntoPareto(byOutlet, histOutlet);
+    const byAreaMerged = mergeHistoricalIntoPareto(byArea, histArea);
+    const byPICMerged = mergeHistoricalIntoPareto(byPIC, histPIC);
+
     return NextResponse.json({
       success: true,
       period: { month, week },
       filters: { area: area || null, pic: pic || null },
-      byItem,
-      byOutlet,
-      byArea,
-      byPIC,
+      byItem: byItemMerged,
+      byOutlet: byOutletMerged,
+      byArea: byAreaMerged,
+      byPIC: byPICMerged,
       nested,
       durationMs: Date.now() - startedAt,
     });

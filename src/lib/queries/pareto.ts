@@ -298,3 +298,105 @@ export async function queryParetoNestedItemOutlet(
 
   return { items, totalAbsNominal: grandTotal };
 }
+
+// ============================================================
+//  Pareto Historical — fetch historical stats for Pareto dimensions
+//  For each dimension (item/outlet/area/pic), computes the average +
+//  stddev of totalAbsNominal across same weekLabel in previous months.
+//  Returns a Map<name, { histAvg, histStdDev, histN }> for z-score computation.
+//
+//  z-score = (current - histAvg) / histStdDev
+//  |z| > 2 = ABNORMAL, |z| > 1 = ELEVATED
+// ============================================================
+export async function queryParetoHistorical(
+  week: string,
+  month: string,
+  dimension: 'item' | 'outlet' | 'area' | 'pic',
+  filters: { area?: string | null; picOutletCodes?: string[] | null },
+): Promise<Map<string, { histAvg: number; histStdDev: number; histN: number }>> {
+  const f = buildSqlFilters(filters);
+
+  // Different GROUP BY expression per dimension
+  const groupExpr = dimension === 'item'
+    ? Prisma.sql`i.name`
+    : dimension === 'outlet'
+      ? Prisma.sql`o.code`
+      : dimension === 'area'
+        ? Prisma.sql`o.area`
+        : Prisma.sql`COALESCE(pic.pic, 'Unassigned')`;
+
+  const joinItem = dimension === 'item'
+    ? Prisma.sql`JOIN "Item" i ON ir."itemId" = i.id`
+    : Prisma.empty;
+  const joinOutlet = dimension !== 'item'
+    ? Prisma.sql`JOIN "Outlet" o ON ir."outletId" = o.id`
+    : Prisma.empty;
+  const joinPIC = dimension === 'pic'
+    ? Prisma.sql`LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"`
+    : Prisma.empty;
+
+  // Two-level aggregation:
+  // 1. weekly_dev: per (dimension, month, week) → 1 observation = SUM(absNominalDeviasi)
+  // 2. final: per dimension → AVG + STDDEV across weekly observations
+  // Filter: same weekLabel, different monthLabel (historical comparison)
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ name: string; histAvg: number; histStdDev: number; histN: number }>>`
+    WITH weekly_dev AS (
+      SELECT ${groupExpr} as "name",
+        ir."monthLabel", ir."weekLabel",
+        SUM(ir."absNominalDeviasi") as "weeklyTotal"
+      FROM "InventoryRecord" ir
+      ${joinItem}
+      ${joinOutlet}
+      ${joinPIC}
+      WHERE ir."weekLabel" = ${week}
+        AND ir."monthLabel" != ${month}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        ${f}
+      GROUP BY ${groupExpr}, ir."monthLabel", ir."weekLabel"
+    )
+    SELECT "name",
+      AVG("weeklyTotal") as "histAvg",
+      STDDEV_SAMP("weeklyTotal") as "histStdDev",
+      CAST(COUNT(*) AS INTEGER) as "histN"
+    FROM weekly_dev
+    WHERE "weeklyTotal" IS NOT NULL
+    GROUP BY "name"
+  `);
+
+  const map = new Map<string, { histAvg: number; histStdDev: number; histN: number }>();
+  for (const r of rows) {
+    const n = Number(r.histN);
+    const mean = Number(r.histAvg) || 0;
+    const stdDev = Number(r.histStdDev) || 0;
+    if (n >= 2) {
+      map.set(r.name, { histAvg: mean, histStdDev: stdDev, histN: n });
+    }
+  }
+  return map;
+}
+
+// ============================================================
+//  Merge historical stats into Pareto results
+//  Adds histAvg, zScore, histN to each driver row
+// ============================================================
+export function mergeHistoricalIntoPareto(
+  pareto: ParetoResult,
+  historical: Map<string, { histAvg: number; histStdDev: number; histN: number }>,
+): ParetoResult {
+  return {
+    ...pareto,
+    drivers: pareto.drivers.map(d => {
+      const hist = historical.get(d.name) || historical.get(d.code || '');
+      if (!hist || hist.histStdDev <= 0) {
+        return { ...d, histAvg: hist?.histAvg ?? null, zScore: null, histN: hist?.histN ?? 0 };
+      }
+      const zScore = (d.totalAbsNominal - hist.histAvg) / hist.histStdDev;
+      return {
+        ...d,
+        histAvg: hist.histAvg,
+        zScore: Number(zScore.toFixed(2)),
+        histN: hist.histN,
+      };
+    }),
+  };
+}
