@@ -500,7 +500,6 @@ export default function DashboardPage() {
 
   // GLOBAL-ITEM-SEARCH: Cmd+K opens the global item search modal (cross-outlet view).
   const [itemSearchOpen, setItemSearchOpen] = useState(false);
-  const [paretoOpen, setParetoOpen] = useState(false);
 
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
@@ -533,9 +532,9 @@ export default function DashboardPage() {
         setItemSearchOpen(true);
         return;
       }
-      // 1 / 2 / 3 → switch tabs (only when not typing in an input)
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
-        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer' };
+      // 1 / 2 / 3 / 4 → switch tabs (only when not typing in an input)
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4')) {
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto' };
         setActiveTab(tabMap[e.key]);
         return;
       }
@@ -544,7 +543,6 @@ export default function DashboardPage() {
       if (e.key === 'Escape') {
         setExportDialogOpen(false);
         setItemSearchOpen(false);
-        setParetoOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
         setSourceModal(false);
         setCardDrillDown(null);
@@ -609,19 +607,6 @@ export default function DashboardPage() {
                 <kbd className="hidden md:inline ml-0.5 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
               </Button>
             )}
-            {/* PARETO: 80/20 analysis button */}
-            {hasData && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-xs font-medium transition-all active:scale-95"
-                onClick={() => setParetoOpen(true)}
-                aria-label="Pareto 80/20 Analysis"
-              >
-                <TrendingDown className="h-3.5 w-3.5" />
-                <span className="hidden md:inline">Pareto</span>
-              </Button>
-            )}
             {analysis.isFetching && analysis.data && (
               <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -670,6 +655,7 @@ export default function DashboardPage() {
                   <li className="flex items-center justify-between gap-3"><span>Tab Dashboard</span><kbd className="font-mono">1</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
+                  <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">4</kbd></li>
                   <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
                 </ul>
               </TooltipContent>
@@ -706,6 +692,9 @@ export default function DashboardPage() {
               </TabsTrigger>
               <TabsTrigger value="peer" className="text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all">
                 <Activity className="h-3.5 w-3.5" /> Peer Comparison
+              </TabsTrigger>
+              <TabsTrigger value="pareto" className="text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all">
+                <TrendingDown className="h-3.5 w-3.5" /> Pareto
               </TabsTrigger>
             </TabsList>
 
@@ -840,6 +829,11 @@ export default function DashboardPage() {
             <TabsContent value="peer" className="space-y-4 mt-2 animate-fade-in-up">
               <PeerComparison />
             </TabsContent>
+
+            {/* ====== PARETO TAB (80/20 Analysis) ====== */}
+            <TabsContent value="pareto" className="space-y-4 mt-2 animate-fade-in-up">
+              <ParetoDashboard />
+            </TabsContent>
           </Tabs>
         ) : null}
       </main>
@@ -885,8 +879,6 @@ export default function DashboardPage() {
       />
       {/* GLOBAL-ITEM-SEARCH: cross-outlet item analysis modal (Cmd+K) */}
       <GlobalItemSearchModal open={itemSearchOpen} onOpenChange={setItemSearchOpen} />
-      {/* PARETO: 80/20 analysis modal (items, outlets, areas, PICs + nested) */}
-      <ParetoDashboard open={paretoOpen} onOpenChange={setParetoOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />

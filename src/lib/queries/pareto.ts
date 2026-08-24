@@ -258,7 +258,7 @@ export async function queryParetoNestedItemOutlet(
 
     const outletTotal = outletRows.reduce((s, r: any) => s + Number(r.totalAbsNominal), 0);
     let outletCumPct = 0;
-    const outlets = outletRows.map((r: any) => {
+    const allOutlets = outletRows.map((r: any) => {
       const sharePct = outletTotal > 0 ? (Number(r.totalAbsNominal) / outletTotal) * 100 : 0;
       outletCumPct += sharePct;
       return {
@@ -270,12 +270,13 @@ export async function queryParetoNestedItemOutlet(
         sharePct: Number(sharePct.toFixed(1)),
         cumPct: Number(outletCumPct.toFixed(1)),
       };
-    }).filter((_, i) => i === 0 || outlets === undefined || (outletCumPct < 80 && i < 20));
+    });
 
-    // Keep outlets until 80% cumulative (keep at least 1)
-    const filteredOutlets: typeof outlets = [];
+    // FIX: was `.filter((_, i) => i === 0 || outlets === undefined || ...)` — referenced
+    // `outlets` before initialization (TDZ error → HTTP 500). Now uses simple for-loop.
+    const filteredOutlets: typeof allOutlets = [];
     let cum = 0;
-    for (const o of outlets) {
+    for (const o of allOutlets) {
       filteredOutlets.push(o);
       cum = o.cumPct;
       if (cum >= 80) break;
