@@ -267,7 +267,6 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-          </div>
 
           <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
             <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[90px]"><SelectValue placeholder="Minggu" /></SelectTrigger>
@@ -300,7 +299,6 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-          </div>
 
           <Select
             value={compareValue}
@@ -328,7 +326,6 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-          </div>
 
           <SearchableComboBox
             options={pics.map((p) => ({ value: p, label: p }))}
