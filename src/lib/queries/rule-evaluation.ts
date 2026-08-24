@@ -16,7 +16,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 import type { RuntimeThresholds } from '@/lib/settings';
 
 export interface SqlRuleFlag {
@@ -63,7 +63,8 @@ export async function evaluateRulesSql(
     ? Prisma.sql`AND ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}`
     : Prisma.sql`AND 1=0`;
 
-  const rows = await db.$queryRaw<SqlRuleFlag[]>`
+  // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — LATERAL joins on 35K rows.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<SqlRuleFlag[]>`
     WITH curr AS (
       SELECT ir."outletId", ir."itemId", ir."akunPenyesuaian",
         ir."qtyBom", ir."qtyDeviasi", ir."qtyWaste", ir."qtySusut", ir."qtyTrial",
@@ -143,7 +144,7 @@ export async function evaluateRulesSql(
           ELSE NULL END as "nominalDeviasiGrowth"
     ) g
     ORDER BY c."outletId", c."itemId"
-  `;
+  `);
 
   // Convert boolean columns to SqlRuleFlag[]
   const RULE_MAP: Array<{ col: string; code: string; severity: string; category: string; priority: number }> = [

@@ -880,21 +880,28 @@ export async function queryRestoRecommendations(
     // FIX REC-6: was binary 0/50; now scales with count (was inconsistent with other count-based signals)
     const s12Score = Math.min(100, hasNoTolerance * 20);
 
-    // Signal 13: Benchmark High (3%) — HISTORICAL_HIGH / BENCHMARK_ABOVE_NETWORK
-    const s13Score = Math.min(100, benchmarkHighCount * 25);
+    // Signal 13: REMOVED (DEEP-AUDIT-LOGIC #2) — was identical to S3 (both used
+    // ABS(pctQtyDeviasiToBom) > 0.50). Weight 3% redistributed to S1 (Dev/BOM vs Peer)
+    // which IS the real benchmark comparison. S3 still captures high-deviation items.
+    // const s13Score = ... (removed)
 
     // Signal 14: Residual Nominal Impact (2%) — financial impact of unexplained
     const s14Score = Math.min(100, (residualNominal / 1_000_000) * 5);
 
-    // Signal 15: Tolerance Breach (regular) (1%) — TOLERANCE_BREACH rule
-    const s15Score = Math.min(100, toleranceBreachCount * 5);
+    // Signal 15: Tolerance Breach REGULAR (1%) — items that breach tolerance but NOT severely.
+    // FIX (DEEP-AUDIT-LOGIC #3): was `toleranceBreachCount` which includes high-breach items
+    // (S9). Every high-breach item was double-counted (9% combined weight). Now excludes
+    // high-breach items: regular = total - high.
+    const regularBreachCount = Math.max(0, toleranceBreachCount - toleranceBreachHighCount);
+    const s15Score = Math.min(100, regularBreachCount * 5);
 
-    // Weighted Priority Score (15 signals, total 100%)
+    // Weighted Priority Score (14 signals, total 100%)
+    // FIX: S13 removed (3% redistributed to S1: 12% → 15%). S15 now excludes high-breach.
     const priorityScore = Math.round(
-      s1Score * 0.12 + s2Score * 0.10 + s3Score * 0.10 + s4Score * 0.10 +
+      s1Score * 0.15 + s2Score * 0.10 + s3Score * 0.10 + s4Score * 0.10 +
       s5Score * 0.08 + s6Score * 0.08 + s7Score * 0.08 + s8Score * 0.05 +
       s9Score * 0.08 + s10Score * 0.07 + s11Score * 0.05 +
-      s12Score * 0.03 + s13Score * 0.03 + s14Score * 0.02 + s15Score * 0.01
+      s12Score * 0.03 + s14Score * 0.02 + s15Score * 0.01
     );
 
     const priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH' =
@@ -971,7 +978,7 @@ export async function queryRestoRecommendations(
       analysis,
       // FIX DRILLDOWN: expose signal scores + weights for Priority Summary breakdown
       signalScores: [
-        { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.12, value: `${devBomRatio.toFixed(2)}×` },
+        { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.15, value: `${devBomRatio.toFixed(2)}×` },
         { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: `MoM: ${deviasiGrowth != null ? (deviasiGrowth * 100).toFixed(0) + '%' : '—'} | Hist: ${deviasiGrowthHistorical != null ? (deviasiGrowthHistorical * 100).toFixed(0) + '%' : '—'}` },
         { name: 'Deviasi >50% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
         { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
@@ -983,9 +990,8 @@ export async function queryRestoRecommendations(
         { name: 'Over-Explained', score: Math.round(s10Score), weight: 0.07, value: `${overExplainedCount} item` },
         { name: 'High Loss Nominal', score: Math.round(s11Score), weight: 0.05, value: `${highLossItem} item` },
         { name: 'No Tolerance', score: Math.round(s12Score), weight: 0.03, value: `${hasNoTolerance} item` },
-        { name: 'Benchmark High', score: Math.round(s13Score), weight: 0.03, value: `${benchmarkHighCount} item` },
         { name: 'Residual Nominal', score: Math.round(s14Score), weight: 0.02, value: `Rp ${Math.round(residualNominal / 1000000)}jt` },
-        { name: 'Tolerance Breach', score: Math.round(s15Score), weight: 0.01, value: `${toleranceBreachCount} item` },
+        { name: 'Tol Breach Reg', score: Math.round(s15Score), weight: 0.01, value: `${regularBreachCount} item` },
       ],
     };
   });

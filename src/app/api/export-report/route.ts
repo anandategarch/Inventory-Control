@@ -2,6 +2,15 @@
 //  /api/export-report — Export analysis data to Word (.docx)
 //  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=
 //  Fetches analysis data server-side, generates .docx, returns as download.
+//
+//  KNOWN DIVERGENCE (DEEP-AUDIT-BACKEND C2): This route uses the legacy JS
+//  rule evaluator (evaluateRules + computeVarianceAnalysis + computeHistoricalAnalysis
+//  from @/engine/analysis/analysis), while the dashboard's /api/analysis route
+//  uses the SQL-pushed versions (evaluateRulesSql + queryVarianceAnalysis +
+//  queryHistoricalCriticalItems). Results should be similar but may differ in
+//  edge cases. Full sync requires refactoring the export's per-record loop to
+//  use the SQL batch approach — deferred to a future sprint to avoid breaking
+//  the Word export format.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';

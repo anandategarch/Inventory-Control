@@ -30,7 +30,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 
 // ============================================================
 //  Outlet Health Ranking — per-outlet aggregate (GROUP BY outlet)
@@ -78,7 +78,9 @@ export async function queryOutletHealthRanking(
   // `dedupSalesByOutlet(recsWithFlags.map(r => r.curr))` which only considers
   // non-zero-dev records. (Sales is outlet-level denormalized so the MODE
   // is the same regardless, but we match the existing behaviour exactly.)
-  const rows = await db.$queryRaw<OutletHealthRow[]>`
+  // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — 3 CTEs with window funcs
+  // can hang under PgBouncer tx mode.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<OutletHealthRow[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -146,7 +148,7 @@ export async function queryOutletHealthRanking(
     LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
     LEFT JOIN outlet_counts oc ON oa."outletId" = oc."outletId"
     ORDER BY "absNominal" DESC
-  `;
+  `);
 
   // Coerce BigInt → Number (PostgreSQL COUNT returns bigint; SUM returns numeric)
   return rows.map((r) => ({
@@ -209,7 +211,8 @@ export async function queryVarianceAnalysis(
   // for table ir" error when any filter (area/outlet/pic/item) is active.
   const f = buildSqlFilters(filters, 'c');
 
-  const rows = await db.$queryRaw<VarianceRow[]>`
+  // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — self-join on 272K rows.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<VarianceRow[]>`
     SELECT
       i.name as "itemName",
       o.code as "outletCode",
@@ -228,6 +231,14 @@ export async function queryVarianceAnalysis(
         ELSE 'NEUTRAL'
       END as "direction",
       CASE
+        -- FIX (DEEP-AUDIT-LOGIC #4): detect direction flip (LOSS↔SURPLUS).
+        -- When direction flips, abs delta can be 0 (e.g. +100M→-100M has delta=0)
+        -- but this is a significant operational change — classify as WORSENED
+        -- to surface for investigation.
+        WHEN (
+          (c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) OR
+          (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0)
+        ) THEN 'WORSENED'
         WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") > 0 THEN 'WORSENED'
         WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") < 0 THEN 'IMPROVED'
         ELSE 'STABLE'
@@ -246,7 +257,7 @@ export async function queryVarianceAnalysis(
       AND c."absNominalDeviasi" IS NOT NULL
       AND p."absNominalDeviasi" IS NOT NULL
       ${f}
-  `;
+  `);
 
   const typed = rows.map((r) => ({
     itemName: r.itemName,

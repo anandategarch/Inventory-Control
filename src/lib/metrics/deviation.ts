@@ -211,12 +211,15 @@ export function computeHealthScore(
   };
 
   // DevBOM: <good → 100, >bad → 0 (linear)
-  const devBom = computeDevBomAggregate(input);
-  const devBomScore = componentScore(devBom, th.devBom);
+  // FIX (DEEP-AUDIT-LOGIC #6): when totalQtyBom=0, safeDiv returns 0 → componentScore
+  // interprets 0 as "good" → false positive score 100. Return neutralScore instead.
+  const devBom = input.totalQtyBom > 0 ? computeDevBomAggregate(input) : null;
+  const devBomScore = devBom != null ? componentScore(devBom, th.devBom) : neutralScore;
 
   // Residual: <good → 100, >bad → 0 (linear)
-  const residualPct = computeResidualPctAggregate(input);
-  const residualScore = componentScore(residualPct, th.residual);
+  // FIX (DEEP-AUDIT-LOGIC #6): same div-by-zero guard for residual denominator.
+  const residualPct = input.totalQtyDeviasi > 0 ? computeResidualPctAggregate(input) : null;
+  const residualScore = residualPct != null ? componentScore(residualPct, th.residual) : neutralScore;
 
   // Loss/Sales: <good → 100, >bad → 0 (linear)
   const lossToSales = computeLossToSales(input);
@@ -224,9 +227,12 @@ export function computeHealthScore(
     ? componentScore(lossToSales, th.lossToSales)
     : neutralScore;
 
-  // Abnormal: abnormal / (warning + abnormal), <good → 100, >bad → 0 (linear)
-  const activeItems = input.warningCount + input.abnormalCount;
-  const abnormalRate = activeItems > 0 ? input.abnormalCount / activeItems : 0;
+  // Abnormal rate: abnormal / total items, <good → 100, >bad → 0 (linear)
+  // FIX (DEEP-AUDIT-LOGIC #7): was abnormal / (warning + abnormal) which dilutes by
+  // warnings — an outlet with 50 warnings + 5 abnormals scored HIGHER than one
+  // with 0 warnings + 5 abnormals. Now uses total item count as denominator.
+  const totalItemCount = input.normalCount + input.warningCount + input.abnormalCount;
+  const abnormalRate = totalItemCount > 0 ? input.abnormalCount / totalItemCount : 0;
   const abnormalScore = componentScore(abnormalRate, th.abnormal);
 
   // FIX (BUG-2-3): clamp the final weighted sum to [0, 100] so negative

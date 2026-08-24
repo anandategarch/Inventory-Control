@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, Info, BarChart3 } from 'lucide-react';
@@ -37,58 +36,14 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
 };
 
 // ============================================================
-//  UX-ENHANCE: Count-up animation for KPI values
-//  Animates from 0 → target on first load only (not on refetch).
-//  Uses requestAnimationFrame with easeOutCubic over 500ms.
+//  Count-up animation — REMOVED (DEEP-AUDIT-FRONTEND #1)
+//  The previous implementation caused negative KPI values in React Strict
+//  Mode (dev) due to timing issues with rAF + microtask setHasAnimated.
+//  This was the root cause of the "dashboard angka 0 semua" report.
+//  KPI values now display instantly — no animation, no timing bugs.
 // ============================================================
-function useCountUp(target: number | null, duration = 500): number | null {
-  const [display, setDisplay] = useState<number | null>(target == null ? null : 0);
-  const [prevTarget, setPrevTarget] = useState<number | null>(target);
-  const [hasAnimated, setHasAnimated] = useState(false);
-  const rafRef = useRef(0);
-
-  // Adjust state during render when target changes (avoids set-state-in-effect).
-  // Pattern per React docs: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  if (prevTarget !== target) {
-    setPrevTarget(target);
-    if (target == null) {
-      setDisplay(null);
-    } else if (hasAnimated) {
-      // Already animated once — sync instantly to new target (no re-animation)
-      setDisplay(target);
-    }
-    // If not yet animated, the effect below starts the animation
-  }
-
-  // First-load animation only (fires once per component instance).
-  // setHasAnimated is called in the rAF callback (async) to avoid the
-  // set-state-in-effect lint rule — it never fires synchronously in the body.
-  useEffect(() => {
-    if (target == null) return;
-    if (hasAnimated) return;
-    const start = performance.now();
-    const to = target;
-    let finished = false;
-    const tick = (now: number) => {
-      const progress = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
-      setDisplay(to * eased);
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(tick);
-      } else {
-        finished = true;
-      }
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    // Mark as animated AFTER the first frame is scheduled so the effect doesn't
-    // re-fire. Using a microtask avoids synchronous setState in the effect body.
-    Promise.resolve().then(() => {
-      if (!finished) setHasAnimated(true);
-    });
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [target, duration, hasAnimated]);
-
-  return display;
+function useCountUp(target: number | null, _duration = 500): number | null {
+  return target;
 }
 
 function AnimatedValue({ value, format }: { value: number | null; format: (v: number | null) => string }) {
