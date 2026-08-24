@@ -270,23 +270,39 @@ export interface DeviationDriverCategory {
 }
 
 async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
-  const res = await fetch(`/api/analysis?${params.toString()}`);
-  // FIX: Check content-type — server crash returns HTML, not JSON
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
-  }
-  if (!res.ok) {
-    const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean };
-    // FIX: 404 with "No records found" is NOT an error — it means the selected
-    // month/week has no data uploaded yet. Return a friendly message instead of
-    // treating it as a server error.
-    if (res.status === 404 && e.message?.includes('No records found')) {
-      throw new Error(`Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih.`);
+  // FIX (LOADING-TIMEOUT): AbortController — if server doesn't respond in 90s,
+  // abort the fetch so TanStack Query can retry (instead of infinite loading).
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const res = await fetch(`/api/analysis?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    // FIX: Check content-type — server crash returns HTML, not JSON
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
     }
-    throw new Error(e.message || e.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean };
+      // FIX: 404 with "No records found" is NOT an error — it means the selected
+      // month/week has no data uploaded yet. Return a friendly message instead of
+      // treating it as a server error.
+      if (res.status === 404 && e.message?.includes('No records found')) {
+        throw new Error(`Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih.`);
+      }
+      throw new Error(e.message || e.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err: unknown) {
+    // AbortError = timeout — throw a friendly message
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Server timeout (90s). Query terlalu berat — coba lagi atau persempit filter.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return res.json();
 }
 
 // ============================================================
