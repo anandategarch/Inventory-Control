@@ -9,7 +9,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, TrendingDown, Package, Store, MapPin, Users, ChevronDown, ChevronRight, Target, AlertCircle } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Loader2, TrendingDown, Package, Store, MapPin, Users, ChevronDown, ChevronRight, Target } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum } from '@/lib/format';
 
@@ -87,61 +88,55 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
         {!data || data.drivers.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada data</p>
         ) : (
-          <div className="space-y-0.5">
-            {/* Column headers */}
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40">
-              <span className="w-5 shrink-0">#</span>
-              <span className="min-w-[120px] flex-1 shrink-0">Nama</span>
-              <span className="w-20 text-right shrink-0">QTY</span>
-              <span className="w-24 text-right shrink-0">Nominal</span>
-              <span className="w-24 text-right shrink-0 hidden xl:block">Hist Avg</span>
-              <span className="w-12 text-right shrink-0 hidden xl:block">Z</span>
-              <span className="w-10 text-right shrink-0">%</span>
-              <span className="w-10 text-right shrink-0">Cum</span>
-            </div>
-            <div className="max-h-[260px] overflow-y-auto">
-            {data.drivers.map((d, i) => (
-              <div key={`${d.name}-${i}`} className="relative group hover:bg-muted/40 transition-colors rounded-md">
-                <div className="flex items-center gap-2 text-xs py-1 px-1 border-b border-border/20 last:border-0">
-                  {/* Rank badge for top 3 */}
-                  <span className={`w-5 text-center tabular-nums shrink-0 font-bold ${
-                    i === 0 ? 'text-amber-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground'
-                  }`}>
-                    {i + 1}
-                  </span>
-                  <span className="min-w-[120px] flex-1 truncate font-medium" title={d.name}>{d.name}</span>
-                  {d.outletCount != null && <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{d.outletCount} out</span>}
-                  {/* QTY Deviasi (signed) */}
-                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</span>
-                  {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
-                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</span>
-                  {/* Historical avg + z-score */}
-                  <span className="w-24 text-right tabular-nums text-muted-foreground shrink-0 hidden xl:block" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
-                    {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
-                  </span>
-                  <span className={`w-12 text-right tabular-nums font-medium shrink-0 hidden xl:block ${
-                    d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
-                  }`} title={d.zScore != null ? `Z-score: ${d.zScore.toFixed(2)} (${d.histN} periode)` : ''}>
-                    {d.zScore != null ? (d.zScore > 0 ? '+' : '') + d.zScore.toFixed(1) : '—'}
-                  </span>
-                  <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{d.sharePct.toFixed(0)}%</span>
-                  <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{d.cumPct.toFixed(0)}%</span>
-                </div>
-                {/* Mini progress bar — visual share % */}
-                <div className="h-0.5 rounded-full overflow-hidden mb-0.5" style={{ background: 'transparent' }}>
-                  <div
-                    className={`h-full rounded-full ${barColor} transition-all duration-300`}
-                    style={{ width: `${Math.min(100, d.sharePct)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-            {data.remainderCount > 0 && (
-              <p className="text-[10px] text-muted-foreground/60 pl-6 pt-1">
-                Sisa {data.remainderPct.toFixed(0)}%: {data.remainderCount} lainnya
-              </p>
-            )}
-            </div>
+          <div className="max-h-[300px] overflow-auto">
+            <Table className="min-w-[600px]">
+              <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
+                <TableRow className="border-b hover:bg-transparent">
+                  <TableHead className="w-8 text-center text-[10px] font-semibold uppercase tracking-wider h-7 p-1">#</TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Nama</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">QTY</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Nominal</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 hidden xl:table-cell">Hist Avg</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 hidden xl:table-cell">Z</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 w-10">%</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 w-10">Cum</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.drivers.map((d, i) => (
+                  <TableRow key={`${d.name}-${i}`} className="hover:bg-muted/40 transition-colors border-b border-border/20 last:border-0">
+                    <TableCell className="text-center text-xs tabular-nums p-1 font-bold shrink-0 w-8">
+                      <span className={i === 0 ? 'text-amber-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground'}>
+                        {i + 1}
+                      </span>
+                    </TableCell>
+                    <TableCell className="p-1">
+                      <div className="font-medium text-xs truncate max-w-[180px]" title={d.name}>{d.name}</div>
+                      {d.outletCount != null && <div className="text-[10px] text-muted-foreground tabular-nums">{d.outletCount} outlet</div>}
+                    </TableCell>
+                    <TableCell className={`text-right text-xs tabular-nums p-1 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</TableCell>
+                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1 hidden xl:table-cell" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
+                      {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
+                    </TableCell>
+                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 hidden xl:table-cell ${
+                      d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                    }`} title={d.zScore != null ? `Z-score: ${d.zScore.toFixed(2)} (${d.histN} periode)` : ''}>
+                      {d.zScore != null ? (d.zScore > 0 ? '+' : '') + d.zScore.toFixed(1) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1">{d.sharePct.toFixed(0)}%</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground/60 p-1">{d.cumPct.toFixed(0)}%</TableCell>
+                  </TableRow>
+                ))}
+                {data.remainderCount > 0 && (
+                  <TableRow className="border-0">
+                    <TableCell colSpan={8} className="text-[10px] text-muted-foreground/60 p-1 pl-6">
+                      Sisa {data.remainderPct.toFixed(0)}%: {data.remainderCount} lainnya
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </div>
         )}
       </CardContent>
