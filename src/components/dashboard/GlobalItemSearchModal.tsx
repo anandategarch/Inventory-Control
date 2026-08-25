@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtNum, fmtPct, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { ItemTrendRow } from '@/lib/queries/items';
 

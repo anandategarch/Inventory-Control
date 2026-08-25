@@ -133,6 +133,14 @@ export function ParetoDashboard() {
   const { monthLabel, currentWeek, area, pic } = useDashboard();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
+  // Reset expanded items when filter changes (stale state cleanup)
+  const filterKey = `${monthLabel}|${currentWeek}|${area}|${pic}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey);
+    setExpandedItems(new Set());
+  }
+
   const { data: paretoData, isLoading, error } = useQuery<ParetoData>({
     queryKey: ['pareto', monthLabel, currentWeek, area, pic],
     queryFn: async () => {
