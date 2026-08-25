@@ -34,7 +34,7 @@ export async function queryTopItemsByNominal(
   // Previous version sorted/displayed absNominalLossSurplus (NET) — user wants nominalDeviasi (GROSS).
   const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
-      SUM(ir."absNominalDeviasi") as "absNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       -- FIX VERIFY3-8: add qtyDeviasi NULL fallback for direction computation
       CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
@@ -839,7 +839,7 @@ export async function queryGlobalItemSearch(
       COALESCE(SUM(ir."qtyLossSurplus"), 0) as "qtyLossSurplus",
       COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
       COALESCE(SUM(ir."nominalLossSurplus"), 0) as "nominalLossSurplus",
-      COALESCE(SUM(ir."absNominalDeviasi"), 0) as "absNominalDeviasi",
+      COALESCE(ABS(SUM(ir."nominalDeviasi")), 0) as "absNominalDeviasi",
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
         ELSE NULL END as "devBom",
@@ -894,7 +894,7 @@ export async function queryItemAutocomplete(
     SELECT
       i.name as "itemName",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      COALESCE(SUM(ir."absNominalDeviasi"), 0) as "totalAbsNominal"
+      COALESCE(ABS(SUM(ir."nominalDeviasi")), 0) as "totalAbsNominal"
     FROM "Item" i
     JOIN "InventoryRecord" ir ON ir."itemId" = i.id
     WHERE ir."monthLabel" = ${month}

@@ -70,7 +70,7 @@ export async function queryParetoByItem(
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT i.name as "itemName",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
@@ -102,7 +102,7 @@ export async function queryParetoByOutlet(
   const f = buildSqlFilters(filters);
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT o.code as "outletCode", o.name as "outletName", o.area,
-      SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
@@ -135,7 +135,7 @@ export async function queryParetoByArea(
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ area: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT o.area,
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
@@ -168,7 +168,7 @@ export async function queryParetoByPIC(
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ pic: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT COALESCE(pic.pic, 'Unassigned') as "pic",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
@@ -225,7 +225,7 @@ export async function queryParetoNestedItemOutlet(
   // Step 1: get top items (Pareto 80%)
   const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number; outletCount: number }>>`
     SELECT i.name as "itemName",
-      SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
@@ -255,7 +255,7 @@ export async function queryParetoNestedItemOutlet(
 
     const outletRows = await db.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
       SELECT o.code as "outletCode", o.name as "outletName", o.area,
-        SUM(ir."absNominalDeviasi") as "totalAbsNominal",
+        ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
         SUM(ir."qtyDeviasi") as "qtyDeviasi"
       FROM "InventoryRecord" ir
@@ -359,7 +359,7 @@ export async function queryParetoHistorical(
     WITH weekly_dev AS (
       SELECT ${groupExpr} as "name",
         ir."monthLabel", ir."weekLabel",
-        SUM(ir."absNominalDeviasi") as "weeklyTotal"
+        ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"
       FROM "InventoryRecord" ir
       ${joinItem}
       ${joinOutlet}

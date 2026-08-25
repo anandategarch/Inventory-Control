@@ -55,9 +55,8 @@ export async function queryTopOutlets(
     ),
     outlet_aggs AS (
       SELECT ir."outletId",
-        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(absNominalLossSurplus) — should be SUM(absNominalDeviasi)
-        -- to match all other queries (ExecSummary, TopItems, PeerComparison use absNominalDeviasi).
-        SUM(ir."absNominalDeviasi") as "absNominal",
+        -- FIX (MASTER-CONTEXT): ABS(SUM(nominalDeviasi)) — ABS of sum, not sum of per-item ABS
+        ABS(SUM(ir."nominalDeviasi")) as "absNominal",
         -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(nominalLossSurplus) (NET) — should be SUM(nominalDeviasi) (GROSS)
         -- to match all other queries. nominalDeviasi is GROSS financial impact.
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -125,8 +124,8 @@ export async function queryTopOutletsBySales(
     ),
     outlet_nominal AS (
       SELECT ir."outletId",
-        -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(absNominalLossSurplus) — should be SUM(absNominalDeviasi)
-        SUM(ir."absNominalDeviasi") as "absNominal",
+        -- FIX (MASTER-CONTEXT): ABS(SUM(nominalDeviasi)) — ABS of sum, not sum of per-item ABS
+        ABS(SUM(ir."nominalDeviasi")) as "absNominal",
         -- FIX (AUDIT-CALC-SQL BUG-1): was SUM(nominalLossSurplus) (NET) — should be SUM(nominalDeviasi) (GROSS)
         SUM(ir."nominalDeviasi") as "nominalDeviasi"
       FROM "InventoryRecord" ir
