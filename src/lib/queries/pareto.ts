@@ -79,6 +79,7 @@ export async function queryParetoByItem(
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY i.name
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
   const typed = rows.map((r: any) => ({
@@ -111,6 +112,7 @@ export async function queryParetoByOutlet(
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY o.code, o.name, o.area
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
   const typed = rows.map((r: any) => ({
@@ -144,6 +146,7 @@ export async function queryParetoByArea(
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY o.area
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
   const typed = rows.map((r: any) => ({
@@ -178,6 +181,7 @@ export async function queryParetoByPIC(
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY pic.pic
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
   const typed = rows.map((r: any) => ({
@@ -235,6 +239,7 @@ export async function queryParetoNestedItemOutlet(
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
     GROUP BY i.name
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
     LIMIT ${maxItems}
   `);
@@ -266,6 +271,7 @@ export async function queryParetoNestedItemOutlet(
         AND LOWER(i.name) = LOWER(${itemName})
         ${f}
       GROUP BY o.code, o.name, o.area
+      HAVING ABS(SUM(ir."nominalDeviasi")) > 0
       ORDER BY "totalAbsNominal" DESC
       LIMIT 20
     `;

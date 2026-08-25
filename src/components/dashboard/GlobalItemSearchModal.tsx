@@ -97,7 +97,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
   }, [open]);
 
   // Stage 1: autocomplete (debounced via useDeferredValue — fires after user stops typing)
-  const { data: acData, isLoading: acLoading } = useQuery<{ results: AutocompleteResult[] }>({
+  const { data: acData, isLoading: acLoading, error: acError } = useQuery<{ results: AutocompleteResult[] }>({
     queryKey: ['item-search', 'autocomplete', monthLabel, currentWeek, deferredQuery],
     queryFn: async () => {
       const p = new URLSearchParams({
@@ -280,10 +280,16 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
                 ))}
               </div>
             ) : !acLoading && query.length >= 2 ? (
-              <div className="text-center text-muted-foreground text-sm py-12">
-                <Package className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                Tidak ada item ditemukan untuk &ldquo;{query}&rdquo;
-              </div>
+              acError ? (
+                <div className="text-center text-red-600 dark:text-red-400 text-sm py-12">
+                  Gagal mencari: {acError.message}
+                </div>
+              ) : (
+                <div className="text-center text-muted-foreground text-sm py-12">
+                  <Package className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  Tidak ada item ditemukan untuk &ldquo;{query}&rdquo;
+                </div>
+              )
             ) : null}
           </div>
         ) : (

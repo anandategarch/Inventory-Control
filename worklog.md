@@ -18348,3 +18348,498 @@ VERIFIED CORRECT (no bugs found)
 - computeDeterioration: |current| - |earliest| — correct signed delta (positive = worsening).
 - SQL lossNominal = SUM(CASE WHEN nominalLossSurplus < 0 THEN ABS(nominalLossSurplus) ELSE 0 END) — consistent across dashboard.ts, health-ranking.ts, areas.ts, items.ts. Matches deviation.ts comment.
 - Sign convention (LOSS = negative nominalLossSurplus) — consistent across all SQL queries, JS helpers, and rule-evaluation.ts.
+
+---
+Task ID: BUG-HUNT-UI
+Agent: Frontend Bug Hunter
+Task: Find and report UI/frontend bugs
+
+Work Log:
+- Read worklog.md tail (lines 18250-18351) for prior audit context (calc-engine audit, no UI findings).
+- Read all 6 in-scope files: ParetoDashboard.tsx (356 lines), GlobalItemSearchModal.tsx (458 lines), page.tsx (888 lines), PeerComparison.tsx (343 lines), globals.css (261 lines), plus table.tsx + skeleton.tsx + a11y.ts + format.ts + peer-comparison/helpers.ts for verification.
+- Verified runtime: dev server up at :3000, /api/status OK, /api/pareto returns 41KB JSON (17 items, 20 outlets, 3 areas, 7 PICs, 10 nested items), /api/item-search?mode=cross-outlet returns 100 rows (devBom can be NEGATIVE e.g. -1.27 with direction=LOSS — sign convention verified consistent with numberColor).
+- Verified fmtPctAbs vs fmtPct usage: GlobalItemSearchModal lines 337 + 405 both correctly use fmtPctAbs (devBom is absolute %, no sign needed). PeerComparison helpers.ts:19 also uses fmtPctAbs for Dev/BOM column. ✓
+- Verified rules-of-hooks in PeerComparison: all 5 useMemo (lines 84, 85, 86, 87, 88, 127) fire BEFORE the `if (!activeOutlet)` early return at line 146. ✓
+- Verified keyboard shortcut "4" → "pareto" mapping (page.tsx:537) matches TabsTrigger value="pareto" (page.tsx:696). ✓
+- Verified TrendingDown imported (page.tsx:68) and used (page.tsx:697). ✓
+- Verified LoadingState elapsed timer (page.tsx:122-196): setInterval with cleanup, isSlow threshold at 15s. ✓
+- Verified ErrorState retry button (page.tsx:198-266): invalidates ['analysis'] query. ✓
+- Verified z-score computation (GlobalItemSearchModal.tsx:164-178): Map init ✓, filter null devBom ✓, n>=2 guard ✓, sample variance (n-1) ✓, stdDev>0 guard ✓.
+- Verified colSpan={8} in ParetoDashboard remainder row matches 8 columns (#, Nama, QTY, Nominal, Hist Avg, Z, %, Cum). ✓
+- Verified sticky header inside max-h-[300px] overflow-auto works (table.tsx comment confirms overflow-x-auto was removed from Table wrapper to fix sticky).
+
+Stage Summary:
+
+======================================================================
+1. CRITICAL UI BUGS (broken layout, crashes)
+======================================================================
+None found. No crashes, no broken layouts. All API endpoints return valid data; all components have null/empty guards.
+
+======================================================================
+2. VISUAL ISSUES (alignment, truncation, responsiveness)
+======================================================================
+
+VIS-1 [MEDIUM] — Sticky header background layering leak
+  Files: src/components/dashboard/ParetoDashboard.tsx:93
+         src/components/dashboard/GlobalItemSearchModal.tsx:366
+         src/components/dashboard/PeerComparison.tsx:242
+  Code (ParetoDashboard): `<TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">`
+  Problem: The `bg-background/95` is applied to `<TableHeader>` (thead), but the default `<TableHead>` (th) class in src/components/ui/table.tsx:77 bakes in `bg-muted/30 dark:bg-zinc-900/30`. In CSS table layout, cell backgrounds paint OVER the row-group background. So the visible header background is `bg-muted/30` (30% opacity muted), NOT the intended `bg-background/95` (95% opacity). Body rows scrolling under are mostly hidden by the thead's 95% bg layered behind, but with `backdrop-blur-sm` the blurred body content is still partially visible through the 30% opaque th layer. Visual artifact: ghosting of body text behind sticky header text, especially noticeable with high-contrast dark mode.
+  Fix: Move the opaque bg to each `<TableHead>` instead of `<TableHeader>`:
+    `<TableHead className="... bg-background/95 dark:bg-zinc-900/95">`
+  Or override the default in table.tsx (remove `bg-muted/30 dark:bg-zinc-900/30` from TableHead base class — but that changes shadcn default behavior).
+  Impact: Subtle visual ghosting when scrolling tables vertically. Most visible in ParetoDashboard (compact rows) and PeerComparison (long table with 50+ rows).
+
+VIS-2 [MEDIUM] — `useDeferredValue` does NOT debounce API calls
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:70
+  Code:
+    `const deferredQuery = useDeferredValue(query);`
+    Comment: "FIX (AUDIT-FRONTEND-V2): debounce autocomplete input — was firing query on every keystroke."
+  Problem: `useDeferredValue` defers the React render (keeps input responsive during expensive renders), but it does NOT coalesce rapid state updates. Each time `deferredQuery` updates (on idle frames), the queryKey `['item-search', 'autocomplete', monthLabel, currentWeek, deferredQuery]` changes, triggering a new fetch. Typing "CABAI" (5 chars in ~500ms) fires up to 5 API calls, not 1. TanStack Query's staleTime (60s) doesn't help because each queryKey is unique.
+  Fix: Replace with a true debounce:
+    ```ts
+    // Option A: manual useEffect+setTimeout
+    const [debouncedQuery, setDebouncedQuery] = useState(query);
+    useEffect(() => {
+      const t = setTimeout(() => setDebouncedQuery(query), 300);
+      return () => clearTimeout(t);
+    }, [query]);
+    // Option B: usehooks-ts
+    import { useDebouncedValue } from 'usehooks-ts';
+    const [debouncedQuery] = useDebouncedValue(query, 300);
+    ```
+  Impact: 5× unnecessary API calls per search. Backend autocomplete query is fast (~50ms) so user doesn't notice, but it wastes server CPU and bandwidth.
+
+VIS-3 [MEDIUM] — Autocomplete API errors silently swallowed
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:100
+  Code: `const { data: acData, isLoading: acLoading } = useQuery<...>({...});`
+  Problem: `error` field not destructured. If /api/item-search?mode=autocomplete returns HTTP 500 or network fails, `acData` stays undefined and `acLoading` becomes false. The render path at line 282 `!acLoading && query.length >= 2` evaluates true, showing "Tidak ada item ditemukan untuk '...'" — misleading the user into thinking the item doesn't exist, when actually the API failed.
+  Fix: Destructure error and add error branch:
+    ```ts
+    const { data: acData, isLoading: acLoading, error: acError } = useQuery<...>({...});
+    // In render:
+    {acError ? (
+      <div className="text-center text-red-600 text-sm py-12">
+        Gagal mencari: {acError.message}
+      </div>
+    ) : query.length < 2 ? (...) : acData?.results?.length ? (...) : !acLoading && query.length >= 2 ? (...) : null}
+    ```
+  Impact: User confusion when API is down — looks like "no items" instead of "network error".
+
+VIS-4 [LOW] — `viewMode` not reset when selecting a new item
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:264
+  Code: `onClick={() => setSelectedItem(r.itemName)}`
+  Problem: If user picks item A, switches to "Trend" view, then clicks X (line 218) to go back to search, `viewMode` stays as 'trend'. When they pick item B, the modal opens in Trend mode — but trend data for item B hasn't been fetched yet (the trend query is enabled only when `viewMode === 'trend'`). User sees a loading spinner, then the trend chart. Confusing if they expected the cross-outlet table.
+  Fix: Reset viewMode when selectedItem changes:
+    ```ts
+    onClick={() => { setSelectedItem(r.itemName); setViewMode('cross-outlet'); }}
+    ```
+  Impact: Minor UX confusion. No data corruption.
+
+VIS-5 [LOW] — `peerCodesKey` includes all peers but queryFn only sends first 20
+  File: src/components/dashboard/PeerComparison.tsx:88, 111, 116
+  Code:
+    Line 88:  `const peerCodesKey = useMemo(() => peerCodes.join(','), [peerCodes]);`
+    Line 111: `queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodesKey],`
+    Line 116: `if (peerCodes.length > 0) p.set('peers', peerCodes.slice(0, 20).join(','));`
+  Problem: queryKey uses the FULL peerCodesKey (all 50 peer codes joined), but the actual fetch only sends the first 20. If the peer set grows from 20 to 25 (same first 20, 5 new at the end), the queryKey changes (triggering refetch) but the fetched data would be identical. Conservative but wasteful.
+  Fix: Align the key with what's actually fetched:
+    `const peerCodesKey = useMemo(() => peerCodes.slice(0, 20).join(','), [peerCodes]);`
+  Impact: Rare unnecessary refetches when peer set grows beyond 20. Low impact since peer set is stable for a given outlet+period.
+
+VIS-6 [LOW] — Scrollbar color inconsistency between Firefox and WebKit
+  File: src/app/globals.css:242 vs 252
+  Code:
+    Line 242: `scrollbar-color: var(--muted-foreground) transparent;`  // Firefox: full opacity
+    Line 252: `background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);`  // WebKit: 30% opacity
+  Problem: Firefox shows a dark (full-opacity) scrollbar thumb; WebKit shows a light (30% opacity) thumb. Visual inconsistency between browsers.
+  Fix: Use the same color-mix for both:
+    ```css
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent) transparent;
+    }
+    ```
+  Impact: Cosmetic cross-browser inconsistency.
+
+VIS-7 [LOW] — Dead code: unused props, fields, CSS
+  Files:
+    - src/components/dashboard/ParetoDashboard.tsx:71 — `barColor` prop destructured but never referenced. Passed at lines 231, 238, 245, 252 (all ignored).
+    - src/components/dashboard/ParetoDashboard.tsx:19 — `code?: string` field in ParetoRow interface, never rendered.
+    - src/app/globals.css:178-180 — `.animate-scale-in` class + `scaleIn` keyframe defined but no usage anywhere in src/.
+  Fix: Remove dead code or implement intended feature (e.g., use `barColor` for a horizontal progress bar under each Pareto row showing sharePct).
+  Impact: Code clutter, ~200 bytes wasted in CSS bundle.
+
+======================================================================
+3. ACCESSIBILITY ISSUES
+======================================================================
+
+A11Y-1 [MEDIUM] — Expand/collapse button missing `aria-expanded`
+  File: src/components/dashboard/ParetoDashboard.tsx:279-291
+  Code: `<button onClick={() => toggleItem(item.itemName)} className="w-full flex ...">`
+  Problem: Button toggles nested outlet list (lines 292-306) but doesn't expose expansion state to screen readers. SR users have no way to know if the section is expanded or collapsed before clicking.
+  Fix:
+    ```tsx
+    <button
+      onClick={() => toggleItem(item.itemName)}
+      aria-expanded={isExpanded}
+      aria-controls={`outlets-${i}`}
+      className="..."
+    >
+    ```
+    And add `id={`outlets-${i}`}` to the nested div at line 293.
+  Impact: SR users can't navigate expand/collapse efficiently.
+
+A11Y-2 [MEDIUM] — View toggle buttons missing `aria-pressed`
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:299-310
+  Code: Two `<button>` elements with active state indicated only by visual styling (`bg-background text-foreground shadow-sm` vs `text-muted-foreground`).
+  Problem: Screen readers don't announce which view is active. No `aria-pressed` or `role="radio"` + `aria-checked`.
+  Fix:
+    ```tsx
+    <button
+      onClick={() => setViewMode('cross-outlet')}
+      aria-pressed={viewMode === 'cross-outlet'}
+      className="..."
+    >
+    ```
+  Impact: SR users can't tell which view is currently shown.
+
+A11Y-3 [LOW] — Search input missing `aria-label`
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:239-245
+  Code: `<Input ref={inputRef} value={query} onChange={...} placeholder="Ketik nama item..." className="pl-9 h-10" />`
+  Problem: No `aria-label` or visible `<label>`. Placeholder disappears on input, leaving SR users no context.
+  Fix: `aria-label="Cari item di semua outlet"`
+  Impact: SR users lose context after typing.
+
+A11Y-4 [LOW] — Clickable rows missing `aria-label`
+  Files:
+    - src/components/dashboard/PeerComparison.tsx:274-278 (peer rows)
+    - src/components/dashboard/GlobalItemSearchModal.tsx:390-394 (outlet rows)
+  Code: `{...clickableRowProps(() => setFocusOutlet(p.outletCode))}` (from src/lib/a11y.ts — adds role="button" + tabIndex=0 but no aria-label).
+  Problem: SR announces all cell contents when focusing the row — verbose. No concise label.
+  Fix: Add `aria-label={\`Lihat detail outlet ${p.outletName} (${p.outletCode})\`}` to TableRow.
+  Impact: Verbose SR announcement, but functionally accessible.
+
+A11Y-5 [LOW] — Close button missing `type="button"`
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:217-223
+  Code: `<button onClick={() => setSelectedItem(null)} className="..." aria-label="Kembali ke pencarian">`
+  Problem: No `type="button"`. Default type is "submit" — if a form ancestor exists, clicking would trigger form submission. Currently no form, but defensive.
+  Fix: Add `type="button"`.
+  Impact: None currently (no form), but fragile if form is added later.
+
+======================================================================
+4. PERFORMANCE ISSUES
+======================================================================
+
+PERF-1 [MEDIUM] — `backdrop-blur-sm` on sticky headers is GPU-expensive
+  Files:
+    - src/components/dashboard/ParetoDashboard.tsx:93 (4 QuadrantCards, each with sticky header)
+    - src/components/dashboard/GlobalItemSearchModal.tsx:366
+    - src/components/dashboard/PeerComparison.tsx:242
+  Problem: `backdrop-blur-sm` applies a `backdrop-filter: blur(4px)` which forces GPU compositing on every scroll frame. With 4 sticky headers in ParetoDashboard alone, scrolling the page causes 4 simultaneous blur re-computations. On low-end devices (mobile, older laptops), this causes scroll jank.
+  Fix: Consider removing `backdrop-blur-sm` and using a fully opaque bg instead (which also fixes VIS-1). Or use `backdrop-blur-sm` only on the header that's currently scrolling into view.
+  Impact: Scroll jank on low-end devices. Modern desktops handle it fine.
+
+PERF-2 [LOW] — `zScores` Map and `stats` object rebuilt every render
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:164-197
+  Code:
+    ```ts
+    const zScores = new Map<string, number>();
+    { /* block scope computing z-scores */ }
+    const stats = results.length === 0 ? null : (() => { /* reduce over results */ })();
+    ```
+  Problem: Not memoized. Every render (including parent re-renders from `useDashboard` context changes) re-iterates `results` twice (once for zScores, once for stats). For 100 outlets, that's ~200 ops per render — negligible. But the Map is also re-built, breaking referential equality if passed to children (currently not passed, so OK).
+  Fix (defensive): Wrap in `useMemo`:
+    ```ts
+    const { zScores, stats } = useMemo(() => {
+      const m = new Map<string, number>();
+      // ... compute z-scores
+      // ... compute stats
+      return { zScores: m, stats };
+    }, [results]);
+    ```
+  Impact: Negligible at current scale. Becomes relevant if results grow to 1000+.
+
+PERF-3 [LOW] — ParetoDashboard "stale state cleanup" pattern triggers extra render
+  File: src/components/dashboard/ParetoDashboard.tsx:153-157
+  Code:
+    ```ts
+    const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+    if (prevFilterKey !== filterKey) {
+      setPrevFilterKey(filterKey);
+      setExpandedItems(new Set());
+    }
+    ```
+  Problem: This is the official React "storing info from previous renders" pattern (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes), but it triggers an immediate re-render before commit. React 18+ batches these, so it's one extra render cycle. Acceptable, but `useEffect` with `[filterKey]` dep would be cleaner (and only fire after commit).
+  Fix: This is the recommended pattern per React docs — leave as-is. Alternative: `useEffect(() => setExpandedItems(new Set()), [filterKey])` fires after commit (one render later, user might see expanded state briefly).
+  Impact: One extra render per filter change. Negligible.
+
+======================================================================
+5. PRIORITY RANKING
+======================================================================
+
+P0 (Critical, user-visible): NONE — no crashes, no broken layouts.
+
+P1 (Important, fix soon):
+  1. VIS-1 — Sticky header bg layering leak (3 files: ParetoDashboard:93, GlobalItemSearchModal:366, PeerComparison:242). Body content ghosts through sticky header. Fix: move `bg-background/95` to each `<TableHead>`.
+  2. VIS-2 — `useDeferredValue` doesn't debounce API (GlobalItemSearchModal:70). 5× excess API calls per search. Fix: use true debounce (setTimeout 300ms).
+  3. VIS-3 — Autocomplete errors silently swallowed (GlobalItemSearchModal:100). Misleading "no items" on API failure. Fix: destructure `error`, show error UI.
+  4. A11Y-1 — Expand/collapse missing `aria-expanded` (ParetoDashboard:279). SR users can't navigate. Fix: add `aria-expanded` + `aria-controls`.
+  5. A11Y-2 — View toggle missing `aria-pressed` (GlobalItemSearchModal:299-310). SR users can't tell active view.
+
+P2 (Polish):
+  6. VIS-4 — viewMode not reset on new item (GlobalItemSearchModal:264).
+  7. PERF-1 — `backdrop-blur-sm` on 4+ sticky headers (scroll jank on low-end).
+  8. VIS-6 — Scrollbar color cross-browser inconsistency (globals.css:242 vs 252).
+  9. A11Y-3 — Search input missing `aria-label`.
+  10. A11Y-4 — Clickable rows missing `aria-label`.
+  11. A11Y-5 — Close button missing `type="button"`.
+
+P3 (Defensive / cleanup):
+  12. VIS-5 — peerCodesKey/queryFn slice mismatch (PeerComparison:88,116).
+  13. VIS-7 — Dead code: `barColor` prop, `code` field, `animate-scale-in` CSS.
+  14. PERF-2 — zScores/stats not memoized (negligible at current scale).
+  15. PERF-3 — Stale state cleanup extra render (recommended pattern, leave as-is).
+  16. globals.css:222-234 — `.shimmer` class not in reduced-motion exemption selector (comment claims "skeletons exempt" but only `animate-pulse` is matched, not `.shimmer::after`). Skeleton still pulses (animate-pulse exempted) but shimmer sweep stops. Minor visual inconsistency under prefers-reduced-motion.
+
+======================================================================
+VERIFIED CORRECT (no bugs found)
+======================================================================
+- fmtPctAbs used for devBom display in GlobalItemSearchModal (lines 337, 405) and PeerComparison helpers.ts:19 — correct (devBom is absolute %, no sign needed). fmtPct (signed) not misused.
+- z-score computation (GlobalItemSearchModal:164-178): Map init ✓, null filter ✓, n>=2 guard ✓, sample variance (n-1) ✓, stdDev>0 guard ✓. Matches computeZScore semantics in lib/analysis/historical.ts.
+- colSpan={8} in ParetoDashboard remainder row matches 8 columns (#, Nama, QTY, Nominal, Hist Avg, Z, %, Cum). ✓
+- Sticky `top-0` inside `max-h-[300px] overflow-auto` works correctly — table.tsx:11-14 comment confirms `overflow-x-auto` was removed from Table wrapper to fix sticky ancestor.
+- Pareto tab value="pareto" (page.tsx:696) matches keyboard shortcut '4' → 'pareto' (page.tsx:537). ✓
+- TrendingDown imported (page.tsx:68) and used (page.tsx:697). ✓
+- LoadingState elapsed timer (page.tsx:122-196): setInterval + cleanup, isSlow threshold 15s. ✓
+- ErrorState retry button (page.tsx:198-266): invalidates ['analysis'] query. ✓
+- PeerComparison rules-of-hooks: all 5 useMemo (lines 84, 85, 86, 87, 88, 127) fire BEFORE `if (!activeOutlet)` early return at line 146. ✓
+- PeerComparison `peerCodesKey` (line 88) is a STRING in the queryKey (line 111), not the array — referentially stable across renders. ✓
+- `otherPeers.length` references (PeerComparison:128, 180, 190, 193, 196, 199, 212, 257, 337) all correct — was `peerCount`, now `otherPeers.length`. ✓
+- Cross-browser scrollbar: Firefox (`scrollbar-width` + `scrollbar-color`) ✓, WebKit (`::-webkit-scrollbar*` pseudo-elements) ✓. IE/Edge legacy not handled but modern Edge uses Chromium.
+- `prefers-reduced-motion` media query (globals.css:222-234): base rule `*` reduces all animations to 0.01ms ✓; exemption selector `:is([class*="animate-spin"], [class*="animate-pulse"], [class*="animate-ping"])` correctly re-enables spinners/pulse/ping at 1s infinite ✓. Skeleton's `animate-pulse` continues under reduced-motion (essential status feedback per WCAG 2.3.3).
+- Filter reset pattern in ParetoDashboard (lines 153-157): official React "storing info from previous renders" pattern, conditional setState during render — safe, idempotent. ✓
+- API responses verified: /api/pareto returns 17 items + 20 outlets + 3 areas + 7 PICs + 10 nested items (each with 16 outlets). /api/item-search?mode=cross-outlet returns 100 rows with valid devBom (signed) + direction. /api/item-search?mode=autocomplete returns 2 results for "MINYAK".
+
+
+---
+Task ID: BUG-HUNT-CALC
+Agent: Calculation Bug Hunter
+Task: Find and report calculation/SQL bugs
+
+Work Log:
+- Read /home/z/my-project/worklog.md lines 18100-18351 (prior AUDIT-CALC-METRICS context, PRIORITY RANKING, VERIFIED CORRECT list).
+- Read MASTER_CONTEXT.md lines 35-75 (Nominal Deviasi signed vs absolute convention: nominalDeviasi=SIGNED sum for display, absNominal=ABS(SUM) for sorting).
+- Read in-scope files fully: pareto.ts (419 lines), items.ts (994 lines), outlets.ts (1008 lines), health-ranking.ts (362 lines), growth-drivers.ts (227 lines), deviation.ts (295 lines), forecast.ts (286 lines), pareto/route.ts (95 lines).
+- Read out-of-scope but related: historical.ts (76 lines, queryHistoricalStats), dashboard.ts (346 lines, queryExecSummary + queryTrendAgg + queryDeviationBreakdown).
+- Grep for remaining SUM(absNominalDeviasi) usage across src/ — found 5 matches; verified each is either (a) the intentional grossAbsNominal field, (b) a comment, (c) out-of-scope peer-comparison route, or (d) outlet-items route (single-record SUM = identity).
+- Grep for HAVING clauses in pareto.ts/items.ts — confirmed NONE. This is the root cause of BUG-CALC-PARETO-1.
+- Verified variance direction CASE logic by tracing all 6 direction-transition cases (SURPLUS→LOSS, LOSS→SURPLUS, LOSS→DEEPER-LOSS, LOSS→SMALLER-LOSS, SURPLUS→DEEPER-SURPLUS, SURPLUS→SMALLER-SURPLUS) — all classify correctly.
+- Verified forecast.ts classifyTrendDirection uses normalized trendStrength (fix from prior BUG-CALC-1) — correct.
+- Verified mergeHistoricalIntoPareto map-key fallback (d.name → d.code) handles outlet dimension correctly (historical map keyed by o.code, driver.name = outletName, driver.code = outletCode).
+- Read dev.log (38 lines) — no 500 errors, no transaction timeouts, no SQL errors. All requests return 200.
+- Discovered out-of-scope bug in outlets.ts:749 queryRestoRecommendations (histAvgNominalDeviasi = AVG(per-record ABS) compared against |SUM(current)| — scale mismatch inflates s7Score).
+
+Stage Summary:
+
+======================================================================
+1. CRITICAL BUGS (wrong data)
+======================================================================
+
+BUG-CALC-PARETO-1 [MEDIUM] — pareto.ts:73-83, 103-115, 135-148, 168-182, 226-240, 256-271 + items.ts:893-907 — Net-zero items appear in Pareto drivers with 0 magnitude
+  Root cause: The WHERE filter `ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0` only filters per-RECORD. After GROUP BY + SUM(nominalDeviasi) + ABS, an item with canceling +/- deviations across outlets (e.g., +5M SURPLUS at outlet A, -5M LOSS at outlet B for the same item) gets totalAbsNominal = ABS(SUM) = 0.
+  Effect in computePareto (pareto.ts:33-59):
+    - rows.sort puts 0-items at the bottom (correct)
+    - BUT the for-loop pushes them into `drivers` array if loop reaches them before maxDrivers=20 OR cumPct>=80%
+    - They display as "Item X — 0 IDR — 0%" in the Pareto chart (confusing)
+  Trigger condition: low concentration (cumPct < 80% after all non-zero items) AND existence of net-zero items.
+  Also affects: items.ts:893-907 queryItemAutocomplete (item with canceling deviations appears with totalAbsNominal=0).
+  Fix (SQL): Add `HAVING ABS(SUM(ir."nominalDeviasi")) > 0` to all 7 Pareto SELECT queries + queryItemAutocomplete.
+  Fix (JS, alternative): In computePareto, filter before sorting:
+    const filteredRows = rows.filter(r => r.totalAbsNominal > 0);
+    rows = filteredRows;
+  Impact: Low frequency but real. UI shows misleading 0-magnitude drivers when concentration is low.
+
+BUG-CALC-OUTLET-RECO-1 [HIGH, OUT OF SCOPE] — outlets.ts:749 — queryRestoRecommendations histAvg scale mismatch
+  Code:
+    -- outlets.ts:749
+    AVG(ABS(ir."nominalDeviasi")) as "histAvgNominalDeviasi",
+    -- outlets.ts:822-824 (consumer)
+    const deviasiGrowthHistorical = histAvgNominal != null && histAvgNominal > 0 && histPeriodCount >= 2
+      ? (Math.abs(nominalDeviasi) - histAvgNominal) / histAvgNominal
+      : null;
+  Problem: `nominalDeviasi` (current) = SUM across all records for the outlet (line 618). `histAvgNominal` = AVG of per-RECORD |nominalDeviasi| across all historical records. SCALE MISMATCH:
+    - Current: |SUM across ~1000 records| ≈ millions (IDR)
+    - Historical: AVG(per-record |nominalDeviasi|) ≈ thousands (IDR)
+    - Ratio ≈ 1000x → deviasiGrowthHistorical always inflated
+  Downstream: deviasiGrowthHistorical feeds deviasiGrowthHybrid (line 827) → trendDeteriorating (line 862) → s7Score (line 863, 8% weight in priorityScore).
+  Effect: Any outlet with ≥2 historical periods gets s7Score=100 (trendDeteriorating=true), inflating priorityScore by ~8 points uniformly. Ranking becomes less discriminative.
+  Compare to: queryParetoHistorical (pareto.ts:358-380) which CORRECTLY uses two-level aggregation: weekly_dev CTE computes ABS(SUM(nominalDeviasi)) per (dimension, month, week), then final query computes AVG(weeklyTotal) per dimension. The outlets.ts:749 query skips the weekly aggregation step.
+  Fix: Replace with two-level CTE matching queryParetoHistorical pattern:
+    WITH weekly_dev AS (
+      SELECT o.code as "outletCode", ir."monthLabel", ir."weekLabel",
+        ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"
+      FROM "InventoryRecord" ir
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."weekLabel" = ${week} AND ir."monthLabel" != ${month}
+        ${f}
+      GROUP BY o.code, ir."monthLabel", ir."weekLabel"
+    )
+    SELECT "outletCode",
+      AVG("weeklyTotal") as "histAvgNominalDeviasi",
+      COUNT(DISTINCT "monthLabel") as "histPeriodCount"
+    FROM weekly_dev
+    GROUP BY "outletCode"
+  Note: Out of explicit audit scope (scope lists only queryTopOutlets + queryTopOutletsBySales for outlets.ts), but flagged because it's a real calculation bug discovered during the ABS(SUM) consistency check.
+
+======================================================================
+2. EDGE CASE ISSUES
+======================================================================
+
+EDGE-PARETO-HIST-1 [LOW] — pareto.ts:358-380 — Historical baseline includes 0-valued weekly periods
+  Issue: If a historical period had canceling deviations for a dimension (net 0), weeklyTotal = ABS(SUM(nominalDeviasi)) = 0 is included in AVG/STDDEV. This biases the baseline low (more 0s → lower mean → higher z-score for current).
+  Status: Statistically valid (the 0 reflects "dimension had canceling deviations that week"). Not a bug — design choice.
+  Fix: None needed. Optionally filter `HAVING ABS(SUM(ir."nominalDeviasi")) > 0` in weekly_dev CTE to compute baseline only on weeks with non-zero net deviation (changes semantics).
+
+EDGE-VARIANCE-1 [LOW] — health-ranking.ts:233-243 — NEUTRAL→SURPLUS classified as WORSENED
+  Issue: When p.nominalLossSurplus=0 (NEUTRAL) and c.nominalLossSurplus>0 (SURPLUS), the flip detection (lines 238-239) doesn't trigger (p>0 is FALSE when p=0). Falls through to absNom comparison (line 240) → WORSENED (magnitude grew).
+  Status: Consistent with magnitude-based approach (any deviation from plan = bad). Semantically debatable — SURPLUS could be "saved inventory" (good).
+  Trace verified (all 6 direction transitions correct):
+    - SURPLUS→LOSS (p=+5M, c=-10M): line 238 TRUE → WORSENED ✓
+    - LOSS→SURPLUS (p=-10M, c=+5M): line 239 TRUE → IMPROVED ✓
+    - LOSS→DEEPER-LOSS (p=-5M, c=-10M): line 240 TRUE → WORSENED ✓
+    - LOSS→SMALLER-LOSS (p=-10M, c=-5M): line 241 TRUE → IMPROVED ✓
+    - SURPLUS→DEEPER-SURPLUS (p=+5M, c=+10M): line 240 TRUE → WORSENED ✓
+    - SURPLUS→SMALLER-SURPLUS (p=+10M, c=+5M): line 241 TRUE → IMPROVED ✓
+    - NEUTRAL→LOSS / NEUTRAL→SURPLUS: falls through to absNom → WORSENED (magnitude grew) — consistent.
+  NULL nominalLossSurplus handled by absNom fallback. ✓
+  Fix: None needed (design choice). If business wants NEUTRAL→SURPLUS = IMPROVED, add explicit CASE branch.
+
+EDGE-FORECAST-1 [LOW, already documented] — forecast.ts:139 — rSquared=1 when all y identical (yDenom=0)
+  Code: `const rSquared = yDenom === 0 ? 1 : ((n * sumXY - sumX * sumY) ** 2) / (denom * yDenom);`
+  Status: Documented in code comment (line 137-138). Treating flat line as R²=1 is defensible (model perfectly predicts the constant). Confidence classification still requires n>=4 AND R²>0.7 for HIGH, so a flat 2-point line gets LOW confidence. Not a bug.
+
+======================================================================
+3. CONSISTENCY ISSUES (same metric, different implementations)
+======================================================================
+
+CONS-PARETO-NETWORK-1 [MEDIUM] — items.ts:673,688 — queryNetworkItemRisk uses SUM(ABS) for sorting, inconsistent with Pareto's ABS(SUM)
+  Code:
+    -- items.ts:673 (item_aggs CTE)
+    COALESCE(SUM(ABS("nominalDeviasi")), 0) as "totalAbsNominal",
+    -- items.ts:688 (final ORDER BY)
+    ORDER BY ia."totalAbsNominal" DESC
+  Problem: Pareto/TopItems use `ABS(SUM(nominalDeviasi))` (NET). NetworkItemRisk uses `SUM(ABS(nominalDeviasi))` (GROSS). An item with +5M SURPLUS at outlet A and -5M LOSS at outlet B:
+    - Pareto: totalAbsNominal = ABS(5M + (-5M)) = 0 → ranks LAST
+    - NetworkItemRisk: totalAbsNominal = |5M| + |-5M| = 10M → ranks HIGH
+  User sees inconsistent rankings between Pareto view and NetworkItemRisk view.
+  Status: Defensible (NetworkItemRisk measures "total financial impact across network" = gross). But inconsistent with Pareto convention.
+  Fix: Decide on one convention. If NetworkItemRisk should match Pareto, change line 673 to `ABS(SUM("nominalDeviasi"))`. If gross is intended, document it explicitly.
+  Also: Comment at items.ts:620-623 is misleading — says "absNominalDeviasi still available for sorting via the separate absDevBom column" but `absDevBom` (line 631) is the Dev/BOM ratio, not absNominal. Comment should reference `totalAbsNominal` (the actual sort field) and clarify it's GROSS.
+
+CONS-PEER-COMP-1 [LOW] — peer-comparison/items/route.ts:109,118,134 — uses SUM(ABS) for sorting target top items
+  Code:
+    SUM(ABS(ir."nominalDeviasi")) as "targetNominal"  -- line 109
+    ORDER BY SUM(ir."absNominalDeviasi") DESC          -- line 118
+    SUM(ABS(ir."nominalDeviasi")) as "peerNominal"     -- line 134
+  Problem: Same as CONS-PARETO-NETWORK-1. Within one outlet, SUM(ABS) ≠ ABS(SUM) only for multi-akunPenyesuaian items.
+  Status: Low impact — peer comparison is outlet-scoped, multi-akun cancellation is rare.
+  Fix: Low priority. Could align with Pareto convention if desired.
+
+CONS-GROWTH-1 [LOW] — growth-drivers.ts:214-215 — up/down buckets mix improving-LOSS with worsening-SURPLUS
+  Code:
+    if (delta > 0) positive.push({ item: name, delta, pct });
+    else negative.push({ item: name, delta, pct });
+  Problem: For signed metrics (qtyDeviasi with signed=true), `delta > 0` bucket contains BOTH:
+    - Improving LOSS (prev=-100, curr=-50, delta=+50) — GOOD (loss shrank)
+    - Worsening SURPLUS (prev=+50, curr=+100, delta=+50) — BAD (surplus grew)
+  Label "Drivers Naik" mixes opposite business outcomes.
+  Status: Not a calculation bug (numbers correct). Labeling ambiguity only.
+  Fix: Consider splitting by direction, or use clearer labels ("Delta Positif" instead of "Naik"). For unsigned metrics (sales, bom, nominalDeviasi with signed=false), the current labeling is fine.
+
+CONS-OUTLET-RECO-1 [HIGH, OUT OF SCOPE] — outlets.ts:749 — queryRestoRecommendations histAvg uses per-record AVG(ABS), not weekly ABS(SUM)
+  (See BUG-CALC-OUTLET-RECO-1 above for full details.)
+  Status: Out of explicit audit scope but flagged due to severity. The queryParetoHistorical (in scope) correctly uses two-level aggregation; queryRestoRecommendations does not. Same metric (historical avg nominal deviation), two different implementations.
+
+======================================================================
+4. PRIORITY RANKING — FIX FIRST
+======================================================================
+
+P0 (Critical, user-visible):
+  (none in explicit scope)
+
+P1 (Important, correctness):
+  1. BUG-CALC-PARETO-1 (net-zero items in Pareto drivers) — pareto.ts (7 queries) + items.ts:queryItemAutocomplete. Easy fix: add HAVING clause OR filter in computePareto. Confusing UI when triggered.
+  2. BUG-CALC-OUTLET-RECO-1 / CONS-OUTLET-RECO-1 (histAvg scale mismatch in queryRestoRecommendations) — OUT OF SCOPE but real bug. s7Score (Trend signal, 8% weight) always=100 for outlets with ≥2 historical periods. Inflates priorityScore uniformly, reduces ranking discrimination. Fix: replace with two-level CTE matching queryParetoHistorical pattern.
+
+P2 (Nice-to-have, consistency):
+  3. CONS-PARETO-NETWORK-1 (NetworkItemRisk SUM(ABS) vs Pareto ABS(SUM)) — items.ts:673,688. Decide on one convention or document the distinction.
+  4. EDGE-PARETO-HIST-1 (historical baseline includes 0-valued weeks) — design choice, document.
+  5. EDGE-VARIANCE-1 (NEUTRAL→SURPLUS = WORSENED semantics) — design choice, document.
+  6. CONS-GROWTH-1 (growth-drivers up/down bucket ambiguity for signed metrics) — labeling only.
+
+P3 (Polish, no functional impact):
+  7. CONS-PEER-COMP-1 (peer-comparison items SUM(ABS) sort) — low impact, single-outlet scope.
+  8. items.ts:620-623 misleading comment about absDevBom column — doc fix.
+
+======================================================================
+VERIFIED CORRECT (no bugs found in scope)
+======================================================================
+
+ABS(SUM) vs SUM(ABS) consistency (in-scope files):
+- pareto.ts: All 7 queries use `ABS(SUM(ir."nominalDeviasi"))` for `totalAbsNominal` (sorting) + `SUM(ir."nominalDeviasi")` for `nominalDeviasi` (display). ✓
+- items.ts queryTopItemsByNominal (line 37-38): `ABS(SUM(...)) as absNominal` + `SUM(...) as nominalDeviasi`. ✓
+- items.ts queryGlobalItemSearch (line 840-842): `SUM(...) as nominalDeviasi` + `ABS(SUM(...)) as absNominalDeviasi`. ✓
+- items.ts queryItemAutocomplete (line 897): `ABS(SUM(...)) as totalAbsNominal`. ✓ (but has BUG-CALC-PARETO-1 edge case)
+- outlets.ts queryTopOutlets (line 59-62): `ABS(SUM(...)) as absNominal` + `SUM(...) as nominalDeviasi`. ✓
+- outlets.ts queryTopOutletsBySales (line 128-130): same pattern. ✓
+- outlets.ts:629 `SUM(ir."absNominalDeviasi") as "grossAbsNominal"` — INTENTIONAL (gross field, explicitly allowed per scope). Used as denominator for itemConcentration (line 869-870) where gross is the correct semantic. ✓
+- health-ranking.ts queryOutletHealthRanking (line 116, 134): `SUM(...) as nominalDeviasi` + `ABS(oa."nominalDeviasi") as absNominal`. ✓
+
+Pareto Historical Query (queryParetoHistorical):
+- weekly_dev CTE (line 359-372): `ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"` — consistent with current query. ✓
+- Final aggregation (line 373-380): `AVG("weeklyTotal")` + `STDDEV_SAMP("weeklyTotal")` per dimension. ✓
+- n>=2 filter (line 387) excludes single-observation dimensions. ✓
+- STDDEV_SAMP returns NULL for n=1, but n>=2 filter prevents this. ✓
+- mergeHistoricalIntoPareto (line 398-418): z = (current.absNominal - histAvg) / histStdDev. histStdDev<=0 → zScore=null. ✓
+- Map key fallback (line 405): `historical.get(d.name) || historical.get(d.code || '')` — handles outlet dimension (driver.name=outletName, driver.code=outletCode, historical key=outletCode). ✓
+- z-score matches master context: (|current| - mean(|historical|)) / STDDEV_SAMP(|historical|). ✓
+
+Variance Direction Flip (queryVarianceAnalysis):
+- SURPLUS→LOSS = WORSENED (line 238). ✓
+- LOSS→SURPLUS = IMPROVED (line 239). ✓
+- Magnitude fallback (lines 240-241) correctly handles same-direction changes (LOSS→DEEPER-LOSS, SURPLUS→DEEPER-SURPLUS, etc.). ✓
+- NULL nominalLossSurplus handled by absNom fallback. ✓
+- All 6 direction transitions traced and verified correct. ✓
+
+Growth Drivers pct:
+- `pct = absPrev > 0 ? Math.abs(delta) / absPrev : 0` (line 213) — correct magnitude ratio. ✓
+- `delta` is signed (curr - prev); bucket by sign. ✓
+- `SUM(ABS(nominalDeviasi))` for nominalDeviasi metric (signed=false, line 183) — INTENTIONAL (measures gross magnitude growth, not net). Different metric from Pareto sorting. ✓
+- FULL OUTER JOIN (line 123) handles new + disappeared items correctly. ✓
+- Delta threshold (line 202): 1000 for sales/nominalDeviasi, 0.01 for bom/qtyDeviasi. ✓
+
+deviation.ts:
+- abnormalRate (line 237): `totalItemCount > 0 ? abnormalCount / totalItemCount : null` — correct, returns null for empty outlets (fix from prior EDGE-1). ✓
+- abnormalScore (line 238): null → neutralScore (50). ✓
+- computeHealthScore (line 184-249): linear interpolation + div-by-zero guards (bad===good → neutralScore) + final clamp [0,100]. ✓
+- safeDiv (line 16): `den > 0 ? num/den : 0` — asymmetric with safeRatio but all callers pass non-negative den. ✓ (documented in prior audit)
+
+forecast.ts:
+- TREND_STRENGTH_THRESHOLD = 0.05 (line 93) — normalized ratio (fix from prior BUG-CALC-1). ✓
+- classifyTrendDirection (line 168-171): trendStrength < 0.05 → STABLE; else slope>0 → DETERIORATING, slope<0 → IMPROVING. ✓
+- trendStrength (line 251-254): `|slope| / mean(|y|)` with meanAbsNominal>0 guard. ✓
+- projectTrend (line 207-285): OLS regression, R², confidence, warning — all correct. ✓
+- Degenerate cases (n<2, denom=0, yDenom=0) handled. ✓
+
+pareto/route.ts:
+- Historical merge (line 67-77): runs 4 queryParetoHistorical in parallel + applies mergeHistoricalIntoPareto to each dimension. ✓
+- Filters threaded correctly (area for item/outlet/pic; picOutletCodes for all). ✓
+
+Export Report (out-of-scope but checked):
+- /api/export-report/route.ts uses shared query functions (queryTopItemsByNominal, queryTopItemsByDevBom, queryExecSummary, etc.) — inherits ABS(SUM) pattern. No raw SQL with SUM(absNominalDeviasi). ✓
+- queryTopItemsByCategory (items.ts:395-414) uses `SUM(ABS(qtyRef))` for waste/susut/trial/lossSurplus — correct (these are per-category gross totals, not net deviation). ✓
+
+Runtime (dev.log):
+- No 500 errors, no transaction timeouts, no SQL errors. All requests return 200. ✓
+- /api/analysis completed in 11.4s (first call, includes compile). Subsequent calls fast. ✓

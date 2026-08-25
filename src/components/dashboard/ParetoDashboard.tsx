@@ -278,6 +278,7 @@ export function ParetoDashboard() {
                   <div key={`${item.itemName}-${i}`}>
                     <button
                       onClick={() => toggleItem(item.itemName)}
+                      aria-expanded={isExpanded}
                       className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left"
                     >
                       <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
