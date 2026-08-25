@@ -39,6 +39,7 @@ interface NestedOutlet {
   area: string;
   totalAbsNominal: number;
   nominalDeviasi: number;
+  qtyDeviasi: number;
   sharePct: number;
   cumPct: number;
 }
@@ -46,6 +47,7 @@ interface NestedItem {
   itemName: string;
   totalAbsNominal: number;
   nominalDeviasi: number;
+  qtyDeviasi: number;
   outletCount: number;
   sharePct: number;
   cumPct: number;
@@ -89,12 +91,12 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
             {/* Column headers */}
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40">
               <span className="w-5 shrink-0">#</span>
-              <span className="flex-1 shrink-0">Nama</span>
-              <span className="w-24 text-right shrink-0">QTY Deviasi</span>
-              <span className="w-28 text-right shrink-0">Nominal</span>
-              <span className="w-24 text-right shrink-0 hidden lg:block">Hist Avg (all)</span>
-              <span className="w-14 text-right shrink-0 hidden lg:block">Z-Score</span>
-              <span className="w-10 text-right shrink-0">Share</span>
+              <span className="min-w-[120px] flex-1 shrink-0">Nama</span>
+              <span className="w-20 text-right shrink-0">QTY</span>
+              <span className="w-24 text-right shrink-0">Nominal</span>
+              <span className="w-24 text-right shrink-0 hidden xl:block">Hist Avg</span>
+              <span className="w-12 text-right shrink-0 hidden xl:block">Z</span>
+              <span className="w-10 text-right shrink-0">%</span>
               <span className="w-10 text-right shrink-0">Cum</span>
             </div>
             <div className="max-h-[260px] overflow-y-auto">
@@ -107,17 +109,17 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
                   }`}>
                     {i + 1}
                   </span>
-                  <span className="flex-1 truncate font-medium" title={d.name}>{d.name}</span>
-                  {d.outletCount != null && <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{d.outletCount} outlet</span>}
+                  <span className="min-w-[120px] flex-1 truncate font-medium" title={d.name}>{d.name}</span>
+                  {d.outletCount != null && <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{d.outletCount} out</span>}
                   {/* QTY Deviasi (signed) */}
-                  <span className={`w-24 text-right tabular-nums shrink-0 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</span>
+                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</span>
                   {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
-                  <span className={`w-28 text-right tabular-nums font-medium shrink-0 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</span>
+                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</span>
                   {/* Historical avg + z-score */}
-                  <span className="w-24 text-right tabular-nums text-muted-foreground shrink-0 hidden lg:block" title={d.histN ? `${d.histN} periode historis` : ''}>
+                  <span className="w-24 text-right tabular-nums text-muted-foreground shrink-0 hidden xl:block" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
                     {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
                   </span>
-                  <span className={`w-14 text-right tabular-nums font-medium shrink-0 hidden lg:block ${
+                  <span className={`w-12 text-right tabular-nums font-medium shrink-0 hidden xl:block ${
                     d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
                   }`} title={d.zScore != null ? `Z-score: ${d.zScore.toFixed(2)} (${d.histN} periode)` : ''}>
                     {d.zScore != null ? (d.zScore > 0 ? '+' : '') + d.zScore.toFixed(1) : '—'}
@@ -285,9 +287,10 @@ export function ParetoDashboard() {
                     >
                       <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                       {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                      <span className="flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
-                      <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} outlet</span>
-                      <span className={`w-28 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
+                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                      <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} out</span>
+                      <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
+                      <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
                       <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
                       <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
                     </button>
@@ -296,9 +299,10 @@ export function ParetoDashboard() {
                         {item.outlets.map((o, j) => (
                           <div key={`${o.outletCode}-${j}`} className="flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20">
                             <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
-                            <span className="flex-1 truncate" title={o.outletName}>{o.outletName}</span>
+                            <span className="min-w-[100px] flex-1 truncate" title={o.outletName}>{o.outletName}</span>
                             <span className="text-muted-foreground text-[10px] shrink-0">{o.area}</span>
-                            <span className={`w-28 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
+                            <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(o.qtyDeviasi)}`}>{fmtNum(o.qtyDeviasi)}</span>
+                            <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
                             <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
                             <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{o.cumPct.toFixed(0)}%</span>
                           </div>

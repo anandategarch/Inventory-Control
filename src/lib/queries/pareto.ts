@@ -199,6 +199,7 @@ export interface NestedParetoItem {
   itemName: string;
   totalAbsNominal: number;
   nominalDeviasi: number;
+  qtyDeviasi: number;
   outletCount: number;
   sharePct: number;
   cumPct: number;
@@ -208,6 +209,7 @@ export interface NestedParetoItem {
     area: string;
     totalAbsNominal: number;
     nominalDeviasi: number;
+    qtyDeviasi: number;
     sharePct: number;
     cumPct: number;
   }>;
@@ -221,10 +223,11 @@ export async function queryParetoNestedItemOutlet(
 ): Promise<{ items: NestedParetoItem[]; totalAbsNominal: number }> {
   const f = buildSqlFilters(filters);
   // Step 1: get top items (Pareto 80%)
-  const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; totalAbsNominal: number; nominalDeviasi: number; outletCount: number }>>`
+  const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number; outletCount: number }>>`
     SELECT i.name as "itemName",
       SUM(ir."absNominalDeviasi") as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -247,12 +250,14 @@ export async function queryParetoNestedItemOutlet(
     const itemName = (item as any).itemName;
     const itemTotal = Number((item as any).totalAbsNominal);
     const itemNominal = Number((item as any).nominalDeviasi);
+    const itemQtyDeviasi = Number((item as any).qtyDeviasi);
     const itemOutletCount = Number((item as any).outletCount);
 
-    const outletRows = await db.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number }>>`
+    const outletRows = await db.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
       SELECT o.code as "outletCode", o.name as "outletName", o.area,
         SUM(ir."absNominalDeviasi") as "totalAbsNominal",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi"
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        SUM(ir."qtyDeviasi") as "qtyDeviasi"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       JOIN "Outlet" o ON ir."outletId" = o.id
@@ -276,6 +281,7 @@ export async function queryParetoNestedItemOutlet(
         area: r.area,
         totalAbsNominal: Number(r.totalAbsNominal),
         nominalDeviasi: Number(r.nominalDeviasi),
+        qtyDeviasi: Number(r.qtyDeviasi),
         sharePct: Number(sharePct.toFixed(1)),
         cumPct: Number(outletCumPct.toFixed(1)),
       };
@@ -298,6 +304,7 @@ export async function queryParetoNestedItemOutlet(
       itemName,
       totalAbsNominal: itemTotal,
       nominalDeviasi: itemNominal,
+      qtyDeviasi: itemQtyDeviasi,
       outletCount: itemOutletCount,
       sharePct: Number(itemSharePct.toFixed(1)),
       cumPct: Number(itemCumPct.toFixed(1)),
