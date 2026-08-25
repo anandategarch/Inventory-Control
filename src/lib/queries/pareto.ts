@@ -12,6 +12,7 @@ interface ParetoRow {
   code?: string;
   totalAbsNominal: number;
   nominalDeviasi: number;
+  qtyDeviasi: number; // SIGNED sum — for display (negative=LOSS, positive=SURPLUS)
   outletCount?: number;
   sharePct: number;
   cumPct: number;
@@ -25,7 +26,7 @@ interface ParetoResult {
   totalCount: number;
 }
 
-function computePareto<T extends { totalAbsNominal: number; name: string; nominalDeviasi: number }>(
+function computePareto<T extends { totalAbsNominal: number; name: string; nominalDeviasi: number; qtyDeviasi: number }>(
   rows: T[],
   threshold: number = 0.80,
   maxDrivers: number = 20,
@@ -66,11 +67,12 @@ export async function queryParetoByItem(
   filters: { area?: string | null; outletCode?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number }>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT i.name as "itemName",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
       SUM(ir."absNominalDeviasi") as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -84,6 +86,7 @@ export async function queryParetoByItem(
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
     nominalDeviasi: Number(r.nominalDeviasi),
+    qtyDeviasi: Number(r.qtyDeviasi),
   }));
   return computePareto(typed);
 }
@@ -97,10 +100,11 @@ export async function queryParetoByOutlet(
   filters: { area?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number }>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT o.code as "outletCode", o.name as "outletName", o.area,
       SUM(ir."absNominalDeviasi") as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
     JOIN "Outlet" o ON ir."outletId" = o.id
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -114,6 +118,7 @@ export async function queryParetoByOutlet(
     code: r.outletCode,
     totalAbsNominal: Number(r.totalAbsNominal),
     nominalDeviasi: Number(r.nominalDeviasi),
+    qtyDeviasi: Number(r.qtyDeviasi),
   }));
   return computePareto(typed);
 }
@@ -127,11 +132,12 @@ export async function queryParetoByArea(
   filters: { picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters({ ...filters, area: null });
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ area: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number }>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ area: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT o.area,
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
       SUM(ir."absNominalDeviasi") as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
     JOIN "Outlet" o ON ir."outletId" = o.id
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
@@ -145,6 +151,7 @@ export async function queryParetoByArea(
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
     nominalDeviasi: Number(r.nominalDeviasi),
+    qtyDeviasi: Number(r.qtyDeviasi),
   }));
   return computePareto(typed);
 }
@@ -158,11 +165,12 @@ export async function queryParetoByPIC(
   filters: { area?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ pic: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number }>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ pic: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
     SELECT COALESCE(pic.pic, 'Unassigned') as "pic",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
       SUM(ir."absNominalDeviasi") as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi"
     FROM "InventoryRecord" ir
     JOIN "Outlet" o ON ir."outletId" = o.id
     LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
@@ -177,6 +185,7 @@ export async function queryParetoByPIC(
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
     nominalDeviasi: Number(r.nominalDeviasi),
+    qtyDeviasi: Number(r.qtyDeviasi),
   }));
   return computePareto(typed);
 }

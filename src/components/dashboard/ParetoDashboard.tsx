@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, TrendingDown, Package, Store, MapPin, Users, ChevronDown, ChevronRight, Target, AlertCircle } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtNum } from '@/lib/format';
 
 interface ParetoRow {
   name: string;
@@ -19,11 +19,12 @@ interface ParetoRow {
   outletCount?: number;
   totalAbsNominal: number;
   nominalDeviasi: number;
+  qtyDeviasi: number; // SIGNED sum for display
   sharePct: number;
   cumPct: number;
-  histAvg?: number | null; // historical average of totalAbsNominal
-  zScore?: number | null; // z-score vs historical
-  histN?: number; // number of historical observations
+  histAvg?: number | null;
+  zScore?: number | null;
+  histN?: number;
 }
 interface ParetoResult {
   drivers: ParetoRow[];
@@ -89,8 +90,9 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40">
               <span className="w-5 shrink-0">#</span>
               <span className="flex-1 shrink-0">Nama</span>
+              <span className="w-24 text-right shrink-0">QTY Deviasi</span>
               <span className="w-28 text-right shrink-0">Nominal</span>
-              <span className="w-24 text-right shrink-0 hidden lg:block">Hist Avg</span>
+              <span className="w-24 text-right shrink-0 hidden lg:block">Hist Avg (all)</span>
               <span className="w-14 text-right shrink-0 hidden lg:block">Z-Score</span>
               <span className="w-10 text-right shrink-0">Share</span>
               <span className="w-10 text-right shrink-0">Cum</span>
@@ -107,6 +109,8 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
                   </span>
                   <span className="flex-1 truncate font-medium" title={d.name}>{d.name}</span>
                   {d.outletCount != null && <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{d.outletCount} outlet</span>}
+                  {/* QTY Deviasi (signed) */}
+                  <span className={`w-24 text-right tabular-nums shrink-0 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</span>
                   {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
                   <span className={`w-28 text-right tabular-nums font-medium shrink-0 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</span>
                   {/* Historical avg + z-score */}
