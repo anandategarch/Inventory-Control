@@ -17,6 +17,7 @@ import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items';
+import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 
@@ -77,23 +78,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'item is required for cross-outlet/trend mode' }, { status: 400 });
     }
 
-    // Resolve PIC → outletCodes (if pic filter is set) — shared by cross-outlet + trend
-    let picOutletCodes: string[] | null = null;
-    if (pic) {
-      const picRows = await db.$queryRaw<Array<{ outletCode: string }>>`
-        SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
-      `;
-      picOutletCodes = picRows.map((r) => r.outletCode);
-      if (picOutletCodes.length === 0) {
-        // PIC has no outlets → return empty
-        return NextResponse.json({
-          success: true,
-          mode,
-          item,
-          results: [],
-          durationMs: Date.now() - startedAt,
-        });
-      }
+    // Resolve PIC → outletCodes (shared logic) — used by cross-outlet + trend
+    const picOutletCodes = await resolvePICOutletCodes(pic);
+    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      return NextResponse.json({
+        success: true,
+        mode,
+        item,
+        results: [],
+        durationMs: Date.now() - startedAt,
+      });
     }
 
     // mode === 'trend' — return per-(period, outlet) data across ALL periods

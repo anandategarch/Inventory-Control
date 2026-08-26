@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryRestoRecommendations } from '@/lib/queries';
+import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
@@ -78,29 +79,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    let picOutletCodes: string[] | null = null;
-    if (pic) {
-      const { db } = await import('@/lib/db');
-      // Case-insensitive match — Prisma's `mode: 'insensitive'` is PostgreSQL-only.
-      // Use raw SQL with LOWER() which works on BOTH PostgreSQL and SQLite.
-      // This ensures 'BUDI' matches 'Budi'/'budi' regardless of DB provider.
-      let pics: Array<{ outletCode: string }> = [];
-      try {
-        pics = await db.$queryRaw<Array<{ outletCode: string }>>`
-          SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
-        `;
-      } catch (e) {
-        logger.error("[recommendations] OutletPIC query failed", { error: e instanceof Error ? e.message : String(e) });
-        pics = [];
-      }
-      picOutletCodes = pics.map((p) => p.outletCode);
-      // BUG FIX: if PIC is selected but has 0 outlets, buildSqlFilters treats []
-      // as "no filter" → shows ALL outlets (wrong). Use sentinel '__NO_MATCH__'
-      // so the IN clause returns 0 outlets (correct: PIC has no outlets).
-      if (picOutletCodes.length === 0) {
-        picOutletCodes = ['__NO_MATCH__'];
-      }
-    }
+    // Resolve PIC → outletCodes (shared logic)
+    const picOutletCodes = await resolvePICOutletCodes(pic);
 
     const filters = {
       area: area && area !== 'all' ? area : null,

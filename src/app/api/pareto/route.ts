@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoHistorical, mergeHistoricalIntoPareto } from '@/lib/queries/pareto';
 
 export const dynamic = 'force-dynamic';
@@ -35,16 +36,10 @@ export async function GET(req: NextRequest) {
     const monthResolver = await getMonthResolver();
     month = resolveMonthLabel(month, monthResolver) || month;
 
-    // Resolve PIC → outletCodes
-    let picOutletCodes: string[] | null = null;
-    if (pic) {
-      const picRows = await db.$queryRaw<Array<{ outletCode: string }>>`
-        SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
-      `;
-      picOutletCodes = picRows.map((r) => r.outletCode);
-      if (picOutletCodes.length === 0) {
-        return NextResponse.json({ success: true, byItem: { drivers: [] }, byOutlet: { drivers: [] }, byArea: { drivers: [] }, byPIC: { drivers: [] }, nested: { items: [] }, durationMs: Date.now() - startedAt });
-      }
+    // Resolve PIC → outletCodes (shared logic)
+    const picOutletCodes = await resolvePICOutletCodes(pic);
+    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      return NextResponse.json({ success: true, byItem: { drivers: [] }, byOutlet: { drivers: [] }, byArea: { drivers: [] }, byPIC: { drivers: [] }, nested: { items: [] }, durationMs: Date.now() - startedAt });
     }
 
     const filters = {
