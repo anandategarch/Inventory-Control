@@ -742,18 +742,28 @@ export async function queryRestoRecommendations(
       `
       : Promise.resolve([]),
     // FIX: Historical average — same weekLabel across ALL months BEFORE current month
-    // Computes mean + count of historical periods for each outlet
+    // FIX (BUG-HUNT-CALC): was AVG(ABS(per-record nominalDeviasi)) — scale mismatch with
+    // current |SUM(nominalDeviasi)|. Now uses 2-level CTE: weekly_dev (per outlet+month+week)
+    // → AVG(weeklyTotal). This matches queryParetoHistorical pattern.
     db.$queryRaw<any[]>`
-      SELECT
-        o.code as "outletCode",
-        AVG(ABS(ir."nominalDeviasi")) as "histAvgNominalDeviasi",
-        COUNT(DISTINCT ir."monthLabel") as "histPeriodCount"
-      FROM "InventoryRecord" ir
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE ir."weekLabel" = ${week}
-        AND ir."monthLabel" != ${month}
-        ${f}
-      GROUP BY o.code
+      WITH weekly_dev AS (
+        SELECT o.code as "outletCode",
+          ir."monthLabel", ir."weekLabel",
+          ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"
+        FROM "InventoryRecord" ir
+        JOIN "Outlet" o ON ir."outletId" = o.id
+        WHERE ir."weekLabel" = ${week}
+          AND ir."monthLabel" != ${month}
+          AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+          ${f}
+        GROUP BY o.code, ir."monthLabel", ir."weekLabel"
+      )
+      SELECT "outletCode",
+        AVG("weeklyTotal") as "histAvgNominalDeviasi",
+        CAST(COUNT(*) AS INTEGER) as "histPeriodCount"
+      FROM weekly_dev
+      WHERE "weeklyTotal" IS NOT NULL
+      GROUP BY "outletCode"
     `,
   ]);
 
