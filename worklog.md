@@ -19224,3 +19224,48 @@ Runtime:
 
 OUT-OF-SCOPE NOTE:
 - BUG-CALC-OUTLET-RECO-1 (outlets.ts:749 histAvg scale mismatch) flagged in prior BUG-HUNT-CALC audit as OUT OF SCOPE — verified FIXED in this refactor cycle. resto-recommendations.ts:219-237 now uses two-level CTE (weekly_dev + final AVG) matching queryParetoHistorical pattern. ✓
+
+---
+Task ID: BUGFIX-KELOMPOK-EMPTY
+Agent: main (Z.ai Code)
+Task: Fix bug where dashboard becomes empty/blank when applying the kelompok filter.
+
+Work Log:
+- Root cause analysis: Outlet codes have two formats — "1030.BDGSET" (XXXX.YYYYYY) and "B.1001.MLGPAR" (B.XXXX.YYYYYY). The kelompok (e.g. "MLG") is the first 3 chars of the NAME segment (after the LAST dot).
+- Bug 1 (ROOT CAUSE): src/lib/queries/shared.ts:69 used `code LIKE 'MLG%'` — but outlet codes start with numbers ("1030") or "B", so the LIKE matched ZERO outlets → all SQL aggregates returned empty → dashboard appeared blank. Fixed to use `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = ${kelompok}` which correctly extracts the last dot-segment's first 3 chars.
+- Bug 2: src/app/api/status/route.ts:86 used `parts[1].substring(0,3)` — wrong for format 2 ("B.1001.MLGPAR" → parts[1]="1001" → "100", not "MLG"). Fixed to take the LAST segment's first 3 chars.
+- Bug 3: src/lib/queries/pareto.ts:173,384 used `SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3)` — same first-dot bug as Bug 1/2. Fixed both queryParetoByKelompok (line 173) and queryParetoHistorical (line 384) to use `LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)`.
+- Bug 4: src/lib/aggregation-cache.ts buildCacheKey was missing kelompok → cache poisoning between requests with different kelompok filters. Added kelompok to the cache key parts array. Also updated the caller in src/app/api/analysis/route.ts:162 to pass kelompok.
+- Bug 5: src/app/api/analysis/route.ts buildWhere (Prisma WhereInput for currSlim rule evaluation) didn't filter by kelompok → rule flags (NORMAL/WARNING/ABNORMAL) and health ranking included ALL outlets, contradicting the SQL aggregates. Added kelompokOutletCodes resolution (pre-fetch outlet codes matching the kelompok prefix) and integrated into buildWhere with proper intersection logic for PIC/outletCode filters.
+- Bug 6 (cosmetic): src/app/api/analysis/route.ts:934 response filters object didn't include kelompok. Added kelompok to the response for frontend consistency.
+
+Verification:
+- `bun run lint` → 0 errors (9 pre-existing warnings, all unrelated).
+- `bunx tsc --noEmit` → exit 0, zero type errors.
+- API tests via curl:
+  - /api/analysis without kelompok: 187 outlets, sales Rp 153.92M ✓
+  - /api/analysis with kelompok=BDG: 11 outlets, sales Rp 7.80M ✓ (correctly filtered)
+  - /api/analysis with kelompok=BDG + area=JAWA BARAT 1: 11 outlets, sales Rp 7.80M ✓ (combined filter)
+  - /api/analysis with kelompok=ZZZ (non-existent): 404 "No records found" ✓ (friendly error)
+  - /api/pareto with kelompok=BDG: byItem 11, byOutlet 7, byArea 1, byKelompok 20 (intentionally shows all for comparison), byPIC 4, nested 10 ✓
+- Browser verification via Agent Browser:
+  - Opened dashboard, selected "BDG" from Kelompok dropdown.
+  - Dashboard SALES updated from Rp 153,92M → Rp 7,80M (matches API).
+  - "Reset filter aktif" button appeared (filter active).
+  - Pareto tab: kelompok card rendered with BDG + CKR data visible.
+  - dev.log confirmed: GET /api/analysis?...&kelompok=BDG 200, GET /api/pareto?...&kelompok=BDG 200.
+  - No console errors or hydration mismatches.
+
+Stage Summary:
+- Root cause: kelompok filter SQL used `code LIKE 'PREFIX%'` but outlet codes start with numbers, so the LIKE matched nothing → empty dashboard.
+- Fixed 6 related bugs across 5 files (shared.ts, status/route.ts, pareto.ts, aggregation-cache.ts, analysis/route.ts).
+- All kelompok extraction now uses a single consistent pattern: `LEFT(SUBSTRING(code FROM '[^.]+$'), 3)` (SQL) / `segs[segs.length-1].substring(0,3)` (JS) — works for both outlet code formats.
+- Cache key now includes kelompok to prevent cache poisoning.
+- buildWhere (Prisma path) now filters by kelompok, keeping rule evaluation consistent with SQL aggregates.
+- Dashboard, Pareto, and Resto Analysis tabs all verified working with kelompok filter.
+- Files modified:
+  - src/lib/queries/shared.ts (buildSqlFilters kelompok clause)
+  - src/app/api/status/route.ts (kelompokOptions extraction)
+  - src/lib/queries/pareto.ts (queryParetoByKelompok + queryParetoHistorical groupExpr)
+  - src/lib/aggregation-cache.ts (buildCacheKey adds kelompok)
+  - src/app/api/analysis/route.ts (cache key passes kelompok, buildWhere filters by kelompok, response includes kelompok)

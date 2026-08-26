@@ -169,8 +169,12 @@ export async function queryParetoByKelompok(
   filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
+  // FIX (BUG-KELOMPOK-EMPTY): Use LEFT(SUBSTRING(code FROM '[^.]+$'), 3) to extract
+  // the kelompok from the LAST dot-segment (the name prefix), consistent with
+  // buildSqlFilters + /api/status. POSITION('.' IN code)+1 returns the position
+  // after the FIRST dot — wrong for format 2 ("B.1001.MLGPAR" → "100", not "MLG").
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ kelompok: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3) as "kelompok",
+    SELECT LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) as "kelompok",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
       ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -180,7 +184,7 @@ export async function queryParetoByKelompok(
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
       ${f}
-    GROUP BY SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3)
+    GROUP BY LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
@@ -374,6 +378,11 @@ export async function queryParetoHistorical(
   const f = buildSqlFilters(filters);
 
   // Different GROUP BY expression per dimension
+  // FIX (BUG-KELOMPOK-EMPTY): kelompok extraction uses LEFT(SUBSTRING(code FROM '[^.]+$'), 3)
+  // to get the 3-char prefix of the LAST dot-segment (the name prefix). The old
+  // SUBSTRING(... POSITION('.' IN code)+1 FOR 3) grabbed chars after the FIRST dot
+  // — wrong for format 2 ("B.1001.MLGPAR" → "100", not "MLG"). Now consistent with
+  // buildSqlFilters + queryParetoByKelompok.
   const groupExpr = dimension === 'item'
     ? Prisma.sql`i.name`
     : dimension === 'outlet'
@@ -381,7 +390,7 @@ export async function queryParetoHistorical(
       : dimension === 'area'
         ? Prisma.sql`o.area`
         : dimension === 'kelompok'
-          ? Prisma.sql`SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3)`
+          ? Prisma.sql`LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)`
           : Prisma.sql`COALESCE(pic.pic, 'Unassigned')`;
 
   const joinItem = dimension === 'item'

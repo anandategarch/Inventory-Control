@@ -29,7 +29,12 @@ const inflightPromises = new Map<string, Promise<unknown>>();
 
 /**
  * Build a cache key from the filter parameters.
- * Format: "analysis|2026-08|WEEK 1|WEEK 1|||Juli 2026|JAWA TIMUR 1|1016.MLGJAK|MINYAK MIE|Andi"
+ * Format: "analysis|2026-08|WEEK 1|WEEK 1|||Juli 2026|JAWA TIMUR 1|MLG|1016.MLGJAK|MINYAK MIE|Andi"
+ *
+ * FIX (BUG-KELOMPOK-CACHE): kelompok was missing from the cache key → requests
+ * with different kelompok filters shared the same cache entry → cache poisoning
+ * (e.g., user A selects kelompok="MLG" then user B with no filter gets A's
+ * filtered result, or vice-versa). Adding kelompok to the key fixes this.
  */
 export function buildCacheKey(parts: {
   route: string;
@@ -38,6 +43,7 @@ export function buildCacheKey(parts: {
   compareWeek?: string | null;
   compareMonth?: string | null;
   area?: string | null;
+  kelompok?: string | null;
   outletCode?: string | null;
   itemName?: string | null;
   pic?: string | null;
@@ -48,6 +54,7 @@ export function buildCacheKey(parts: {
     parts.compareWeek || 'NONE',
     parts.compareMonth || 'NONE',
     parts.area || 'ALL',
+    parts.kelompok || 'ALL',
     parts.outletCode || 'ALL',
     parts.itemName || 'ALL',
     parts.pic || 'ALL',

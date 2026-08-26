@@ -157,12 +157,14 @@ export async function GET(req: NextRequest) {
     // FIX Medium #1: DB-level cache check.
     // Try to read cached result BEFORE running the 16 parallel SQL queries.
     // Cache hit: <100ms response (vs 6-8s cold). TTL 5 min.
+    // FIX (BUG-KELOMPOK-CACHE): kelompok is now part of the cache key — without it,
+    // requests with different kelompok filters would share a cache entry (cache poisoning).
     const cacheKey = buildCacheKey({
       route: 'analysis',
       month, week,
       compareWeek: compareWeek ?? compareMonthExplicit,
       compareMonth: compareMonthExplicit,
-      area, outletCode, itemName, pic,
+      area, kelompok, outletCode, itemName, pic,
     });
 
     // FIX M3 (AUDIT-5): Check in-flight Promise map (prevents cache stampede).
@@ -308,13 +310,39 @@ export async function GET(req: NextRequest) {
     // BUG FIX (BUG-NORECORDS-1): add area/outletCode 'all' guards (was missing — caused
     // "No records found" if frontend sent 'all' as literal string).
     // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter (mode: 'insensitive').
+    // FIX (BUG-KELOMPOK-EMPTY): add kelompok filter so currSlim (rule evaluation)
+    // also respects the kelompok dropdown. Without this, rule flags (NORMAL/WARNING/
+    // ABNORMAL) and health ranking counts would include ALL outlets, contradicting
+    // the SQL aggregates (which DO filter by kelompok via buildSqlFilters).
     const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput => {
       const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
       if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
-      // FIX FILTER-2: PIC filter — case-insensitive (done in raw SQL above) + sentinel for empty list.
-      // Combine with outletCode: if both set, outlet must be in PIC list (intersection).
-      if (picOutletCodes !== null) {
+      // Kelompok: filter outlet by code prefix (last dot-segment, first 3 chars).
+      // Prisma startsWith on 'code' won't work (kelompok is in the middle/end),
+      // so we resolve kelompok → list of outlet codes first via a sub-query.
+      // Cheaper: use Prisma's relation filter with a startsWith on the LAST segment.
+      // Since Prisma can't easily express "LEFT(SUBSTRING(code, '[^.]+$'),3) = X",
+      // we resolve outlet codes here.
+      // FIX: deferred resolution — we compute kelompokOutletIds once below (after
+      // this function definition) and reference via closure. See kelompokOutletIds.
+      if (kelompok && kelompok !== 'all' && kelompokOutletCodes !== null) {
+        if (kelompokOutletCodes.length === 0) {
+          // kelompok selected but no outlets match — sentinel to return 0 rows
+          w.outlet = { code: { in: ['__NO_MATCH__'] } };
+        } else {
+          // Intersect with PIC/outletCode filters if both set
+          if (picOutletCodes !== null) {
+            const picCodes = picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'];
+            const intersect = kelompokOutletCodes.filter((c: string) => picCodes.includes(c));
+            w.outlet = { code: { in: intersect.length > 0 ? intersect : ['__NO_MATCH__'] } };
+          } else if (outletCode && outletCode !== 'all') {
+            w.outlet = { code: kelompokOutletCodes.includes(outletCode) ? outletCode : '__NO_MATCH__' };
+          } else {
+            w.outlet = { code: { in: kelompokOutletCodes } };
+          }
+        }
+      } else if (picOutletCodes !== null) {
         // PIC selected — filter to PIC's outlets (or sentinel if empty → 0 rows)
         let codes = picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'];
         // If outletCode also selected, intersect (outletCode must be in PIC list)
@@ -328,6 +356,23 @@ export async function GET(req: NextRequest) {
       }
       return w;
     };
+
+    // FIX (BUG-KELOMPOK-EMPTY): resolve kelompok → outlet codes ONCE for buildWhere.
+    // The raw SQL path (buildSqlFilters) uses an inline sub-select, but Prisma's
+    // WhereInput can't easily express LEFT(SUBSTRING(code, '[^.]+$'),3) = X.
+    // Pre-fetching the outlet code list (typically 5-30 codes per kelompok) is
+    // cheap (~1ms on indexed code column) and keeps buildWhere Prisma-friendly.
+    let kelompokOutletCodes: string[] = [];
+    if (kelompok && kelompok !== 'all') {
+      const allOutlets = await db.outlet.findMany({ select: { code: true } });
+      kelompokOutletCodes = allOutlets
+        .map((o) => o.code)
+        .filter((code) => {
+          const segs = code.split('.');
+          if (segs.length < 2) return false;
+          return segs[segs.length - 1].substring(0, 3).toUpperCase() === kelompok.toUpperCase();
+        });
+    }
 
     // Shared filter options for SQL aggregate queries
     // FIX FILTER-2: apply sentinel for empty PIC list (buildSqlFilters skips empty arrays)
@@ -886,7 +931,9 @@ export async function GET(req: NextRequest) {
     const result = {
       success: true,
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
-      filters: { area, outletCode, itemName },
+      // FIX (BUG-KELOMPOK-EMPTY): include kelompok in the response filters object
+      // so the frontend can display the active filter state consistently.
+      filters: { area, kelompok, outletCode, itemName },
       executiveSummary: execSummary,
       healthStatus: { normal, warning, abnormal, breakdown: ruleBreakdown },
       // OPTIMIZE-ANALYSIS: only `errors` + `warnings` are read by the frontend
