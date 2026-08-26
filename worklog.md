@@ -20002,3 +20002,38 @@ Stage Summary:
 - New shared module: src/lib/kelompok-resolver.ts (extractKelompokFromCode + resolveKelompokOutletCodes).
 - New shared type: SqlFilterOpts in shared.ts (adopted by 32 query functions).
 - All fixes verified via tsc, lint, API tests, and browser tests.
+
+---
+Task ID: FIX-P3-KELOMPOK
+Agent: main (Z.ai Code)
+Task: Fix 10 P3 bugs from kelompok filter bug hunt (polish + robustness).
+
+Work Log:
+- User requested fix P3 bugs after P1+P2 were fixed.
+- Skip: tests (instructions: "do not write any test code"), documentation (instructions: "NEVER proactively create documentation files"), URL persistence (by design), virtualization (not needed at 151 options), cache cleanup cron (defer).
+- Fixed 10 P3 bugs across 12 files.
+
+P3 fixes (10):
+1. Zod validation (BUG-BE-8/EDGE-3/PERF-6): added kelompokSchema to 3 schemas. 1000-char kelompok → 400.
+2. Audit log (BUG-BE-10): added kelompok + pic to audit detail.
+3. Response filters (BUG-PERF-11): added pic to analysis + export-report response.
+4. Cache key collision (BUG-EDGE-4): replaced | with \x1f (ASCII Unit Separator).
+5. withStatementTimeout (BUG-BE-11): wrapped queryGlobalItemSearch + queryItemTrend.
+6. Misleading comment (BUG-FE-10): fixed useAnalysis.ts comment.
+7. scorecardOutlet (BUG-FE-3): added to setKelompok + reset in useDashboard.
+8. placeholderData (BUG-FE-5): added keepPreviousData to 3 side-panel queries.
+9. aria-label (BUG-FE-7): added ariaLabel prop to SearchableComboBox, passed from FilterBar. Also fixed duplicate CommandEmpty (BUG-EDGE-8).
+10. Stale filter cleanup (BUG-FE-9): useEffect in FilterBar clears invalid filters after upload.
+
+Verification:
+- tsc --noEmit: 0 errors
+- lint: 0 errors (9 pre-existing warnings)
+- kelompok=BDG → sales Rp 7.8M, 11 outlets, filters include pic ✓
+- 1000-char kelompok → HTTP 400 (Zod validation) ✓
+- Browser: aria-labels present on 4 SearchableComboBox dropdowns ✓
+- Committed + pushed (commit dc00344).
+
+Stage Summary:
+- 10 P3 bugs fixed across 12 files, 100 insertions, 27 deletions.
+- All kelompok filter bugs from the 4-agent bug hunt are now resolved (P1: 3, P2: 9, P3: 10 = 22 total).
+- Remaining unfixed (by design/defer): tests, documentation, URL persistence, virtualization, cache cleanup cron.
