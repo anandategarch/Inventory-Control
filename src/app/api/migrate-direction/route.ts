@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { statusCache } from '@/lib/cache';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, migrateDirectionQuerySchema } from '@/lib/validation';
 
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
     clearMonthResolverCache();
 
     // FIX (AUDIT-SECURITY-PERF D5): add audit log — this mutates up to 100% of

@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
@@ -513,7 +513,7 @@ export async function POST(req: NextRequest) {
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after week import.
       // Without this, /api/analysis serves stale data for up to 5 min (TTL).
-      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+      invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this import. Without this, getMonthResolver() would
       // keep returning the pre-import resolver and the new month's case might
@@ -707,7 +707,7 @@ export async function POST(req: NextRequest) {
       // Clear caches
       statusCache.clear();
       // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after import-all.
-      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+      invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       clearMonthResolverCache();
 
       // Cleanup chunks

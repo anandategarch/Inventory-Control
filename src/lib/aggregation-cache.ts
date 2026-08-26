@@ -151,6 +151,16 @@ export function setInflight<T>(cacheKey: string, promise: Promise<T>): Promise<T
  * Invalidate cache entries matching a pattern.
  * Use after data mutations (ingest, settings change, direction migration).
  * Pass a prefix to invalidate all entries for a route (e.g. "analysis|").
+ *
+ * FIX (BUG2-PERF-1): The old `invalidateCache('analysis|')` calls used the
+ * literal `|` character, but buildCacheKey was changed to use `\x1f` (ASCII
+ * Unit Separator) in the BUG-EDGE-4 fix. This caused `startsWith('analysis|')`
+ * to return false for ALL cache keys → zero entries invalidated → stale cache
+ * for the full 5-min TTL after every mutation (ingest, settings, pic, etc.).
+ *
+ * Fix: export dedicated `invalidateAnalysisCache()` helper that uses the
+ * correct delimiter. All callers should use this helper instead of passing
+ * raw prefix strings.
  */
 export async function invalidateCache(prefix?: string): Promise<void> {
   try {
@@ -168,4 +178,18 @@ export async function invalidateCache(prefix?: string): Promise<void> {
   } catch (e) {
     logger.error('[cache] invalidateCache error', { error: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/**
+ * FIX (BUG2-PERF-1): Dedicated helper to invalidate all analysis cache entries.
+ * Uses the SAME delimiter (\x1f) as buildCacheKey — do NOT pass raw 'analysis|'
+ * to invalidateCache (it won't match any keys).
+ *
+ * Usage: `await invalidateAnalysisCache();` after any mutation that affects
+ * analysis data (ingest, import-drive, settings change, pic change, data delete,
+ * migrate-direction).
+ */
+export async function invalidateAnalysisCache(): Promise<void> {
+  // \x1f = ASCII Unit Separator — must match buildCacheKey's SEP constant.
+  return invalidateCache(`analysis\x1f`);
 }

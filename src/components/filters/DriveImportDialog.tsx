@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CloudDownload, Loader2, CheckCircle2, XCircle, Folder, FileSpreadsheet, Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface DriveImportResult {
@@ -77,7 +77,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
       const ingestResults = data.ingestResults || data.results || [];
       setDriveResult(ingestResults);
       if (ingestResults.some((r: DriveImportResult) => r.status === 'INGESTED')) {
-        await invalidateCache('analysis|');
+        await invalidateAnalysisCache();
         queryClient.invalidateQueries({ queryKey: ['status'] });
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         // FIX (BUG-HUNT-RECENT P1): invalidate ALL data-dependent queries (was only 2)

@@ -1,11 +1,16 @@
 // ============================================================
-//  Top Items queries — by nominal, devBom, deviasiRank, category,
-//  historicalCategoryAvg, itemConsistency, deviasiRankForOutlet.
+//  Item-level queries — top-N items by various metrics
+//  and item consistency (outlet coverage) analysis.
+//  All aggregation done in SQL (PostgreSQL + SQLite portable).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import { buildSqlFilters, withStatementTimeout } from './shared';
 
+// ============================================================
+//  Top Items by Metric — GROUP BY itemId (Phase 2)
+//  Returns N rows instead of 35K
+// ============================================================
 export interface TopItemRow {
   itemName: string;
   outletCode: string;
@@ -16,7 +21,12 @@ export interface TopItemRow {
 export async function queryTopItemsByNominal(
   week: string,
   month: string,
-  filters: SqlFilterOpts,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }>> {
   const f = buildSqlFilters(filters);
@@ -48,7 +58,12 @@ export async function queryTopItemsByNominal(
 export async function queryTopItemsByDevBom(
   week: string,
   month: string,
-  filters: SqlFilterOpts,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }>> {
   const f = buildSqlFilters(filters);
@@ -94,7 +109,12 @@ export async function queryTopItemsByDevBom(
 export async function queryTopItemsByDeviasiRank(
   week: string,
   month: string,
-  filters: SqlFilterOpts,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
   limit: number = 20
 ): Promise<Array<{
   itemName: string;
@@ -349,7 +369,12 @@ export async function queryTopItemsByDeviasiRankForOutlet(
 export async function queryTopItemsByCategory(
   week: string,
   month: string,
-  filters: SqlFilterOpts,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
   category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }>> {
@@ -397,7 +422,12 @@ export async function queryTopItemsByCategory(
 // ============================================================
 export async function queryHistoricalCategoryAvg(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
-  filters: SqlFilterOpts,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
   category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
 ): Promise<Map<string, { avgQty: number; avgNominal: number }>> {
   if (historicalPeriods.length === 0) return new Map();
@@ -448,7 +478,12 @@ export async function queryHistoricalCategoryAvg(
 export async function queryItemConsistency(
   week: string,
   month: string,
-  filters: SqlFilterOpts
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  }
 ): Promise<Array<{
   itemName: string;
   outletCount: number;
@@ -517,3 +552,442 @@ export async function queryItemConsistency(
 //  `deviationThreshold` = STD_DEVIASI_BOM_PCT (passed from runtime thresholds)
 //  so an outlet is counted as "deviating" when its abs(Dev/BOM) > threshold.
 // ============================================================
+export interface NetworkItemRiskOutlet {
+  outletCode: string;
+  outletName: string;
+  nominalDeviasi: number;
+  devBom: number;
+}
+
+export interface NetworkItemRisk {
+  itemName: string;
+  satuan: string;
+  outletCount: number;          // how many outlets have this item
+  deviatingOutlets: number;     // how many have deviation > threshold
+  totalAbsNominal: number;      // SUM of |nominalDeviasi| across all outlets
+  avgDevBom: number;            // avg deviation ratio
+  maxDevBom: number;            // max deviation ratio (worst outlet)
+  systemicScore: number;        // 0-100 (higher = more systemic)
+  financialImpact: number;      // 0-100 (higher = more financial impact)
+  riskScore: number;            // 0-100 (weighted combination)
+  riskLevel: 'TINGGI' | 'SEDANG' | 'RENDAH';
+  topDeviatingOutlets: NetworkItemRiskOutlet[];
+}
+
+// Raw row shape returned by SQL (before JS risk-score computation).
+// `topDeviatingOutlets` comes back as a JSON string from PostgreSQL json_agg.
+interface NetworkItemRiskRawRow {
+  itemName: string;
+  satuan: string | null;
+  outletCount: number;
+  deviatingOutlets: number;
+  totalAbsNominal: number;
+  avgDevBom: number;
+  maxDevBom: number;
+  totalOutlets: number;
+  topDeviatingOutlets: string | NetworkItemRiskOutlet[] | null;
+}
+
+export async function queryNetworkItemRisk(
+  week: string,
+  month: string,
+  filters: {
+    area?: string | null;
+    outletCode?: string | null;
+    itemName?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 10,
+  deviationThreshold: number = 0.05,
+): Promise<NetworkItemRisk[]> {
+  const f = buildSqlFilters(filters);
+  // Single query strategy:
+  //   CTE 1 (item_per_outlet): per (item, outlet) — sum absNominalDeviasi,
+  //     compute signed + abs Dev/BOM. Filters to rows with deviation > 0
+  //     so outletCount only counts outlets that actually have this item with
+  //     a non-zero deviation.
+  //   CTE 2 (total_outlets): count DISTINCT outlets in the (filtered) period
+  //     so systemicScore has the right denominator.
+  //   CTE 3 (top_outlets): per item, top 3 outlets by ABS(nominalDeviasi)
+  //     via ROW_NUMBER window — collected into JSON via json_agg.
+  //   Final: GROUP BY item — aggregate across outlets, LEFT JOIN top_outlets
+  //     JSON. Risk scores computed in JS (Math.min/round keeps SQL portable
+  //     across PostgreSQL + SQLite).
+  const rows = await db.$queryRaw<NetworkItemRiskRawRow[]>`
+    WITH item_per_outlet AS (
+      SELECT i.id as "itemId", i.name as "itemName", MAX(ir."satuan") as "satuan",
+        ir."outletId",
+        -- FIX (AUDIT-CALC-SQL SIGN-2): was SUM(absNominalDeviasi) (ABS, always positive)
+        — labeled as "nominalDeviasi" which should be SIGNED everywhere else.
+        Now uses SUM(nominalDeviasi) for consistency. absNominalDeviasi still available
+        for sorting via the separate absDevBom column.
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (consistent with other queries)
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "absDevBom"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        ${f}
+      GROUP BY i.id, i.name, ir."outletId"
+    ),
+    item_outlet_full AS (
+      SELECT ipo.*, o.code as "outletCode", o.name as "outletName"
+      FROM item_per_outlet ipo
+      JOIN "Outlet" o ON ipo."outletId" = o.id
+    ),
+    total_outlets AS (
+      SELECT CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "totalOutlets"
+      FROM "InventoryRecord" ir
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        ${f}
+    ),
+    top_outlets AS (
+      SELECT "itemId",
+        json_agg(json_build_object(
+          'outletCode', "outletCode",
+          'outletName', "outletName",
+          'nominalDeviasi', "nominalDeviasi",
+          'devBom', "devBom"
+        ) ORDER BY ABS("nominalDeviasi") DESC) as "topDeviatingOutlets"
+      FROM (
+        SELECT "itemId", "outletCode", "outletName", "nominalDeviasi", "devBom",
+          ROW_NUMBER() OVER (
+            PARTITION BY "itemId"
+            ORDER BY ABS("nominalDeviasi") DESC
+          ) as rn
+        FROM item_outlet_full
+      ) ranked
+      WHERE rn <= 3
+      GROUP BY "itemId"
+    ),
+    item_aggs AS (
+      SELECT "itemId", "itemName", MAX("satuan") as "satuan",
+        CAST(COUNT(DISTINCT "outletId") AS INTEGER) as "outletCount",
+        CAST(COUNT(DISTINCT CASE WHEN "absDevBom" > ${deviationThreshold} THEN "outletId" END) AS INTEGER) as "deviatingOutlets",
+        COALESCE(SUM(ABS("nominalDeviasi")), 0) as "totalAbsNominal",
+        AVG("absDevBom") as "avgDevBom",
+        MAX("absDevBom") as "maxDevBom"
+      FROM item_outlet_full
+      GROUP BY "itemId", "itemName"
+    )
+    SELECT ia."itemName", ia."satuan",
+      ia."outletCount", ia."deviatingOutlets",
+      ia."totalAbsNominal",
+      COALESCE(ia."avgDevBom", 0) as "avgDevBom",
+      COALESCE(ia."maxDevBom", 0) as "maxDevBom",
+      COALESCE((SELECT "totalOutlets" FROM total_outlets), 0) as "totalOutlets",
+      COALESCE(to2."topDeviatingOutlets", '[]'::json) as "topDeviatingOutlets"
+    FROM item_aggs ia
+    LEFT JOIN top_outlets to2 ON ia."itemId" = to2."itemId"
+    ORDER BY ia."totalAbsNominal" DESC
+  `;
+
+  // Compute risk scores in JS — keeps SQL portable + testable.
+  const FINANCIAL_IMPACT_DENOMINATOR = 100_000_000; // Rp 100jt = score 100
+
+  const results: NetworkItemRisk[] = rows.map((r) => {
+    const outletCount = Number(r.outletCount) || 0;
+    const deviatingOutlets = Number(r.deviatingOutlets) || 0;
+    const totalOutlets = Number(r.totalOutlets) || 0;
+    const totalAbsNominal = Number(r.totalAbsNominal) || 0;
+    const avgDevBom = Number(r.avgDevBom) || 0;
+    const maxDevBom = Number(r.maxDevBom) || 0;
+
+    // systemicScore: 100 if >50% of outlets deviate, else proportional.
+    // Formula: min(100, deviatingOutlets / totalOutlets * 200)
+    const systemicScore = totalOutlets > 0
+      ? Math.min(100, (deviatingOutlets / totalOutlets) * 200)
+      : 0;
+
+    // financialImpact: 100 if totalAbsNominal >= Rp 100jt, else proportional.
+    const financialImpact = Math.min(100, (totalAbsNominal / FINANCIAL_IMPACT_DENOMINATOR) * 100);
+
+    // riskScore: weighted combination (40% systemic + 40% financial + 20% avgDevBom×100)
+    const riskScore = Math.round(
+      systemicScore * 0.4 + financialImpact * 0.4 + Math.min(100, avgDevBom * 100) * 0.2
+    );
+
+    // riskLevel thresholds
+    const riskLevel: NetworkItemRisk['riskLevel'] =
+      riskScore >= 55 ? 'TINGGI'
+      : riskScore >= 30 ? 'SEDANG'
+      : 'RENDAH';
+
+    // Parse topDeviatingOutlets — PostgreSQL returns json as string, SQLite may return object.
+    let parsedOutlets: NetworkItemRiskOutlet[] = [];
+    if (r.topDeviatingOutlets) {
+      if (typeof r.topDeviatingOutlets === 'string') {
+        try {
+          parsedOutlets = JSON.parse(r.topDeviatingOutlets);
+        } catch {
+          parsedOutlets = [];
+        }
+      } else if (Array.isArray(r.topDeviatingOutlets)) {
+        parsedOutlets = r.topDeviatingOutlets as NetworkItemRiskOutlet[];
+      }
+    }
+    // Coerce numeric fields (BigInt/Decimal safety)
+    parsedOutlets = parsedOutlets.map((o) => ({
+      outletCode: String(o.outletCode ?? ''),
+      outletName: String(o.outletName ?? ''),
+      nominalDeviasi: Number(o.nominalDeviasi ?? 0),
+      devBom: Number(o.devBom ?? 0),
+    }));
+
+    return {
+      itemName: String(r.itemName ?? ''),
+      satuan: r.satuan ? String(r.satuan) : '',
+      outletCount,
+      deviatingOutlets,
+      totalAbsNominal,
+      avgDevBom,
+      maxDevBom,
+      systemicScore: Math.round(systemicScore),
+      financialImpact: Math.round(financialImpact),
+      riskScore,
+      riskLevel,
+      topDeviatingOutlets: parsedOutlets,
+    };
+  });
+
+  // Sort by riskScore DESC (then by totalAbsNominal DESC for tie-break) and slice top N
+  results.sort((a, b) =>
+    b.riskScore - a.riskScore || b.totalAbsNominal - a.totalAbsNominal
+  );
+  return results.slice(0, limit);
+}
+
+// ============================================================
+//  Global Item Search — cross-outlet view for a single item
+//  --------------------------------------------------------
+//  When user searches "CABAI" and selects an item, this query
+//  returns that item's deviation across ALL outlets (not just
+//  the selected one). Surfaces systemic patterns: which outlets
+//  have the worst deviation for this specific item.
+//
+//  Returns per-(item, outlet) rows with:
+//    - outlet code/name/area/pic
+//    - signed qtyDeviasi, qtyBom, nominalDeviasi (for display)
+//    - abs(qtyDeviasi) for sorting
+//    - devBom ratio (signed)
+//    - direction (LOSS/SURPLUS/NEUTRAL)
+//
+//  Note: `itemNameFilter` is the EXACT item name (already resolved
+//  by the caller via /api/item-search?q=...). We filter by exact
+//  match on i.name (case-insensitive via LOWER) to avoid partial
+//  matches crossing items (e.g. "CABAI" matching "CABAI FROZEN"
+//  AND "CABAI MERAH" — caller should pick one).
+// ============================================================
+export interface GlobalItemSearchRow {
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  area: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyBom: number;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  qtyLossSurplus: number;
+  nominalDeviasi: number;
+  nominalLossSurplus: number;
+  absNominalDeviasi: number;
+  devBom: number | null;
+  direction: string;
+}
+
+export async function queryGlobalItemSearch(
+  week: string,
+  month: string,
+  itemNameFilter: string,
+  filters: {
+    area?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 100
+): Promise<GlobalItemSearchRow[]> {
+  // Filter by exact item name (case-insensitive). Outlet filter is intentionally
+  // NOT applied — this is a CROSS-OUTLET view (user wants to see the item in
+  // ALL outlets). Area + PIC filters are still respected (narrow the outlet scope).
+  const f = buildSqlFilters({
+    area: filters.area,
+    outletCode: null, // cross-outlet: no outlet filter
+    itemName: null,   // itemName handled by exact match below
+    picOutletCodes: filters.picOutletCodes,
+  });
+  const rows = await db.$queryRaw<Array<GlobalItemSearchRow>>`
+    SELECT
+      i.name as "itemName",
+      o.code as "outletCode",
+      o.name as "outletName",
+      o.area,
+      pic.pic,
+      MAX(ir."satuan") as "satuan",
+      COALESCE(SUM(ir."qtyBom"), 0) as "qtyBom",
+      COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasi",
+      COALESCE(SUM(ir."qtyWaste"), 0) as "qtyWaste",
+      COALESCE(SUM(ir."qtySusut"), 0) as "qtySusut",
+      COALESCE(SUM(ir."qtyTrial"), 0) as "qtyTrial",
+      COALESCE(SUM(ir."qtyLossSurplus"), 0) as "qtyLossSurplus",
+      COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+      COALESCE(SUM(ir."nominalLossSurplus"), 0) as "nominalLossSurplus",
+      COALESCE(ABS(SUM(ir."nominalDeviasi")), 0) as "absNominalDeviasi",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+        ELSE NULL END as "devBom",
+      CASE
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+        ELSE 'NEUTRAL'
+      END as "direction"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
+    WHERE ir."monthLabel" = ${month}
+      AND ir."weekLabel" = ${week}
+      AND LOWER(i.name) = LOWER(${itemNameFilter})
+      ${f}
+    GROUP BY i.name, o.code, o.name, o.area, pic.pic
+    ORDER BY "absNominalDeviasi" DESC
+    LIMIT ${limit}
+  `;
+  // Coerce BigInt/Decimal to Number (PostgreSQL SUM returns bigint for integer columns)
+  return rows.map((r: any) => ({
+    ...r,
+    qtyBom: Number(r.qtyBom),
+    qtyDeviasi: Number(r.qtyDeviasi),
+    qtyWaste: Number(r.qtyWaste),
+    qtySusut: Number(r.qtySusut),
+    qtyTrial: Number(r.qtyTrial),
+    qtyLossSurplus: Number(r.qtyLossSurplus),
+    nominalDeviasi: Number(r.nominalDeviasi),
+    nominalLossSurplus: Number(r.nominalLossSurplus),
+    absNominalDeviasi: Number(r.absNominalDeviasi),
+    devBom: r.devBom != null ? Number(r.devBom) : null,
+  }));
+}
+
+// ============================================================
+//  Item Autocomplete — for the global search bar (Cmd+K)
+//  Returns up to `limit` item names matching `q` (case-insensitive).
+//  Ranked by total absNominalDeviasi DESC so high-impact items
+//  surface first.
+// ============================================================
+export async function queryItemAutocomplete(
+  week: string,
+  month: string,
+  q: string,
+  limit: number = 10
+): Promise<Array<{ itemName: string; outletCount: number; totalAbsNominal: number }>> {
+  const rows = await db.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number | bigint }>>`
+    SELECT
+      i.name as "itemName",
+      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+      COALESCE(ABS(SUM(ir."nominalDeviasi")), 0) as "totalAbsNominal"
+    FROM "Item" i
+    JOIN "InventoryRecord" ir ON ir."itemId" = i.id
+    WHERE ir."monthLabel" = ${month}
+      AND ir."weekLabel" = ${week}
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      AND LOWER(i.name) LIKE LOWER(${'%' + q + '%'})
+    GROUP BY i.name
+    ORDER BY "totalAbsNominal" DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => ({
+    itemName: r.itemName,
+    outletCount: Number(r.outletCount),
+    totalAbsNominal: Number(r.totalAbsNominal),
+  }));
+}
+
+// ============================================================
+//  Item Trend Analysis — per-(period, outlet) for 1 item across ALL periods
+//  --------------------------------------------------------
+//  Returns the item's deviation across ALL months × weeks in the DB,
+//  grouped by outlet. Used for trend line chart in GlobalItemSearchModal.
+//
+//  Each row = 1 period × 1 outlet:
+//    - monthLabel, weekLabel (for X-axis sorting)
+//    - outletCode, outletName, area (for line identification)
+//    - nominalDeviasi (signed, for Y-axis)
+//    - devBom (signed, for alternative Y-axis)
+//    - direction (LOSS/SURPLUS/NEUTRAL)
+//
+//  Sorted by period (chronological) then outlet.
+//  Uses index @@index([monthLabel, weekLabel, outletId]) for fast scan.
+// ============================================================
+export interface ItemTrendRow {
+  monthLabel: string;
+  monthKey: string; // FIX (AUDIT-NEWFEATURES C1): ISO format "2026-08" for chronological sort (monthLabel alphabetical sort is wrong for Indonesian month names)
+  weekLabel: string;
+  outletCode: string;
+  outletName: string;
+  area: string;
+  nominalDeviasi: number;
+  devBom: number | null;
+  direction: string;
+}
+
+export async function queryItemTrend(
+  itemNameFilter: string,
+  filters: {
+    area?: string | null;
+    picOutletCodes?: string[] | null;
+  },
+  limit: number = 500
+): Promise<ItemTrendRow[]> {
+  // No month/week filter — we want ALL periods. Only area + PIC filters apply.
+  const f = buildSqlFilters({
+    area: filters.area,
+    outletCode: null,
+    itemName: null, // handled by exact match below
+    picOutletCodes: filters.picOutletCodes,
+  });
+  const rows = await db.$queryRaw<Array<ItemTrendRow>>`
+    SELECT
+      ir."monthLabel",
+      sf."monthKey",
+      ir."weekLabel",
+      o.code as "outletCode",
+      o.name as "outletName",
+      o.area,
+      COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+        THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+        ELSE NULL END as "devBom",
+      CASE
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+        WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+        ELSE 'NEUTRAL'
+      END as "direction"
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
+    WHERE LOWER(i.name) = LOWER(${itemNameFilter})
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      ${f}
+    GROUP BY ir."monthLabel", sf."monthKey", ir."weekLabel", o.code, o.name, o.area
+    ORDER BY sf."monthKey", ir."weekLabel", o.code
+    LIMIT ${limit}
+  `;
+  return rows.map((r: any) => ({
+    ...r,
+    nominalDeviasi: Number(r.nominalDeviasi),
+    devBom: r.devBom != null ? Number(r.devBom) : null,
+  }));
+}

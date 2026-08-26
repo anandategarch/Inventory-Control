@@ -14,7 +14,7 @@ import {
   invalidateSettingsCache,
   type SettingDefinition,
 } from '@/lib/settings';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation';
 
@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
     return NextResponse.json({
       success: true,

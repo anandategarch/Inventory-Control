@@ -20037,3 +20037,2336 @@ Stage Summary:
 - 10 P3 bugs fixed across 12 files, 100 insertions, 27 deletions.
 - All kelompok filter bugs from the 4-agent bug hunt are now resolved (P1: 3, P2: 9, P3: 10 = 22 total).
 - Remaining unfixed (by design/defer): tests, documentation, URL persistence, virtualization, cache cleanup cron.
+
+---
+Task ID: BUGHUNT2-PERF-5
+Agent: Cross-Cutting Bug Hunter (Performance + Security + State)
+Task: Audit performance (N+1, re-renders, bundle, DB), security (rate limit, validation, auth, SQLi), and state (Zustand, TanStack Query, cache coherence) across 15+ files. Do NOT fix — report only.
+
+Work Log:
+- Read worklog tail (lines 19540-20039) for context on prior kelompok bug hunt (BUGHUNT-BE-1, BUGHUNT-FE-2, BUGHUNT-EDGE-3, BUGHUNT-PERF-4) and the subsequent FIX-P1-P2-KELOMPOK + FIX-P3-KELOMPOK fixes.
+- Audited 25 files: useDashboard.ts, useAnalysis.ts, cache.ts, aggregation-cache.ts, rate-limit.ts, db.ts, logger.ts, pic-resolver.ts, kelompok-resolver.ts, month-resolver.ts, middleware.ts, next.config.ts, schema.prisma, validation.ts, api-response.ts, .gitignore, .env.example, and 16 API routes (analysis, export-report, pareto, data, ingest, ingest-upload, ingest-process, import-drive, settings, setup, status, drilldown, item-search, item-history, outlet-focus, outlet-items, recommendations, migrate-direction, investigation, investigation/[key], peer-comparison, peer-comparison/items, peer-comparison/trend, pic, pic/import, resto-bahan-matrix, route.ts).
+- Ran `bunx tsc --noEmit` to discover compile errors not mentioned in recent worklog entries.
+- Verified cache-prefix mismatch by running `node -e` — confirmed `'analysis|'` does NOT prefix-match `'analysis\x1f...'` cache keys.
+- Cross-referenced all `invalidateCache` call sites (8 files) against the `buildCacheKey` implementation.
+- Searched for N+1 patterns: `for ... await db` in queries modules → found 1 instance in queryParetoNestedItemOutlet.
+- Searched for SQLi patterns: `$queryRawUnsafe`, `$executeRawUnsafe`, `Prisma.raw` — verified all use hardcoded literals or parameterized values.
+- Verified Investigation model is absent from schema.prisma and investigation API is unused by frontend (dead code with TS errors).
+- Checked FilterBar + 9 other components for Zustand selector anti-pattern.
+
+Stage Summary:
+- 23 bugs found (2×P0, 5×P1, 8×P2, 8×P3).
+- CRITICAL (P0): Cache invalidation prefix mismatch — every `invalidateCache('analysis|')` call (8 sites) fails to delete any cache entries because the cache key delimiter was changed from `|` to `\x1f` in the BUG-EDGE-4 fix. Result: stale data served for full 5-min TTL after every mutation (ingest, settings, pic, migrate-direction, data delete, ingest-process). 8 files affected.
+- HIGH (P1): (1) focusCache exported nowhere — outlet-focus route has TS error + crashes at runtime. (2) investigation routes import non-existent `client` from db.ts + use SQLite API + Investigation table missing — 100% broken. (3) settings DELETE missing invalidateCache → stale analysis cache after settings reset. (4) investigation routes not in middleware PROTECTED_PATHS → no auth, no rate limit on POST/PATCH/DELETE. (5) middleware fail-open contradicts .env.example docs.
+- Performance: 1×N+1 (pareto nested), static docx import bloats cold start, settings DELETE missing rate limit, resolveKelompokOutletCodes + resolvePICOutletCodes query DB on every request (not cached), Zustand selector anti-pattern in 10+ components.
+- Security: 4 routes missing Zod validation (pareto, outlet-focus, resto-bahan-matrix, investigation), 1 route using analysis rate-limit for heavy export (too lenient), import-drive URL length unbounded.
+- State: Zustand reset() doesn't clear period filters, setFocusOutlet doesn't clear drilldown state, TanStack Query useDrilldown queryKey uses undefined vs null inconsistently.
+- Environment: DATABASE_URL only validated by string-prefix check (no URL parsing), .env.example docs contradict middleware fail-open behavior.
+- All findings reported below — NO fixes applied.
+
+=====================================================================
+BUG REPORT (23 bugs)
+=====================================================================
+
+## P0 — Critical
+
+### BUG2-PERF-1: Cache invalidation prefix mismatch (CACHE POISONING)
+- **Severity:** P0
+- **Files:** src/lib/aggregation-cache.ts:73 (cache key), src/lib/ingestion.ts:452, src/app/api/settings/route.ts:191, src/app/api/migrate-direction/route.ts:99, src/app/api/data/route.ts:242, src/app/api/pic/route.ts:80, src/app/api/pic/route.ts:130, src/app/api/pic/import/route.ts:135, src/app/api/ingest-process/route.ts:516, src/app/api/ingest-process/route.ts:710
+- **Description:** `buildCacheKey` joins parts with `\x1f` (ASCII Unit Separator) — changed in the BUG-EDGE-4 fix (worklog line 19994). The resulting cache key looks like `analysis\x1f2026-08\x1fWEEK 1\x1f...`. But ALL 8 invalidation call sites still pass the literal string `'analysis|'` (pipe character) as the prefix to `invalidateCache('analysis|')`. The Prisma `deleteMany({ where: { cacheKey: { startsWith: 'analysis|' } } })` matches ZERO entries because `'analysis\x1f...'` does not start with `'analysis|'`.
+- **Verification:** Ran `node -e "console.log('analysis\x1f2026-08'.startsWith('analysis|'))"` → `false`. Confirmed.
+- **Impact:** Cache invalidation is completely broken. Every mutation (file ingest, settings change, PIC update, direction migration, data delete, chunked upload) leaves the old AggregationCache entry in place for the full 5-min TTL. Users see stale dashboard data after every upload/settings change. The bug is silent (no error logged) because `deleteMany` returns `count: 0` which is treated as success.
+- **Suggested fix:** Replace all 8 `invalidateCache('analysis|')` calls with `invalidateCache('analysis\x1f')`. Better: export a constant `CACHE_KEY_PREFIX = 'analysis'` and a helper `invalidateAnalysisCache()` from aggregation-cache.ts that uses the correct separator. Add a unit test that builds a key with `buildCacheKey` and verifies `startsWith(invalidatePrefix)` returns true.
+
+## P1 — High
+
+### BUG2-STATE-1: focusCache missing from cache.ts (TS error + runtime crash)
+- **Severity:** P1
+- **File:** src/app/api/outlet-focus/route.ts:20 (`import { focusCache } from '@/lib/cache';`), src/lib/cache.ts (only exports `statusCache` + `LRUCache` class)
+- **Description:** outlet-focus/route.ts imports `focusCache` from `@/lib/cache`, but cache.ts only exports `statusCache` and the `LRUCache` class. There is no `focusCache` declaration anywhere in src/lib/. The code at lines 204 and 1149 calls `focusCache.get(cacheKey)` and `focusCache.set(cacheKey, result)`. `tsc --noEmit` confirms: `src/app/api/outlet-focus/route.ts(20,10): error TS2305: Module '"@/lib/cache"' has no exported member 'focusCache'.`
+- **Impact:** TypeScript compilation fails. If somehow built (e.g., with `typescript.ignoreBuildErrors: true`), the route would crash at runtime with `Cannot read properties of undefined (reading 'get')` — outlet-focus returns 500 for every request. The worklog (line 6492) claims "focusCache/priceGrowth deletions are all correct and complete" — but the import was never removed.
+- **Suggested fix:** Either (a) re-add `export const focusCache = new LRUCache<string, unknown>(50, 60_000);` to cache.ts, or (b) remove the import + cache.set/cache.get calls from outlet-focus/route.ts (since DB-level AggregationCache is the recommended pattern).
+
+### BUG2-STATE-2: investigation routes use non-existent `client` export (BROKEN)
+- **Severity:** P1
+- **Files:** src/app/api/investigation/route.ts:2 (`import { client } from '@/lib/db';`), src/app/api/investigation/[key]/route.ts:2 (same), src/lib/db.ts (only exports `db`)
+- **Description:** Both investigation route files import `client` from `@/lib/db`, but db.ts only exports `db` (a PrismaClient Proxy). Both files use the libsql/SQLite-style API: `client.execute({ sql: 'SELECT * FROM Investigation WHERE ...', args: [...] })`. This API does not exist on PrismaClient — Prisma uses `db.$queryRaw\`...\`` or `db.$executeRaw\`...\``. Additionally, the `Investigation` table is NOT defined in prisma/schema.prisma — `grep Investigation prisma/schema.prisma` returns no matches. The frontend never calls `/api/investigation` (verified by grep).
+- **Impact:** TypeScript compilation fails: `src/app/api/investigation/[key]/route.ts(2,10): error TS2305: Module '"@/lib/db"' has no exported member 'client'`. If somehow built, runtime crashes on first DB call. Routes are 100% dead code.
+- **Suggested fix:** Delete both investigation route files + the `InvestigationRecord` interface. The frontend doesn't use them (worklog line 967 confirms `investigationWorklist` was removed from AnalysisData type). If investigation tracking is needed later, add an `Investigation` model to schema.prisma and rewrite routes using Prisma client + Zod validation + middleware auth.
+
+### BUG2-SEC-1: Settings DELETE missing invalidateCache (STALE CACHE)
+- **Severity:** P1
+- **File:** src/app/api/settings/route.ts:207-279 (DELETE handler)
+- **Description:** POST handler (line 191) calls `invalidateCache('analysis|').catch(...)` after settings update. DELETE handler (reset to defaults) does NOT — it only calls `invalidateSettingsCache()` (line 258) which clears the in-memory settings cache, not the DB-level AggregationCache. Resetting all settings to defaults affects every threshold used by analysis (HIGH_LOSS_NOMINAL_THRESHOLD, RESIDUAL_LOSS_WARN_PCT, HISTORICAL_ZSCORE_HIGH, etc.) — the analysis route reads these via `getRuntimeThresholds()` and uses them in `computePriority` + `computeHealthScore`. Cached analysis responses will reflect OLD thresholds for up to 5 min.
+- **Note:** Even if invalidateCache were called, BUG2-PERF-1 means it wouldn't actually invalidate anything. Both bugs compound.
+- **Impact:** After "Reset all settings to defaults", dashboard shows stale priority/health rankings for 5 min.
+- **Suggested fix:** Add `invalidateCache('analysis\x1f').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));` after the `invalidateSettingsCache()` call at line 258.
+
+### BUG2-SEC-2: investigation routes missing from middleware PROTECTED_PATHS
+- **Severity:** P1
+- **Files:** src/middleware.ts:31-41 (PROTECTED_PATHS array), src/app/api/investigation/route.ts, src/app/api/investigation/[key]/route.ts
+- **Description:** middleware.ts protects `/api/setup`, `/api/ingest*`, `/api/import-drive`, `/api/settings`, `/api/data`, `/api/pic`, `/api/migrate-direction`. `/api/investigation` is NOT in the list. POST (upsert), PATCH (update), DELETE (remove) operations on investigation records are completely open — no ADMIN_TOKEN check, no rate limit. Combined with BUG2-STATE-2 (broken implementation), this is currently unexploitable, but if the routes are ever fixed, the auth gap remains.
+- **Impact:** If investigation routes are repaired without adding to middleware, anyone can create/update/delete investigation records.
+- **Suggested fix:** Add `/api/investigation` to PROTECTED_PATHS in middleware.ts (and to the matcher config). Add rate limiting + Zod validation to the route handlers.
+
+### BUG2-SEC-3: middleware fail-open contradicts .env.example documentation
+- **Severity:** P1
+- **Files:** src/middleware.ts:71-74 (fail-open when ADMIN_TOKEN unset), .env.example:24-26 (says "fail-closed (403) in production")
+- **Description:** middleware.ts comments (line 64-70) explicitly state: "fail-open when ADMIN_TOKEN not set, regardless of NODE_ENV ... The 'security risk' is theoretical for a single-user local dev tool." But .env.example says: "If unset, destructive endpoints are open in dev mode but fail-closed (403) in production." These contradict each other. A production deploy that forgets to set ADMIN_TOKEN leaves DELETE /api/data, POST /api/settings, POST /api/ingest, POST /api/pic, etc. fully open to the internet.
+- **Impact:** Misleading docs → operator may deploy without ADMIN_TOKEN thinking production is safe. Actual behavior: any visitor can wipe the database.
+- **Suggested fix:** Either (a) update .env.example to match actual behavior ("If unset, destructive endpoints are open in ALL environments — set ADMIN_TOKEN for any non-local deployment"), or (b) change middleware to fail-closed when `NODE_ENV === 'production'` and ADMIN_TOKEN is unset. Option (b) is safer.
+
+## P2 — Medium
+
+### BUG2-PERF-2: N+1 query in queryParetoNestedItemOutlet
+- **Severity:** P2
+- **File:** src/lib/queries/pareto.ts:293-316
+- **Description:** Step 1 fetches top N items (default 10) via 1 SQL query. Step 2 then loops over those items and runs a SEPARATE SQL query per item to fetch the outlet breakdown:
+  ```ts
+  for (const item of topItems) {
+    const outletRows = await db.$queryRaw`... WHERE LOWER(i.name) = LOWER(${itemName}) ...`;
+    ...
+  }
+  ```
+  This is a classic N+1: 1 + 10 = 11 sequential DB round-trips per /api/pareto request. Each query scans InventoryRecord (35K rows) + joins Item + Outlet.
+- **Impact:** /api/pareto takes ~10× longer than necessary. With 35K records × 10 items, this adds ~1-3s to every pareto request.
+- **Suggested fix:** Replace the loop with a single SQL query using `GROUP BY item × outlet` + a window function to compute per-item outlet rankings. Or use `Prisma.join` to pass all item names in one `IN (...)` clause and group the results in JS.
+
+### BUG2-PERF-3: Static `docx` import bloats serverless cold start
+- **Severity:** P2
+- **File:** src/app/api/export-report/route.ts:18-21
+- **Description:** Top-level static import: `import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, WidthType } from 'docx';`. The `docx` library is ~500KB and adds ~200-400ms to module load time. Every cold start of /api/export-report pays this cost, even for requests that fail validation (e.g., 400 for missing month/week) before docx is ever used.
+- **Impact:** Cold-start latency for /api/export-report increased by 200-400ms. On Vercel serverless, cold starts happen on every new instance (scale-out, redeploy, idle timeout).
+- **Suggested fix:** Move the import inside the GET handler: `const { Document, Packer, ... } = await import('docx');` after all validation passes. Next.js will code-split docx into a separate chunk that's only loaded when actually needed.
+
+### BUG2-PERF-4: settings DELETE missing rate limiting
+- **Severity:** P2
+- **File:** src/app/api/settings/route.ts:207 (DELETE handler)
+- **Description:** POST handler (line 77-84) calls `rateLimit('settings:${ip}', RATE_LIMITS.settings.maxRequests, ...)`. DELETE handler has NO rate limit. An attacker can spam DELETE requests to reset all settings to defaults repeatedly, causing DB churn + cache invalidation storms + audit log spam.
+- **Impact:** DoS vector — unbounded DELETE requests. Also, since DELETE doesn't invalidate the AggregationCache (BUG2-SEC-1), the spam is "free" for the attacker but expensive for the DB.
+- **Suggested fix:** Add the same rateLimit call at the top of the DELETE handler.
+
+### BUG2-PERF-5: resolveKelompokOutletCodes + resolvePICOutletCodes not cached (DB hit per request)
+- **Severity:** P2
+- **Files:** src/lib/kelompok-resolver.ts:53-69 (resolveKelompokOutletCodes), src/lib/pic-resolver.ts:20-35 (resolvePICOutletCodes)
+- **Description:** Both helpers execute a fresh DB query on every call. resolveKelompokOutletCodes is called on every /api/analysis + /api/export-report request (when kelompok filter is active). resolvePICOutletCodes is called on every /api/analysis, /api/pareto, /api/item-search, /api/recommendations request (when pic filter is active). Outlet→kelompok mapping and PIC→outlet mapping change ONLY on data ingest / PIC mutation — both of which already clear the statusCache + invalidateCache. These helpers could share the same in-memory cache (or piggyback on statusCache).
+- **Impact:** Extra DB round-trip (5-20ms) on every filtered dashboard request. With 60 req/min rate limit, that's 60 unnecessary queries/min.
+- **Suggested fix:** Cache the result in a module-level `Map<string, { value: string[]; expiresAt: number }>` with 30-60s TTL. Clear on `statusCache.clear()` (both are mutation-coherent). Or refactor to reuse the existing statusCache (which already fetches outlets + PICs).
+
+### BUG2-SEC-4: pareto route missing Zod validation
+- **Severity:** P2
+- **File:** src/app/api/pareto/route.ts:26-50
+- **Description:** Reads `month, week, area, pic, kelompok` directly from `url.searchParams.get(...)` with no `validateQuery` call. Compare to analysis/route.ts:95-98 which uses `validateQuery(analysisQuerySchema, ...)`. The `kelompokSchema` exists in validation.ts (line 43) but pareto doesn't use it. A 10MB `kelompok` value would be passed to `resolvePICOutletCodes` → `LOWER(pic)` SQL fragment. Prisma parameterizes safely so no SQLi, but no input shape/length validation. Also `month`/`week` format not validated — `month=123` would skip monthResolver fast-path and hit DB with bogus value.
+- **Impact:** Inconsistent validation across routes. No 400 response for malformed input — bogus params silently produce empty results.
+- **Suggested fix:** Add `paretoQuerySchema = z.object({ month: monthLabelSchema, week: weekLabelSchema, area: areaSchema, kelompok: kelompokSchema, pic: picSchema })` to validation.ts, and call `validateQuery(paretoQuerySchema, url.searchParams)` at the top of pareto/route.ts GET.
+
+### BUG2-SEC-5: outlet-focus route missing Zod validation
+- **Severity:** P2
+- **File:** src/app/api/outlet-focus/route.ts:177-198
+- **Description:** Reads `outletCode, month, week, compareWeek, compareMonth` directly from URL with no validation. `outletCode` goes directly into raw SQL: `WHERE o.code = ${outletCode}`. Prisma parameterizes so no SQLi, but no length/format check. A 10MB `outletCode` would be passed to the DB.
+- **Impact:** Same as BUG2-SEC-4 — inconsistent validation, no 400 for malformed input.
+- **Suggested fix:** Add `outletFocusQuerySchema` to validation.ts and validate.
+
+### BUG2-SEC-6: resto-bahan-matrix route missing Zod validation
+- **Severity:** P2
+- **File:** src/app/api/resto-bahan-matrix/route.ts:42-48
+- **Description:** Reads `month, week, area, priority, limit` directly from URL. `limit` is parsed via `parseInt(...)` then `Math.min(..., 500)` — bounded but no validation message. `priority` is used in `matrix.filter(m => m.priority === priorityFilter)` — accepts any string. `month`/`week` not format-validated.
+- **Impact:** Same as BUG2-SEC-4.
+- **Suggested fix:** Add `restoBahanMatrixQuerySchema` to validation.ts.
+
+### BUG2-SEC-7: investigation POST body not Zod-validated
+- **Severity:** P2
+- **File:** src/app/api/investigation/route.ts:100-120
+- **Description:** Uses inline `String(body.x).trim()` pattern with no schema. `body.status` is checked via `['OPEN', 'INVESTIGATING', 'RESOLVED'].includes(body.status)` — OK. But `body.notes` and `body.assignedTo` have no length cap (could be 10MB string → stored in DB). `body.worklistKey` has no format validation.
+- **Impact:** If investigation routes are repaired (BUG2-STATE-2), unbounded `notes`/`assignedTo` could be used for DB bloat DoS.
+- **Suggested fix:** Add `investigationPostSchema = z.object({ worklistKey: z.string().min(1).max(200), outletCode: z.string().min(1).max(50), itemName: z.string().min(1).max(200), ... })` to validation.ts.
+
+### BUG2-STATE-3: Zustand store used without selectors (over-rendering)
+- **Severity:** P2
+- **Files:** src/components/filters/FilterBar.tsx:27, src/components/drilldown/SourceDataModal.tsx:17, src/components/drilldown/DrillDownDrawer.tsx:16, src/components/dashboard/PeerComparison.tsx:43, src/components/dashboard/ParetoDashboard.tsx:145, src/components/dashboard/ExecutiveSummary.tsx:67+138, src/components/dashboard/RestoAnalysis.tsx:45, src/components/dashboard/GlobalItemSearchModal.tsx:61, src/components/dashboard/ItemDeepDive.tsx:36, +others (10+ components total)
+- **Description:** Pattern: `const { monthLabel, currentWeek, ..., setMonth, ... } = useDashboard();` — destructures the entire store. Zustand's `useDashboard()` without a selector subscribes to ALL state changes. Any state update (e.g., `setSourceModal(true)`, `setCardDrillDown('x')`, `setDrilldown({...})`) causes ALL 10+ components to re-render, even though most don't read the changed field. Some components (e.g., TopItems.tsx:142, CostAccounting.tsx:125) correctly use `useDashboard((s) => s.setFocusOutlet)` — the single-field selector pattern.
+- **Impact:** Unnecessary re-renders on every store update. With interactive dashboard (hover, click, modal open), this can trigger cascading re-renders. React Compiler (Next.js 16) may mitigate some of this, but the anti-pattern remains.
+- **Suggested fix:** Replace `const { a, b, c } = useDashboard();` with `const a = useDashboard((s) => s.a); const b = useDashboard((s) => s.b);` or use `useShallow` from `zustand/react/shallow` for multi-field selectors.
+
+### BUG2-STATE-4: TanStack Query useDrilldown queryKey uses undefined vs null inconsistently
+- **Severity:** P2
+- **File:** src/hooks/useAnalysis.ts:547-558
+- **Description:** `useDrilldown` queryKey: `['drilldown', params.outletCode, params.itemName, params.weekLabel, params.monthLabel, params.limit]`. If caller passes `weekLabel: undefined` vs `weekLabel: null`, the queryKey differs (`['drilldown', null, ...]` vs `['drilldown', undefined, ...]`) → TanStack treats them as different queries → cache miss + duplicate fetch. The `params` type signature is `{ outletCode?: string | null; ... }` — both `undefined` (omitted) and `null` (explicit) are valid. Also missing `compareWeek`/`compareMonth` from queryKey — some drilldown callers may pass them and expect cache hits on re-fetch with same params.
+- **Impact:** Cache misses on drilldown queries when callers pass `null` vs `undefined` inconsistently. Minor perf cost.
+- **Suggested fix:** Normalize all params to `null` before building queryKey: `const k = [params.outletCode ?? null, params.itemName ?? null, ...]`. Or use `buildAnalysisQueryKey`-style helper.
+
+### BUG2-STATE-5: Settings audit log awaited but cache invalidation fire-and-forget (inverted priority)
+- **Severity:** P2
+- **File:** src/app/api/settings/route.ts:182-191
+- **Description:** ```ts
+  await db.auditLog.create({ ... });  // BLOCKS response
+  invalidateCache('analysis|').catch(...);  // fire-and-forget, races with response
+  ```
+  The audit log (low-priority telemetry) blocks the response, while the cache invalidation (correctness-critical) races. If the response returns before invalidation completes, the next request may read stale cache. (Note: BUG2-PERF-1 means invalidation doesn't actually delete anything currently — but the pattern is wrong regardless.)
+- **Impact:** Stale window between response return and cache invalidation completion. ~10-30ms typical.
+- **Suggested fix:** Reverse: `await invalidateCache('analysis\x1f');` (correctness-critical) and `db.auditLog.create({...}).catch(...)` (fire-and-forget telemetry). Same pattern in migrate-direction/route.ts:99-113 (correctly fire-and-forget for audit log, but invalidateCache is also fire-and-forget — should await).
+
+## P3 — Low
+
+### BUG2-PERF-6: console.error used instead of logger in 5+ routes
+- **Severity:** P3
+- **Files:** src/app/api/outlet-focus/route.ts:1153, src/app/api/resto-bahan-matrix/route.ts:300, src/app/api/investigation/route.ts:83+181+202, src/app/api/investigation/[key]/route.ts:41+92, src/lib/api-response.ts:45
+- **Description:** These routes use `console.error(...)` directly instead of the structured `logger.error(msg, { data })` from `@/lib/logger`. Inconsistent with the rest of the codebase. Logger adds timestamps, structured data, level filtering.
+- **Impact:** Log analysis harder — missing timestamps + structure. In production, console.error may be filtered differently than logger.error.
+- **Suggested fix:** Replace `console.error('[route] error:', e)` with `logger.error('[route] error', { error: e instanceof Error ? e.message : String(e) })`.
+
+### BUG2-PERF-7: peer-comparison/items reads `mode` from URL but schema doesn't validate it
+- **Severity:** P3
+- **File:** src/app/api/peer-comparison/items/route.ts:46 (`const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';`), src/lib/validation.ts:114-118 (peerComparisonItemsQuerySchema has no `mode` field)
+- **Description:** Route reads `mode` directly from URL with `as 'week' | 'month'` type assertion. Zod schema (`peerComparisonItemsQuerySchema`) doesn't include `mode`. Any string (e.g., `mode=delete`) is accepted and passed to SQL via the ternary at line 57-62. The ternary only checks `mode === 'week'`, so any non-'week' value falls into the 'month' branch — safe but misleading.
+- **Impact:** No 400 for invalid `mode` value. Type assertion lies to TypeScript.
+- **Suggested fix:** Add `mode: z.enum(['week', 'month']).optional()` to `peerComparisonItemsQuerySchema` and read from `validation.data.mode`.
+
+### BUG2-PERF-8: statusCache max=1 is fragile
+- **Severity:** P3
+- **File:** src/lib/cache.ts:72 (`new LRUCache<string, unknown>(1, 5 * 60 * 1000)`)
+- **Description:** `statusCache` has `max=1` — only holds one entry. Currently only `/api/status` uses it (key='status'). If any other route ever caches a different key in `statusCache`, it evicts the status entry immediately. The comment at line 70 says "Exported so other routes (/api/data, /api/pic) can clear it after mutations" — but no other route currently SETS into it. Fragile design.
+- **Impact:** No current bug, but a foot-gun for future developers.
+- **Suggested fix:** Either rename to `statusCacheSingleton` and document, or increase `max` to a small number (e.g., 10) for safety.
+
+### BUG2-SEC-8: import-drive URL length unbounded
+- **Severity:** P3
+- **File:** src/lib/validation.ts:206-210 (`url: z.string().url()`)
+- **Description:** `importDriveBodySchema.url` validates format via `z.string().url()` but has no `.max(...)` length cap. A 10MB URL string would be parsed by `new URL(url)` (slow regex) before the SSRF domain check. While Vercel has a 4.5MB body size limit, an attacker could still send a 4MB URL.
+- **Impact:** Minor DoS vector — slow URL parsing on oversized input.
+- **Suggested fix:** Add `.max(2048)` to the URL schema.
+
+### BUG2-SEC-9: export-report uses too-lenient rate limit (analysis: 60/min)
+- **Severity:** P3
+- **File:** src/app/api/export-report/route.ts:248 (`rateLimit('export-report:${ip}', RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs)`)
+- **Description:** Export-report is heavy: `maxDuration = 60` (line 54), generates a Word document with 10+ tables, runs 19 parallel SQL queries (line 453-482) + legacy JS rule evaluation loop over 35K records (line 431-441). Using `RATE_LIMITS.analysis` (60 req/min) is too lenient — an attacker can spawn 60 concurrent export jobs, each consuming 60s of CPU + DB. Compare to `RATE_LIMITS.ingest` (5/min) and `RATE_LIMITS.importDrive` (3/min) which are appropriately strict for heavy operations.
+- **Impact:** DoS vector — 60 concurrent exports could exhaust DB connection pool + serverless instance memory.
+- **Suggested fix:** Add `RATE_LIMITS.exportReport = { maxRequests: 5, windowMs: 60_000 }` and use it.
+
+### BUG2-SEC-10: migrate-direction POST uses inline rate limit instead of RATE_LIMITS
+- **Severity:** P3
+- **File:** src/app/api/migrate-direction/route.ts:25 (`rateLimit('migrate-direction:POST:${ip}', 5, 60_000)`)
+- **Description:** Hardcodes `5, 60_000` instead of using `RATE_LIMITS.setup` (which is `{ maxRequests: 2, windowMs: 60_000 }`). The GET handler (line 143) correctly uses `RATE_LIMITS.analysis`. Inconsistent — makes it harder to tune rate limits centrally.
+- **Impact:** Minor — migrate-direction is destructive (rewrites direction column on up to 100% of InventoryRecord rows), so 5/min is arguably too lenient compared to setup's 2/min.
+- **Suggested fix:** Add `RATE_LIMITS.migrateDirection = { maxRequests: 2, windowMs: 60_000 }` and use it.
+
+### BUG2-STATE-6: setFocusOutlet doesn't clear drilldown/cardDrillDown/deepDiveItem state
+- **Severity:** P3
+- **File:** src/hooks/useDashboard.ts:72-75
+- **Description:** `setFocusOutlet(code)` sets `focusOutlet: code, activeTab: 'resto'` but doesn't clear `drilldown`, `cardDrillDown`, `deepDiveItem`. If user is in a drill-down drawer / card drill-down modal / item deep-dive modal and clicks "Focus Outlet" on a peer row, the modal state remains. When they later close the focus outlet view, the old modal may reappear (depending on how the modal visibility is gated).
+- **Impact:** UX glitch — stale modal state after focus outlet switch.
+- **Suggested fix:** `set: { focusOutlet: code, activeTab: 'resto', drilldown: { outletCode: null, itemName: null }, cardDrillDown: null, deepDiveItem: { itemName: null, outletCode: null } }`.
+
+### BUG2-STATE-7: reset() doesn't clear period filters (month/week/comparison)
+- **Severity:** P3
+- **File:** src/hooks/useDashboard.ts:60
+- **Description:** `reset()` clears `area, kelompok, outletCode, itemName, pic, focusOutlet, scorecardOutlet` but leaves `monthLabel, currentWeek, comparisonWeek, comparisonMonth, comparisonMode` set. The FilterBar "Reset" button (FilterBar.tsx:27 destructures `reset`) is likely interpreted by users as "clear all filters" — but period filters remain. Confusing UX.
+- **Impact:** User clicks "Reset" expecting full reset, but dashboard still shows the previously-selected month/week. May think the button is broken.
+- **Suggested fix:** Either (a) clear period filters too: `set({ area: null, kelompok: null, ..., monthLabel: null, currentWeek: null, comparisonWeek: null, comparisonMonth: null })`, or (b) rename to `resetFilters()` and add a separate `resetAll()` that includes periods. Document the distinction in the button tooltip.
+
+### BUG2-ENV-1: DATABASE_URL only validated by string prefix
+- **Severity:** P3
+- **File:** src/lib/db.ts:18-26
+- **Description:** Validation: `if (!dbUrl) throw...; if (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) { ... }`. No `new URL(dbUrl)` parse to catch malformed URLs (e.g., `postgresql://user@host:5432` missing password, or `postgresql://host:99999/db` invalid port). A typo'd URL passes db.ts checks but fails on first query with a cryptic Prisma error.
+- **Impact:** Poor DX — operator sees "Can't reach database server" instead of "DATABASE_URL is malformed: missing password".
+- **Suggested fix:** Wrap in `try { new URL(dbUrl); } catch { throw new Error('DATABASE_URL is not a valid URL: ...'); }` before the protocol check.
+
+### BUG2-ENV-2: .env.example docs contradict middleware fail-open behavior
+- **Severity:** P3
+- **File:** .env.example:24-26
+- **Description:** Says "If unset, destructive endpoints are open in dev mode but fail-closed (403) in production." Actual middleware (BUG2-SEC-3) fails OPEN in all environments. Documentation is misleading.
+- **Impact:** Operator may deploy without ADMIN_TOKEN thinking production is safe.
+- **Suggested fix:** Update .env.example to match actual behavior: "If unset, destructive endpoints are open in ALL environments. Set ADMIN_TOKEN for any non-local deployment."
+
+
+---
+Task ID: BUGHUNT2-PARETO-3
+Agent: Backend + Data Bug Hunter (Pareto / Historical / Z-Score specialist)
+Task: Audit Pareto dashboard, historical comparison logic, and z-score calculations for mathematical correctness, SQL accuracy, and data consistency. Do NOT fix — report only.
+
+Work Log:
+- Read worklog tail (last ~500 lines) for context: prior BUGHUNT-BE-1, FIX-TYPES-10, FIX-P1-P2-KELOMPOK, FIX-P3-KELOMPOK cycles. Kelompok filter is fully fixed. This audit is a NEW scope (pareto/historical/z-score math + SQL).
+- Audited 10 files end-to-end:
+    1. src/app/api/pareto/route.ts (103 lines)
+    2. src/lib/queries/pareto.ts (471 lines) — 7 query functions + computePareto + mergeHistoricalIntoPareto
+    3. src/components/dashboard/ParetoDashboard.tsx (388 lines) — UI
+    4. src/lib/queries/historical.ts (70 lines) — queryHistoricalStats
+    5. src/lib/queries/rule-evaluation.ts (242 lines) — evaluateRulesSql (12 SQL rules) + evaluateHistoricalRulesJs (5 JS rules)
+    6. src/lib/queries/health-ranking.ts (347 lines) — queryOutletHealthRanking + queryVarianceAnalysis + queryHistoricalCriticalItems
+    7. src/lib/metrics/historical.ts (190 lines) — computeZScore + calcZScoreFromStats + HISTORICAL_STATS_SQL template
+    8. src/lib/metrics/deviation.ts (295 lines) — computeDirection, computeResidual, computeHealthScore, computePriority
+    9. src/lib/metrics/growth.ts (124 lines) — calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth
+    10. src/engine/rules/evaluator.ts (491 lines) — YAML rule evaluator (used by export-report)
+- Cross-referenced: src/engine/analysis/ruleService.ts (buildRuleContext — JS path), src/engine/analysis/rankingService.ts (old JS computePareto comment confirming ABS(SUM) is intentional), src/lib/queries/shared.ts (buildSqlFilters + withStatementTimeout), src/lib/queries/growth-drivers.ts (duplicate computePareto), src/config/rules.yaml (17 rules), prisma/schema.prisma (InventoryRecord + Outlet + Item + OutletPIC models).
+- Verified SQL correctness: GROUP BY clauses, HAVING clauses, JOIN types (LEFT vs INNER), alias usage in buildSqlFilters, sub-select patterns, LATERAL JOIN structure.
+- Verified mathematical correctness: z-score formula (|current| - mean) / stdDev, sample stddev (N-1) consistency across 3 implementations, variance numerical stability, pareto cumPct accumulation, sharePct + remainderPct math.
+- Cross-checked the TWO rule evaluation paths (SQL path in analysis/route.ts vs YAML/JS path in export-report/route.ts) for divergence.
+- Verified the historical period filtering: analysis/export-report routes filter `p.sortKey < current.sortKey` (past only); pareto route's queryParetoHistorical only filters `monthLabel != current` (includes FUTURE months).
+
+Stage Summary:
+- 18 bugs found (0×P0, 3×P1, 5×P2, 10×P3). NO data-corrupting P0 bugs — the core math (z-score, pareto 80/20, sample stddev) is correct.
+- Top priority: BUG2-PARETO-1 (P1 — pareto historical includes future months), BUG2-PARETO-2 (P1 — nested pareto N+1 + missing timeout on inner query), BUG2-PARETO-9 (P1 — DIRECTION_FLIP divergence between SQL and JS paths).
+- The ABS(SUM(nominalDeviasi)) pattern is INTENTIONAL (confirmed by rankingService.ts comment) — ranks by NET deviation magnitude, not gross activity. NOT a bug.
+- The 3 stddev implementations (SQL STDDEV_SAMP in pareto, JS (Σx²-n·x̄²)/(n-1) in historical.ts, JS reduce/(n-1) in metrics/historical.ts) all use sample variance (N-1) — consistent and correct for z-score.
+- Two sources of truth for rule logic (evaluateRulesSql hardcoded SQL vs rules.yaml JS) — divergence risk (BUG2-PARETO-13).
+- No bugs were fixed (report-only per task instructions). Full bug list in the agent's final markdown summary.
+
+---
+Task ID: BUGHUNT2-DASH-1
+Agent: Frontend + Data Bug Hunter (Dashboard tab)
+Task: Bug hunt Dashboard tab — Executive Summary cards, top items/outlets tables, deviation breakdown, growth drivers, trend chart, area analysis, variance analysis, outlet health ranking, cost impact, item consistency, net cost trend, drill-down interactions. Report only — do NOT fix.
+
+Work Log:
+- Read worklog tail (lines 19539-20039) to understand prior kelompok filter fixes (BUGHUNT-BE-1, BUGHUNT-FE-2, BUGHUNT-EDGE-3, BUGHUNT-PERF-4, FIX-TYPES-10, FIX-P1-P2-KELOMPOK, FIX-P3-KELOMPOK). Confirmed all 22 kelompok bugs (3 P1 + 9 P2 + 10 P3) were fixed in prior cycles.
+- Located actual dashboard component files. NOTE: task brief listed filenames that don't exist (TopOutlets.tsx, DeviationBreakdown.tsx, GrowthDrivers.tsx, TrendChart.tsx, AreaAnalysis.tsx, VarianceAnalysis.tsx, OutletHealthRanking.tsx, CostImpact.tsx, ItemConsistency.tsx, NetCostTrend.tsx). Actual files audited:
+  - src/app/page.tsx (652 lines) — main page, tab switching
+  - src/components/dashboard/ExecutiveSummary.tsx (417 lines) — KPI cards + HealthAlert
+  - src/components/dashboard/TopItems.tsx (206 lines) — TopItemsByNominal, TopItemsByDevBom, TopOutlets
+  - src/components/dashboard/Charts.tsx (583 lines) — GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, TrendChart
+  - src/components/dashboard/AdvancedAnalysis.tsx (344 lines) — OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison
+  - src/components/dashboard/AnalysisCards.tsx (94 lines) — MultiPeriodComparisonCard
+  - src/components/dashboard/HistoricalZScoreCard.tsx (168 lines)
+  - src/components/dashboard/AreaTrendChart.tsx (240 lines)
+  - src/components/dashboard/InsightsPanel.tsx (369 lines)
+  - src/components/dashboard/CardDrillDown.tsx (229 lines) — drill-down modal
+  - src/components/drilldown/DrillDownDrawer.tsx (241 lines) — source data drawer
+  - src/components/drilldown/SourceDataModal.tsx (254 lines) — full source data modal
+  - src/components/dashboard/shared/index.tsx (264 lines) — EmptyState, LoadingState, ErrorState, SectionHeader, ScrollToTop
+  - src/components/dashboard/ItemDeepDive.tsx (273 lines) — item detail modal
+  - src/components/dashboard/CostAccounting.tsx (390 lines) — DEAD CODE (4 components, not imported)
+  - src/components/dashboard/Narrative.tsx (48 lines) — DEAD CODE (RecommendationPanel, not imported, broken)
+  - src/components/dashboard/ExtraCharts.tsx (855 lines) — DEAD CODE (VarianceDivergingBar, OutletRadarChart, not imported)
+- Also audited supporting files: src/hooks/useDashboard.ts, src/hooks/useAnalysis.ts, src/lib/format.ts, src/lib/a11y.ts, src/lib/queries/dashboard.ts, src/app/api/analysis/services/trend-builder.ts, src/app/api/analysis/queries.ts, src/lib/metrics/growth.ts.
+- Verified data flow for KPI cards, drill-down interactions, chart rendering, filter propagation, edge cases, accessibility.
+- Cross-checked TypeScript types (AnalysisData in useAnalysis.ts) vs actual API response shape — found type missing `kelompok` + `pic` in `filters` object (backend added them in FIX-P3-KELOMPOK but frontend type wasn't updated).
+
+Stage Summary:
+- 30 bugs found (0×P0, 1×P1, 11×P2, 18×P3). NO critical crashes — the dashboard renders without errors in normal flow.
+- The single P1 (BUG2-DASH-1) is a data-correctness issue: clicking the "QTY BOM" KPI card opens a drill-down that shows top items by NOMINAL DEVIASI (not by QTY BOM). The AnalysisData type doesn't have a `topItemsByBom` field — backend doesn't compute it. The drill-down config falls back to `topItemsByNominal` with a misleading title/description ("proxy untuk QTY BOM"). Users clicking "QTY BOM" expect BOM-ranked items but get nominal-deviation-ranked items.
+- 11×P2 bugs: 3 dead-code files (CostAccounting, Narrative, ExtraCharts — 1295 lines of unused code with their own bugs), 2 drill-down issues (missing res.ok check, missing filter pass-through), 1 type-safety gap (AnalysisData.filters missing kelompok/pic), 1 misleading trend data in ItemDeepDive (uses global trend, not item-specific), 1 missing outlet name in CardDrillDown, 1 missing dark: color variant, 1 SourceDataModal limit hardcoded to 500 (actually fetches 50, no pagination).
+- 18×P3 polish bugs: single-data-point chart handling, empty-state missing, redundant badges, row keys using index, color logic edge cases, fallback mappings with zero values, inconsistent state reset in useDashboard.
+- Verified CORRECT (non-bugs): trend data is sorted chronologically by backend (trend-builder.ts), growth calculations handle zero-division (calcGrowth returns null when prev=0), ExecutiveSummary "inverse" flag on Net Loss/Surplus is correct (qtyLossSurplus is SUM(ABS) — always positive — so growth>0 means MORE deviation = bad = red, which is the inverse behavior), clickableRowProps provides keyboard accessibility (Enter/Space), empty/loading/error states exist for most components, kelompok filter is correctly propagated to all side-panel queries (RestoRecommendationCard, GlobalItemSearchModal), prefetch includes kelompok (BUG-FE-1 was fixed).
+- No bugs were fixed (report-only per task instructions).
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-1 (P1) — CardDrillDown `qtyBom` config shows wrong data
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CardDrillDown.tsx:62-72
+Description:
+  The KPI card "QTY BOM" in ExecutiveSummary.tsx:157 has `drillDown="qtyBom"`.
+  The CARD_CONFIG.qtyBom entry has:
+    title: 'Top 10 Items (by Nominal Deviasi)'
+    description: 'Item dengan financial impact tertinggi — proxy untuk QTY BOM'
+    getData: (data) => (data.topItemsByNominal || [])
+  
+  The drill-down shows `data.topItemsByNominal` (items ranked by absolute
+  nominal deviation), NOT items ranked by QTY BOM. The AnalysisData type
+  has no `topItemsByBom` field — backend doesn't compute it.
+  
+  The description says "proxy untuk QTY BOM" — but high nominal deviation
+  is NOT a proxy for high BOM usage. A high-volume staple item (e.g., 
+  "Minyak Goreng" with BOM 1000kg) could have tiny deviation (5kg, Rp 50K)
+  while a low-volume premium item (e.g., "Saffron" with BOM 0.1kg) could
+  have huge nominal deviation (Rp 5M). The drill-down would show Saffron
+  at the top, misleading the user about which items drive BOM volume.
+Expected: Clicking "QTY BOM" KPI shows items ranked by QTY BOM (descending).
+Actual: Shows items ranked by |nominalDeviasi| (financial impact), labeled as "proxy untuk QTY BOM".
+Suggested fix: Either (a) add a `topItemsByBom` field to AnalysisData + backend query (SUM(ABS(qtyBom)) per item, sorted desc, top-N), or (b) change the drill-down to open the existing `topItemsByDevBom` (Dev/BOM ratio ranking) which is at least BOM-related, or (c) remove the `drillDown="qtyBom"` from the KPI card and show a tooltip "QTY BOM is a totals metric — no item-level drill-down available".
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-2 (P2) — DrillDownDrawer handleLoadMore doesn't check res.ok
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/DrillDownDrawer.tsx:62-67
+Description:
+  The Load More handler fetches the next page but doesn't verify the
+  response status:
+    const res = await fetch(`/api/drilldown?${params.toString()}`);
+    const data = await res.json();
+    if (data.success) { ... }
+  
+  If the API returns 404/500, `data.success` will be false (or data will
+  be an error object without `success` field). The code silently does
+  nothing — no error shown to user. The catch block only catches network
+  errors (TypeError: Failed to fetch), not HTTP errors.
+  
+  User experience: click "Muat Lebih Banyak", button shows loading spinner,
+  then nothing happens. No feedback. User may click repeatedly, thinking
+  the click didn't register.
+Expected: On HTTP error, show error message (toast or inline) so user knows the load failed.
+Actual: Silent failure — button stays at "Muat Lebih Banyak" with no indication of error.
+Suggested fix: Add `if (!res.ok) throw new Error(...)` after the fetch, OR check `data.success === false` and surface the error via toast.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-3 (P2) — DrillDownDrawer doesn't pass area/kelompok/pic filters
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/DrillDownDrawer.tsx:54-60 (handleLoadMore)
+                  and src/hooks/useAnalysis.ts:547-556 (useDrilldown)
+Description:
+  When user clicks a row in ItemConsistencyAnalysis (AdvancedAnalysis.tsx:198),
+  `setDrilldown({ outletCode: null, itemName: row.itemName })` is called — 
+  outletCode is null, only itemName is set.
+  
+  The DrillDownDrawer's useDrilldown hook only passes outletCode, itemName,
+  weekLabel, monthLabel to the API. It does NOT pass area, kelompok, or pic.
+  
+  Scenario: user filters dashboard by area=JAWA BARAT 1, then clicks an
+  item row in ItemConsistencyAnalysis. The drill-down opens and fetches
+  records for that item across ALL areas (not just JAWA BARAT 1). The user
+  sees records from JAKARTA, SURABAYA, etc. — inconsistent with the
+  dashboard's area filter.
+  
+  Same issue applies to handleLoadMore (line 54-60) — doesn't pass filters.
+Expected: Drill-down respects the dashboard's area/kelompok/pic filters when outletCode is null.
+Actual: Drill-down shows records from all areas/kelompok/pics, ignoring dashboard filters.
+Suggested fix: Pass area/kelompok/pic to useDrilldown + handleLoadMore. Read them from useDashboard() in DrillDownDrawer.tsx.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-4 (P2) — SourceDataModal hardcodes "500" limit check, actually fetches 50
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/SourceDataModal.tsx:19-24, 144
+Description:
+  The useDrilldown call at line 19-24 doesn't pass a `limit` param:
+    const drill = useDrilldown({
+      outletCode: drilldown.outletCode,
+      itemName: drilldown.itemName,
+      weekLabel: currentWeek,
+      monthLabel,
+      // no limit field
+    });
+  
+  useAnalysis.ts:553-555 only sets `limit` if `params.limit` is truthy:
+    if (params.limit) p.set('limit', String(params.limit));
+  
+  So the API uses its default limit (50, per useAnalysis.ts:553 comment).
+  But SourceDataModal.tsx:144 checks:
+    {records.length === 500 && ' (maks 500 — data lengkap ada di Excel sumber)'}
+  
+  This check will NEVER be true (records.length maxes at 50). The "maks 500"
+  message never shows. Worse: there's no "Load More" button, so the user
+  can only ever see 50 records, with no indication that more exist.
+  
+  The tooltip "Dapat ditelusuri ke Excel sumber" (line 147) implies full
+  traceability, but the user can only see the first 50 records.
+Expected: Modal shows all records (or paginates with Load More), and the limit message is accurate.
+Actual: Modal shows max 50 records, "maks 500" message never appears, no pagination.
+Suggested fix: Either (a) pass `limit: 500` to useDrilldown (matching ItemDeepDive.tsx:51 pattern), or (b) add cursor-based pagination like DrillDownDrawer.tsx does.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-5 (P2) — ItemDeepDive trendData uses GLOBAL trend, not item-specific
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/ItemDeepDive.tsx:53-57, 249-265
+Description:
+  The trend section in ItemDeepDive uses `data.trend` which is the global
+  network-wide trend (all items, all outlets per period):
+    const trendData = (data?.trend || []).map((t) => ({
+      weekLabel: t.weekLabel,
+      nominal: Math.abs(t.nominal || 0),
+    }));
+  
+  The header says "Trend Multi-Periode (Semua Resto)" which is honest about
+  it being all-resto, but the section is inside the ITEM Deep Dive modal.
+  Users opening an item's deep dive expect to see THAT ITEM's trend across
+  periods, not the network-wide trend.
+  
+  The modal already has a trend API available (GlobalItemSearchModal.tsx:137
+  uses `/api/item-search?mode=trend` for item-specific trend). ItemDeepDive
+  doesn't use it.
+Expected: Item Deep Dive shows the trend for the specific item across periods.
+Actual: Shows network-wide trend (all items summed), labeled "Semua Resto".
+Suggested fix: Fetch item-specific trend via `/api/item-search?mode=trend&item=${itemName}` (like GlobalItemSearchModal does), or remove the trend section since it's misleading in this context.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-6 (P2) — CardDrillDown doesn't show outlet name
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CardDrillDown.tsx:43, 133, 147
+Description:
+  The `sales`, `loss`, `surplus` configs only show `outletCode`, not 
+  `outletName`. The TopOutlets table on the dashboard (TopItems.tsx:191)
+  shows both outletName (bold) and outletCode (small text below).
+  
+  The TopOutletBySales type (useAnalysis.ts:47-55) and TopOutlet type
+  (useAnalysis.ts:32-44) both have `outletName` field available.
+  
+  User experience: in the drill-down, user sees "1016.MLGJAK" instead of
+  "McD Malang Jakarta". Hard to identify outlets by code alone.
+Expected: Drill-down shows outlet name + code (like the dashboard table does).
+Actual: Shows only outletCode.
+Suggested fix: Add a column `{ key: 'outletName', label: 'Outlet Name' }` or combine into the outletCode column with a sub-line.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-7 (P2) — CardDrillDown color classes missing dark: variants
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CardDrillDown.tsx:46, 57, 68
+Description:
+  The color functions return:
+    color: (v) => v == null ? '' : (v as number) < 0 ? 'text-red-600' : 'text-emerald-600'
+  
+  No `dark:` variants. Other components (e.g., AdvancedAnalysis.tsx:118-120,
+  TopItems.tsx:64) use:
+    `text-red-600 dark:text-red-400` / `text-emerald-600 dark:text-emerald-400`
+  
+  In dark mode, the drill-down table colors will be darker (text-red-600)
+  compared to the rest of the dashboard (text-red-400). Inconsistent.
+Expected: Color classes include dark: variants matching other components.
+Actual: Only light-mode classes; dark mode uses darker shades.
+Suggested fix: Use `directionColor()` from format.ts (already has dark: variants) for direction-based coloring. For numeric coloring, use `numberColor()` from format.ts.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-8 (P2) — AnalysisData.filters type missing kelompok + pic
+═══════════════════════════════════════════════════════════════
+File: src/hooks/useAnalysis.ts:186
+Description:
+  The frontend type declares:
+    filters: { area: string | null; outletCode: string | null; itemName: string | null };
+  
+  But the backend (per FIX-P3-KELOMPOK in worklog) now returns:
+    filters: { area, kelompok, outletCode, itemName, pic }
+  
+  Two fields (`kelompok`, `pic`) are returned by the API but not declared
+  in the TypeScript type. This is a type-safety gap — any frontend code
+  that wants to display the active filters from the API response can't
+  access these fields without `as any` casts.
+Expected: Type matches API response shape.
+Actual: Type is missing 2 fields that the API returns.
+Suggested fix: Update the type to:
+  filters: { area: string | null; kelompok: string | null; outletCode: string | null; itemName: string | null; pic: string | null };
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-9 (P2) — CostAccounting.tsx is dead code (4 components, 390 lines)
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CostAccounting.tsx (entire file)
+Description:
+  page.tsx:23 has comment "CostAccounting components removed — tab Cost Accounting dihapus".
+  Verified with `rg "from '@/components/dashboard/CostAccounting'"` → 0 matches.
+  
+  The file exports 4 components (CostImpactDecomposition, OutletEfficiencyMatrix,
+  CostPerThousandCard, NetCostTrendChart) that are never imported. The file
+  contains its own bugs (see BUG2-DASH-28, BUG2-DASH-29 below) that are
+  unreachable but could mislead future maintainers.
+  
+  The task brief mentioned "CostImpact.tsx" and "NetCostTrend.tsx" as
+  separate files — they don't exist. The functionality lives in this
+  dead CostAccounting.tsx file.
+Expected: Dead code should be removed or clearly marked as deprecated.
+Actual: 390 lines of unreachable code with bugs.
+Suggested fix: Delete the file, OR add a `@deprecated` JSDoc tag at the top with a note pointing to the active dashboard components.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-10 (P2) — Narrative.tsx RecommendationPanel is dead AND broken
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/Narrative.tsx (entire file)
+Description:
+  Verified with `rg "from '@/components/dashboard/Narrative'"` → 0 matches.
+  The file exports `RecommendationPanel` which is never imported.
+  
+  The component uses `data.recommendation` (line 9):
+    const recs = data.recommendation || [];
+  
+  But `AnalysisData` type (useAnalysis.ts:183-238) has NO `recommendation`
+  field. TypeScript would error on this access — but since the file isn't
+  imported, the error never surfaces. At runtime, `data.recommendation`
+  is `undefined`, so `recs = []`, and the component always shows
+  "Tidak ada rekomendasi".
+Expected: Dead code should be removed; if kept, it should type-check.
+Actual: 48 lines of dead, broken code that would crash if imported.
+Suggested fix: Delete the file. The active recommendations UI is RestoRecommendationCard.tsx (which fetches from /api/recommendations separately).
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-11 (P2) — ExtraCharts.tsx VarianceDivergingBar is dead code
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/ExtraCharts.tsx (855 lines)
+Description:
+  Verified with `rg "from '@/components/dashboard/ExtraCharts'"` → 0 matches.
+  The file exports VarianceDivergingBar, OutletRadarChart, and other
+  components that are never imported.
+  
+  The task brief mentioned "VarianceAnalysis.tsx" — doesn't exist. The
+  functionality lives in this dead ExtraCharts.tsx file.
+  
+  Contains `any` types (lines 371, 381, 507, 519) and would benefit from
+  cleanup if revived.
+Expected: Dead code removed or clearly marked.
+Actual: 855 lines of unreachable code.
+Suggested fix: Delete the file, OR mark `@deprecated` and remove `any` types if reviving.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-12 (P2) — DrillDownDrawer has no empty state for virtualized table
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/DrillDownDrawer.tsx:182-214
+Description:
+  When `allRecords` is empty (first page loaded with 0 records), the
+  VirtualizedDrawerTable renders with just the header row and no body.
+  No "Tidak ada data" message.
+  
+  The parent component (line 104-167) does have a `drill.data && (...)`
+  guard, but inside that block, if `allRecords.length === 0`, only the
+  "Metrik Turunan" section (line 148-166) is conditionally hidden. The
+  table itself renders empty.
+  
+  Compare to SourceDataModal.tsx:130-134 which DOES have an empty state:
+    {drill.data && records.length === 0 && (
+      <div className="p-8 text-center text-sm text-muted-foreground">
+        Tidak ada data sumber untuk filter ini.
+      </div>
+    )}
+Expected: Empty state message when no records.
+Actual: Empty table with just header.
+Suggested fix: Add an empty-state check before rendering VirtualizedDrawerTable.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-13 (P3) — TrendChart doesn't handle single data point
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/Charts.tsx:515-582
+Description:
+  When `trend.length === 1`, Recharts `<Line type="monotone">` needs 2+
+  points to render a line. With 1 point, only a dot appears (no connecting
+  line). The chart looks broken — axes render but no visible trend.
+  
+  No special handling for single-point case (e.g., show a message
+  "Hanya 1 periode data — butuh min. 2 untuk trend").
+Expected: Single-point case shows a helpful message or a clear single-dot visualization.
+Actual: Chart renders with 1 dot, looks broken.
+Suggested fix: Add `if (trend.length === 1)` branch with a message, OR render a Bar instead of Line for single-point.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-14 (P3) — LossVsSurplusChart has no empty data state
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/Charts.tsx:459-513
+Description:
+  If `l.loss` and `l.surplus` are both 0 (e.g., no records match the
+  filter), the chart renders 2 empty bars with no message. The bottom
+  summary (line 500-509) shows "Rp 0,00Jt" for both LOSS and SURPLUS.
+  
+  Compare to TrendChart (line 517-536) which DOES have an empty state.
+Expected: Empty state message when both loss and surplus are 0.
+Actual: Empty bars + "Rp 0,00Jt" summary.
+Suggested fix: Add `if (l.loss === 0 && l.surplus === 0)` check with a "Tidak ada data" message.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-15 (P3) — AreaComparison worst/best badges both true for single area
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/AdvancedAnalysis.tsx:314-315
+Description:
+  `isWorst = i === 0` and `isBest = i === areas.length - 1`.
+  When only 1 area exists, `i=0` and `length-1=0`, so BOTH are true.
+  Both the red "Terburuk" dot and emerald "Terbaik" dot render next to
+  the same area name. Confusing — the area is simultaneously worst AND best.
+Expected: When only 1 area, neither badge (or a neutral "Only Area" badge).
+Actual: Both worst AND best badges render.
+Suggested fix: `const isWorst = areas.length > 1 && i === 0;` and `const isBest = areas.length > 1 && i === areas.length - 1;`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-16 (P3) — CardDrillDown row keys use index
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CardDrillDown.tsx:198
+Description:
+  `<TableRow key={i}>` uses array index as React key. If the data changes
+  (e.g., user changes filter while drill-down is open), React may reuse
+  the wrong row instances, causing subtle rendering bugs (e.g., hover
+  state persists on wrong row).
+  
+  Should use a stable key like `${row.outletCode}-${row.itemName}` or
+  similar. Same issue in ItemDeepDive.tsx:204, HistoricalZScoreCard.tsx:141
+  (uses `${item.itemName}-${item.outletCode}-${i}` — includes index as
+  fallback, OK but not ideal).
+Expected: Stable keys based on row identity.
+Actual: Index-based keys.
+Suggested fix: `key={row.outletCode || row.itemName || i}` — fall back to index only if no stable ID.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-17 (P3) — DrillDownDrawer "still more" badge is redundant
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/DrillDownDrawer.tsx:107-112
+Description:
+  Two badges are shown next to each other:
+    <Badge>{allRecords.length} record</Badge>           // line 107
+    {nextCursor && (
+      <Badge>{allRecords.length} dimuat · masih ada lagi</Badge>  // line 109-111
+    )}
+  
+  The second badge repeats `allRecords.length` (already shown in the first
+  badge). Redundant — the user sees the same number twice.
+Expected: Second badge shows only "masih ada lagi" (without repeating the count).
+Actual: Count shown twice.
+Suggested fix: Change line 110 to `{`Masih ada lagi`}` (drop the count).
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-18 (P3) — ExecutiveSummary "Explained" card uses Math.abs unnecessarily
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/ExecutiveSummary.tsx:160
+Description:
+  `value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))}`
+  
+  qtyWaste, qtySusut, qtyTrial are all `SUM(ABS(...))` from the backend
+  (queries.ts:179-181) — always >= 0. The Math.abs is a no-op.
+  
+  Not a bug per se (no incorrect behavior), but suggests the author was
+  unsure about the sign convention. Misleading for future maintainers
+  who might think the values could be negative.
+Expected: No Math.abs (or a comment explaining why it's there).
+Actual: Unnecessary Math.abs.
+Suggested fix: Remove Math.abs, or add a comment `// all 3 are SUM(ABS()) — always >= 0`.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-19 (P3) — ExecutiveSummary category bar width multiplies pct by 5
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/ExecutiveSummary.tsx:380
+Description:
+  `style={{ width: `${Math.min(pct * 5, 100)}%` }}`
+  
+  `pct` is the percentage of total records (e.g., 5% abnormal rate).
+  The bar width is `pct * 5` (capped at 100%). So a 20% abnormal rate
+  fills the bar to 100%. A 5% rate fills to 25%.
+  
+  This is a visual choice to amplify small percentages, but it's
+  inconsistent with other progress bars in the same component (line
+  353-355 uses raw percentage for the normal/warning/abnormal bar).
+  User may wonder why a 5% bar looks different in two places.
+Expected: Consistent bar width scaling across the component.
+Actual: Top-issue-categories bar uses 5× multiplier; health-status bar uses raw percentage.
+Suggested fix: Use raw percentage everywhere, OR document the 5× multiplier in a comment.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-20 (P3) — AreaTrendChart allows selecting 1-period areas
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/AreaTrendChart.tsx:74-90, 207-225
+Description:
+  The auto-select logic (line 84-89) filters areas to those with ≥2
+  periods (can't draw a trend with 1 point). But the area selector chips
+  (line 207) show ALL areas, including 1-period ones.
+  
+  If user clicks a 1-period area chip, it's added to `selectedAreas`.
+  The `displayAreas` useMemo (line 75) returns selected areas as-is
+  (bypassing the ≥2 filter). The Line chart tries to render this area
+  but only has 1 data point → no line, just a dot. Confusing.
+Expected: 1-period areas either disabled in the chip selector, or show a clear "1 period only" indicator.
+Actual: 1-period areas are selectable but render as a single dot.
+Suggested fix: Disable chips for areas with <2 periods (visual grey-out + tooltip "Hanya 1 periode data").
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-21 (P3) — TopItems direction column shows undefined for null direction
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/TopItems.tsx:65
+Description:
+  `{it.direction?.[0]}` — if `direction` is null/undefined, this evaluates
+  to `undefined`, which React renders as nothing (empty cell). The user
+  sees an empty "Dir" column with no indicator.
+  
+  Compare to CardDrillDown.tsx:58 which handles this:
+    `format: (v) => (v as string)?.[0] || '-'`
+Expected: Fallback to '—' or 'N' for null direction.
+Actual: Empty cell.
+Suggested fix: `{it.direction?.[0] ?? '—'}`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-22 (P3) — TopOutlets color shows emerald for nominalDeviasi === 0
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/TopItems.tsx:193
+Description:
+  Color logic: `o.nominalDeviasi != null && o.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'`
+  
+  When `nominalDeviasi === 0` (neither LOSS nor SURPLUS), the cell shows
+  emerald (SURPLUS color). Misleading — 0 is neutral, not surplus.
+  
+  Compare to OutletHealthRanking (AdvancedAnalysis.tsx:118-121) which
+  handles null correctly with '—' fallback, but doesn't special-case 0.
+Expected: 0 shows as neutral (muted) color, not emerald.
+Actual: 0 shows emerald (same as positive surplus).
+Suggested fix: `o.nominalDeviasi == null ? 'text-muted-foreground' : o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : o.nominalDeviasi > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-23 (P3) — MultiPeriodComparisonCard Y-axis inconsistent for negatives
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/AnalysisCards.tsx:62
+Description:
+  Y-axis tickFormatter:
+    `(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString()`
+  
+  For positive 2,000,000: shows "2Jt" (compact).
+  For negative -2,000,000: `v >= 1_000_000` is false (because -2M < 1M),
+  so falls to `v.toLocaleString()` → "-2.000.000" (full).
+  
+  Inconsistent formatting — positive values compact, negative values full.
+  Same issue in CostAccounting.tsx:66 (dead code).
+Expected: Both positive and negative use compact format.
+Actual: Negative values use full number format.
+Suggested fix: Use `Math.abs(v) >= 1_000_000` for the threshold check, preserve sign in output.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-24 (P3) — InsightsPanel "Buka Investigation Worklist" action never renders
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/InsightsPanel.tsx:87-88
+Description:
+  The health-critical insight sets:
+    action: 'Buka Investigation Worklist',
+    // no actionTarget
+  
+  The render logic (line 348):
+    {insight.action && insight.actionTarget && (...)}
+  
+  Since `actionTarget` is missing, the button doesn't render. But
+  `insight.action` is still set to "Buka Investigation Worklist" — 
+  misleading dead field. The "Investigation Worklist" feature doesn't
+  exist in the current UI (it was removed per worklog — the
+  investigationWorklist field was removed from AnalysisData type).
+Expected: Either remove the dead `action` field, or wire it to an existing feature.
+Actual: Dead `action` field that never renders.
+Suggested fix: Remove the `action: 'Buka Investigation Worklist'` line (line 87).
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-25 (P3) — ItemConsistencyAnalysis fallback shows 0 for LOSS/SURPLUS
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/AdvancedAnalysis.tsx:172-191
+Description:
+  When backend doesn't provide `ca.items` (backward-compat path), the
+  fallback maps systemic/episodic to rows with:
+    lossOutlets: 0,
+    surplusOutlets: 0,
+  
+  The LOSS/SURPLUS columns in the table (line 249-250) show "0" for these
+  rows. Misleading — the items may actually have loss/surplus outlets,
+  but the fallback doesn't have that data.
+Expected: Either hide the LOSS/SURPLUS columns when in fallback mode, or show "—" instead of 0.
+Actual: Shows "0" which the user may interpret as "this item has 0 loss/surplus outlets" (incorrect — it's "unknown").
+Suggested fix: Use `lossOutlets: null` in the fallback, and render null as "—" in the table.
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-26 (P3) — useDashboard setOutlet doesn't clear scorecardOutlet
+═══════════════════════════════════════════════════════════════
+File: src/hooks/useDashboard.ts:57
+Description:
+  `setOutlet: (v) => set({ outletCode: v, focusOutlet: null })`
+  
+  Doesn't clear `scorecardOutlet`. Compare to setArea (line 55), setKelompok
+  (line 56), setPic (line 59) which all clear `scorecardOutlet`.
+  
+  Scenario: user is on Resto tab with scorecardOutlet=X. User goes back
+  to Dashboard, changes the outlet filter to Y via FilterBar. The
+  scorecardOutlet state is still X (stale). If user returns to Resto tab,
+  the scorecard may show outlet X instead of Y.
+Expected: setOutlet clears scorecardOutlet (consistent with other filter setters).
+Actual: scorecardOutlet persists across outlet filter changes.
+Suggested fix: `setOutlet: (v) => set({ outletCode: v, focusOutlet: null, scorecardOutlet: null })`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-27 (P3) — HistoricalZScoreCard row key includes index
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/HistoricalZScoreCard.tsx:141
+Description:
+  `key={${item.itemName}-${item.outletCode}-${i}}` — includes index `i`
+  as part of the key. If the same item+outlet appears twice (shouldn't,
+  but hypothetically), React would distinguish them by index. If the
+  sort order changes, the same item+outlet keeps the same key (good)
+  but the index suffix is unnecessary.
+  
+  Same issue in ItemDeepDive.tsx:204 (`key={i}` — pure index).
+Expected: Stable keys without index suffix.
+Actual: Index included in key.
+Suggested fix: `key={`${item.itemName}-${item.outletCode}`}` (drop the `-${i}`).
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-28 (P3) — CostAccounting tooltip crashes on null value (dead code)
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CostAccounting.tsx:73 (DEAD CODE)
+Description:
+  Tooltip renders: `payload[0].payload.value.toLocaleString()`
+  
+  If `value` is null/undefined (e.g., backend returns null for empty
+  categories), `.toLocaleString()` crashes. The guard
+  `active && payload && payload[0]` doesn't check `payload[0].payload.value`.
+  
+  Unreachable (file is dead code per BUG2-DASH-9), but noted for completeness.
+Expected: Null check before .toLocaleString().
+Actual: Potential crash on null value.
+Suggested fix: `payload[0].payload.value?.toLocaleString() ?? '—'`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-29 (P3) — NetCostTrendChart tooltip casts value to number without null check (dead code)
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/CostAccounting.tsx:368-369 (DEAD CODE)
+Description:
+  Tooltip: `(p.value as number).toFixed(2)`
+  
+  If `p.value` is null/undefined, `Number(null).toFixed(2)` = "0.00",
+  `Number(undefined).toFixed(2)` = "NaN". Misleading display.
+  
+  Unreachable (file is dead code per BUG2-DASH-9).
+Expected: Null check before formatting.
+Actual: Potential "NaN" display.
+Suggested fix: `Number(p.value ?? 0).toFixed(2)`
+
+═══════════════════════════════════════════════════════════════
+BUG2-DASH-30 (P3) — DrillDownDrawer "Metrik Turunan" section uses allRecords[0] without guard
+═══════════════════════════════════════════════════════════════
+File: src/components/drilldown/DrillDownDrawer.tsx:148-166
+Description:
+  The "Metrik Turunan" section is wrapped in `{allRecords.length > 0 && (...)}`,
+  so it only renders when there are records. Inside, it accesses
+  `allRecords[0]` (line 152) — safe because of the length check.
+  
+  BUT: it shows metrics from the FIRST record only, labeled "record teratas".
+  If the user has loaded multiple pages (via Load More), the "record teratas"
+  is still the first record of the first page — not necessarily the most
+  relevant. Minor: the label is accurate ("teratas" = top/first), but users
+  might expect summary metrics across ALL loaded records.
+Expected: Either clearly label as "first record" or compute summary across all loaded records.
+Actual: Shows first record's metrics, labeled "record teratas".
+Suggested fix: Change label to "Record Pertama" (more precise), OR compute aggregate metrics (sum/avg) across allRecords.
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (non-bugs)
+═══════════════════════════════════════════════════════════════
+1. Trend data is sorted chronologically by backend (trend-builder.ts:50, 69, 92).
+   Frontend TrendChart and AreaTrendChart don't need to re-sort. ✓
+
+2. Growth calculations handle zero-division (calcGrowth in growth.ts:31-35):
+   returns null when prev=0 (can't compute from zero base). KPI card shows
+   "—" for null growth. ✓
+
+3. ExecutiveSummary "inverse" flag on Net Loss/Surplus KPI is CORRECT.
+   qtyLossSurplus is SUM(ABS()) → always >= 0. Growth > 0 means MORE
+   deviation activity = BAD = red (via inverse flag). Growth < 0 means
+   LESS deviation = GOOD = green. The inverse flag correctly inverts
+   the default "growth>0 = good" semantics. ✓
+
+4. clickableRowProps (a11y.ts) provides keyboard accessibility:
+   tabIndex=0, role=button, Enter/Space triggers click. All clickable
+   table rows use this. ✓
+
+5. Empty/loading/error states exist for most components:
+   - EmptyState, LoadingState, ErrorState in shared/index.tsx
+   - TrendChart has empty state (Charts.tsx:517-536)
+   - All tables have "Tidak ada data" empty rows
+   - LoadingState shows elapsed time + slow-warning after 15s ✓
+
+6. Kelompok filter is correctly propagated to all side-panel queries:
+   - RestoRecommendationCard.tsx:64 passes kelompok
+   - GlobalItemSearchModal.tsx:123, 146 passes kelompok
+   - FilterBar.tsx prefetch includes kelompok (BUG-FE-1 fixed) ✓
+
+7. FilterBar stale-filter cleanup (FilterBar.tsx:92-107): useEffect
+   clears invalid kelompok/area/pic/outletCode after data upload if
+   the new dataset doesn't have them. ✓
+
+8. CardDrillDown respects current filters (because `data` is the
+   analysis result which is already filtered by area/kelompok/pic).
+   The drill-down shows filtered data, not unfiltered. ✓
+
+9. DeviationBreakdown handles zero-total correctly (Charts.tsx:282):
+   `const total = b.total || 1;` — if b.total is 0, total becomes 1,
+   avoiding division by zero. All 4 categories also 0 → chart shows
+   empty bars with 0% labels. ✓
+
+10. TrendChart Y-axis handles negative values (Charts.tsx:561-567):
+    tickFormatter uses `Math.abs(v)` for threshold check but preserves
+    sign in output. Negative values show as "-2Jt" etc. ✓
+
+11. useAnalysis retry logic (useAnalysis.ts:387-393): retries on 504/502/503/
+    timeout/Server error, max 2 retries with 1s/2s/3s backoff. Doesn't
+    retry on 4xx (correct — those are permanent errors). ✓
+
+12. placeholderData: keepPreviousData (useAnalysis.ts:383) — smooth
+    transition during filter changes. Combined with the FetchAware
+    wrapper (page.tsx:72-86) that shows "Memperbarui" badge, the UX
+    is good (no full-screen flash on filter change). ✓
+
+13. deviationToBom calculation (exec-summary.ts:50):
+    `c.qtyBom !== 0 ? c.qtyDeviasi / Math.abs(c.qtyBom) : null`
+    — handles qtyBom=0 (returns null, displays "—"). Math.abs is
+    redundant (qtyBom is already SUM(ABS)) but harmless. ✓
+
+14. AreaComparison sorts by totalAbsNominal descending (AdvancedAnalysis.tsx:269-271).
+    Worst (highest nominal) at top, best at bottom. Badges "Terburuk"/"Terbaik"
+    correctly placed (except BUG2-DASH-15 when only 1 area). ✓
+
+15. OutletHealthRanking sorts by healthScore ascending (AdvancedAnalysis.tsx:48).
+    Worst (lowest score) at top. Critical outlets (score < 30) get red
+    background tint. ✓
+
+16. HistoricalZScoreCard filters out |Dev/BOM| > 500% (data anomalies
+    where BOM ≈ 0). Also filters zScore=0 and historicalAvg=0. Shows
+    filter count "(N difilter: BOM≈0)" when items are excluded. ✓
+
+17. SourceDataModal CSV export (SourceDataModal.tsx:29-60): properly
+    escapes commas, quotes, newlines. Handles null fields with `?? ''`. ✓
+
+18. VirtualizedDrawerTable (DrillDownDrawer.tsx:182-240) and
+    VirtualizedRecordsTable (SourceDataModal.tsx:162-253) use
+    @tanstack/react-virtual with measureElement for dynamic row heights.
+    Handles 500 records smoothly. ✓
+
+19. clickableRowProps + cursor-pointer + hover:bg-muted/40 on all table
+    rows — consistent visual feedback for clickable rows. ✓
+
+20. Keyboard shortcuts (page.tsx:275-320): Cmd+E export, Cmd+R refresh,
+    Cmd+K item search, 1/2/3/4 tab switch, Escape close. All guarded
+    against input/textarea/select focus (isTyping check). ✓
+
+---
+Task ID: BUGHUNT2-INGEST-4
+Agent: Backend Bug Hunter (Ingest + Rule Engine focus)
+Task: Find bugs in data import/ingest flow, file parsing, data validation, rule engine, and threshold settings. Focus on data integrity, error handling, and correctness of computed fields. Do NOT fix — report only.
+
+Work Log:
+- Read worklog tail (~500 lines) for context: prior bug hunts BUGHUNT-BE-1, BUGHUNT-PERF-4, FIX-P1-P2-KELOMPOK, FIX-P3-KELOMPOK focused on kelompok filter. This audit is scoped to ingest/rule-engine/threshold — a different surface area.
+- Audited 14 files: src/app/api/ingest/route.ts, src/app/api/ingest-upload/route.ts, src/app/api/ingest-process/route.ts, src/app/api/import-drive/route.ts, src/lib/ingestion.ts, src/engine/transform.ts, src/engine/rules/evaluator.ts, src/engine/analysis/analysis.ts (+ ruleService.ts), src/lib/settings.ts, src/app/api/settings/route.ts, src/app/api/migrate-direction/route.ts, src/components/filters/FileUploadDialog.tsx, src/components/filters/DriveImportDialog.tsx, src/components/filters/SettingsDialog.tsx, src/config/settings.ts.
+- Cross-referenced supporting files: src/lib/excel.ts (parseExcelFile, parseMonthFromFilename, HEADER_ALIASES), src/lib/drive-import.ts (downloadDriveFile, importFromDriveUrl), src/lib/csv-parser.ts, src/lib/queries/rule-evaluation.ts (evaluateRulesSql, evaluateHistoricalRulesJs), src/lib/queries/historical.ts (queryHistoricalStats), src/lib/metrics/deviation.ts (computeDirection, computeResidual, computeDevBomPerRow), src/lib/metrics/historical.ts (calcZScoreFromStats), src/lib/metrics/growth.ts (calcGrowthAbs), src/lib/validation.ts (Zod schemas), src/lib/filename.ts (validateManualFileName), src/lib/outlet.ts, src/config/rules.yaml (17 rules), prisma/schema.prisma (natural keys, indexes), src/engine/validator.ts (validateRow, summarizeDQ).
+- Verified all 12 specific audit items from the task brief: file parsing, data validation, direction calculation, computed fields, rule evaluation, threshold settings, Google Drive import, ingest process flow, error handling, security, data integrity, performance.
+- Confirmed rule count: 12 SQL rules (evaluateRulesSql RULE_MAP) + 5 JS historical rules (evaluateHistoricalRulesJs) = 17 total, matching rules.yaml and evaluator.test.ts.
+- Verified Zod schema `importDriveBodySchema` rejects 'eu' locale value sent by DriveImportDialog (enum only allows 'auto' | 'id' | 'us').
+- Verified `getAllSettings` calls `ensureDefaultSettings` (write attempt) on every invocation — called by 6 routes via `getRuntimeThresholds`.
+- Verified month dedup (ingestion.ts:228-237) deletes old SourceFile + records BEFORE new SourceFile is created (line 240) — data loss if ingestion fails.
+- Verified `import` mode (ingest-process/route.ts:323-534) does NOT clean up FileChunk rows (only `import-all` mode does, line 714).
+- Verified `deleteMany` + `processRowsForImport` (createMany) in ingest-process is NOT wrapped in $transaction.
+- Verified three different direction calculations: transform.ts uses qtyLossSurplus, migrate-direction uses nominalLossSurplus, ruleService uses nominalLossSurplus ?? qtyDeviasi.
+- Verified `pctQtyDeviasiToBom` is read from Excel (transform.ts:215) and never recomputed despite `computeDevBomPerRow` existing in deviation.ts:55 (unused).
+- Verified SQL rule engine filter `absNominalDeviasi > 0` (rule-evaluation.ts:74) excludes records that could fire OVER_EXPLAINED, TOLERANCE_BREACH, DIRECTION_FLIP.
+- Verified `residualNominal` (transform.ts:274) uses `sign` derived from `qtyDeviasi` (line 264), not from `nominalDeviasi` — wrong sign when qty and nominal disagree.
+- Verified NULL `akunPenyesuaian` breaks `skipDuplicates` dedup (PostgreSQL treats NULLs as distinct in unique constraints — schema.prisma:141).
+
+Stage Summary:
+- 30 bugs found (0×P0, 5×P1, 10×P2, 15×P3). NO immediate production-breaking bugs, but 5 P1 data-loss / feature-broken bugs need urgent attention.
+- Top P1 issues:
+  1. BUG2-INGEST-1: Month dedup deletes old data before new data is ingested → data loss on ingestion failure.
+  2. BUG2-INGEST-2: `import` mode orphans FileChunk rows in DB (only `import-all` cleans up).
+  3. BUG2-INGEST-3: `deleteMany` + `createMany` not in transaction → data loss if insert fails after delete.
+  4. BUG2-INGEST-4: DriveImportDialog sends 'eu' locale but backend Zod rejects it → EU format option always fails with 400.
+  5. BUG2-INGEST-5: `getAllSettings` writes to Setting table on every dashboard request → write-lock contention.
+- P2 highlights: SQL rule filter suppresses valid rules; `pctQtyDeviasiToBom` not recomputed (zScore mixes stored + recomputed); 3 different direction calculations; analysis vs export-report use different rule engines; `residualNominal` uses wrong sign; Drive files never cleaned up; migrate-direction not transactional + fire-and-forget audit log; NULL akunPenyesuaian breaks dedup; `.xls` in allowlist but unsupported by parser.
+- P3 highlights: avgPrice skips nominalDeviasi=0; ensureDefaultSettings write-on-every-read; dead code (forceRefresh, Prisma.join `t`, computeDevBomPerRow); tolerancePct not normalized from Excel; BENCHMARK rules always overridden by HISTORICAL rules; misleading comments; DELETE doesn't validate fileHash; SettingsDialog UX inconsistency; 'UNKNOWN' week gets WEEK 1 period.
+- The rule engine has 3 different direction logic implementations that can disagree — recommend consolidating to a single `computeDirection` call everywhere.
+- The analysis route (SQL path) and export-report route (JS path) can produce different flags for the same data — recommend unifying.
+- No bugs were fixed (report-only per task instructions).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-1 (P1) — Month dedup deletes old data BEFORE new data is ingested (data loss risk)
+═══════════════════════════════════════════════════════════════
+File: src/lib/ingestion.ts:228-237
+Description:
+  Before creating the new SourceFile (line 240) and ingesting any rows,
+  processIngestion deletes ALL existing SourceFiles for the same monthKey
+  (or monthLabel fallback) along with their InventoryRecords, Weeks, and
+  DQIssues via $transaction.
+  
+  If the subsequent ingestion fails (Excel parse error, DB error, OOM,
+  Vercel timeout), the old data is PERMANENTLY LOST. There is no rollback.
+  
+  The $transaction only covers the DELETE — it does not include the
+  subsequent CREATE + INSERT. So the atomicity guarantee does not extend
+  to the new ingestion.
+  
+  Scenario: user re-uploads "Juli 2026.xlsx" to add WEEK 4. The old data
+  (WEEK 1-3) is deleted. Excel parsing fails (corrupt file). Old data is
+  gone, new data is not inserted. User must re-upload all 4 weeks.
+Expected: Old data should be retained until new data is successfully
+  ingested (e.g., delete old data AFTER new data is committed, or use a
+  single transaction covering delete + insert).
+Actual: Old data is deleted before new data is created. Failure = data
+  loss.
+Suggested fix:
+  Option A: Move the dedup-delete to AFTER successful ingestion (after
+  line 424 `db.sourceFile.update`).
+  Option B: Rename the new SourceFile's fileName to a unique value
+  (e.g., append timestamp), ingest, then delete old SourceFiles in a
+  final step.
+  Option C: Use a single $transaction covering delete + create + insert
+  (may be too large for 35K records).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-2 (P1) — `import` mode orphans FileChunk rows in DB
+═══════════════════════════════════════════════════════════════
+File: src/app/api/ingest-process/route.ts:323-534 (import mode)
+Description:
+  The `import` mode (single-week import) reassembles the file from DB
+  chunks, parses it, imports the week, and deletes the temp file (line
+  394) — but NEVER calls `db.fileChunk.deleteMany({ where: { fileHash } })`.
+  
+  Only `import-all` mode cleans up chunks (line 714). The frontend
+  (FileUploadDialog.tsx) always uses `import-all`, so this is a latent
+  bug. But if anyone calls `mode: 'import'` directly via API (e.g.,
+  programmatic import, future UI change), chunks accumulate in the DB
+  forever.
+  
+  Each chunk is up to 5MB. A 50MB file = 10 chunks = 50MB of orphaned
+  Bytes data in the DB. Over time, this bloats the database.
+Expected: `import` mode should clean up chunks after successful import
+  (same as `import-all` mode does on line 714).
+Actual: Chunks are orphaned in the FileChunk table.
+Suggested fix:
+  Add `await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});`
+  after the successful import in `import` mode (after line 522
+  `clearMonthResolverCache()`).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-3 (P1) — deleteMany + createMany not in transaction (data loss)
+═══════════════════════════════════════════════════════════════
+File: src/app/api/ingest-process/route.ts:447, 678 (and processRowsForImport)
+Description:
+  In both `import` mode (line 447) and `import-all` mode (line 678),
+  the route deletes old InventoryRecords for the sourceFile+week, then
+  calls `processRowsForImport` which does `createMany`. These two
+  operations are NOT in a transaction.
+  
+  If `createMany` fails (DB error, timeout, OOM), the old records are
+  already deleted. The week has 0 records. Data loss.
+  
+  The `.catch(() => {})` on the deleteMany (line 447, 678) also
+  silently swallows delete errors — if the delete fails, the code
+  proceeds to insert, which may then fail due to unique constraint
+  violations (old records still present).
+Expected: delete + insert should be atomic (single transaction).
+Actual: Non-atomic; failure between delete and insert = 0 records.
+Suggested fix:
+  Wrap the delete + processRowsForImport in `db.$transaction([...])`.
+  Note: processRowsForImport does multiple createMany calls (batched),
+  so the transaction would need to use the interactive form:
+  `db.$transaction(async (tx) => { await tx.deleteMany(...); await
+  processRowsForImport(..., tx); })` — requiring processRowsForImport
+  to accept a transaction client.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-4 (P1) — DriveImportDialog sends 'eu' locale; backend rejects with 400
+═══════════════════════════════════════════════════════════════
+File: src/components/filters/DriveImportDialog.tsx:47, src/lib/validation.ts:209
+Description:
+  DriveImportDialog declares:
+    `const [driveNumberLocale, setDriveNumberLocale] = useState<'us' | 'eu'>('us');`
+  and sends `numberLocale: driveNumberLocale` in the POST body (line 71).
+  
+  The backend Zod schema `importDriveBodySchema` (validation.ts:209)
+  validates: `numberLocale: z.enum(['auto', 'id', 'us']).optional()`.
+  
+  The value 'eu' is NOT in the enum. When the user selects "EU
+  (1.234,56)" in the dialog, the request fails with HTTP 400:
+  "Invalid body: numberLocale: Invalid enum value."
+  
+  The user sees a generic "❌ Import gagal" toast with no clear
+  explanation. The EU format option is presented as valid but is
+  completely non-functional.
+  
+  Note: Indonesian number format (dot=thousands, comma=decimal) is
+  the SAME as European format. The backend uses 'id' for this. The
+  dialog should use 'id' instead of 'eu'.
+Expected: Selecting "EU (1.234,56)" should parse numbers in European
+  / Indonesian format (dot=thousands, comma=decimal).
+Actual: Request fails with 400 because 'eu' is not in the Zod enum.
+Suggested fix:
+  In DriveImportDialog.tsx, change the type and values:
+    `useState<'us' | 'id'>('us')` 
+    Radio value="id" for "EU (1.234,56)" (Indonesian/European format)
+    Radio value="us" for "US (1,234.56)"
+  Or add 'eu' as an alias for 'id' in the Zod enum + toNum function.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-5 (P1) — getAllSettings writes to Setting table on every dashboard request
+═══════════════════════════════════════════════════════════════
+File: src/lib/settings.ts:367-379
+Description:
+  `getAllSettings()` calls `await ensureDefaultSettings()` on EVERY
+  invocation. `ensureDefaultSettings` does:
+    `await db.setting.createMany({ data, skipDuplicates: true });`
+  
+  This is an INSERT ... ON CONFLICT DO NOTHING query that attempts to
+  insert all 32 setting rows. On PostgreSQL, this acquires a write
+  lock on the Setting table (even though 0 rows are actually inserted
+  if all rows exist).
+  
+  `getAllSettings` is called by `getRuntimeThresholds`, which is
+  called by 6 API routes: analysis, outlet-items, item-history,
+  export-report, outlet-focus, resto-bahan-matrix. Every dashboard
+  load triggers 6+ calls to `getAllSettings` → 6+ write attempts on
+  the Setting table.
+  
+  Under concurrent load (10 users × 6 routes = 60 requests), this
+  causes lock contention on the Setting table. The Setting table is
+  tiny (32 rows) but the write lock still serializes access.
+  
+  The comment says "cache disabled — always read from DB to ensure
+  consistency across Vercel serverless instances." But the write
+  attempt is unnecessary — the settings already exist after the first
+  call.
+Expected: `getAllSettings` should only READ from the DB, not write.
+  `ensureDefaultSettings` should run once at startup (or via a setup
+  script), not on every request.
+Actual: Every `getAllSettings` call does a write (createMany with
+  skipDuplicates) + a read (findMany). Write-lock contention under
+  load.
+Suggested fix:
+  Option A: Remove `ensureDefaultSettings()` from `getAllSettings`.
+  Call it once in a setup script or `/api/setup` endpoint.
+  Option B: Add a module-level boolean `_defaultsEnsured = false`.
+  Only call `ensureDefaultSettings` if `!_defaultsEnsured`. Set
+  `_defaultsEnsured = true` after success. (Per-instance, but
+  acceptable — if one instance fails, the next will retry.)
+  Option C: Use a SELECT-only check: `SELECT 1 FROM Setting LIMIT 1`.
+  If empty, call `ensureDefaultSettings`. Avoids write lock on the
+  common path.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-6 (P2) — SQL rule filter `absNominalDeviasi > 0` suppresses valid rules
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/rule-evaluation.ts:74
+Description:
+  The `curr` CTE filters:
+    `WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0`
+  
+  This excludes records where `nominalDeviasi` is NULL or 0. But
+  several rules don't depend on `nominalDeviasi`:
+  
+  - OVER_EXPLAINED: depends on qtyDeviasi, qtyWaste, qtySusut, qtyTrial.
+    A record with qtyDeviasi=-10 but nominalDeviasi=NULL is EXCLUDED →
+    OVER_EXPLAINED never fires.
+  
+  - TOLERANCE_BREACH / TOLERANCE_BREACH_HIGH: depend on
+    pctQtyDeviasiToBom and tolerancePct. A record with
+    pctQtyDeviasiToBom=0.5 but nominalDeviasi=0 is EXCLUDED.
+  
+  - DIRECTION_FLIP: depends on nominalLossSurplus (not nominalDeviasi).
+    A record with nominalLossSurplus=-100 but nominalDeviasi=NULL is
+    EXCLUDED → DIRECTION_FLIP never fires.
+  
+  This causes false negatives — valid anomalies are missed.
+Expected: Rules should be evaluated for all records in the current
+  period, regardless of nominalDeviasi value.
+Actual: Records with NULL/0 nominalDeviasi are excluded from ALL
+  12 SQL rules, including rules that don't use nominalDeviasi.
+Suggested fix:
+  Remove the `absNominalDeviasi > 0` filter from the `curr` CTE.
+  Individual rules already handle NULLs via their CASE WHEN
+  conditions (e.g., `c."nominalLossSurplus" < 0` is NULL if
+  nominalLossSurplus is NULL → CASE returns 0).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-7 (P2) — pctQtyDeviasiToBom stored from Excel, not recomputed
+═══════════════════════════════════════════════════════════════
+File: src/engine/transform.ts:215, src/lib/queries/rule-evaluation.ts:208, src/lib/queries/historical.ts:41
+Description:
+  `pctQtyDeviasiToBom` is read directly from the Excel column
+  (transform.ts:215) and stored in the DB. It is NEVER recomputed
+  from `qtyDeviasi / qtyBom` during ingestion.
+  
+  The `computeDevBomPerRow` function exists in deviation.ts:55 but
+  is NEVER USED anywhere (only exported in index.ts).
+  
+  The historical stats (historical.ts:41) compute the mean from
+  `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` — a RECOMPUTED value.
+  
+  The zScore calculation (rule-evaluation.ts:208) uses:
+    `(Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.mean) / stats.stdDev`
+  
+  So the NUMERATOR uses the STORED Excel value, while the MEAN and
+  STDDEV use RECOMPUTED values. If Excel's `pctQtyDeviasiToBom`
+  differs from `qtyDeviasi / qtyBom` (due to Excel formula errors,
+  manual entry, or different calculation method), the zScore is
+  computed from mixed sources → meaningless.
+  
+  Similarly, ruleService.ts:44 passes `curr.pctQtyDeviasiToBom`
+  (stored) to `calcZScoreFromStats`, which uses the same historical
+  mean (recomputed). Same inconsistency.
+Expected: `pctQtyDeviasiToBom` should be recomputed from
+  `qtyDeviasi / qtyBom` during ingestion (or at query time) for
+  consistency with historical stats.
+Actual: Stored Excel value used for current; recomputed value used
+  for historical mean → zScore mixes sources.
+Suggested fix:
+  In `normalizeRow` or `deriveRecord` (transform.ts), recompute:
+    `pctQtyDeviasiToBom: (rec.qtyDeviasi != null && rec.qtyBom != null && rec.qtyBom !== 0) ? Math.abs(rec.qtyDeviasi) / Math.abs(rec.qtyBom) : null`
+  Or call `computeDevBomPerRow(rec.qtyDeviasi, rec.qtyBom)` (the
+  existing but unused function).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-8 (P2) — Three different direction calculations
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/engine/transform.ts:287 (ingestion): `computeDirection(rec.qtyLossSurplus, rec.qtyDeviasi)` — NET=qtyLossSurplus, fallback=qtyDeviasi
+  - src/app/api/migrate-direction/route.ts:48-90: uses `nominalLossSurplus` sign ONLY (no fallback)
+  - src/engine/analysis/ruleService.ts:68-81: `nominalLossSurplus ?? qtyDeviasi` — NOMINAL first, fallback=qtyDeviasi
+Description:
+  Three different code paths compute `direction` (LOSS/SURPLUS/NEUTRAL)
+  using different source fields:
+  
+  1. INGESTION (transform.ts): `qtyLossSurplus ?? qtyDeviasi`
+     → Based on QUANTITY net deviation.
+  2. MIGRATE-DIRECTION API: `nominalLossSurplus` only
+     → Based on NOMINAL (currency) net deviation. No fallback.
+  3. ANALYSIS (ruleService.ts): `nominalLossSurplus ?? qtyDeviasi`
+     → Based on NOMINAL first, fallback to QUANTITY gross.
+  
+  If `qtyLossSurplus` and `nominalLossSurplus` have DIFFERENT signs
+  (e.g., qty loss but price gain — possible with negative prices or
+  data entry errors), the stored direction (from ingestion) would
+  be LOSS, but migrate-direction would change it to SURPLUS, and
+  ruleService would also compute SURPLUS.
+  
+  After running migrate-direction, the stored `direction` field no
+  longer matches what `computeDirection` (transform.ts) would
+  produce on re-ingestion. Re-ingesting the same file would revert
+  the direction back.
+  
+  The ruleService.ts intentionally uses `nominalLossSurplus` (see
+  comment "FIX FLOW3-1: compute direction on-the-fly from
+  nominalLossSurplus sign"), but transform.ts (ingestion) was not
+  updated to match.
+Expected: Single source of truth for direction calculation.
+Actual: 3 implementations that can disagree.
+Suggested fix:
+  Update `computeDirection` (deviation.ts:36) to use
+  `nominalLossSurplus ?? qtyLossSurplus ?? qtyDeviasi` (nominal
+  first, then qty net, then qty gross). Update transform.ts:287 to
+  pass all three. Update migrate-direction to use the same function.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-9 (P2) — Analysis (SQL path) vs export-report (JS path) use different rule engines
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/analysis/route.ts:475-599: uses `evaluateRulesSql` + `evaluateHistoricalRulesJs`
+  - src/app/api/export-report/route.ts:438-439: uses `buildRuleContext` + `evaluateRules` (JS engine)
+Description:
+  The analysis route uses the SQL rule engine (12 SQL rules in
+  `evaluateRulesSql` + 5 JS historical rules in
+  `evaluateHistoricalRulesJs`). The export-report route uses the
+  JS rule engine (`evaluateRules` from evaluator.ts, which evaluates
+  all 17 rules in JS).
+  
+  These two paths can produce DIFFERENT flags for the same data:
+  
+  1. SQL path filters `absNominalDeviasi > 0` (BUG2-INGEST-6) — JS
+     path (export-report.ts:432) filters `qtyDeviasi === null/0 AND
+     absNominalDeviasi === null/0` (both must be null/0 to skip).
+     Different filter → different records evaluated.
+  
+  2. SQL path uses `pctQtyDeviasiToBom` from DB (stored Excel value)
+     for zScore. JS path (ruleService.ts:44) also uses stored value.
+     SAME bug (BUG2-INGEST-7), but both paths have it consistently.
+  
+  3. SQL path's `f_dir_flip` checks `prevNominalLossSurplus` sign
+     flip. JS path's `isDirectionFlip` checks `prevDirection !==
+     currDirection` (both non-NEUTRAL). These should be equivalent
+     but the SQL uses strict <0/>0 while JS uses the computed
+     direction string. Edge case: prev=0 → SQL: no flip; JS:
+     prevDirection='NEUTRAL' → no flip. Consistent.
+  
+  4. SQL path keeps only the HIGHEST priority flag per record
+     (analysis/route.ts:604-611). JS path (export-report.ts:439)
+     keeps ALL flags. Different output shape.
+  
+  The dashboard (analysis route) and the exported report may show
+  different anomaly flags for the same record.
+Expected: Both routes should use the same rule engine (or at least
+  produce the same flags).
+Actual: SQL path and JS path can produce different flags.
+Suggested fix:
+  Migrate export-report to use the SQL path (`evaluateRulesSql` +
+  `evaluateHistoricalRulesJs`) for consistency. Or unify both to
+  use the JS engine (slower but single source of truth).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-10 (P2) — residualNominal uses qtyDeviasi sign instead of nominalDeviasi sign
+═══════════════════════════════════════════════════════════════
+File: src/engine/transform.ts:264, 274
+Description:
+  ```ts
+  const sign = rec.qtyDeviasi >= 0 ? 1 : -1;  // line 264
+  ...
+  const residualNominal = sign * Math.max(0, absDevNom - explainedNom);  // line 274
+  ```
+  
+  `residualNominal` uses the sign of `qtyDeviasi` (quantity), but
+  the magnitude is from `nominalDeviasi` (currency). If qty and
+  nominal have different signs (e.g., qtyDeviasi=+5 but
+  nominalDeviasi=-100 — quantity surplus but nominal loss, possible
+  with negative prices), `residualNominal` would be POSITIVE
+  (sign=+1 from qty) but the nominal magnitude suggests a LOSS.
+  
+  The `residualQty` (line 265) correctly uses the qty sign. But
+  `residualNominal` should use the NOMINAL sign for consistency
+  with its magnitude source.
+Expected: `residualNominal` sign should come from `nominalDeviasi`,
+  not `qtyDeviasi`.
+Actual: Sign from qty, magnitude from nominal → inconsistent when
+  signs disagree.
+Suggested fix:
+  ```ts
+  const signNominal = rec.nominalDeviasi != null
+    ? (rec.nominalDeviasi >= 0 ? 1 : -1)
+    : sign;
+  const residualNominal = signNominal * Math.max(0, absDevNom - explainedNom);
+  ```
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-11 (P2) — Downloaded Drive files never cleaned up (disk space leak)
+═══════════════════════════════════════════════════════════════
+Files: src/app/api/import-drive/route.ts, src/lib/drive-import.ts, src/lib/ingestion.ts
+Description:
+  The import-drive route downloads files from Google Drive to
+  DATA_DIR (or /tmp/inventory on Vercel) via `importFromDriveUrl`.
+  After `processIngestion` completes, the downloaded files are NEVER
+  deleted.
+  
+  `processIngestion` (ingestion.ts) reads the file but doesn't
+  delete it. `importFromDriveUrl` (drive-import.ts) writes the file
+  but doesn't clean up. The import-drive route doesn't clean up.
+  
+  On Vercel, /tmp is per-invocation (cleared when the function
+  ends), so this is not an issue. But on local/self-hosted
+  deployments (DATA_DIR = data/inventory), downloaded files
+  accumulate forever.
+  
+  Each Drive file is typically 1-10MB. Importing 12 months × 4
+  weeks = 48 files = 50-500MB of orphaned files.
+Expected: Downloaded files should be deleted after successful (or
+  failed) ingestion.
+Actual: Files persist in DATA_DIR indefinitely.
+Suggested fix:
+  In import-drive/route.ts, after `processIngestion` for each file:
+    `await fs.unlink(file.localPath).catch(() => {});`
+  Or add a cleanup step in `processIngestion` itself (delete the
+  file after parsing, since rows are in memory).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-12 (P2) — migrate-direction: 5 UPDATEs without transaction
+═══════════════════════════════════════════════════════════════
+File: src/app/api/migrate-direction/route.ts:48-90
+Description:
+  The POST handler executes 5 separate `$executeRaw` UPDATE
+  statements (lossUpdated, surplusUpdated, neutralUpdated,
+  lossFallback, surplusFallback) without wrapping them in a
+  transaction.
+  
+  If the process crashes between UPDATE 2 and 3 (e.g., Vercel
+  timeout, OOM), the DB is in a partial state: some records have
+  the new direction, others still have the old (inverted) direction.
+  
+  The operation IS idempotent (re-running fixes partial states),
+  but the intermediate state could cause incorrect analysis results
+  until the next run.
+Expected: All 5 UPDATEs should be atomic (single transaction).
+Actual: Each UPDATE is atomic, but the sequence is not.
+Suggested fix:
+  ```ts
+  await db.$transaction([
+    db.$executeRaw`UPDATE ...`,
+    db.$executeRaw`UPDATE ...`,
+    db.$executeRaw`UPDATE ...`,
+    db.$executeRaw`UPDATE ...`,
+    db.$executeRaw`UPDATE ...`,
+  ]);
+  ```
+  Note: $executeRaw in $transaction array may need Prisma.sql wrapper.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-13 (P2) — migrate-direction: audit log is fire-and-forget
+═══════════════════════════════════════════════════════════════
+File: src/app/api/migrate-direction/route.ts:105-113
+Description:
+  ```ts
+  db.auditLog.create({ ... }).catch((e) => {
+    logger.error('Audit log write failed (non-blocking)', ...);
+  });
+  ```
+  
+  The `db.auditLog.create` call is NOT awaited. The response is
+  returned (line 115) before the audit log write completes. On
+  Vercel serverless, the function may terminate immediately after
+  the response, killing the in-flight audit log write.
+  
+  The `.catch()` handles errors, but only if the write actually
+  executes. If the function is killed first, the write never happens
+  and no error is logged.
+  
+  This means migration operations may not be recorded in the audit
+  log, breaking the audit trail for a destructive operation that
+  mutates up to 100% of InventoryRecord rows.
+Expected: Audit log write should complete before the response is
+  sent.
+Actual: Fire-and-forget; may be lost on serverless.
+Suggested fix:
+  `await db.auditLog.create({ ... }).catch(...);` (add `await`).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-14 (P2) — NULL akunPenyesuaian breaks skipDuplicates dedup
+═══════════════════════════════════════════════════════════════
+File: prisma/schema.prisma:141, src/lib/ingestion.ts:381
+Description:
+  The InventoryRecord unique constraint is:
+    `@@unique([weekId, outletId, itemId, akunPenyesuaian])`
+  
+  In PostgreSQL, NULL values are treated as DISTINCT in unique
+  constraints. This means multiple rows with the same (weekId,
+  outletId, itemId, NULL) can coexist without violating the
+  constraint.
+  
+  `createMany` with `skipDuplicates: true` uses
+  `INSERT ... ON CONFLICT DO NOTHING`. For rows with NULL
+  akunPenyesuaian, there is NO conflict (NULLs are distinct) →
+  duplicates are INSERTED, not skipped.
+  
+  If a single Excel file has duplicate rows for the same outlet +
+  item + week with no `akunPenyesuaian` (empty cell), both rows are
+  inserted. The dashboard would show double the deviation for that
+  outlet+item.
+  
+  In fastMode (ingest-process route line 469: `true`), the
+  validator's DUPLICATE check (validator.ts:137-148) is SKIPPED.
+  So duplicates with NULL akunPenyesuaian are not caught by
+  validation either.
+Expected: Duplicate rows (same outlet+item+week+akun) should be
+  deduped regardless of whether akunPenyesuaian is NULL.
+Actual: Rows with NULL akunPenyesuaian bypass dedup → duplicates
+  inserted.
+Suggested fix:
+  Option A: Make akunPenyesuaian NOT NULL in the schema (default
+  to empty string '' instead of NULL). Requires migration.
+  Option B: In processRowsForImport, dedup in JS before createMany:
+    `const key = \`\${weekId}|\${outletId}|\${itemId}|\${akun ?? ''}\`;`
+    skip if seenKeys.has(key).
+  Option C: Use a partial unique index with `WHERE akunPenyesuaian
+  IS NOT NULL` + a separate JS dedup for NULL case.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-15 (P2) — `.xls` in allowlist but not supported by ExcelJS parser
+═══════════════════════════════════════════════════════════════
+File: src/app/api/ingest-process/route.ts:32, src/lib/excel.ts:5
+Description:
+  ingest-process/route.ts defines:
+    `const SAFE_EXT_ALLOWLIST = new Set(['.xlsx', '.xls', '.csv']);`
+  
+  But the upload route (ingest-upload/route.ts:68) only allows
+  `.xlsx` and `.csv`:
+    `if (ext !== '.xlsx' && ext !== '.csv') { ... 400 }`
+  
+  And `parseExcelFile` (excel.ts:5) uses `ExcelJS.Workbook`, which
+  only supports `.xlsx` (OpenXML format), NOT `.xls` (old binary
+  format).
+  
+  So `.xls` is accepted by the process route's allowlist but:
+  1. Can't be uploaded (ingest-upload rejects it).
+  2. Can't be parsed if it somehow gets through (ExcelJS throws).
+  
+  The allowlist entry is misleading — it suggests `.xls` is
+  supported when it's not.
+Expected: Allowlist should match actual supported formats.
+Actual: `.xls` in allowlist but not supported.
+Suggested fix:
+  Remove '.xls' from SAFE_EXT_ALLOWLIST:
+    `const SAFE_EXT_ALLOWLIST = new Set(['.xlsx', '.csv']);`
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-16 (P3) — avgPrice truthy check skips nominalDeviasi=0
+═══════════════════════════════════════════════════════════════
+File: src/lib/ingestion.ts:362, 603
+Description:
+  ```ts
+  avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0
+    ? Math.abs(n.nominalDeviasi / n.qtyDeviasi)
+    : null,
+  ```
+  
+  The truthy check `n.nominalDeviasi` is falsy when
+  nominalDeviasi=0. So a free item (nominalDeviasi=0, qtyDeviasi=5)
+  gets avgPrice=null instead of 0.
+  
+  The `n.qtyDeviasi !== 0` check is redundant with the truthy
+  `n.qtyDeviasi` (0 is falsy).
+  
+  Minor data loss — the information that the item is free (price=0)
+  is not stored.
+Expected: avgPrice=0 when nominalDeviasi=0 and qtyDeviasi≠0.
+Actual: avgPrice=null when nominalDeviasi=0.
+Suggested fix:
+  ```ts
+  avgPrice: n.qtyDeviasi != null && n.qtyDeviasi !== 0 && n.nominalDeviasi != null
+    ? Math.abs(n.nominalDeviasi / n.qtyDeviasi)
+    : null,
+  ```
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-17 (P3) — ensureDefaultSettings runs createMany on every call
+═══════════════════════════════════════════════════════════════
+File: src/lib/settings.ts:337-362
+Description:
+  (Related to BUG2-INGEST-5)
+  
+  `ensureDefaultSettings` does:
+    `await db.setting.createMany({ data, skipDuplicates: true });`
+  
+  On PostgreSQL, this is `INSERT ... ON CONFLICT DO NOTHING`. Even
+  if all 32 rows already exist (0 rows inserted), the query still
+  executes and acquires locks.
+  
+  Called on every `getAllSettings` invocation → every dashboard
+  request.
+  
+  The `_settingsCache = null;` at line 361 is also pointless — the
+  cache is never read (CACHE_TTL_MS = 0).
+Expected: `ensureDefaultSettings` should run once, not per-request.
+Actual: Runs on every `getAllSettings` call.
+Suggested fix:
+  See BUG2-INGEST-5.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-18 (P3) — forceRefresh parameter unused (dead code)
+═══════════════════════════════════════════════════════════════
+File: src/lib/settings.ts:367
+Description:
+  `getAllSettings(forceRefresh = false)` — the `forceRefresh`
+  parameter is declared but never used in the function body. The
+  function always reads from DB regardless of the parameter value.
+Expected: Either use the parameter (e.g., skip DB read if
+  forceRefresh=false and cache is fresh) or remove it.
+Actual: Dead parameter; misleading API.
+Suggested fix: Remove the parameter, or implement caching with
+  TTL > 0 and respect forceRefresh.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-19 (P3) — Prisma.join `t` variable declared but never used
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/rule-evaluation.ts:44-54
+Description:
+  ```ts
+  const t = Prisma.join([
+    thresholds.STD_DEVIASI_BOM_PCT,
+    ...
+  ], ', ');
+  ```
+  
+  The variable `t` is declared but NEVER referenced in the SQL
+  query. The query uses `${thresholds.STD_DEVIASI_BOM_PCT}` etc.
+  directly as separate parameters.
+  
+  Dead code — likely a leftover from a refactor.
+Expected: Remove unused variable, or use it in the query.
+Actual: Dead code; minor confusion.
+Suggested fix: Delete lines 44-54.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-20 (P3) — tolerancePct from Excel not normalized (5 → 500%)
+═══════════════════════════════════════════════════════════════
+File: src/engine/transform.ts:162-183, src/app/api/settings/route.ts:128-138
+Description:
+  The settings API normalizes percent values > 1 to decimal (line
+  135-138): if user enters 50, it's stored as 0.5 (50%).
+  
+  But the Excel parser `parseTolerance` (transform.ts:162-183)
+  does NOT normalize. If an Excel cell contains `5` (meaning 5%),
+  it's stored as `tolerancePct = 5` (interpreted as 500% by rules).
+  
+  The rules compare `absPctQtyDeviasiToBom > absTolerancePct * 2`.
+  If tolerancePct=5 (should be 0.05), the threshold is 10 (1000%)
+  instead of 0.10 (10%). TOLERANCE_BREACH_HIGH would NEVER fire.
+  
+  Conversely, if `pctQtyDeviasiToBom` is stored as 0.05 (5%) and
+  tolerancePct is 5 (500%), the comparison `0.05 > 5` is false →
+  no tolerance breach detected.
+  
+  This is a SILENT data integrity issue — rules appear to work but
+  thresholds are wrong by a factor of 100.
+Expected: tolerancePct from Excel should be normalized to 0-1
+  range if > 1.
+Actual: Stored as-is; rules use wrong threshold.
+Suggested fix:
+  In `parseTolerance` (transform.ts:183), add:
+    `if (n !== null && n > 1) n = n / 100;`
+  Or document that Excel cells must use decimal format (0.05 not 5).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-21 (P3) — computeDevBomPerRow defined but never used
+═══════════════════════════════════════════════════════════════
+File: src/lib/metrics/deviation.ts:55-58
+Description:
+  `computeDevBomPerRow` is defined and exported (index.ts:18) but
+  NEVER CALLED anywhere in the codebase. The `pctQtyDeviasiToBom`
+  field is always read from Excel (see BUG2-INGEST-7).
+  
+  This is related to BUG2-INGEST-7 — the function exists to
+  recompute the value but is never used.
+Expected: Either use it (recompute pctQtyDeviasiToBom during
+  ingestion) or remove it.
+Actual: Dead code.
+Suggested fix: Use it in `deriveRecord` (transform.ts) to
+  recompute pctQtyDeviasiToBom from qtyDeviasi / qtyBom.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-22 (P3) — BENCHMARK_* rules always overridden by HISTORICAL_* rules
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/rule-evaluation.ts:230-237, src/app/api/analysis/route.ts:604-611
+Description:
+  `evaluateHistoricalRulesJs` produces BOTH:
+  - HISTORICAL_WARNING (priority 58) AND BENCHMARK_ABOVE_AREA (priority 50) for zScore in (warn, high].
+  - HISTORICAL_ABNORMAL (priority 78) AND BENCHMARK_ABOVE_NETWORK (priority 72) for zScore > high.
+  
+  The analysis route (route.ts:604-611) keeps only the HIGHEST
+  priority flag per record:
+    `if (!existing || flag.priority > existing.priority) { topFlagByKey.set(key, flag); }`
+  
+  So BENCHMARK_ABOVE_AREA (50) is always overridden by
+  HISTORICAL_WARNING (58). BENCHMARK_ABOVE_NETWORK (72) is always
+  overridden by HISTORICAL_ABNORMAL (78).
+  
+  The BENCHMARK rules are effectively DEAD in the analysis path —
+  they're produced but never shown to the user.
+  
+  In the export-report path (JS engine), ALL flags are kept
+  (export-report.ts:439), so BENCHMARK rules ARE shown there.
+  Another inconsistency between the two paths (BUG2-INGEST-9).
+Expected: Either BENCHMARK rules should have higher priority than
+  HISTORICAL rules (so they're shown), or they should be removed
+  (dead code), or the analysis route should keep multiple flags
+  per record.
+Actual: BENCHMARK rules produced but always discarded in analysis
+  path.
+Suggested fix:
+  Option A: Increase BENCHMARK priorities above HISTORICAL.
+  Option B: Remove BENCHMARK rules from rules.yaml (they duplicate
+  HISTORICAL rules).
+  Option C: Keep multiple flags per record (change topFlagByKey to
+  allFlagsByKey).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-23 (P3) — deriveRecord netDeviationMismatch comment is misleading
+═══════════════════════════════════════════════════════════════
+File: src/engine/transform.ts:292
+Description:
+  Comment says: `Net = Gross - |Waste| - |Susut| - |Trial|`
+  
+  But the code (line 306) computes:
+    `expectedNet = qtyDeviasi - explainedMag * Math.sign(qtyDeviasi)`
+  
+  For negative qtyDeviasi (LOSS):
+    expectedNet = qtyDeviasi - explainedMag * (-1) = qtyDeviasi + explainedMag
+    (e.g., -10 + 6 = -4)
+  
+  The comment's formula would give: -10 - 6 = -16 (MORE loss), which
+  is WRONG.
+  
+  The code is correct; the comment is misleading.
+Expected: Comment should match code.
+Actual: Comment says subtraction; code does sign-aware addition.
+Suggested fix:
+  Update comment to: `Net = Gross - sign(Gross) * (|W|+|S|+|T|)`
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-24 (P3) — DELETE handler doesn't validate fileHash format
+═══════════════════════════════════════════════════════════════
+File: src/app/api/ingest-process/route.ts:756-759
+Description:
+  The DELETE handler:
+    `const { fileHash } = body;`
+    `if (fileHash) { await db.fileChunk.deleteMany({ where: { fileHash } }); }`
+  
+  No validation of `fileHash` format. The POST handler validates
+  via `SAFE_FILEHASH_RE` (line 31: `/^[a-f0-9]{8,128}$/i`), but
+  DELETE doesn't.
+  
+  Not a SQL injection risk (Prisma parameterizes), but:
+  1. An attacker could pass any string and delete chunks from ANY
+     upload session (if they know or guess the fileHash).
+  2. No rate limit beyond the 10/min limit (line 752).
+  3. No auth check — anyone can call DELETE.
+  
+  Minor DoS vector: an attacker who observes a fileHash in transit
+  can delete chunks mid-upload, causing the upload to fail.
+Expected: Validate fileHash format before deleting.
+Actual: Any string accepted.
+Suggested fix:
+  ```ts
+  if (typeof fileHash !== 'string' || !SAFE_FILEHASH_RE.test(fileHash)) {
+    return NextResponse.json({ success: false, error: 'Invalid fileHash' }, { status: 400 });
+  }
+  ```
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-25 (P3) — SettingsDialog shows raw input vs normalized value inconsistency
+═══════════════════════════════════════════════════════════════
+File: src/components/filters/SettingsDialog.tsx:354, 257-271
+Description:
+  The input field (line 354) shows `currentVal` — the raw stored
+  value (e.g., "0.05" for 5%).
+  
+  The "previously" label (line 362) uses `formatValueDisplay` which
+  formats percent as `n * 100`% (e.g., "5.00%" for 0.05).
+  
+  So the user sees:
+    Input: [0.05]   sebelumnya: 5.00%
+  
+  If the user enters "10" (meaning 10%), the backend normalizes to
+  "0.1" (settings/route.ts:135-138). After save + refetch, the
+  input shows "0.1" but the user entered "10". Confusing.
+  
+  The tip (line 307) says "Untuk persen, masukkan nilai 0-1 (mis.
+  10% = 0.10)" — but the "previously" label shows the percentage
+  format, creating mixed signals.
+Expected: Consistent display format (either both raw or both
+  formatted).
+Actual: Input is raw; "previously" is formatted.
+Suggested fix:
+  Either show both as raw (remove formatValueDisplay for percent),
+  or show both as formatted (format the input value too).
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-26 (P3) — evaluateHistoricalRulesJs uses pctQtyDeviasiToBom ?? 0
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/rule-evaluation.ts:208
+Description:
+  ```ts
+  const zScore = (Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.mean) / stats.stdDev;
+  ```
+  
+  If `pctQtyDeviasiToBom` is NULL, it's treated as 0. The zScore
+  becomes `(0 - mean) / stdDev = -mean/stdDev` — typically a
+  negative number.
+  
+  Since rules check `zScore > zWarn` (positive threshold), a
+  negative zScore won't trigger any rule. So NULL values don't
+  cause false positives — they cause FALSE NEGATIVES (rule doesn't
+  fire when it might should if the value were known).
+  
+  More importantly, evaluating zScore for a record with NULL
+  pctQtyDeviasiToBom is meaningless — the record has no deviation
+  ratio to compare. It should be skipped.
+Expected: Skip zScore evaluation if pctQtyDeviasiToBom is NULL.
+Actual: Treats NULL as 0, computes meaningless zScore.
+Suggested fix:
+  ```ts
+  if (curr.pctQtyDeviasiToBom == null) continue;
+  const zScore = (Math.abs(curr.pctQtyDeviasiToBom) - stats.mean) / stats.stdDev;
+  ```
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-27 (P3) — 'UNKNOWN' week gets WEEK 1 period
+═══════════════════════════════════════════════════════════════
+File: src/lib/ingestion.ts:291, src/engine/transform.ts:317-322
+Description:
+  In ingestion.ts:291: `const wk = n.weekLabel || 'UNKNOWN';`
+  
+  If weekLabel is empty, it's set to 'UNKNOWN'. Then in
+  deriveRecord (transform.ts:317-322):
+    ```ts
+    let period = CFG_RECON_SETTINGS.WEEK_PERIODS[rec.weekLabel];
+    if (!period) {
+      const weekNum = parseInt(rec.weekLabel.replace(/\D/g, '')) || 1;
+      period = { start: 1, end: Math.min(weekNum * 7, 31) };
+    }
+    ```
+  
+  For 'UNKNOWN': `parseInt('UNKNOWN'.replace(/\D/g, '')) || 1` = 1.
+  So period = { start: 1, end: 7 } — same as WEEK 1.
+  
+  The Week record is created with weekLabel='UNKNOWN' but
+  periodStart=1, periodEnd=7. This is misleading — the week has no
+  real label but gets WEEK 1's period range.
+  
+  Queries that filter by weekLabel='WEEK 1' won't match 'UNKNOWN',
+  but the period data suggests they overlap.
+Expected: 'UNKNOWN' week should have a NULL or sentinel period,
+  not WEEK 1's range.
+Actual: Gets WEEK 1's period {1, 7}.
+Suggested fix:
+  Use a sentinel period for unknown weeks: { start: 0, end: 0 }
+  or skip period derivation for 'UNKNOWN'.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-28 (P3) — driveNumberLocale type is 'us' | 'eu' (should be 'auto' | 'id' | 'us')
+═══════════════════════════════════════════════════════════════
+File: src/components/filters/DriveImportDialog.tsx:47
+Description:
+  (Related to BUG2-INGEST-4)
+  
+  `useState<'us' | 'eu'>('us')` — the type only allows 'us' or
+  'eu'. The backend expects 'auto' | 'id' | 'us'. 'eu' is invalid
+  (rejected by Zod). 'auto' and 'id' are not offered.
+  
+  The dialog should offer:
+    - Auto-detect
+    - Indonesian/European (1.234,56) → 'id'
+    - US (1,234.56) → 'us'
+Expected: Type and options should match backend's accepted values.
+Actual: Type is 'us' | 'eu'; 'eu' is rejected by backend.
+Suggested fix:
+  `useState<'auto' | 'id' | 'us'>('us')`
+  Radio values: 'us' for US, 'id' for EU/Indonesian.
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-29 (P3) — f_dir_flip doesn't detect gradual flip through zero
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/rule-evaluation.ts:111, src/engine/analysis/ruleService.ts:84-86
+Description:
+  The DIRECTION_FLIP rule checks if direction changed from LOSS to
+  SURPLUS (or vice versa) between periods. Both SQL and JS paths
+  require:
+    - prevDirection !== 'NEUTRAL'
+    - currDirection !== 'NEUTRAL'
+    - prevDirection !== currDirection
+  
+  A gradual flip through zero (prev=+5 SURPLUS, curr=0 NEUTRAL,
+  next=-5 LOSS) is NOT detected as a flip between period 1 and 3,
+  because the intermediate period (curr=0) is NEUTRAL.
+  
+  This is by design (NEUTRAL is excluded), but it means gradual
+  direction reversals are missed. The rule only catches abrupt
+  flips.
+Expected: May want to detect multi-period flips (period 1 vs
+  period 3, skipping NEUTRAL intermediates).
+Actual: Only detects consecutive-period flips where both are
+  non-NEUTRAL.
+Suggested fix:
+  For multi-period analysis, compare against the last non-NEUTRAL
+  period instead of the immediate previous period. (Design change,
+  not a bug fix.)
+
+═══════════════════════════════════════════════════════════════
+BUG2-INGEST-30 (P3) — import-drive route doesn't validate numberLocale (relies on Zod only)
+═══════════════════════════════════════════════════════════════
+File: src/app/api/import-drive/route.ts:58
+Description:
+  `const numberLocale: 'auto' | 'id' | 'us' = body.numberLocale || 'us';`
+  
+  This relies on Zod (validation.ts:209) to reject invalid values.
+  If Zod validation is bypassed (e.g., direct call to
+  processIngestion without going through the route), 'eu' would be
+  passed through to `toNum` as the locale, which falls through to
+  the 'auto' heuristic (silently wrong).
+  
+  Compare to ingest-process/route.ts:117-118 which explicitly
+  validates:
+    ```ts
+    const validLocales = ['auto', 'id', 'us'];
+    const locale = validLocales.includes(numberLocale) ? numberLocale : 'auto';
+    ```
+  
+  The import-drive route lacks this defense-in-depth.
+Expected: Explicit validation of numberLocale in the route handler.
+Actual: Relies solely on Zod; no defense-in-depth.
+Suggested fix:
+  Add the same explicit validation as ingest-process/route.ts:117-118.
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (non-bugs)
+═══════════════════════════════════════════════════════════════
+1. Rule count: 17 rules total (12 SQL + 5 JS historical), matching
+   rules.yaml and evaluator.test.ts. ✓
+
+2. computeDirection (deviation.ts:36-45): uses NET (qtyLossSurplus)
+   with fallback to GROSS (qtyDeviasi). Correct per spec. ✓
+   (Note: BUG2-INGEST-8 is about inconsistency between different
+   consumers, not about computeDirection itself being wrong.)
+
+3. computeResidual (deviation.ts:64-79): uses abs-each-then-sum for
+   explained magnitude. Correctly handles mixed-sign waste/susut/
+   trial. ✓
+
+4. parseTolerance (transform.ts:162-183): correctly handles
+   "BELUM ADA TOLERANSI" sentinel, percentage suffix, and leading
+   numeric extraction. ✓
+   (Note: BUG2-INGEST-20 is about missing normalization, not
+   parsing.)
+
+5. normalizeHeader (excel.ts:85-96): robust against Excel header
+   variations (% symbol, spaces around slashes). Multiple fallback
+   strategies. ✓
+
+6. parseMonthFromFilename (excel.ts:212-248): handles full month
+   names, abbreviations, typos (pebruari, okteber, nopember), 2-digit
+   and 4-digit years, prefixes (13.JANUARI 2026). ✓
+
+7. SSRF protection in import-drive (route.ts:61-74): validates URL
+   hostname against allowlist (drive.google.com, docs.google.com,
+   drive.usercontent.google.com). ✓
+
+8. Path traversal protection (ingestion.ts:43-62): safePath validates
+   resolved path is within DATA_DIR or allowed /tmp subdirs. ✓
+
+9. File hash dedup (ingestion.ts:167-187): correctly skips already-
+   ingested files by SHA-256 hash, cleans up stale stubs. ✓
+
+10. Rate limiting: all ingest routes (ingest, ingest-upload,
+    ingest-process, import-drive, migrate-direction, settings) have
+    rate limits. ✓
+
+11. Zod validation: all routes have Zod schemas for body/query
+    validation. ✓
+
+12. Cache invalidation: ingest, ingest-process, settings, migrate-
+    direction all call invalidateCache('analysis|') + statusCache.clear()
+    + clearMonthResolverCache(). ✓
+
+13. Batch insert: processIngestion uses BATCH_SIZE=2000,
+    processRowsForImport uses BATCH_SIZE=500. Both use createMany
+    (not one-by-one). ✓
+
+14. Indexes: schema.prisma has indexes on all FK columns + common
+    filter combos (outletId+weekId, itemId+weekId, area+weekId,
+    monthLabel+weekLabel, sourceFileId). ✓
+
+15. skipDuplicates fallback (ingestion.ts:381-389): PostgreSQL uses
+    skipDuplicates:true; SQLite falls back to per-row insert with
+    try/catch. ✓
+
+---
+Task ID: BUGHUNT2-RESTO-2
+Agent: Frontend + Data Bug Hunter (Z.ai Code)
+Task: Find bugs in Resto Analysis tab and Peer Comparison tab — deep-dive views, item detail modal, outlet comparison, peer benchmarks, trend analysis. Do NOT fix — report only.
+
+Work Log:
+- Read worklog tail (lines 19500-20039) for context on prior kelompok-filter bug hunts (BUGHUNT-BE-1, BUGHUNT-FE-2, BUGHUNT-EDGE-3, BUGHUNT-PERF-4, FIX-P1-P2-KELOMPOK, FIX-P3-KELOMPOK, FIX-TYPES-10).
+- Audited 18 files: RestoAnalysis.tsx, RestoRecommendationCard.tsx, PeerComparison.tsx, resto-analysis/{types,helpers,item-detail-modal,menu-analysis,ranking-nasional}.tsx, peer-comparison/{types,helpers,items-table,trend-chart,anomaly-flags,efficiency-score-card,gap-analysis-card,ranking-summary-card,scatter-chart,correlation-insight-card}.tsx, /api/outlet-items/route.ts, /api/peer-comparison/route.ts, /api/peer-comparison/items/route.ts, /api/peer-comparison/trend/route.ts, /api/item-history/route.ts, /api/recommendations/route.ts, /lib/queries/outlets/resto-recommendations.ts, /lib/queries/outlets/peer-comparison.ts, /lib/queries/outlets/top-outlets.ts, /lib/queries/items/top-items.ts, /lib/queries/shared.ts, /lib/metrics/deviation.ts, /lib/metrics/historical.ts, /lib/validation.ts, /hooks/useDashboard.ts, /components/dashboard/PrioritySummaryCard.tsx, /components/dashboard/priority-summary/{constants,signal-chart}.ts(x), prisma/schema.prisma.
+- Verified recommendation scoring: 14 signals (S13 removed, weight redistributed to S1 12%→15%). Weights sum to 100% (15+10+10+10+8+8+8+5+8+7+5+3+2+1=100). Priority threshold TINGGI≥55 / SEDANG≥30 / RENDAH<30 — matches between API and UI.
+- Verified priority engine (computePriority in metrics/deviation.ts) uses OR logic for P1/P2 conditions — correct.
+- Verified z-score computation (computeZScore in metrics/historical.ts): ABS magnitude, sample variance (N-1), excludes current, requires n≥HISTORICAL_MIN_WEEKS — correct.
+- Ran `bunx tsc --noEmit` — 0 errors in target files (24 pre-existing errors in unrelated files: narrative.ts, investigation, outlet-focus, AlertPanel, Animations, OutletScorecard, growth.ts, tailwind.config).
+- Cross-referenced signal names between API signalScores array and PrioritySummaryCard SIGNAL_GROUPS constants — found 2 name mismatches.
+
+Bugs Found (20 total — DO NOT FIX, report only):
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-1 (P1) — Peer Comparison ignores kelompok/area filter
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/peer-comparison.ts:34-40 (queryPeerComparison signature lacks filters param)
+  - src/app/api/peer-comparison/route.ts:46 (calls queryPeerComparison without filters)
+  - src/components/dashboard/PeerComparison.tsx:63-78 (doesn't pass kelompok/area to API)
+  - src/lib/validation.ts:105-125 (peerComparisonQuerySchema + ItemsQuerySchema + TrendQuerySchema all lack kelompok/area)
+Description:
+  The dashboard's kelompok filter (rolled out in BUGFIX-KELOMPOK-EMPTY/GLOBAL) is respected by /api/analysis, /api/recommendations, /api/pareto, /api/item-search, /api/export-report — but NOT by the 3 peer-comparison routes. queryPeerComparison has no `filters` parameter and uses raw SQL without buildSqlFilters. The frontend PeerComparison.tsx doesn't pass `kelompok` or `area` to the API.
+Expected: When user filters to kelompok=BDG, PeerComparison should only consider BDG outlets as peers (or at least offer the option).
+Actual: PeerComparison always uses ALL outlets in the network as peers, regardless of the kelompok/area filter. Inconsistent with RestoRecommendationCard which respects the filter.
+Suggested fix:
+  - Add `filters: SqlFilterOpts` param to queryPeerComparison, queryPeerItemComparison, queryPeerTrend.
+  - Apply `buildSqlFilters(filters)` to all 3 SQL queries.
+  - Add `kelompok`/`area` to the 3 peer-comparison Zod schemas.
+  - Pass `kelompok`/`area` from PeerComparison.tsx to all 3 API calls.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-2 (P1) — Signal name mismatch: 'Tol Breach Reg' (API) vs 'Tolerance Breach' (UI)
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/resto-recommendations.ts:477 (API sends `{ name: 'Tol Breach Reg', ... }`)
+  - src/components/dashboard/priority-summary/constants.ts:37 (SIGNAL_GROUPS expects 'Tolerance Breach')
+  - src/components/dashboard/priority-summary/constants.ts:72 (SIGNAL_ICONS key: 'Tolerance Breach')
+  - src/components/dashboard/priority-summary/constants.ts:127 (SIGNAL_EXPLANATIONS key: 'Tolerance Breach')
+  - src/components/dashboard/priority-summary/signal-chart.tsx:255 (switch case: 'Tolerance Breach')
+Description:
+  The API's signalScores array uses the name 'Tol Breach Reg' (S15). The PrioritySummaryCard's SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS, and SignalChart switch all use 'Tolerance Breach'. The lookup `signalByName.get('Tolerance Breach')` returns undefined because the API sends 'Tol Breach Reg'.
+  Consequences:
+  1. 'Tol Breach Reg' is ORPHANED — present in signalScores but never displayed in any signal group.
+  2. 'Tolerance Breach' row in the "Toleransi & Compliance" group is silently dropped (filtered out by `.filter((s): s is SignalScore => Boolean(s))` at PrioritySummaryCard.tsx:280).
+  3. The "Total (dari breakdown)" at line 370 sums ALL signalScores (including orphaned 'Tol Breach Reg'), so the displayed total includes the orphaned signal's contribution even though it's not visible. The visible signals' contributions don't add up to the displayed total.
+Expected: API and UI use the same signal name.
+Actual: Name mismatch causes 1 orphaned signal + 1 missing signal row.
+Suggested fix: Rename API's 'Tol Breach Reg' → 'Tolerance Breach' (or vice versa). Update signal-chart.tsx switch case to match.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-3 (P1) — 'Benchmark High' signal is dead (S13 removed but UI still expects it)
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/resto-recommendations.ts:366-369 (comment: "Signal 13: REMOVED (DEEP-AUDIT-LOGIC #2) — was identical to S3")
+  - src/lib/queries/outlets/resto-recommendations.ts:463-478 (signalScores has 14 entries, NO 'Benchmark High')
+  - src/components/dashboard/priority-summary/constants.ts:49 (SIGNAL_GROUPS "Benchmark" group expects 'Benchmark High')
+  - src/components/dashboard/priority-summary/constants.ts:70 (SIGNAL_ICONS has 'Benchmark High')
+  - src/components/dashboard/priority-summary/constants.ts:125 (SIGNAL_EXPLANATIONS has 'Benchmark High')
+  - src/components/dashboard/priority-summary/signal-chart.tsx:311 (switch case: 'Benchmark High')
+  - src/components/dashboard/PrioritySummaryCard.tsx:242 (section title: "Breakdown 15 Sinyal Priority Score")
+Description:
+  S13 ('Benchmark High') was removed from the priority score calculation (weight 3% redistributed to S1). The signalScores array no longer includes a 'Benchmark High' entry. However, the PrioritySummaryCard's constants and signal-chart switch STILL reference 'Benchmark High'. The lookup `signalByName.get('Benchmark High')` returns undefined, so the row is filtered out.
+  Net effect: PrioritySummaryCard displays 13 signals (not 15 as the section title advertises). The "Benchmark" group shows only 1 signal (Residual Nominal) instead of 2.
+Expected: Either restore S13 with a distinct calculation, OR remove 'Benchmark High' from constants.ts + signal-chart.tsx + update the section title to "Breakdown 14 Sinyal".
+Actual: 2 signals silently dropped from the UI. Section title is misleading.
+Suggested fix: Remove 'Benchmark High' from SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS, and signal-chart.tsx switch. Update section title to "14 Sinyal".
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-4 (P2) — Duplicate signal: benchmarkHighCount === zScoreAbnormalCount (identical SQL)
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/resto-recommendations.ts:117 (zScoreAbnormalCount SQL: `COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END)`)
+  - src/lib/queries/outlets/resto-recommendations.ts:121 (benchmarkHighCount SQL: `COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END)` — IDENTICAL)
+  - src/lib/queries/outlets/resto-recommendations.ts:407 (analysis bullet: "${zScoreAbnormalCount} item dengan deviasi > 50% BOM (proxy z-score abnormal...)")
+  - src/lib/queries/outlets/resto-recommendations.ts:417 (analysis bullet: "${benchmarkHighCount} item dengan deviasi > 50% BOM (proxy benchmark high...)")
+  - src/components/dashboard/PrioritySummaryCard.tsx:208-217 (two badges: "Bench High" + "Z-Score Abnormal" — both show same count)
+  - src/components/dashboard/RestoRecommendationCard.tsx:281-285 (badge: "Bench High: {benchmarkHighCount}")
+Description:
+  The SQL computes `zScoreAbnormalCount` and `benchmarkHighCount` with the EXACT SAME expression: `COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END)`. So `benchmarkHighCount === zScoreAbnormalCount` always. The comment at line 119 says "benchmarkFlag not available — use high devBom as proxy" but uses the same threshold (0.50) as zScoreAbnormalCount, making it a duplicate.
+  Consequences:
+  1. Two analysis bullets (lines 407 + 417) show the SAME count with different wording — confusing.
+  2. Two badges in PrioritySummaryCard (lines 208-217) show the same number — "Bench High: N" and "Z-Score Abnormal: N".
+  3. RestoRecommendationCard.tsx also shows "Bench High: N" badge.
+Expected: benchmarkHighCount should be a DIFFERENT metric (e.g., actual area/network benchmark comparison) or removed entirely.
+Actual: Duplicate signal masquerading as two independent metrics.
+Suggested fix: Either (a) compute benchmarkHighCount using actual area/network benchmark (outlet Dev/BOM > area avg × factor), or (b) remove benchmarkHighCount from signals object + analysis bullets + badges.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-5 (P2) — item-history API doesn't GROUP BY (outletId, itemId, akunPenyesuaian) → duplicate timeline rows
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/item-history/route.ts:96-120 (SQL query has NO GROUP BY clause)
+  - prisma/schema.prisma:141 (`@@unique([weekId, outletId, itemId, akunPenyesuaian])` — same outlet+item+week can have MULTIPLE records, one per akunPenyesuaian)
+  - Compare: src/app/api/outlet-items/route.ts:212 (uses `GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian"` for the same data)
+Description:
+  The InventoryRecord schema's natural key is (weekId, outletId, itemId, akunPenyesuaian). This means the same outlet+item+week can have multiple records — e.g., one for "COM DEVIASI - RESTO" and another for "ADJUSTMENT". The outlet-items API correctly GROUP BYs these to collapse duplicates. But item-history API has NO GROUP BY, so it returns one row per record.
+  Consequences:
+  1. Timeline shows DUPLICATE period rows for multi-akun items.
+  2. `isCurrent: r.monthLabel === currentMonth && r.weekLabel === currentWeek` (line 149) marks ALL duplicate rows as isCurrent.
+  3. `timeline.find(t => t.isCurrent)` (line 158) returns only the FIRST duplicate — not the aggregate.
+  4. `historicalValues = timeline.filter(... t.weekLabel === currentWeek)` (line 219-221) includes ALL duplicates for the same week in different months → skews z-score mean/stdDev (same period counted multiple times).
+Expected: Timeline has ONE row per (monthLabel, weekLabel) — aggregated across akunPenyesuaian.
+Actual: Timeline has N rows per period (N = number of akunPenyesuaian for that item).
+Suggested fix: Add `GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel", i.name, sf."monthKey"` and replace raw column selects with SUM/MAX aggregates (matching outlet-items pattern). Or at minimum, GROUP BY (monthLabel, weekLabel) in JS after fetching.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-6 (P2) — item-history area benchmark uses denormalized ir.area instead of JOIN Outlet
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/item-history/route.ts:193 (`AND ir.area = ${outlet.area}`)
+  - Compare: src/app/api/outlet-items/route.ts:246 (FIXED — uses `JOIN Outlet o ON ir."outletId" = o.id WHERE o.area = ${outlet.area}`) with comment "FIX H1 (AUDIT-3): was `WHERE ir.area = ${outlet.area}` — silently returned 0 when denormalized ir.area diverged from Outlet.area"
+Description:
+  The outlet-items route has a documented fix (FIX H1 / AUDIT-3) for using denormalized `ir.area` instead of joining to Outlet. The item-history route has the SAME bug — it uses `ir.area = ${outlet.area}` for the area benchmark query. When ir.area diverges from Outlet.area (denormalization drift — the worklog notes cases like "MLGPAR: outlet='JAWA TIMUR 1' vs ir='BAKSO'"), the area benchmark returns 0 or wrong values.
+Expected: Area benchmark should JOIN Outlet and filter by o.area (consistent with outlet-items).
+Actual: Uses denormalized ir.area — produces wrong area benchmark when data drifts.
+Suggested fix: Change line 193 to `JOIN "Outlet" o2 ON ir."outletId" = o2.id WHERE o2.area = ${outlet.area}` (matching outlet-items pattern).
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-7 (P2) — TrendChartCard hides errors as "Menunggu peer data..."
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/peer-comparison/trend-chart.tsx:49-53
+Description:
+  The conditional chain is:
+  ```js
+  isLoading ? <spinner>
+  : !data ? <p>Menunggu peer data...</p>     // ← fires when data is undefined, REGARDLESS of error
+  : error || !data?.success ? <p>Error: ...</p>
+  ```
+  When the query errors, `data` is undefined (React Query doesn't set data on error by default). So the `!data` branch fires first, showing "Menunggu peer data..." indefinitely. The error branch is unreachable when data is undefined.
+  Compare with items-table.tsx:42 which correctly uses `!data && !error` for the waiting state.
+Expected: When error is set, show the error message.
+Actual: When error is set (and data is undefined), shows "Menunggu peer data..." forever — user never sees the error.
+Suggested fix: Change line 49 from `!data ?` to `!data && !error ?` (matching items-table.tsx pattern).
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-8 (P2) — 'INSUFFICIENT_DATA' trend string shown literally to user
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/outlet-items/route.ts:414 (`trend: prevRecs.length === 0 ? 'INSUFFICIENT_DATA' : ...`)
+  - src/components/dashboard/RestoAnalysis.tsx:175-180 (UI checks for 'DETERIORATING'/'IMPROVING'/'STABLE' for icon, but renders raw `profile.historical.trend` string as text)
+  - src/components/dashboard/RestoAnalysis.tsx:176 (text: `{profile.historical.trend}` — renders the raw string)
+Description:
+  When an outlet has no previous-period data (prevRecs.length === 0), the API returns trend='INSUFFICIENT_DATA'. The RestoAnalysis UI:
+  1. None of the icon conditions match (`=== 'DETERIORATING'`, `=== 'IMPROVING'`, `=== 'STABLE'`) → no trend icon shown.
+  2. The text `{profile.historical.trend}` renders the raw string "INSUFFICIENT_DATA" — an English developer-facing string with an underscore — in the Historical card.
+  3. The color logic also falls through to the `else` branch (muted-foreground), which is at least neutral.
+Expected: A user-friendly Indonesian message like "Data belum cukup" with an appropriate icon (e.g., Minus or Info).
+Actual: Raw "INSUFFICIENT_DATA" string shown to the user.
+Suggested fix: Add a 4th condition: `profile.historical.trend === 'INSUFFICIENT_DATA' && <Info className="h-4 w-4 text-muted-foreground" />` and render "Data belum cukup" instead of the raw string. Or map INSUFFICIENT_DATA → 'STABLE' for display purposes with a tooltip explaining the lack of historical data.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-9 (P2) — outlet-items API inconsistent prev-period auto-compute vs recommendations API
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/outlet-items/route.ts:100 (`if (!prevWeek) { ... auto-compute both prevWeek + prevMonth ... }`)
+  - Compare: src/app/api/recommendations/route.ts:52 (`if (!prevWeek || !prevMonth) { ... auto-compute both ... }`)
+Description:
+  The outlet-items API auto-computes the previous period ONLY when `!prevWeek`. If a caller passes `compareWeek=WEEK 2` without `compareMonth`, then:
+  - prevWeek = 'WEEK 2' (truthy) → auto-compute doesn't fire.
+  - prevMonth = null (not provided).
+  - Line 189: `prevWeek && prevMonth ? db.$queryRaw... : Promise.resolve([])` — prevMonth is null → prevRecs = [] (skipped).
+  - Result: growth calculations (qtyBomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth) all return null/0. Historical.trend returns 'INSUFFICIENT_DATA'.
+  The recommendations API uses `!prevWeek || !prevMonth` (OR) — if EITHER is missing, both are auto-computed. This is more robust.
+  The frontend (RestoAnalysis.tsx:67-71) always sends both together (or neither), so this edge case only triggers via manual API calls. But the inconsistency is a latent bug.
+Expected: Both APIs use the same auto-compute trigger (OR logic).
+Actual: outlet-items uses AND-ish (only checks prevWeek); recommendations uses OR.
+Suggested fix: Change outlet-items/route.ts:100 from `if (!prevWeek)` to `if (!prevWeek || !prevMonth)`.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-10 (P3) — queryPeerTrend has dead `week` parameter
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/peer-comparison.ts:346-351 (function signature: `week: string` param)
+  - src/lib/queries/outlets/peer-comparison.ts:356-380 (SQL body — `week` is NEVER referenced)
+  - src/app/api/peer-comparison/trend/route.ts:84 (passes `''` as week argument)
+Description:
+  queryPeerTrend declares a `week` parameter but never uses it in the SQL. The API route passes empty string `''`. The SQL filters by monthLabel + outlet codes only (no week filter) — by design, since the trend shows ALL weeks in the month.
+Expected: Remove the unused parameter, OR use it for an optional week filter.
+Actual: Dead parameter clutters the API contract.
+Suggested fix: Remove `week: string` from queryPeerTrend signature and the `''` argument at the call site.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-11 (P3) — benchmark.status field computed but never displayed + type doesn't declare it
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/outlet-items/route.ts:430-432 (computes isAboveNetwork, isAboveArea, status='ABOVE_NETWORK'/'ABOVE_AREA'/'NORMAL')
+  - src/app/api/outlet-items/route.ts:433-444 (returns 10 benchmark fields)
+  - src/components/dashboard/resto-analysis/types.ts:22-25 (RestoProfile.benchmark type declares only 4 fields: areaAvgDevBom, allRestoAvgDevBom, outletDevBom, areaMultiplier)
+  - src/components/dashboard/RestoAnalysis.tsx:155-160 (Benchmark card displays only 4 fields — status, isAboveNetwork, isAboveArea, networkMultiplier, allRestoMultiplier are NOT displayed)
+Description:
+  The API computes a `status` field ('ABOVE_NETWORK' / 'ABOVE_AREA' / 'NORMAL') using threshold factors (BENCHMARK_NETWORK_FACTOR, BENCHMARK_AREA_FACTOR) from settings. This status is returned in the response but:
+  1. Not declared in the TypeScript type (would cause type errors if a developer tries to access `profile.benchmark.status`).
+  2. Not displayed in the UI (the Benchmark card only shows 4 numeric fields).
+  The status represents a meaningful classification (outlet is above network/area average or normal) that would be useful to display.
+Expected: Either display the status as a badge/label in the Benchmark card, OR remove the computation if unused.
+Actual: Computed + returned + undocumented in type + never displayed.
+Suggested fix: (a) Add `status?: string` to the RestoProfile.benchmark type, and display it as a Badge in the Benchmark card. OR (b) remove the status/isAboveNetwork/isAboveArea computation (lines 430-432, 441-443) to save computation.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-12 (P3) — MenuAnalysis unused props + dead branch
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/components/dashboard/resto-analysis/menu-analysis.tsx:19-22 (props: `monthLabel`, `currentWeek` declared but never used in component body)
+  - src/components/dashboard/resto-analysis/menu-analysis.tsx:25 (`const outletData = allItemsData;` — redundant alias)
+  - src/components/dashboard/resto-analysis/menu-analysis.tsx:32 (`if (!outletData?.allItems && !outletData?.rankings?.financial) return [];` — checks `rankings?.financial` but the rest of the function only uses `allItems`)
+  - src/components/dashboard/RestoAnalysis.tsx (caller passes `monthLabel={monthLabel || ''} currentWeek={currentWeek || ''}`)
+Description:
+  MenuAnalysis receives `monthLabel` and `currentWeek` as props but never uses them (it uses `allItemsData` from the parent's React Query result). The conditional at line 32 checks `outletData?.rankings?.financial` but this field is never accessed afterward — it's a leftover from an earlier version that used rankings.financial instead of allItems.
+Expected: Remove unused props and dead branch.
+Actual: Misleading API surface + dead code.
+Suggested fix: Remove `monthLabel` and `currentWeek` from MenuAnalysis props. Remove the `&& !outletData?.rankings?.financial` part of the condition at line 32. Update the caller in RestoAnalysis.tsx to stop passing these props.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-13 (P3) — RankingNasionalCard dead color branches
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/resto-analysis/ranking-nasional.tsx:82, 87, 89
+Description:
+  - Line 82: `it.qtyWaste < 0 ? 'text-red-600...' : 'text-emerald-600...'` — qtyWaste is `SUM(ir."qtyWaste")` (signed sum, but waste is typically a non-negative magnitude in Excel format). The `< 0` branch is effectively dead.
+  - Line 87: `Math.abs(it.pctLossSurplusToBom * 100)` — pctLossSurplusToBom is `ABS(SUM(qtyLossSurplus)) / SUM(ABS(qtyBom))` (always ≥ 0). Math.abs() is redundant.
+  - Line 89: `it.qtyBom < 0 ? 'text-red-600...' : 'text-emerald-600...'` — qtyBom is `SUM(ir."qtyBom")` (BOM quantity, typically non-negative). The `< 0` branch is dead.
+Expected: Remove dead branches or use consistent sign handling.
+Actual: Misleading conditional logic that suggests values can be negative when they can't.
+Suggested fix: Remove the `< 0` checks (always use the emerald color) and remove the `Math.abs()` call. Or change the SQL to use ABS() consistently if negative values are actually possible.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-14 (P3) — Scatter chart tooltip type assertion includes non-existent fields
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/peer-comparison/scatter-chart.tsx:81
+Description:
+  The tooltip's payload type assertion is:
+  ```ts
+  const d = payload[0].payload as { outletName: string; sales: number; devBom: number; nominalDeviasi: number; direction: string; outletCode: string; isTarget: boolean };
+  ```
+  But the actual data points (line 30-35) only have `{ sales, devBom, outletName, isTarget }`. The fields `nominalDeviasi`, `direction`, `outletCode` are NOT in the data. The render code (lines 84-87) only accesses `d.outletName`, `d.sales`, `d.devBom`, `d.isTarget` — so no runtime crash. But the type assertion is misleading.
+Expected: Type assertion matches the actual data shape.
+Actual: Type includes 3 fields that don't exist on the data object.
+Suggested fix: Remove `nominalDeviasi`, `direction`, `outletCode` from the type assertion.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-15 (P3) — rankBom in queryTopItemsByDeviasiRankForOutlet is global rank, not per-item
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/items/top-items.ts:286-288 (rankBom = ROW_NUMBER() OVER (PARTITION BY CASE WHEN qtyBom != 0 THEN 1 ELSE 0 END ORDER BY ABS(qtyBom) DESC))
+  - src/components/dashboard/resto-analysis/ranking-nasional.tsx:58 (UI: `<TableHead>Rank BOM</TableHead>`)
+  - src/components/dashboard/resto-analysis/ranking-nasional.tsx:77 (displays `it.rankBom`)
+Description:
+  The "Rank BOM" column shows the GLOBAL rank of the item-outlet combo's BOM across ALL items in ALL outlets (1 = highest BOM among all item-outlet pairs). This is misleading in a per-outlet view — the user likely expects either:
+  (a) Rank of this outlet's BOM among same-item peers (how does this outlet's BOM compare to other outlets for the same item?), or
+  (b) Rank of this item's BOM among all items within the outlet.
+  The current implementation gives neither — it's a global cross-item rank.
+  Also, the `PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END` is convoluted — it creates 2 partitions (zero and non-zero BOM), but the outer `CASE WHEN ipo."qtyBom" != 0 THEN ROW_NUMBER() ... ELSE NULL END` sets zero-BOM rows to NULL anyway, making the partition for zero-BOM rows pointless.
+Expected: rankBom should have a clear per-item or per-outlet semantic.
+Actual: Global cross-item rank — misleading.
+Suggested fix: Either (a) change to `ROW_NUMBER() OVER (PARTITION BY itemName ORDER BY ABS(qtyBom) DESC)` for per-item rank, or (b) remove the rankBom column if it's not meaningful.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-16 (P3) — queryPeerTrend returns 0 for missing weeks (misleading chart)
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/outlets/peer-comparison.ts:373-376
+Description:
+  The SQL uses `COALESCE(MAX(CASE WHEN ow."outletCode" = ${outletCode} THEN ow."devBom" END), 0)` for targetDevBom and `COALESCE(AVG(...), 0)` for peerAvgDevBom. When the target (or all peers) have no records in a particular week, the value is 0.
+  The trend chart (trend-chart.tsx) plots 0 for that week, which visually looks like "perfect Dev/BOM = 0%" — but actually means "no data". The user might misinterpret a 0 spike as a sudden improvement.
+Expected: Missing weeks should be null/skipped in the chart (gap in the line), not plotted as 0.
+Actual: Missing weeks plotted as 0 — misleading visualization.
+Suggested fix: Remove the COALESCE (let NULL propagate), and configure the recharts LineChart with `connectNulls={false}` so missing weeks show as gaps in the line.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-17 (P3) — peer-comparison/items route imports buildSqlFilters but never uses it
+═══════════════════════════════════════════════════════════════
+File: src/app/api/peer-comparison/items/route.ts:21
+Description:
+  `import { buildSqlFilters } from '@/lib/queries/shared';` is imported but never referenced in the file. The route writes raw SQL without using buildSqlFilters. Dead import.
+Expected: Remove unused import.
+Actual: Dead import (would be flagged by stricter lint rules).
+Suggested fix: Remove the import line. (If BUG2-RESTO-1 is fixed, this import would be USED — so fix BUG2-RESTO-1 first, then this becomes relevant.)
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-18 (P3) — items-table.tsx isSigned branch is dead code
+═══════════════════════════════════════════════════════════════
+File: src/components/dashboard/peer-comparison/items-table.tsx:101-107
+Description:
+  The isSigned logic:
+  ```ts
+  const isSigned = r.label === 'QTY Deviasi' || r.label === 'Nominal';
+  const isWorse = isSigned
+    ? Math.abs(r.target) > Math.abs(r.best)  // bigger magnitude = worse
+    : r.gap > 0;
+  ```
+  The comment says "for signed metrics (qtyDeviasi, nominal can be negative=LOSS)". But in this context, both `target.qtyDeviasi` and `target.nominal` are `SUM(ABS(...))` from the SQL (peer-comparison/items/route.ts:105-109, 130-134) — always ≥ 0. Same for peerBest values (Math.min of non-negative values). So:
+  - Math.abs(r.target) = r.target (no-op)
+  - Math.abs(r.best) = r.best (no-op)
+  - isWorse (isSigned) = r.target > r.best = r.gap > 0 (same as non-signed branch)
+  The isSigned branch is redundant — produces the same result as the non-signed branch.
+Expected: Remove the isSigned branch (always use `r.gap > 0`), OR fix the SQL to return signed values if signed comparison is intended.
+Actual: Misleading code that suggests values can be negative when they can't.
+Suggested fix: Simplify to `const isWorse = r.gap > 0;` and remove the isSigned logic + comment.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-19 (P3) — Stale/conflicting docstrings in resto-recommendations.ts
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/outlets/resto-recommendations.ts:1-12
+Description:
+  Two conflicting header comments:
+  - Line 1-4: "Resto Recommendation Engine — rank all outlets by priority. **14 signals** weighted into Priority Score (0-100)"
+  - Line 11-12: "Resto Recommendation Engine — rank all outlets by priority. **8 signals** weighted into Priority Score (0-100)"
+  The "8 signals" comment is from an earlier version (before signals 9-15 were added). The "14 signals" comment is current (S13 was removed). Both appear at the top of the same file.
+Expected: Single accurate docstring.
+Actual: Two conflicting comments — confusing for maintainers.
+Suggested fix: Remove the duplicate header (lines 10-12). Keep only the "14 signals" version.
+
+═══════════════════════════════════════════════════════════════
+BUG2-RESTO-20 (P3) — Dead SQL fields: zScoreWarningCount + benchmarkWarningCount (hardcoded 0)
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/queries/outlets/resto-recommendations.ts:118 (`COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.25 THEN 1 END) as "zScoreWarningCount"`)
+  - src/lib/queries/outlets/resto-recommendations.ts:122 (`0 as "benchmarkWarningCount"` — hardcoded 0)
+  - src/lib/queries/outlets/resto-recommendations.ts:174, 176 (selected in final result)
+Description:
+  `zScoreWarningCount` is computed (items with ABS(pctQtyDeviasiToBom) > 0.25) and selected, but NEVER used in the JS recommendation logic — not in signals object, not in signalScores, not in analysis bullets. Dead field.
+  `benchmarkWarningCount` is hardcoded to 0 (line 122) and also never used. Dead field.
+Expected: Remove unused fields, or use them (e.g., add a "Warning" tier to the analysis bullets).
+Actual: Wasted SQL computation + dead selected columns.
+Suggested fix: Remove both fields from the SQL SELECT and the COALESCE lines (174, 176).
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (non-bugs)
+═══════════════════════════════════════════════════════════════
+1. Recommendation scoring weights sum to 100%: 15+10+10+10+8+8+8+5+8+7+5+3+2+1 = 100 ✓ (S13's 3% redistributed to S1: 12%→15%).
+2. Priority threshold TINGGI/SEDANG/RENDAH (55/30) matches between API (resto-recommendations.ts:391) and UI (RestoRecommendationCard.tsx:148-152, PrioritySummaryCard.tsx:108-115). ✓
+3. z-score computation (computeZScore in metrics/historical.ts): ABS magnitude, sample variance (N-1, Bessel's correction), excludes current period, requires n≥HISTORICAL_MIN_WEEKS, stdDev>0 guard. ✓
+4. computePriority (metrics/deviation.ts:276-294): OR logic for P1/P2 conditions — any single condition triggers the level. ✓
+5. computeHealthScore (metrics/deviation.ts:184-249): 4 components (DevBOM 30% + Residual 25% + Loss/Sales 25% + Abnormal 20%), div-by-zero guards, clamp [0,100]. ✓
+6. setFocusOutlet in useDashboard.ts:72-75: sets `activeTab: 'resto'` when code is provided → correctly opens Resto Analysis tab when user clicks an outlet in Resto Prioritas. ✓
+7. RestoAnalysis activeOutlet = focusOutlet || outletCode: correctly prioritizes focusOutlet (from table click) over outletCode (from FilterBar dropdown). ✓
+8. PeerComparison parallel queries (main + items fire in parallel; trend waits for peerCodes): correct dependency management, no waterfall. ✓
+9. PeerComparison memoization (peers, targetRow, otherPeers, peerCodes, peerCodesKey, peerAverages): all properly memoized with correct deps. ✓
+10. ItemDetailModal queryKey ['item-history', outletCode, itemName, month, week]: unique across items + outlets + periods. ✓
+11. OutletItemsResponse null guards (RestoAnalysis.tsx:165-169): handles partial payloads during ingest race conditions. ✓
+12. kelompok filter respected by /api/recommendations (recommendations/route.ts:39 + filters.kelompok at line 95). ✓
+13. kelompok filter respected by /api/outlet-items via outletCode filter (outlet is resolved by code, so kelompok is implicit). ✓
+14. Area benchmark in outlet-items uses JOIN Outlet (FIX H1/AUDIT-3 applied). ✓ (But item-history has the same bug — see BUG2-RESTO-6.)
+15. Month label case resolution (resolveMonthLabel) applied in all 5 API routes. ✓
+16. Zod validation present in all 5 API routes (with kelompok in analysis/recommendations/export schemas; missing in peer-comparison schemas — see BUG2-RESTO-1). ✓ for the routes that have it.
+17. Rate limiting applied to all 5 API routes (per-IP buckets). ✓
+18. withStatementTimeout applied to queryTopItemsByDeviasiRankForOutlet (top-items.ts:257). ✓
+19. RestoRecommendationCard uses keepPreviousData for smooth kelompok transitions (BUG-FE-5 fix verified). ✓
+20. RankingNasionalCard fallback: outletDeviasiRank (per-outlet top 30 from /api/outlet-items) is primary; analysisData.topDeviasiRank filtered by focusOutlet is fallback during loading. ✓
+21. MenuAnalysis outlier detection: groups by first 2 words (FIX M-G), threshold = avg + 2σ AND > 1.5× avg. ✓
+22. ItemDetailModal error handling: checks content-type, throws on non-JSON, displays error message. ✓
+23. PeerComparison row click → setFocusOutlet → switches to Resto Analysis tab with that outlet (documented behavior). ✓
+
+Stage Summary:
+- 20 bugs found (0×P0, 3×P1, 6×P2, 11×P3). NO crash-level bugs — the tab is functional for the happy path.
+- Severity breakdown:
+  - P1 (3): peer-comparison ignores kelompok filter (BUG2-RESTO-1), signal name mismatch 'Tol Breach Reg' vs 'Tolerance Breach' (BUG2-RESTO-2), 'Benchmark High' dead signal (BUG2-RESTO-3).
+  - P2 (6): duplicate signal benchmarkHighCount===zScoreAbnormalCount (BUG2-RESTO-4), item-history missing GROUP BY (BUG2-RESTO-5), item-history denormalized ir.area (BUG2-RESTO-6), trend-chart hides errors (BUG2-RESTO-7), 'INSUFFICIENT_DATA' shown raw (BUG2-RESTO-8), outlet-items inconsistent prev-period auto-compute (BUG2-RESTO-9).
+  - P3 (11): dead week param (BUG2-RESTO-10), benchmark.status dead field (BUG2-RESTO-11), MenuAnalysis unused props (BUG2-RESTO-12), RankingNasionalCard dead branches (BUG2-RESTO-13), scatter chart misleading type (BUG2-RESTO-14), rankBom global rank (BUG2-RESTO-15), trend 0 for missing weeks (BUG2-RESTO-16), dead buildSqlFilters import (BUG2-RESTO-17), items-table isSigned dead code (BUG2-RESTO-18), stale docstrings (BUG2-RESTO-19), dead SQL fields (BUG2-RESTO-20).
+- The 3 P1 bugs are the highest priority:
+  - BUG2-RESTO-1 (peer comparison ignores kelompok) is a FEATURE CONSISTENCY bug — the kelompok filter was rolled out across 5 routes in the prior bug-hunt cycle, but the 3 peer-comparison routes were missed. Fixing this requires adding `filters: SqlFilterOpts` to all 3 query functions + updating the API routes + frontend + Zod schemas.
+  - BUG2-RESTO-2 + BUG2-RESTO-3 (signal name mismatch + dead 'Benchmark High') are DISPLAY CORRECTNESS bugs — the PrioritySummaryCard advertises "15 Sinyal" but only displays 13. The breakdown total includes an orphaned signal ('Tol Breach Reg') that's never shown. Fixing requires renaming 'Tol Breach Reg' → 'Tolerance Breach' in the API AND either restoring S13 with a distinct calculation OR removing 'Benchmark High' from constants + updating the section title.
+- The 6 P2 bugs affect data correctness (BUG2-RESTO-5 duplicate timeline rows, BUG2-RESTO-6 wrong area benchmark, BUG2-RESTO-9 skipped prev period) and UX (BUG2-RESTO-7 hidden errors, BUG2-RESTO-8 raw 'INSUFFICIENT_DATA' string, BUG2-RESTO-4 duplicate badges).
+- The 11 P3 bugs are code quality / dead code / minor UX issues.
+- Recommendation scoring is CORRECT: 14 signals, weights sum to 100%, threshold consistent between API and UI. The "15 signals" in the task brief is slightly outdated — S13 was removed (weight redistributed to S1) per the DEEP-AUDIT-LOGIC #2 fix noted in the code comments.
+- No bugs were fixed (report-only per task instructions).

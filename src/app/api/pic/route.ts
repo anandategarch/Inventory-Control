@@ -14,7 +14,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateQuery, validateBody, picQuerySchema, picPostBodySchema } from '@/lib/validation';
 
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     // Clear caches — PIC affects /api/status response and analysis filters
     statusCache.clear();
     // FIX H2 (AUDIT-P1): invalidate DB-level AggregationCache after single PIC mutation.
-    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
     await db.auditLog.create({
       data: {
@@ -127,7 +127,7 @@ export async function DELETE(req: NextRequest) {
 
     statusCache.clear();
     // FIX H2 (AUDIT-P1): invalidate DB-level AggregationCache after PIC delete.
-    invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
     await db.auditLog.create({
       data: {

@@ -7,7 +7,7 @@
 import { logger } from './logger';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
-import { invalidateCache } from '@/lib/aggregation-cache';
+import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
@@ -449,7 +449,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       statusCache.clear();
       // FIX Medium #1: invalidate DB-level AggregationCache for analysis route.
       // New data means all cached analysis results are stale.
-      invalidateCache('analysis|').catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+      invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
       // sees fresh data immediately after ingestion.
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this ingestion. Without this, getMonthResolver() would
