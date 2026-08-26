@@ -80,11 +80,19 @@ export async function GET(req: NextRequest) {
 
     const areas = [...new Set(outlets.map((o) => o.area))].sort();
     const pics = [...new Set(outletPics.map((p) => p.pic).filter(Boolean))].sort();
-    // Kelompok: 3-char prefix from outlet code (e.g. "MLG" from "1016.MLGJAK")
+    // Kelompok: 3-char prefix from outlet NAME segment (after the LAST dot).
+    // FIX (BUG-KELOMPOK-EMPTY): Outlet codes have two formats:
+    //   "1030.BDGSET"   → parts = ["1030","BDGSET"]   → old parts[1].substring(0,3) = "BDG" ✓
+    //   "B.1001.MLGPAR" → parts = ["B","1001","MLGPAR"] → old parts[1].substring(0,3) = "100" ✗
+    // The old code took parts[1] which is the numeric code for format 2 — wrong.
+    // Fix: take the LAST segment's first 3 chars (the name prefix), consistent
+    // with the SQL extraction in buildSqlFilters + queryParetoByKelompok.
     const kelompokOptions = [...new Set(
       outlets.map((o) => {
-        const parts = o.code.split('.');
-        return parts.length >= 2 ? parts[1].substring(0, 3) : '';
+        const segs = o.code.split('.');
+        if (segs.length < 2) return '';
+        const nameSeg = segs[segs.length - 1];
+        return nameSeg.substring(0, 3).toUpperCase();
       }).filter(Boolean)
     )].sort();
 

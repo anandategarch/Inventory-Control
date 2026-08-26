@@ -66,7 +66,17 @@ export function buildSqlFilters(
     parts.push(Prisma.sql`AND ${a}.area = ${opts.area}`);
   }
   if (opts.kelompok) {
-    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code LIKE ${opts.kelompok + '%'})`);
+    // FIX (BUG-KELOMPOK-EMPTY): Outlet codes are like "1030.BDGSET" or "B.1001.MLGPAR".
+    // The kelompok (e.g. "MLG") is the first 3 chars of the NAME segment — the part
+    // AFTER THE LAST DOT. The old filter `code LIKE 'MLG%'` matched NOTHING because
+    // codes start with numbers ("1030") or "B", not the kelompok prefix → 0 outlets
+    // matched → all SQL aggregates returned empty → dashboard appeared blank.
+    //
+    // Fix: extract the last dot-separated segment, take its first 3 chars, compare.
+    // LEFT(SUBSTRING(code FROM '[^.]+$'), 3) works for BOTH outlet code formats:
+    //   "1030.BDGSET"  → SUBSTRING = "BDGSET" → LEFT 3 = "BDG" ✓
+    //   "B.1001.MLGPAR" → SUBSTRING = "MLGPAR" → LEFT 3 = "MLG" ✓
+    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = ${opts.kelompok})`);
   }
   if (opts.outletCode) {
     parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);
