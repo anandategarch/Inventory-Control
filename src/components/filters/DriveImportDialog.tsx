@@ -49,7 +49,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
   const queryClient = useQueryClient();
 
   function handleCloseDialog() {
-    setDriveDialogOpen: onOpenChange(false);
+    onOpenChange(false);
     setDriveUrl('');
     setDriveResult(null);
     setProgressLog([]);
@@ -73,13 +73,20 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
       const res = await fetch('/api/import-drive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setDriveResult(data.results || []);
-      if (data.results?.some((r: DriveImportResult) => r.status === 'INGESTED')) {
+      // FIX (BUG-HUNT-RECENT P0): API returns 'ingestResults', not 'results'
+      const ingestResults = data.ingestResults || data.results || [];
+      setDriveResult(ingestResults);
+      if (ingestResults.some((r: DriveImportResult) => r.status === 'INGESTED')) {
         await invalidateCache('analysis|');
         queryClient.invalidateQueries({ queryKey: ['status'] });
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        // FIX (BUG-HUNT-RECENT P1): invalidate ALL data-dependent queries (was only 2)
+        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+        queryClient.invalidateQueries({ queryKey: ['item-history'] });
+        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
         onImported?.();
-        toast({ title: '✅ Import berhasil', description: `${data.results.filter((r: DriveImportResult) => r.status === 'INGESTED').length} file diimpor` });
+        toast({ title: '✅ Import berhasil', description: `${ingestResults.filter((r: DriveImportResult) => r.status === 'INGESTED').length} file diimpor` });
       }
     } catch (e: unknown) {
       toast({ title: '❌ Import gagal', description: e instanceof Error ? e.message : 'Unknown error', variant: 'destructive' });

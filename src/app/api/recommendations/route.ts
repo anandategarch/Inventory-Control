@@ -81,6 +81,10 @@ export async function GET(req: NextRequest) {
 
     // Resolve PIC → outletCodes (shared logic)
     const picOutletCodes = await resolvePICOutletCodes(pic);
+    // FIX (BUG-HUNT-RECENT): early-return if PIC has no outlets (sibling routes have this)
+    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      return NextResponse.json({ success: true, recommendations: [] });
+    }
 
     const filters = {
       area: area && area !== 'all' ? area : null,

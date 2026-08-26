@@ -18843,3 +18843,384 @@ Export Report (out-of-scope but checked):
 Runtime (dev.log):
 - No 500 errors, no transaction timeouts, no SQL errors. All requests return 200. ✓
 - /api/analysis completed in 11.4s (first call, includes compile). Subsequent calls fast. ✓
+
+---
+Task ID: BUG-HUNT-RUNTIME
+Agent: Runtime Bug Hunter
+Task: Find runtime errors + API issues after refactoring
+
+Work Log:
+- Read worklog tail (Task IDs up to BUG-HUNT-CALC) for refactoring context (SPLIT-COMPONENTS, SPLIT-PEER, AUDIT-CALC-SQL)
+- Ran `grep -rn "from.*@/lib/queries" src/app/api/` — verified 9 API routes' imports against the split barrel + direct paths
+- Read each split module's exports: items/top-items.ts, items/global-search.ts, items/network-risk.ts, outlets/top-outlets.ts, outlets/peer-comparison.ts, outlets/resto-recommendations.ts, plus barrel index.ts
+- Verified barrel re-exports 11 modules; growth-drivers + rule-evaluation + pareto intentionally NOT re-exported (naming collisions / direct-import design)
+- Read DriveImportDialog.tsx fully (269 lines) + FilterBar.tsx fully (494 lines) — compared state ownership
+- Read pareto.ts fully (425 lines) — checked SQL validity, HAVING placement, Prisma.raw injection risks
+- Read export-report/route.ts header + imports (lines 1-120) — verified barrel imports resolve
+- Ran `npx tsc --noEmit` — exit code 0, no errors
+- Ran `npx eslint` on 5 key files (DriveImportDialog, FilterBar, pareto, index, shared) — no warnings
+- Checked .zscripts/dev.log — only an env-config Prisma db push error (invalid DATABASE_URL in sandbox), no runtime errors
+
+Stage Summary:
+
+==============================
+1. CRITICAL RUNTIME BUGS (would cause 500/crash)
+==============================
+NONE FOUND.
+
+All API routes import correctly from the split `@/lib/queries/*` modules:
+- `/api/analysis/route.ts:23-44` → barrel `@/lib/queries` ✓
+- `/api/recommendations/route.ts:5` → barrel `@/lib/queries` ✓ (queryRestoRecommendations)
+- `/api/peer-comparison/route.ts:10` → barrel `@/lib/queries` ✓ (queryPeerComparison)
+- `/api/peer-comparison/items/route.ts:21` → direct `@/lib/queries/shared` ✓
+- `/api/peer-comparison/trend/route.ts:29` → direct `@/lib/queries/outlets/peer-comparison` ✓
+- `/api/item-search/route.ts:19` → direct `@/lib/queries/items/global-search` ✓
+- `/api/outlet-items/route.ts:38` → direct `@/lib/queries/items/top-items` ✓
+- `/api/export-report/route.ts:32-45` → barrel `@/lib/queries` ✓ (12 imports incl. queryHistoricalCategoryAvg, queryOutletHealthRanking, queryGlobalItemSearch)
+- `/api/pareto/route.ts:12` → direct `@/lib/queries/pareto` ✓
+
+`tsc --noEmit` exits 0. ESLint on key files: clean.
+
+==============================
+2. IMPORT PATH ISSUES (would cause module not found)
+==============================
+NONE FOUND.
+
+All frontend imports verified:
+- `src/app/page.tsx:58` → `@/components/dashboard/shared` ✓ (EmptyState, LoadingState, ErrorState, SectionHeader, ScrollToTop)
+- `src/components/filters/FilterBar.tsx:24` → `@/components/filters/DriveImportDialog` ✓
+- `src/components/dashboard/GlobalItemSearchModal.tsx:23,27` → `@/lib/format` (numberColor, directionColor) ✓ + `@/lib/queries/items/global-search` (ItemTrendRow) ✓
+- `src/components/dashboard/ParetoDashboard.tsx:15` → `@/lib/format` (numberColor) ✓
+- `src/components/dashboard/resto-analysis/menu-analysis.tsx:15` → `./helpers` (directionColor) ✓ — helpers.tsx:35 re-exports from `@/lib/format`
+- `src/components/dashboard/ItemTrendChart.tsx:16` → `@/lib/queries/items/global-search` (ItemTrendRow) ✓
+
+No duplicate `numberColor`/`directionColor` definitions in components/ — single source of truth in `src/lib/format.ts:88,102`.
+
+==============================
+3. STATE MANAGEMENT BUGS (DriveImportDialog)
+==============================
+
+BUG-DRIVE-1 (P2 — code clarity, NO runtime impact):
+  File: src/components/filters/DriveImportDialog.tsx:52
+  Code:
+    function handleCloseDialog() {
+        setDriveDialogOpen: onOpenChange(false);   // ← labeled statement, NOT a function call
+        setDriveUrl('');
+        ...
+    }
+  Root cause: Refactor artifact. The original code was `setDriveDialogOpen(false)` (a useState setter). When the dialog was extracted to its own component, the setter was removed (replaced with `onOpenChange` prop callback) but the `setDriveDialogOpen:` prefix was left behind, turning the line into a JS labeled statement (`label: expression`).
+  Runtime impact: NONE — labeled statements are valid JS no-ops. The expression `onOpenChange(false)` is still evaluated, so the dialog DOES close correctly and state IS reset.
+  Fix: Replace `setDriveDialogOpen: onOpenChange(false);` with `onOpenChange(false);`
+
+BUG-DRIVE-2 (P3 — dead code, NO runtime impact):
+  File: src/components/filters/FilterBar.tsx (lines 35-45, 51-64, 155-221, 77, 441)
+  Issue: FilterBar retains ~80 lines of dead Drive-related state + handlers after the DriveImportDialog extraction:
+    - 8 useState hooks: driveUrl, driveImporting, driveResult, progressLog, driveRenameMode, driveManualName, driveNumberLocale, driveTab (lines 35-45)
+    - 2 unused derived values: driveManualValid (useMemo), renameAllowedForTab (lines 51-64)
+    - handleDriveImport function (lines 155-215) — never called from JSX
+    - handleCloseDialog function (lines 217-221) — never called from JSX
+    - 4 dead setter calls on lines 77 + 441 (mutate FilterBar's dead state, no UI effect since DriveImportDialog manages its own state internally)
+  Runtime impact: NONE — DriveImportDialog was correctly extracted with its own state. FilterBar only passes `open` + `onOpenChange` to DriveImportDialog (line 480); it does NOT pass any of the dead state.
+  Code clarity: Misleading — suggests FilterBar still orchestrates Drive import. ~80 LOC dead code.
+  Fix: Remove dead state hooks (keep only `driveDialogOpen`), remove unused useMemo/const, remove handleDriveImport + handleCloseDialog functions. The openDrive event listener at line 77 can simplify to just `setDriveDialogOpen(true)`.
+
+==============================
+4. SQL ISSUES (Pareto)
+==============================
+NONE FOUND. All 7 queries in src/lib/queries/pareto.ts verified:
+
+- ABS(SUM(ir."nominalDeviasi")) is valid PostgreSQL — SUM aggregates first, ABS takes absolute value of the aggregate. Used consistently as "totalAbsNominal" for sorting. ✓
+- HAVING ABS(SUM(ir."nominalDeviasi")) > 0 placement is correct in all 7 queries:
+    * queryParetoByItem:82 — after GROUP BY i.name (line 81), before ORDER BY (line 83) ✓
+    * queryParetoByOutlet:115 — after GROUP BY (line 114), before ORDER BY (line 116) ✓
+    * queryParetoByArea:149 — after GROUP BY (line 148), before ORDER BY (line 150) ✓
+    * queryParetoByPIC:184 — after GROUP BY (line 183), before ORDER BY (line 185) ✓
+    * queryParetoNestedItemOutlet step 1:242 — after GROUP BY (line 241), before ORDER BY (line 243) ✓
+    * queryParetoNestedItemOutlet step 2:274 — after GROUP BY (line 273), before ORDER BY (line 275) ✓
+    * queryParetoHistorical (CTE):377 — after GROUP BY (line 377), no ORDER BY in CTE ✓
+- Nested query HAVING works correctly: queryParetoNestedItemOutlet uses two-level CTE-style flow (top items → per-item outlets), HAVING applied at both levels independently. ✓
+- Prisma.raw injection risks: NONE.
+    * User inputs (month, week, itemName, maxItems) all parameterized via Prisma.sql template literals ✓
+    * Internal fragments (groupExpr, joinItem, joinOutlet, joinPIC in historical.ts) constructed from hardcoded string literals, never user input ✓
+    * withStatementTimeout uses Prisma.raw(String(timeoutMs)) — timeoutMs is a hardcoded integer (30000), not user input ✓
+    * buildSqlFilters uses Prisma.raw(alias) — alias is an internal literal ('ir' | 'c' | 'p'), never user input ✓
+
+==============================
+5. EXPORT-REPORT DIVERGENCE
+==============================
+NO ISSUES. /api/export-report/route.ts imports all 12 functions from `@/lib/queries` barrel (lines 32-45):
+  queryTrendAgg, queryExecSummary, queryTopItemsByNominal, queryTopItemsByDevBom,
+  queryTopItemsByCategory, queryTopItemsByDeviasiRank, queryHistoricalCategoryAvg,
+  queryDeviationBreakdown, queryAreaAnalysis, queryHistoricalStats,
+  queryOutletHealthRanking, queryGlobalItemSearch
+All 12 verified present in barrel re-exports:
+  - queryHistoricalCategoryAvg → items/top-items.ts:418 ✓ (was originally in old items.ts, correctly migrated)
+  - queryOutletHealthRanking → health-ranking.ts:57 ✓
+  - queryGlobalItemSearch → items/global-search.ts:29 ✓
+  - All others → dashboard.ts / items/top-items.ts / areas.ts / historical.ts ✓
+
+KNOWN DIVERGENCE (already documented at route.ts:6-13, NOT a bug): export-report uses legacy JS rule evaluator while /api/analysis uses SQL-pushed versions. Intentional, deferred to future sprint.
+
+==============================
+6. BARREL EXPORT COMPLETENESS
+==============================
+VERIFIED COMPLETE. src/lib/queries/index.ts re-exports from 11 modules. No naming conflicts between split files (each module's interface/type names are unique: TopItemRow, NetworkItemRiskOutlet, GlobalItemSearchRow, TopOutletRow, PeerComparisonRow/PeerItemRow/PeerTrendRow, RestoRecommendation, OutletHealthRow/VarianceRow/HistoricalCriticalRow, TrendAggRow/ExecSummaryRow/DeviationDriverItemRow, AreaTrendRow).
+
+Intentionally NOT re-exported (documented at index.ts:19-21):
+  - growth-drivers.ts — GrowthDriverMetric would collide with src/app/api/analysis/services/growth-drivers.ts. Callers import directly from `@/lib/queries/growth-drivers`.
+  - rule-evaluation.ts — SqlRuleFlag used only by analysis route.
+  - pareto.ts — NestedParetoItem, used only by pareto route.
+
+queryHistoricalCategoryAvg IS exported from items/top-items.ts:418 — verified (was in original items.ts before split, correctly migrated to top-items.ts).
+
+==============================
+7. BUILD/COMPILE CHECK
+==============================
+- `npx tsc --noEmit` → exit code 0, no errors ✓
+- `npx eslint` on DriveImportDialog, FilterBar, pareto.ts, index.ts, shared.ts → no warnings ✓
+- `.zscripts/dev.log`: only an env-config Prisma error (invalid DATABASE_URL in sandbox — `the URL must start with the protocol postgresql://`), NOT a code bug. No Next.js runtime errors logged.
+
+==============================
+PRIORITY RANKING
+==============================
+P0 (Critical, would crash/500): NONE
+P1 (Important, correctness):    NONE
+P2 (Code clarity, no runtime impact):
+  - BUG-DRIVE-1: DriveImportDialog.tsx:52 — `setDriveDialogOpen:` labeled statement (works but misleading)
+P3 (Polish):
+  - BUG-DRIVE-2: FilterBar.tsx:35-221 — ~80 LOC dead Drive state/handlers after extraction
+  - MINOR-1: peer-comparison/items/route.ts:21 — `buildSqlFilters` imported but unused
+  - MINOR-2: outlets/peer-comparison.ts:349 — `queryPeerTrend`'s `week` parameter declared but unused in SQL (caller passes `''`)
+
+==============================
+OVERALL ASSESSMENT
+==============================
+The split refactor (queries/ directory + components/dashboard/shared + DriveImportDialog extraction) was completed CORRECTLY. No runtime bugs, no import resolution failures, no SQL validity issues, no barrel export gaps. tsc + eslint pass cleanly.
+
+The only findings are cosmetic:
+1. One labeled-statement typo in DriveImportDialog (works at runtime, but should be cleaned up)
+2. ~80 LOC of dead Drive state in FilterBar (works at runtime, but should be removed for clarity)
+
+Neither requires urgent action — production is safe.
+
+---
+Task ID: BUG-HUNT-RECENT
+Agent: Recent Changes Bug Hunter
+Task: Find bugs in recent refactoring + dedup + dead code removal
+
+Work Log:
+- Read worklog tail (last ~80 lines, Task ID: BUG-HUNT-RUNTIME) for refactoring context — prior runtime audit caught BUG-DRIVE-1 (labeled statement) + BUG-DRIVE-2 (FilterBar dead state), missed the data.results bug below.
+- Audited numberColor/directionColor import chain: rg across src/ → only 1 definition each in lib/format.ts:88,102. helpers.tsx:35 re-exports directionColor. All 7 caller files import from @/lib/format. No local duplicates remain. ✓
+- Verified file splits: outlets/ (3 files: top-outlets, peer-comparison, resto-recommendations), items/ (3 files: top-items, network-risk, global-search) — all import `buildSqlFilters, withStatementTimeout` from `../shared` correctly. No circular imports. Barrel index.ts re-exports all 11 modules. No stale imports from old single-file paths (queries/items, queries/outlets).
+- Verified shared/index.tsx: all 5 components exported (EmptyState, LoadingState, ErrorState, SectionHeader, ScrollToTop). LoadingState elapsed timer ✓ (lines 70-79). ErrorState retry button ✓ (lines 152-153, 196-202). All added imports (Boxes, CloudDownload, Sparkles, Badge) used. page.tsx:58 imports all 5 correctly.
+- Verified pic-resolver.ts: resolvePICOutletCodes used by 3 routes (item-search, pareto, recommendations). resolveFilterOptsWithPIC exported but UNUSED anywhere (dead code, likely scaffolding).
+- Verified period-resolver.ts: resolvePreviousPeriod exported but UNUSED anywhere (dead code, intentional scaffolding per task description — recommendations/route.ts:48-80 still has inline 30-line period resolution).
+- Audited Pareto: all 7 queries have HAVING ABS(SUM(ir."nominalDeviasi")) > 0 (pareto.ts:82, 115, 149, 184, 242, 274, historical CTE line 377). Nested query HAVING at both levels. queryParetoHistorical uses ABS(SUM) for weeklyTotal (line 368). mergeHistoricalIntoPareto matches by `historical.get(d.name) || historical.get(d.code || '')` — handles outlet dimension correctly.
+- Audited table-based QuadrantCard (ParetoDashboard.tsx:67-141): colSpan={8} matches 8 columns (#, Nama, QTY, Nominal, Hist Avg, Z, %, Cum) ✓. hidden xl:table-cell on Hist Avg + Z columns ✓. sticky top-0 inside max-h-[300px] overflow-auto works for sticky header ✓. barColor prop destructured but UNUSED (dead code, all 4 callers still pass it).
+- Verified dead code removal: tailwind.config.ts deleted, tailwindcss-animate uninstalled (only tw-animate-css in package.json), animate-scale-in CSS removed from globals.css. (bun.lock still has stale tailwindcss-animate entry — normal, will be cleaned on next bun install.)
+- Ran `bunx tsc --noEmit --project tsconfig.json` — exit 0, zero TypeScript errors (the labeled statement in DriveImportDialog:52 compiles as valid JS).
+- Dev server NOT running in sandbox (DATABASE_URL not configured per dev.log). Cannot runtime-verify. Reports below based on static analysis + API response shape comparison.
+- Re-read DriveImportDialog.tsx (269 lines) end-to-end and compared response shape against /api/import-drive/route.ts:128-138 — discovered data.results vs data.ingestResults mismatch (BUG-EXT-DRIVE-1 below). Prior BUG-HUNT-RUNTIME audit missed this because it only checked import paths + TS compilation, not API response shape contract.
+- Re-read FilterBar.tsx (494 lines) and confirmed ~80 LOC of dead Drive state persists (BUG-DRIVE-2 from prior audit, still present — re-flagged as BUG-EXT-FILTER-1).
+- Cross-checked __NO_MATCH__ sentinel handling across 3 routes: item-search ✓ early-return, pareto ✓ early-return, recommendations ✗ NO early-return (runs full heavy query for 0 rows).
+
+Stage Summary:
+
+======================================================================
+1. CRITICAL BUGS (broken functionality)
+======================================================================
+
+BUG-EXT-DRIVE-1 [P0 — CRITICAL] — src/components/filters/DriveImportDialog.tsx:76,77,82 — Drive import success path is completely broken
+  Root cause: API /api/import-drive returns response shape:
+    { success: true, downloadSummary: {...}, ingestResults: [...], durationMs }
+  But DriveImportDialog reads `data.results` (which doesn't exist on the response):
+    Line 76:  setDriveResult(data.results || []);                    // always sets []
+    Line 77:  if (data.results?.some((r) => r.status === 'INGESTED')) // always false
+    Line 82:  toast({ ..., description: `${data.results.filter(...).length} file diimpor` })
+  Effect: User imports a Drive file → server processes successfully → returns success:true + ingestResults → DriveImportDialog reads data.results (undefined) →
+    1. setDriveResult([]) → results panel NEVER renders ("no results" UI shown)
+    2. if-block never triggers → no cache invalidation, no onImported() callback, no success toast
+    3. catch-block not triggered (no error thrown)
+    4. Dialog stays open with no feedback — user thinks import failed
+    5. All dashboard tabs show STALE data (no query invalidation happened)
+  Regression: FilterBar's old handleDriveImport (lines 195-207, now dead code) correctly checked `d.success` and read the proper response shape.
+  Fix: Replace `data.results` → `data.ingestResults` in 3 places (lines 76, 77, 82).
+  Severity: P0 — affects every single Drive import attempt. User-visible regression.
+
+BUG-EXT-DRIVE-2 [P1 — HIGH] — src/components/filters/DriveImportDialog.tsx:78-80 — Cache invalidation scope reduced from 6 queries to 2
+  Root cause: DriveImportDialog's handleDriveImport only invalidates:
+    - ['status']           (line 79)
+    - ['analysis']         (line 80)
+  FilterBar's old handleDriveImport (now-dead lines 200-206) invalidated 6 queries:
+    - ['status'], ['analysis'], ['outlet-items'], ['item-history'], ['peer-comparison'], ['recommendations']
+  Effect: Even after BUG-EXT-DRIVE-1 is fixed, OutletItems, ItemHistory, PeerComparison, and Recommendations tabs will show STALE data after a Drive import until user manually refreshes.
+  Fix: Add the 4 missing invalidateQueries calls to DriveImportDialog handleDriveImport success block:
+    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
+    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+    queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+  Severity: P1 — silent data staleness, user doesn't know tabs are stale.
+
+======================================================================
+2. MEDIUM BUGS (inconsistencies, suboptimal)
+======================================================================
+
+BUG-EXT-DRIVE-3 [P2 — MEDIUM] — src/components/filters/DriveImportDialog.tsx:52 — Labeled statement (find/replace artifact)
+  Code:
+    function handleCloseDialog() {
+      setDriveDialogOpen: onOpenChange(false);   // ← labeled statement, NOT a function call
+      setDriveUrl('');
+      ...
+    }
+  Root cause: Refactor artifact. Original code was `setDriveDialogOpen(false)` (useState setter). When dialog was extracted, setter was removed but the `setDriveDialogOpen:` prefix was left behind, turning the line into a JS labeled statement.
+  Runtime impact: NONE — labeled statements are valid JS no-ops. `onOpenChange(false)` is still evaluated, so dialog closes + state resets correctly.
+  Code clarity: Confusing — looks like a function call but isn't. ESLint `no-labels` rule would flag.
+  Fix: Replace `setDriveDialogOpen: onOpenChange(false);` with `onOpenChange(false);`
+  Status: Already documented as BUG-DRIVE-1 in prior BUG-HUNT-RUNTIME audit (P3). Re-flagged here because the extraction is the root cause and it's adjacent to BUG-EXT-DRIVE-1.
+
+BUG-EXT-FILTER-1 [P2 — MEDIUM] — src/components/filters/FilterBar.tsx:35-45, 51-64, 155-221, 77, 441 — ~80 LOC dead Drive state + handlers remain after extraction
+  Dead state (lines 35-45): driveUrl, driveImporting, driveResult, progressLog, driveRenameMode, driveManualName, driveNumberLocale, driveTab (8 useState hooks)
+  Dead derived (lines 51-64): driveManualValid (useMemo), renameAllowedForTab (const)
+  Dead functions (lines 155-221): handleDriveImport (61 LOC), handleCloseDialog (5 LOC)
+  Dead mutations (lines 77, 441): setDriveResult(null), setDriveRenameMode('auto'), setDriveManualName(''), setDriveNumberLocale('us') — mutate FilterBar's dead state, no UI effect since DriveImportDialog manages its own state internally.
+  Dead imports (lines 6, 11-15, 17): CloudDownload, Loader2, CheckCircle2, XCircle, Folder, FileSpreadsheet, Pencil icons; Dialog/DialogContent/DialogHeader/DialogTitle/DialogDescription/DialogFooter; Input; Label; Tabs/TabsContent/TabsList/TabsTrigger.
+  Runtime impact: NONE — DriveImportDialog was correctly extracted with its own state. FilterBar only passes `open` + `onOpenChange` to DriveImportDialog (line 480).
+  Code clarity: Misleading — suggests FilterBar still orchestrates Drive import. ~80 LOC dead code + ~15 dead imports.
+  Fix: Remove dead state hooks (keep only `driveDialogOpen`), remove unused useMemo/const, remove handleDriveImport + handleCloseDialog functions, remove unused imports. openDrive event listener at line 77 simplifies to `setDriveDialogOpen(true)`.
+  Status: Already documented as BUG-DRIVE-2 in prior BUG-HUNT-RUNTIME audit (P3). Re-flagged here with full enumeration of dead items.
+
+BUG-EXT-RECO-1 [P2 — MEDIUM] — src/app/api/recommendations/route.ts:83-89 — Missing __NO_MATCH__ sentinel early-return
+  Code:
+    const picOutletCodes = await resolvePICOutletCodes(pic);
+    const filters = { area, outletCode, picOutletCodes };
+    const recommendations = await queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit);
+  Issue: When pic has no outlets, resolvePICOutletCodes returns `['__NO_MATCH__']`. The other 2 routes that use the resolver short-circuit:
+    - item-search/route.ts:83-86 → returns `{ success: true, items: [] }` immediately
+    - pareto/route.ts:40-44 → returns empty Pareto shape immediately
+  But recommendations/route.ts does NOT short-circuit — it passes `['__NO_MATCH__']` into buildSqlFilters, which generates `WHERE code IN ('__NO_MATCH__')` SQL. The queryRestoRecommendations 3-CTE heavy query runs for nothing, returns 0 rows.
+  Runtime impact: NONE (functionally correct — 0 rows returned). Performance: Wastes DB resources on heavy query when PIC has no outlets.
+  Fix: Add early-return after line 83:
+    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      return NextResponse.json({ success: true, recommendations: [] });
+    }
+  Severity: P2 — performance, not correctness. Inconsistent with established pattern in sibling routes.
+
+======================================================================
+3. LOW BUGS (dead code, no functional impact)
+======================================================================
+
+BUG-EXT-QUAD-1 [P3 — LOW] — src/components/dashboard/ParetoDashboard.tsx:67 — barColor prop unused in table-based QuadrantCard
+  Code:
+    function QuadrantCard({ title, icon, data, color, barColor }: { ... barColor: string }) {
+      // barColor is destructured but NEVER referenced in the function body
+  Callers (lines 227, 234, 241, 248) still pass barColor="bg-amber-500" / "bg-emerald-500" / "bg-violet-500" / "bg-red-500".
+  Root cause: Old chart-based QuadrantCard used barColor for progress bars. New table-based version (replacing chart) doesn't render bars.
+  Runtime impact: NONE.
+  Fix: Remove `barColor` from props destructure + type signature + 4 caller sites. (Or keep for future chart restoration.)
+  Status: Already documented as VIS-7 in prior audit (line 18600 of worklog).
+
+BUG-EXT-RESOLVER-1 [P3 — LOW] — src/lib/pic-resolver.ts:41-63 — resolveFilterOptsWithPIC exported but never used
+  Issue: Convenience wrapper `resolveFilterOptsWithPIC` was created but no route imports it. The 3 routes that use pic-resolver all call `resolvePICOutletCodes` directly + inline the filterOpts construction.
+  Runtime impact: NONE (dead code).
+  Fix: Either remove the unused export, OR migrate the 2 remaining routes that still use inline PIC resolution (analysis/route.ts:205-223, export-report/route.ts:283-308) to use it.
+  Severity: P3 — likely intentional scaffolding for future migration.
+
+BUG-EXT-RESOLVER-2 [P3 — LOW] — src/lib/period-resolver.ts:29-77 — resolvePreviousPeriod exported but never used
+  Issue: Created as shared utility but no route imports it. recommendations/route.ts:48-80 still has 30-line inline period resolution logic.
+  Runtime impact: NONE (dead code).
+  Fix: Either remove the unused export, OR migrate recommendations/route.ts (and any other route with inline period resolution) to use it.
+  Severity: P3 — intentional scaffolding per task description ("should NOT be [wired] — it was created but not wired").
+
+======================================================================
+4. TYPE MISMATCHES
+======================================================================
+NONE FOUND. `bunx tsc --noEmit` exits 0.
+- numberColor signature `(v: number | null | undefined)` accepts all caller patterns including `r.devBom ?? 0` (GlobalItemSearchModal.tsx:404 — null becomes 0 → 'text-muted-foreground', correct semantic).
+- directionColor signature `(d: string | null | undefined)` accepts CardDrillDown's `v as string` cast (runtime value preserved, returns 'text-muted-foreground' for null).
+
+======================================================================
+5. DEAD REFERENCES (code referencing removed items)
+======================================================================
+NONE FOUND.
+- tailwind.config.ts: deleted, no references in src/.
+- tailwindcss-animate: uninstalled, only stale entry in bun.lock (will clean on next install).
+- animate-scale-in CSS: removed from globals.css, no class usage in src/.
+- Old single-file paths (@/lib/queries/items, @/lib/queries/outlets): no references.
+
+======================================================================
+6. PRIORITY RANKING — FIX FIRST
+======================================================================
+
+P0 (Critical, user-visible — fix immediately):
+  1. BUG-EXT-DRIVE-1 (DriveImportDialog.tsx:76,77,82 — data.results → data.ingestResults)
+     Effect: Every Drive import appears to fail (no toast, no results, no invalidation).
+     Fix: 3-line rename. ~30 seconds.
+
+P1 (Important, correctness — fix this sprint):
+  2. BUG-EXT-DRIVE-2 (DriveImportDialog.tsx:78-80 — add 4 missing invalidateQueries calls)
+     Effect: Stale data in 4 dashboard tabs after Drive import.
+     Fix: 4-line addition. ~1 minute. (Best done together with P0 fix above.)
+
+P2 (Medium, consistency — fix this sprint):
+  3. BUG-EXT-DRIVE-3 (DriveImportDialog.tsx:52 — remove labeled-statement artifact)
+     Fix: 1-line edit. ~10 seconds.
+  4. BUG-EXT-FILTER-1 (FilterBar.tsx — remove ~80 LOC + ~15 imports of dead Drive state)
+     Fix: ~10 minutes. Mechanical deletion. Improves maintainability.
+  5. BUG-EXT-RECO-1 (recommendations/route.ts:83-89 — add __NO_MATCH__ early-return)
+     Fix: 3-line addition. ~1 minute. Aligns with sibling routes.
+
+P3 (Polish, no functional impact — defer):
+  6. BUG-EXT-QUAD-1 (ParetoDashboard.tsx:67 — remove unused barColor prop)
+  7. BUG-EXT-RESOLVER-1 (pic-resolver.ts — remove or wire resolveFilterOptsWithPIC)
+  8. BUG-EXT-RESOLVER-2 (period-resolver.ts — remove or wire resolvePreviousPeriod)
+
+======================================================================
+VERIFIED CORRECT (no bugs found in scope)
+======================================================================
+
+Helper dedup (numberColor/directionColor):
+- Single source of truth: lib/format.ts:88 (directionColor), 102 (numberColor) — both with dark: variants.
+- helpers.tsx:35 re-exports directionColor from @/lib/format (callers in resto-analysis/ import from './helpers').
+- All 7 caller files verified: DrillDownDrawer.tsx:10, SourceDataModal.tsx:11, CardDrillDown.tsx:10, ItemDeepDive.tsx:11, GlobalItemSearchModal.tsx:23, TopItems.tsx:7, ParetoDashboard.tsx:15, resto-analysis/{item-detail-modal,menu-analysis,RestoAnalysis}.tsx (via helpers).
+- No remaining local copies. ✓
+
+File splits:
+- outlets/ (3 files) + items/ (3 files) all import buildSqlFilters + withStatementTimeout from ../shared. ✓
+- No circular imports. No stale `@/lib/queries/items` or `@/lib/queries/outlets` single-file imports. ✓
+- Barrel index.ts re-exports 11 modules; growth-drivers intentionally not re-exported (naming collision documented). ✓
+
+shared/ extraction:
+- All 5 components present + exported. LoadingState elapsed timer ✓. ErrorState retry button ✓.
+- All added imports (Boxes, CloudDownload, Sparkles, Badge) used. ✓
+- page.tsx:58 imports all 5 from @/components/dashboard/shared. ✓
+
+PIC sentinel pattern:
+- resolvePICOutletCodes returns null | ['__NO_MATCH__'] | string[] correctly.
+- item-search/route.ts:83-86 early-returns on sentinel. ✓
+- pareto/route.ts:40-44 early-returns on sentinel. ✓
+- recommendations/route.ts:83-89 — sentinel still works via SQL filter (`WHERE code IN ('__NO_MATCH__')` returns 0 rows), just lacks the early-return optimization. (See BUG-EXT-RECO-1.)
+
+Pareto ABS(SUM) + HAVING:
+- All 7 queries have HAVING ABS(SUM(ir."nominalDeviasi")) > 0 (pareto.ts:82, 115, 149, 184, 242, 274, 377). ✓
+- Nested query has HAVING at both top-item level (line 242) AND per-item-outlet level (line 274). ✓
+- queryParetoHistorical weekly_dev CTE uses ABS(SUM) for weeklyTotal (line 368). ✓
+- mergeHistoricalIntoPareto matches by name AND code (line 411). ✓
+
+Table-based QuadrantCard:
+- colSpan={8} matches 8 columns. ✓
+- hidden xl:table-cell on Hist Avg + Z columns. ✓
+- sticky top-0 + backdrop-blur inside max-h-[300px] overflow-auto. ✓
+
+Dead code removal:
+- tailwind.config.ts deleted. ✓
+- tailwindcss-animate uninstalled (only tw-animate-css in package.json). ✓
+- animate-scale-in CSS removed from globals.css. ✓
+
+TypeScript:
+- `bunx tsc --noEmit --project tsconfig.json` → exit 0, zero errors. ✓
+
+Runtime:
+- Dev server NOT running in sandbox (DATABASE_URL not configured per .zscripts/dev.log). Cannot runtime-verify Drive import flow end-to-end. Static analysis + API contract comparison confirms BUG-EXT-DRIVE-1.
+
+OUT-OF-SCOPE NOTE:
+- BUG-CALC-OUTLET-RECO-1 (outlets.ts:749 histAvg scale mismatch) flagged in prior BUG-HUNT-CALC audit as OUT OF SCOPE — verified FIXED in this refactor cycle. resto-recommendations.ts:219-237 now uses two-level CTE (weekly_dev + final AVG) matching queryParetoHistorical pattern. ✓
