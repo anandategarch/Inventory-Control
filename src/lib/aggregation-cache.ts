@@ -29,12 +29,21 @@ const inflightPromises = new Map<string, Promise<unknown>>();
 
 /**
  * Build a cache key from the filter parameters.
- * Format: "analysis|2026-08|WEEK 1|WEEK 1|||Juli 2026|JAWA TIMUR 1|MLG|1016.MLGJAK|MINYAK MIE|Andi"
+ * Format: "analysis␟2026-08␟WEEK 1␟WEEK 1␟Juli 2026␟JAWA TIMUR 1␟MLG␟1016.MLGJAK␟MINYAK MIE␟Andi"
  *
  * FIX (BUG-KELOMPOK-CACHE): kelompok was missing from the cache key → requests
  * with different kelompok filters shared the same cache entry → cache poisoning
  * (e.g., user A selects kelompok="MLG" then user B with no filter gets A's
  * filtered result, or vice-versa). Adding kelompok to the key fixes this.
+ *
+ * FIX (BUG-EDGE-4): Use ASCII Unit Separator (\x1f) as delimiter instead of `|`.
+ * The old `|` separator could cause key collision if any filter value contained
+ * `|` (e.g., month="a|b" + week="c" → same key as month="a" + week="b|c").
+ * \x1f is a control character that will never appear in user input, making
+ * the key collision-proof.
+ *
+ * FIX (BUG-BE-5 / BUG-PERF-7): normalize 'all' → 'ALL' + uppercase kelompok
+ * so that `?kelompok=all` and no kelompok param produce the SAME cache key.
  */
 export function buildCacheKey(parts: {
   route: string;
@@ -48,23 +57,20 @@ export function buildCacheKey(parts: {
   itemName?: string | null;
   pic?: string | null;
 }): string {
+  // FIX (BUG-EDGE-4): \x1f (ASCII Unit Separator) — never appears in user input.
+  const SEP = '\x1f';
   const filter = [
     parts.month || 'ALL',
     parts.week || 'ALL',
     parts.compareWeek || 'NONE',
     parts.compareMonth || 'NONE',
     parts.area && parts.area !== 'all' ? parts.area : 'ALL',
-    // FIX (BUG-BE-5 / BUG-PERF-7): normalize 'all' → 'ALL' so that `?kelompok=all`
-    // and no kelompok param produce the SAME cache key. Without this, they'd
-    // create 2 separate cache entries for the same logical request → cache miss.
-    // Also normalize to uppercase for case-insensitive consistency with the
-    // SQL filter (which uses UPPER()).
     parts.kelompok && parts.kelompok !== 'all' ? parts.kelompok.toUpperCase() : 'ALL',
     parts.outletCode && parts.outletCode !== 'all' ? parts.outletCode : 'ALL',
     parts.itemName || 'ALL',
     parts.pic || 'ALL',
-  ].join('|');
-  return `${parts.route}|${filter}`;
+  ].join(SEP);
+  return `${parts.route}${SEP}${filter}`;
 }
 
 /**

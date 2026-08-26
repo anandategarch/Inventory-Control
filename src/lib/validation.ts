@@ -37,12 +37,18 @@ export const cursorSchema = z.coerce.number().int().positive().optional();
 //  Route-specific schemas
 // ============================================================
 
-// /api/analysis?month=&week=&compareWeek=&area=&outlet=&item=&pic=
+// Kelompok: 3-char prefix from outlet code name segment (e.g. "BDG", "MLG")
+// FIX (BUG-BE-8 / BUG-EDGE-3 / BUG-PERF-6): was missing from these schemas —
+// a 1000-char kelompok would pass through unvalidated.
+export const kelompokSchema = z.string().min(1).max(50).optional();
+
+// /api/analysis?month=&week=&compareWeek=&area=&kelompok=&outlet=&item=&pic=
 export const analysisQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   compareWeek: compareWeekSchema,
   area: areaSchema,
+  kelompok: kelompokSchema,
   outlet: outletCodeSchema,
   item: itemNameSchema,
   pic: picSchema,
@@ -82,13 +88,17 @@ export const settingsUpdateSchema = z.object({
   updatedBy: z.string().max(100).optional(),
 });
 
-// /api/recommendations?month=&week=&prevWeek=&prevMonth=&limit=
+// /api/recommendations?month=&week=&prevWeek=&prevMonth=&limit=&area=&kelompok=&outletCode=&pic=
 export const recommendationsQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   prevWeek: weekLabelSchema,
   prevMonth: monthLabelSchema,
   limit: limitSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  outletCode: outletCodeSchema,
+  pic: picSchema,
 });
 
 // /api/peer-comparison?outletCode=&month=&week=&mode=&limit=
@@ -114,11 +124,18 @@ export const peerComparisonTrendQuerySchema = z.object({
   week: weekLabelSchema,
 });
 
-// /api/export-report?month=&week=&sections=
+// /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   sections: z.string().optional(),
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  outlet: outletCodeSchema,
+  item: itemNameSchema,
+  pic: picSchema,
+  compareWeek: compareWeekSchema,
+  compareMonth: monthLabelSchema,
 });
 
 // /api/data (GET — optional ?fileId=N, DELETE — ?month=&monthKey=&fileId=&all=&confirm=)

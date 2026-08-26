@@ -24,6 +24,10 @@ interface SearchableComboBoxProps {
   className?: string;
   disabled?: boolean;
   buttonClassName?: string;
+  // FIX (BUG-FE-7): aria-label for screen reader accessibility.
+  // Without this, the combobox's accessible name is just the visible text
+  // (e.g. "BDG"), so screen readers don't announce the field's purpose.
+  ariaLabel?: string;
 }
 
 export function SearchableComboBox({
@@ -37,6 +41,7 @@ export function SearchableComboBox({
   className,
   disabled,
   buttonClassName,
+  ariaLabel,
 }: SearchableComboBoxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -79,6 +84,7 @@ export function SearchableComboBox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-label={ariaLabel || placeholder}
           disabled={disabled}
           className={cn('justify-between font-normal h-8 text-xs', buttonClassName)}
         >
@@ -100,6 +106,11 @@ export function SearchableComboBox({
             />
           </div>
           <CommandList className="max-h-[280px]">
+            {/* FIX (BUG-EDGE-8): removed duplicate CommandEmpty — was rendered both
+                here (inside CommandList) AND inside CommandGroup when filtered.length === 0.
+                The one inside CommandGroup was conditional on `search` being non-empty,
+                so it only showed when searching. This one shows when the options list
+                is genuinely empty (no options to filter). Keeping just this one. */}
             <CommandEmpty className="text-xs py-3">{emptyText}</CommandEmpty>
             {allOptionLabel && (
               <CommandGroup heading="">
@@ -134,7 +145,7 @@ export function SearchableComboBox({
                 );
               })}
               {filtered.length === 0 && search && (
-                <CommandEmpty className="text-xs py-3">{emptyText}</CommandEmpty>
+                <div className="text-xs py-3 text-center text-muted-foreground">{emptyText}</div>
               )}
             </CommandGroup>
           </CommandList>

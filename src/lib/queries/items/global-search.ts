@@ -45,7 +45,7 @@ export async function queryGlobalItemSearch(
     itemName: null,   // itemName handled by exact match below
     picOutletCodes: filters.picOutletCodes,
   });
-  const rows = await db.$queryRaw<Array<GlobalItemSearchRow>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<GlobalItemSearchRow>>`
     SELECT
       i.name as "itemName",
       o.code as "outletCode",
@@ -83,7 +83,7 @@ export async function queryGlobalItemSearch(
     GROUP BY i.name, o.code, o.name, o.area, pic.pic
     ORDER BY "absNominalDeviasi" DESC
     LIMIT ${limit}
-  `;
+  `);
   // Coerce BigInt/Decimal to Number (PostgreSQL SUM returns bigint for integer columns)
   return rows.map((r: any) => ({
     ...r,
@@ -177,7 +177,7 @@ export async function queryItemTrend(
     itemName: null, // handled by exact match below
     picOutletCodes: filters.picOutletCodes,
   });
-  const rows = await db.$queryRaw<Array<ItemTrendRow>>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<ItemTrendRow>>`
     SELECT
       ir."monthLabel",
       sf."monthKey",
@@ -206,7 +206,7 @@ export async function queryItemTrend(
     GROUP BY ir."monthLabel", sf."monthKey", ir."weekLabel", o.code, o.name, o.area
     ORDER BY sf."monthKey", ir."weekLabel", o.code
     LIMIT ${limit}
-  `;
+  `);
   return rows.map((r: any) => ({
     ...r,
     nominalDeviasi: Number(r.nominalDeviasi),

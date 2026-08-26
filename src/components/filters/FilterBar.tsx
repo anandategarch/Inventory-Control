@@ -83,6 +83,29 @@ export function FilterBar() {
     };
   }, []);
 
+  // FIX (BUG-FE-9): After data upload/import, the status query invalidates and
+  // refetches. If the new dataset doesn't have the currently-selected kelompok
+  // (e.g., user uploaded a different region's data), the dropdown would still
+  // show the old kelompok as selected but the option would be gone — user can't
+  // deselect via dropdown, only via Reset. This effect clears kelompok (and
+  // other filter state) if they're no longer valid in the new status data.
+  useEffect(() => {
+    if (!status) return;
+    const kelompokOpts = status.kelompokOptions || [];
+    if (kelompok && kelompok !== 'all' && kelompokOpts.length > 0 && !kelompokOpts.includes(kelompok)) {
+      setKelompok(null);
+    }
+    if (area && status.areas.length > 0 && !status.areas.includes(area)) {
+      setArea(null);
+    }
+    if (pic && status.pics.length > 0 && !status.pics.includes(pic)) {
+      setPic(null);
+    }
+    if (outletCode && status.outlets.length > 0 && !status.outlets.some((o) => o.code === outletCode)) {
+      setOutlet(null);
+    }
+  }, [status, kelompok, area, pic, outletCode, setKelompok, setArea, setPic, setOutlet]);
+
   const months = status?.months || [];
   const weeks = (monthLabel && status?.weeksByMonth) ? Object.entries(status.weeksByMonth).find(([k]) => {
     const m = status.months.find((mm) => mm.label === monthLabel);
@@ -354,6 +377,7 @@ export function FilterBar() {
             emptyText="PIC tidak ditemukan."
             allOptionLabel={`Semua PIC (${pics.length})`}
             buttonClassName="min-w-[120px]"
+            ariaLabel="Filter PIC"
           />
 
           <SearchableComboBox
@@ -365,6 +389,7 @@ export function FilterBar() {
             emptyText="Area tidak ditemukan."
             allOptionLabel={`Semua Area (${areas.length})`}
             buttonClassName="min-w-[120px]"
+            ariaLabel="Filter Area"
           />
 
           <SearchableComboBox
@@ -376,6 +401,7 @@ export function FilterBar() {
             emptyText="Kelompok tidak ditemukan."
             allOptionLabel={`Semua Kelompok (${status?.kelompokOptions?.length || 0})`}
             buttonClassName="min-w-[120px]"
+            ariaLabel="Filter Kelompok"
           />
 
           <SearchableComboBox
@@ -387,6 +413,7 @@ export function FilterBar() {
             emptyText="Outlet tidak ditemukan."
             allOptionLabel={`Semua Outlet (${outlets.length})`}
             buttonClassName="min-w-[150px]"
+            ariaLabel="Filter Outlet"
           />
 
           {hasActiveFilter && (

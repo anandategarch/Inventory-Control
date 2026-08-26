@@ -565,7 +565,8 @@ export async function GET(req: NextRequest) {
     const data = {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
       // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
-      filters: { area, kelompok, outletCode, itemName },
+      // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
+      filters: { area, kelompok, outletCode, itemName, pic },
       executiveSummary: execSummary,
       growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,

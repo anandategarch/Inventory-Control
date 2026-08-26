@@ -12,7 +12,7 @@
 // ============================================================
 
 import { useState, useEffect, useRef, useDeferredValue } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -128,6 +128,8 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
     },
     enabled: Boolean(selectedItem && monthLabel && currentWeek),
     staleTime: 120_000,
+    // FIX (BUG-FE-5): keepPreviousData for smooth transition on filter change
+    placeholderData: keepPreviousData,
   });
 
   // #1 TREND ANALYSIS: fetch per-(period, outlet) data across ALL periods for trend chart.

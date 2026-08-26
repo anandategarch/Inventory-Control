@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -71,6 +71,9 @@ export function RestoRecommendationCard() {
     },
     enabled: Boolean(monthLabel && currentWeek),
     staleTime: 60_000,
+    // FIX (BUG-FE-5): keepPreviousData so the card shows stale data during refetch
+    // (smooth transition) instead of flashing full-screen skeletons when kelompok changes.
+    placeholderData: keepPreviousData,
   });
 
   if (isLoading) {

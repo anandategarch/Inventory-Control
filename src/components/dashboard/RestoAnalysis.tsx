@@ -10,7 +10,7 @@
 //  This file re-exports types for backward compatibility.
 // ============================================================
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -67,6 +67,8 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       return res.json() as Promise<OutletItemsResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // FIX (BUG-FE-5): keepPreviousData for smooth transition on filter change
+    placeholderData: keepPreviousData,
   });
 
   // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary

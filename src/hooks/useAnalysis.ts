@@ -369,9 +369,11 @@ export const ANALYSIS_STALE_TIME = 120_000; // 2 min
 export const ANALYSIS_GC_TIME = 600_000;     // 10 min
 
 export function useAnalysis(params: AnalysisParams) {
-  // PERF-OPT: memoize the URLSearchParams so the queryFn closure captures a
-  // stable reference across renders (was being rebuilt every render — fine
-  // functionally, but caused TanStack Query to see a new queryFn each render).
+  // NOTE (BUG-FE-10): the old comment claimed this was "memoized" via useMemo,
+  // but it's just a plain const. TanStack Query caches by queryKey (not queryFn
+  // reference), so this is functionally fine — the queryFn closure captures
+  // searchParams, and since queryKey includes all params, a param change
+  // triggers a new queryFn invocation with the updated searchParams. No fix needed.
   const searchParams = buildAnalysisSearchParams(params);
 
   return useQuery({

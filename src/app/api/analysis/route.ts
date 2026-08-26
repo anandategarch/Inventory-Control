@@ -940,7 +940,8 @@ export async function GET(req: NextRequest) {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
       // FIX (BUG-KELOMPOK-EMPTY): include kelompok in the response filters object
       // so the frontend can display the active filter state consistently.
-      filters: { area, kelompok, outletCode, itemName },
+      // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
+      filters: { area, kelompok, outletCode, itemName, pic },
       executiveSummary: execSummary,
       healthStatus: { normal, warning, abnormal, breakdown: ruleBreakdown },
       // OPTIMIZE-ANALYSIS: only `errors` + `warnings` are read by the frontend
@@ -999,7 +1000,8 @@ export async function GET(req: NextRequest) {
     db.auditLog.create({
       data: {
         action: 'ANALYSIS',
-        detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} outlet=${outletCode || 'ALL'} | ${currSlim.length} records`,
+        // FIX (BUG-BE-10): include kelompok + pic in audit log for traceability
+        detail: `${month}/${week} vs ${prevWeek} | area=${area || 'ALL'} kelompok=${kelompok || 'ALL'} outlet=${outletCode || 'ALL'} pic=${pic || 'ALL'} | ${currSlim.length} records`,
         duration: Date.now() - startedAt,
       },
     }).catch((e) => {
