@@ -19329,3 +19329,589 @@ Stage Summary:
   - src/components/dashboard/RestoRecommendationCard.tsx
   - src/components/dashboard/RestoAnalysis.tsx
   - src/components/dashboard/GlobalItemSearchModal.tsx
+
+---
+Task ID: BUGHUNT-FE-2
+Agent: frontend-bug-hunter (sub-agent)
+Task: Audit frontend integration of kelompok filter — React hooks, query keys, state management, UI consistency, UX. Read-only audit (no fixes applied).
+
+Work Log:
+- Read worklog sections BUGFIX-KELOMPOK-EMPTY (lines 19229-19271) and BUGFIX-KELOMPOK-GLOBAL (lines 19274-19331) to understand the kelompok filter wiring. Backend + 3 frontend components were updated to pass kelompok to URLSearchParams + queryKey. Audit focused on remaining frontend gaps.
+- Audited 9 files: useDashboard.ts, useAnalysis.ts, FilterBar.tsx, RestoRecommendationCard.tsx, RestoAnalysis.tsx, GlobalItemSearchModal.tsx, ParetoDashboard.tsx, page.tsx, SearchableComboBox.tsx. Also cross-checked ExportDialog.tsx and PeerComparison.tsx.
+- Verified every useQuery that fetches kelompok-dependent data DOES include kelompok in both queryKey and URLSearchParams (RestoRecommendationCard:54/64, RestoAnalysis:75/87, GlobalItemSearchModal cross-outlet:113/123, GlobalItemSearchModal trend:136/144, ParetoDashboard:157/164, useAnalysis:367/341). ✓ No missing-queryKey bug.
+- Verified autocomplete query in GlobalItemSearchModal correctly OMITS kelompok from both queryKey (line 95) and URL params (line 97-102) — by design (autocomplete shows global item names). ✓ QueryKey is stable (all primitives).
+- Found 10 bugs (1×P1, 1×P2, 7×P3, 1×P4). See Findings section below.
+
+Findings (10 bugs — NO fixes applied, report only):
+
+BUG-FE-1 — P1 — Prefetch missing kelompok (cache poisoning / wasted prefetch)
+- File: src/components/filters/FilterBar.tsx:254-263 (month hover) and 286-295 (week hover)
+- Description: Both `prefetchAnalysis` calls in `onMouseEnter` handlers build the params object WITHOUT passing the current `kelompok` from useDashboard. The params type allows `kelompok?: string | null`, so the omitted field becomes `undefined`.
+- Expected: prefetch queryKey should match the eventual live useAnalysis queryKey exactly so the prefetched cache entry is reused.
+- Actual: prefetch sends `{ kelompok: undefined, ... }` while live useAnalysis (page.tsx:198) sends `{ kelompok: 'BDG' | null, ... }`. TanStack Query treats `undefined` ≠ `null` ≠ `'BDG'` as distinct cache keys → prefetch cache entry is never reused → wasted server fetch + cache memory bloat. Effectively disables the hover-prefetch optimization whenever kelompok is active.
+- Suggested fix: add `kelompok` to both prefetch calls: `prefetchAnalysis({ month: ..., week: ..., compareWeek: null, compareMonth: null, area, kelompok, outlet: outletCode, item: itemName, pic })`. Also consider passing `kelompok` in the initial cache-warming prefetch in page.tsx:133-142 (currently `kelompok: undefined` — OK only because initial load implies kelompok is null, but explicit is safer).
+
+BUG-FE-2 — P2 — Outlet dropdown not filtered by kelompok (contradictory filters)
+- File: src/components/filters/FilterBar.tsx:93-97
+- Description: The `outlets` filter only checks `area` and `pic`, not `kelompok`. When user selects kelompok=BDG, the Outlet SearchableComboBox still shows ALL outlets. User can select e.g. outletCode="JKT001" (not in BDG) → contradictory state.
+- Expected: when kelompok is selected, outlet dropdown should only show outlets whose code's last dot-segment starts with the kelompok prefix (matching backend's `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = kelompok` pattern from shared.ts:69).
+- Actual: backend /api/analysis resolves the contradiction by setting `w.outlet = { code: '__NO_MATCH__' }` (analysis/route.ts:340) → returns 404 "No records found" → dashboard shows misleading "Tidak ada data" empty state. User has no clue why.
+- Suggested fix: add kelompok filter to the `outlets` memo:
+  ```ts
+  if (kelompok) {
+    const seg = o.code.split('.').pop() || '';
+    if (!seg.startsWith(kelompok)) return false;
+  }
+  ```
+  Also consider adding the kelompok to the outlet option's `description` so users can see at a glance which kelompok an outlet belongs to.
+
+BUG-FE-3 — P3 (latent) — setKelompok + reset() don't clear scorecardOutlet
+- File: src/hooks/useDashboard.ts:56 (setKelompok) and :60 (reset)
+- Description: `setKelompok` clears `outletCode` + `focusOutlet` but NOT `scorecardOutlet`. `reset()` clears area/kelompok/outletCode/itemName/pic/focusOutlet but NOT `scorecardOutlet`. Compare to `setArea` (line 55) and `setPic` (line 59) which DO clear `scorecardOutlet`.
+- Expected: setKelompok + reset should clear scorecardOutlet for consistency with setArea/setPic.
+- Actual: latent inconsistency — currently no impact because `setScorecardOutlet` is never called from any component (grep confirms only the type+setter exist, no caller). But if/when it's wired up, this would be a state leak (stale scorecardOutlet after kelompok change).
+- Suggested fix: add `scorecardOutlet: null` to both setKelompok and reset actions.
+
+BUG-FE-4 — P3 — ExportDialog doesn't show active filter state
+- File: src/components/dashboard/ExportDialog.tsx (whole component) + src/app/page.tsx:639-644 (invocation)
+- Description: ExportDialog's description says "File Word akan berisi data sesuai filter yang aktif" (line 76) but the dialog does NOT display what filters are currently active (kelompok, area, outletCode, pic, period). The component receives only `open/onOpenChange/onExport/isExporting` — no filter props.
+- Expected: dialog shows a summary of active filters before user clicks Export, e.g. "Filter aktif: Kelompok=BDG · Area=JAWA BARAT 1 · Periode=WEEK 4 MEI 2026 vs WEEK 4 APRIL 2026" so user can verify the export will contain the expected scope.
+- Actual: user must trust the description text. If kelompok=BDG is active, the exported Word file will only contain BDG data, but the dialog gives no visual confirmation of this.
+- Suggested fix: pass current filter snapshot (kelompok, area, outletCode, pic, monthLabel, currentWeek, comparisonWeek) as a prop to ExportDialog and render a compact "Active filters" chip-row above the section list.
+
+BUG-FE-5 — P3 — Loading state inconsistency when kelompok changes
+- Files: src/components/dashboard/RestoRecommendationCard.tsx:53-74, ParetoDashboard.tsx:156-172, GlobalItemSearchModal.tsx:94-152 (all 3 queries)
+- Description: The main analysis query (useAnalysis) uses `placeholderData: keepPreviousData` (useAnalysis.ts:370) → when kelompok changes, the dashboard stays stable with a "Memperbarui" badge (page.tsx:72-86 FetchAware wrapper). But the 3 side-panel queries listed above do NOT use `placeholderData` → when kelompok changes, they flash their full-screen loading skeletons (RestoRecommendationCard) / spinner (ParetoDashboard, GlobalItemSearchModal) before re-rendering with new data.
+- Expected: consistent loading behavior across all kelompok-dependent components — either all use keepPreviousData (smooth transition) or all use skeletons (consistent flash).
+- Actual: mixed behavior — main dashboard stable, side panels flash. Jarring UX during filter changes.
+- Suggested fix: add `placeholderData: keepPreviousData` to the 3 side-panel queries. Note: keepPreviousData may show stale outlet names (e.g. BDG outlets briefly visible after switching to JKT) — acceptable trade-off for smoother UX, or wrap each in a FetchAware-style opacity dimmer.
+
+BUG-FE-6 — P3 — Misleading empty state when filters contradict
+- File: src/hooks/useAnalysis.ts:291-293 + src/app/page.tsx (ErrorState rendering)
+- Description: When user has contradictory filters (e.g. kelompok=BDG + outletCode=JKT001, per BUG-FE-2), /api/analysis returns 404 "No records found" → fetchAnalysis throws "Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih." (line 292). This message is misleading — the issue is contradictory filters, not missing data.
+- Expected: friendly message distinguishing "no data uploaded for this period" from "current filters don't match any data".
+- Actual: same generic "upload data" message shown for both cases. User can't tell if they need to upload data or reset filters.
+- Suggested fix (client-side): detect the contradiction in page.tsx before fetching — if `kelompok && outletCode && !outletCode.split('.').pop()?.startsWith(kelompok)`, show a specific message like "Outlet 'JKT001' tidak termasuk dalam kelompok 'BDG'. Reset salah satu filter." Suggested fix (server-side): return a distinct error code (e.g. 409 Conflict) for "filters don't intersect" vs 404 for "no data uploaded".
+
+BUG-FE-7 — P3 — SearchableComboBox lacks explicit aria-label
+- File: src/components/filters/SearchableComboBox.tsx:77-89
+- Description: Button has `role="combobox"` and `aria-expanded={open}` (lines 80-81) but no `aria-label`. The accessible name comes only from the visible text content (the `currentLabel` span). When kelompok is selected (e.g. "BDG"), the button's accessible name becomes "BDG" — screen reader users navigating the filter bar hear "BDG, combobox, expanded" with no context that this is the kelompok filter.
+- Expected: each filter dropdown has a clear accessible name like "Filter Kelompok" so screen readers announce the field's purpose.
+- Actual: accessible name is just the selected value or placeholder ("Semua Kelompok (N)"). When a value is selected, the field's purpose is ambiguous.
+- Suggested fix: add an optional `ariaLabel?: string` prop to SearchableComboBoxProps and pass it from FilterBar (e.g. `ariaLabel="Filter Kelompok"` for the kelompok dropdown, `ariaLabel="Filter Area"` for area, etc.). Set `aria-label={ariaLabel || placeholder}` on the Button.
+
+BUG-FE-8 — P3 (informational) — No URL persistence for kelompok
+- File: src/hooks/useDashboard.ts (entire store) + src/app/page.tsx
+- Description: Filter state lives only in the Zustand store (in-memory). Refreshing the page loses kelompok (and all other filters). No `useSearchParams` / `history.pushState` / `localStorage` persistence anywhere in the app (grep confirmed zero matches for these patterns in src/).
+- Expected: filter state could be persisted to URL (e.g. `?kelompok=BDG&area=JAWA+BARAT+1`) so refresh / share-link preserves context.
+- Actual: refresh resets all filters to defaults (null). User loses their filter context.
+- Suggested fix (optional): add useSearchParams syncing in page.tsx — serialize filter state to URL on every setKelompok/setArea/setOutlet/setPic call, deserialize on mount. Not strictly a bug — many SPAs work this way by design — but worth flagging.
+
+BUG-FE-9 — P3 (edge case) — Stale kelompok selection after status refresh
+- File: src/components/filters/FilterBar.tsx:354-362 (kelompok dropdown) + src/hooks/useDashboard.ts
+- Description: After data upload/ingest (FilterBar.tsx:139 / page.tsx:257 invalidate `['status']`), useStatus refetches and `status.kelompokOptions` may change. If user had kelompok=BDG selected but the new dataset has no BDG outlets, the SearchableComboBox still shows "BDG" as the selected value (because `value={kelompok}` from useDashboard), but "BDG" is no longer in the options list. User can't deselect via the dropdown (the option doesn't exist) — only via the Reset button. And /api/analysis returns "No records found" → confusing empty state.
+- Expected: if selected kelompok is no longer in kelompokOptions after status refresh, auto-reset kelompok to null (with a toast notification).
+- Actual: stale selection persists; user sees empty dashboard with the misleading "upload data" message (BUG-FE-6).
+- Suggested fix: add a useEffect in page.tsx (or FilterBar) that validates `kelompok` against `status.kelompokOptions`:
+  ```ts
+  useEffect(() => {
+    if (kelompok && status?.kelompokOptions && !status.kelompokOptions.includes(kelompok)) {
+      setKelompok(null);
+      toast({ title: 'Filter kelompok direset', description: `Kelompok "${kelompok}" tidak lagi tersedia setelah refresh data.` });
+    }
+  }, [status, kelompok, setKelompok, toast]);
+  ```
+  Note: same pattern applies to area, pic, outletCode — all filter values should be validated against the refreshed status payload.
+
+BUG-FE-10 — P4 (cosmetic) — Misleading comment in useAnalysis
+- File: src/hooks/useAnalysis.ts:361-364
+- Description: Comment says "PERF-OPT: memoize the URLSearchParams so the queryFn closure captures a stable reference across renders (was being rebuilt every render — fine functionally, but caused TanStack Query to see a new queryFn each render)." but the code is just `const searchParams = buildAnalysisSearchParams(params);` — no useMemo wrapper.
+- Expected: either remove the misleading comment or actually memoize.
+- Actual: comment doesn't match code. Functionally OK (TanStack uses queryKey for cache identity, not queryFn reference — so the rebuild-every-render is harmless), but the comment misleads future maintainers.
+- Suggested fix: remove the comment, OR replace with accurate note: "URLSearchParams is rebuilt every render — functionally harmless (TanStack caches by queryKey, not queryFn ref)." A useMemo wouldn't help anyway because `params` is a fresh object every render (page.tsx:192-202 constructs it inline).
+
+Stage Summary:
+- 10 bugs found, 0 fixed (read-only audit per task scope).
+- Severity breakdown: 1×P1 (BUG-FE-1 prefetch missing kelompok), 1×P2 (BUG-FE-2 outlet dropdown not filtered by kelompok), 7×P3 (BUG-FE-3 scorecardOutlet leak, BUG-FE-4 ExportDialog no filter preview, BUG-FE-5 loading inconsistency, BUG-FE-6 misleading empty state, BUG-FE-7 a11y aria-label, BUG-FE-8 no URL persistence, BUG-FE-9 stale kelompok after refresh), 1×P4 (BUG-FE-10 misleading comment).
+- Good news: every useQuery that fetches kelompok-dependent data (RestoRecommendationCard, RestoAnalysis single-reco, GlobalItemSearchModal cross-outlet + trend, ParetoDashboard, useAnalysis main) DOES include kelompok in both queryKey and URLSearchParams. The BUGFIX-KELOMPOK-GLOBAL task wired kelompok correctly into all 3 frontend components. No missing-queryKey bugs found.
+- Autocomplete query in GlobalItemSearchModal correctly OMITS kelompok from both queryKey and URL params (by design — autocomplete shows global item names). QueryKey is stable (all primitives).
+- The two highest-priority bugs (BUG-FE-1 + BUG-FE-2) are both in FilterBar.tsx and degrade the kelompok UX: prefetch is silently broken when kelompok is active, and users can select outlets outside the selected kelompok leading to contradictory filters + confusing empty state.
+- Recommended fix order: BUG-FE-1 + BUG-FE-2 first (both in FilterBar, ~5 lines each), then BUG-FE-6 (depends on BUG-FE-2 fix), then BUG-FE-5 + BUG-FE-7 + BUG-FE-4 (UX polish), then BUG-FE-9 + BUG-FE-3 (edge cases / latent), then BUG-FE-8 + BUG-FE-10 (informational / cosmetic).
+
+---
+Task ID: BUGHUNT-EDGE-3
+Agent: edge-case-bug-hunter (sub-agent)
+Task: Find edge-case bugs and cross-feature interaction issues in the kelompok filter. Trace through 15 scenarios mentally + verify with code reading. Read-only audit (no fixes applied).
+
+Work Log:
+- Read worklog sections BUGFIX-KELOMPOK-EMPTY (lines 19229-19271) + BUGFIX-KELOMPOK-GLOBAL (lines 19274-19331) + BUGHUNT-FE-2 (lines 19333-19439) to understand recent kelompok changes.
+- Audited 9 files: src/lib/queries/shared.ts, src/app/api/analysis/route.ts, src/app/api/export-report/route.ts, src/app/api/item-search/route.ts, src/app/api/pareto/route.ts, src/app/api/recommendations/route.ts, src/app/api/status/route.ts, src/lib/queries/items/global-search.ts, src/lib/queries/pareto.ts, src/lib/queries/outlets/resto-recommendations.ts, src/lib/aggregation-cache.ts, src/lib/rate-limit.ts, src/lib/pic-resolver.ts, src/lib/validation.ts, src/components/filters/SearchableComboBox.tsx, src/components/filters/FilterBar.tsx, src/components/drilldown/DrillDownDrawer.tsx, src/hooks/useDashboard.ts, src/hooks/useAnalysis.ts, prisma/schema.prisma.
+- Verified all 15 scenarios from the task description. Found 8 bugs (1×P2, 7×P3). See Findings section below.
+
+Findings (8 bugs — NO fixes applied, report only):
+
+BUG-EDGE-1 — P2 — Case-sensitivity inconsistency between SQL and JS kelompok paths
+- Files: src/lib/queries/shared.ts:79 (SQL, case-sensitive `=`), src/app/api/analysis/route.ts:373 (JS, case-insensitive `.toUpperCase()`), src/app/api/export-report/route.ts:313 (JS, case-insensitive `.toUpperCase()`).
+- Scenario 5: User sends kelompok="mlg" (lowercase) — e.g. via manually crafted URL or external integration. The SQL path uses PostgreSQL's `=` operator on text, which is case-sensitive by default: `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = 'mlg'` → compares 'MLG' = 'mlg' → FALSE → 0 outlets matched → all SQL aggregates (sales, top items, exec summary, etc.) return empty. The JS path uses `segs[segs.length-1].substring(0,3).toUpperCase() === kelompok.toUpperCase()` → matches 'MLG' outlets → rule evaluation flags (NORMAL/WARNING/ABNORMAL counts) computed normally.
+- Expected: both paths apply the same case-sensitivity, so SQL aggregates and JS rule evaluation agree.
+- Actual: hybrid state — dashboard shows empty SQL aggregates (Rp 0 sales, 0 top items) but non-zero rule flag counts (e.g. "11 outlets, 5 normal, 3 warning"). Confusing for users.
+- Also affects Scenario 6 (historical compareWeek): /api/analysis builds `currSlim` via the JS buildWhere (line 437) but runs `queryExecSummary(prevWeek, prevMonth, filterOpts)` via the SQL path (line 484). If kelompok is lowercase, current-period rule evaluation has data but previous-period SQL aggregates return empty → misleading growth comparison (current = X, previous = 0 → infinite growth %).
+- Mitigating factor: normal UI usage doesn't trigger this — the /api/status dropdown generates kelompokOptions via `.toUpperCase()` (status/route.ts:95) and the SearchableComboBox sends the option's exact value. So URL params are always uppercase via the UI. Only triggers via manual URL crafting or external integrations.
+- Suggested fix: either (a) make the SQL path case-insensitive — `LOWER(LEFT(SUBSTRING(code FROM '[^.]+$'), 3)) = LOWER(${opts.kelompok})` — OR (b) normalize kelompok to uppercase at every API entry point before reading URL params (`const kelompok = url.searchParams.get('kelompok')?.toUpperCase() || null`). Option (b) is simpler and also fixes BUG-EDGE-3's validation gap if combined with a Zod transform.
+
+BUG-EDGE-2 — P3 (latent) — Single-segment outlet code excluded by JS path but included by SQL path
+- Files: src/lib/queries/shared.ts:79 (SQL includes single-segment codes via `[^.]+$` matching the whole string), src/app/api/analysis/route.ts:371-372 (JS guard `if (segs.length < 2) return false`), src/app/api/status/route.ts:92-93 (same JS guard), src/app/api/export-report/route.ts:311-312 (same JS guard).
+- Scenario: If an outlet code has no dots (e.g. "BDGSET" instead of "1030.BDGSET"), the SQL `SUBSTRING(code FROM '[^.]+$')` matches the entire string (no dots to exclude) → `LEFT("BDGSET", 3)` = "BDG" → included in BDG kelompok. But the JS path's `code.split('.')` returns `["BDGSET"]` (length 1), and the `if (segs.length < 2) return false` guard excludes it.
+- Expected: both paths agree on whether single-segment codes belong to a kelompok.
+- Actual: SQL aggregates include the outlet's records in the kelompok; JS rule evaluation + dropdown exclude it → inconsistent counts.
+- Latent: doesn't trigger with current data (all outlet codes have dots — verified via schema comment "1030.BDGSET or B.1001.MLGPAR"), but would surface if a new outlet format without dots is introduced.
+- Suggested fix: remove the `if (segs.length < 2) return false` guard in all 3 JS paths (the substring logic handles single-segment codes correctly), OR add a `WHERE code LIKE '%.%'` guard to the SQL filter to match the JS behavior.
+
+BUG-EDGE-3 — P3 — kelompok (and area/pic/outletCode) missing from Zod validation schemas
+- Files: src/lib/validation.ts:41-49 (analysisQuerySchema — validates month/week/compareWeek/area/outlet/item/pic but NOT kelompok), :86-92 (recommendationsQuerySchema — validates month/week/prevWeek/prevMonth/limit but NOT area/pic/outletCode/kelompok), :118-122 (exportReportQuerySchema — validates only month/week/sections, NOT area/outlet/item/pic/kelompok/compareWeek/compareMonth).
+- Scenario: All three routes read kelompok via `url.searchParams.get('kelompok')` AFTER calling validateQuery, but since kelompok isn't in the schema, it bypasses Zod entirely. An attacker could send a 100KB kelompok string — Prisma parameterizes it (no SQL injection), but the SQL parser + DB connection could be stressed. Only /api/item-search validates kelompok (`z.string().max(50).optional()` at item-search/route.ts:34).
+- Expected: all filter params validated for length/format at the API boundary.
+- Actual: unbounded string inputs accepted for kelompok/area/pic/outletCode across 3 routes.
+- Suggested fix: add `kelompok: z.string().max(50).optional()` (and similar for area/pic/outletCode) to all 3 schemas, and switch from `url.searchParams.get(...)` to reading from the parsed Zod output.
+
+BUG-EDGE-4 — P3 (theoretical) — Cache key pipe-separator collision risk
+- File: src/lib/aggregation-cache.ts:51-61 (buildCacheKey joins 9 fields with `|`).
+- Scenario: If any filter value contains a literal `|` (pipe), the joined cache key could theoretically collide with a different filter combination. E.g. kelompok="BDG|MLG" + area=null produces key fragment `...|ALL|BDG|MLG|ALL|...`, which could be mis-parsed as kelompok="BDG" + outletCode="MLG|ALL". Purely theoretical — UI only sends uppercase 3-letter codes (no pipes), and BUG-EDGE-3 doesn't restrict kelompok format, so a malicious URL could craft a colliding key.
+- Expected: cache keys are unambiguous regardless of filter value content.
+- Actual: pipe-separated keys assume filter values never contain pipes (unverified assumption).
+- Suggested fix: use a separator unlikely to appear in filter values (e.g. `\x1f` ASCII unit separator), or JSON.stringify the filter object as the cache key (deterministic + unambiguous).
+
+BUG-EDGE-5 — P3 (performance) — kelompokOutletCodes fetches ALL outlets then filters in JS
+- Files: src/app/api/analysis/route.ts:367 (`db.outlet.findMany({ select: { code: true } })`), src/app/api/export-report/route.ts:307 (same).
+- Scenario: Every request with kelompok set fetches ALL outlet codes from the DB (currently ~333 rows, but unbounded as data grows) into Node.js memory, then filters in JS via `.filter()`. On a 10K-outlet DB this would be ~10K rows fetched per request just to extract ~5-30 matching codes.
+- Expected: filter pushed to SQL so only matching rows are transferred.
+- Actual: full-table fetch + JS filter on every kelompok-filtered request. ~5-15ms overhead at 333 outlets, grows linearly.
+- Not a correctness bug, but a scalability concern. The SQL path (buildSqlFilters) already does this correctly via an inline sub-select — the JS path was added because Prisma's WhereInput can't express `LEFT(SUBSTRING(...))`.
+- Suggested fix: replace the findMany+filter with a raw SQL query: `db.$queryRaw\`SELECT code FROM "Outlet" WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = ${kelompok}\``. Returns only matching codes (~5-30 rows) instead of all outlets.
+
+BUG-EDGE-6 — P3 — No proactive cleanup of expired AggregationCache entries
+- File: src/lib/aggregation-cache.ts:69-88 (getCached lazily deletes expired entries only when read).
+- Scenario: When a cache entry expires, it's only deleted if someone tries to read it again (lazy deletion at line 76). Entries that are never re-queried (e.g. old filter combinations the user no longer uses) linger in the AggregationCache table forever. Over months of usage with many filter permutations, the table grows unbounded.
+- Expected: expired entries proactively cleaned up (e.g. daily cron).
+- Actual: lazy deletion only. Storage grows monotonically with distinct filter combinations.
+- Mitigating factor: the schema has `@@index([computedAt])` (schema.prisma:202) for fast TTL queries, but no scheduled cleanup job uses it.
+- Suggested fix: add a cron job (or a cleanup-on-read heuristic that occasionally runs `DELETE FROM "AggregationCache" WHERE "computedAt" < NOW() - INTERVAL '1 hour'`). Vercel Cron or a lightweight cleanup endpoint triggered periodically would suffice.
+
+BUG-EDGE-7 — P3 (scalability) — SearchableComboBox renders all options without virtualization
+- File: src/components/filters/SearchableComboBox.tsx:117-135 (`filtered.map(option => <CommandItem ...>)`).
+- Scenario 15(a): For the kelompok dropdown with ~20 options, rendering all items is fine. But the same component is reused for the Outlet dropdown (333 outlets) and Area dropdown (14 areas). If kelompok options grow to 1000+ (e.g. after ingesting a large dataset), the dropdown could render slowly on open.
+- Expected: large option lists virtualized for smooth UX.
+- Actual: all options rendered as DOM nodes. Performance acceptable at current scale (~20 kelompok, 333 outlets) but would degrade at 1000+.
+- Suggested fix: integrate @tanstack/react-virtual (already a dependency — used in DrillDownDrawer:13) for the CommandList when `options.length > 100`. Or document a hard cap on options length.
+
+BUG-EDGE-8 — P3 (cosmetic) — Potential duplicate CommandEmpty rendering in SearchableComboBox
+- File: src/components/filters/SearchableComboBox.tsx:103 (CommandEmpty outside CommandGroup) + :136-138 (conditional CommandEmpty inside CommandGroup).
+- Scenario 15(c): When `options=[]` (fresh DB, empty kelompokOptions) or `filtered=[]` (no search match), both CommandEmpty blocks could render, showing two "No results found." / "Kelompok tidak ditemukan." messages.
+- Expected: single empty-state message.
+- Actual: depends on cmdk's internal logic with `shouldFilter={false}` (line 92). The outer CommandEmpty (line 103) may or may not auto-render based on cmdk's item-count detection; the inner conditional (line 136) is a manual fallback. If both fire, user sees duplicate messages.
+- Suggested fix: remove the outer CommandEmpty (line 103) and rely solely on the inner conditional, OR vice versa. Test with empty `options` prop to confirm which one fires.
+
+Non-bugs (verified correct — no action needed):
+- Scenario 1 (kelompok=BDG + area=JAWA TIMUR 1, BDG outlets are in JAWA BARAT 1): buildSqlFilters generates `AND outletId IN (BDG outlets) AND area = 'JAWA TIMUR 1'` → AND of two disjoint sets → 0 rows. ✓ Correct. JS path: buildWhere sets `w.area = 'JAWA TIMUR 1'` + `w.outlet = { code: { in: kelompokOutletCodes } }` → Prisma ANDs them → 0 rows. ✓ Correct.
+- Scenario 2 (kelompok=MLG + pic=Andi where Andi manages JKT outlets): JS path line 337 `intersect = kelompokOutletCodes.filter(c => picCodes.includes(c))` → empty array → sentinel `['__NO_MATCH__']` → 0 rows. ✓ Correct. SQL path: AND of kelompok IN-subquery + picOutletCodes IN-subquery → 0 rows. ✓ Correct.
+- Scenario 3 (kelompok=BDG + outletCode="1353.SORTAB" not in BDG): JS path line 340 `kelompokOutletCodes.includes(outletCode) ? outletCode : '__NO_MATCH__'` → '__NO_MATCH__' → 0 rows. ✓ Correct. SQL path: AND of two IN-subqueries with disjoint sets → 0 rows. ✓ Correct.
+- Scenario 4 (kelompok with regex special chars like `.+*`): The `[^.]+$` regex in shared.ts:79 is a HARDCODED literal, not user input. The `${opts.kelompok}` is bound as a SQL parameter (Prisma.sql template), so it's treated as a plain string in the `=` comparison — no regex injection. Even if kelompok=".*+", the SQL just tries to match a 3-char string ".*+" which no outlet has → 0 rows. ✓ Safe.
+- Scenario 7 (kelompok + trend mode across all periods): queryItemTrend (global-search.ts:169-223) uses buildSqlFilters with kelompok → filter applies to ALL periods. Since outlet codes are immutable (Outlet.code doesn't change over time), the same outlets match the kelompok across all historical periods. ✓ Correct. (Edge case: if an outlet's code was renamed historically, the Outlet table only stores the latest code — but this is a data integrity issue, not a kelompok filter bug.)
+- Scenario 8 (kelompok + pareto nested): queryParetoNestedItemOutlet (pareto.ts:261-361) uses the SAME `f` filter (buildSqlFilters output) in both Step 1 (top items, line 279) and Step 2 (per-item outlet breakdown, line 311). ✓ Consistent. Note: queryParetoByKelompok intentionally does NOT receive the kelompok filter (pareto/route.ts:58 passes `{ area, picOutletCodes }` without kelompok) — this is BY DESIGN so the byKelompok card shows all kelompoks for comparison context (per worklog BUGFIX-KELOMPOK-EMPTY verification: "byKelompok 20 (intentionally shows all for comparison)").
+- Scenario 9 (kelompok + drilldown): DrillDownDrawer.tsx fetches /api/drilldown with outletCode + itemName + weekLabel + monthLabel + limit + cursor (lines 54-62). It does NOT pass kelompok — but this is correct because the drilldown is scoped to a specific outlet (kelompok is implicit). The drawer contains only a source-records table + derived-metrics panel — no "related items" or "peer comparison" sections that would need kelompok filtering. ✓ Correct. (PeerComparison.tsx is a separate component that's scoped to focusOutlet, not part of DrillDownDrawer.)
+- Scenario 10 (kelompok + Word export sections): All sections in export-report/route.ts use `filterOpts` (line 349-355, includes kelompok). Verified: exec (queryExecSummary:451), growth (trendAggRows:476), topItems (queryTopItemsByNominal:468 etc.), breakdown (queryDeviationBreakdown:475), area (queryAreaAnalysis:474), variance (computeVarianceAnalysis from currentRecs/prevRecs filtered via buildWhere:406/410), consistency (queryTopItemsByDeviasiRank:488), trend (queryTrendAgg:476), historical (computeHistoricalAnalysis from recsWithFlags:552), restoPriority (queryOutletHealthRanking:557), itemCrossOutlet (queryGlobalItemSearch with filterOpts.kelompok:562-565). ✓ All sections respect kelompok.
+- Scenario 11 (cache invalidation): buildCacheKey (aggregation-cache.ts:51-61) includes `parts.kelompok || 'ALL'` at position 6. Different kelompok values produce different cache keys → no poisoning. ✓ Correct. (BUG-EDGE-6 notes the unrelated storage-growth concern.) The in-memory `inflightPromises` Map (line 28) auto-cleans via `promise.finally(() => inflightPromises.delete(cacheKey))` (line 131-132) — no memory leak.
+- Scenario 12 (kelompok + rate limiting): rateLimit is keyed by `item-search:${ip}` (item-search/route.ts:42), `pareto:${ip}` (pareto/route.ts:21), etc. — per-IP, not per-filter. Rapid kelompok changes from one user all count toward the same IP bucket (60 req/min for analysis-tier routes). This is intentional design — rate limit protects the server, not per-filter fairness. ✓ Not a bug. (Power users hitting 60 req/min would be rate-limited regardless of kelompok.)
+- Scenario 13 (empty Outlet table): JS path — kelompokOutletCodes resolves to `[]` (no outlets match) → buildWhere line 330-332 sets `w.outlet = { code: { in: ['__NO_MATCH__'] } }` → 0 rows. ✓ Correct, no crash. SQL path — `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = ${kelompok}` returns no rows from empty Outlet sub-select → outletId IN (empty) → 0 rows. ✓ Correct. /api/status returns kelompokOptions=[] → dropdown shows "Semua Kelompok (0)" — no crash.
+- Scenario 14 (kelompok + item name with special chars): Both kelompok and itemName use Prisma.sql template literals (shared.ts:79, 92) which automatically parameterize — safe from SQL injection. Apostrophes, semicolons, etc. in itemName are passed as parameter values, not interpolated. ✓ Safe. (Unrelated note: itemName uses LIKE with `%${itemName}%` — if itemName contains `%` or `_`, those become LIKE wildcards. E.g. itemName="100% Beef" matches "100X Beef" too. This is a pre-existing issue unrelated to kelompok — out of scope.)
+- Scenario 15 (SearchableComboBox UI): (a) 151 options — renders fine without virtualization (BUG-EDGE-7 notes scalability concern beyond 1000). (b) Duplicate kelompok values — /api/status dedupes via `new Set(...)` (status/route.ts:90) before sending to UI. ✓ No duplicates. (c) Empty kelompokOptions — dropdown opens with empty list, shows "Kelompok tidak ditemukan." (potential duplicate via BUG-EDGE-8). (d) Rapid selection changes — handleSelect calls onValueChange + setOpen(false) + setSearch(''), React 18 batches state updates, only last selection sticks. ✓ OK. Also: useDashboard.setKelompok (line 56) clears outletCode + focusOutlet on kelompok change, preventing contradictory stale outlet selection. ✓ Good UX.
+
+Stage Summary:
+- 8 bugs found, 0 fixed (read-only audit per task scope).
+- Severity breakdown: 1×P2 (BUG-EDGE-1 case-sensitivity inconsistency), 7×P3 (BUG-EDGE-2 single-segment code latent, BUG-EDGE-3 missing Zod validation, BUG-EDGE-4 cache key pipe collision, BUG-EDGE-5 perf full-table fetch, BUG-EDGE-6 no proactive cache cleanup, BUG-EDGE-7 no virtualization, BUG-EDGE-8 duplicate CommandEmpty).
+- The highest-priority bug (BUG-EDGE-1) is a real correctness issue but only triggers via manual URL crafting or external integrations — normal UI usage always sends uppercase kelompok (dropdown enforces it). Severity could be argued as P3 if the team considers only UI-driven inputs in scope.
+- Good news: the core kelompok filter logic (intersection of kelompok + area + PIC + outletCode) is CORRECT in both SQL and JS paths for all realistic scenarios (1, 2, 3, 6, 7, 8, 10, 13, 14). The BUGFIX-KELOMPOK-EMPTY + BUGFIX-KELOMPOK-GLOBAL fixes are solid. No data-corruption or crash bugs found.
+- The SQL `[^.]+$` regex is safe (hardcoded literal, not user input) — no regex injection risk in scenario 4.
+- The cache key includes kelompok (BUGFIX-KELOMPOK-EMPTY fix verified) — no cache poisoning.
+- All 11 Word export sections respect kelompok (verified individually) — no missed sections.
+- DrillDownDrawer correctly omits kelompok (scoped to specific outlet — kelompok is implicit).
+- Recommended fix order: BUG-EDGE-1 first (correctness, ~1 line fix via `.toUpperCase()` normalization at API entry), then BUG-EDGE-3 (validation hardening, ~5 lines per schema), then BUG-EDGE-5 (perf, ~3 lines per route), then BUG-EDGE-2 + BUG-EDGE-4 (latent/theoretical, low priority), then BUG-EDGE-6 + BUG-EDGE-7 + BUG-EDGE-8 (operational/cosmetic).
+
+---
+Task ID: BUGHUNT-BE-1
+Agent: Backend Bug Hunter (Z.ai Code)
+Task: Audit backend SQL + logic for kelompok filter feature. Find bugs in SQL correctness, logic edge cases, and cross-route consistency. Do NOT fix — report only.
+
+Work Log:
+- Read worklog sections BUGFIX-KELOMPOK-EMPTY (lines 19229-19272) and BUGFIX-KELOMPOK-GLOBAL (lines 19274-19332) to understand the 2 prior fix cycles.
+- Audited 11 files: shared.ts, pareto.ts, status/route.ts, analysis/route.ts, recommendations/route.ts, item-search/route.ts, export-report/route.ts, global-search.ts, resto-recommendations.ts, aggregation-cache.ts, validation.ts.
+- Cross-referenced all kelompok-related code paths: SQL filter (buildSqlFilters), Prisma filter (buildWhere in analysis + export-report), cache key (buildCacheKey), response filters object, Zod validation schemas, and TypeScript filter type signatures.
+- Verified 12 specific audit items from the task brief.
+
+Stage Summary:
+- 11 bugs found (0×P0, 1×P1, 4×P2, 6×P3). NO critical/data-corrupting bugs — the kelompok filter is functionally correct for the normal flow (uppercase kelompok from frontend dropdown).
+- The single P1 (BUG-BE-1) is a case-sensitivity inconsistency between the SQL path (no UPPER() normalization) and the Prisma path (.toUpperCase()). Only triggered by lowercase kelompok in URL (frontend never sends lowercase, but manual URL or programmatic API calls could).
+- 4×P2: (1) case sensitivity SQL vs Prisma, (2) performance — kelompokOutletCodes fetches ALL outlets per request, (3) byKelompok dimension design undocumented inline, (4) status route kelompokOptions excludes no-dot outlets (inconsistent with SQL filter).
+- 6×P3: incomplete TS type signatures across 9 query files, /api/recommendations missing filters in response, inconsistent Zod schemas, dead code (kelompokOutletCodes !== null), audit log missing kelompok, missing withStatementTimeout on global-search queries, cache key uses raw kelompok.
+- BUGFIX-KELOMPOK-EMPTY + BUGFIX-KELOMPOK-GLOBAL are SOLID — the core kelompok filter logic (SQL expression, Prisma intersection, cache key, response object) is correct. Bugs found are edge cases, polish, and documentation gaps.
+- Files with NO kelompok bugs: pareto.ts (correct), aggregation-cache.ts (correct), resto-recommendations.ts (correct type signature).
+- See detailed bug report in the task response message.
+
+---
+Task ID: BUGHUNT-PERF-4
+Agent: general-purpose (perf + cache + type-safety bug hunter)
+Task: Find bugs related to performance, caching, type safety, and code quality in the kelompok filter implementation (post BUGFIX-KELOMPOK-EMPTY + BUGFIX-KELOMPOK-GLOBAL).
+
+Work Log:
+- Read worklog sections BUGFIX-KELOMPOK-EMPTY (line 19229) + BUGFIX-KELOMPOK-GLOBAL (line 19274) to understand the recent kelompok filter rollout across 5 API routes + 8 query modules + 3 frontend components.
+- Audited cache layer (`src/lib/aggregation-cache.ts`), all 5 kelompok-aware API routes, all 7 query modules in `src/lib/queries/`, `prisma/schema.prisma` indexes, Zod validation schemas, and the in-flight Promise map lifecycle.
+- Verified TypeScript structural typing behavior with a standalone reproduction (`/tmp/tsc-test2.ts`) — confirmed that the current pattern works at runtime but is fragile under destructuring refactors.
+- Ran `bunx tsc --noEmit --project tsconfig.json` → exit 0, zero type errors (confirming the type-safety gap is NOT caught by TypeScript).
+
+Bugs Found (11 total — DO NOT FIX, report only):
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-1 (P1) — In-flight Promise never settled on 404 "No records" path
+═══════════════════════════════════════════════════════════════
+File: src/app/api/analysis/route.ts:448-453
+Description:
+  At line 204, `setInflight(cacheKey, computationPromise)` registers the Promise
+  in the module-level `inflightPromises` Map. The Promise is only settled by
+  `resolveComputation(result)` (line 985, success path) or `rejectComputation?.(e)`
+  (line 1007, catch path). BUT the early-return at line 448-453 (when
+  `currSlim.length === 0`) returns 404 WITHOUT calling either — the return is
+  inside the try block, so the catch block is NOT entered.
+  
+  Consequences:
+  1. MEMORY LEAK: the `inflightPromises` entry is never deleted (the `.finally()`
+     auto-cleanup in `setInflight` never fires because the Promise never settles).
+     Each unique "no records" query (e.g., kelompok=ZZZ) accumulates a permanent
+     entry in the Map until the serverless instance dies.
+  2. CONCURRENT REQUEST HANG: any concurrent request for the same cache key
+     arrives, calls `getInflight(cacheKey)`, sees the still-pending Promise,
+     and `await inflight` (line 174) hangs FOREVER → dashboard stuck.
+  
+  This is especially likely now that kelompok filtering is global — a user
+  selecting a non-existent kelompok (e.g., "ZZZ") triggers this path.
+  
+Performance impact:
+  Memory: ~1 entry per unique "no records" filter combo (leaks until cold start).
+  Latency: concurrent requests hang indefinitely (until socket timeout).
+Suggested fix:
+  Before the 404 return at line 449, call:
+    `rejectComputation(new Error('No records found for ' + month + '/' + week));`
+  This settles the Promise → `.finally()` fires → Map entry deleted → concurrent
+  requests get the rejection (caught by their catch block → 500, which is
+  acceptable; or change the concurrent-await branch to handle the rejection
+  gracefully and re-return 404).
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-2 (P2) — Type-safety gap: filter type signatures missing `kelompok`
+═══════════════════════════════════════════════════════════════
+Files (19 functions across 7 modules):
+  - src/lib/queries/dashboard.ts:33 (queryTrendAgg), :120 (queryExecSummary),
+    :184 (queryDeviationBreakdown), :232 (queryDeviationBreakdownDrivers),
+    :269 (queryLossVsSurplus), :297 (queryCostImpact)
+  - src/lib/queries/items/top-items.ts:19 (queryTopItemsByNominal), :56
+    (queryTopItemsByDevBom), :107 (queryTopItemsByDeviasiRank), :367
+    (queryTopItemsByCategory), :420 (queryHistoricalCategoryAvg), :476
+    (queryItemConsistency)
+  - src/lib/queries/health-ranking.ts:60 (queryOutletHealthRanking), :198
+    (queryVarianceAnalysis), :307 (queryHistoricalCriticalItems)
+  - src/lib/queries/areas.ts:18 (queryAreaAnalysis), :109 (queryTrendByArea)
+  - src/lib/queries/historical.ts:20 (queryHistoricalStats)
+  - src/lib/queries/rule-evaluation.ts:37 (evaluateRulesSql)
+  - src/lib/queries/growth-drivers.ts:48 (FilterOpts interface → queryGrowthDrivers)
+Description:
+  These functions declare their `filters` parameter as:
+    `{ area?: string | null; outletCode?: string | null; itemName?: string | null; picOutletCodes?: string[] | null }`
+  — WITHOUT `kelompok`. But the analysis route passes `filterOpts` (which HAS
+  kelompok) to all of them.
+  
+  TypeScript ALLOWS this via structural typing (an object with extra properties
+  is assignable to a type with fewer properties — excess property checks only
+  apply to object literals, not variables). At runtime, `buildSqlFilters(filters)`
+  reads `opts.kelompok` correctly because JavaScript doesn't erase properties.
+  
+  VERIFIED with standalone reproduction:
+    Current pattern (passes filters object) → "kelompok=BDG" ✓
+    Refactored pattern (destructures { area, outletCode }) → "no kelompok" ✗
+  
+  The code WORKS today, but is FRAGILE: a naive refactor to destructuring
+  (e.g., `const { area, outletCode } = filters; return buildSqlFilters({ area, outletCode });`)
+  would SILENTLY DROP the kelompok filter with no TypeScript error.
+  
+Performance impact: None (runtime correct). Type-safety / maintainability risk.
+Suggested fix:
+  Option A (minimal): Add `kelompok?: string | null` to each filter type.
+  Option B (preferred): Extract a shared type in shared.ts:
+    `export interface SqlFilterOpts { area?: string | null; kelompok?: string | null; outletCode?: string | null; itemName?: string | null; picOutletCodes?: string[] | null; }`
+  and use it everywhere. This makes the contract explicit and refactor-safe.
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-3 (P2) — Redundant outlet fetch on every request when kelompok is set
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/analysis/route.ts:367
+  - src/app/api/export-report/route.ts:307
+Description:
+  Both routes do `const allOutlets = await db.outlet.findMany({ select: { code: true } })`
+  on EVERY request when kelompok is set. With 341 outlets, this fetches ~5KB
+  and adds ~2-5ms per request (DB round-trip + serialization).
+  
+  The `statusCache` in `src/lib/cache.ts` (LRU, 5 min TTL) already caches the
+  full outlet list (fetched by `/api/status`). The analysis/export routes could
+  reuse this cache instead of re-querying the DB.
+  
+  Alternatively, the SQL path could be used:
+    `SELECT code FROM "Outlet" WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = $1`
+  which returns only matching codes (~5-30 rows) instead of all 341.
+  
+Performance impact: ~2-5ms per request × 1000 req/min = ~2-5s/min of DB time.
+Suggested fix:
+  Option A: Read from `statusCache.get('status')` (already cached, 5 min TTL).
+  Option B: Add a dedicated `kelompokOutletCache` LRU keyed by kelompok
+    (long TTL — outlets rarely change; invalidate on ingest).
+  Option C: Replace JS filter with SQL `WHERE LEFT(SUBSTRING(...)) = $1`.
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-4 (P2) — Code duplication: kelompokOutletCodes resolution logic
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/analysis/route.ts:365-375 (11 lines)
+  - src/app/api/export-report/route.ts:305-315 (11 lines)
+Description:
+  The EXACT same logic (fetch all outlets, filter by kelompok prefix via JS
+  split + substring + toUpperCase) is duplicated verbatim. The codebase already
+  has a `src/lib/pic-resolver.ts` for the analogous PIC→outletCodes resolution.
+  No `src/lib/kelompok-resolver.ts` exists.
+  
+  This duplication means:
+  - Bug fixes must be applied in 2 places (risk of drift).
+  - The performance optimization (BUG-PERF-3) must be applied in 2 places.
+  - The type-safety issue (filters object shape) is duplicated.
+  
+Suggested fix:
+  Create `src/lib/kelompok-resolver.ts` with:
+    `export async function resolveKelompokOutletCodes(kelompok: string | null): Promise<string[]>`
+  Mirrors `resolvePICOutletCodes` pattern (returns [] for null, sentinel-free).
+  Both routes call: `const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);`
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-5 (P2) — Code duplication: JS kelompok extraction in 3 places
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/app/api/analysis/route.ts:373
+  - src/app/api/status/route.ts:94-95
+  - src/app/api/export-report/route.ts:313
+Description:
+  The pattern `segs[segs.length - 1].substring(0, 3).toUpperCase()` (with the
+  `segs.length < 2` guard) is duplicated in 3 routes. The SQL equivalent
+  `LEFT(SUBSTRING(code FROM '[^.]+$'), 3)` is also duplicated in 3 places in
+  `src/lib/queries/` (shared.ts:79, pareto.ts:177+187, pareto.ts:393).
+  
+  The worklog (BUGFIX-KELOMPOK-EMPTY) explicitly states the goal was "All
+  kelompok extraction now uses a single consistent pattern" — but the pattern
+  itself is copy-pasted, not extracted to a shared function.
+  
+Suggested fix:
+  In `src/lib/kelompok-resolver.ts`:
+    `export function extractKelompokFromCode(code: string): string`
+  And for SQL:
+    `export const KETOLOMPOK_SQL_EXPR = Prisma.sql\`LEFT(SUBSTRING(code FROM '[^.]+$'), 3)\``
+  (or a function that takes an alias).
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-6 (P3) — Zod validation gap: kelompok not in 3 route schemas
+═══════════════════════════════════════════════════════════════
+Files:
+  - src/lib/validation.ts:41-49 (analysisQuerySchema) — NO kelompok
+  - src/lib/validation.ts:86-92 (recommendationsQuerySchema) — NO kelompok
+  - src/lib/validation.ts:118-122 (exportReportQuerySchema) — NO kelompok
+  - src/app/api/pareto/route.ts — reads kelompok directly, no Zod at all
+Description:
+  These 4 routes read `kelompok` via `url.searchParams.get('kelompok')` WITHOUT
+  Zod validation. A malformed kelompok (e.g., 1000 chars, SQL-like string) would
+  pass through. Prisma parameterizes safely (no SQL injection), but:
+  - A 1000-char kelompok would never match → 0 rows → confusing "No records
+    found" error instead of "kelompok too long".
+  - The `kelompokOutletCodes` JS filter would call `.toUpperCase()` on a
+    1000-char string (minor CPU waste).
+  
+  The `itemSearchQuerySchema` (src/app/api/item-search/route.ts:34) correctly
+  has `kelompok: z.string().max(50).optional()` — this should be the standard.
+  
+Performance impact: Negligible (no security issue, just UX).
+Suggested fix:
+  Add `kelompok: z.string().max(50).optional()` to analysisQuerySchema,
+  recommendationsQuerySchema, exportReportQuerySchema. Add a paretoQuerySchema
+  (currently pareto route has no Zod at all).
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-7 (P3) — Cache key fragmentation: 'all' vs null produce different keys
+═══════════════════════════════════════════════════════════════
+File: src/lib/aggregation-cache.ts:57
+Description:
+  `parts.kelompok || 'ALL'` treats the string `'all'` as truthy → cache key
+  uses `'all'`. But `null`/`undefined` → cache key uses `'ALL'`.
+  
+  The same logical request (no kelompok filter) could produce two different
+  cache keys:
+    - Request 1: `kelompok=all` → key `...|all|...` → miss → compute → cache
+    - Request 2: no kelompok param → key `...|ALL|...` → miss → compute → cache
+  
+  Two cache entries for the same data. Minor waste.
+  
+  In practice, the frontend (useDashboard.ts) stores `kelompok: string | null`
+  and only sends the param when non-null (useAnalysis.ts:341:
+  `if (params.kelompok) p.set('kelompok', params.kelompok)`). So the frontend
+  never sends `'all'`. But the backend's `kelompok !== 'all'` checks suggest
+  the route expects 'all' as a possible value — inconsistent.
+  
+  Same issue applies to `area` (line 56: `parts.area || 'ALL'`).
+  
+Performance impact: Minor cache fragmentation (only if 'all' is sent).
+Suggested fix:
+  Normalize before building the key:
+    `const normalizedKelompok = kelompok && kelompok !== 'all' ? kelompok : null;`
+    `buildCacheKey({ ..., kelompok: normalizedKelompok, ... });`
+  Or in buildCacheKey itself:
+    `(parts.kelompok && parts.kelompok !== 'all' ? parts.kelompok : 'ALL')`
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-8 (P3) — Cache key docstring example is misleading
+═══════════════════════════════════════════════════════════════
+File: src/lib/aggregation-cache.ts:32
+Description:
+  The docstring example:
+    `"analysis|2026-08|WEEK 1|WEEK 1|||Juli 2026|JAWA TIMUR 1|MLG|1016.MLGJAK|MINYAK MIE|Andi"`
+  uses `WEEK 1|||Juli 2026` — this is the URL PARAM format for cross-month
+  compare (`compareWeek=WEEK 1|||Juli 2026`), NOT the cache key format.
+  
+  The actual cache key format (from buildCacheKey) uses `|` as separator with
+  compareWeek and compareMonth in SEPARATE positions:
+    `analysis|{month}|{week}|{compareWeek}|{compareMonth}|{area}|{kelompok}|{outletCode}|{itemName}|{pic}`
+  
+  Correct example: `"analysis|2026-08|WEEK 1|WEEK 1|Juli 2026|JAWA TIMUR 1|MLG|1016.MLGJAK|MINYAK MIE|Andi"`
+  
+Suggested fix: Update the docstring to show the correct format.
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-9 (P3) — No tests for kelompok filter
+═══════════════════════════════════════════════════════════════
+Files: Searched all *.test.ts and *.spec.ts — zero mention of kelompok.
+Description:
+  The kelompok filter touches 5 API routes, 7 query modules, the cache key,
+  and 3 frontend components. None of it is tested. Existing test files:
+    - src/app/api/analysis/services/analysis-services.test.ts
+    - src/lib/validation.test.ts
+    - src/lib/format.test.ts
+    - src/lib/metrics/historical.test.ts
+    - src/lib/metrics/growth.test.ts
+    - src/engine/rules/evaluator.test.ts
+  
+  Scenarios that should be tested:
+  1. buildSqlFilters with kelompok set → SQL contains `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = $1`
+  2. buildSqlFilters with kelompok=null → SQL does NOT contain the kelompok clause
+  3. buildSqlFilters with kelompok='all' → treated as null (no clause) — CURRENTLY NOT NORMALIZED in buildSqlFilters
+  4. buildCacheKey with kelompok='BDG' vs kelompok=null → different keys
+  5. extractKelompokFromCode("1030.BDGSET") → "BDG"
+  6. extractKelompokFromCode("B.1001.MLGPAR") → "MLG"
+  7. extractKelompokFromCode("NODOT") → "" (or null)
+  8. resolveKelompokOutletCodes("BDG") → array of BDG codes
+  9. resolveKelompokOutletCodes("ZZZ") → [] (empty)
+  10. Analysis route with kelompok=BDG → response only contains BDG outlets
+  11. Cache invalidation on ingest → kelompok-specific entries cleared
+  12. In-flight Promise rejection on 404 (BUG-PERF-1) → no hang
+
+Suggested fix: Create `src/lib/queries/shared.test.ts` and
+  `src/lib/aggregation-cache.test.ts` with the above scenarios.
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-10 (P3) — No documentation for kelompok filter
+═══════════════════════════════════════════════════════════════
+Files: README.md (no mention), MASTER_CONTEXT.md (no mention).
+Description:
+  The kelompok filter is a user-facing feature (dropdown in FilterBar) but is
+  only documented in code comments and the worklog. The SQL extraction pattern
+  (`LEFT(SUBSTRING(code FROM '[^.]+$'), 3)`) and the JS extraction pattern
+  (`segs[segs.length-1].substring(0,3).toUpperCase()`) are non-obvious and
+  should be documented for future maintainers.
+  
+  Key facts to document:
+  - Kelompok = 3-char prefix of the outlet NAME segment (after the LAST dot)
+  - Two outlet code formats: "1030.BDGSET" (XXXX.YYYYYY) and "B.1001.MLGPAR" (B.XXXX.YYYYYY)
+  - Extraction: last dot-segment, first 3 chars, uppercase
+  - Supported by 5 routes: /api/analysis, /api/pareto, /api/recommendations, /api/item-search, /api/export-report
+  - NOT applicable to: /api/drilldown, /api/outlet-items, /api/peer-comparison, /api/item-history (scoped to specific outlet)
+  - Cache key includes kelompok (position 6 in the pipe-delimited key)
+  - In-flight Promise map keys by kelompok (concurrent different-kelompok requests don't collide)
+  
+Suggested fix: Add a "Kelompok Filter" section to README.md or create
+  `docs/kelompok-filter.md`.
+
+═══════════════════════════════════════════════════════════════
+BUG-PERF-11 (P3) — Response `filters` object missing `pic` (pre-existing)
+═══════════════════════════════════════════════════════════════
+File: src/app/api/analysis/route.ts:936
+Description:
+  `filters: { area, kelompok, outletCode, itemName }` — does NOT include `pic`.
+  The pareto route (src/app/api/pareto/route.ts:82) correctly includes `pic`:
+    `filters: { area: area || null, kelompok: kelompok || null, pic: pic || null }`
+  
+  This is a pre-existing inconsistency (not introduced by the kelompok work),
+  but it means the frontend can't display the active PIC filter from the
+  analysis response (it must rely on its own state).
+  
+  The export-report route (line 575) also omits pic:
+    `filters: { area, kelompok, outletCode, itemName }`
+  
+Suggested fix: Add `pic` to the filters response in both routes.
+
+═══════════════════════════════════════════════════════════════
+VERIFIED CORRECT (non-bugs)
+═══════════════════════════════════════════════════════════════
+1. Cache invalidation on data import: `invalidateCache('analysis|')` in
+   ingest-process, settings, pic, migrate-direction, data, DriveImportDialog —
+   ALL use the `analysis|` prefix, which matches ALL cache entries regardless
+   of kelompok value. ✓
+
+2. In-flight Promise map: kelompok IS in the cache key → concurrent requests
+   with different kelompok get different in-flight entries. ✓
+
+3. In-flight cleanup: `setInflight` attaches `.finally(() => inflightPromises.delete(cacheKey))`
+   — entry IS deleted on settle. ✓ (EXCEPT BUG-PERF-1 where the Promise never settles)
+
+4. SQL sub-select execution: `AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE ...)`
+   — the sub-select is NOT correlated (doesn't reference outer columns), so
+   PostgreSQL materializes it once. The `ir."outletId"` index
+   (`@@index([outletId, weekId])`) is used for the IN check. ✓
+
+5. Outlet.code index: `code String @unique` creates a B-tree index. The
+   `LEFT(SUBSTRING(code FROM '[^.]+$'), 3)` expression can't use this index
+   (it's a derived expression, not a direct column comparison). But Outlet
+   has only 341 rows → full scan is ~1-2ms. Acceptable. ✓
+
+6. `kelompokOutletCodes` memory: local variable (per-request) — no cross-request
+   leak. At 1000 req/min × 30 codes × ~10 bytes = ~300KB/min GC pressure.
+   Negligible. ✓
+
+7. `db.outlet.findMany` failure: propagates to route's catch block → 500 error.
+   NOT silent. The route does NOT proceed with empty `kelompokOutletCodes`. ✓
+
+8. `queryParetoByKelompok` and `queryParetoHistorical('kelompok', ...)` intentionally
+   do NOT pass kelompok filter (pareto/route.ts:58, :69) — correct, because
+   these functions GROUP BY kelompok (we want all kelompok values). ✓
+
+9. Cache key kelompok position (index 5 in the filter array): consistent between
+   buildCacheKey definition and the single caller in analysis/route.ts. No
+   off-by-one. ✓
+
+Stage Summary:
+- 11 bugs found across performance (3), type-safety (1), code quality (4: duplication ×2, validation, docs), cache correctness (2: leak + fragmentation), and consistency (1).
+- Severity breakdown: P1 ×1 (in-flight Promise leak on 404), P2 ×4 (type-safety, redundant fetch, duplication ×2), P3 ×6 (Zod, cache fragmentation, docstring, tests, docs, response shape).
+- The kelompok filter WORKS correctly at runtime in all 5 routes — the bugs are about robustness, maintainability, and edge cases (especially BUG-PERF-1 which causes concurrent request hangs on 404).
+- Cache correctness is VERIFIED: buildCacheKey includes kelompok, invalidateCache clears all kelompok variants, in-flight map keys by kelompok.
+- SQL performance is ACCEPTABLE for current scale (341 outlets, 54K records): sub-select materializes once, indexes used for IN check, full scan on Outlet is ~1-2ms.
+- Top priority fixes: BUG-PERF-1 (P1, concurrent hang), BUG-PERF-2 (P2, refactor fragility), BUG-PERF-4 (P2, extract shared helper — enables fixing BUG-PERF-3 + BUG-PERF-5 together).
+- No bugs were fixed (report-only per task instructions).
