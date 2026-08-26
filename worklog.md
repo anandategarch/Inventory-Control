@@ -19269,3 +19269,63 @@ Stage Summary:
   - src/lib/queries/pareto.ts (queryParetoByKelompok + queryParetoHistorical groupExpr)
   - src/lib/aggregation-cache.ts (buildCacheKey adds kelompok)
   - src/app/api/analysis/route.ts (cache key passes kelompok, buildWhere filters by kelompok, response includes kelompok)
+
+---
+Task ID: BUGFIX-KELOMPOK-GLOBAL
+Agent: main (Z.ai Code)
+Task: Fix bug where kelompok filter doesn't apply globally — some data (Resto Prioritas, Global Search, Word export) doesn't change when kelompok is selected.
+
+Work Log:
+- Root cause: kelompok filter was only wired into /api/analysis and /api/pareto (fixed in BUGFIX-KELOMPOK-EMPTY). Three other data-query routes were missing the kelompok param entirely:
+  1. /api/recommendations — Resto Prioritas card + Resto Analysis single-outlet
+  2. /api/item-search — Global Search (Cmd+K) cross-outlet + trend modes
+  3. /api/export-report — Word document export
+- Backend fixes:
+  - /api/recommendations: added `const kelompok = url.searchParams.get('kelompok')` + pass to filters object → queryRestoRecommendations
+  - /api/export-report: added kelompok read + kelompokOutletCodes resolution (pre-fetch matching outlet codes) + integrated into buildWhere (Prisma path for currentRecs/prevRecs) + filterOpts (SQL aggregates path) + queryGlobalItemSearch cross-outlet call
+  - /api/item-search: added kelompok to itemSearchQuerySchema + destructured from parse.data + pass to queryGlobalItemSearch (cross-outlet mode) + queryItemTrend (trend mode) + response filters object
+  - queryGlobalItemSearch + queryItemTrend: added kelompok to filters type signature + pass to buildSqlFilters
+  - queryRestoRecommendations: added kelompok to filters type signature (buildSqlFilters already handles it)
+- Frontend fixes (3 components):
+  - RestoRecommendationCard: destructure kelompok from useDashboard + pass to URLSearchParams + add to queryKey (so TanStack refetches when kelompok changes)
+  - RestoAnalysis: same pattern for the single-outlet recommendation query
+  - GlobalItemSearchModal: same pattern for both cross-outlet + trend mode queries
+- page.tsx export-report call: ALREADY passed kelompok (line 223) — no change needed.
+
+Verification:
+- tsc --noEmit: 0 errors
+- bun run lint: 0 errors (9 pre-existing warnings, all unrelated)
+- API tests via curl:
+  - /api/recommendations?kelompok=BDG → 5 outlets, all BDG (BDGBUA, BDGTER, BDGNAS) ✓
+  - /api/recommendations without kelompok → 5 outlets from various kelompok (SORTAB, TNGMER, CBNPEM) ✓
+  - /api/item-search cross-outlet MIE (V.20) & kelompok=BDG → 11 BDG outlets ✓
+  - /api/item-search cross-outlet without kelompok → 10 outlets from various areas ✓
+  - /api/export-report?kelompok=BDG → HTTP 200, 8.9KB ✓
+- Browser verification via Agent Browser (kelompok=BDG selected):
+  - Resto Prioritas Analisa card: shows BDGBUA (#1), BDGTER (#2) — all BDG ✓
+  - Global Search (Cmd+K) → MINYAK MIE (V.20) cross-outlet: "11 outlet" (all BDG: BDGNAS, BDGGAT, BDGDAG) ✓
+  - dev.log confirms all API calls include &kelompok=BDG and return 200 ✓
+- Committed + pushed to GitHub (commit 7e6fbeb).
+
+Stage Summary:
+- 3 backend routes + 2 query modules + 3 frontend components updated.
+- kelompok filter is now applied globally across ALL data-query routes that show filtered/aggregated data:
+  - /api/analysis ✓ (fixed in BUGFIX-KELOMPOK-EMPTY)
+  - /api/pareto ✓ (fixed in BUGFIX-KELOMPOK-EMPTY)
+  - /api/recommendations ✓ (fixed in this task)
+  - /api/item-search ✓ (fixed in this task)
+  - /api/export-report ✓ (fixed in this task)
+- Routes that DON'T need kelompok (scoped to specific outlet/item — no fix needed):
+  - /api/drilldown (specific outletCode + itemName)
+  - /api/outlet-items (specific outletCode)
+  - /api/peer-comparison (specific outletCode)
+  - /api/item-history (specific outletCode + itemName)
+- Files modified (8 total):
+  - src/app/api/recommendations/route.ts
+  - src/app/api/export-report/route.ts
+  - src/app/api/item-search/route.ts
+  - src/lib/queries/items/global-search.ts (queryGlobalItemSearch + queryItemTrend)
+  - src/lib/queries/outlets/resto-recommendations.ts (type signature)
+  - src/components/dashboard/RestoRecommendationCard.tsx
+  - src/components/dashboard/RestoAnalysis.tsx
+  - src/components/dashboard/GlobalItemSearchModal.tsx
