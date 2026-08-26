@@ -23,7 +23,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, type SqlFilterOpts } from './shared';
 
 export interface DriverEntry {
   item: string;
@@ -45,12 +45,10 @@ export interface GrowthDriverMetric {
   down: DriverResult;
 }
 
-interface FilterOpts {
-  area?: string | null;
-  outletCode?: string | null;
-  itemName?: string | null;
-  picOutletCodes?: string[] | null;
-}
+// Shared filter type re-exported from ./shared — kept as a local alias for
+// backwards-compat with internal call sites. New code should use SqlFilterOpts
+// directly from ./shared.
+type FilterOpts = SqlFilterOpts;
 
 // ============================================================
 //  Per-metric SQL aggregation

@@ -4,7 +4,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface GlobalItemSearchRow {
   itemName: string;
@@ -30,11 +30,7 @@ export async function queryGlobalItemSearch(
   week: string,
   month: string,
   itemNameFilter: string,
-  filters: {
-    area?: string | null;
-    kelompok?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 100
 ): Promise<GlobalItemSearchRow[]> {
   // Filter by exact item name (case-insensitive). Outlet filter is intentionally
@@ -168,11 +164,7 @@ export interface ItemTrendRow {
 
 export async function queryItemTrend(
   itemNameFilter: string,
-  filters: {
-    area?: string | null;
-    kelompok?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 500
 ): Promise<ItemTrendRow[]> {
   // No month/week filter — we want ALL periods. Only area + PIC + kelompok filters apply.

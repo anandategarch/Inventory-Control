@@ -5,7 +5,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ============================================================
 //  Resto Recommendation Engine — rank all outlets by priority
@@ -56,13 +56,7 @@ export async function queryRestoRecommendations(
   week: string,
   prevWeek: string | null,
   prevMonth: string | null,
-  filters: {
-    area?: string | null;
-    kelompok?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 5
 ): Promise<RestoRecommendation[]> {
   const f = buildSqlFilters(filters);

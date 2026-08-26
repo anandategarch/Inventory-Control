@@ -7,7 +7,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, type SqlFilterOpts } from './shared';
 
 // ============================================================
 //  Area Analysis — GROUP BY area (Phase 2)
@@ -15,11 +15,7 @@ import { buildSqlFilters } from './shared';
 export async function queryAreaAnalysis(
   week: string,
   month: string,
-  filters: {
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<Array<{
   area: string;
   outletCount: number;
@@ -106,12 +102,8 @@ export interface AreaTrendRow {
   outletCount: number;
 }
 
-export async function queryTrendByArea(filters: {
+export async function queryTrendByArea(filters: SqlFilterOpts & {
   weekLabel?: string | null;
-  area?: string | null;
-  outletCode?: string | null;
-  itemName?: string | null;
-  picOutletCodes?: string[] | null;
 }): Promise<AreaTrendRow[]> {
   const f = buildSqlFilters({ ...filters, area: null }); // area=null to get ALL areas
   const weekFilter = filters.weekLabel

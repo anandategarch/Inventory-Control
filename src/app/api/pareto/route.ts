@@ -51,22 +51,30 @@ export async function GET(req: NextRequest) {
     };
 
     // Run all 6 Pareto queries in parallel
+    // DESIGN NOTE (BUG-BE-3): byKelompok + histKelompok intentionally OMIT the
+    // kelompok filter from their filterOpts — the byKelompok card shows ALL
+    // kelompok for comparison context (so the user can see how the selected
+    // kelompok ranks against others). All OTHER dimensions (byItem, byOutlet,
+    // byArea, byPIC, nested) correctly include kelompok in their filters.
+    // Do NOT "fix" by adding kelompok to byKelompok/histKelompok — it would
+    // break the comparison feature.
     const [byItem, byOutlet, byArea, byKelompok, byPIC, nested] = await Promise.all([
       queryParetoByItem(week, month, filters),
       queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }),
+      queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
       queryParetoByPIC(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoNestedItemOutlet(week, month, filters, 10),
     ]);
 
     // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
     // + merge histAvg + zScore into Pareto results
+    // DESIGN NOTE: histKelompok intentionally omits kelompok filter (same reason as byKelompok above).
     const [histItem, histOutlet, histArea, histKelompok, histPIC] = await Promise.all([
       queryParetoHistorical(week, month, 'item', filters),
       queryParetoHistorical(week, month, 'outlet', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoHistorical(week, month, 'area', { kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }),
+      queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
       queryParetoHistorical(week, month, 'pic', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
     ]);
 

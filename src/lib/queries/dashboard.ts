@@ -6,7 +6,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from './shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 // ============================================================
 //  Trend Query — per-period aggregates (Phase 1b)
@@ -30,11 +30,7 @@ export interface TrendAggRow {
   surplusNominal: number;
 }
 
-export async function queryTrendAgg(filters: {
-  area?: string | null;
-  outletCode?: string | null;
-  itemName?: string | null;
-  picOutletCodes?: string[] | null;
+export async function queryTrendAgg(filters: SqlFilterOpts & {
   weekLabel?: string | null; // FIX: filter trend to same weekLabel only (cumulative weeks)
 }): Promise<TrendAggRow[]> {
   const f = buildSqlFilters(filters);
@@ -120,12 +116,7 @@ export interface ExecSummaryRow {
 export async function queryExecSummary(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<ExecSummaryRow | null> {
   const f = buildSqlFilters(filters);
   // FIX H4 (AUDIT-7): wrap in withStatementTimeout — exec summary is critical path.
@@ -184,12 +175,7 @@ export async function queryExecSummary(
 export async function queryDeviationBreakdown(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<{ waste: number; susut: number; trial: number; residual: number; total: number }> {
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ waste: number; susut: number; trial: number; residual: number; total: number }[]>`
@@ -232,12 +218,7 @@ export interface DeviationDriverItemRow {
 export async function queryDeviationBreakdownDrivers(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<DeviationDriverItemRow[]> {
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<DeviationDriverItemRow[]>`
@@ -269,12 +250,7 @@ export async function queryDeviationBreakdownDrivers(
 export async function queryLossVsSurplus(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }> {
   const f = buildSqlFilters(filters);
   const rows = await db.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
@@ -298,12 +274,7 @@ export async function queryCostImpact(
   week: string,
   month: string,
   salesTotal: number,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<{
   wasteCost: number; susutCost: number; trialCost: number; residualCost: number; totalCost: number;
   wastePct: number; susutPct: number; trialPct: number; residualPct: number;

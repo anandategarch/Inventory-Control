@@ -4,7 +4,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface TopItemRow {
   itemName: string;
@@ -16,12 +16,7 @@ export interface TopItemRow {
 export async function queryTopItemsByNominal(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }>> {
   const f = buildSqlFilters(filters);
@@ -53,12 +48,7 @@ export async function queryTopItemsByNominal(
 export async function queryTopItemsByDevBom(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }>> {
   const f = buildSqlFilters(filters);
@@ -104,12 +94,7 @@ export async function queryTopItemsByDevBom(
 export async function queryTopItemsByDeviasiRank(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 20
 ): Promise<Array<{
   itemName: string;
@@ -364,12 +349,7 @@ export async function queryTopItemsByDeviasiRankForOutlet(
 export async function queryTopItemsByCategory(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }>> {
@@ -417,12 +397,7 @@ export async function queryTopItemsByCategory(
 // ============================================================
 export async function queryHistoricalCategoryAvg(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
 ): Promise<Map<string, { avgQty: number; avgNominal: number }>> {
   if (historicalPeriods.length === 0) return new Map();
@@ -473,12 +448,7 @@ export async function queryHistoricalCategoryAvg(
 export async function queryItemConsistency(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<Array<{
   itemName: string;
   outletCount: number;

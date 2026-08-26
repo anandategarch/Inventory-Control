@@ -44,6 +44,8 @@ import {
 } from '@/lib/queries';
 import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+// FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
+import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 // Phase 3: ExecutiveSummary type no longer needed here — buildExecSummaryFromSql
@@ -326,7 +328,10 @@ export async function GET(req: NextRequest) {
       // we resolve outlet codes here.
       // FIX: deferred resolution — we compute kelompokOutletIds once below (after
       // this function definition) and reference via closure. See kelompokOutletIds.
-      if (kelompok && kelompok !== 'all' && kelompokOutletCodes !== null) {
+      // FIX (BUG-BE-9): removed dead `kelompokOutletCodes !== null` check — it's
+      // always an array (never null). The empty-array check below handles the
+      // "no outlets match" case.
+      if (kelompok && kelompok !== 'all') {
         if (kelompokOutletCodes.length === 0) {
           // kelompok selected but no outlets match — sentinel to return 0 rows
           w.outlet = { code: { in: ['__NO_MATCH__'] } };
@@ -360,19 +365,13 @@ export async function GET(req: NextRequest) {
     // FIX (BUG-KELOMPOK-EMPTY): resolve kelompok → outlet codes ONCE for buildWhere.
     // The raw SQL path (buildSqlFilters) uses an inline sub-select, but Prisma's
     // WhereInput can't easily express LEFT(SUBSTRING(code, '[^.]+$'),3) = X.
-    // Pre-fetching the outlet code list (typically 5-30 codes per kelompok) is
-    // cheap (~1ms on indexed code column) and keeps buildWhere Prisma-friendly.
-    let kelompokOutletCodes: string[] = [];
-    if (kelompok && kelompok !== 'all') {
-      const allOutlets = await db.outlet.findMany({ select: { code: true } });
-      kelompokOutletCodes = allOutlets
-        .map((o) => o.code)
-        .filter((code) => {
-          const segs = code.split('.');
-          if (segs.length < 2) return false;
-          return segs[segs.length - 1].substring(0, 3).toUpperCase() === kelompok.toUpperCase();
-        });
-    }
+    //
+    // FIX (BUG-PERF-4 / BUG-BE-2): Replaced inline "fetch ALL outlets + JS filter"
+    // with the shared resolveKelompokOutletCodes helper, which does a single DB-level
+    // SQL filter (same LEFT(SUBSTRING(...)) expression as buildSqlFilters). This is
+    // ~5x faster (1 SQL query vs fetch-all + JS loop) and deduplicates the logic
+    // that was copy-pasted in export-report/route.ts.
+    const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
 
     // Shared filter options for SQL aggregate queries
     // FIX FILTER-2: apply sentinel for empty PIC list (buildSqlFilters skips empty arrays)
@@ -446,6 +445,14 @@ export async function GET(req: NextRequest) {
     ]);
 
     if (currSlim.length === 0) {
+      // FIX (BUG-PERF-1): MUST reject the in-flight computation Promise before
+      // returning 404. Without this, the computationPromise (registered via
+      // setInflight at the top of the handler) is never settled → stays in the
+      // inflightPromises Map forever → concurrent requests for the same cache
+      // key call getInflight() → see pending Promise → await hangs forever.
+      // This caused memory leak + concurrent request hangs when kelompok had
+      // no matching data (e.g., kelompok=ZZZ).
+      rejectComputation?.(new Error(`No records found for ${month} / ${week} with given filters.`));
       return NextResponse.json({
         success: false,
         message: `No records found for ${month} / ${week} with given filters.`,

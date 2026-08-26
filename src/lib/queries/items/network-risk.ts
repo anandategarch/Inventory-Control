@@ -4,7 +4,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface NetworkItemRiskOutlet {
   outletCode: string;
@@ -45,12 +45,7 @@ interface NetworkItemRiskRawRow {
 export async function queryNetworkItemRisk(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 10,
   deviationThreshold: number = 0.05,
 ): Promise<NetworkItemRisk[]> {

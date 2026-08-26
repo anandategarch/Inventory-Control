@@ -89,10 +89,20 @@ export function FilterBar() {
     return m && k === m.key;
   })?.[1] || [] : [];
   const pics = status?.pics || [];
-  // Filter outlets by area AND pic
+  // Filter outlets by area AND pic AND kelompok
+  // FIX (BUG-FE-2): previously only filtered by area + pic — user could select
+  // an outlet outside the selected kelompok → backend returns 0 rows → misleading
+  // "no data" error. Now filters by kelompok too, so the dropdown only shows
+  // outlets consistent with the active kelompok filter.
   const outlets = (status?.outlets || []).filter((o) => {
     if (area && o.area !== area) return false;
     if (pic && o.pic !== pic) return false;
+    if (kelompok) {
+      // Same extraction as backend: last dot-segment, first 3 chars, uppercase
+      const segs = o.code.split('.');
+      const oKelompok = (segs[segs.length - 1] || '').substring(0, 3).toUpperCase();
+      if (oKelompok !== kelompok.toUpperCase()) return false;
+    }
     return true;
   });
   const areas = status?.areas || [];
@@ -251,12 +261,17 @@ export function FilterBar() {
                           const weeksForMonth = status?.weeksByMonth?.[m.key] || [];
                           const lastWeek = weeksForMonth[weeksForMonth.length - 1];
                           if (!lastWeek) return;
+                          // FIX (BUG-FE-1): include kelompok in prefetch params
+                          // so the prefetch queryKey matches the live useAnalysis
+                          // queryKey. Without this, prefetch cache entries were
+                          // never reused when kelompok was active.
                           prefetchAnalysis({
                             month: m.label,
                             week: lastWeek,
                             compareWeek: null,
                             compareMonth: null,
                             area,
+                            kelompok,
                             outlet: outletCode,
                             item: itemName,
                             pic,
@@ -283,12 +298,14 @@ export function FilterBar() {
                         // when the user actually clicks).
                         onMouseEnter={() => {
                           if (!monthLabel) return;
+                          // FIX (BUG-FE-1): include kelompok in prefetch params
                           prefetchAnalysis({
                             month: monthLabel,
                             week: w,
                             compareWeek: null,
                             compareMonth: null,
                             area,
+                            kelompok,
                             outlet: outletCode,
                             item: itemName,
                             pic,

@@ -40,18 +40,36 @@ export async function withStatementTimeout<T>(
 }
 
 // ============================================================
+//  Shared filter options for all SQL aggregate queries.
+//
+//  FIX (BUG-PERF-2 / BUG-BE-6): Previously each query module declared its
+//  `filters` parameter as an inline type WITHOUT `kelompok`, even though
+//  `buildSqlFilters` (below) DOES read `opts.kelompok`. TypeScript's
+//  structural typing allowed this to "work" at runtime (extra props on a
+//  passed object are not erased), but the contract was fragile: a naive
+//  refactor to destructuring (e.g. `const { area, outletCode } = filters`)
+//  would silently drop the kelompok filter with no type error.
+//
+//  Centralising the filter shape here makes the contract explicit and
+//  refactor-safe. All query modules should use `SqlFilterOpts` for their
+//  `filters` parameter type.
+// ============================================================
+/** Shared filter options for all SQL aggregate queries. */
+export interface SqlFilterOpts {
+  area?: string | null;
+  kelompok?: string | null;
+  outletCode?: string | null;
+  itemName?: string | null;
+  picOutletCodes?: string[] | null;
+}
+
+// ============================================================
 //  Build filter conditions for raw SQL (Prisma.sql fragments)
 //  Returns an empty Prisma.sql fragment when no filters apply
 //  (Prisma.join requires ≥1 element, so handle empty case explicitly)
 // ============================================================
 export function buildSqlFilters(
-  opts: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-    kelompok?: string | null;
-  },
+  opts: SqlFilterOpts,
   alias: string = 'ir'
 ): Prisma.Sql {
   // FIX (DEEP-AUDIT-IR): `alias` param allows callers that use a different
@@ -76,7 +94,14 @@ export function buildSqlFilters(
     // LEFT(SUBSTRING(code FROM '[^.]+$'), 3) works for BOTH outlet code formats:
     //   "1030.BDGSET"  → SUBSTRING = "BDGSET" → LEFT 3 = "BDG" ✓
     //   "B.1001.MLGPAR" → SUBSTRING = "MLGPAR" → LEFT 3 = "MLG" ✓
-    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = ${opts.kelompok})`);
+    //
+    // FIX (BUG-BE-1 / BUG-EDGE-1): UPPER(${opts.kelompok}) normalizes the input to
+    // uppercase so the filter is case-insensitive. DB codes are stored uppercase
+    // ("MLGPAR"), so LEFT() returns uppercase. Without UPPER(), a lowercase
+    // `?kelompok=bdg` would compare "MLG" = "bdg" → FALSE → 0 rows → empty dashboard.
+    // The JS path (kelompokOutletCodes in analysis/export routes) already normalizes
+    // via .toUpperCase() — this makes the SQL path consistent.
+    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${opts.kelompok}))`);
   }
   if (opts.outletCode) {
     parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);

@@ -16,7 +16,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from './shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 import type { RuntimeThresholds } from '@/lib/settings';
 
 export interface SqlRuleFlag {
@@ -34,12 +34,7 @@ export async function evaluateRulesSql(
   month: string,
   prevWeek: string | null,
   prevMonth: string | null,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   thresholds: RuntimeThresholds,
 ): Promise<SqlRuleFlag[]> {
   const f = buildSqlFilters(filters);

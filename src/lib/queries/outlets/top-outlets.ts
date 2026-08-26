@@ -6,7 +6,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ============================================================
 //  Top Outlets — GROUP BY outletId (Phase 2)
@@ -27,12 +27,7 @@ export interface TopOutletRow {
 export async function queryTopOutlets(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 10
 ): Promise<TopOutletRow[]> {
   const f = buildSqlFilters(filters);
@@ -96,12 +91,7 @@ export async function queryTopOutlets(
 export async function queryTopOutletsBySales(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   limit: number = 10
 ): Promise<Array<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }>> {
   const f = buildSqlFilters(filters);

@@ -30,7 +30,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from './shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 // ============================================================
 //  Outlet Health Ranking — per-outlet aggregate (GROUP BY outlet)
@@ -57,12 +57,7 @@ export interface OutletHealthRow {
 export async function queryOutletHealthRanking(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
 ): Promise<OutletHealthRow[]> {
   const f = buildSqlFilters(filters);
 
@@ -195,12 +190,7 @@ export async function queryVarianceAnalysis(
   month: string,
   prevWeek: string | null,
   prevMonth: string | null,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
 ): Promise<{ topWorsened: VarianceRow[]; topImproved: VarianceRow[] }> {
   if (!prevWeek || !prevMonth) {
     return { topWorsened: [], topImproved: [] };
@@ -304,12 +294,7 @@ export interface HistoricalCriticalRow {
 export async function queryHistoricalCriticalItems(
   week: string,
   month: string,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  },
+  filters: SqlFilterOpts,
   flaggedKeys: Array<{ outletId: number; itemId: number; akunPenyesuaian: string | null }>,
 ): Promise<HistoricalCriticalRow[]> {
   if (flaggedKeys.length === 0) return [];

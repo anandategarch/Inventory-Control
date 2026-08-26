@@ -285,10 +285,21 @@ async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
     }
     if (!res.ok) {
       const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean };
-      // FIX: 404 with "No records found" is NOT an error — it means the selected
-      // month/week has no data uploaded yet. Return a friendly message instead of
-      // treating it as a server error.
+      // FIX: 404 with "No records found" is NOT always a missing-data issue.
+      // It can also mean the user selected contradictory filters (e.g.,
+      // kelompok=BDG + outlet=JKT, or kelompok=BDG + area=JAWA TIMUR 1 where
+      // no BDG outlets exist in that area). The old message ("Upload file Excel")
+      // was misleading — it hinted at missing data when the real cause was
+      // filter conflict. Now we check if any filter is active and tailor the
+      // message accordingly.
+      // FIX (BUG-FE-6 / BUG-EDGE-11): improved error message for contradictory filters.
       if (res.status === 404 && e.message?.includes('No records found')) {
+        const url = new URL(res.url);
+        const hasFilter = url.searchParams.get('area') || url.searchParams.get('kelompok')
+          || url.searchParams.get('outlet') || url.searchParams.get('pic') || url.searchParams.get('item');
+        if (hasFilter) {
+          throw new Error(`Tidak ada data untuk kombinasi filter ini. Periksa apakah filter Area, Kelompok, Outlet, atau PIC saling bertentangan (mis: kelompok=BDG + outlet di luar BDG). Coba reset filter atau ubah kombinasi.`);
+        }
         throw new Error(`Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih.`);
       }
       throw new Error(e.message || e.error || `HTTP ${res.status}`);

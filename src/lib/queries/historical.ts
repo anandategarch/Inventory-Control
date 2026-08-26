@@ -13,16 +13,11 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters } from './shared';
+import { buildSqlFilters, type SqlFilterOpts } from './shared';
 
 export async function queryHistoricalStats(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
-  filters: {
-    area?: string | null;
-    outletCode?: string | null;
-    itemName?: string | null;
-    picOutletCodes?: string[] | null;
-  }
+  filters: SqlFilterOpts
 ): Promise<Map<string, { mean: number; stdDev: number; n: number }>> {
   if (historicalPeriods.length === 0) return new Map();
 

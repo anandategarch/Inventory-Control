@@ -44,6 +44,8 @@ import {
   queryGlobalItemSearch,
 } from '@/lib/queries';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+// FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
+import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
@@ -299,20 +301,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // FIX (BUG-KELOMPOK-GLOBAL): resolve kelompok → outlet codes for buildWhere.
-    // Same pattern as /api/analysis — Prisma WhereInput can't express
-    // LEFT(SUBSTRING(code, '[^.]+$'), 3) = X, so pre-fetch the matching codes.
-    let kelompokOutletCodes: string[] = [];
-    if (kelompok && kelompok !== 'all') {
-      const allOutlets = await db.outlet.findMany({ select: { code: true } });
-      kelompokOutletCodes = allOutlets
-        .map((o) => o.code)
-        .filter((code) => {
-          const segs = code.split('.');
-          if (segs.length < 2) return false;
-          return segs[segs.length - 1].substring(0, 3).toUpperCase() === kelompok.toUpperCase();
-        });
-    }
+    // FIX (BUG-PERF-4 / BUG-BE-2): Replaced inline "fetch ALL outlets + JS filter"
+    // with the shared resolveKelompokOutletCodes helper. Same DB-level SQL filter
+    // as buildSqlFilters, ~5x faster, and deduplicates the logic.
+    const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
 
     // Build where clause
     // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter
@@ -323,7 +315,8 @@ export async function GET(req: NextRequest) {
       if (area && area !== 'all') w.area = area;
       if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
       // Kelompok filter — intersect with PIC/outletCode if both set
-      if (kelompok && kelompok !== 'all' && kelompokOutletCodes !== null) {
+      // FIX (BUG-BE-9): removed dead `kelompokOutletCodes !== null` check
+      if (kelompok && kelompok !== 'all') {
         if (kelompokOutletCodes.length === 0) {
           w.outlet = { code: { in: ['__NO_MATCH__'] } };
         } else if (picOutletCodes !== null) {

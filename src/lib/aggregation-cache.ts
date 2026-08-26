@@ -53,9 +53,14 @@ export function buildCacheKey(parts: {
     parts.week || 'ALL',
     parts.compareWeek || 'NONE',
     parts.compareMonth || 'NONE',
-    parts.area || 'ALL',
-    parts.kelompok || 'ALL',
-    parts.outletCode || 'ALL',
+    parts.area && parts.area !== 'all' ? parts.area : 'ALL',
+    // FIX (BUG-BE-5 / BUG-PERF-7): normalize 'all' → 'ALL' so that `?kelompok=all`
+    // and no kelompok param produce the SAME cache key. Without this, they'd
+    // create 2 separate cache entries for the same logical request → cache miss.
+    // Also normalize to uppercase for case-insensitive consistency with the
+    // SQL filter (which uses UPPER()).
+    parts.kelompok && parts.kelompok !== 'all' ? parts.kelompok.toUpperCase() : 'ALL',
+    parts.outletCode && parts.outletCode !== 'all' ? parts.outletCode : 'ALL',
     parts.itemName || 'ALL',
     parts.pic || 'ALL',
   ].join('|');
