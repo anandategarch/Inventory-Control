@@ -22,7 +22,7 @@ import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'luc
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
-import type { ItemTrendRow } from '@/lib/queries/items';
+import type { ItemTrendRow } from '@/lib/queries/items/global-search';
 
 // Lazy-load trend chart (Recharts = 5.4MB) — only loaded when user switches to Trend view
 const ItemTrendChart = dynamic(() => import('./ItemTrendChart').then(m => m.ItemTrendChart), { ssr: false, loading: () => (

@@ -35,7 +35,7 @@ import {
 } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
-import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items';
+import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-items';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;

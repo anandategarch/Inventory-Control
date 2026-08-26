@@ -26,7 +26,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets';
+import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets/peer-comparison';
 import { validateQuery, peerComparisonTrendQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';

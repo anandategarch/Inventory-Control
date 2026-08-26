@@ -5,8 +5,12 @@
 // ============================================================
 export * from './shared';
 export * from './dashboard';
-export * from './items';
-export * from './outlets';
+export * from './items/top-items';
+export * from './items/network-risk';
+export * from './items/global-search';
+export * from './outlets/top-outlets';
+export * from './outlets/peer-comparison';
+export * from './outlets/resto-recommendations';
 export * from './areas';
 export * from './historical';
 // SQL-OPTIMIZE: pushed computeOutletHealthRanking + computeVarianceAnalysis +

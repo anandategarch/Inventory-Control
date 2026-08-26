@@ -13,7 +13,7 @@ import { useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { fmtIDR } from '@/lib/format';
 import { getTooltipStyle } from '@/lib/chart-constants';
-import type { ItemTrendRow } from '@/lib/queries/items';
+import type { ItemTrendRow } from '@/lib/queries/items/global-search';
 
 // Distinct colors for up to 5 outlet lines (NO blue/indigo per design rules)
 const LINE_COLORS = ['#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'];

@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items';
+import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items/global-search';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
