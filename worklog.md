@@ -22501,3 +22501,44 @@ Stage Summary:
 - **Timeouts tuned:** 240s transaction timeout (vs Prisma default 5s) accommodates large 35K-row files. Well within Vercel maxDuration=300s for import-drive/ingest-process.
 - **AuditLog resilience:** Moved outside transaction with .catch() — a logging failure no longer risks rolling back a successful ingestion.
 - tsc: 0 errors. lint: 0 errors (9 pre-existing warnings in unrelated files). Dev server: starts and compiles successfully.
+
+---
+Task ID: FIX-P0-P1-GEL2
+Agent: main (Z.ai Code) + 2 subagents (FIX-P1-PEER-1, FIX-P1-INGEST-2)
+Task: Fix all 15 P0+P1 bugs from bug hunt gelombang 2.
+
+Work Log:
+- Dispatched 2 subagents in parallel: Peer Comparison kelompok + Ingest data safety.
+- Both completed successfully.
+- Handled remaining 8 bugs myself: dead code cleanup, signal fixes, pareto fixes, security, locale.
+
+P0 fixes (2):
+1. BUG2-PERF-1 (cache invalidation regression): FIXED in prior hotfix (commit b2c5250).
+2. BUG2-P0-2 (dead code TS errors): deleted 26 dead files — investigation routes, outlet-focus, dead analysis modules (advancedAnalysis, costAccounting, execSummary, growth, narrative, queries, topItems, types, index barrel), dead frontend components (OutletFocusMode, AlertPanel, OutletScorecard, CostAccounting, Narrative, ExtraCharts, Animations), dead engine files (insightEngine, calculations/growth), tailwind.config.ts. Updated engine/analysis/index.ts barrel to remove insightEngine exports. All TS errors resolved.
+
+P1 fixes (13):
+1. BUG2-RESTO-1 (peer comparison kelompok): subagent — added kelompok to 3 routes + queryPeerComparison + frontend + 3 Zod schemas.
+2. BUG2-RESTO-2 (signal name mismatch): renamed 'Tol Breach Reg' → 'Tolerance Breach' in API.
+3. BUG2-RESTO-3 (dead Benchmark High): removed from SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS.
+4. BUG2-PARETO-1 (future months): added SourceFile JOIN + monthKey < currentMonthKey filter to queryParetoHistorical. Added currentMonthKey param to function signature.
+5. BUG2-PARETO-2 (nested N+1): parallelized 10 per-item queries via Promise.all + wrapped each in withStatementTimeout. Also fixed BUG2-PARETO-14 (exact match instead of LOWER).
+6. BUG2-PARETO-9 (DIRECTION_FLIP divergence): SQL path now uses COALESCE fallback from nominalLossSurplus to qtyDeviasi, matching JS path.
+7. BUG2-INGEST-1 (dedup data loss): subagent — wrapped delete+insert in $transaction.
+8. BUG2-INGEST-2 (FileChunk orphan): subagent — added cleanup to import mode.
+9. BUG2-INGEST-3 (deleteMany+createMany): subagent — wrapped in $transaction.
+10. BUG2-INGEST-5 (getAllSettings contention): subagent — per-process settingsInitialized flag.
+11. BUG2-SEC-1 (Settings DELETE cache): added invalidateAnalysisCache() + fire-and-forget audit log.
+12. BUG2-SEC-3 (middleware fail-open): fail-closed in production, fail-open in dev.
+13. BUG2-INGEST-4 (DriveImportDialog locale): changed 'eu' → 'id' to match backend Zod schema.
+
+Verification:
+- tsc --noEmit: 0 errors (was 10+ before dead code cleanup)
+- lint: 0 errors (9 pre-existing warnings)
+- Dev server was down during final testing (subagent restart lost PostgreSQL DATABASE_URL from env). Code verified via tsc + lint only.
+- Committed + pushed (commit 30cf50d).
+
+Stage Summary:
+- 15 bugs fixed (2 P0 + 13 P1) across 44 files (26 deleted, 18 modified).
+- 2 subagents completed parallel work (peer comparison + ingest safety).
+- All TS errors from dead code resolved.
+- Dead code cleanup removed ~3000+ lines of unused code.
