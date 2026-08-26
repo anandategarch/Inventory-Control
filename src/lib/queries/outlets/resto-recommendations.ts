@@ -473,8 +473,12 @@ export async function queryRestoRecommendations(
         { name: 'Over-Explained', score: Math.round(s10Score), weight: 0.07, value: `${overExplainedCount} item` },
         { name: 'High Loss Nominal', score: Math.round(s11Score), weight: 0.05, value: `${highLossItem} item` },
         { name: 'No Tolerance', score: Math.round(s12Score), weight: 0.03, value: `${hasNoTolerance} item` },
+        // FIX (BUG2-RESTO-3): S13 'Benchmark High' removed — was duplicate of S3 'Deviasi >50% BOM'
+        // (identical SQL: ABS(pctQtyDeviasiToBom) > 0.50). Removing eliminates duplicate badges + analysis bullets.
         { name: 'Residual Nominal', score: Math.round(s14Score), weight: 0.02, value: `Rp ${Math.round(residualNominal / 1000000)}jt` },
-        { name: 'Tol Breach Reg', score: Math.round(s15Score), weight: 0.01, value: `${regularBreachCount} item` },
+        // FIX (BUG2-RESTO-2): renamed 'Tol Breach Reg' → 'Tolerance Breach' to match UI constants.
+        // The old name was orphaned — UI expected 'Tolerance Breach' but API sent 'Tol Breach Reg' → signal never displayed.
+        { name: 'Tolerance Breach', score: Math.round(s15Score), weight: 0.01, value: `${regularBreachCount} item` },
       ],
     };
   });

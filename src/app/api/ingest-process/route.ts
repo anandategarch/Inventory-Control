@@ -443,31 +443,46 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // FIX: delete old InventoryRecords for this sourceFile+week (handles re-upload)
-      await db.inventoryRecord.deleteMany({ where: { sourceFileId: sourceFile.id, weekId: weekRec.id } }).catch(() => {});
-
-      // Process rows — P2 fix: use shared processRowsForImport from ingestion.ts
-      // (eliminates ~100 lines of duplicate validate/normalize/derive/insert logic)
+      // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
+      // transaction so that if createMany fails (DB error, timeout, OOM), the
+      // deleteMany is rolled back. Previously, if createMany failed after
+      // deleteMany succeeded, the week had 0 records → data loss. The
+      // `.catch(() => {})` on deleteMany was also silently swallowing delete
+      // errors (which could then cause unique-constraint violations on insert).
+      // Now the transaction handles atomicity — if deleteMany fails, the
+      // transaction aborts and processRowsForImport is not called.
       //
-      // ImportSpeed: fastMode=true — skip validateRow() + DQ issue tracking.
-      // Pure normalize + derive + insert → ~3-5x faster for large files.
-      // DQ validation can be run separately later (e.g., via /api/dq-check).
+      // 240s timeout matches the maxDuration (300s) with headroom for parse
+      // and post-import steps. Large weeks (~35K rows) can take 1-2 min.
       const seenKeys = new Set<string>();
       const outletDbMap = new Map<string, number>();
       const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
+      // Capture monthLabel before the transaction — `monthInfo` is a `let` (reassigned
+      // during placeholder-filename resolution above), so TypeScript narrowing from
+      // the `if (!monthInfo) return` guard doesn't carry into the closure below.
+      const monthLabelForTx = monthInfo.monthLabel;
 
-      const result = await processRowsForImport(
-        weekRows,
-        sourceFile.id,
-        weekRec.id,
-        fileName,
-        monthInfo.monthLabel,
-        0,
-        outletDbMap,
-        itemDbMap,
-        seenKeys,
-        true, // fastMode: skip DQ validation — pure import for speed
-        locale, // numberLocale: 'auto' | 'id' | 'us' for CSV separator parsing
+      const result = await db.$transaction(
+        async (tx) => {
+          await tx.inventoryRecord.deleteMany({
+            where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
+          });
+          return processRowsForImport(
+            weekRows,
+            sourceFile.id,
+            weekRec.id,
+            fileName,
+            monthLabelForTx,
+            0,
+            outletDbMap,
+            itemDbMap,
+            seenKeys,
+            true, // fastMode: skip DQ validation — pure import for speed
+            locale, // numberLocale: 'auto' | 'id' | 'us' for CSV separator parsing
+            tx, // pass transaction client so createMany uses the same transaction
+          );
+        },
+        { timeout: 240_000, maxWait: 10_000 },
       );
 
       const inserted = result.inserted;
@@ -520,6 +535,17 @@ export async function POST(req: NextRequest) {
       // not be in the resolver's `exact` set → resolveMonthLabel would fall back
       // to the (possibly different-case) input label → potential mismatch.
       clearMonthResolverCache();
+
+      // FIX (BUG2-INGEST-2): Clean up FileChunk rows for this fileHash after
+      // successful import. Previously, only `import-all` mode cleaned up chunks
+      // (see line ~726 below). The `import` mode reassembles the file from DB
+      // chunks, parses it, imports the week, and deletes the temp file — but
+      // NEVER deleted the FileChunk rows. Each chunk is up to 5MB, so a 50MB
+      // file left 50MB of orphaned Bytes data in the DB. Over time, this
+      // bloats the database. The frontend (FileUploadDialog) always uses
+      // `import-all`, so this is a latent bug for programmatic API callers.
+      // Now both modes clean up chunks after successful import.
+      await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
 
       return NextResponse.json({
         success: true,
@@ -674,13 +700,25 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // FIX: delete old InventoryRecords for this sourceFile+week (handles re-upload)
-        await db.inventoryRecord.deleteMany({ where: { sourceFileId: sourceFile.id, weekId: weekRec.id } }).catch(() => {});
-
-        const result = await processRowsForImport(
-          weekRows, sourceFile.id, weekRec.id, fileName,
-          monthInfo.monthLabel, 0, outletDbMap, itemDbMap, seenKeys,
-          true, locale,
+        // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
+        // transaction so that if createMany fails, the deleteMany is rolled back.
+        // Same rationale as `import` mode above (line ~446). Without this, a
+        // createMany failure mid-week would leave the week with 0 records.
+        // Capture monthLabel before the transaction — `monthInfo` is a `let`, so TS
+        // narrowing from the `if (!monthInfo) return` guard doesn't carry into closures.
+        const monthLabelForTx = monthInfo.monthLabel;
+        const result = await db.$transaction(
+          async (tx) => {
+            await tx.inventoryRecord.deleteMany({
+              where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
+            });
+            return processRowsForImport(
+              weekRows, sourceFile.id, weekRec.id, fileName,
+              monthLabelForTx, 0, outletDbMap, itemDbMap, seenKeys,
+              true, locale, tx,
+            );
+          },
+          { timeout: 240_000, maxWait: 10_000 },
         );
 
         const dq = summarizeDQ(result.dqIssues);

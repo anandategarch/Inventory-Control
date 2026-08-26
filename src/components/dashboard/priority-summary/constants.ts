@@ -46,7 +46,9 @@ export const SIGNAL_GROUPS: Array<{
     name: 'Benchmark',
     emoji: '📋',
     icon: Trophy,
-    signals: ['Benchmark High', 'Residual Nominal'],
+    // FIX (BUG2-RESTO-3): removed 'Benchmark High' — was dead signal (S13 removed from API,
+    // was duplicate of 'Deviasi >50% BOM'). Only 'Residual Nominal' remains in this group.
+    signals: ['Residual Nominal'],
   },
 ];
 
@@ -67,7 +69,7 @@ export const SIGNAL_ICONS: Record<string, React.ComponentType<{ className?: stri
   'Over-Explained': AlertTriangle,
   'High Loss Nominal': AlertOctagon,
   'No Tolerance': AlertTriangle,
-  'Benchmark High': Trophy,
+  // FIX (BUG2-RESTO-3): removed 'Benchmark High' icon — dead signal
   'Residual Nominal': Layers,
   'Tolerance Breach': ShieldAlert,
 };
@@ -122,7 +124,7 @@ export const SIGNAL_EXPLANATIONS: Record<string, string> = {
   'Over-Explained': 'Item dimana penjelasan (Waste+Susut+Trial) > 100% deviasi. Indikasi kesalahan input data atau pencatatan ganda.',
   'High Loss Nominal': 'Item dengan nominal loss >Rp 10jt. Prioritas investigasi berdasarkan dampak finansial.',
   'No Tolerance': 'Item-item tanpa setup toleransi di master data. Tidak bisa di-evaluasi breach — setup toleransi segera.',
-  'Benchmark High': 'Deviasi outlet lebih tinggi dari rata-rata area/semua resto. Investigasi gap praktik antar outlet.',
+  // FIX (BUG2-RESTO-3): removed 'Benchmark High' explanation — dead signal
   'Residual Nominal': 'Nominal deviasi yang tidak terjelaskan. Semakin tinggi, semakin besar "uang hilang" yang perlu dijelaskan.',
   'Tolerance Breach': 'Item dengan deviasi >toleransi (breach reguler). Review penyebab dan corrective action.',
 };

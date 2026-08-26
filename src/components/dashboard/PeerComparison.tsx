@@ -40,7 +40,7 @@ export type {
 };
 
 export function PeerComparison() {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard();
   const activeOutlet = focusOutlet || outletCode;
   // Fixed: mode='week' (follows currentWeek from main FilterBar), peerLimit=50.
   // No dropdowns — peer scope is always top 50 by sales proximity for the
@@ -61,7 +61,10 @@ export function PeerComparison() {
   //  then immediately refetch).
   // ============================================================
   const { data: mainData, isLoading: mainLoading, isFetching: mainFetching, error: mainError } = useQuery({
-    queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, peerLimit],
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok added to queryKey so TanStack
+    // refetches when kelompok changes. Without this, switching kelompok would
+    // show stale (unfiltered) peer data.
+    queryKey: ['peer-comparison', activeOutlet, monthLabel, currentWeek, peerLimit, kelompok],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
@@ -69,6 +72,8 @@ export function PeerComparison() {
       if (currentWeek) p.set('week', currentWeek);
       p.set('mode', mode);
       p.set('limit', String(peerLimit));
+      // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): pass kelompok so peer scope respects the global filter.
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       const res = await fetch(`/api/peer-comparison?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
@@ -89,7 +94,8 @@ export function PeerComparison() {
 
   // Items query — independent inputs, fires in parallel with main.
   const { data: itemsData, isLoading: itemsLoading, error: itemsError } = useQuery({
-    queryKey: ['peer-comparison', 'items', activeOutlet, monthLabel, currentWeek],
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok added to queryKey + URL params.
+    queryKey: ['peer-comparison', 'items', activeOutlet, monthLabel, currentWeek, kelompok],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
@@ -97,6 +103,7 @@ export function PeerComparison() {
       if (currentWeek) p.set('week', currentWeek);
       p.set('mode', mode);
       p.set('topItems', '5');
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
@@ -108,12 +115,17 @@ export function PeerComparison() {
   // Trend query — depends on peerCodes from main for stable peer
   // set across weeks. `enabled` waits for peerCodes.
   const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
-    queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodesKey],
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok added to queryKey + URL params.
+    // peerCodesKey already changes when kelompok changes (main query refetches
+    // → peerCodes recomputed), but adding kelompok explicitly makes the cache
+    // key stable + explicit.
+    queryKey: ['peer-comparison', 'trend', activeOutlet, monthLabel, peerCodesKey, kelompok],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('outletCode', activeOutlet!);
       p.set('month', monthLabel!);
       if (peerCodes.length > 0) p.set('peers', peerCodes.slice(0, 20).join(','));
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       const res = await fetch(`/api/peer-comparison/trend?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');

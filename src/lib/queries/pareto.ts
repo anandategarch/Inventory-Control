@@ -288,16 +288,13 @@ export async function queryParetoNestedItemOutlet(
   const grandTotal = topItems.reduce((s, r: any) => s + Number(r.totalAbsNominal), 0);
   let itemCumPct = 0;
 
-  // Step 2: for each top item, get outlet breakdown (Pareto 80% per item)
-  const items: NestedParetoItem[] = [];
-  for (const item of topItems) {
-    const itemName = (item as any).itemName;
-    const itemTotal = Number((item as any).totalAbsNominal);
-    const itemNominal = Number((item as any).nominalDeviasi);
-    const itemQtyDeviasi = Number((item as any).qtyDeviasi);
-    const itemOutletCount = Number((item as any).outletCount);
-
-    const outletRows = await db.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
+  // FIX (BUG2-PARETO-2): Parallelize the per-item outlet breakdown queries.
+  // Old code ran 10 sequential queries (N+1 pattern) — 3-5s latency.
+  // Now runs all 10 in parallel via Promise.all — ~0.5s latency.
+  // Also wrap each query in withStatementTimeout (was missing → hang risk under PgBouncer).
+  const outletRowsByItem = await Promise.all(topItems.map((item: any) => {
+    const itemName = item.itemName;
+    return withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
       SELECT o.code as "outletCode", o.name as "outletName", o.area,
         ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -307,13 +304,28 @@ export async function queryParetoNestedItemOutlet(
       JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        AND LOWER(i.name) = LOWER(${itemName})
+        -- FIX (BUG2-PARETO-14): use exact match (not LOWER) — the top-items query
+        -- already grouped by exact i.name, so we should match the same exact name.
+        -- LOWER() could match case-variant items that were grouped separately above.
+        AND i.name = ${itemName}
         ${f}
       GROUP BY o.code, o.name, o.area
       HAVING ABS(SUM(ir."nominalDeviasi")) > 0
       ORDER BY "totalAbsNominal" DESC
       LIMIT 20
-    `;
+    `);
+  }));
+
+  const items: NestedParetoItem[] = [];
+  for (let idx = 0; idx < topItems.length; idx++) {
+    const item = topItems[idx] as any;
+    const itemName = item.itemName;
+    const itemTotal = Number(item.totalAbsNominal);
+    const itemNominal = Number(item.nominalDeviasi);
+    const itemQtyDeviasi = Number(item.qtyDeviasi);
+    const itemOutletCount = Number(item.outletCount);
+
+    const outletRows = outletRowsByItem[idx];
 
     const outletTotal = outletRows.reduce((s, r: any) => s + Number(r.totalAbsNominal), 0);
     let outletCumPct = 0;
@@ -374,6 +386,10 @@ export async function queryParetoHistorical(
   month: string,
   dimension: 'item' | 'outlet' | 'area' | 'kelompok' | 'pic',
   filters: SqlFilterOpts,
+  // FIX (BUG2-PARETO-1): pass currentMonthKey to filter out FUTURE months.
+  // The old code only excluded `monthLabel != ${month}` — included future months
+  // if they exist in DB, inflating/shifting the historical mean+stddev.
+  currentMonthKey?: string,
 ): Promise<Map<string, { histAvg: number; histStdDev: number; histN: number }>> {
   const f = buildSqlFilters(filters);
 
@@ -407,6 +423,13 @@ export async function queryParetoHistorical(
   // 1. weekly_dev: per (dimension, month, week) → 1 observation = SUM(absNominalDeviasi)
   // 2. final: per dimension → AVG + STDDEV across weekly observations
   // Filter: same weekLabel, different monthLabel (historical comparison)
+  // FIX (BUG2-PARETO-1): JOIN SourceFile + filter sf."monthKey" < currentMonthKey
+  // to exclude FUTURE months. The old code only excluded `monthLabel != ${month}`,
+  // which included future months if they exist in DB.
+  const futureFilter = currentMonthKey
+    ? Prisma.sql`AND sf."monthKey" < ${currentMonthKey}`
+    : Prisma.sql`AND ir."monthLabel" != ${month}`;
+  const joinSourceFile = Prisma.sql`JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`;
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ name: string; histAvg: number; histStdDev: number; histN: number }>>`
     WITH weekly_dev AS (
       SELECT ${groupExpr} as "name",
@@ -416,8 +439,9 @@ export async function queryParetoHistorical(
       ${joinItem}
       ${joinOutlet}
       ${joinPIC}
+      ${joinSourceFile}
       WHERE ir."weekLabel" = ${week}
-        AND ir."monthLabel" != ${month}
+        ${futureFilter}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         ${f}
       GROUP BY ${groupExpr}, ir."monthLabel", ir."weekLabel"

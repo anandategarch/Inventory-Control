@@ -257,14 +257,21 @@ export async function DELETE(req: NextRequest) {
 
     invalidateSettingsCache();
 
-    // Bug 4 fix: clear analysis cache on settings reset
+    // FIX (BUG2-SEC-1): clear analysis cache on settings reset — was missing!
+    // The POST handler calls invalidateAnalysisCache() (line 191) but DELETE didn't.
+    // Threshold changes affect rule evaluation (TOLERANCE_BREACH, HISTORICAL, etc.)
+    // so stale analysis cache would show old rule flags for up to 5 min.
+    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
-    await db.auditLog.create({
+    // FIX (BUG2-STATE-5): audit log is fire-and-forget (low priority) — don't await.
+    // The cache invalidation above is correctness-critical but also fire-and-forget
+    // (non-blocking). Response should return immediately after DB write succeeds.
+    db.auditLog.create({
       data: {
         action: 'SETTINGS_RESET',
         detail: key ? `Reset ${key} to default` : 'Reset all settings to defaults',
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

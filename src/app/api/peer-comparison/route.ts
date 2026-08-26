@@ -35,6 +35,9 @@ export async function GET(req: NextRequest) {
     const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
     // FIX API2-1: cap limit to prevent abuse + NaN guard
     const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '10', 10) || 10), 100);
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
+    // the focus outlet is still queried by outletCode regardless.
+    const kelompok = url.searchParams.get('kelompok');
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -43,7 +46,7 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
-    const { targetSales, peers } = await queryPeerComparison(outletCode, month, week, mode, limit);
+    const { targetSales, peers } = await queryPeerComparison(outletCode, month, week, mode, limit, kelompok);
 
     return NextResponse.json({
       success: true,

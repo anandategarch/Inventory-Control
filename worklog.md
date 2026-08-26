@@ -22370,3 +22370,134 @@ Stage Summary:
 - The 11 P3 bugs are code quality / dead code / minor UX issues.
 - Recommendation scoring is CORRECT: 14 signals, weights sum to 100%, threshold consistent between API and UI. The "15 signals" in the task brief is slightly outdated — S13 was removed (weight redistributed to S1) per the DEEP-AUDIT-LOGIC #2 fix noted in the code comments.
 - No bugs were fixed (report-only per task instructions).
+
+---
+Task ID: FIX-P1-PEER-1
+Agent: general-purpose (sub-agent)
+Task: Fix BUG2-RESTO-1 — Peer Comparison routes ignore the kelompok filter. Apply the same pattern used in BUGFIX-KELOMPOK-GLOBAL (which fixed /api/recommendations, /api/item-search, /api/export-report) to the 3 peer-comparison routes.
+
+Work Log:
+- Read worklog sections BUGFIX-KELOMPOK-EMPTY (lines 19229-19271) and BUGFIX-KELOMPOK-GLOBAL (lines 19274-19331) to understand the kelompok filter wiring pattern. The fix pattern is: (1) read kelompok param in route, (2) pass to query function, (3) query function injects `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${kelompok})` SQL fragment, (4) frontend adds kelompok to URLSearchParams + queryKey, (5) validation schema adds `kelompok: kelompokSchema`.
+- Audited peer-comparison query module (`src/lib/queries/outlets/peer-comparison.ts`):
+  - `queryPeerComparison` takes `outletCode, month, week, mode, limit` — no filters/kelompok param. The peer scope is the final SELECT WHERE clause `CROSS JOIN target_combined t WHERE COALESCE(sm.sales,0) > 0 AND ABS(...) <= t.sales * 0.1`. The focus outlet is identified by `target` CTE (`o.code = ${outletCode}`) + `isTarget` flag in final SELECT.
+  - `queryPeerItemComparison` defined but UNUSED (items route uses inline SQL). Left untouched.
+  - `queryPeerTrend` takes explicit `peerOutletCodes` array — doesn't query DB for peer scope, so no kelompok filter needed inside (peer codes come from main query which will be filtered).
+- Confirmed `src/lib/queries/index.ts:12` only re-exports `./outlets/peer-comparison` — the duplicate `queryPeerComparison`/`queryPeerItemComparison`/`queryPeerTrend` in legacy `src/lib/queries/outlets.ts` (lines 179, 361, 491) are DEAD CODE (no imports anywhere in src). Left untouched.
+- Audited 3 route files:
+  - `/api/peer-comparison/route.ts` calls `queryPeerComparison(outletCode, month, week, mode, limit)` — peer scope only.
+  - `/api/peer-comparison/items/route.ts` uses inline SQL with `peer_outlets` CTE (the peer scope) + `target_top_items` CTE (focus outlet's top items by `o.code = ${outletCode}`).
+  - `/api/peer-comparison/trend/route.ts` calls `queryPeerComparison` (auto-compute peer codes path) + `queryPeerTrend` (uses explicit peer codes).
+- KEY DESIGN DECISION: Per task spec — "kelompok filter should affect the PEER scope, NOT the focus outlet". So the filter is wrapped in an OR clause that always keeps the focus outlet: `AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`. This ensures:
+  - When kelompok=BDG and focus is a BDG outlet → peers are BDG-only, focus included (targetRow always present).
+  - When kelompok=BDG and focus is a JKT outlet (edge case, contradictory filters) → focus still appears as target row, peers = BDG-only. UI may show "no peers" if JKT focus has no BDG peers in ±10% band.
+
+Backend changes (4 files):
+1. `src/lib/queries/outlets/peer-comparison.ts`:
+   - `queryPeerComparison` signature: added `kelompok?: string | null` 6th param.
+   - Built `peerKelompokFilter` fragment (Prisma.sql): empty when no kelompok, else `AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`.
+   - Injected into final SELECT WHERE clause (after the `ABS(...) <= ...` line). This scopes peer rows without touching the focus outlet's `target` / `target_fallback` CTEs.
+2. `src/app/api/peer-comparison/route.ts`: added `const kelompok = url.searchParams.get('kelompok')` + pass to `queryPeerComparison(outletCode, month, week, mode, limit, kelompok)`.
+3. `src/app/api/peer-comparison/items/route.ts`: added `const kelompok = url.searchParams.get('kelompok')` + built `peerKelompokFilter` fragment + injected into `peer_outlets` CTE WHERE clause (after `ABS(...) <= t.sales * 0.1`). The `target_top_items` CTE is unchanged — focus outlet's top items are always queried by `o.code = ${outletCode}`.
+4. `src/app/api/peer-comparison/trend/route.ts`: added `const kelompok = url.searchParams.get('kelompok')` + pass to `queryPeerComparison(outletCode, month, null, 'month', 20, kelompok)` in the auto-compute peer-codes path. `queryPeerTrend` itself is unchanged (uses explicit peerCodes which already respect kelompok via the main query).
+
+Frontend changes (1 file):
+5. `src/components/dashboard/PeerComparison.tsx`:
+   - Destructured `kelompok` from `useDashboard()`.
+   - Main query: added `kelompok` to queryKey array + `if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok)` in queryFn.
+   - Items query: same pattern.
+   - Trend query: same pattern. (Note: peerCodesKey already changes when kelompok changes — main query refetches → peerCodes recomputed → peerCodesKey changes → trend query naturally refetches. Adding kelompok explicitly to queryKey is for cache-key clarity + correctness.)
+
+Validation changes (1 file):
+6. `src/lib/validation.ts`: added `kelompok: kelompokSchema` to all 3 schemas:
+   - `peerComparisonQuerySchema`
+   - `peerComparisonItemsQuerySchema`
+   - `peerComparisonTrendQuerySchema`
+   The `kelompokSchema` already existed (line 43: `z.string().min(1).max(50).optional()`), exported and reused by analysis/recommendations/export-report schemas.
+
+Verification:
+- `bunx tsc --noEmit` → exit 0, zero type errors.
+- `bun run lint` → 0 errors, 9 pre-existing warnings (all react-hooks/exhaustive-deps + react-hooks/incompatible-library warnings unrelated to this change). No new warnings introduced in any peer-comparison file.
+- Did NOT run live curl test — no dev server running (dev.log absent, port 3000/3001 not listening). tsc + lint green is the validation bar per task spec.
+
+Stage Summary:
+- 6 files modified (3 routes + 1 query module + 1 frontend component + 1 validation file).
+- kelompok filter is now applied to ALL peer-comparison routes (main + items + trend), scoping the PEER SET ONLY. The focus outlet is always queried by `outletCode` and is never dropped by the kelompok filter (via the `OR o.code = ${outletCode}` clause).
+- Pattern matches BUGFIX-KELOMPOK-GLOBAL exactly: read param → pass to query function → inject `LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${kelompok})` SQL fragment → frontend adds to URLSearchParams + queryKey → Zod schema adds `kelompok: kelompokSchema`.
+- kelompok filter is now applied globally across ALL data-query routes that show filtered/aggregated data:
+  - /api/analysis ✓ (BUGFIX-KELOMPOK-EMPTY)
+  - /api/pareto ✓ (BUGFIX-KELOMPOK-EMPTY)
+  - /api/recommendations ✓ (BUGFIX-KELOMPOK-GLOBAL)
+  - /api/item-search ✓ (BUGFIX-KELOMPOK-GLOBAL)
+  - /api/export-report ✓ (BUGFIX-KELOMPOK-GLOBAL)
+  - /api/peer-comparison ✓ (this task — FIX-P1-PEER-1)
+  - /api/peer-comparison/items ✓ (this task)
+  - /api/peer-comparison/trend ✓ (this task)
+- Files modified (6 total):
+  - src/lib/queries/outlets/peer-comparison.ts (queryPeerComparison: +kelompok param +peerKelompokFilter fragment in final SELECT WHERE)
+  - src/app/api/peer-comparison/route.ts (+kelompok read +pass to queryPeerComparison)
+  - src/app/api/peer-comparison/items/route.ts (+kelompok read +peerKelompokFilter fragment in peer_outlets CTE WHERE)
+  - src/app/api/peer-comparison/trend/route.ts (+kelompok read +pass to queryPeerComparison auto-compute path)
+  - src/components/dashboard/PeerComparison.tsx (kelompok in useDashboard destructure + 3 queryKeys + 3 URLSearchParams)
+  - src/lib/validation.ts (+kelompok: kelompokSchema to 3 schemas)
+
+---
+Task ID: FIX-P1-INGEST-2
+Agent: Backend Data-Safety Fixer (Ingest + Settings flow)
+Task: Fix 4 P1 data-safety bugs in the ingest/settings flow that can cause DATA LOSS or write contention. Bugs: BUG2-INGEST-1 (month dedup deletes before insert), BUG2-INGEST-2 (import mode orphans FileChunks), BUG2-INGEST-3 (deleteMany+createMany not transactional), BUG2-INGEST-5 (getAllSettings writes on every request).
+
+Work Log:
+- Read worklog tail (~500 lines) for context — reviewed BUGHUNT2-INGEST-4 section (lines 21006-21434) which documented all 4 bugs with file/line references and suggested fixes.
+- Read 3 target files fully:
+  - src/lib/ingestion.ts (649 lines): processIngestion (full-file ingest, used by /api/ingest + /api/import-drive) + processRowsForImport (shared per-week import logic, used by /api/ingest-process).
+  - src/app/api/ingest-process/route.ts (766 lines): 3 modes — detect, import (single week), import-all (all weeks in one request).
+  - src/lib/settings.ts (533 lines): SETTING_DEFINITIONS (32 settings) + ensureDefaultSettings (createMany with skipDuplicates) + getAllSettings (calls ensureDefaultSettings on every call).
+- Cross-referenced: prisma/schema.prisma (SourceFile.fileName @unique, fileHash @unique; InventoryRecord @@unique([weekId, outletId, itemId, akunPenyesuaian]); Week onDelete: Cascade; FileChunk model), src/lib/db.ts (PostgreSQL-only, lazy Proxy, globalThis singleton), src/lib/queries/shared.ts (Prisma.TransactionClient type + $transaction with timeout/maxWait options), src/app/api/settings/route.ts (POST uses upsert in $transaction, DELETE uses upsert to reset — never deletes rows).
+- Applied 4 fixes:
+
+  **BUG2-INGEST-5 (settings.ts:332-382)** — Write contention on every dashboard request.
+  - Added module-level `let _defaultsEnsured = false;` flag.
+  - ensureDefaultSettings() now early-returns if `_defaultsEnsured` is true.
+  - Sets `_defaultsEnsured = true` after successful createMany/upsert.
+  - Per-process flag: cold starts (serverless) re-run; warm invocations skip the write.
+  - Safe because settings/route.ts POST+DELETE use upsert (never delete rows) — default rows persist for process lifetime.
+  - Eliminates write-lock acquisition on Setting table for 6+ routes that call getRuntimeThresholds → getAllSettings → ensureDefaultSettings on every request.
+
+  **BUG2-INGEST-3 (ingestion.ts:547-560 + ingest-process/route.ts:446-486, 699-722)** — deleteMany + createMany not transactional.
+  - Added `import { Prisma } from '@prisma/client'` to ingestion.ts.
+  - processRowsForImport: added optional `tx?: Prisma.TransactionClient` parameter (last arg). Uses `const client = tx ?? db;` so all DB writes (outlet.upsert, item.upsert, inventoryRecord.createMany + SQLite fallback) use the transaction client when provided. Backward-compatible — existing callers that don't pass tx are unaffected.
+  - ingest-process/route.ts import mode (line 446-486): replaced bare `deleteMany.catch(()=>{})` + `processRowsForImport(...)` with `db.$transaction(async (tx) => { await tx.deleteMany(...); return processRowsForImport(..., tx); }, { timeout: 240_000, maxWait: 10_000 })`.
+  - ingest-process/route.ts import-all mode (line 699-722): same transaction wrapping inside the per-week loop.
+  - Removed the silent `.catch(() => {})` on deleteMany — if delete fails, the transaction aborts and processRowsForImport is not called (prevents unique-constraint violations on insert from stale rows).
+  - 240s transaction timeout: matches maxDuration=300s for import-drive/ingest-process with headroom for parse + post-tx audit/cache steps.
+
+  **BUG2-INGEST-2 (ingest-process/route.ts:539-548)** — import mode orphans FileChunk rows.
+  - Added `await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});` after clearMonthResolverCache() in import mode (line 548).
+  - Now both import mode and import-all mode (line 752) clean up FileChunk rows after successful import.
+  - Previously only import-all cleaned up; import mode left up to 5MB × N chunks orphaned in DB.
+
+  **BUG2-INGEST-1 (ingestion.ts:215-477)** — Month dedup deletes old data BEFORE new data is ingested → data loss on insert failure.
+  - Restructured processIngestion to wrap dedup-delete + create + insert-loop + SourceFile.update + DQ-issue-insert in a SINGLE `db.$transaction(async (tx) => {...}, { timeout: 240_000, maxWait: 10_000 })`.
+  - Old flow: query existingPeriodFiles → DELETE old SourceFiles (in own $transaction) → CREATE new SourceFile → loop insert → UPDATE SourceFile → DQ issues. If loop failed, old data already gone.
+  - New flow: query existingPeriodFiles (READ, outside tx) → pre-cache outlets/items (READ, outside tx) → $transaction { DELETE old SourceFiles (via tx) → CREATE new SourceFile (via tx) → loop: upsert week/outlet/item + createMany InventoryRecords (all via tx) → UPDATE SourceFile (via tx) → DQ issues (via tx) } → auditLog (outside tx) → cache invalidation (outside tx).
+  - All `db.X` calls inside the loop replaced with `tx.X` (week.upsert, outlet.upsert, item.upsert, inventoryRecord.createMany, inventoryRecord.create fallback, sourceFile.update, dQIssue.createMany).
+  - Transaction returns `{ totalInserted, skippedErrors, dq }` via destructuring.
+  - AuditLog moved outside transaction with `.catch()` so a log failure doesn't roll back ingestion (audit is non-critical; data is critical).
+  - If transaction fails (DB error, OOM, timeout), ALL writes roll back — old data preserved, no orphaned SourceFile/Week records.
+  - 240s timeout: import-drive maxDuration=300s (headroom for audit+cache); ingest maxDuration=30s (Vercel kills function first, PostgreSQL auto-rolls-back on connection drop).
+
+- Verification:
+  - `bunx tsc --noEmit` → 0 errors (initial run had 2 errors: `monthInfo` possibly-null inside transaction closures because `monthInfo` is a `let` — TS narrowing from `if (!monthInfo) return` guard doesn't carry into closures. Fixed by capturing `const monthLabelForTx = monthInfo.monthLabel;` before each transaction in ingest-process/route.ts).
+  - `bun run lint` → 0 errors, 9 warnings (all pre-existing in unrelated React component files — AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal, PicManagementDialog).
+  - Dev server starts successfully (Next.js 16.1.3 Turbopack, Ready in 1098ms, compiles / route in 11.6s).
+  - /api/status route loads and returns JSON (DB connection fails only because sandbox DATABASE_URL is file: protocol — environmental, not a code regression; db.ts correctly rejects non-postgres URLs).
+
+Stage Summary:
+- 4 P1 data-safety bugs fixed across 3 files (src/lib/ingestion.ts, src/app/api/ingest-process/route.ts, src/lib/settings.ts).
+- **Data loss prevention (BUG2-INGEST-1, BUG2-INGEST-3):** Both ingestion paths now wrap delete+insert in atomic Prisma transactions. If createMany fails (DB error, timeout, OOM), the preceding deleteMany is rolled back → old data preserved. Previously, a mid-insert failure left weeks/months with 0 records.
+- **DB bloat prevention (BUG2-INGEST-2):** import mode now cleans up FileChunk rows after successful import (was only done in import-all mode). Eliminates orphaned 5MB chunks accumulating in DB for programmatic API callers.
+- **Write-lock contention elimination (BUG2-INGEST-5):** ensureDefaultSettings skips the createMany write after first successful call per process. Eliminates write-lock acquisition on Setting table for 6+ dashboard routes that call getAllSettings on every request. Warm serverless invocations now do read-only access.
+- **No data format / transformation logic changed:** Only reordered operations (delete moved inside transaction) and wrapped existing operations in transactions. All normalize/derive/validate logic untouched. BATCH_SIZE, skipDuplicates, SQLite fallbacks, upsert patterns all preserved.
+- **Backward compatible:** processRowsForImport's new `tx` parameter is optional — existing callers (none outside ingest-process) would still work with `db` fallback.
+- **Timeouts tuned:** 240s transaction timeout (vs Prisma default 5s) accommodates large 35K-row files. Well within Vercel maxDuration=300s for import-drive/ingest-process.
+- **AuditLog resilience:** Moved outside transaction with .catch() — a logging failure no longer risks rolling back a successful ingestion.
+- tsc: 0 errors. lint: 0 errors (9 pre-existing warnings in unrelated files). Dev server: starts and compiles successfully.

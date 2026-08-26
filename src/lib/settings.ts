@@ -334,7 +334,26 @@ async function loadSettingsFromDB(): Promise<Map<string, string>> {
 // missing setting row (deleted, or new key added in a code release) was
 // never re-inserted. Now we always attempt to create missing rows and let
 // `skipDuplicates: true` skip the ones that already exist.
+//
+// FIX (BUG2-INGEST-5): ensureDefaultSettings does a write (createMany) on
+// every call. getAllSettings calls this on EVERY dashboard request → write-
+// lock contention on the Setting table under concurrent load. Add a module-
+// level flag so the write only happens once per process (cold start in
+// serverless). Warm invocations skip the write entirely. If a new setting
+// key is added in a code release, the next cold start (server restart /
+// new serverless instance) will re-run ensureDefaultSettings and insert it.
+// Note: the Settings UI (settings/route.ts) and POST/DELETE routes use
+// upsert (not delete), so default rows are never removed by the app — the
+// flag stays valid for the entire process lifetime.
+let _defaultsEnsured = false;
+
 export async function ensureDefaultSettings(): Promise<void> {
+  // FIX (BUG2-INGEST-5): Skip the write if defaults were already ensured in
+  // this process. The Setting table is tiny (32 rows) and skipDuplicates
+  // would be a no-op anyway, but the write lock acquisition is the real
+  // cost under concurrent load. Skipping eliminates the lock contention.
+  if (_defaultsEnsured) return;
+
   const data = SETTING_DEFINITIONS.map((d) => ({
     key: d.key,
     value: d.defaultValue,
@@ -359,6 +378,7 @@ export async function ensureDefaultSettings(): Promise<void> {
     }
   }
   _settingsCache = null; // force reload
+  _defaultsEnsured = true; // mark as initialized for this process
 }
 
 // Get all settings (merged: DB overrides defaults)

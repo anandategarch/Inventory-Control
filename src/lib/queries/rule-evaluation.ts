@@ -108,7 +108,35 @@ export async function evaluateRulesSql(
       CASE WHEN c."nominalLossSurplus" < 0 AND c."residualRatio" > ${thresholds.RESIDUAL_LOSS_HIGH_PCT} THEN 1 ELSE 0 END as "f_resid_high",
       CASE WHEN c."nominalLossSurplus" < 0 AND c."residualRatio" > ${thresholds.RESIDUAL_LOSS_WARN_PCT} AND c."residualRatio" <= ${thresholds.RESIDUAL_LOSS_HIGH_PCT} THEN 1 ELSE 0 END as "f_resid_warn",
       CASE WHEN c."nominalLossSurplus" < 0 AND ABS(c."nominalLossSurplus") > ${thresholds.HIGH_LOSS_NOMINAL_THRESHOLD} THEN 1 ELSE 0 END as "f_high_loss",
-      CASE WHEN p."prevNominalLossSurplus" IS NOT NULL AND c."nominalLossSurplus" IS NOT NULL AND ((p."prevNominalLossSurplus" < 0 AND c."nominalLossSurplus" > 0) OR (p."prevNominalLossSurplus" > 0 AND c."nominalLossSurplus" < 0)) THEN 1 ELSE 0 END as "f_dir_flip",
+      -- FIX (BUG2-PARETO-9): DIRECTION_FLIP divergence between SQL and JS paths.
+      -- Old SQL: only used nominalLossSurplus for direction → missed flips when
+      -- nominalLossSurplus IS NULL but qtyDeviasi IS NOT NULL.
+      -- JS path (ruleService.ts:68-86) falls back from nominalLossSurplus to qtyDeviasi.
+      -- Fix: compute direction sign with COALESCE fallback, matching JS behavior.
+      CASE
+        WHEN
+          -- Compute current direction sign: nominalLossSurplus first, fallback to qtyDeviasi
+          COALESCE(
+            CASE WHEN c."nominalLossSurplus" IS NOT NULL THEN SIGN(c."nominalLossSurplus") END,
+            CASE WHEN c."qtyDeviasi" IS NOT NULL THEN SIGN(c."qtyDeviasi") END
+          ) IS NOT NULL
+          AND
+          -- Compute previous direction sign: same fallback
+          COALESCE(
+            CASE WHEN p."prevNominalLossSurplus" IS NOT NULL THEN SIGN(p."prevNominalLossSurplus") END,
+            CASE WHEN p."prevQtyDeviasi" IS NOT NULL THEN SIGN(p."prevQtyDeviasi") END
+          ) IS NOT NULL
+          AND
+          -- Both must be non-zero (NEUTRAL = 0 → no flip)
+          COALESCE(CASE WHEN c."nominalLossSurplus" IS NOT NULL THEN SIGN(c."nominalLossSurplus") END, CASE WHEN c."qtyDeviasi" IS NOT NULL THEN SIGN(c."qtyDeviasi") END) != 0
+          AND
+          COALESCE(CASE WHEN p."prevNominalLossSurplus" IS NOT NULL THEN SIGN(p."prevNominalLossSurplus") END, CASE WHEN p."prevQtyDeviasi" IS NOT NULL THEN SIGN(p."prevQtyDeviasi") END) != 0
+          AND
+          -- Signs must differ (one positive, one negative)
+          COALESCE(CASE WHEN c."nominalLossSurplus" IS NOT NULL THEN SIGN(c."nominalLossSurplus") END, CASE WHEN c."qtyDeviasi" IS NOT NULL THEN SIGN(c."qtyDeviasi") END)
+          !=
+          COALESCE(CASE WHEN p."prevNominalLossSurplus" IS NOT NULL THEN SIGN(p."prevNominalLossSurplus") END, CASE WHEN p."prevQtyDeviasi" IS NOT NULL THEN SIGN(p."prevQtyDeviasi") END)
+        THEN 1 ELSE 0 END as "f_dir_flip",
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" > 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > g."salesGrowth" * ${thresholds.SALES_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_sales_mismatch",
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" < 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_sales_decrease",
       CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_bom_mismatch",

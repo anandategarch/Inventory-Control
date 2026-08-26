@@ -6,6 +6,7 @@
 // ============================================================
 import { logger } from './logger';
 import { db } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
@@ -216,6 +217,14 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       // didn't match "Agustus 2026" (from dashboard import) → old SourceFile not deleted →
       // duplicate records split by case → query returns 0 for one case variant.
       // monthKey is always "2026-08" (numeric, case-insensitive) → safe dedup.
+      //
+      // FIX (BUG2-INGEST-1): The old code DELETED the existing SourceFiles HERE (before
+      // creating the new one + inserting rows). If the subsequent create/insert failed
+      // (Excel parse error already handled above, but DB error / OOM / Vercel timeout
+      // can still happen mid-insert), the old data was PERMANENTLY LOST.
+      // Now we CAPTURE the list of old SourceFile IDs here (read-only) and defer the
+      // actual delete to INSIDE the transaction below (line ~270). This way, if the
+      // transaction fails, the delete is rolled back → old data is preserved.
       const existingPeriodFiles = monthKey !== 'unknown'
         ? await db.sourceFile.findMany({
             where: { monthKey },
@@ -225,27 +234,11 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
             where: { monthLabel },
             select: { id: true, fileName: true },
           });
-      if (existingPeriodFiles.length > 0) {
-        await db.$transaction(
-          existingPeriodFiles.flatMap(oldFile => [
-            db.dQIssue.deleteMany({ where: { sourceFileId: oldFile.id } }),
-            db.inventoryRecord.deleteMany({ where: { sourceFileId: oldFile.id } }),
-            db.week.deleteMany({ where: { sourceFileId: oldFile.id } }),
-            db.sourceFile.delete({ where: { id: oldFile.id } }),
-          ])
-        );
-      }
-
-      // STEP 2: Create SourceFile record
-      const sourceFile = await db.sourceFile.create({
-        data: {
-          fileName, filePath,
-          monthLabel, monthKey, fileHash,
-          rowCount: 0, dqStatus: 'OK',
-        },
-      });
 
       // STEP 3: Pre-cache ALL outlets & items (avoid per-row DB queries — 50% faster)
+      // Read-only — safe to do outside the transaction. The maps are populated and
+      // reused inside the transaction loop. New outlets/items encountered inside the
+      // transaction are upserted via `tx` (rolled back if the transaction fails).
       const allOutlets = await db.outlet.findMany({ select: { id: true, code: true } });
       const allItems = await db.item.findMany({ select: { id: true, name: true, satuan: true } });
       const outletDbMap = new Map<string, number>(allOutlets.map(o => [o.code, o.id]));
@@ -255,193 +248,233 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       const allIssues: any[] = [];
       const weekDbMap = new Map<string, number>();
 
-      const BATCH_SIZE = 2000;
-      let batchRecords: any[] = [];
-      let totalInserted = 0;
-      let totalRows = 0;
-      let skippedErrors = 0;
-
-      // SINGLE PASS: validate + normalize + create outlets/items lazily + insert
-      // Pre-loaded outletDbMap and itemDbMap from SELECT above.
-      // New outlets/items created on first encounter, then cached.
+      // FIX (BUG2-INGEST-1): Wrap dedup-delete + create + insert + update + DQ in a
+      // single transaction so that if ANY step fails, ALL writes are rolled back.
+      // Previously, the delete happened BEFORE the create/insert — a failure mid-insert
+      // meant the old data was already gone (data loss). Now the delete is inside the
+      // transaction, so it only commits if the entire insert succeeds.
       //
-      // FAST MODE: skip validateRow() entirely — pure normalize + derive + insert.
-      // Validation can be run separately later. ~3-5x faster for large files.
-      for (const rawRow of allRows) {
-        totalRows++;
-        const rowNumber = totalRows + 1;
-
-        if (!fastMode) {
-          // Validate
-          const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName, body.numberLocale || 'auto');
-          allIssues.push(...issues);
-
-          const hasError = issues.some((i) => i.severity === 'ERROR');
-          if (hasError) {
-            skippedErrors++;
-            continue;
+      // 240s timeout: import-drive maxDuration is 300s; ingest maxDuration is 30s.
+      // For /api/ingest (30s), Vercel will kill the function before the transaction
+      // timeout — PostgreSQL will then roll back automatically when the connection drops.
+      // For /api/import-drive (300s), the 240s timeout gives headroom for post-tx work
+      // (audit log + cache invalidation).
+      const { totalInserted, skippedErrors, dq } = await db.$transaction(
+        async (tx) => {
+          // STEP 1 (deferred): Delete old SourceFiles for the same monthKey/monthLabel.
+          // This runs INSIDE the transaction so it's rolled back if the insert fails.
+          if (existingPeriodFiles.length > 0) {
+            const oldIds = existingPeriodFiles.map(f => f.id);
+            await tx.dQIssue.deleteMany({ where: { sourceFileId: { in: oldIds } } });
+            await tx.inventoryRecord.deleteMany({ where: { sourceFileId: { in: oldIds } } });
+            await tx.week.deleteMany({ where: { sourceFileId: { in: oldIds } } });
+            await tx.sourceFile.deleteMany({ where: { id: { in: oldIds } } });
           }
-        }
 
-        // Normalize — pass numberLocale from body (default 'auto')
-        const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, body.numberLocale || 'auto');
-        const derived = deriveRecord(n);
-
-        // Ensure week exists (only 3-4 unique weeks per file)
-        const wk = n.weekLabel || 'UNKNOWN';
-        if (!weekDbMap.has(wk)) {
-          // FIX: Use CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-          // Previously: inline duplicate with WRONG discrete ranges (W2=8-14, W3/4=15-31)
-          let p = CFG_RECON_SETTINGS.WEEK_PERIODS[wk];
-          if (!p) {
-            // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
-            const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
-            p = { start: 1, end: Math.min(weekNum * 7, 31) };
-            logger.warn(`Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
-          }
-          const w = await db.week.upsert({
-            where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
-            update: {},
-            create: {
-              sourceFileId: sourceFile.id, weekLabel: wk,
-              weekKey: `${monthKey}-${wk.replace(/\s+/g, '')}`,
-              monthKey, periodStart: p.start, periodEnd: p.end,
+          // STEP 2: Create SourceFile record
+          const sourceFile = await tx.sourceFile.create({
+            data: {
+              fileName, filePath,
+              monthLabel, monthKey, fileHash,
+              rowCount: 0, dqStatus: 'OK',
             },
           });
-          weekDbMap.set(wk, w.id);
-        }
 
-        // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
-        // findUnique + create. Two concurrent imports of different weeks for the
-        // same NEW outlet code previously raced: both findUnique miss → both create →
-        // P2002 unique constraint violation → entire week import fails.
-        // Upsert is atomic: if the row exists, update area/name if changed; if not,
-        // create it. Either way, no P2002.
-        if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
-          const outlet = await db.outlet.upsert({
-            where: { code: derived.outletCode },
-            // LOGIC-12 fix: update area + name if outlet moved to different area.
-            // Conditional update avoids unnecessary writes when nothing changed.
-            update: n.area ? { area: n.area, name: derived.outletName } : {},
-            create: {
-              code: derived.outletCode,
-              name: derived.outletName,
-              outletCode: derived.outletNumericCode,
-              area: n.area,
-            },
-            select: { id: true },
-          });
-          outletDbMap.set(derived.outletCode, outlet.id);
-        }
+          const BATCH_SIZE = 2000;
+          let batchRecords: any[] = [];
+          let totalInserted = 0;
+          let totalRows = 0;
+          let skippedErrors = 0;
 
-        // FIX-A-4 (BUG-5-5): Race-safe item creation — same upsert pattern.
-        if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
-          const item = await db.item.upsert({
-            where: { name: n.namaBahan },
-            update: {}, // existing items keep their satuan (see processRowsForImport for satuan fill)
-            create: { name: n.namaBahan, satuan: n.satuan },
-            select: { id: true },
-          });
-          itemDbMap.set(n.namaBahan, { id: item.id, satuan: n.satuan });
-        }
+          // SINGLE PASS: validate + normalize + create outlets/items lazily + insert
+          // Pre-loaded outletDbMap and itemDbMap from SELECT above.
+          // New outlets/items created on first encounter, then cached.
+          //
+          // FAST MODE: skip validateRow() entirely — pure normalize + derive + insert.
+          // Validation can be run separately later. ~3-5x faster for large files.
+          for (const rawRow of allRows) {
+            totalRows++;
+            const rowNumber = totalRows + 1;
 
-        // Get IDs from cache (O(1) Map lookup, no DB query)
-        const weekId = weekDbMap.get(wk) ?? 0;
-        const outletId = outletDbMap.get(derived.outletCode) ?? 0;
-        const itemEntry = itemDbMap.get(n.namaBahan);
-        const itemId = itemEntry?.id ?? 0;
+            if (!fastMode) {
+              // Validate
+              const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName, body.numberLocale || 'auto');
+              allIssues.push(...issues);
 
-        if (weekId > 0 && outletId > 0 && itemId > 0) {
-          batchRecords.push({
-            sourceFileId: sourceFile.id, weekId, outletId, itemId,
-            akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
-            qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
-            qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
-            nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
-            nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
-            avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
-            tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
-            pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
-            pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
-            pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
-            direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
-            residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
-            absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
-            absNominalLossSurplus: derived.absNominalLossSurplus,
-            area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
-          });
-        }
-
-        // Batch insert
-        if (batchRecords.length >= BATCH_SIZE) {
-          // BUG-06 fix: createMany returns { count: N } — use actual count, not batch length
-          // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
-          let result;
-          try {
-            result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-          } catch {
-            // SQLite fallback: insert one by one, skip duplicates manually
-            let count = 0;
-            for (const rec of batchRecords) {
-              try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+              const hasError = issues.some((i) => i.severity === 'ERROR');
+              if (hasError) {
+                skippedErrors++;
+                continue;
+              }
             }
-            result = { count };
-          }
-          totalInserted += result.count;
-          batchRecords = [];
-        }
-      }
 
-      // Insert remaining records
-      if (batchRecords.length > 0) {
-        let result2;
-        try {
-          result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-        } catch {
-          let count = 0;
-          for (const rec of batchRecords) {
-            try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
-          }
-          result2 = { count };
-        }
-        totalInserted += result2.count;
-      }
+            // Normalize — pass numberLocale from body (default 'auto')
+            const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, body.numberLocale || 'auto');
+            const derived = deriveRecord(n);
 
-      // STEP 4: Update source file record
-      // FAST MODE: skip summarizeDQ() — return empty DQ summary (OK, 0 errors, 0 warnings).
-      // Validation can be run separately later and update these counts.
-      const dq = fastMode
-        ? { summary: [], severityCounts: { ERROR: 0, WARNING: 0, INFO: 0 }, status: 'OK' as const }
-        : summarizeDQ(allIssues);
-      await db.sourceFile.update({
-        where: { id: sourceFile.id },
-        data: {
-          rowCount: totalInserted,
-          dqStatus: dq.status,
-          dqErrorCount: dq.severityCounts.ERROR,
-          dqWarningCount: dq.severityCounts.WARNING,
+            // Ensure week exists (only 3-4 unique weeks per file)
+            const wk = n.weekLabel || 'UNKNOWN';
+            if (!weekDbMap.has(wk)) {
+              // FIX: Use CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+              // Previously: inline duplicate with WRONG discrete ranges (W2=8-14, W3/4=15-31)
+              let p = CFG_RECON_SETTINGS.WEEK_PERIODS[wk];
+              if (!p) {
+                // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
+                const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
+                p = { start: 1, end: Math.min(weekNum * 7, 31) };
+                logger.warn(`Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
+              }
+              const w = await tx.week.upsert({
+                where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
+                update: {},
+                create: {
+                  sourceFileId: sourceFile.id, weekLabel: wk,
+                  weekKey: `${monthKey}-${wk.replace(/\s+/g, '')}`,
+                  monthKey, periodStart: p.start, periodEnd: p.end,
+                },
+              });
+              weekDbMap.set(wk, w.id);
+            }
+
+            // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
+            // findUnique + create. Two concurrent imports of different weeks for the
+            // same NEW outlet code previously raced: both findUnique miss → both create →
+            // P2002 unique constraint violation → entire week import fails.
+            // Upsert is atomic: if the row exists, update area/name if changed; if not,
+            // create it. Either way, no P2002.
+            if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
+              const outlet = await tx.outlet.upsert({
+                where: { code: derived.outletCode },
+                // LOGIC-12 fix: update area + name if outlet moved to different area.
+                // Conditional update avoids unnecessary writes when nothing changed.
+                update: n.area ? { area: n.area, name: derived.outletName } : {},
+                create: {
+                  code: derived.outletCode,
+                  name: derived.outletName,
+                  outletCode: derived.outletNumericCode,
+                  area: n.area,
+                },
+                select: { id: true },
+              });
+              outletDbMap.set(derived.outletCode, outlet.id);
+            }
+
+            // FIX-A-4 (BUG-5-5): Race-safe item creation — same upsert pattern.
+            if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
+              const item = await tx.item.upsert({
+                where: { name: n.namaBahan },
+                update: {}, // existing items keep their satuan (see processRowsForImport for satuan fill)
+                create: { name: n.namaBahan, satuan: n.satuan },
+                select: { id: true },
+              });
+              itemDbMap.set(n.namaBahan, { id: item.id, satuan: n.satuan });
+            }
+
+            // Get IDs from cache (O(1) Map lookup, no DB query)
+            const weekId = weekDbMap.get(wk) ?? 0;
+            const outletId = outletDbMap.get(derived.outletCode) ?? 0;
+            const itemEntry = itemDbMap.get(n.namaBahan);
+            const itemId = itemEntry?.id ?? 0;
+
+            if (weekId > 0 && outletId > 0 && itemId > 0) {
+              batchRecords.push({
+                sourceFileId: sourceFile.id, weekId, outletId, itemId,
+                akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
+                qtyBom: n.qtyBom, qtyCom: n.qtyCom, qtyDeviasi: n.qtyDeviasi,
+                qtyWaste: n.qtyWaste, qtySusut: n.qtySusut, qtyTrial: n.qtyTrial, qtyLossSurplus: n.qtyLossSurplus,
+                nominalDeviasi: n.nominalDeviasi, nominalWaste: n.nominalWaste, nominalSusut: n.nominalSusut,
+                nominalTrial: n.nominalTrial, nominalLossSurplus: n.nominalLossSurplus, nominalSales: n.nominalSales,
+                avgPrice: n.qtyDeviasi && n.nominalDeviasi && n.qtyDeviasi !== 0 ? Math.abs(n.nominalDeviasi / n.qtyDeviasi) : null,
+                tolerancePct: n.tolerancePct, toleranceRaw: n.toleranceRaw,
+                pctWasteSusut: n.pctWasteSusut, pctQtyDeviasiToBom: n.pctQtyDeviasiToBom,
+                pctQtyWasteToBom: n.pctQtyWasteToBom, pctQtySusutToBom: n.pctQtySusutToBom,
+                pctQtyTrialToBom: n.pctQtyTrialToBom, pctQtyLossToBom: n.pctQtyLossToBom,
+                direction: derived.direction, residualQty: derived.residualQty, residualNominal: derived.residualNominal,
+                residualRatio: derived.residualRatio, absQtyDeviasi: derived.absQtyDeviasi,
+                absNominalDeviasi: derived.absNominalDeviasi, absQtyLossSurplus: derived.absQtyLossSurplus,
+                absNominalLossSurplus: derived.absNominalLossSurplus,
+                area: n.area, bulan: n.bulan, bulan2: n.bulan2, weekLabel: n.weekLabel, monthLabel: n.monthLabel,
+              });
+            }
+
+            // Batch insert
+            if (batchRecords.length >= BATCH_SIZE) {
+              // BUG-06 fix: createMany returns { count: N } — use actual count, not batch length
+              // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
+              let result;
+              try {
+                result = await tx.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+              } catch {
+                // SQLite fallback: insert one by one, skip duplicates manually
+                let count = 0;
+                for (const rec of batchRecords) {
+                  try { await tx.inventoryRecord.create({ data: rec }); count++; } catch {}
+                }
+                result = { count };
+              }
+              totalInserted += result.count;
+              batchRecords = [];
+            }
+          }
+
+          // Insert remaining records
+          if (batchRecords.length > 0) {
+            let result2;
+            try {
+              result2 = await tx.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+            } catch {
+              let count = 0;
+              for (const rec of batchRecords) {
+                try { await tx.inventoryRecord.create({ data: rec }); count++; } catch {}
+              }
+              result2 = { count };
+            }
+            totalInserted += result2.count;
+          }
+
+          // STEP 4: Update source file record
+          // FAST MODE: skip summarizeDQ() — return empty DQ summary (OK, 0 errors, 0 warnings).
+          // Validation can be run separately later and update these counts.
+          const dq = fastMode
+            ? { summary: [], severityCounts: { ERROR: 0, WARNING: 0, INFO: 0 }, status: 'OK' as const }
+            : summarizeDQ(allIssues);
+          await tx.sourceFile.update({
+            where: { id: sourceFile.id },
+            data: {
+              rowCount: totalInserted,
+              dqStatus: dq.status,
+              dqErrorCount: dq.severityCounts.ERROR,
+              dqWarningCount: dq.severityCounts.WARNING,
+            },
+          });
+
+          // Insert DQ issues — skip entirely in fast mode (allIssues stays empty).
+          if (!fastMode && allIssues.length > 0) {
+            const dqRecords = allIssues.map((i) => ({
+              sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
+              message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
+              sheetName: (i as any).sheetName ?? null, // P1-9 fix
+            }));
+            for (let i = 0; i < dqRecords.length; i += 500) {
+              await tx.dQIssue.createMany({ data: dqRecords.slice(i, i + 500) });
+            }
+          }
+
+          return { totalInserted, skippedErrors, dq };
         },
-      });
+        { timeout: 240_000, maxWait: 10_000 },
+      );
 
-      // Insert DQ issues — skip entirely in fast mode (allIssues stays empty).
-      if (!fastMode && allIssues.length > 0) {
-        const dqRecords = allIssues.map((i) => ({
-          sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
-          message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
-          sheetName: (i as any).sheetName ?? null, // P1-9 fix
-        }));
-        for (let i = 0; i < dqRecords.length; i += 500) {
-          await db.dQIssue.createMany({ data: dqRecords.slice(i, i + 500) });
-        }
-      }
-
+      // Audit log — outside the transaction so a failure here doesn't roll back the
+      // ingestion. AuditLog is non-critical: a missing audit entry is preferable to
+      // losing the ingested data.
       await db.auditLog.create({
         data: {
           action: 'INGEST',
           detail: `${fileName} → ${ext === '.xlsx' ? 'Excel direct' : 'CSV'}: ${totalInserted} rows (${skippedErrors} skipped due to ERROR)${fastMode ? ' [FAST MODE]' : ''}`,
           duration: Date.now() - startedAt,
         },
-      });
+      }).catch((e) => logger.error("[ingest] auditLog create failed", { error: e instanceof Error ? e.message : String(e) }));
 
       // Phase 3: invalidate analysis cache when new data is ingested
       // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.
@@ -504,6 +537,11 @@ export interface ProcessRowsResult {
  * @param itemDbMap - Pre-populated item cache (name → {id, satuan})
  * @param seenKeys - Set of seen (outlet+item+week) keys for dedup
  * @param fastMode - When true, skip validateRow() + DQ issue tracking (pure import, ~3-5x faster)
+ * @param numberLocale - Number format locale ('auto' | 'id' | 'us') for CSV separator parsing
+ * @param tx - Optional Prisma transaction client. When provided, all DB writes (outlet/item upserts,
+ *             inventoryRecord createMany) use this transaction client. This enables the caller to
+ *             wrap delete + insert in a single atomic transaction (FIX BUG2-INGEST-3: prevents
+ *             data loss if createMany fails after deleteMany succeeds).
  * @returns { inserted, skippedErrors, dqIssues }
  */
 export async function processRowsForImport(
@@ -518,7 +556,12 @@ export async function processRowsForImport(
   seenKeys?: Set<string>,
   fastMode?: boolean,
   numberLocale?: 'auto' | 'id' | 'us',
+  tx?: Prisma.TransactionClient,
 ): Promise<ProcessRowsResult> {
+  // FIX (BUG2-INGEST-3): Use the transaction client if provided, otherwise fall back to the
+  // global db client. This allows the caller to wrap delete + insert in a single atomic
+  // transaction so that if createMany fails, the preceding deleteMany is rolled back.
+  const client = tx ?? db;
   const _outletDbMap = outletDbMap ?? new Map<string, number>();
   const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
   const _seenKeys = seenKeys ?? new Set<string>();
@@ -556,7 +599,7 @@ export async function processRowsForImport(
     // Upsert is atomic: if the row exists, update area/name if changed; if not,
     // create it. Either way, no P2002.
     if (derived.outletCode && !_outletDbMap.has(derived.outletCode)) {
-      const outlet = await db.outlet.upsert({
+      const outlet = await client.outlet.upsert({
         where: { code: derived.outletCode },
         // LOGIC-12 fix: update area + name if outlet moved to different area.
         update: n.area ? { area: n.area, name: derived.outletName } : {},
@@ -576,7 +619,7 @@ export async function processRowsForImport(
     // Preserves the original behavior of back-filling `satuan` on existing items
     // when the DB row has null satuan and the current row provides one.
     if (n.namaBahan && !_itemDbMap.has(n.namaBahan)) {
-      const item = await db.item.upsert({
+      const item = await client.item.upsert({
         where: { name: n.namaBahan },
         // If existing item has no satuan, fill it from the current row.
         // (Prisma returns the row AFTER the upsert, so the returned satuan is the
@@ -615,13 +658,14 @@ export async function processRowsForImport(
 
     if (batchRecords.length >= BATCH_SIZE) {
       // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
+      // FIX (BUG2-INGEST-3): use `client` (tx if provided) so this is part of the caller's transaction.
       let result;
       try {
-        result = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+        result = await client.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
       } catch {
         let count = 0;
         for (const rec of batchRecords) {
-          try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+          try { await client.inventoryRecord.create({ data: rec }); count++; } catch {}
         }
         result = { count };
       }
@@ -631,13 +675,14 @@ export async function processRowsForImport(
   }
 
   if (batchRecords.length > 0) {
+    // FIX (BUG2-INGEST-3): use `client` (tx if provided) so this is part of the caller's transaction.
     let result2;
     try {
-      result2 = await db.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
+      result2 = await client.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
     } catch {
       let count = 0;
       for (const rec of batchRecords) {
-        try { await db.inventoryRecord.create({ data: rec }); count++; } catch {}
+        try { await client.inventoryRecord.create({ data: rec }); count++; } catch {}
       }
       result2 = { count };
     }

@@ -101,27 +101,32 @@ export const recommendationsQuerySchema = z.object({
   pic: picSchema,
 });
 
-// /api/peer-comparison?outletCode=&month=&week=&mode=&limit=
+// /api/peer-comparison?outletCode=&month=&week=&mode=&limit=&kelompok=
+// FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
+// the focus outlet is always queried by outletCode regardless.
 export const peerComparisonQuerySchema = z.object({
   outletCode: z.string().min(1).max(50),
   month: monthLabelSchema,
   week: weekLabelSchema,
   mode: z.enum(['week', 'month']).optional(),
   limit: limitSchema,
+  kelompok: kelompokSchema,
 });
 
-// /api/peer-comparison/items?outletCode=&month=&week=
+// /api/peer-comparison/items?outletCode=&month=&week=&kelompok=
 export const peerComparisonItemsQuerySchema = z.object({
   outletCode: z.string().min(1).max(50),
   month: monthLabelSchema,
   week: weekLabelSchema,
+  kelompok: kelompokSchema,
 });
 
-// /api/peer-comparison/trend?outletCode=&month=&week=
+// /api/peer-comparison/trend?outletCode=&month=&week=&kelompok=
 export const peerComparisonTrendQuerySchema = z.object({
   outletCode: z.string().min(1).max(50),
   month: monthLabelSchema,
   week: weekLabelSchema,
+  kelompok: kelompokSchema,
 });
 
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=

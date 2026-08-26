@@ -36,7 +36,8 @@ export async function queryPeerComparison(
   month: string,
   week: string | null,
   mode: 'week' | 'month',
-  limit: number = 10
+  limit: number = 10,
+  kelompok?: string | null
 ): Promise<{ targetSales: number; peers: PeerComparisonRow[] }> {
   // CRITICAL FIX (PEER-BACKEND-5): In month mode, weeks are CUMULATIVE
   // (W1=1-7, W2=1-14, W3=1-21, W4=1-25). Summing all weeks multi-counts.
@@ -47,6 +48,16 @@ export async function queryPeerComparison(
         SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
         WHERE ir2."monthLabel" = ${month}
       )`;
+
+  // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok filter scopes the PEER set
+  // only (which outlets are considered peers). The focus outlet is ALWAYS
+  // included via `o.code = ${outletCode}` so targetRow is never dropped
+  // (e.g. if focus outlet is outside the selected kelompok). Pattern matches
+  // shared.ts:buildSqlFilters kelompok clause — extract last dot-segment,
+  // compare first 3 chars (works for both "1030.BDGSET" and "B.1001.MLGPAR").
+  const peerKelompokFilter = kelompok
+    ? Prisma.sql`AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`
+    : Prisma.sql``;
 
   const rows = await db.$queryRaw<any[]>`
     WITH sales_counts AS (
@@ -157,6 +168,7 @@ export async function queryPeerComparison(
     CROSS JOIN target_combined t
     WHERE COALESCE(sm.sales, 0) > 0
       AND ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END
+      ${peerKelompokFilter}
     ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
     LIMIT ${limit + 1}
   `;

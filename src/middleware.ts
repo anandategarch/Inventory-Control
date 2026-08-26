@@ -61,15 +61,20 @@ export function middleware(req: NextRequest) {
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // FIX (AUDIT-ANIMATION-REVERT): fail-open when ADMIN_TOKEN not set, regardless of NODE_ENV.
-  // Reason: This is a single-user app with NO auth UI (no login page, no token input).
-  // Fail-closed breaks ALL mutations (add PIC, manage data, settings, ingest) — user
-  // cannot use the app at all without setting ADMIN_TOKEN, which they have no UI to do.
-  // The "security risk" is theoretical for a single-user local dev tool.
-  // When ADMIN_TOKEN IS set, all mutations require it (Bearer header or ?admin_token=).
-  // TODO: If deploying multi-user, add auth UI + re-enable fail-closed.
+  // FIX (BUG2-SEC-3): fail-closed in PRODUCTION, fail-open in development.
+  // The old code failed open regardless of NODE_ENV — a production deploy without
+  // ADMIN_TOKEN would leave all destructive endpoints (ingest, settings, data delete,
+  // migrate-direction) open to anyone. In development, fail-open is correct (no auth UI,
+  // single-user sandbox). In production, fail-closed is the safe default.
   if (!adminToken) {
-    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth (single-user mode)`);
+    if (process.env.NODE_ENV === 'production') {
+      logger.error(`ADMIN_TOKEN not set in PRODUCTION — ${pathname} blocked (fail-closed)`);
+      return NextResponse.json(
+        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set it in production to allow mutations.' },
+        { status: 500 }
+      );
+    }
+    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth (single-user dev mode)`);
     return NextResponse.next();
   }
 

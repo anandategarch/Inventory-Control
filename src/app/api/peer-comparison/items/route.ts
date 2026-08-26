@@ -45,6 +45,9 @@ export async function GET(req: NextRequest) {
     const week = url.searchParams.get('week');
     const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
     const topItems = Math.min(parseInt(url.searchParams.get('topItems') || '5', 10) || 5, 20);
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
+    // the focus outlet's top-items CTE is queried by outletCode regardless.
+    const kelompok = url.searchParams.get('kelompok');
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -60,6 +63,17 @@ export async function GET(req: NextRequest) {
           SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
           WHERE ir2."monthLabel" = ${month}
         )`;
+
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok filter scopes the PEER set
+    // only (peer_outlets CTE). The focus outlet is ALWAYS included via
+    // `o.code = ${outletCode}` so it is never dropped from the result set
+    // (e.g. if focus outlet is outside the selected kelompok). Pattern
+    // matches shared.ts:buildSqlFilters kelompok clause — extract last
+    // dot-segment, compare first 3 chars (works for both "1030.BDGSET" and
+    // "B.1001.MLGPAR").
+    const peerKelompokFilter = kelompok
+      ? Prisma.sql`AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`
+      : Prisma.sql``;
 
     // 1. Find target outlet's sales (mode) within the ±10% peer set.
     //    Reuse the same sales_mode logic from queryPeerComparison.
@@ -99,6 +113,7 @@ export async function GET(req: NextRequest) {
         CROSS JOIN target t
         WHERE COALESCE(sm.sales, 0) > 0
           AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1
+          ${peerKelompokFilter}
       ),
       target_top_items AS (
         SELECT i.id as "itemId", i.name as "itemName",

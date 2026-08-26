@@ -44,7 +44,10 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
   const [driveManualName, setDriveManualName] = useState('');
-  const [driveNumberLocale, setDriveNumberLocale] = useState<'us' | 'eu'>('us');
+  // FIX (BUG2-INGEST-4): changed 'eu' → 'id' to match backend Zod schema ('auto' | 'id' | 'us').
+  // The old 'eu' value was rejected by the backend → 400 error on every Drive import with EU format.
+  // Indonesian locale uses European-style number format (1.234,56) so 'id' is the correct equivalent.
+  const [driveNumberLocale, setDriveNumberLocale] = useState<'us' | 'id'>('us');
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -198,11 +201,11 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
             <label className="flex items-center gap-1.5 text-xs cursor-pointer">
               <input
                 type="radio"
-                checked={driveNumberLocale === 'eu'}
-                onChange={() => setDriveNumberLocale('eu')}
+                checked={driveNumberLocale === 'id'}
+                onChange={() => setDriveNumberLocale('id')}
                 className="h-3.5 w-3.5"
               />
-              EU (1.234,56)
+              ID (1.234,56)
             </label>
           </div>
         </div>

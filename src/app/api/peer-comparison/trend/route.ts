@@ -51,6 +51,9 @@ export async function GET(req: NextRequest) {
     const outletCode = url.searchParams.get('outletCode');
     let month = url.searchParams.get('month');
     const peersParam = url.searchParams.get('peers'); // optional comma-separated outlet codes
+    // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
+    // passed to queryPeerComparison for the auto-compute peer set path.
+    const kelompok = url.searchParams.get('kelompok');
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -70,7 +73,8 @@ export async function GET(req: NextRequest) {
     if (peerCodes.length === 0) {
       // month mode → MAX(weekLabel) = whole-month aggregate (matches
       // the main table's peer band derivation; see outlets.ts:177-182).
-      const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20);
+      // Pass kelompok so the auto-computed peer set respects the global filter.
+      const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20, kelompok);
       peerCodes = peers
         .filter(p => !p.isTarget)
         .map(p => p.outletCode)

@@ -67,15 +67,24 @@ export async function GET(req: NextRequest) {
       queryParetoNestedItemOutlet(week, month, filters, 10),
     ]);
 
+    // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
+    // from historical baseline. The old queryParetoHistorical only excluded
+    // `monthLabel != ${month}`, which included future months if they exist.
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey;
+
     // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
     // + merge histAvg + zScore into Pareto results
-    // DESIGN NOTE: histKelompok intentionally omits kelompok filter (same reason as byKelompok above).
+    // FIX (BUG2-PARETO-1): pass currentMonthKey to exclude future months
     const [histItem, histOutlet, histArea, histKelompok, histPIC] = await Promise.all([
-      queryParetoHistorical(week, month, 'item', filters),
-      queryParetoHistorical(week, month, 'outlet', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoHistorical(week, month, 'area', { kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
-      queryParetoHistorical(week, month, 'pic', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
+      queryParetoHistorical(week, month, 'item', filters, currentMonthKey),
+      queryParetoHistorical(week, month, 'outlet', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
+      queryParetoHistorical(week, month, 'area', { kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
+      queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }, currentMonthKey), // intentional: no kelompok filter
+      queryParetoHistorical(week, month, 'pic', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
     ]);
 
     const byItemMerged = mergeHistoricalIntoPareto(byItem, histItem);

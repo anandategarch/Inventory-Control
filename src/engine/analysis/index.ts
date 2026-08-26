@@ -6,8 +6,11 @@
 //  - rankingService.ts   (health ranking, variance, historical, priorities, worklist)
 //  - patternEngine.ts    (cross-outlet pattern detection)
 //  - rootCauseEngine.ts  (ruleCode → root causes + recommended actions)
-//  - insightEngine.ts    (auto-generated executive insights from analysis data)
 //  - types.ts            (shared types)
+//
+//  FIX (BUG2-P0-2): Removed insightEngine.ts (dead code — generateExecutiveInsights
+//  was never called by any active route or component. Referenced investigationWorklist
+//  field which was removed from AnalysisData type.)
 // ============================================================
 export { buildRuleContext, recommendAction } from './ruleService';
 export {
@@ -35,12 +38,4 @@ export type {
   RootCauseSeverity,
   RootCauseCategory,
 } from './rootCauseEngine';
-export { generateExecutiveInsights } from './insightEngine';
-export type {
-  ExecutiveInsight,
-  InsightCategory,
-  InsightSeverity,
-  InsightInput,
-  NetworkItemRiskSummary,
-} from './insightEngine';
 export type { RecWithRels } from './types';
