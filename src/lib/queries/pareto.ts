@@ -64,7 +64,7 @@ function computePareto<T extends { totalAbsNominal: number; name: string; nomina
 export async function queryParetoByItem(
   week: string,
   month: string,
-  filters: { area?: string | null; outletCode?: string | null; picOutletCodes?: string[] | null },
+  filters: { area?: string | null; kelompok?: string | null; outletCode?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
@@ -98,7 +98,7 @@ export async function queryParetoByItem(
 export async function queryParetoByOutlet(
   week: string,
   month: string,
-  filters: { area?: string | null; picOutletCodes?: string[] | null },
+  filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
@@ -131,7 +131,7 @@ export async function queryParetoByOutlet(
 export async function queryParetoByArea(
   week: string,
   month: string,
-  filters: { picOutletCodes?: string[] | null },
+  filters: { kelompok?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters({ ...filters, area: null });
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ area: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
@@ -160,12 +160,47 @@ export async function queryParetoByArea(
 }
 
 // ============================================================
+//  Pareto by Kelompok — top outlet prefixes (3-char) accounting for 80%
+//  Kelompok = 3-char prefix from outlet code (e.g. "MLG" from "1016.MLGJAK")
+// ============================================================
+export async function queryParetoByKelompok(
+  week: string,
+  month: string,
+  filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
+): Promise<ParetoResult> {
+  const f = buildSqlFilters(filters);
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ kelompok: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
+    SELECT SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3) as "kelompok",
+      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") as "qtyDeviasi"
+    FROM "InventoryRecord" ir
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      ${f}
+    GROUP BY SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3)
+    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
+    ORDER BY "totalAbsNominal" DESC
+  `);
+  const typed = rows.map((r: any) => ({
+    name: r.kelompok,
+    outletCount: Number(r.outletCount),
+    totalAbsNominal: Number(r.totalAbsNominal),
+    nominalDeviasi: Number(r.nominalDeviasi),
+    qtyDeviasi: Number(r.qtyDeviasi),
+  }));
+  return computePareto(typed);
+}
+
+// ============================================================
 //  Pareto by PIC — top PICs accounting for 80% of total deviation (#8)
 // ============================================================
 export async function queryParetoByPIC(
   week: string,
   month: string,
-  filters: { area?: string | null; picOutletCodes?: string[] | null },
+  filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
 ): Promise<ParetoResult> {
   const f = buildSqlFilters(filters);
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ pic: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
@@ -222,7 +257,7 @@ export interface NestedParetoItem {
 export async function queryParetoNestedItemOutlet(
   week: string,
   month: string,
-  filters: { area?: string | null; picOutletCodes?: string[] | null },
+  filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
   maxItems: number = 10,
 ): Promise<{ items: NestedParetoItem[]; totalAbsNominal: number }> {
   const f = buildSqlFilters(filters);
@@ -333,8 +368,8 @@ export async function queryParetoNestedItemOutlet(
 export async function queryParetoHistorical(
   week: string,
   month: string,
-  dimension: 'item' | 'outlet' | 'area' | 'pic',
-  filters: { area?: string | null; picOutletCodes?: string[] | null },
+  dimension: 'item' | 'outlet' | 'area' | 'kelompok' | 'pic',
+  filters: { area?: string | null; kelompok?: string | null; picOutletCodes?: string[] | null },
 ): Promise<Map<string, { histAvg: number; histStdDev: number; histN: number }>> {
   const f = buildSqlFilters(filters);
 
@@ -345,7 +380,9 @@ export async function queryParetoHistorical(
       ? Prisma.sql`o.code`
       : dimension === 'area'
         ? Prisma.sql`o.area`
-        : Prisma.sql`COALESCE(pic.pic, 'Unassigned')`;
+        : dimension === 'kelompok'
+          ? Prisma.sql`SUBSTRING(o.code FROM POSITION('.' IN o.code)+1 FOR 3)`
+          : Prisma.sql`COALESCE(pic.pic, 'Unassigned')`;
 
   const joinItem = dimension === 'item'
     ? Prisma.sql`JOIN "Item" i ON ir."itemId" = i.id`

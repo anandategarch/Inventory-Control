@@ -24,7 +24,7 @@ import { FileUploadDialog } from '@/components/filters/FileUploadDialog';
 import { DriveImportDialog } from '@/components/filters/DriveImportDialog';
 
 export function FilterBar() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setOutlet, setPic, reset } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard();
   const { data: status, isLoading } = useStatus();
   const prefetchAnalysis = usePrefetchAnalysis();
   const [ingesting, setIngesting] = useState(false);
@@ -117,7 +117,7 @@ export function FilterBar() {
   const compareValue = comparisonWeek
     ? `${comparisonWeek}|||${comparisonMonth || monthLabel}`
     : 'auto';
-  const hasActiveFilter = Boolean(area || outletCode || pic);
+  const hasActiveFilter = Boolean(area || kelompok || outletCode || pic);
 
   async function handleIngest() {
     setIngesting(true);
@@ -347,6 +347,17 @@ export function FilterBar() {
             searchPlaceholder="Cari area..."
             emptyText="Area tidak ditemukan."
             allOptionLabel={`Semua Area (${areas.length})`}
+            buttonClassName="min-w-[120px]"
+          />
+
+          <SearchableComboBox
+            options={(status?.kelompokOptions || []).map((k: string) => ({ value: k, label: k }))}
+            value={kelompok}
+            onValueChange={setKelompok}
+            placeholder="Semua Kelompok"
+            searchPlaceholder="Cari kelompok..."
+            emptyText="Kelompok tidak ditemukan."
+            allOptionLabel={`Semua Kelompok (${status?.kelompokOptions?.length || 0})`}
             buttonClassName="min-w-[120px]"
           />
 

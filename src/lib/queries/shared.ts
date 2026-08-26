@@ -50,6 +50,7 @@ export function buildSqlFilters(
     outletCode?: string | null;
     itemName?: string | null;
     picOutletCodes?: string[] | null;
+    kelompok?: string | null;
   },
   alias: string = 'ir'
 ): Prisma.Sql {
@@ -63,6 +64,9 @@ export function buildSqlFilters(
   const parts: Prisma.Sql[] = [];
   if (opts.area) {
     parts.push(Prisma.sql`AND ${a}.area = ${opts.area}`);
+  }
+  if (opts.kelompok) {
+    parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code LIKE ${opts.kelompok + '%'})`);
   }
   if (opts.outletCode) {
     parts.push(Prisma.sql`AND ${a}."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${opts.outletCode})`);

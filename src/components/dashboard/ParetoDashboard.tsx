@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, TrendingDown, Package, Store, MapPin, Users, ChevronDown, ChevronRight, Target } from 'lucide-react';
+import { Loader2, TrendingDown, Package, Store, MapPin, Users, Boxes, ChevronDown, ChevronRight, Target } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
 
@@ -59,6 +59,7 @@ interface ParetoData {
   byItem: ParetoResult;
   byOutlet: ParetoResult;
   byArea: ParetoResult;
+  byKelompok: ParetoResult;
   byPIC: ParetoResult;
   nested: { items: NestedItem[]; totalAbsNominal: number };
   durationMs?: number;
@@ -141,11 +142,11 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
 }
 
 export function ParetoDashboard() {
-  const { monthLabel, currentWeek, area, pic } = useDashboard();
+  const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   // Reset expanded items when filter changes (stale state cleanup)
-  const filterKey = `${monthLabel}|${currentWeek}|${area}|${pic}`;
+  const filterKey = `${monthLabel}|${currentWeek}|${area}|${kelompok}|${pic}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (prevFilterKey !== filterKey) {
     setPrevFilterKey(filterKey);
@@ -153,13 +154,14 @@ export function ParetoDashboard() {
   }
 
   const { data: paretoData, isLoading, error } = useQuery<ParetoData>({
-    queryKey: ['pareto', monthLabel, currentWeek, area, pic],
+    queryKey: ['pareto', monthLabel, currentWeek, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams({
         month: monthLabel!,
         week: currentWeek!,
       });
       if (area && area !== 'all') p.set('area', area);
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/pareto?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -217,7 +219,7 @@ export function ParetoDashboard() {
         </div>
       </div>
 
-      {/* 4-Quadrant Grid */}
+      {/* 5-Quadrant Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <QuadrantCard
           title="Top Items (80% Deviation)"
@@ -232,6 +234,13 @@ export function ParetoDashboard() {
           data={paretoData.byOutlet}
           color="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400"
           barColor="bg-emerald-500"
+        />
+        <QuadrantCard
+          title="Top Kelompok (80% Deviation)"
+          icon={<Boxes className="h-3.5 w-3.5" />}
+          data={paretoData.byKelompok}
+          color="bg-cyan-100 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400"
+          barColor="bg-cyan-500"
         />
         <QuadrantCard
           title="Top Areas (80% Deviation)"
@@ -340,7 +349,7 @@ export function ParetoDashboard() {
               <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
                 Action Plan — Prioritas Investigasi
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                 <div className="flex items-center gap-1.5 text-xs">
                   <Package className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                   <span className="text-amber-700 dark:text-amber-400">
@@ -351,6 +360,12 @@ export function ParetoDashboard() {
                   <Store className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <span className="text-amber-700 dark:text-amber-400">
                     <strong>{paretoData.byOutlet?.drivers.length || 0}</strong> outlet = 80% masalah
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs">
+                  <Boxes className="h-3 w-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                  <span className="text-amber-700 dark:text-amber-400">
+                    <strong>{paretoData.byKelompok?.drivers.length || 0}</strong> kelompok = 80% deviation
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-xs">

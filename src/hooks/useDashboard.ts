@@ -8,6 +8,7 @@ interface DashboardStore {
   comparisonWeek: string | null;
   comparisonMonth: string | null;
   area: string | null;
+  kelompok: string | null;
   outletCode: string | null;
   itemName: string | null;
   pic: string | null;
@@ -16,6 +17,7 @@ interface DashboardStore {
   setWeek: (v: string | null) => void;
   setCompareWeek: (v: string | null, m: string | null) => void;
   setArea: (v: string | null) => void;
+  setKelompok: (v: string | null) => void;
   setOutlet: (v: string | null) => void;
   setItem: (v: string | null) => void;
   setPic: (v: string | null) => void;
@@ -42,18 +44,20 @@ export const useDashboard = create<DashboardStore>((set) => ({
   comparisonWeek: null,
   comparisonMonth: null,
   area: null,
+  kelompok: null,
   outletCode: null,
   itemName: null,
   pic: null,
   comparisonMode: 'previous_week',
   setMonth: (v) => set({ monthLabel: v, currentWeek: null, comparisonWeek: null, comparisonMonth: null }),
-  setWeek: (v) => set({ currentWeek: v, comparisonWeek: null, comparisonMonth: null }), // reset compare saat ganti week, auto-set akan jalan via useEffect
+  setWeek: (v) => set({ currentWeek: v, comparisonWeek: null, comparisonMonth: null }),
   setCompareWeek: (v, m) => set({ comparisonWeek: v, comparisonMonth: m }),
   setArea: (v) => set({ area: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
+  setKelompok: (v) => set({ kelompok: v, outletCode: null, focusOutlet: null }),
   setOutlet: (v) => set({ outletCode: v, focusOutlet: null }),
   setItem: (v) => set({ itemName: v }),
   setPic: (v) => set({ pic: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
-  reset: () => set({ area: null, outletCode: null, itemName: null, pic: null, focusOutlet: null }),
+  reset: () => set({ area: null, kelompok: null, outletCode: null, itemName: null, pic: null, focusOutlet: null }),
   drilldown: { outletCode: null, itemName: null },
   setDrilldown: (d) => set({ drilldown: d }),
   sourceModalOpen: false,

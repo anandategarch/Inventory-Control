@@ -99,6 +99,7 @@ export async function GET(req: NextRequest) {
     const currentWeek = url.searchParams.get('week');
     const compareWeekRaw = url.searchParams.get('compareWeek');
     const area = url.searchParams.get('area');
+    const kelompok = url.searchParams.get('kelompok');
     const outletCode = url.searchParams.get('outlet');
     const itemName = url.searchParams.get('item');
     const pic = url.searchParams.get('pic');
@@ -332,6 +333,7 @@ export async function GET(req: NextRequest) {
     // FIX FILTER-2: apply sentinel for empty PIC list (buildSqlFilters skips empty arrays)
     const filterOpts = {
       area,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode,
       itemName,
       picOutletCodes: picOutletCodes !== null

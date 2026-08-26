@@ -88,7 +88,7 @@ function FetchAware({ isFetching, children }: { isFetching: boolean; children: R
 // Fix #10: Scroll to Top button — appears after scrolling down 300px
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard();
   const { data: status } = useStatus();
   const queryClient = useQueryClient();
   // PERF-OPT: track whether cache warming has already fired for this status
@@ -195,6 +195,7 @@ export default function DashboardPage() {
     compareWeek: comparisonWeek,
     compareMonth: comparisonMonth,
     area,
+    kelompok,
     outlet: outletCode,
     item: itemName,
     pic,
@@ -216,6 +217,7 @@ export default function DashboardPage() {
       if (comparisonWeek) params.set('compareWeek', comparisonWeek);
       if (comparisonMonth) params.set('compareMonth', comparisonMonth);
       if (area) params.set('area', area);
+      if (kelompok) params.set('kelompok', kelompok);
       if (outletCode) params.set('outlet', outletCode);
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
@@ -247,7 +249,7 @@ export default function DashboardPage() {
     } finally {
       setIsExporting(false);
     }
-  }, [analysis.data, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, itemName, pic, toast, status]);
+  }, [analysis.data, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, toast, status]);
 
   // UX-ENHANCE: Refresh handler — invalidates analysis + status queries and
   // fires a toast. Wired to Cmd/Ctrl+R keyboard shortcut.

@@ -80,6 +80,13 @@ export async function GET(req: NextRequest) {
 
     const areas = [...new Set(outlets.map((o) => o.area))].sort();
     const pics = [...new Set(outletPics.map((p) => p.pic).filter(Boolean))].sort();
+    // Kelompok: 3-char prefix from outlet code (e.g. "MLG" from "1016.MLGJAK")
+    const kelompokOptions = [...new Set(
+      outlets.map((o) => {
+        const parts = o.code.split('.');
+        return parts.length >= 2 ? parts[1].substring(0, 3) : '';
+      }).filter(Boolean)
+    )].sort();
 
     const itemsCount = await db.item.count();
     const recordsCount = await db.inventoryRecord.count();
@@ -114,6 +121,7 @@ export async function GET(req: NextRequest) {
       outlets: outletsWithPic,
       areas,
       pics,
+      kelompokOptions,
       stats: {
         totalFiles: files.length,
         totalOutlets: outlets.length,
