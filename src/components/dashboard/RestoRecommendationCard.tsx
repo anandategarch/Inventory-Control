@@ -48,10 +48,10 @@ interface RestoRecommendation {
 }
 
 export function RestoRecommendationCard() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic, setFocusOutlet } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic, setFocusOutlet } = useDashboard();
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, outletCode, pic],
+    queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel!);
@@ -60,6 +60,8 @@ export function RestoRecommendationCard() {
       if (comparisonMonth) p.set('prevMonth', comparisonMonth);
       p.set('limit', '5');
       if (area && area !== 'all') p.set('area', area);
+      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so recommendations respect the global filter
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (outletCode && outletCode !== 'all') p.set('outletCode', outletCode);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/recommendations?${p.toString()}`);

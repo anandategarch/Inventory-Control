@@ -31,6 +31,7 @@ const itemSearchQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   area: z.string().max(100).optional(),
+  kelompok: z.string().max(50).optional(),
   pic: z.string().max(100).optional(),
 });
 
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
     if (!parse.success) {
       return NextResponse.json({ success: false, error: `Invalid params: ${parse.error.message}` }, { status: 400 });
     }
-    const { mode, q, item, month: monthRaw, week, area, pic } = parse.data;
+    const { mode, q, item, month: monthRaw, week, area, kelompok, pic } = parse.data;
 
     // Resolve month label case (DB may have "AGUSTUS 2026" vs "Agustus 2026")
     // Only resolve if monthRaw is provided (trend mode doesn't need month)
@@ -94,13 +95,14 @@ export async function GET(req: NextRequest) {
     if (mode === 'trend') {
       const results = await queryItemTrend(item, {
         area: area || null,
+        kelompok: kelompok || null,
         picOutletCodes,
       }, 500);
       return NextResponse.json({
         success: true,
         mode: 'trend',
         item,
-        filters: { area: area || null, pic: pic || null },
+        filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
         results,
         durationMs: Date.now() - startedAt,
       });
@@ -113,6 +115,7 @@ export async function GET(req: NextRequest) {
 
     const results = await queryGlobalItemSearch(week, month, item, {
       area: area || null,
+      kelompok: kelompok || null,
       picOutletCodes,
     }, 100);
 
@@ -121,7 +124,7 @@ export async function GET(req: NextRequest) {
       mode: 'cross-outlet',
       item,
       period: { month, week },
-      filters: { area: area || null, pic: pic || null },
+      filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
       results,
       durationMs: Date.now() - startedAt,
     });

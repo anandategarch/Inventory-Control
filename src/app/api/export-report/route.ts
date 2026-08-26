@@ -264,6 +264,10 @@ export async function GET(req: NextRequest) {
     const outletCode = url.searchParams.get('outlet');
     const itemName = url.searchParams.get('item');
     const pic = url.searchParams.get('pic');
+    // FIX (BUG-KELOMPOK-GLOBAL): read kelompok so Word export respects the
+    // global kelompok filter (was missing → exported report included outlets
+    // from ALL kelompok even when user filtered to one).
+    const kelompok = url.searchParams.get('kelompok');
     // BUG FIX (AUDIT-EXPORT-AI-2): read compareWeek/compareMonth from URL params.
     // Previously export ignored user's comparison selection — always auto-computed.
     const userCompareWeek = url.searchParams.get('compareWeek');
@@ -295,14 +299,42 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // FIX (BUG-KELOMPOK-GLOBAL): resolve kelompok → outlet codes for buildWhere.
+    // Same pattern as /api/analysis — Prisma WhereInput can't express
+    // LEFT(SUBSTRING(code, '[^.]+$'), 3) = X, so pre-fetch the matching codes.
+    let kelompokOutletCodes: string[] = [];
+    if (kelompok && kelompok !== 'all') {
+      const allOutlets = await db.outlet.findMany({ select: { code: true } });
+      kelompokOutletCodes = allOutlets
+        .map((o) => o.code)
+        .filter((code) => {
+          const segs = code.split('.');
+          if (segs.length < 2) return false;
+          return segs[segs.length - 1].substring(0, 3).toUpperCase() === kelompok.toUpperCase();
+        });
+    }
+
     // Build where clause
     // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter
+    // FIX (BUG-KELOMPOK-GLOBAL): add kelompok filter so currentRecs + prevRecs
+    // (used by rule evaluation + variance analysis) also respect kelompok.
     const buildWhere = (wk: string, mLabel: string) => {
       const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
       if (area && area !== 'all') w.area = area;
       if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
-      // FIX FILTER-4: PIC filter with sentinel + outletCode intersection
-      if (picOutletCodes !== null) {
+      // Kelompok filter — intersect with PIC/outletCode if both set
+      if (kelompok && kelompok !== 'all' && kelompokOutletCodes !== null) {
+        if (kelompokOutletCodes.length === 0) {
+          w.outlet = { code: { in: ['__NO_MATCH__'] } };
+        } else if (picOutletCodes !== null) {
+          const intersect = kelompokOutletCodes.filter((c) => picOutletCodes.includes(c));
+          w.outlet = { code: { in: intersect.length > 0 ? intersect : ['__NO_MATCH__'] } };
+        } else if (outletCode && outletCode !== 'all') {
+          w.outlet = { code: kelompokOutletCodes.includes(outletCode) ? outletCode : '__NO_MATCH__' };
+        } else {
+          w.outlet = { code: { in: kelompokOutletCodes } };
+        }
+      } else if (picOutletCodes !== null) {
         let codes = picOutletCodes; // already has sentinel if empty
         if (outletCode && outletCode !== 'all') {
           codes = codes.includes(outletCode) ? [outletCode] : ['__NO_MATCH__'];
@@ -316,6 +348,7 @@ export async function GET(req: NextRequest) {
 
     const filterOpts = {
       area: area === 'all' ? null : area,
+      kelompok: kelompok === 'all' ? null : kelompok,
       outletCode: outletCode === 'all' ? null : outletCode,
       itemName,
       picOutletCodes, // already has sentinel applied
@@ -526,8 +559,10 @@ export async function GET(req: NextRequest) {
       (async () => {
         const topNom = topNominal[0];
         if (!topNom) return [];
+        // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok to cross-outlet query in export
         return queryGlobalItemSearch(week, month, topNom.itemName, {
           area: filterOpts.area,
+          kelompok: filterOpts.kelompok,
           picOutletCodes: filterOpts.picOutletCodes,
         }, 50);
       })(),
@@ -536,7 +571,8 @@ export async function GET(req: NextRequest) {
     // Build data object for document
     const data = {
       period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
-      filters: { area, outletCode, itemName },
+      // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
+      filters: { area, kelompok, outletCode, itemName },
       executiveSummary: execSummary,
       growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,

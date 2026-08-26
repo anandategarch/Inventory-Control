@@ -32,15 +32,19 @@ export async function queryGlobalItemSearch(
   itemNameFilter: string,
   filters: {
     area?: string | null;
+    kelompok?: string | null;
     picOutletCodes?: string[] | null;
   },
   limit: number = 100
 ): Promise<GlobalItemSearchRow[]> {
   // Filter by exact item name (case-insensitive). Outlet filter is intentionally
   // NOT applied — this is a CROSS-OUTLET view (user wants to see the item in
-  // ALL outlets). Area + PIC filters are still respected (narrow the outlet scope).
+  // ALL outlets). Area + PIC + kelompok filters are still respected (narrow the outlet scope).
+  // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok to buildSqlFilters so the cross-outlet
+  // view respects the global kelompok filter.
   const f = buildSqlFilters({
     area: filters.area,
+    kelompok: filters.kelompok,
     outletCode: null, // cross-outlet: no outlet filter
     itemName: null,   // itemName handled by exact match below
     picOutletCodes: filters.picOutletCodes,
@@ -166,13 +170,17 @@ export async function queryItemTrend(
   itemNameFilter: string,
   filters: {
     area?: string | null;
+    kelompok?: string | null;
     picOutletCodes?: string[] | null;
   },
   limit: number = 500
 ): Promise<ItemTrendRow[]> {
-  // No month/week filter — we want ALL periods. Only area + PIC filters apply.
+  // No month/week filter — we want ALL periods. Only area + PIC + kelompok filters apply.
+  // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok to buildSqlFilters so trend view
+  // respects the global kelompok filter.
   const f = buildSqlFilters({
     area: filters.area,
+    kelompok: filters.kelompok,
     outletCode: null,
     itemName: null, // handled by exact match below
     picOutletCodes: filters.picOutletCodes,

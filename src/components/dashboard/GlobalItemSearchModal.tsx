@@ -58,7 +58,7 @@ interface CrossOutletRow {
 }
 
 export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { monthLabel, currentWeek, area, pic, setFocusOutlet, setActiveTab } = useDashboard();
+  const { monthLabel, currentWeek, area, kelompok, pic, setFocusOutlet, setActiveTab } = useDashboard();
   const [query, setQuery] = useState('');
   // FIX (AUDIT-FRONTEND-V2): debounce autocomplete input — was firing query on every keystroke.
   const deferredQuery = useDeferredValue(query);
@@ -110,7 +110,7 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
 
   // Stage 2: cross-outlet view
   const { data: crossData, isLoading: crossLoading, error: crossError } = useQuery<{ results: CrossOutletRow[] }>({
-    queryKey: ['item-search', 'cross-outlet', monthLabel, currentWeek, selectedItem, area, pic],
+    queryKey: ['item-search', 'cross-outlet', monthLabel, currentWeek, selectedItem, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams({
         mode: 'cross-outlet',
@@ -119,6 +119,8 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
         week: currentWeek!,
       });
       if (area && area !== 'all') p.set('area', area);
+      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so cross-outlet view respects the global filter
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/item-search?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -131,13 +133,15 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
   // #1 TREND ANALYSIS: fetch per-(period, outlet) data across ALL periods for trend chart.
   // Only fires when user switches to Trend view (enabled: viewMode === 'trend').
   const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery<{ results: ItemTrendRow[] }>({
-    queryKey: ['item-search', 'trend', selectedItem, area, pic],
+    queryKey: ['item-search', 'trend', selectedItem, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams({
         mode: 'trend',
         item: selectedItem!,
       });
       if (area && area !== 'all') p.set('area', area);
+      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so trend view respects the global filter
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/item-search?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

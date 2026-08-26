@@ -42,7 +42,7 @@ export type {
 };
 
 export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData }) {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic } = useDashboard();
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');
@@ -72,7 +72,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
   // FIX INT-1: pass area + pic params so Signal 1 (Dev/BOM vs Peer) uses correct network scope
   const { data: recoData } = useQuery<RecommendationResponse>({
-    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, pic],
+    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel!);
@@ -82,6 +82,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       p.set('outletCode', activeOutlet!);
       p.set('limit', '1');
       if (area && area !== 'all') p.set('area', area);
+      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so single-outlet recommendation
+      // is consistent with the global kelompok filter (also affects network benchmark scope)
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/recommendations?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';

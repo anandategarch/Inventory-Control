@@ -33,6 +33,10 @@ export async function GET(req: NextRequest) {
     const area = url.searchParams.get('area');
     const outletCode = url.searchParams.get('outletCode');
     const pic = url.searchParams.get('pic');
+    // FIX (BUG-KELOMPOK-GLOBAL): read kelompok param so RestoRecommendationCard
+    // respects the global kelompok filter (was missing → recommendations showed
+    // outlets from ALL kelompok even when user filtered to one).
+    const kelompok = url.searchParams.get('kelompok');
 
     if (!month || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
@@ -88,6 +92,7 @@ export async function GET(req: NextRequest) {
 
     const filters = {
       area: area && area !== 'all' ? area : null,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       picOutletCodes,
     };

@@ -58,6 +58,7 @@ export async function queryRestoRecommendations(
   prevMonth: string | null,
   filters: {
     area?: string | null;
+    kelompok?: string | null;
     outletCode?: string | null;
     itemName?: string | null;
     picOutletCodes?: string[] | null;
