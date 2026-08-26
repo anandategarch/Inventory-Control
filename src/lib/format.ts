@@ -87,19 +87,21 @@ export function severityColor(s: string): string {
 
 export function directionColor(d: string | null | undefined): string {
   switch (d) {
-    case 'LOSS': return 'text-red-600';
-    case 'SURPLUS': return 'text-emerald-600';
+    case 'LOSS': return 'text-red-600 dark:text-red-400';
+    case 'SURPLUS': return 'text-emerald-600 dark:text-emerald-400';
     default: return 'text-muted-foreground';
   }
 }
 
 // ============================================================
-//  numberColor — global: negative numbers = red
+//  numberColor — global: negative = red, positive = green, zero = muted
 //  Apply to ANY numeric display (IDR, QTY, percent, etc.)
+//  FIX: consolidated from 3 duplicate versions (format.ts, GlobalItemSearchModal,
+//  ParetoDashboard). Now includes dark mode + positive=green (was red-only).
 // ============================================================
 export function numberColor(v: number | null | undefined): string {
-  if (v == null || isNaN(v)) return '';
-  return v < 0 ? 'text-red-600' : '';
+  if (v == null || isNaN(v)) return 'text-muted-foreground';
+  return v < 0 ? 'text-red-600 dark:text-red-400' : v > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
 }
 
 export function priorityColor(p: string): string {

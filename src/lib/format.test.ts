@@ -118,11 +118,11 @@ describe('fmtPctAbs', () => {
 
 describe('directionColor', () => {
   it('returns red for LOSS', () => {
-    expect(directionColor('LOSS')).toBe('text-red-600');
+    expect(directionColor('LOSS')).toBe('text-red-600 dark:text-red-400');
   });
 
   it('returns emerald for SURPLUS', () => {
-    expect(directionColor('SURPLUS')).toBe('text-emerald-600');
+    expect(directionColor('SURPLUS')).toBe('text-emerald-600 dark:text-emerald-400');
   });
 
   it('returns muted for null/undefined/NEUTRAL', () => {
@@ -134,13 +134,19 @@ describe('directionColor', () => {
 
 describe('numberColor', () => {
   it('returns red for negative', () => {
-    expect(numberColor(-5)).toBe('text-red-600');
+    expect(numberColor(-5)).toBe('text-red-600 dark:text-red-400');
   });
 
-  it('returns empty string for null/NaN/positive', () => {
-    expect(numberColor(null)).toBe('');
-    expect(numberColor(NaN)).toBe('');
-    expect(numberColor(5)).toBe('');
-    expect(numberColor(0)).toBe('');
+  it('returns muted for null/NaN', () => {
+    expect(numberColor(null)).toBe('text-muted-foreground');
+    expect(numberColor(NaN)).toBe('text-muted-foreground');
+  });
+
+  it('returns emerald for positive', () => {
+    expect(numberColor(5)).toBe('text-emerald-600 dark:text-emerald-400');
+  });
+
+  it('returns muted for zero', () => {
+    expect(numberColor(0)).toBe('text-muted-foreground');
   });
 });

@@ -156,17 +156,6 @@
   to { opacity: 1; }
 }
 
-@keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 .animate-fade-in-up {
   animation: fadeInUp 0.3s ease-out;
 }
@@ -175,9 +164,6 @@
   animation: fadeIn 0.2s ease-out;
 }
 
-.animate-scale-in {
-  animation: scaleIn 0.2s ease-out;
-}
 
 /* Tab content transition */
 [data-state="active"][role="tabpanel"] {

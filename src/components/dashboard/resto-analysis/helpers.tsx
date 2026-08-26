@@ -32,9 +32,7 @@ export function priorityBg(p: string): string {
   return p === 'P1' ? 'bg-red-100 dark:bg-red-950/30' : p === 'P2' ? 'bg-amber-100 dark:bg-amber-950/30' : 'bg-emerald-100 dark:bg-emerald-950/30';
 }
 
-export function directionColor(d: string): string {
-  return d === 'LOSS' ? 'text-red-600 dark:text-red-400' : d === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
-}
+export { directionColor } from '@/lib/format';
 
 // ------------------------------------------------------------
 //  Row — label/value row used inside profile cards and modal

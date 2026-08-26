@@ -20,7 +20,9 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, numberColor, directionColor } from '@/lib/format';
+
+// FIX: removed local numberColor + directionColor duplicates — now imported from @/lib/format
 import { clickableRowProps } from '@/lib/a11y';
 import type { ItemTrendRow } from '@/lib/queries/items/global-search';
 
@@ -53,14 +55,6 @@ interface CrossOutletRow {
   absNominalDeviasi: number;
   devBom: number | null;
   direction: string;
-}
-
-function directionColor(d: string): string {
-  return d === 'LOSS' ? 'text-red-600 dark:text-red-400' : d === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
-}
-
-function numberColor(v: number): string {
-  return v < 0 ? 'text-red-600 dark:text-red-400' : v > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
 }
 
 export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {

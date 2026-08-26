@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, TrendingDown, Package, Store, MapPin, Users, ChevronDown, ChevronRight, Target } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtNum } from '@/lib/format';
+import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
 
 interface ParetoRow {
   name: string;
@@ -62,10 +62,6 @@ interface ParetoData {
   byPIC: ParetoResult;
   nested: { items: NestedItem[]; totalAbsNominal: number };
   durationMs?: number;
-}
-
-function numberColor(v: number): string {
-  return v < 0 ? 'text-red-600 dark:text-red-400' : v > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
 }
 
 function QuadrantCard({ title, icon, data, color, barColor }: { title: string; icon: React.ReactNode; data: ParetoResult; color: string; barColor: string }) {
