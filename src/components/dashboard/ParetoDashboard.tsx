@@ -267,6 +267,16 @@ export function ParetoDashboard() {
             <p className="text-xs text-muted-foreground mb-2">
               Top 10 item by deviation. Klik untuk lihat outlet mana yang menyumbang 80% per item.
             </p>
+            {/* Column headers */}
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
+              <span className="w-5 shrink-0">#</span>
+              <span className="w-3 shrink-0"></span>
+              <span className="min-w-[120px] flex-1 shrink-0">Nama</span>
+              <span className="w-20 text-right shrink-0">QTY</span>
+              <span className="w-24 text-right shrink-0">Nominal</span>
+              <span className="w-10 text-right shrink-0">%</span>
+              <span className="w-10 text-right shrink-0">Cum</span>
+            </div>
             <div className="space-y-0.5 max-h-[500px] overflow-y-auto">
               {nestedItems.map((item, i) => {
                 const isExpanded = expandedItems.has(item.itemName);
@@ -288,6 +298,16 @@ export function ParetoDashboard() {
                     </button>
                     {isExpanded && item.outlets.length > 0 && (
                       <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
+                        {/* Outlet sub-header */}
+                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
+                          <span className="w-4 shrink-0"></span>
+                          <span className="min-w-[100px] flex-1 shrink-0">Outlet</span>
+                          <span className="text-[10px] shrink-0">Area</span>
+                          <span className="w-20 text-right shrink-0">QTY</span>
+                          <span className="w-24 text-right shrink-0">Nominal</span>
+                          <span className="w-10 text-right shrink-0">%</span>
+                          <span className="w-10 text-right shrink-0">Cum</span>
+                        </div>
                         {item.outlets.map((o, j) => (
                           <div key={`${o.outletCode}-${j}`} className="flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20">
                             <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>

@@ -34,8 +34,9 @@ export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
     for (const r of data) {
       const periodKey = `${r.monthKey}|${r.weekLabel}`;
       if (!periodMap.has(periodKey)) {
-        periodMap.set(periodKey, {
+      periodMap.set(periodKey, {
           period: `${r.monthLabel.slice(0, 3)} ${r.weekLabel.replace('WEEK ', 'W')}`,
+          // FIX: include monthKey in sortKey for proper chronological sort
           sortKey: `${r.monthKey}|${String(parseInt(r.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
         });
       }
