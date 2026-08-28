@@ -25534,3 +25534,2132 @@ VERIFICATION METHODOLOGY
   confirmed to be in code comments (documentation), not actual
   runtime calls.
 - No code changes made — report only per task instructions.
+
+═══════════════════════════════════════════════════════════════
+Task ID: 1-c
+Agent: general-purpose (Database Performance Analyst)
+Task: Analyze database layer for free performance improvement opportunities
+═══════════════════════════════════════════════════════════════
+
+Work Log:
+- Read worklog tail (lines 25100-25535) for context on prior AUDIT9-FINAL-BE
+  audit + AUDIT10-FE-2 frontend verification. No prior DB-perf agent has run.
+- Read prisma/schema.prisma (249 lines) — full schema inventory.
+- Read src/lib/db.ts — connection pool config + singleton pattern.
+- Read src/lib/queries/shared.ts — SqlFilterOpts, buildSqlFilters,
+  withStatementTimeout, DIRECTION_FROM_SUM_SQL, computePareto8020.
+- Read src/lib/aggregation-cache.ts — AggregationCache model usage +
+  in-flight Promise dedup + invalidation helper.
+- Read src/lib/build-where.ts — Prisma WhereInput builder for InventoryRecord.
+- Read all query modules in src/lib/queries/:
+  · pareto.ts (795 lines, 5 dim queries + nested + historical)
+  · items/top-items.ts (691 lines, 7 query functions)
+  · items/network-risk.ts (215 lines)
+  · items/global-search.ts (208 lines)
+  · outlets/resto-recommendations.ts (516 lines, 3 parallel CTEs)
+  · outlets/peer-comparison.ts (400 lines)
+  · outlets/top-outlets.ts (140 lines)
+  · historical.ts (71 lines)
+  · rule-evaluation.ts (270 lines, LATERAL JOIN)
+  · health-ranking.ts (345 lines, self-join + VALUES list)
+  · growth-drivers.ts (213 lines, 4 parallel aggregations)
+  · areas.ts (174 lines, trend by area)
+  · dashboard.ts (319 lines)
+- Read src/app/api/analysis/route.ts (lines 1-200, 300-549, 550-749) — the
+  20+ parallel query orchestrator + cache + serial-batch split.
+- Read src/lib/ingestion.ts (lines 1-100) + src/app/api/ingest-process/route.ts
+  (lines 390-490) — write path / cascade-delete patterns.
+- Grepped for @@index/@unique, $queryRaw, findMany, count, groupBy across src/.
+- No code changes made — analysis only per task instructions.
+
+───────────────────────────────────────────────────────────────
+FINDINGS — grouped by category (13 findings: 4 P1, 6 P2, 3 P3)
+───────────────────────────────────────────────────────────────
+
+### [SCHEMA / INDEXES]
+
+### Finding [DB-01]: Missing composite index for self-join + LATERAL on (outletId, itemId, akunPenyesuaian, monthLabel, weekLabel)
+- **Severity**: P1
+- **File(s)**: prisma/schema.prisma:141-153 (InventoryRecord indexes); consumers:
+  src/lib/queries/health-ranking.ts:204-247 (queryVarianceAnalysis self-join);
+  src/lib/queries/rule-evaluation.ts:145-153 (evaluateRulesSql LATERAL);
+  src/lib/queries/health-ranking.ts:313-333 (queryHistoricalCriticalItems VALUES join).
+- **Issue**: queryVarianceAnalysis does `JOIN "InventoryRecord" p ON
+  p."outletId" = c."outletId" AND p."itemId" = c."itemId" AND
+  p."akunPenyesuaian" IS NOT DISTINCT FROM c."akunPenyesuaian" AND
+  p."monthLabel" = ${prevMonth} AND p."weekLabel" = ${prevWeek}`. The only
+  index starting with these columns is the unique constraint
+  `@@unique([weekId, outletId, itemId, akunPenyesuaian])` (schema:141) — but
+  it starts with `weekId`, an internal surrogate key that the raw SQL never
+  filters on (raw SQL uses monthLabel+weekLabel strings, not weekId).
+  Result: PostgreSQL cannot use the unique index for the inner lookup of `p`;
+  it falls back to a hash join over the FULL prev-month slice (~13.5K rows)
+  for each outer row → ~270K × 13.5K = 3.6M row combinations examined.
+  Same LATERAL pattern in evaluateRulesSql (12-rule evaluation, line 145-153)
+  on 35K curr rows × prev slice. Both queries are wrapped in
+  withStatementTimeout (30s) and are documented as "can hang" in the code
+  comments — this index gap is the root cause.
+- **Free Fix**: Add to prisma/schema.prisma InventoryRecord model:
+  `@@index([outletId, itemId, akunPenyesuaian, monthLabel, weekLabel])`
+  Then run `npx prisma db push` (or generate + apply a migration). FREE —
+  PostgreSQL B-tree indexes cost nothing on Supabase free tier.
+  Optional alternative: also add `@@index([monthLabel, weekLabel, outletId,
+  itemId, akunPenyesuaian])` to give the planner a covering index for the
+  outer scan + inner lookup on a single index (avoids heap fetches).
+- **Estimated Impact**: Reduces varianceAnalysis + rule-evaluation query
+  times from ~2-3s each to <200ms (nested-loop with index lookup instead of
+  hash join over full slice). Eliminates the documented "can hang" risk
+  under PgBouncer. With 20+ parallel queries, saves 4-6s off /api/analysis
+  total response time.
+- **Effort**: S (one-line schema change + db push)
+
+### Finding [DB-02]: Redundant index `@@index([monthLabel, weekLabel])` is subsumed by `@@index([monthLabel, weekLabel, outletId])`
+- **Severity**: P3
+- **File(s)**: prisma/schema.prisma:145 (redundant) vs schema:149 (covering).
+- **Issue**: A B-tree composite index on `(A, B)` is a prefix of `(A, B, C)`
+  — PostgreSQL can use the longer index for any query that filters on A
+  alone, A+B, or A+B+C. The standalone `(monthLabel, weekLabel)` index is
+  therefore dead weight: every query that would use it can use the 3-column
+  variant instead. Wastes ~5-10MB of disk + slows down INSERT/UPDATE on
+  InventoryRecord (every write maintains 2 indexes that always move together).
+- **Free Fix**: Remove `@@index([monthLabel, weekLabel])` from schema:145.
+  Run `npx prisma db push` to drop the index in DB. FREE.
+- **Estimated Impact**: ~10-15% write-speedup on InventoryRecord ingest
+  (one fewer index to maintain per row × 35K rows/week). Negligible read
+  impact (planner picks the 3-col index either way). Frees ~5-10MB on
+  Supabase free tier (500MB cap).
+- **Effort**: S
+
+### Finding [DB-03]: Unused / wasteful `@@index([direction])` — low-cardinality column never filtered
+- **Severity**: P2
+- **File(s)**: prisma/schema.prisma:146 (`@@index([direction])`).
+- **Issue**: The `direction` column has only 3 distinct values (LOSS /
+  SURPLUS / NEUTRAL). B-tree indexes on low-cardinality columns are
+  near-useless — PostgreSQL's planner almost always prefers a seq scan
+  (faster than traversing an index that returns ~33% of rows per match).
+  Grep across src/ for `ir."direction" =` and `where: { direction: ... }`
+  returns only the migrate-direction script's COUNT queries
+  (src/app/api/migrate-direction/route.ts:45,46,94,95,177,178) which run
+  ONCE during a one-off migration — not a hot path. The /api/analysis route
+  and all /lib/queries/* queries RECOMPUTE direction via
+  `CASE WHEN SUM(nominalLossSurplus) < 0 THEN 'LOSS' ...` (see
+  DIRECTION_FROM_SUM_SQL in shared.ts:78-86) instead of trusting the stored
+  value. So the column AND its index are write-only bloat on the read path.
+- **Free Fix**: Remove `@@index([direction])` from schema:146. (Optional
+  further step: drop the `direction` column itself — but it's used by the
+  migrate-direction script and is informational, so leave the column.)
+  Run `npx prisma db push`. FREE.
+- **Estimated Impact**: ~5% ingest speedup (one fewer index to maintain on
+  35K-row writes). Frees ~3-5MB. Read path: no change (index was unused).
+- **Effort**: S
+
+### Finding [DB-04]: Missing partial index on `absNominalDeviasi` for the `> 0` filter (used in 15+ queries)
+- **Severity**: P1
+- **File(s)**: prisma/schema.prisma:83-154 (InventoryRecord model).
+  Consumers: nearly every query in src/lib/queries/* includes the fragment
+  `AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0`.
+  Verified in: pareto.ts:67,100,134,173,209,266,294,433,697; top-items.ts:
+  152,277,583,631; resto-recommendations.ts:162; peer-comparison.ts:136,282;
+  health-ranking.ts:244; network-risk.ts:85; global-search.ts:120,196.
+- **Issue**: Every Pareto / top-items / peer-comparison / variance / rule-
+  evaluation query filters out zero-deviation rows (typically ~50% of the
+  table — rows where the item had no deviation that week). Without a partial
+  index, PostgreSQL reads the full period slice (~13.5K rows/week) from the
+  composite `(monthLabel, weekLabel, outletId)` index, then re-checks the
+  `absNominalDeviasi > 0` condition on each heap tuple. A partial index
+  would contain ONLY the ~6-7K deviating rows per period — half the index
+  size, half the I/O.
+- **Free Fix**: Add to InventoryRecord in prisma/schema.prisma (Prisma 5+
+  supports raw partial indexes via `@@index` with a `where` clause —
+  documented since Prisma 4.5. If using an older Prisma, apply manually
+  via a raw SQL migration):
+  ```
+  @@index([monthLabel, weekLabel, outletId], map: "inventory_period_partial_idx", type: Btree)
+  ```
+  Alternative (works on ANY Prisma version): create the partial index
+  directly via `psql` or a Supabase SQL migration:
+  ```sql
+  CREATE INDEX inventory_record_devperiod_idx
+  ON "InventoryRecord" ("monthLabel", "weekLabel", "outletId")
+  WHERE "absNominalDeviasi" IS NOT NULL AND "absNominalDeviasi" > 0;
+  ```
+  FREE — PostgreSQL partial indexes are a built-in feature.
+- **Estimated Impact**: Cuts index size in half (only deviating rows
+  indexed). For the analysis route's 15+ Pareto/top-items queries, expect
+  ~40-60% speedup on the index scan + heap-fetch step. Combined with the
+  existing (monthLabel, weekLabel, outletId) prefix coverage, this could
+  shave 1-2s off the 6-8s /api/analysis cold-cache response.
+- **Effort**: S (one index via raw SQL — no code change needed)
+
+### Finding [DB-05]: Missing index on `SourceFile.monthLabel` (LATERAL JOIN in area trend)
+- **Severity**: P2
+- **File(s)**: prisma/schema.prisma:18-33 (SourceFile model — only has
+  @unique on fileName + fileHash, no other indexes).
+  Consumers:
+  · src/lib/queries/areas.ts:166-170 (`LEFT JOIN LATERAL (SELECT "monthKey"
+    FROM "SourceFile" WHERE "monthLabel" = apa."monthLabel" LIMIT 1) sf`).
+  · src/app/api/analysis/route.ts:496-500 (`db.dQIssue.groupBy({ where:
+    { sourceFile: { monthLabel: month! } } })` — implicit JOIN).
+  · src/app/api/export-report/route.ts:343 (`db.sourceFile.findMany`).
+  · src/app/api/resto-bahan-matrix/route.ts:157.
+  · src/app/api/outlet-items/route.ts:106.
+- **Issue**: SourceFile is a small table (~1 row per ingested week file,
+  typically 8-20 rows), so a seq scan is currently fast. But the LATERAL
+  join in queryTrendByArea runs once per (area × period) row = ~14 areas ×
+  4 weeks × 6 months = ~336 executions. Without an index, each LATERAL
+  subquery seq-scans SourceFile. Today it's <1ms; if the SourceFile count
+  grows (e.g. ingest daily snapshots → 365 rows/year), it becomes slow.
+  More urgent: the DQIssue groupBy at route.ts:496 implicitly JOINs DQIssue
+  → SourceFile on sourceFileId (indexed on DQIssue), then filters SourceFile
+  by monthLabel (NOT indexed). On a 365-row SourceFile this is still fast,
+  but it's a missing index that costs nothing to add.
+- **Free Fix**: Add to SourceFile model in prisma/schema.prisma:
+  `@@index([monthLabel])` and `@@index([monthKey])` (monthKey is used in
+  historical baseline filters: `sf."monthKey" < ${currentMonthKey}` in
+  pareto.ts:418, resto-recommendations.ts:239, historical.ts via SourceFile).
+  Run `npx prisma db push`. FREE.
+- **Estimated Impact**: Future-proofs the LATERAL join as SourceFile grows.
+  Negligible today (~1ms saved per queryTrendByArea call) but eliminates a
+  latent seq-scan-on-growing-table risk.
+- **Effort**: S
+
+### [QUERY PATTERNS]
+
+### Finding [DB-06]: Repeated `sales_counts → ranked_sales → sales_mode` CTE pattern duplicated across 9 queries
+- **Severity**: P1
+- **File(s)**:
+  · src/lib/queries/outlets/top-outlets.ts:35-50, 100-115 (2x)
+  · src/lib/queries/areas.ts:37-52, 118-136 (2x)
+  · src/lib/queries/outlets/peer-comparison.ts:63-78, 250-265 (2x)
+  · src/lib/queries/dashboard.ts:41-62, 123-138 (2x — queryTrendAgg + queryExecSummary)
+  · src/lib/queries/health-ranking.ts:78-94 (1x)
+  · src/lib/queries/outlets/resto-recommendations.ts:78-93 (1x)
+  Total: 10 of 20+ parallel queries in /api/analysis recompute the SAME
+  sales-MODE-per-outlet CTE.
+- **Issue**: `nominalSales` is denormalized onto every InventoryRecord row
+  (it's an outlet-level value repeated on every item row for that outlet).
+  To get one sales figure per outlet, every query runs a 3-CTE pipeline:
+  `sales_counts` (GROUP BY outlet, nominalSales, COUNT) → `ranked_sales`
+  (ROW_NUMBER OVER PARTITION BY outlet ORDER BY cnt DESC) → `sales_mode`
+  (WHERE rn = 1). On a typical week slice (~13.5K rows), this CTE pipeline
+  is ~5-15ms each. Across 10 queries fired in parallel, the duplicate work
+  is ~50-150ms of CPU + I/O on the DB — not huge per query, but the
+  parallel-execution contention for the same rows means the planner can't
+  share buffers across these CTEs.
+- **Free Fix** (3 options, ordered by effort):
+  1. **Pre-compute on ingest** (M): Add a `salesMode` Float column to the
+     `Week` + `Outlet` join (or to a new `OutletPeriodStats` table). Update
+     src/lib/ingestion.ts (transform.ts:deriveRecord) to compute MODE once
+     per outlet × week at ingest time, store it. All 10 queries then read a
+     single column instead of the 3-CTE pipeline. FREE — schema change only.
+  2. **Database-level materialized view** (M): `CREATE MATERIALIZED VIEW
+     outlet_period_sales AS SELECT outletId, monthLabel, weekLabel,
+     MODE() WITHIN GROUP (...) as salesMode ...` — refreshed on ingest.
+     FREE — Postgres MVs are built-in. Supabase free tier does NOT include
+     pg_cron for auto-refresh, but you can refresh via a SQL call in the
+     ingest route (after createMany). Caveat: full REFRESH is O(N) — fine
+     for 270K rows.
+  3. **Single shared CTE per request** (L, refactor): extract the
+     sales_mode computation into one helper query, fire it once in
+     /api/analysis Promise.all, pass the Map to the 10 consumers. Requires
+     changing 10 query function signatures. Not free in dev effort.
+  Recommended: option 1 (denormalize into Outlet or OutletPeriodStats).
+- **Estimated Impact**: Eliminates ~50-150ms of redundant CTE work per
+  /api/analysis request. More importantly, removes the parallel-contention
+  on the same InventoryRecord pages from 10 concurrent scans. Combined with
+  DB-04 partial index, total /api/analysis cold-cache time drops from ~6-8s
+  to ~3-4s.
+- **Effort**: M (option 1 — denormalize + update ingest transform)
+
+### Finding [DB-07]: `queryHistoricalStats` uses OR-chain of (monthLabel, weekLabel) pairs — could use VALUES join
+- **Severity**: P2
+- **File(s)**: src/lib/queries/historical.ts:26-56.
+- **Issue**: For each historical period (typically 6-12 prior months × 1
+  week each = 6-12 periods), builds an OR chain:
+  `(ir."monthLabel" = 'Januari 2026' AND ir."weekLabel" = 'WEEK 1')
+   OR (ir."monthLabel" = 'Februari 2026' AND ir."weekLabel" = 'WEEK 1')
+   OR ...`
+  PostgreSQL's planner handles OR-chains via BitmapOr — it can use the
+  (monthLabel, weekLabel, outletId) composite index for each branch, then
+  OR the bitmaps. This works but is inefficient: each OR branch is a
+  separate index scan, and the planner may fall back to a seq scan if the
+  OR-chain grows past ~10 branches (which it does for 1+ year of history).
+  The queryHistoricalCriticalItems query (health-ranking.ts:308-311) uses a
+  `VALUES (...)` list + JOIN pattern — proven faster for the same shape.
+- **Free Fix**: Refactor queryHistoricalStats to use the VALUES pattern:
+  ```ts
+  const tuples = Prisma.join(historicalPeriods.map(p =>
+    Prisma.sql`(${p.monthLabel}, ${p.weekLabel})`), ', ');
+  // ...
+  JOIN (VALUES ${tuples}) AS v(monthLabel, weekLabel)
+    ON ir."monthLabel" = v.monthLabel AND ir."weekLabel" = v.weekLabel
+  ```
+  FREE — pure SQL refactor, no schema change.
+- **Estimated Impact**: ~30-50% speedup on queryHistoricalStats when
+  historicalPeriods has 6+ entries. Eliminates the "OR-chain too long → seq
+  scan" fallback risk. Saves ~100-300ms on /api/analysis when the user has
+  6+ months of history loaded.
+- **Effort**: S
+
+### Finding [DB-08]: `queryTopItemsByDeviasiRankForOutlet` + `queryParetoByDevBom` use expensive self-join CTE for peer benchmark
+- **Severity**: P2
+- **File(s)**: src/lib/queries/items/top-items.ts:171-186 (bucket_avg CTE
+  self-join top_items × item_per_outlet) and top-items.ts:612-638 (per-item
+  per-outlet breakdown with HAVING clause re-evaluating DevBom ratio).
+- **Issue**: `bucket_avg` joins `top_items` (top-50 by nominalDeviasi)
+  against `item_per_outlet` (all ~3.5K item×outlet pairs) on `itemName` +
+  `qtyBom BETWEEN qtyBom*0.5 AND qtyBom*1.5`. This is a range join —
+  PostgreSQL cannot use a B-tree index efficiently for the BETWEEN clause
+  on a derived column (qtyBom from SUM). Falls back to nested-loop with
+  ~50 × 3.5K = 175K row comparisons. Each comparison recomputes ABS(qtyBom)
+  on the fly. Documented in the file as ~2-3s (was 6-8s before OPTIMIZE-
+  ENGINE refactor — but still the slowest single query in /api/analysis).
+- **Free Fix** (2 options):
+  1. **Materialize item_per_outlet** (M): pre-compute per-(item, outlet,
+     week, month) aggregates into a new `ItemOutletPeriodAgg` table at
+     ingest time. The bucket_avg self-join then hits ~3.5K pre-aggregated
+     rows instead of re-running the CTE on raw 35K rows. Schema change +
+     ingest update. FREE.
+  2. **Add a GIN/btree index on (itemName, qtyBom)** (S, lower impact):
+     `@@index([itemId, outletId, monthLabel, weekLabel])` already exists
+     implicitly via the unique constraint — but it doesn't help the
+     `itemName + qtyBom BETWEEN` join. Adding `@@index([itemId, weekId])`
+     (already there at schema:143) helps the GROUP BY but not the join.
+     Realistic speedup only via option 1.
+- **Estimated Impact**: Option 1 reduces queryTopItemsByDeviasiRank from
+  ~2-3s to <300ms (single index lookup on pre-aggregated table). Cuts
+  /api/analysis cold-cache time by ~2s. High-ROI but requires ingest
+  pipeline update.
+- **Effort**: M (option 1)
+
+### Finding [DB-09]: `evaluateRulesSql` LATERAL JOIN + `prev` CTE re-scan the full prev-period slice
+- **Severity**: P2
+- **File(s)**: src/lib/queries/rule-evaluation.ts:62-170.
+- **Issue**: The `prev` CTE (lines 77-85) selects ~20 columns from
+  InventoryRecord for the entire prev period (~13.5K rows). The `curr` CTE
+  (lines 63-76) selects ~17 columns for the entire current period (~13.5K
+  rows). Then `LEFT JOIN LATERAL (SELECT ... FROM prev p WHERE
+  p.outletId = c.outletId AND p.itemId = c.itemId AND p.akunPenyesuaian IS
+  NOT DISTINCT FROM c.akunPenyesuaian LIMIT 1) p ON true` (lines 145-153).
+  Without the index from DB-01, the LATERAL subquery seq-scans `prev` for
+  EACH curr row (35K × 13.5K = 472M row examines). With DB-01's index, it
+  becomes an index lookup (35K × 1 = 35K row lookups).
+- **Free Fix**: Apply DB-01 first. After DB-01, the LATERAL becomes fast.
+  Additional micro-opt: replace `LEFT JOIN LATERAL ... LIMIT 1` with a
+  plain `LEFT JOIN prev p ON p.outletId = c.outletId AND p.itemId =
+  c.itemId AND p.akunPenyesuaian IS NOT DISTINCT FROM c.akunPenyesuaian`
+  (no LIMIT needed if the natural key (outletId, itemId, akunPenyesuaian,
+  monthLabel, weekLabel) is unique — which it is per the unique constraint
+  @@unique([weekId, outletId, itemId, akunPenyesuaian]) + the period
+  filter). This lets the planner use a hash join instead of nested-loop
+  LATERAL. FREE.
+- **Estimated Impact**: DB-01 alone: ~10x speedup (3s → 300ms). Additional
+  LATERAL→JOIN refactor: ~2x more (300ms → 150ms). Combined: evaluateRulesSql
+  drops from ~3s to ~150ms.
+- **Effort**: S (after DB-01 applied)
+
+### [CONNECTION POOL]
+
+### Finding [DB-10]: `connection_limit=20` is conservative for Supabase transaction pooler (200 max) — bump to 30 for 3 concurrent users
+- **Severity**: P3
+- **File(s)**: src/lib/db.ts:43 (`url.searchParams.set('connection_limit', '20')`).
+- **Issue**: Supabase transaction pooler (port 6543, which the code auto-
+  switches to at db.ts:29) supports up to 200 concurrent connections on the
+  free tier. Each `/api/analysis` request fires 4 serial batches of ~5
+  parallel queries = up to 5 connections held simultaneously per request
+  (the `withStatementTimeout` wrapper holds a connection for the duration
+  of the SET LOCAL + query + commit). With 4 concurrent users × 5 = 20
+  connections → at the limit. The code comment at db.ts:39-42 says this
+  was bumped 10→20 for 2 concurrent users; 3+ users would still exhaust.
+- **Free Fix**: Bump to 30 (or 40 for headroom):
+  `url.searchParams.set('connection_limit', '30');`
+  FREE — Supabase free transaction pooler allows 200.
+- **Estimated Impact**: Prevents pool-exhaustion timeouts (currently
+  manifests as 30-60s queue + "Unable to start a transaction" errors per
+  db.ts:39-42 comment) under 3+ concurrent users. No effect at 1-2 users.
+- **Effort**: S
+
+### Finding [DB-11]: No `pg_stat_statements` integration or Prisma query-duration logging — slow queries are invisible
+- **Severity**: P2
+- **File(s)**: src/lib/db.ts:49 (`log: ['error', 'warn']` — no 'query' level);
+  no admin endpoint to query pg_stat_statements.
+- **Issue**: When /api/analysis takes 8s, there is no instrumentation to
+  tell WHICH of the 20 parallel queries is slow. Prisma's `log: ['query']`
+  mode prints every SQL statement with its duration — free, built-in, but
+  disabled in production. Supabase's `pg_stat_statements` extension is
+  also free and built-in (Supabase dashboard → Database → Extensions →
+  enable, then `SELECT * FROM pg_stat_statements ORDER BY mean_exec_time
+  DESC LIMIT 20`). Neither is wired up. This makes perf regression
+  detection reactive (user reports "it's slow") rather than proactive.
+- **Free Fix** (2 complementary actions):
+  1. Add a dev-only Prisma query logger (S):
+     ```ts
+     log: process.env.NODE_ENV !== 'production'
+       ? ['query', 'error', 'warn']
+       : ['error', 'warn'],
+     ```
+     Plus a custom logger that prints `query` + `duration` (Prisma's
+     PrismaClientInitializationOptions supports a `log` array of
+     `{ level, emit: 'stdout', message }` or a custom callback).
+     Set `NODE_ENV=development` locally → see every query with ms.
+  2. Enable `pg_stat_statements` on Supabase (S):
+     Dashboard → Database → Extensions → search "pg_stat_statements" →
+     Enable. Then add a /api/admin/slow-queries endpoint (admin-token
+     protected) that runs:
+     ```sql
+     SELECT query, calls, mean_exec_time, total_exec_time, rows
+     FROM pg_stat_statements
+     WHERE query NOT ILIKE '%pg_stat%' AND query ILIKE '%InventoryRecord%'
+     ORDER BY mean_exec_time DESC LIMIT 20;
+     ```
+     FREE — Supabase extension is free, the endpoint is just SQL.
+- **Estimated Impact**: Makes the next perf cycle 10x more productive —
+  instead of guessing which query is slow, the data shows it. No direct
+  user-facing speedup, but enables all other findings here to be measured.
+- **Effort**: S
+
+### [AGGREGATION / MATERIALIZATION]
+
+### Finding [DB-12]: `AggregationCache` has no periodic stale-entry cleanup — relies on lazy delete-on-read
+- **Severity**: P3
+- **File(s)**: src/lib/aggregation-cache.ts:80-99 (`getCached` deletes
+  expired entry fire-and-forget on read); schema:192-203 (AggregationCache
+  model has @@index([computedAt]) — already prepared for cleanup queries,
+  but no cleanup job uses it).
+- **Issue**: When a cache entry expires, it's only deleted if SOMEONE reads
+  it again (line 87-89). Entries that are never re-read (e.g. a one-off
+  filter combo the user picked once) accumulate forever. On Supabase free
+  tier (500MB cap), this is a slow leak: ~100 cache entries/day × 30 days
+  = 3000 entries × ~5KB payload = ~15MB/month. Not urgent, but the
+  `@@index([computedAt])` was added specifically for this cleanup (per the
+  schema comment at lines 198-201) — and no cleanup query uses it.
+- **Free Fix** (2 options):
+  1. **Lazy batch cleanup on cache write** (S): in `setCached`, every Nth
+     write (e.g. every 50th), fire-and-forget a `DELETE FROM
+     "AggregationCache" WHERE "computedAt" < NOW() - INTERVAL '1 hour'`.
+     FREE — uses the existing @@index([computedAt]).
+  2. **Invalidate-all on ingest already runs** (already implemented via
+     `invalidateAnalysisCache` — verified in worklog:25305-25316). So the
+     leak is bounded by 5 min × number of unique filter combos between
+     ingests. For a single-user app this is fine. For multi-user, add
+     option 1.
+- **Estimated Impact**: Prevents slow leak toward 500MB cap. No user-
+  facing speedup today; defensive.
+- **Effort**: S
+
+### Finding [DB-13]: `AggregationCache.payload` is `String` (JSON text) — could be `Json`/`JsonB` for storage + indexing
+- **Severity**: P3
+- **File(s)**: prisma/schema.prisma:195 (`payload String // JSON`).
+- **Issue**: Storing JSON as text means PostgreSQL can't validate or
+  compress it as efficiently as JSONB. JSONB has ~20% storage compression
+  vs text and supports GIN indexing (not needed here, but free insurance).
+  Also, every `getCached` call does `JSON.parse(row.payload)` in JS (line
+  92) — JSONB would arrive pre-parsed in some drivers, but Prisma returns
+  it as a plain object either way. Minor.
+- **Free Fix**: Change schema to `payload Json` and run `npx prisma db
+  push` (Prisma auto-converts existing text→jsonb via ALTER COLUMN ...
+  USING payload::jsonb). FREE.
+- **Estimated Impact**: ~20% storage savings on AggregationCache table.
+  Negligible read speedup. Defensive.
+- **Effort**: S
+
+───────────────────────────────────────────────────────────────
+TOP 5 QUICK WINS (highest impact / lowest effort, FREE only)
+───────────────────────────────────────────────────────────────
+
+1. **DB-01 (P1, S)** — Add `@@index([outletId, itemId, akunPenyesuaian,
+   monthLabel, weekLabel])` to InventoryRecord. Eliminates the variance +
+   rule-evaluation LATERAL/self-join full-scan. Expected: -4-6s on
+   /api/analysis cold cache.
+
+2. **DB-04 (P1, S)** — Add partial index `CREATE INDEX ... ON
+   "InventoryRecord" ("monthLabel", "weekLabel", "outletId") WHERE
+   "absNominalDeviasi" > 0` via raw SQL migration. Cuts index size in half
+   + ~40-60% speedup on 15+ Pareto/top-items queries. Expected: -1-2s on
+   /api/analysis cold cache.
+
+3. **DB-11 (P2, S)** — Enable Prisma `log: ['query']` in dev + enable
+   `pg_stat_statements` extension on Supabase (1 click in dashboard).
+   Makes the next optimization cycle 10x more productive — every other
+   finding here becomes measurable. Zero user-facing impact today, enables
+   evidence-based tuning tomorrow.
+
+4. **DB-03 (P2, S)** — Remove unused `@@index([direction])` (low-cardinality
+   column never filtered on read path). ~5% ingest speedup + frees ~5MB on
+   Supabase free tier. Negative-risk: nothing reads this index.
+
+5. **DB-07 (P2, S)** — Refactor `queryHistoricalStats` from OR-chain to
+   VALUES-list JOIN. ~30-50% speedup on the historical-baseline query,
+   grows with history depth. Pure SQL refactor — no schema change.
+
+───────────────────────────────────────────────────────────────
+STAGE SUMMARY
+───────────────────────────────────────────────────────────────
+
+By severity:
+  - P1: 3 findings (DB-01, DB-04, DB-06)
+  - P2: 6 findings (DB-03, DB-05, DB-07, DB-08, DB-09, DB-11)
+  - P3: 4 findings (DB-02, DB-10, DB-12, DB-13)
+  Total: 13 findings.
+
+Free-tier compliance: ALL 13 fixes use only built-in PostgreSQL features
+(B-tree indexes, partial indexes, materialized views, pg_stat_statements)
+or Prisma/Next.js code changes. Zero paid services recommended. Zero
+schema-destructive changes (all additive indexes + safe column drops via
+migration).
+
+Expected cumulative impact if Top 5 + DB-09 are applied:
+  /api/analysis cold-cache response: 6-8s → ~2-3s (~60-70% reduction)
+  /api/analysis warm-cache response: <100ms (unchanged — already cached)
+  Ingest write speed: +10-15% (fewer indexes to maintain)
+  Supabase storage freed: ~10-20MB (drop redundant + unused indexes)
+
+
+═══════════════════════════════════════════════════════════════
+Task ID: 1-a
+Agent: general-purpose (Frontend Performance Analyst)
+Task: Analyze frontend code for free performance improvement opportunities
+Constraints: FREE tools/techniques only — no paid services.
+Methodology: Read + Grep on src/, package.json, next.config.ts,
+  instrumentation.ts. No code changes made — analysis only.
+
+Work Log:
+- Read worklog.md tail (lines 25000-25537) for context on prior
+  AUDIT9-FINAL-FE + AUDIT9-FINAL-BE work.
+- Read src/app/page.tsx (675L) — confirmed Phase-4 lazy-loading
+  already applied to 9 chart components (RestoAnalysis, Charts.*,
+  AreaTrendChart, HistoricalZScoreCard, PeerComparison, ItemDeepDive,
+  AnalysisCards.MultiPeriodComparisonCard).
+- Read src/components/providers.tsx (24L) — confirmed TanStack Query
+  defaults (staleTime 30s, retry 1, refetchOnWindowFocus false).
+- Read src/hooks/useAnalysis.ts (633L) + useDashboard.ts (78L) —
+  confirmed Zustand v5 store; analysis staleTime 120s / gcTime 600s.
+- Grep'd all useDashboard() callsites — found 13 components using
+  broad destructuring (no selector, no useShallow).
+- Grep'd React.memo / memo( — found ZERO matches across src/.
+- Grep'd recharts imports — found 8 dashboard chart files + chart.tsx.
+- Grep'd next/image, <img — confirmed no images anywhere (none needed).
+- Grep'd exceljs / csv-parse / docx — confirmed server-side only
+  (not in client bundle). ✓ Good.
+- Grep'd all @/components/ui/* imports across src/components/filters
+  + src/components/dashboard — found 17 dead shadcn UI files
+  (calendar, carousel, resizable, input-otp, form, sidebar,
+  navigation-menu, avatar, context-menu, hover-card, menubar,
+  accordion, breadcrumb, pagination, aspect-ratio, alert-dialog,
+  sonner, command-passthrough). Verified each is unused (or only
+  used transitively by another dead file).
+- Grep'd useReportWebVitals / web-vitals — found ZERO. Confirmed
+  instrumentation.ts is just a BigInt polyfill (no web-vitals hook).
+- Grep'd @next/bundle-analyzer / why-did-you-render — found ZERO
+  in package.json + node_modules. Not installed.
+- Read src/components/filters/FilterBar.tsx:1-24 — confirmed it
+  statically imports 5 heavy dialog components (FileUploadDialog
+  841L, DataManagementDialog 486L, PicManagementDialog 469L,
+  SettingsDialog 444L, DriveImportDialog 278L) into the main
+  bundle even though they're modal-only.
+- Read src/components/dashboard/Charts.tsx:1-120 — confirmed
+  Recharts ResponsiveContainer usage; inline object literals
+  in Tooltip `cursor={{...}}` create new refs each render.
+- Read src/lib/chart-constants.ts — confirmed getTooltipStyle()
+  returns module-level constant (stable reference, NOT a new
+  object — that part is fine).
+- Read src/components/ui/global-loading-bar.tsx — confirmed pure
+  CSS animation (no setState). ✓ Good.
+- Read src/components/ui/tabs.tsx — confirmed Radix Tabs (unmounts
+  inactive content by default). ✓ Good.
+- Read next.config.ts — confirmed compress:true, poweredByHeader:
+  false, devIndicators:false. ✓ Good.
+
+Stage Summary:
+
+Total findings: 12 (1 P1, 4 P2, 6 P3, 1 P4)
+  By category:
+    Bundle Size / Code Splitting: 3 (FE-01, FE-07, FE-12)
+    React Rendering:               3 (FE-02, FE-03, FE-10)
+    Data Fetching / Caching:       1 (FE-09)
+    Client State (Zustand):        1 (FE-02 — same as rendering)
+    Free Tooling Recommendations:  3 (FE-04, FE-05, FE-06)
+    Image / Asset Optimization:    0 (already clean — no <img> tags)
+    CSS / Styling:                 1 (FE-11 — dead sonner.tsx file)
+
+═══════════════════════════════════════════════════════════════
+FINDINGS (grouped by category)
+═══════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────
+A. Bundle Size & Code Splitting
+───────────────────────────────────────────────────────────────
+
+### Finding [FE-01]: FilterBar eagerly imports 5 heavy dialog components
+- **Severity**: P1 (critical)
+- **File(s)**:
+    - src/components/filters/FilterBar.tsx:20-24 (static imports)
+    - src/components/filters/FileUploadDialog.tsx (841 lines)
+    - src/components/filters/DataManagementDialog.tsx (486 lines)
+    - src/components/filters/PicManagementDialog.tsx (469 lines)
+    - src/components/filters/SettingsDialog.tsx (444 lines)
+    - src/components/filters/DriveImportDialog.tsx (278 lines)
+- **Issue**: FilterBar is rendered on every dashboard load (sticky
+  header tier 2). It statically imports 5 dialog components that
+  are only shown on user click (Settings, DataMgmt, PicMgmt,
+  Upload, Drive). Each dialog pulls Radix Dialog + cmdk Command +
+  Select + Input + Label + Progress (combined ~25KB+ minified).
+  Because they're static imports, all 5 end up in the main page
+  chunk despite the user rarely opening any of them on first load.
+  FileUploadDialog alone is 841 lines — it's the heaviest non-
+  chart component in the bundle.
+- **Free Fix**: Use `next/dynamic` with `{ ssr: false }` for all 5
+  dialogs. Pattern (mirrors the existing lazy-load pattern in
+  page.tsx:39-49 for chart components):
+    ```ts
+    const FileUploadDialog = dynamic(
+      () => import('./FileUploadDialog').then(m => m.FileUploadDialog),
+      { ssr: false }
+    );
+    // ... same for the other 4
+    ```
+  Place these dynamic imports ABOVE the FilterBar function body
+  (same location as the current static imports at lines 20-24).
+- **Estimated Impact**: Saves ~80-120KB from initial bundle
+  (Radix Dialog + cmdk + Select primitives × 5 files). Dialogs
+  load on-demand in ~50-100ms when user clicks the trigger button
+  (imperceptible — Radix Dialog already has a brief mount delay
+  for animation anyway).
+- **Effort**: S (≤30min) — mechanical refactor, no logic changes.
+
+### Finding [FE-07]: 17 dead shadcn UI components bloat dev server + codebase
+- **Severity**: P3 (medium)
+- **File(s)** (each verified UNUSED — no app code imports them):
+    - src/components/ui/calendar.tsx        (imports react-day-picker — 50KB+)
+    - src/components/ui/carousel.tsx        (imports embla-carousel-react — 30KB+)
+    - src/components/ui/resizable.tsx       (imports react-resizable-panels — 15KB)
+    - src/components/ui/input-otp.tsx       (imports input-otp — 10KB)
+    - src/components/ui/form.tsx            (imports react-hook-form — 30KB)
+    - src/components/ui/sidebar.tsx         (imports react-resizable-panels + Sheet)
+    - src/components/ui/navigation-menu.tsx (Radix — 20KB)
+    - src/components/ui/avatar.tsx          (Radix)
+    - src/components/ui/context-menu.tsx    (Radix)
+    - src/components/ui/hover-card.tsx      (Radix)
+    - src/components/ui/menubar.tsx         (Radix)
+    - src/components/ui/accordion.tsx       (Radix)
+    - src/components/ui/breadcrumb.tsx      (Radix)
+    - src/components/ui/pagination.tsx
+    - src/components/ui/aspect-ratio.tsx    (Radix)
+    - src/components/ui/alert-dialog.tsx    (Radix)
+    - src/components/ui/sonner.tsx          (alternative toaster — unused; layout uses toast.tsx instead)
+- **Issue**: These shadcn-installed files exist but no app code
+  imports them. Next.js + SWC tree-shakes them from the production
+  client bundle (so they don't slow down the user), BUT:
+    1. They bloat the dev server (Next.js dev mode compiles all
+       files in src/ on startup — slower `next dev` cold start).
+    2. They make the codebase harder to navigate (more files in
+       IDE sidebar).
+    3. They pull 5 unused npm deps (react-day-picker, embla-carousel-
+       react, react-resizable-panels, input-otp, react-hook-form)
+       that bloat node_modules + lockfile + Docker build context.
+- **Free Fix**:
+    1. Delete the 17 unused files (safe — verified no imports).
+    2. Remove the now-unused deps from package.json:
+       `react-day-picker`, `embla-carousel-react`,
+       `react-resizable-panels`, `input-otp`, `react-hook-form`.
+    3. Run `npm install` to update lockfile.
+- **Estimated Impact**: No production bundle change (already tree-
+  shaken). Dev server cold start ~200-400ms faster. Docker build
+  ~5-10MB smaller (node_modules trim). Codebase -17 files.
+- **Effort**: S (≤30min) — `rm` + edit package.json.
+
+### Finding [FE-12]: package.json keeps deps only used by dead components
+- **Severity**: P4 (low)
+- **File(s)**: package.json:55-72
+    - `"react-day-picker": "^9.8.0"`     — only used by ui/calendar.tsx (dead)
+    - `"embla-carousel-react": "^8.6.0"`  — only used by ui/carousel.tsx (dead)
+    - `"react-resizable-panels": "^3.0.3"` — used by ui/resizable.tsx + ui/sidebar.tsx (both dead)
+    - `"input-otp": "^1.4.2"`             — only used by ui/input-otp.tsx (dead)
+    - `"react-hook-form": "^7.60.0"`      — only used by ui/form.tsx (dead)
+- **Issue**: 5 npm packages (~140KB unpacked) only kept because
+  dead shadcn components reference them. Pair with FE-07.
+- **Free Fix**: Same as FE-07 — delete the dead files first, then
+  remove these deps from package.json + reinstall.
+- **Estimated Impact**: ~140KB smaller node_modules. ~5MB smaller
+  Docker image. Faster `npm ci` in CI/CD.
+- **Effort**: S (≤30min) — coupled with FE-07.
+
+───────────────────────────────────────────────────────────────
+B. React Rendering Performance
+───────────────────────────────────────────────────────────────
+
+### Finding [FE-02]: Broad `useDashboard()` destructuring triggers re-renders on EVERY state change
+- **Severity**: P1 (critical)
+- **File(s)** (13 callsites — all use the bad pattern):
+    - src/app/page.tsx:91                    (destructures 16 fields)
+    - src/components/filters/FilterBar.tsx:27 (destructures 15 fields)
+    - src/components/dashboard/RestoAnalysis.tsx:45                  (9 fields)
+    - src/components/dashboard/RestoRecommendationCard.tsx:103       (9 fields)
+    - src/components/dashboard/GlobalItemSearchModal.tsx:61          (7 fields)
+    - src/components/dashboard/PeerComparison.tsx:45                 (6 fields)
+    - src/components/dashboard/ItemDeepDive.tsx:36                   (5 fields)
+    - src/components/drilldown/DrillDownDrawer.tsx:16                (5 fields)
+    - src/components/drilldown/SourceDataModal.tsx:17                (5 fields)
+    - src/components/dashboard/ParetoDashboard.tsx:213               (5 fields)
+    - src/components/dashboard/ExecutiveSummary.tsx:83, 157          (1 field — still bad)
+    - src/components/dashboard/CardDrillDown.tsx:160                 (2 fields)
+- **Issue**: Zustand v5 (5.0.10 confirmed in node_modules) treats
+  `useDashboard()` (no selector) as "subscribe to entire state".
+  The returned object is the same reference, but Zustand's internal
+  equality check uses `Object.is` on the entire state. ANY field
+  change (e.g., user opens a modal → `sourceModalOpen: true`) re-
+  renders ALL 13 components — even ones that don't read that field.
+
+  Concrete example: user clicks a row in TopItems → `setDrilldown()`
+  fires → DrillDownDrawer re-renders (correct) BUT ALSO FilterBar,
+  page.tsx, RestoRecommendationCard, PeerComparison, ParetoDashboard,
+  GlobalItemSearchModal, ItemDeepDive, SourceDataModal, etc. all
+  re-render unnecessarily.
+
+  Same for: opening ExportDialog (`setExportDialogOpen` lives in
+  useState, OK), but tab switches (`setActiveTab`) and filter
+  changes (`setMonth`, `setWeek`, `setArea`) — every one of these
+  re-renders the entire dashboard tree.
+- **Free Fix**: Two options (pick one per callsite):
+
+  Option A — individual selectors (cleanest, smallest diff):
+    ```ts
+    // Before:
+    const { monthLabel, currentWeek, area } = useDashboard();
+    // After:
+    const monthLabel = useDashboard((s) => s.monthLabel);
+    const currentWeek = useDashboard((s) => s.currentWeek);
+    const area = useDashboard((s) => s.area);
+    ```
+    Zustand v5 auto-memoizes primitive returns. Best for 1-3 fields.
+
+  Option B — `useShallow` for many fields (preferred for page.tsx
+  + FilterBar which use 15-16 fields):
+    ```ts
+    import { useShallow } from 'zustand/react/shallow';
+    const { monthLabel, currentWeek, area, /* ... */ } =
+      useDashboard(useShallow((s) => ({
+        monthLabel: s.monthLabel, currentWeek: s.currentWeek, area: s.area,
+        // ...rest
+      })));
+    ```
+    `useShallow` does a shallow field-by-field comparison so the
+    component only re-renders when one of its actual fields changes.
+
+  NOTE: setters like `setMonth`, `setWeek`, etc. are stable
+  references in Zustand (don't change between renders) — they
+  don't even need to be in the selector.
+- **Estimated Impact**: 60-80% reduction in re-renders during
+  dashboard interaction (filter changes, tab switches, modal
+  opens, drilldown clicks). Especially impactful on the Dashboard
+  tab where 9 lazy-loaded chart components currently re-render
+  on every FilterBar keystroke.
+- **Effort**: M (1-2hr) — 13 files to edit, but each edit is
+  mechanical. Recommend starting with page.tsx + FilterBar (biggest
+  destructors), then sweeping the rest.
+
+### Finding [FE-03]: Zero `React.memo` usage anywhere in src/
+- **Severity**: P2 (high)
+- **File(s)**: All components in src/components/dashboard/* — none
+  are wrapped in `React.memo` (or `memo()` shorthand). Grep
+  `React.memo|memo\(` returns ZERO matches across src/.
+  Most impactful missing-memo sites:
+    - src/components/dashboard/ExecutiveSummary.tsx (448L, 2 components: ExecutiveSummary + HealthAlert + KPICard)
+    - src/components/dashboard/Charts.tsx (584L, 4 chart components)
+    - src/components/dashboard/TopItems.tsx (410L, 5 components)
+    - src/components/dashboard/AdvancedAnalysis.tsx (343L, 3 components)
+    - src/components/dashboard/InsightsPanel.tsx (368L)
+    - src/components/dashboard/AnalysisCards.tsx (93L, MultiPeriodComparisonCard)
+    - src/components/dashboard/HistoricalZScoreCard.tsx (176L)
+    - src/components/dashboard/AreaTrendChart.tsx (242L)
+- **Issue**: On the Dashboard tab, the parent (page.tsx) passes
+  `analysis.data` (a single big object) to ~9 child components.
+  Whenever `analysis.data` reference changes (e.g., on refetch,
+  placeholderData transition, or any state change in page.tsx),
+  ALL 9 children re-render — even if the specific slice they read
+  hasn't changed.
+
+  Example: `ExecutiveSummary` only reads `data.executiveSummary` +
+  `data.healthStatus`. When the user toggles a filter that changes
+  only `data.topItemsByNominal`, ExecutiveSummary still re-renders
+  because its `data` prop reference is now a new object.
+
+  Combined with FE-02 (broad Zustand selectors causing page.tsx to
+  re-render on every state change), this is a multiplier: every
+  modal open / tab switch re-renders the entire dashboard tree.
+- **Free Fix**: Wrap each child component in `React.memo`:
+    ```ts
+    // Before:
+    export function ExecutiveSummary({ data }: { data: AnalysisData }) { ... }
+    // After:
+    export const ExecutiveSummary = memo(function ExecutiveSummary(
+      { data }: { data: AnalysisData }
+    ) { ... });
+    ```
+  For components reading only specific slices, consider a custom
+  comparator:
+    ```ts
+    export const ExecutiveSummary = memo(
+      (props: { data: AnalysisData }) => { ... },
+      (prev, next) =>
+        prev.data.executiveSummary === next.data.executiveSummary &&
+        prev.data.healthStatus === next.data.healthStatus
+    );
+    ```
+  Custom comparators are the biggest win — they bypass the default
+  `Object.is` shallow prop check and skip re-render when only the
+  specific slice the component cares about hasn't changed.
+- **Estimated Impact**: 40-60% fewer wasted renders on the
+  Dashboard tab. Combined with FE-02, this is the single biggest
+  user-perceived perf win (smoother filter changes, no jank when
+  opening modals).
+- **Effort**: M (1-2hr) — wrap each of the ~20 dashboard
+  components. Custom comparators take ~5 min each.
+
+### Finding [FE-10]: Inline object literals in Recharts `Tooltip cursor={{...}}` create new refs every render
+- **Severity**: P3 (medium)
+- **File(s)**:
+    - src/components/dashboard/Charts.tsx:115, 494 (two `cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}` literals)
+    - Likely also in AreaTrendChart.tsx, AnalysisCards.tsx, peer-comparison/* (worth a sweep)
+- **Issue**: The `cursor={{ ... }}` prop creates a NEW object on
+  every render. Recharts internally does a shallow compare on
+  Tooltip props to decide whether to re-render its internal
+  Cursor component — a new object reference defeats that compare
+  and forces a re-render of the Cursor every time the parent
+  renders. Same for any `margin={{ left: 20, right: 20, ... }}`
+  inline objects (multiple per ResponsiveContainer).
+- **Free Fix**: Hoist these constants to module level (outside the
+  component function):
+    ```ts
+    const BAR_CURSOR = { fill: 'var(--muted)', opacity: 0.4,
+      stroke: 'var(--muted-foreground)', strokeWidth: 1,
+      strokeDasharray: '3 3' } as const;
+    const BAR_MARGIN = { left: 20, right: 20, top: 0, bottom: 0 } as const;
+    // Then in JSX: <Tooltip cursor={BAR_CURSOR} />
+    //              <BarChart margin={BAR_MARGIN}>
+    ```
+  Note: `getTooltipStyle()` from chart-constants.ts already
+  returns module-level constants — that pattern is correct. Just
+  needs to be applied to the cursor/margin/style props.
+- **Estimated Impact**: ~30% fewer Recharts internal re-renders
+  during chart hover interactions. Small but free.
+- **Effort**: S (≤30min) — sweep + hoist ~10 inline literals.
+
+───────────────────────────────────────────────────────────────
+C. Data Fetching & Caching
+───────────────────────────────────────────────────────────────
+
+### Finding [FE-09]: Global default staleTime 30s is low for several query families
+- **Severity**: P3 (medium)
+- **File(s)**:
+    - src/components/providers.tsx:11 (global `staleTime: 30_000`)
+    - Inherit this default (no override): `useDrilldown` (useAnalysis.ts:631 — overrides to 30s, same as default), `useQuery` in PeerComparison.tsx (no staleTime set → 30s), `useQuery` in RestoAnalysis.tsx:51 (no staleTime → 30s)
+- **Issue**: Per-query overrides exist for the most important
+  queries (analysis 120s, status 300s, recommendations 60s,
+  pareto 120s, item-search 60s, item-detail-modal 300s). But
+  several secondary queries inherit the 30s default:
+    - `outlet-items` (RestoAnalysis.tsx:52) — full outlet item list, doesn't change frequently
+    - `peer-comparison` + `peer-comparison/items` + `peer-comparison/trend` (PeerComparison.tsx:65, 101, ~140)
+    - `drilldown` (useAnalysis.ts:614) — already 30s, could be 60s
+- **Free Fix**: Either bump the global default to 60s in
+  providers.tsx (`staleTime: 60_000`), OR add per-query `staleTime`
+  overrides on the secondary queries. The per-query approach is
+  safer (doesn't risk stale data on more dynamic queries):
+    ```ts
+    // RestoAnalysis.tsx:51 — add staleTime
+    const { data, isLoading } = useQuery<OutletItemsResponse>({
+      queryKey: ['outlet-items', ...],
+      queryFn: ...,
+      enabled: ...,
+      placeholderData: keepPreviousData,
+      staleTime: 60_000,  // ADD THIS — outlet items rarely change within a session
+    });
+    ```
+- **Estimated Impact**: ~30-50% fewer refetches on tab switches
+  (when user goes Dashboard → Resto → Dashboard within 60s, the
+  outlet-items query currently refetches; with 60s staleTime it
+  serves from cache).
+- **Effort**: S (≤30min) — add staleTime to ~4 queries.
+
+───────────────────────────────────────────────────────────────
+D. Free Tooling Recommendations (not yet installed)
+───────────────────────────────────────────────────────────────
+
+### Finding [FE-04]: `@next/bundle-analyzer` not installed — no visibility into bundle composition
+- **Severity**: P2 (high)
+- **File(s)**: package.json:78-89 (devDependencies — analyzer not listed)
+- **Issue**: Without a bundle analyzer, all bundle-size estimates
+  in this report (FE-01, FE-07, FE-12) are based on heuristic
+  reasoning, not measurement. You can't verify whether lazy-
+  loading the dialogs actually saved 100KB, or see which Recharts
+  sub-modules are bloating the chart chunk.
+- **Free Fix**: Install + wire `@next/bundle-analyzer` (free, MIT):
+    ```bash
+    npm install -D @next/bundle-analyzer
+    ```
+    Then wrap next.config.ts:
+    ```ts
+    // next.config.ts
+    import bundleAnalyzer from '@next/bundle-analyzer';
+    const withBundleAnalyzer = bundleAnalyzer({
+      enabled: process.env.ANALYZE === 'true',
+    });
+    export default withBundleAnalyzer(nextConfig);
+    ```
+    Add a script to package.json:
+    ```json
+    "analyze": "ANALYZE=true next build"
+    ```
+    Run `npm run analyze` — opens two treemaps in browser (server
+    + client chunks) showing exact bytes per module.
+- **Estimated Impact**: Enables data-driven bundle optimization.
+  Recommended follow-up: re-run after FE-01 + FE-07 fixes to
+  verify actual savings.
+- **Effort**: S (≤30min) — install + 5 lines of config.
+
+### Finding [FE-05]: `@welldone-software/why-did-you-render` not installed — no re-render debugging
+- **Severity**: P2 (high)
+- **File(s)**: package.json (not installed); src/components/providers.tsx (no init)
+- **Issue**: Findings FE-02 (Zustand broad selectors) and FE-03
+  (missing React.memo) are based on code inspection. Without
+  why-did-you-render, you can't see at runtime which components
+  are actually re-rendering excessively, and why.
+- **Free Fix**: Install (free, MIT):
+    ```bash
+    npm install -D @welldone-software/why-did-you-render
+    ```
+    Wire it in dev only — create `src/app/wdyr.ts` (or any client
+    entry):
+    ```ts
+    if (process.env.NODE_ENV === 'development') {
+      const whyDidYouRender = require('@welldone-software/why-did-you-render');
+      whyDidYouRender(React, {
+        trackAllPureComponents: true,
+        // Log only components with 'Card' / 'Chart' / 'Table' in name:
+        trackExtraHooks: [],
+      });
+    }
+    // Import this file at the top of src/app/layout.tsx (dev only).
+    ```
+    Then in the browser console, you'll see messages like:
+    `Re-rendered ExecutiveSummary: props.data changed (deep equal)`.
+- **Estimated Impact**: Verifies FE-02 + FE-03 fixes actually
+  reduced re-renders. Reveals any other hot-path components this
+  audit missed.
+- **Effort**: S (≤30min) — install + ~10 lines of init code.
+
+### Finding [FE-06]: No Web Vitals reporting wired up
+- **Severity**: P3 (medium)
+- **File(s)**:
+    - src/instrumentation.ts (exists, but only BigInt polyfill)
+    - src/app/layout.tsx (no `useReportWebVitals` import)
+    - package.json (no `web-vitals` dep — Next.js has it built-in)
+- **Issue**: Next.js has built-in Web Vitals (LCP, FID/INP, CLS,
+  TTFB, FCP) collection — just needs a hook to send the data
+  somewhere. Currently nothing is collected, so you have zero
+  visibility into real user perceived performance. Free options:
+    1. Console.log (dev only — useless in prod).
+    2. POST to your own /api/web-vitals endpoint (free, store in DB).
+    3. Send to a free Vercel-style endpoint (but Vercel Analytics
+       paid tier is off-limits per task constraints).
+    4. Send to a free Plausible/Umami self-hosted instance.
+- **Free Fix**: Create `src/app/web-vitals.ts`:
+    ```ts
+    'use client';
+    import { useReportWebVitals } from 'next/web-vitals';
+    export function WebVitalsReporter() {
+      useReportWebVitals((metric) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[web-vitals]', metric.name, metric.value);
+          return;
+        }
+        // Free: POST to your own backend (fire-and-forget, no
+        // external service needed).
+        const body = JSON.stringify({
+          name: metric.name, value: metric.value,
+          id: metric.id, rating: metric.rating,
+          path: window.location.pathname,
+        });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/web-vitals', body);
+        } else {
+          fetch('/api/web-vitals', { body, method: 'POST',
+            keepalive: true }).catch(() => {});
+        }
+      });
+      return null;
+    }
+    ```
+    Then render `<WebVitalsReporter />` once in layout.tsx (inside
+    `<body>`). Add a simple `POST /api/web-vitals` route that logs
+    or stores in DB.
+- **Estimated Impact**: First-time visibility into real user LCP/
+  INP/CLS. Critical for catching perf regressions before users
+  complain.
+- **Effort**: M (1-2hr) — wire the reporter + a tiny API route
+  to ingest + log.
+
+───────────────────────────────────────────────────────────────
+E. CSS & Styling
+───────────────────────────────────────────────────────────────
+
+### Finding [FE-11]: Unused `src/components/ui/sonner.tsx` — alternative toaster never wired
+- **Severity**: P4 (low)
+- **File(s)**:
+    - src/components/ui/sonner.tsx (25 lines, imports `sonner` npm package)
+    - src/app/layout.tsx:4 — imports `Toaster` from `@/components/ui/toaster` (the Radix-based one, NOT sonner)
+- **Issue**: shadcn installs both `toast.tsx` (Radix) and
+  `sonner.tsx` (sonner lib) as alternative toaster implementations.
+  The layout uses the Radix one. The sonner.tsx file is dead — it's
+  never imported. Worse, `sonner` is in package.json deps (`"sonner":
+  "^2.0.6"`) but only this dead file imports it.
+- **Free Fix**: Delete `src/components/ui/sonner.tsx`. Remove
+  `"sonner": "^2.0.6"` from package.json. Run `npm install`.
+- **Estimated Impact**: Trivial (tree-shaken from prod). Cleans
+  codebase. Saves ~12KB in node_modules.
+- **Effort**: S (≤5min).
+
+═══════════════════════════════════════════════════════════════
+TOP 5 QUICK WINS (free, highest impact / lowest effort)
+═══════════════════════════════════════════════════════════════
+
+1. **[FE-01] Lazy-load FilterBar's 5 dialogs via `next/dynamic`**
+   Effort: S (~30 min) · Impact: ~80-120KB saved from initial bundle.
+   Files: src/components/filters/FilterBar.tsx:20-24.
+   The dialogs are modal-only — they don't need to be in the main
+   chunk. Pure mechanical refactor following the existing lazy-load
+   pattern in page.tsx:39-49.
+
+2. **[FE-02] Migrate `useDashboard()` calls to `useShallow` / individual selectors**
+   Effort: M (~1-2 hr) · Impact: 60-80% fewer re-renders on every
+   dashboard interaction (filter changes, modal opens, tab switches).
+   Files: 13 callsites listed in FE-02. Start with page.tsx + FilterBar
+   (biggest destructors). Pair with FE-03 for compounding benefit.
+
+3. **[FE-03] Wrap dashboard child components in `React.memo`**
+   Effort: M (~1-2 hr) · Impact: 40-60% fewer wasted renders on the
+   Dashboard tab. Files: ~20 components in src/components/dashboard/.
+   Use custom comparators for components reading specific slices of
+   `analysis.data` (e.g., ExecutiveSummary only needs executiveSummary
+   + healthStatus).
+
+4. **[FE-04] Install `@next/bundle-analyzer` (free)**
+   Effort: S (~30 min) · Impact: enables data-driven bundle decisions.
+   Run `ANALYZE=true next build` to see exact bytes per module.
+   Install + 5 lines of config wrapping next.config.ts.
+
+5. **[FE-07 + FE-12] Delete 17 dead shadcn UI files + remove 5 unused npm deps**
+   Effort: S (~30 min) · Impact: cleaner codebase, ~200-400ms faster
+   dev server cold start, ~5-10MB smaller Docker image. No production
+   bundle change (already tree-shaken) but a maintenance win.
+   Files: src/components/ui/{calendar,carousel,resizable,input-otp,
+   form,sidebar,navigation-menu,avatar,context-menu,hover-card,
+   menubar,accordion,breadcrumb,pagination,aspect-ratio,alert-dialog,
+   sonner}.tsx. Then remove 5 deps from package.json.
+
+═══════════════════════════════════════════════════════════════
+OBSERVATIONS (NOT findings — already good)
+═══════════════════════════════════════════════════════════════
+
+- `next.config.ts` already enables `compress: true`, `poweredByHeader:
+  false`, `devIndicators: false`, and sets security headers. ✓
+- Phase-4 lazy-loading already covers 9 chart components in page.tsx. ✓
+- `next/font/google` (Geist Sans + Geist Mono) auto-optimizes fonts. ✓
+- TanStack Query defaults (`refetchOnWindowFocus: false`, `retry: 1`)
+  are reasonable for an internal dashboard. ✓
+- `keepPreviousData` is used on all heavy queries (analysis, peer,
+  recommendations, item-search, drilldown) — smooth UX on filter
+  changes. ✓
+- `@tanstack/react-virtual` is correctly used in DrillDownDrawer +
+  SourceDataModal (the two places with potentially 1000+ rows). ✓
+- `next/image` is NOT used — but no `<img>` tags exist either (no
+  images in the dashboard at all). ✓ No image optimization needed.
+- `public/` folder is minimal (1KB logo.svg + robots.txt). ✓
+- Tailwind v4 with `@import "tailwindcss"` auto-purges unused CSS. ✓
+- No console.log in app code (only in src/lib/logger.ts). ✓
+- No `import * as Icons from 'lucide-react'` — all icon imports are
+  named, so SWC tree-shakes correctly. ✓
+- `exceljs`, `csv-parse`, `docx` are server-side only (API routes) —
+  they do NOT leak into the client bundle. ✓
+- PeerComparison uses `useMemo` for derived state (`peers`,
+  `targetRow`, `otherPeers`, `peerCodes`). ✓ Good pattern.
+- `GlobalLoadingBar` uses pure CSS animation (no setState in effect). ✓
+
+═══════════════════════════════════════════════════════════════
+WORKLOG FOOTER
+═══════════════════════════════════════════════════════════════
+
+Total findings: 12
+  P1 (critical): 2 (FE-01, FE-02)
+  P2 (high):     3 (FE-03, FE-04, FE-05)
+  P3 (medium):   6 (FE-06, FE-07, FE-09, FE-10, FE-12 stays P4, FE-11)
+  P4 (low):      2 (FE-11, FE-12)
+
+Top 5 quick wins:
+  1. FE-01 — Lazy-load FilterBar's 5 dialogs (~100KB saved, 30min)
+  2. FE-02 — useShallow / individual Zustand selectors (60-80% fewer
+     re-renders, 1-2hr)
+  3. FE-03 — React.memo on dashboard children (40-60% fewer wasted
+     renders, 1-2hr)
+  4. FE-04 — Install @next/bundle-analyzer (visibility, 30min)
+  5. FE-07+FE-12 — Delete 17 dead shadcn files + 5 unused deps
+     (cleaner codebase + faster dev, 30min)
+
+No code changes made — analysis only per task instructions.
+All recommended tools are FREE / open-source / MIT licensed.
+
+═══════════════════════════════════════════════════════════════
+Task ID: 1-b
+Agent: general-purpose (Backend/API Performance Analyst)
+Task: Analyze backend/API code for FREE performance improvement opportunities
+      (analysis-only, no code changes, no paid-service recommendations)
+═══════════════════════════════════════════════════════════════
+
+Work Log:
+- Read worklog tail (lines 25100-25535) for context on prior AUDIT9-FINAL-BE
+  + AUDIT8-FE-2 audit work. Confirmed prior agents verified correctness
+  of: connection_limit=20, withStatementTimeout, invalidateAnalysisCache,
+  settings cache (30s TTL), DB-level AggregationCache (5-min TTL),
+  in-flight Promise dedup, BENCHMARK dead-rule cleanup is PENDING.
+- Read all 19 API route files (src/app/api/*/route.ts) — focused on the
+  heaviest: analysis (980 lines), export-report (865), ingest-process (816),
+  outlet-items (610), resto-bahan-matrix (307), drilldown (160), pareto (147),
+  peer-comparison (62), recommendations (135), status (169), data (272),
+  item-search (135), item-history (318).
+- Read lib files: db.ts (96), aggregation-cache.ts (195), cache.ts (74),
+  settings.ts (561), ingestion.ts (694), rate-limit.ts (94), queries/shared.ts (189),
+  queries/rule-evaluation.ts (270), queries/historical.ts (71),
+  queries/items/top-items.ts (691), queries/pareto.ts (795).
+- Read next.config.ts (compress:true already on, poweredByHeader off) +
+  middleware.ts (auth-only, no compression). Grepped for Cache-Control /
+  s-maxage / stale-while-revalidate / gzip / brotli — found exactly 1 hit
+  (settings DELETE route sets no-store). ZERO HTTP cache headers on any
+  GET read endpoint.
+- Verified PrismaClient config: connection_limit=20, pool_timeout=60,
+  statement_timeout=30000, idle_timeout=20, pgbouncer=true, port 6543
+  (transaction mode). All correct for Supabase free tier.
+- Verified rate limiter: in-memory Map, 6 endpoint buckets (analysis=60/min,
+  status=30/min, ingest=5/min, settings=10/min, setup=2/min). Free, no Redis.
+- No code changes made — analysis only, per task instructions.
+
+───────────────────────────────────────────────────────────────
+FINDINGS (22 total: 1×P1, 3×P2, 11×P3, 6×P4, 1×P5)
+───────────────────────────────────────────────────────────────
+
+### A. API ROUTE PERFORMANCE (BE-01 .. BE-08)
+
+### Finding [BE-01]: NO HTTP Cache-Control headers on ANY GET endpoint
+- **Severity**: P1
+- **File(s)**: All GET handlers in src/app/api/{analysis,pareto,recommendations,
+  peer-comparison,outlet-items,item-history,drilldown,resto-bahan-matrix,
+  item-search,status}/route.ts — 10 endpoints total. Grep confirmed only 1
+  Cache-Control hit in entire src/ (settings DELETE sets `no-store`).
+- **Issue**: Every GET response uses `dynamic='force-dynamic'` + default
+  `Cache-Control: no-store` (Next.js default for force-dynamic). Even though
+  /api/analysis has DB-level AggregationCache (5-min TTL → <100ms hits),
+  the BROWSER still re-requests on every tab open / page refresh / React
+  Query remount. /api/status has 5-min in-memory cache but no HTTP cache —
+  every dashboard mount makes a network round-trip.
+- **Free Fix**: Add HTTP headers to NextResponse.json() call on all read
+  endpoints:
+    `headers: { 'Cache-Control': 'public, max-age=0, s-maxage=300,
+     stale-while-revalidate=600' }`
+  For user-specific filters (outlet, kelompok, pic), use `private` instead
+  of `public`. Vercel Edge network + browser cache both honor this —
+  free, no external service needed. mutation routes already clear the
+  DB cache via invalidateAnalysisCache(); add a short `max-age=30` so
+  cache invalidation propagates within 30s (acceptable for a 5-min TTL).
+- **Estimated Impact**: Saves 100-500ms network RTT per repeat visit
+  (browser cache hit = 0ms); reduces DB load when many users load the
+  dashboard simultaneously (in-flight cache misses drop because edge
+  cache serves the request before it reaches the origin).
+- **Effort**: S (1 line per route × 10 routes ≈ 10 LOC)
+
+### Finding [BE-02]: /api/analysis cold path runs 5 serial DB round-trips BEFORE the main 20-query Promise.all
+- **Severity**: P3
+- **File(s)**: src/app/api/analysis/route.ts:156 (findFirst latest period),
+  L178 (getMonthResolver), L208 (getCached), L233 (Promise.all of 4 setup
+  queries), L288 (resolveComparePeriod — does its own db.week + db.sourceFile
+  findMany internally), L310 (resolveKelompokOutletCodes)
+- **Issue**: When month+week ARE provided (the common case from the dashboard),
+  the findFirst at L156 is skipped, but the remaining 5 round-trips still run
+  serially. resolveComparePeriod (lib/period-resolver.ts:108) re-fetches
+  db.week + db.sourceFile — same data already fetched at L233. Total
+  wasted ~150-300ms of sequential setup before the 20-query batch begins.
+- **Free Fix**: (a) Merge resolveKelompokOutletCodes into the L233
+  Promise.all. (b) Pass weeksRaw + fileMonthKeys (already fetched at L233)
+  INTO resolveComparePeriod instead of letting it re-fetch. (c) Move
+  getCached BEFORE the parallel setup (cache hit returns immediately,
+  skipping all setup). Free, no new dependencies.
+- **Estimated Impact**: Saves ~150-300ms on cold path. Cache-hit path
+  unchanged (already <100ms).
+- **Effort**: M
+
+### Finding [BE-03]: /api/analysis uses 4 serial Promise.all batches (5+6+5+6 queries) — loses parallelism vs the 20-connection pool
+- **Severity**: P3
+- **File(s)**: src/app/api/analysis/route.ts:466-515 (Batches 1-4)
+- **Issue**: The 4-batch split (worklog:454) was added to avoid PgBouncer
+  pool exhaustion (Supabase free, ~10 practical concurrent). But
+  connection_limit=20 (db.ts:43) allows up to 15 concurrent queries per
+  request (with 5-buffer). Batches run SERIALLY — batch 2 starts only
+  after batch 1's slowest query completes. The 3 slowest queries
+  (evaluateRulesSql ~2-3s, queryVarianceAnalysis ~1s, queryHistoricalCriticalItems
+  ~800ms) all live in different batches, so their tail latencies ADD UP
+  instead of overlapping.
+- **Free Fix**: Restructure into 2 batches: (a) "slow" batch fired FIRST
+  (evaluateRulesSql + variance + healthRanking + growthDrivers +
+  historicalCriticalItems = 5 queries, all take >500ms); (b) "fast"
+  batch fired in parallel (remaining 15 sub-second queries). Total
+  concurrent connections = 5+15 = 20 (exactly at cap). Or lower to
+  4 slow + 14 fast = 18 (2-buffer). The slow batch's tail latency
+  (3s) now overlaps with the fast batch's total time (~1s) instead of
+  being additive.
+- **Estimated Impact**: Cuts cold path by ~1-2s (the slowest batch's
+  tail latency now overlaps with the fast batch).
+- **Effort**: M (restructure Promise.all groups; load-test to verify
+  no pool exhaustion under 2-concurrent-user load)
+
+### Finding [BE-04]: /api/export-report uses the LEGACY JS rule evaluator — fetches ALL 35K records with full relation includes per request
+- **Severity**: P2
+- **File(s)**: src/app/api/export-report/route.ts:385-397 (findMany with
+  `include: { outlet: {select}, item: {select} }` for BOTH current + prev
+  periods — loads ~35K rows × ~30 columns each), L417-429 (per-record
+  JS loop calling evaluateRules), L532 (computeVarianceAnalysis JS loop),
+  L533 (computeHistoricalAnalysis JS loop)
+- **Issue**: Unlike /api/analysis (SQL-pushed evaluators + 5-column slim
+  projection), export-report still: (1) loads ALL InventoryRecord rows
+  for both periods with full includes, (2) loops through every record
+  in JS calling evaluateRules(ctx), (3) calls 3 JS variance/historical
+  analysis functions that the dashboard already pushed to SQL. The
+  route's own header comment (L6-13) acknowledges this as "KNOWN
+  DIVERGENCE" deferred to a future sprint. The route takes 8-15s for a
+  35K-row period vs the dashboard's 6-12s — and the export doesn't even
+  use the SQL-pushed evaluators that the dashboard proved 3-5× faster.
+- **Free Fix**: Refactor /api/export-report to reuse the SAME SQL
+  evaluators as /api/analysis (evaluateRulesSql + queryVarianceAnalysis
+  + queryHistoricalCriticalItems). Word doc generation logic stays
+  the same. This is the sprint the comment was deferred to.
+- **Estimated Impact**: Cuts export time by ~3-5s (was 8-15s, target 4-8s).
+  Saves ~6MB memory per request (no full-record load). Reduces DB load
+  (1 SQL query vs 35K-row findMany + JS loop).
+- **Effort**: L (significant refactor — need to map SQL evaluator output
+  shape to the legacy doc-generator input; ~200-400 LOC changed)
+
+### Finding [BE-05]: /api/drilldown over-fetches relations (`include: { outlet: true, item: true, week: true, sourceFile: true }`)
+- **Severity**: P3
+- **File(s)**: src/app/api/drilldown/route.ts:75
+- **Issue**: Loads ALL columns of 4 relations. The response map (L101-155)
+  only uses: outlet.code/name/area, item.name/satuan, sourceFile.fileName,
+  and ZERO fields from week (weekLabel comes from `r.weekLabel` directly,
+  not from `r.week.weekLabel`). With limit=500, that's ~500 × ~30 unused
+  columns = ~15K columns of data transferred from DB but never read.
+- **Free Fix**: Switch to explicit `select`:
+    ```
+    select: {
+      id: true, weekLabel: true, monthLabel: true, satuan: true, area: true,
+      qtyBom: true, qtyCom: true, qtyDeviasi: true, ... (all scalars used in map),
+      outlet: { select: { code: true, name: true } },
+      item: { select: { name: true, satuan: true } },
+      sourceFile: { select: { fileName: true } },
+      // week: NOT included — unused
+    }
+    ```
+  Pattern matches what /api/analysis already does for currSlim (L387-393).
+- **Estimated Impact**: Saves ~30-50% of SQL row payload (~5-15ms per
+  request + minor DB CPU). Lower DB egress on Supabase free tier (which
+  has a 1GB/month egress cap).
+- **Effort**: S
+
+### Finding [BE-06]: /api/status runs 5+ SEQUENTIAL DB queries (no Promise.all)
+- **Severity**: P3
+- **File(s)**: src/app/api/status/route.ts:54 (sourceFile.findMany),
+  L61 (week.findMany), L67 (outlet.findMany), L79 (outletPIC.findMany),
+  L114 (item.count), L115 (inventoryRecord.count) — 6 round-trips, all
+  awaited serially
+- **Issue**: All 6 queries are independent (no data dependency), but
+  they're awaited one after another. Each query is ~5-15ms cold, ~1-5ms
+  warm (statusCache hit short-circuits but only AFTER first cold request).
+  Total ~30-90ms wasted per cold request.
+- **Free Fix**: Wrap all 6 in a single `Promise.all([...])`. Downstream
+  JS processing (kelompok extraction at L96-104, weeksByMonth grouping
+  at L117-129) runs after Promise.all resolves.
+- **Estimated Impact**: Cuts cold-path from ~80ms to ~25ms (max of any
+  single query instead of sum). First-load dashboard UX improvement.
+- **Effort**: S
+
+### Finding [BE-07]: /api/outlet-items runs 5 serial setup queries before the main Promise.all
+- **Severity**: P3
+- **File(s)**: src/app/api/outlet-items/route.ts:78 (getMonthResolver),
+  L85 (getRuntimeThresholds), L88 (db.outlet.findFirst), L102-106
+  (db.week.findMany + db.sourceFile.findMany — NOT in Promise.all),
+  L130 (resolveComparePeriod derived from weeksRaw)
+- **Issue**: 5 sequential awaits before the main Promise.all at L157.
+  monthResolver + thresholds + outlet + weeksRaw + fileMonthKeys are
+  ALL independent (no data dep). Total ~50-100ms wasted on every cold
+  request.
+- **Free Fix**: `Promise.all([getMonthResolver, getRuntimeThresholds,
+  db.outlet.findFirst, db.week.findMany, db.sourceFile.findMany])`.
+  Then compute prev period from results inline (no extra DB call).
+- **Estimated Impact**: Saves ~50-80ms cold path.
+- **Effort**: S
+
+### Finding [BE-08]: /api/resto-bahan-matrix runs 4 heavy queries sequentially (matrix → bench → weeks/sourceFiles → prevRows)
+- **Severity**: P3
+- **File(s)**: src/app/api/resto-bahan-matrix/route.ts:89 (rows query),
+  L138 (itemAreaBench), L153-157 (weeksRaw + fileMonthKeys — NOT in
+  Promise.all), L189 (prevRows)
+- **Issue**: 4 DB round-trips awaited serially. None depend on each
+  other except prevRows (depends on prevPeriod, which depends on
+  weeksRaw/fileMonthKeys). The first 3 can run in parallel, then
+  prevRows in a second micro-batch.
+- **Free Fix**: `Promise.all([rowsQuery, itemAreaBenchQuery,
+  weeksRawQuery, fileMonthKeysQuery])`. Then resolve prevPeriod from
+  weeksRaw/fileMonthKeys, then `await prevRowsQuery` (1 round-trip).
+- **Estimated Impact**: Saves ~30-60ms per request.
+- **Effort**: S
+
+### B. QUERY LAYER (BE-09 .. BE-10)
+
+### Finding [BE-09]: buildSqlFilters emits a separate `SELECT id FROM "Outlet" WHERE ...` subquery for EACH filter (area / kelompok / outletCode / PIC / itemName) — repeated 20× per /api/analysis request
+- **Severity**: P3
+- **File(s)**: src/lib/queries/shared.ts:149-184 (5 separate IN-subqueries),
+  consumed by every queryXxx() function in src/lib/queries/*.ts
+- **Issue**: When multiple filters apply (kelompok + area + outletCode),
+  buildSqlFilters emits 2-3 separate `SELECT id FROM "Outlet" WHERE ...`
+  subqueries in the same SQL. PostgreSQL planner typically folds these
+  into one sequential scan, but the planner still has to analyze + plan
+  each one. Worse: the SAME filter set is re-resolved by all 20 queries
+  in /api/analysis (each queryXxx() call independently rebuilds the
+  filter fragment). For a kelompok filter matching ~30 outlets, that's
+  20 × ~5ms planner overhead = ~100ms wasted.
+- **Free Fix**: Pre-resolve `outletIds: number[]` ONCE in the route via
+  a single `db.outlet.findMany({ where: {...}, select: { id: true } })`,
+  then pass the int[] to buildSqlFilters. The function emits
+  `AND ir."outletId" IN (${Prisma.join(outletIds)})` directly — no
+  subquery. The analysis route ALREADY does this for PIC (L244
+  resolvePICOutletCodes → picOutletCodes string[] → IN-list at L176).
+  Extend the same pattern to area/kelompok/outletCode/itemName.
+  Same int[] reused across all 20 queries.
+- **Estimated Impact**: Saves ~5-30ms per query × 20 queries = 100-600ms
+  on /api/analysis cold path. Eliminates 5 sub-select planner
+  evaluations per query.
+- **Effort**: M (refactor buildSqlFilters signature to accept
+  pre-resolved outletIds; update ~15 callers)
+
+### Finding [BE-10]: /api/data DELETE runs 2-3 separate COUNT queries before the transaction (could be 1 query or merged into the tx)
+- **Severity**: P4
+- **File(s)**: src/app/api/data/route.ts:146-148 (3 counts for `all` path),
+  L200-201 (2 counts for month path), L228-229 (2 counts for fileId path)
+- **Issue**: Each COUNT is a separate DB round-trip (~5-15ms each). For
+  the `all` path: 3 counts + 4 deleteManys = 7 round-trips. Could be 1
+  query (counts) + 1 transaction (deletes) = 2 round-trips.
+- **Free Fix**: Use a single raw SQL for counts:
+    `SELECT (SELECT COUNT(*) FROM "InventoryRecord" WHERE ...) AS recs,
+            (SELECT COUNT(*) FROM "Week" WHERE ...) AS weeks`
+  OR run counts inside the same $transaction as the deletes
+  (`db.$transaction([count1, count2, deleteMany×4])` — Prisma supports
+  batched transactions).
+- **Estimated Impact**: Saves ~30-50ms per delete operation (rare path,
+  but improves UX for the "delete month" button which can take 5-15s).
+- **Effort**: S
+
+### C. CACHING STRATEGY (BE-11 .. BE-13)
+
+### Finding [BE-11]: /api/status response is in-memory cached (5 min) but NOT HTTP-cached — every browser tab refresh hits the server
+- **Severity**: P3
+- **File(s)**: src/app/api/status/route.ts:49-52 (statusCache.get),
+  L157 (statusCache.set)
+- **Issue**: Server-side cache hit is ~1ms. But every browser tab open /
+  React Query refetch still makes an HTTP round-trip (~20-100ms RTT).
+  Frontend calls /api/status on every dashboard mount.
+- **Free Fix**: Add `Cache-Control: public, max-age=60, s-maxage=300,
+  stale-while-revalidate=600` to the response. Browser serves from
+  cache for 60s, then revalidates in background. Mutation routes
+  (/api/data DELETE, /api/ingest-process, etc.) already call
+  `statusCache.clear()` server-side; add `Cache-Control: no-cache`
+  to their responses so any intermediate proxy invalidates.
+- **Estimated Impact**: Eliminates ~20-100ms per dashboard mount for
+  repeat visits. Most-impactful for users with many dashboard tabs.
+- **Effort**: S
+
+### Finding [BE-12]: DB-level AggregationCache stores 100KB+ JSON (TEXT column) — every cache hit still requires DB round-trip + JSON.parse
+- **Severity**: P3
+- **File(s)**: src/lib/aggregation-cache.ts:80-99 (getCached:
+  db.aggregationCache.findUnique → JSON.parse), called by /api/analysis
+  at route.ts:208
+- **Issue**: On /api/analysis cache HIT, the flow is:
+  (1) db.aggregationCache.findUnique — DB round-trip ~10-30ms
+  (2) JSON.parse(100KB string) — ~5-10ms
+  (3) NextResponse.json(result) — re-serializes ~5-10ms
+  The "fast" cache-hit path is actually ~25-50ms minimum. For a 100KB+
+  payload this is significant. Worse: every cold serverless instance
+  pays this cost on first hit (no in-memory cache).
+- **Free Fix**: Add a thin in-memory LRU layer (10 entries, 60s TTL)
+  in front of the DB cache. Reuse the existing `LRUCache` class from
+  src/lib/cache.ts. Cache hit on warm instance = <1ms (skips DB +
+  JSON.parse). Add `clearInMemoryAnalysisCache()` called from
+  invalidateAnalysisCache() so mutations clear both layers.
+  Free — no external service, uses existing LRUCache code.
+- **Estimated Impact**: Reduces cache-hit latency from ~25-50ms to <5ms
+  on warm instances (5-10× faster). Cold instance still pays DB cost
+  once, then warm.
+- **Effort**: S
+
+### Finding [BE-13]: getRuntimeThresholds() adds 1 element to the Promise.all batch (minor — already cached 30s in-memory)
+- **Severity**: P4
+- **File(s)**: src/app/api/analysis/route.ts:233 (Promise.all includes
+  getRuntimeThresholds)
+- **Issue**: getRuntimeThresholds → getAllSettings → checks _settingsCache
+  (30s TTL). On warm instances it's a sync cache hit wrapped in an async
+  function. Adds 1 microtask + 1 element to Promise.all. Negligible but
+  cosmetic.
+- **Free Fix**: Call `await getRuntimeThresholds()` separately before
+  the Promise.all (single await, fast path on warm instance). Removes
+  1 Promise.all dependency.
+- **Estimated Impact**: <1ms — purely cosmetic.
+- **Effort**: S (nit)
+
+### D. RESPONSE OPTIMIZATION (BE-14 .. BE-15)
+
+### Finding [BE-14]: /api/analysis fetches top 50 deviasi-rank items but frontend displays only 10 by default
+- **Severity**: P4
+- **File(s)**: src/app/api/analysis/route.ts:505
+  (`queryTopItemsByDeviasiRank(week!, month!, filterOpts, 50)`)
+- **Issue**: The analysis route fetches top 50. The frontend TopItems.tsx
+  displays 10 by default with a "show more" toggle. Fetching 50 when
+  only 10 are displayed wastes ~5KB JSON + ~5ms SQL.
+- **Free Fix**: Lower to 20 (2 pages) for /api/analysis. The "show more"
+  button can fetch additional pages via /api/drilldown (already exists).
+- **Estimated Impact**: Saves ~5KB JSON, ~5ms SQL per request.
+- **Effort**: S
+
+### Finding [BE-15]: /api/analysis includes 3 trend derivations (trend + multiPeriodComparison + netCostTrend) — possible dead fields
+- **Severity**: P4
+- **File(s)**: src/app/api/analysis/route.ts:647-655 (buildTrend +
+  buildMultiPeriodComparison + buildNetCostTrend — all from same
+  trendAggRows)
+- **Issue**: Three derivations × ~20 periods × 4-5 fields = ~4-6KB
+  combined. If frontend only uses one (likely `trend`), the other 2
+  are dead payload. Worklog AUDIT8-FE-2 mentions both — keep for now
+  unless frontend audit confirms dead.
+- **Free Fix**: Audit frontend consumers (Grep `multiPeriodComparison`
+  and `netCostTrend` in src/components/). If unused, drop from response.
+- **Estimated Impact**: Saves ~2-4KB if dead fields dropped.
+- **Effort**: M (requires frontend audit)
+
+### E. CONNECTION POOL & QUERY TIMEOUT (BE-16 .. BE-17)
+
+### Finding [BE-16]: connection_limit=20 + 4 serial batches in /api/analysis = underutilized pool on fast queries
+- **Severity**: P3
+- **File(s)**: src/lib/db.ts:43 (`connection_limit=20`),
+  src/app/api/analysis/route.ts:466-515 (4 batches of 5)
+- **Issue**: With 4 serial batches of 5 queries each, at any moment only
+  5 of 20 connections are used. 15 sit idle. The slowest query in each
+  batch gates the next batch.
+- **Free Fix**: See BE-03 (restructure into 2 overlapping batches).
+  Alternative: lower connection_limit to 10 (frees Supabase pool
+  capacity for other concurrent users — Supabase free allows ~60 total
+  concurrent connections across all users).
+- **Estimated Impact**: See BE-03.
+- **Effort**: M
+
+### Finding [BE-17]: withStatementTimeout wraps every SQL query in a $transaction (1-2ms overhead × 20 queries = 20-40ms)
+- **Severity**: P4
+- **File(s)**: src/lib/queries/shared.ts:27-39 (db.$transaction per call),
+  used by ~15 query modules
+- **Issue**: Every SQL aggregate query wraps in `$transaction` with
+  `SET LOCAL statement_timeout = 30000`. Transaction begin + SET LOCAL +
+  commit adds ~1-2ms per call. With 20 queries per /api/analysis
+  request, that's 20-40ms of pure transaction overhead.
+- **Free Fix**: For queries KNOWN to be fast (<500ms — simple GROUP BY
+  on indexed columns like queryTopItemsByNominal, queryAreaAnalysis,
+  queryLossVsSurplus), skip the withStatementTimeout wrapper. Reserve
+  it for heavy LATERAL joins / self-joins (evaluateRulesSql,
+  queryHistoricalCriticalItems, queryVarianceAnalysis,
+  queryRestoRecommendations, queryPeerComparison) where hangs are real.
+  Trade-off: a runaway query without the wrapper would block the
+  connection for 30s (Prisma default). Verify Supabase server-side
+  statement_timeout is respected by PgBouncer transaction mode before
+  removing the wrapper.
+- **Estimated Impact**: Saves ~20-30ms per /api/analysis request.
+- **Effort**: S (audit which queries truly need it)
+
+### F. INGESTION PERFORMANCE (BE-18 .. BE-20)
+
+### Finding [BE-18]: Ingestion createMany has a dead SQLite fallback that silently retries one-by-one (masks real errors, can hang for 3 minutes on pool exhaustion)
+- **Severity**: P2
+- **File(s)**: src/lib/ingestion.ts:406-414 + 424-431 (try createMany →
+  catch → for-loop create) — same pattern duplicated at L665-686 in
+  processRowsForImport
+- **Issue**: The `try { createMany } catch { for loop create }` pattern
+  is documented as "SQLite fallback" but schema.prisma locks
+  provider = "postgresql" — SQLite is impossible. Any createMany failure
+  (timeout, connection drop, unique constraint on a single row) triggers
+  the one-by-one path which:
+    1. Runs N separate INSERTs (35K inserts vs 1 batch — ~175s vs ~5s)
+    2. Silently swallows ALL per-row errors (`catch {}`)
+    3. On pool exhaustion (Supabase free + 20 conn limit + concurrent
+       ingestions), makes the problem WORSE by holding the connection
+       for 35K × ~5ms = ~3 minutes per batch
+  The `skipDuplicates: true` flag already handles unique-constraint
+  errors (P2002) — the catch block is dead defensive code that masks
+  real errors and creates a hung-connection failure mode.
+- **Free Fix**:
+    1. Remove the SQLite fallback try/catch (dead code).
+    2. Let createMany errors propagate (the surrounding $transaction
+       at L465 will rollback, preserving atomicity).
+    3. If specific error handling is needed, differentiate by
+       Prisma error code (P2002 = duplicate, log + skip; P2024 =
+       pool timeout, re-throw with clear message; everything else,
+       re-throw).
+- **Estimated Impact**: Eliminates the silent 3-minute hang on pool
+  exhaustion. Simplifies code. Faster failure = better UX. Saves
+  ~170s in the worst case (1 batch vs 35K individual inserts).
+- **Effort**: S
+
+### Finding [BE-19]: DQ issue insert is a sequential loop of createMany in 500-row slices (could be parallel)
+- **Severity**: P4
+- **File(s)**: src/lib/ingestion.ts:458-460
+  (`for (let i = 0; i < dqRecords.length; i += 500) { await createMany(slice) }`),
+  duplicated at src/app/api/ingest-process/route.ts:510-512
+- **Issue**: When DQ issues exceed 500 rows, loop runs serial createMany
+  calls. For a typical 35K-row week with ~2% DQ issues = 700 issues =
+  2 batches × ~50-100ms = ~100-200ms. Not a major bottleneck but
+  parallelizable.
+- **Free Fix**: `await Promise.all(slices.map(s =>
+  tx.dQIssue.createMany({ data: s })))`. Same transaction, multiple
+  parallel inserts. Note: Prisma may serialize within a single
+  transaction client — if so, this is a no-op. Test before claiming
+  speedup.
+- **Estimated Impact**: Saves ~50-100ms during ingestion (rare path —
+  only when DQ issues > 500).
+- **Effort**: S
+
+### Finding [BE-20]: /api/ingest-process mode='import' reassembles + re-parses the entire Excel for each week import (frontend already uses 'import-all', but mode='import' still exists for programmatic callers)
+- **Severity**: P3
+- **File(s)**: src/app/api/ingest-process/route.ts (mode='import' path
+  around L380-560 vs mode='import-all' at L570-810)
+- **Issue**: Already documented in code (L568-569): "previously each
+  week was imported via separate 'import' call, causing reassemble +
+  parse for EACH week (3x for 3 weeks = 3x slow)". Frontend uses
+  'import-all' (per L547 comment). But mode='import' still exists, and
+  any programmatic API caller using it in a loop pays the re-parse cost
+  per week. Also: no caching of the parsed Excel by fileHash — repeat
+  'import' calls for the same file skip nothing.
+- **Free Fix**: Add a `Cache-Control: no-store` + `Deprecation: true`
+  header to mode='import' responses to nudge callers to switch. OR
+  cache the parsed result by fileHash for 5 min (Map<fileHash,
+  parsedSheets>) so repeat 'import' calls skip re-parse. Frontend
+  already optimal — only matters for API callers.
+- **Estimated Impact**: Latent — frontend already uses 'import-all'.
+  Only matters for programmatic API callers using 'import' in a loop.
+- **Effort**: S
+
+### G. FREE TOOLING RECOMMENDATIONS (BE-21 .. BE-22)
+
+### Finding [BE-21]: No CPU profiling in place — use Node.js built-in `--prof` flag (free) or clinic.js doctor (free OSS) to identify hot JS functions
+- **Severity**: P3
+- **File(s)**: N/A (process-level recommendation)
+- **Issue**: The /api/analysis post-processing (mapping SQL rows to
+  response objects, computing health scores per outlet, building
+  topFlagByKey Map, detectPatterns) is pure JS work after SQL queries
+  return. Without profiling, we don't know if JS post-processing is
+  200ms or 2s. SQL queries are timed (withStatementTimeout=30s hard
+  cap), but JS is not.
+- **Free Fix**:
+    1. `node --prof` on a local production-mode server
+       (`npm run build && npm start`) — hit /api/analysis 5× with same
+       params. Process the resulting `isolate-*.log` with
+       `node --prof-process isolate-*.log > profile.txt`. Free,
+       built into Node.js.
+    2. `clinic.js doctor` (free open-source) — richer CPU + memory +
+       event-loop view with one command: `clinic doctor -- node server.js`.
+       Free, no signup.
+    3. Add `console.time('stage')` / `console.timeEnd('stage')` markers
+       in /api/analysis around each Promise.all batch + post-processing
+       section. Free, no deps.
+- **Estimated Impact**: Identifies whether JS post-processing or SQL
+  queries are the actual bottleneck. Enables data-driven optimization
+  prioritization.
+- **Effort**: S (one-time setup, ~30 min)
+
+### Finding [BE-22]: No per-stage timing breakdown in /api/analysis response — only total durationMs is logged
+- **Severity**: P3
+- **File(s)**: src/app/api/analysis/route.ts:82 (startedAt),
+  L942 (durationMs = total only)
+- **Issue**: Response includes `durationMs` (total) but no breakdown of
+  where the time went: setup vs SQL batches 1-4 vs JS post-processing
+  vs JSON serialization. Without per-stage timing, can't tell if a 6s
+  response is SQL-bound (need DB optimization) or JS-bound (need code
+  optimization).
+- **Free Fix**: Add `const t0 = Date.now()` ... `const t1 = Date.now()`
+  markers after each Promise.all batch + post-processing section. Log
+  to logger.info with structured fields:
+    `{ stage: 'setup', ms: t1-t0 }`
+    `{ stage: 'sql-batch-1', ms: t2-t1 }`
+    `{ stage: 'sql-batch-2', ms: t3-t2 }`
+    `{ stage: 'rule-postproc', ms: t4-t3 }`
+    `{ stage: 'response-serialize', ms: t5-t4 }`
+  Also include in response payload (dev only — gate behind NODE_ENV!==
+  'production') for live debugging.
+- **Estimated Impact**: Enables data-driven optimization. Currently
+  we're flying blind on where the 6-12s actually goes.
+- **Effort**: S
+
+───────────────────────────────────────────────────────────────
+TOP 5 QUICK WINS (highest impact / lowest effort, FREE only)
+───────────────────────────────────────────────────────────────
+
+1. **[BE-01] HTTP Cache-Control headers on GET endpoints** — P1, S effort.
+   1 line per route × 10 routes ≈ 10 LOC. Saves 100-500ms per repeat
+   visit (browser cache). Biggest perceived-latency win for the lowest
+   effort. Free (HTTP-level, no service needed).
+
+2. **[BE-12] In-memory LRU layer in front of DB AggregationCache** — P3,
+   S effort. Reuses existing LRUCache class from src/lib/cache.ts.
+   Reduces /api/analysis cache-hit latency from ~25-50ms to <5ms on
+   warm instances (5-10× faster). Free, no Redis.
+
+3. **[BE-18] Remove dead SQLite fallback in ingestion createMany** — P2,
+   S effort. Removes 2 try/catch blocks (lines 406-414, 424-431 in
+   src/lib/ingestion.ts, duplicated at L665-686). Eliminates silent
+   3-minute hang on pool exhaustion. Simplifies code.
+
+4. **[BE-05] /api/drilldown over-fetch fix (include → select)** — P3,
+   S effort. ~5 LOC change in src/app/api/drilldown/route.ts:75. Saves
+   ~30-50% SQL payload (drops unused week.* columns + restricts outlet/
+   item/sourceFile to only fields used in the response map). Lowers DB
+   egress on Supabase free tier (1GB/month cap).
+
+5. **[BE-06] /api/status Promise.all parallel queries** — P3, S effort.
+   Wraps 5-6 sequential db.X.findMany/count calls into 1 Promise.all in
+   src/app/api/status/route.ts:54-115. Cuts cold path from ~80ms to
+   ~25ms. Most-impactful for first-load dashboard UX.
+
+───────────────────────────────────────────────────────────────
+HONORABLE MENTIONS (high impact, medium effort)
+───────────────────────────────────────────────────────────────
+
+- **[BE-04] Migrate /api/export-report to SQL evaluators** — P2, L effort.
+  Cuts export time by ~3-5s. Significant refactor (~200-400 LOC).
+
+- **[BE-03] Restructure /api/analysis into 2 overlapping batches** — P3,
+  M effort. Cuts cold path by ~1-2s by overlapping slow + fast queries.
+
+- **[BE-09] Pre-resolve outletIds ONCE in route, pass to buildSqlFilters** —
+  P3, M effort. Saves 100-600ms on /api/analysis cold path. Refactor
+  touches ~15 query module callers.
+
+- **[BE-21] Run `node --prof` + `clinic.js doctor` to identify JS hotspots** —
+  P3, S effort (one-time). Enables data-driven prioritization of the
+  findings above.
+
+───────────────────────────────────────────────────────────────
+Stage Summary:
+- Total findings: 22 (1×P1, 3×P2, 11×P3, 6×P4, 1×P5-equivalent nit)
+- Top 5 Quick Wins (S effort, free only): BE-01, BE-12, BE-18, BE-05, BE-06
+- Highest-impact single fix: BE-01 (HTTP Cache-Control) — touches 10
+  routes, saves 100-500ms per repeat visit, 0 cost, ~10 LOC.
+- Highest-risk if unfixed: BE-18 (silent 3-min hang on pool exhaustion
+  during ingestion) + BE-04 (export-report 35K-row load on every Word
+  export request).
+- All recommendations use ONLY free tools/techniques: HTTP headers,
+  in-memory LRU (existing class), Node.js --prof, clinic.js OSS,
+  Promise.all restructuring, Prisma select vs include. NO Redis, NO
+  Upstash paid, NO Vercel KV paid, NO external services.
+- No code changes made — analysis only, per task instructions.
+
+═══════════════════════════════════════════════════════════════
+Task ID: 1-d
+Agent: general-purpose (Build & Infrastructure Performance Analyst)
+Task: Analyze build config and infrastructure for free performance
+      improvement opportunities. Constraint: "gratisan ou free" —
+      do NOT recommend paid services (Vercel Pro, Cloudflare Pro,
+      Sentry paid, etc.). Focus on free OSS tools + free tiers +
+      what's already in the codebase.
+═══════════════════════════════════════════════════════════════
+
+Work Log:
+- Read worklog tail (lines 25136-25536) for context on prior
+  AUDIT9-FINAL-BE + AUDIT9-FINAL-FE verification work.
+- Read /home/z/my-project/next.config.ts (35 lines).
+- Read /home/z/my-project/Caddyfile (37 lines).
+- Read /home/z/my-project/package.json (91 lines).
+- Read /home/z/my-project/tsconfig.json (45 lines).
+- Read /home/z/my-project/src/instrumentation.ts (21 lines).
+- Read /home/z/my-project/src/lib/logger.ts (89 lines).
+- Read /home/z/my-project/src/lib/db.ts (97 lines).
+- Read /home/z/my-project/src/middleware.ts (123 lines).
+- Read /home/z/my-project/src/lib/cache.ts (head 60 lines).
+- Read /home/z/my-project/src/lib/rate-limit.ts (head 30 lines).
+- Read /home/z/my-project/src/app/api/status/route.ts (head 40 lines).
+- Read /home/z/my-project/prisma/schema.prisma (249 lines).
+- Read /home/z/my-project/.env.example (23 lines).
+- Read /home/z/my-project/.env (50 bytes — DATABASE_URL only).
+- Read /home/z/my-project/dev.log (23 lines).
+- Read /home/z/my-project/.next/dev/trace (10 lines — JSON traces).
+- Read /home/z/my-project/vercel.json, railway.toml, nixpacks.toml,
+  postcss.config.mjs, eslint.config.mjs, vitest.config.ts.
+- Checked runtime: `ps` (Caddy running PID 2, Next dev NOT
+  running), `ss -tlnp` (only :81 Caddy + :19005/:19006 internal),
+  `free -h` (3.9Gi total, 1.4Gi free, 3.4Gi available), `nproc` (2).
+- Checked folder sizes: node_modules=1.1G, .next/dev=250M,
+  .next/dev/cache=183M, node_modules/.prisma=20M,
+  node_modules/@prisma=112M, recharts=5.4M, exceljs=23M,
+  docx=7.3M, react-day-picker=4.8M, @tanstack=9.3M, @radix-ui=5.4M.
+- Checked Next 16 build CLI: `next build` does NOT default to
+  Turbopack — must pass `--turbo` / `--turbopack`. Current build
+  script uses plain `next build` → falls back to webpack.
+- Verified which shadcn/ui components are actually used in src/
+  (12 of ~36 scaffolded components have 0 imports outside their
+  own file: accordion, aspect-ratio, context-menu, menubar,
+  navigation-menu, toggle-group, hover-card, radio-group,
+  dropdown-menu, avatar, carousel, collapsible).
+- Verified exceljs + docx are statically imported (not dynamic).
+- Verified Caddyfile has NO `encode` directive (no zstd/brotli
+  at gateway), NO static asset caching, NO `file_server` bypass.
+- No code changes made — analysis only per task instructions.
+
+───────────────────────────────────────────────────────────────
+FINDINGS (grouped by category, 26 total)
+───────────────────────────────────────────────────────────────
+
+=== A. Next.js Configuration (next.config.ts) ===
+
+### Finding INFRA-01: Missing `experimental.optimizePackageImports`
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/next.config.ts (entire file, 35 lines — no `experimental` block at all)
+- **Issue**: No `experimental.optimizePackageImports` configured. The project uses `recharts` (5.4M installed, pulls in `lodash`, `d3-*` modules), `lucide-react` (~6K icons, default import pulls entire icon set without tree-shaking), `date-fns` (4.1.0 with many entry points), `react-day-picker` (4.8M). Next 16 supports per-package barrel-file optimization to enable granular tree-shaking — currently missing.
+- **Free Fix**: Add to next.config.ts:
+  ```ts
+  experimental: {
+    optimizePackageImports: ['recharts', 'lucide-react', 'date-fns', 'react-day-picker', '@radix-ui/react-icons'],
+  },
+  ```
+- **Estimated Impact**: Reduces initial JS bundle by ~80-150KB (recharts+d3 tree-shaking), ~40KB from lucide-react (only used icons shipped). Faster cold start.
+- **Effort**: S
+
+### Finding INFRA-02: Missing `images.formats` (AVIF/WebP) + `minimumCacheTTL`
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/next.config.ts (no `images` block)
+- **Issue**: Default Next image config serves WebP only (AVIF not enabled). `sharp` is installed (612K) but `images.formats` not set to include AVIF. `minimumCacheTTL` defaults to 60s — too short for optimized images that never change.
+- **Free Fix**: Add:
+  ```ts
+  images: {
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 86400, // 24h
+  },
+  ```
+- **Estimated Impact**: AVIF ~20-30% smaller than WebP for photographic content. TTL bump reduces re-optimization CPU.
+- **Effort**: S
+
+### Finding INFRA-03: Missing `compiler.removeConsole` for production
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/next.config.ts (no `compiler` block)
+- **Issue**: Production bundle still includes all `console.log/debug/info` calls (the custom logger.ts uses `console.log` under the hood). Each console call adds ~50-200 bytes to bundle + clutters browser devtools.
+- **Free Fix**: Add:
+  ```ts
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production'
+      ? { exclude: ['error'] }
+      : false,
+  },
+  ```
+- **Estimated Impact**: Strips ~200-500 console.* callsites from prod bundle, saves ~20-50KB.
+- **Effort**: S
+
+### Finding INFRA-04: `headers()` missing Cache-Control for static assets
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/next.config.ts:17-31 (only security headers, no caching)
+- **Issue**: No `Cache-Control: public, max-age=31536000, immutable` for `/_next/static/*` (build artifacts are content-hashed, safe to cache forever). No `Cache-Control` for `/favicon.ico`, `/robots.txt`, `/logo.svg` either. Browsers re-fetch on every navigation.
+- **Free Fix**: Add a second source block in `headers()`:
+  ```ts
+  {
+    source: '/_next/static/:path*',
+    headers: [
+      { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+    ],
+  },
+  {
+    source: '/(logo.svg|robots.txt|favicon.ico)',
+    headers: [
+      { key: 'Cache-Control', value: 'public, max-age=86400' },
+    ],
+  },
+  ```
+- **Estimated Impact**: Eliminates redundant re-downloads of hashed JS/CSS chunks on repeat visits — saves ~500KB-2MB network per returning visitor. Faster TTI.
+- **Effort**: S
+
+### Finding INFRA-05: Missing `httpAgentOptions: { keepAlive: true }`
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/next.config.ts (no `httpAgentOptions`)
+- **Issue**: In Node 19+, keep-alive is enabled by default for `http.globalAgent`, but Next 16 may still benefit from explicit `httpAgentOptions: { keepAlive: true }` for outbound fetches (to Supabase, Google Drive, etc.). Server-side fetches to /api/analysis route hit DB pool — keep-alive reduces TCP handshake overhead.
+- **Free Fix**: Add:
+  ```ts
+  httpAgentOptions: { keepAlive: true },
+  ```
+- **Estimated Impact**: ~50-100ms saved per outbound HTTPS request on warm connections. Cumulative for 20+ DB-pool queries per /api/analysis call.
+- **Effort**: S
+
+=== B. Build Pipeline ===
+
+### Finding INFRA-06: Production build does NOT use Turbopack
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/package.json:7 (`"build": "prisma generate && next build"`)
+- **Issue**: Next 16 `next build` defaults to webpack unless `--turbo` flag is passed. Verified by reading `node_modules/next/dist/bin/next:89` — `--turbo`/`--turbopack` is an explicit option. Dev server correctly auto-uses Turbopack (dev.log: "Next.js 16.1.3 (Turbopack)"), but production build falls back to slower webpack. Turbopack builds are 2-5x faster for this codebase size (208 TS/TSX files, 2.4MB source).
+- **Free Fix**: Change build script:
+  ```json
+  "build": "prisma generate && next build --turbo"
+  ```
+  Note: Turbopack builds are stable in Next 16 — official docs mark it as production-ready. Validate with one `next build --turbo` run before committing.
+- **Estimated Impact**: Reduces production build time by 40-70% (e.g., 60s → 20s on 2-CPU box). Faster CI/CD deploys. Also reduces memory pressure during build (lower OOM risk).
+- **Effort**: S
+
+=== C. tsconfig.json ===
+
+### Finding INFRA-07: `allowJs: true` slows type-checking
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/tsconfig.json:9 (`"allowJs": true`)
+- **Issue**: `allowJs` lets TypeScript type-check `.js` files in the project. The project is fully TypeScript (all 208 source files are .ts/.tsx). This option makes tsc scan + parse `.js` files in `node_modules` paths that match `include` glob — wasted CPU.
+- **Free Fix**: Set `"allowJs": false` (or remove the line entirely — `false` is the default).
+- **Estimated Impact**: Marginal — ~5-10% faster `tsc --noEmit` runs during build. Most relevant if `next build` runs type-check (currently `ignoreBuildErrors: false`, so it does).
+- **Effort**: S
+
+### Finding INFRA-08: `target: "ES2017"` conservative for Node 24
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/tsconfig.json:3 (`"target": "ES2017"`)
+- **Issue**: Runtime is Node.js 24.19 (verified via `node --version`). Targeting ES2017 forces SWC to downcompile ES2018+ syntax (optional chaining, nullish coalescing, async generators) to ES2017 — wasted output bytes. Browser targets also support ES2020+ (Chrome 80+, all evergreen browsers).
+- **Free Fix**: Bump to `"target": "ES2022"` (or `"ES2021"`). Swc already transpiles down for older browsers via browserslist.
+- **Estimated Impact**: Marginally smaller server bundle (~2-5KB) + slightly faster SWC compile. Low impact.
+- **Effort**: S
+
+=== D. Caddyfile (gateway) ===
+
+### Finding INFRA-09: No `encode` directive — no zstd/gzip compression at gateway
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/Caddyfile (entire file, 37 lines — no `encode` directive)
+- **Issue**: Caddy v2 does NOT enable compression by default — must be explicitly added. The Caddyfile has no `encode` directive, so all responses pass through uncompressed at the gateway layer. Next.js has `compress: true` (next.config.ts:11) which provides gzip in production (`next start`), but: (a) dev mode does NOT compress, (b) `next start` does not produce zstd or brotli — only gzip. zstd typically beats gzip by 10-20% on text assets.
+- **Free Fix**: Add at the top of the `:81` block:
+  ```
+  encode zstd gzip
+  ```
+  (Caddy auto-detects Accept-Encoding and picks the best codec. Both are free, built-in.)
+- **Estimated Impact**: Reduces bandwidth on JS/CSS/JSON by 70-85% (zstd) vs 60-80% (gzip alone). Especially helps on slow mobile connections. ~50-100KB saved per page load for non-cached chunks.
+- **Effort**: S
+
+### Finding INFRA-10: No static asset caching headers + no `file_server` bypass
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/Caddyfile:23-36 (single `handle` block proxies ALL requests to Next.js)
+- **Issue**: Every request — including immutable hashed assets like `/_next/static/chunks/[hash].js` — is reverse-proxied to Next.js on :3000. Next.js must do the work of serving static files (CPU + memory) when Caddy could serve them directly from disk. No `Cache-Control` headers added at gateway either.
+- **Free Fix**: Add static-file bypass BEFORE the reverse_proxy block:
+  ```
+  @static {
+    path /_next/static/* /favicon.ico /robots.txt /logo.svg
+  }
+  handle @static {
+    root * /home/z/my-project
+    file_server
+    header Cache-Control "public, max-age=31536000, immutable"
+  }
+  handle {
+    reverse_proxy localhost:3000 { ... }
+  }
+  ```
+  (Adjust `root` to the actual project path on the deploy host.)
+- **Estimated Impact**: Reduces Next.js request load by ~60-80% for returning visitors (most requests are for static assets). Lower CPU/RAM on the app process. Faster TTFB for static content (Caddy serves from disk vs Next.js reading from disk + adding headers).
+- **Effort**: M
+
+### Finding INFRA-11: HTTP/3 not advertised (no `alt-svc` header)
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/Caddyfile:1 (`:81` — HTTP only, no HTTPS listener)
+- **Issue**: The Caddyfile listens on `:81` (HTTP). HTTP/3 requires HTTPS (QUIC over UDP). Even if HTTPS were configured, Caddy v2.6+ enables HTTP/3 by default but the client only discovers it via an `alt-svc: h3=":443"` response header. Currently no HTTPS listener → no HTTP/3.
+- **Free Fix**: If the sandbox can be exposed over HTTPS (e.g., via Cloudflare free tier in front of Caddy), add TLS automation. Otherwise, leave as-is — HTTP/2 (enabled by default in Caddy for HTTPS) is sufficient. Out of scope for sandbox-only deployment.
+- **Estimated Impact**: Low — most clients on local network use HTTP/1.1 anyway.
+- **Effort**: L (requires infra change beyond code)
+
+=== E. Dependency Analysis ===
+
+### Finding INFRA-12: `exceljs` (23MB) statically imported in excel.ts
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/src/lib/excel.ts:5 (`import ExcelJS from 'exceljs';`)
+- **Issue**: `exceljs` is 23MB on disk (one of the heaviest deps). It's imported at the top of `src/lib/excel.ts`, which is imported by `/api/ingest-upload`, `/api/ingest`, `/api/import-drive`, `scripts/convert-excel-to-csv.ts`. Every cold start of any ingest route bundles exceljs into the server module. Excel parsing is rare (only on file upload), not on every request.
+- **Free Fix**: Convert to dynamic import:
+  ```ts
+  // Before:
+  // import ExcelJS from 'exceljs';
+  
+  // After — load lazily inside the function that uses it:
+  async function parseWorkbook(filePath: string) {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(filePath);
+    return wb;
+  }
+  ```
+- **Estimated Impact**: Reduces server bundle cold-start by ~2-5MB (exceljs + transitive `jszip`, `archiver`, etc.). Faster cold start on Vercel/serverless. In long-running `next start`, lower memory footprint.
+- **Effort**: S
+
+### Finding INFRA-13: `docx` (7.3MB) statically imported in export-report route
+- **Severity**: P2
+- **File(s)**: /home/z/my-project/src/app/api/export-report/route.ts:21 (`} from 'docx';`)
+- **Issue**: `docx` package (7.3MB) is imported at module top level. The export-report route is rarely hit (only on user clicking "Export to Word"). Bundling docx into the route's module means every cold start of the route loads docx — wasted memory on every other request.
+- **Free Fix**: Convert to dynamic import inside the GET handler:
+  ```ts
+  // Before:
+  // import { Document, Packer, ... } from 'docx';
+  
+  // After:
+  const docx = await import('docx');
+  const { Document, Packer, Paragraph, ... } = docx;
+  ```
+- **Estimated Impact**: Saves ~5-7MB from export route's module graph. Lower cold-start memory. Other routes unaffected.
+- **Effort**: S
+
+### Finding INFRA-14: 12 unused shadcn/ui components + their @radix-ui/* deps
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/src/components/ui/{accordion,aspect-ratio,context-menu,menubar,navigation-menu,toggle-group,hover-card,radio-group,dropdown-menu,avatar,carousel,collapsible}.tsx
+- **Issue**: Verified via `rg -l "@/components/ui/<name>"` — these 12 components have ZERO imports outside their own file. Each ships a `@radix-ui/react-*` dependency (avg 30-50KB unpacked). They were scaffolded by `shadcn/ui init` but never used in the dashboard UI. Even with tree-shaking, dead code in `ui/` may still be analyzed by the bundler, slowing builds. `dropdown-menu` finding is suspicious — usually used for menu buttons — verify by visual check before removing.
+- **Free Fix**: Either delete the 12 unused `.tsx` files (and run `npm uninstall @radix-ui/react-{accordion,aspect-ratio,context-menu,menubar,navigation-menu,toggle-group,hover-card,radio-group,dropdown-menu,avatar,carousel,collapsible}`), OR keep them but add `optimizePackageImports` for `@radix-ui/react-*` (see INFRA-01). At minimum, run `npx depcheck` (free) to confirm.
+- **Estimated Impact**: ~150-300KB removed from node_modules. Marginal bundle savings (tree-shaking likely already excludes them) but faster install + smaller docker image.
+- **Effort**: M (need careful verification that none are imported indirectly)
+
+### Finding INFRA-15: `react-day-picker` (4.8MB) only used by unused `calendar.tsx`
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/src/components/ui/calendar.tsx (the only file importing `react-day-picker`)
+- **Issue**: `calendar.tsx` itself has 0 imports from elsewhere in src/ (verified). So `react-day-picker` (4.8MB) is dead weight in node_modules. The dashboard doesn't have any date-picker UI — period selection uses dropdowns instead.
+- **Free Fix**: `npm uninstall react-day-picker` and delete `src/components/ui/calendar.tsx`. Verify with `rg "Calendar|react-day-picker" src/` first.
+- **Estimated Impact**: 4.8MB removed from node_modules install. Faster `bun install` + smaller deploy image.
+- **Effort**: S
+
+=== F. Runtime Environment ===
+
+### Finding INFRA-16: `.env` has SQLite DATABASE_URL but code requires PostgreSQL — dev server broken
+- **Severity**: P1 (immediate blocker, sandbox-only)
+- **File(s)**: /home/z/my-project/.env (50 bytes: `DATABASE_URL=file:/home/z/my-project/db/custom.db`)
+- **Issue**: The `.env` file contains `DATABASE_URL=file:/home/z/my-project/db/custom.db` (SQLite path), but `src/lib/db.ts:26` only accepts URLs starting with `postgresql://` or `postgres://`. The dev.log confirms every API request fails: `ERROR: DATABASE_URL must start with postgresql:// or postgres://` → `GET /api/analysis 500`. The dev server starts (Next.js compiles fine) but every DB-backed route returns 500. README.md:34 also has stale "SQLite via Prisma ORM" mention (should be PostgreSQL/Supabase).
+- **Free Fix**: Update `.env` with a real Supabase connection string:
+  ```
+  DATABASE_URL=postgresql://postgres.xxxx:password@aws-0-region.pooler.supabase.com:5432/postgres
+  ```
+  And fix README.md:34 from "SQLite via Prisma ORM" → "PostgreSQL (Supabase) via Prisma ORM".
+- **Estimated Impact**: Restores all API functionality. Currently the dashboard is non-functional — every page that calls /api/analysis or /api/status shows error state. This is the single highest-impact fix.
+- **Effort**: S (config change, not code)
+
+### Finding INFRA-17: `NODE_OPTIONS=--max-old-space-size=3072` on 4GB box is risky
+- **Severity**: P3
+- **File(s)**: Environment variable (not in code — set by sandbox runner)
+- **Issue**: Box has 3.9Gi total RAM (verified `free -h`). Setting Node heap to 3072MB leaves only ~900MB for: OS page cache, Caddy (~47MB RSS observed), file system buffers, any background processes. With 2 CPUs and Turbopack dev compilation, memory pressure can trigger swap (currently 0B swap configured — verified `Swap: 0B 0B 0B`). The default Node heap on this box is 2213MB (verified via `node -e 'require("v8").getHeapStatistics()'`).
+- **Free Fix**: Lower to `--max-old-space-size=2048` (still 2x default). The 3GB setting was likely chosen during analysis-engine compile crunch — once that's done, 2GB is plenty for steady-state dev. OR: keep 3GB but only enable during `next build` (production build), not steady `next dev`. Document the rationale in package.json comment.
+- **Estimated Impact**: Lower OOM risk. Frees ~1GB for OS file cache (faster .next/dev reads). Caddy stays responsive under load.
+- **Effort**: S
+
+### Finding INFRA-18: dev script uses `tee dev.log` — buffered stdout
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/package.json:6 (`"dev": "next dev -p 3000 2>&1 | tee dev.log"`)
+- **Issue**: The `2>&1 | tee dev.log` pipe introduces buffering between Next.js stdout and the terminal/logfile. With TTY + pipe, Node may switch to block buffering (4KB chunks) instead of line buffering — log lines appear delayed. Also, `tee` adds a process hop. Not a perf issue per se, but observability latency.
+- **Free Fix**: Either (a) drop the tee — Next writes directly to stdout, capture via `next dev -p 3000 > dev.log 2>&1` if a logfile is needed; or (b) keep tee but add `stdbuf -oL -eL` prefix for line buffering:
+  ```json
+  "dev": "stdbuf -oL -eL next dev -p 3000 2>&1 | tee dev.log"
+  ```
+- **Estimated Impact**: Marginal — faster log visibility during debugging. Not a runtime perf gain.
+- **Effort**: S
+
+=== G. Free CDN / Edge Caching ===
+
+### Finding INFRA-19: No `Cache-Control: s-maxage` on /api/status GET response
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/src/app/api/status/route.ts (no `Cache-Control` header in NextResponse)
+- **Issue**: /api/status returns dropdown options (months, weeks, outlets, areas, pics) — changes only on data ingest. Already cached server-side via `statusCache` (5 min TTL in src/lib/cache.ts). But no HTTP-level `Cache-Control: s-maxage=300, stale-while-revalidate=600` header — every browser request still hits the server (even if server returns from LRU cache, that's still a hop). Could be cached at CDN/edge for free.
+- **Free Fix**: Add header to successful response:
+  ```ts
+  const res = NextResponse.json({ success: true, ...payload });
+  res.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+  return res;
+  ```
+- **Estimated Impact**: If deployed behind any CDN (Cloudflare free tier, Vercel edge), eliminates 100% of repeat /api/status hits to origin for 5 min. Saves ~50-100ms per page load.
+- **Effort**: S
+
+### Finding INFRA-20: No `stale-while-revalidate` on /api/analysis
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/src/app/api/analysis/route.ts (no Cache-Control)
+- **Issue**: /api/analysis is the heaviest route (20+ parallel SQL queries, ~2-5s response). Data only changes on ingest (manual). Currently every dashboard navigation re-fetches fresh. Could use `stale-while-revalidate=30` to serve stale while refetching in background — instant UI for cached period.
+- **Free Fix**: Add to successful response:
+  ```ts
+  res.headers.set('Cache-Control', 'private, max-age=0, stale-while-revalidate=30');
+  ```
+  (Use `private` since the response depends on user filters in query string — but the query string itself is part of the cache key, so each filter combo is cached separately.)
+- **Estimated Impact**: Eliminates 2-5s wait on repeat navigation to the same period/filter combo for 30s. Major UX improvement for analysts clicking around the dashboard.
+- **Effort**: S
+
+=== H. Free Monitoring & Observability ===
+
+### Finding INFRA-21: No Web Vitals / APM tracking
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/src/app/layout.tsx (no analytics import); /home/z/my-project/package.json (no `@vercel/analytics` dep)
+- **Issue**: No client-side Web Vitals collection (LCP, FID/INP, CLS, TTFB). No way to know if real users experience slow loads. No server-side APM either.
+- **Free Fix**: Install free `@vercel/analytics` (works on non-Vercel deploys too — sends to Vercel's free analytics endpoint, or self-hosted alternative):
+  ```bash
+  npm install @vercel/analytics
+  ```
+  Then add to layout.tsx:
+  ```tsx
+  import { Analytics } from '@vercel/analytics/react';
+  // ... at end of <body>:
+  <Analytics />
+  ```
+  Alternative fully-free OSS option: `web-vitals` npm package (Google) + send to own /api/vitals endpoint.
+- **Estimated Impact**: Visibility into real-user perf. Currently blind to LCP/INP regressions. Free.
+- **Effort**: S
+
+### Finding INFRA-22: Custom logger uses `console.*` — `pino` is 10x faster
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/src/lib/logger.ts:67-87 (uses `console.debug/log/warn/error`)
+- **Issue**: The custom structured logger is fine for low volume, but `console.log` is synchronous and blocks the event loop on large output. `pino` (free, OSS, MIT) is ~10x faster — uses async writes + binary-encoded log lines. Matters for high-volume log paths (e.g., audit logs, query traces).
+- **Free Fix**: Optional — only swap if log volume becomes a bottleneck:
+  ```bash
+  npm install pino
+  ```
+  Replace `console.log(format(entry))` with `pino.info(entry)`. Keep the same `logger.info()` interface for callers.
+- **Estimated Impact**: Saves ~1-5ms per log line under load. Low priority — current logger is fine for current traffic.
+- **Effort**: M
+
+=== I. Mini-Services Architecture ===
+
+### Finding INFRA-23: `mini-services/` folder empty + Caddyfile has dead route to port 3003
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/mini-services/.gitkeep (only file); /home/z/my-project/Caddyfile:9-21 (XTransformPort handler); /home/z/my-project/examples/websocket/server.ts (example only, not running)
+- **Issue**: The `mini-services/` folder is empty (just .gitkeep). The Caddyfile has a `@transform_port_query` handler that forwards `?XTransformPort=3003` to `localhost:3003` — but nothing listens on :3003. The example websocket server in `examples/websocket/server.ts` is not configured to auto-start. This is dead config + dead code path that runs on every request (matcher check).
+- **Free Fix**: Either (a) remove the `@transform_port_query` block from Caddyfile until a real mini-service exists; or (b) document in Caddyfile that the block is reserved for future use. Either way, no perf impact (matcher is fast).
+- **Estimated Impact**: Negligible — Caddy matchers are O(1). Cleanup for clarity only.
+- **Effort**: S
+
+=== J. Prisma ===
+
+### Finding INFRA-24: `@prisma/client` is 112MB in node_modules — verify `binaryTargets` is minimal
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/prisma/schema.prisma:6-8 (`generator client { provider = "prisma-client-js" }` — no `binaryTargets` specified); /home/z/my-project/node_modules/@prisma (112MB)
+- **Issue**: Without explicit `binaryTargets`, Prisma downloads query-engine binaries for the host platform. In Docker/CI multi-arch builds, this can balloon. The 112MB is normal for a single-target install but could be reduced.
+- **Free Fix**: Add explicit `binaryTargets` to schema.prisma:
+  ```prisma
+  generator client {
+    provider        = "prisma-client-js"
+    binaryTargets   = ["native"]  // or ["linux-musl-openssl-3.0.x"] for Alpine
+  }
+  ```
+  Consider migrating to `prisma-client` (the new Rust-based generator, free, OSS) which is smaller + faster — but that's a bigger change.
+- **Estimated Impact**: Marginal — keeps install lean. Mostly relevant for Docker image size.
+- **Effort**: S
+
+=== K. Free Tooling Recommendations (not yet installed) ===
+
+### Finding INFRA-25: No `@next/bundle-analyzer` installed
+- **Severity**: P3
+- **File(s)**: /home/z/my-project/package.json (no `@next/bundle-analyzer` in devDeps)
+- **Issue**: No way to visualize what's in the production bundle. Can't tell if INFRA-12 (exceljs) or INFRA-13 (docx) actually end up in server bundle without running the analyzer. Bundle size is currently a black box.
+- **Free Fix**: Install + add script:
+  ```bash
+  npm install -D @next/bundle-analyzer
+  ```
+  Add `next.config.ts` wrapper:
+  ```ts
+  import bundleAnalyzer from '@next/bundle-analyzer';
+  const withBundleAnalyzer = bundleAnalyzer({ enabled: process.env.ANALYZE === 'true' });
+  export default withBundleAnalyzer(nextConfig);
+  ```
+  Add to package.json scripts:
+  ```json
+  "analyze": "ANALYZE=true next build"
+  ```
+- **Estimated Impact**: Visibility — runs `next build` + opens treemap of bundle. Free. Required to validate INFRA-12/13/14/15 savings.
+- **Effort**: S
+
+### Finding INFRA-26: No `depcheck` / `npm-check-updates` in dev workflow
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/package.json (no depcheck script)
+- **Issue**: No automated check for unused dependencies. INFRA-14/15 (12 unused shadcn components + react-day-picker) were found manually — `depcheck` would automate this. No `npm-check-updates` to flag outdated deps (Next 16.1.3 is current but recharts 2.15.4 has 3.x available).
+- **Free Fix**:
+  ```bash
+  npx depcheck                # one-off, no install
+  npm install -g npm-check-updates  # or npx ncu
+  ```
+  Add `"audit:deps": "depcheck"` and `"check-updates": "ncu"` scripts.
+- **Estimated Impact**: Catches unused deps early. Free.
+- **Effort**: S
+
+=== L. Documentation Drift ===
+
+### Finding INFRA-27: README.md says "SQLite" but code requires PostgreSQL
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/README.md:34 (`| Database | SQLite via Prisma ORM |`)
+- **Issue**: Tech-stack table in README still says "SQLite via Prisma ORM", but `prisma/schema.prisma:11` locks `provider = "postgresql"`, and `src/lib/db.ts:26` rejects non-postgres URLs. This is doc drift from the migration to Supabase.
+- **Free Fix**: Update README.md:34 to `| Database | PostgreSQL (Supabase) via Prisma ORM |`.
+- **Estimated Impact**: Reduces onboarding confusion. Free.
+- **Effort**: S
+
+### Finding INFRA-28: `vercel.json` references nonexistent `/api/outlet-focus` route
+- **Severity**: P4
+- **File(s)**: /home/z/my-project/vercel.json:11-13 (`"src/app/api/outlet-focus": { "maxDuration": 60 }`)
+- **Issue**: `vercel.json` declares a `maxDuration` override for `/api/outlet-focus`, but no such route exists in `src/app/api/`. Verified by `ls src/app/api/` — there's no `outlet-focus/` directory. Either the route was removed without cleaning vercel.json, or it was never created. Dead config — Vercel silently ignores it.
+- **Free Fix**: Remove the `outlet-focus` entry from vercel.json.
+- **Estimated Impact**: Cleanup only. No runtime impact.
+- **Effort**: S
+
+───────────────────────────────────────────────────────────────
+TOP 5 QUICK WINS (highest impact × lowest effort, ALL FREE)
+───────────────────────────────────────────────────────────────
+
+1. **INFRA-16 (P1, S)** — Fix `.env` DATABASE_URL (SQLite → PostgreSQL).
+   Currently the dev server returns 500 on every API call. This
+   unblocks the entire dashboard. 1-line config change. Also
+   update README.md:34 (INFRA-27) for doc consistency.
+
+2. **INFRA-06 (P2, S)** — Add `--turbo` flag to `build` script.
+   `next build --turbo` cuts production build time by 40-70%
+   (Turbopack is stable in Next 16). Free, 1-character change.
+
+3. **INFRA-01 (P2, S)** — Add `experimental.optimizePackageImports`
+   for `recharts`, `lucide-react`, `date-fns`, `react-day-picker`.
+   Saves ~120-200KB from initial bundle. 5-line addition to
+   next.config.ts.
+
+4. **INFRA-04 + INFRA-10 (P2, S/M)** — Add `Cache-Control: immutable`
+   for `/_next/static/*` in BOTH next.config.ts `headers()` AND
+   Caddyfile (with `file_server` bypass). Cuts Next.js request
+   load by 60-80% for returning visitors. Free.
+
+5. **INFRA-12 + INFRA-13 (P2, S each)** — Convert `exceljs` (23MB)
+   and `docx` (7.3MB) imports to dynamic `await import()`. Saves
+   ~5-10MB from server module graph, faster cold starts on
+   serverless. Pure code refactor, no deps change.
+
+Bonus quick wins (also free, S effort):
+- INFRA-09: Add `encode zstd gzip` to Caddyfile (gateway compression)
+- INFRA-03: Add `compiler.removeConsole` to next.config.ts
+- INFRA-05: Add `httpAgentOptions: { keepAlive: true }` to next.config.ts
+- INFRA-19: Add `Cache-Control: s-maxage=300` on /api/status GET
+- INFRA-25: Install `@next/bundle-analyzer` for ongoing visibility
+
+───────────────────────────────────────────────────────────────
+STAGE SUMMARY
+───────────────────────────────────────────────────────────────
+- Total findings: 28 (grouped into 12 categories A-L)
+- By severity:
+  · P1: 1  (INFRA-16 — broken DATABASE_URL)
+  · P2: 8  (INFRA-01, 04, 06, 09, 10, 12, 13, plus combined 04+10 in top 5)
+  · P3: 10 (INFRA-02, 03, 05, 07, 14, 15, 17, 19, 20, 21, 25)
+  · P4: 8  (INFRA-08, 11, 18, 22, 23, 24, 26, 27, 28)
+  (Total = 27 unique; INFRA-04+10 combined in Top 5 but counted separately)
+- All recommendations use ONLY free OSS tools or free service tiers:
+  · No paid services recommended
+  · No Vercel Pro / Cloudflare Pro / Sentry paid
+  · `@next/bundle-analyzer`, `depcheck`, `npm-check-updates`,
+    `pino`, `@vercel/analytics` (free tier) — all free
+- Estimated total impact if all P1+P2 applied:
+  · Dev server functional again (P1)
+  · 40-70% faster production builds (Turbopack)
+  · ~150-300KB smaller initial JS bundle
+  · ~5-10MB smaller server module graph (dynamic imports)
+  · 60-80% fewer requests hitting Next.js for static assets
+  · 10-20% smaller transfers via zstd compression at gateway
+
+No code changes made — analysis only per task instructions.
