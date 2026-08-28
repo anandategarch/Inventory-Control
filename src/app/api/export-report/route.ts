@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  HeadingLevel, AlignmentType, WidthType,
+  HeadingLevel, AlignmentType, WidthType, BorderStyle, ShadingType,
 } from 'docx';
 import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
@@ -45,6 +45,7 @@ import { resolveComparePeriod } from '@/lib/period-resolver';
 import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
+import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -53,9 +54,12 @@ export const maxDuration = 60;
 //  Helpers (same as analysis route)
 // ============================================================
 function buildExecSummaryFromSql(
-  curr: any, prev: any | null,
-  monthLabel: string, weekLabel: string, prevWeekLabel: string | null,
-): ExecutiveSummary {
+  curr: ExecSummaryRow | null,
+  prev: ExecSummaryRow | null,
+  monthLabel: string,
+  weekLabel: string,
+  prevWeekLabel: string | null,
+): ExecutiveSummary & { _prevMetrics: PrevMetrics | null } {
   const c = curr ?? { sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0, qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0, residualLossQty: 0, residualLossNominal: 0, qtyDeviasiLoss: 0 };
   const salesPrev = prev?.sales ?? null;
   return {
@@ -85,8 +89,25 @@ function buildExecSummaryFromSql(
       residualLossQty: prev.residualLossQty ?? null,
       residualLossPct: prev.qtyDeviasiLoss > 0 ? (prev.residualLossQty ?? 0) / prev.qtyDeviasiLoss : null,
     } : null,
-  } as ExecutiveSummary & { _prevMetrics: Record<string, unknown> | null };
+  };
 }
+
+/**
+ * Shape of the 6 prev-period metrics attached to ExecutiveSummary for the
+ * Word export's growth column (FIX: was `as any` cast at every access site).
+ */
+interface PrevMetrics {
+  totalLoss: number | null;
+  totalSurplus: number | null;
+  lossToSales: number | null;
+  surplusToSales: number | null;
+  deviationToBom: number | null;
+  residualLossQty: number | null;
+  residualLossPct: number | null;
+}
+
+/** Executive summary shape used by the export route (extends base type with _prevMetrics). */
+type ExecSummaryWithPrev = ExecutiveSummary & { _prevMetrics: PrevMetrics | null };
 
 // ============================================================
 //  Formatting helpers
@@ -133,7 +154,7 @@ function heading(text: string): Paragraph {
     text: safeText,
     heading: HeadingLevel.HEADING_1,
     spacing: { before: 280, after: 120 },
-    border: { bottom: { style: 'single' as any, size: 12, color: COLOR.PRIMARY, space: 4 } },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: COLOR.PRIMARY, space: 4 } },
   });
 }
 
@@ -146,7 +167,7 @@ function divider(): Paragraph {
   return new Paragraph({
     children: [new TextRun({ text: '', size: 8 })],
     spacing: { before: 80, after: 80 },
-    border: { bottom: { style: 'single' as any, size: 6, color: COLOR.BORDER, space: 1 } },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: COLOR.BORDER, space: 1 } },
   });
 }
 
@@ -174,9 +195,9 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
   // Zebra row: light blue bg
   // Normal: white bg
   const shadingFill = isHeader
-    ? { fill: COLOR.PRIMARY, type: 'clear' as any, color: 'auto' }
+    ? { fill: COLOR.PRIMARY, type: ShadingType.CLEAR, color: 'auto' }
     : isZebra
-      ? { fill: COLOR.PRIMARY_LIGHT, type: 'clear' as any, color: 'auto' }
+      ? { fill: COLOR.PRIMARY_LIGHT, type: ShadingType.CLEAR, color: 'auto' }
       : undefined;
 
   const textColor = isHeader
@@ -198,10 +219,10 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
     margins: { top: 60, bottom: 60, left: 100, right: 100 },
     shading: shadingFill,
     borders: {
-      top: { style: 'single' as any, size: 4, color: COLOR.BORDER },
-      bottom: { style: 'single' as any, size: 4, color: COLOR.BORDER },
-      left: { style: 'single' as any, size: 4, color: COLOR.BORDER },
-      right: { style: 'single' as any, size: 4, color: COLOR.BORDER },
+      top: { style: BorderStyle.SINGLE, size: 4, color: COLOR.BORDER },
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: COLOR.BORDER },
+      left: { style: BorderStyle.SINGLE, size: 4, color: COLOR.BORDER },
+      right: { style: BorderStyle.SINGLE, size: 4, color: COLOR.BORDER },
     },
   });
 }
@@ -463,7 +484,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Build prev + historical lookup maps keyed by "itemName|outletCode"
-    const prevCatMap = (rows: any[], qtyKey: string, nomKey: string) => {
+    const prevCatMap = (rows: Array<{ itemName: string; outletCode: string; qty: number; nominal: number }>, _qtyKey: string, _nomKey: string) => {
       const m = new Map<string, { qty: number; nominal: number }>();
       for (const r of rows) m.set(`${r.itemName}|${r.outletCode}`, { qty: r.qty, nominal: r.nominal });
       return m;
@@ -585,7 +606,7 @@ export async function GET(req: NextRequest) {
     // ============================================================
     //  Build Word document
     // ============================================================
-    const children: any[] = [];
+    const children: Array<Paragraph | Table> = [];
 
     // Build dynamic period labels for column headers (replace static Current/Prev/Hist)
     // Current period: e.g., "WEEK 4 MEI 2026"
@@ -613,7 +634,7 @@ export async function GET(req: NextRequest) {
       new Paragraph({
         children: [new TextRun({ text: 'LAPORAN ANALISIS DEVIASI PEMAKAIAN BAHAN', bold: true, size: 22, color: COLOR.MUTED })],
         alignment: AlignmentType.CENTER, spacing: { after: 200 },
-        border: { bottom: { style: 'single' as any, size: 18, color: COLOR.PRIMARY, space: 6 } },
+        border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: COLOR.PRIMARY, space: 6 } },
       }),
       new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, bold: true, size: 26, color: COLOR.BODY_TEXT })], alignment: AlignmentType.CENTER, spacing: { before: 200, after: 80 } }),
       new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Resto: ${outletCode}` : 'Network (Semua Resto)'}  |  ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 20, color: COLOR.MUTED })], alignment: AlignmentType.CENTER, spacing: { after: 60 } }),
@@ -635,12 +656,12 @@ export async function GET(req: NextRequest) {
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
       // FIX: 6 metrics now show prev value + growth (previously '—')
-      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), (s as any)._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, (s as any)._prevMetrics.deviationToBom), true) : '—', (s as any)._prevMetrics?.deviationToBom != null ? fmtPct((s as any)._prevMetrics.deviationToBom, false) : '—'],
-      ['Loss To Sales', fmtPct(s.lossToSales, false), (s as any)._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, (s as any)._prevMetrics.lossToSales), true) : '—', (s as any)._prevMetrics?.lossToSales != null ? fmtPct((s as any)._prevMetrics.lossToSales, false) : '—'],
-      ['Total LOSS', fmtIDR(s.totalLoss), (s as any)._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, (s as any)._prevMetrics.totalLoss), true) : '—', (s as any)._prevMetrics?.totalLoss != null ? fmtIDR((s as any)._prevMetrics.totalLoss) : '—'],
-      ['Total SURPLUS', fmtIDR(s.totalSurplus), (s as any)._prevMetrics?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, (s as any)._prevMetrics.totalSurplus), true) : '—', (s as any)._prevMetrics?.totalSurplus != null ? fmtIDR((s as any)._prevMetrics.totalSurplus) : '—'],
-      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), (s as any)._prevMetrics?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, (s as any)._prevMetrics.residualLossQty), true) : '—', (s as any)._prevMetrics?.residualLossQty != null ? fmtNum((s as any)._prevMetrics.residualLossQty) : '—'],
-      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), (s as any)._prevMetrics?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, (s as any)._prevMetrics.residualLossPct), true) : '—', (s as any)._prevMetrics?.residualLossPct != null ? fmtPct((s as any)._prevMetrics.residualLossPct, false) : '—'],
+      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), s._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, s._prevMetrics.deviationToBom), true) : '—', s._prevMetrics?.deviationToBom != null ? fmtPct(s._prevMetrics.deviationToBom, false) : '—'],
+      ['Loss To Sales', fmtPct(s.lossToSales, false), s._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, s._prevMetrics.lossToSales), true) : '—', s._prevMetrics?.lossToSales != null ? fmtPct(s._prevMetrics.lossToSales, false) : '—'],
+      ['Total LOSS', fmtIDR(s.totalLoss), s._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, s._prevMetrics.totalLoss), true) : '—', s._prevMetrics?.totalLoss != null ? fmtIDR(s._prevMetrics.totalLoss) : '—'],
+      ['Total SURPLUS', fmtIDR(s.totalSurplus), s._prevMetrics?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, s._prevMetrics.totalSurplus), true) : '—', s._prevMetrics?.totalSurplus != null ? fmtIDR(s._prevMetrics.totalSurplus) : '—'],
+      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), s._prevMetrics?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, s._prevMetrics.residualLossQty), true) : '—', s._prevMetrics?.residualLossQty != null ? fmtNum(s._prevMetrics.residualLossQty) : '—'],
+      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), s._prevMetrics?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, s._prevMetrics.residualLossPct), true) : '—', s._prevMetrics?.residualLossPct != null ? fmtPct(s._prevMetrics.residualLossPct, false) : '—'],
     ]));
 
     }
@@ -662,14 +683,14 @@ export async function GET(req: NextRequest) {
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
+      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
-      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
-      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
-      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
-      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], map: (it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
+      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
+      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
+      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
+      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
     ];
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
@@ -700,7 +721,7 @@ export async function GET(req: NextRequest) {
       children.push(heading('7. PERBANDINGAN ANTAR AREA'));
     children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
       children.push(makeTable(['Area', 'Resto', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
-        data.areaAnalysis.map((a: any) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
+        data.areaAnalysis.map((a) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
       children.push(divider());
     }
 
@@ -714,12 +735,12 @@ export async function GET(req: NextRequest) {
         children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
         // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
         // Use dynamic period labels (currLabel / prevLabel) instead of Current/Previous
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
         children.push(paragraph(''));
       }
       if ((va.topImproved || []).length > 0) {
         children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it: any) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       }
       children.push(divider());
     }
@@ -736,7 +757,7 @@ export async function GET(req: NextRequest) {
         'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',
         'AVG Deviasi By BOM', 'Nominal Deviasi'
       ],
-        dr.map((it: any) => [
+        dr.map((it) => [
           it.itemName,
           String(it.rankNominal),
           String(it.rankBom),
@@ -760,7 +781,7 @@ export async function GET(req: NextRequest) {
       children.push(heading('14. TREND ANTAR PERIODE'));
     children.push(paragraph('Perbandingan periode yang sama di bulan-bulan sebelumnya.'));
       children.push(makeTable(['Period', 'Penjualan', 'Nominal Deviasi', '% Deviasi To BOM'],
-        data.trend.map((t: any) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
+        data.trend.map((t) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
       children.push(divider());
     }
 
@@ -772,12 +793,12 @@ export async function GET(req: NextRequest) {
 
     // 19. Historical Anomaly Analysis — items with z-score > threshold (already computed: historicalAnalysis)
     if (hasSection('historical')) {
-      const ha = (data as any).historicalAnalysis || data.growthComparison?.historicalAnalysis;
+      const ha = data.growthComparison?.historicalAnalysis;
       if (ha && ha.criticalItems && ha.criticalItems.length > 0) {
         children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
         children.push(paragraph('Item yang deviation-nya abnormal dibanding perilaku historical (z-score > 1.0). Z-score > 2.0 = sangat abnormal. Historical Avg = rata-rata Dev/BOM periode sama di bulan-bulan sebelumnya.'));
         children.push(makeTable(['#', 'Item', 'Resto', 'Area', 'Current Dev/BOM', 'Historical Avg', 'Z-Score', 'Abs Nominal Deviasi'],
-          ha.criticalItems.slice(0, 15).map((it: any, i: number) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtPct(it.currentDevBom, false), fmtPct(it.historicalAvg, false), it.zScore != null ? it.zScore.toFixed(2) : '—', fmtIDR(it.absNominal)])));
+          ha.criticalItems.slice(0, 15).map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtPct(it.currentDevBom, false), fmtPct(it.historicalAvg, false), it.zScore != null ? it.zScore.toFixed(2) : '—', fmtIDR(it.absNominal)])));
         children.push(divider());
       } else {
         children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
@@ -792,16 +813,29 @@ export async function GET(req: NextRequest) {
 
     // 2. Resto Prioritas Analisa — outlet health ranking by priority score
     if (hasSection('restoPriority')) {
-      const hr = outletHealthRanking || [];
+      // PRE-EXISTING LATENT BUG: queryOutletHealthRanking returns OutletHealthRow
+      // which has raw SQL fields (outletCode, area, absNominal, etc.) but does NOT
+      // compute healthScore / abnormal / warning / normal / devBom. Those columns
+      // were previously rendered as `undefined`/`String(undefined)`/`—` at runtime
+      // because `(it: any)` hid the missing fields. We preserve that exact runtime
+      // behavior by widening the row type with optional phantom fields (better fix:
+      // wire up the post-processing — out of scope for this type-safety pass).
+      const hr: Array<typeof outletHealthRanking[number] & {
+        healthScore?: number;
+        abnormal?: number;
+        warning?: number;
+        normal?: number;
+        devBom?: number | null;
+      }> = outletHealthRanking || [];
       if (hr.length > 0) {
         children.push(heading('2. RESTO PRIORITAS ANALISA'));
         children.push(paragraph('Top resto by priority score. Score = weighted combination of Dev/BOM, Residual, Loss/Sales, Abnormal rate. Level: TINGGI (≥55), SEDANG (≥30), RENDAH (<30).'));
         children.push(makeTable(['#', 'Outlet', 'Area', 'Level', 'Health Score', 'Abnormal', 'Warning', 'Normal', 'Abs Nominal', 'Dev/BOM'],
-          hr.slice(0, 15).map((it: any, i: number) => [
+          hr.slice(0, 15).map((it, i) => [
             String(i + 1),
             `${it.outletCode} · ${it.outletName}`,
             it.area,
-            it.healthScore >= 55 ? 'TINGGI' : it.healthScore >= 30 ? 'SEDANG' : 'RENDAH',
+            it.healthScore != null && it.healthScore >= 55 ? 'TINGGI' : it.healthScore != null && it.healthScore >= 30 ? 'SEDANG' : 'RENDAH',
             String(it.healthScore),
             String(it.abnormal),
             String(it.warning),
@@ -822,14 +856,14 @@ export async function GET(req: NextRequest) {
         children.push(paragraph(`Analisa "${itemName}" di ${co.length} outlet. Z-Score = (outlet Dev/BOM - peer mean) / stdDev. |Z|>2 = ABNORMAL (outlier), |Z|>1 = ELEVATED.`));
 
         // Compute z-scores
-        const validRows = co.filter((r: any) => r.devBom != null);
-        const values = validRows.map((r: any) => r.devBom);
-        const mean = values.length > 0 ? values.reduce((s: number, v: number) => s + v, 0) / values.length : 0;
-        const variance = values.length > 1 ? values.reduce((s: number, v: number) => s + (v - mean) ** 2, 0) / (values.length - 1) : 0;
+        const validRows = co.filter((r) => r.devBom != null);
+        const values = validRows.map((r) => (r.devBom as number));
+        const mean = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
+        const variance = values.length > 1 ? values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1) : 0;
         const stdDev = Math.sqrt(variance);
 
         children.push(makeTable(['#', 'Outlet', 'Area', 'Dev/BOM', 'Z-Score', 'Level', 'Nominal Deviasi', 'Direction'],
-          co.slice(0, 20).map((it: any, i: number) => {
+          co.slice(0, 20).map((it, i) => {
             const z = stdDev > 0 && it.devBom != null ? (it.devBom - mean) / stdDev : null;
             const level = z != null ? (Math.abs(z) > 2 ? 'ABNORMAL' : Math.abs(z) > 1 ? 'ELEVATED' : 'NORMAL') : '—';
             return [
@@ -852,7 +886,7 @@ export async function GET(req: NextRequest) {
     children.push(new Paragraph({
       children: [new TextRun({ text: '', size: 8 })],
       spacing: { before: 60, after: 60 },
-      border: { top: { style: 'single' as any, size: 12, color: COLOR.PRIMARY, space: 2 } },
+      border: { top: { style: BorderStyle.SINGLE, size: 12, color: COLOR.PRIMARY, space: 2 } },
     }));
     children.push(new Paragraph({ children: [new TextRun({ text: `Dibuat: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, size: 16, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER }));
 

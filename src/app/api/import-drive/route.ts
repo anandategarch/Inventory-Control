@@ -5,7 +5,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { importFromDriveUrl } from '@/lib/drive-import';
-import { processIngestion } from '@/lib/ingestion';
+import { processIngestion, type IngestResult } from '@/lib/ingestion';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { resolveManualFileName } from '@/lib/filename';
 import { validateBody, importDriveBodySchema } from '@/lib/validation';
@@ -77,10 +77,11 @@ export async function POST(req: NextRequest) {
     let importResult;
     try {
       importResult = await importFromDriveUrl(url, DATA_DIR);
-    } catch (downloadErr: any) {
+    } catch (downloadErr: unknown) {
+      const message = downloadErr instanceof Error ? downloadErr.message : String(downloadErr);
       return NextResponse.json({
         success: false,
-        error: `Gagal download dari Google Drive: ${downloadErr?.message || String(downloadErr)}`,
+        error: `Gagal download dari Google Drive: ${message}`,
       }, { status: 500 });
     }
 
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
     // If manualFileName is provided (single-file only — guarded above), pass it through
     // so processIngestion uses it instead of the basename-derived filename.
     // Also pass numberLocale so toNum() parses separators correctly.
-    const ingestResults: any[] = [];
+    const ingestResults: Array<IngestResult> = [];
     for (const file of successful) {
       const result = await processIngestion({
         filePath: file.localPath,

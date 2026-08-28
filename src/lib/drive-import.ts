@@ -233,7 +233,7 @@ export async function downloadDriveFile(
 
   // Stream the file to disk
   if (!res.body) throw new Error('No response body');
-  const stream = Readable.fromWeb(res.body as any);
+  const stream = Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream<Uint8Array>);
   const fileStream = createWriteStream(localPath);
   await pipeline(stream, fileStream);
 
@@ -292,7 +292,7 @@ export async function downloadGoogleSheetsAsCsv(
   }
 
   if (!res.body) throw new Error('No response body');
-  const stream = Readable.fromWeb(res.body as any);
+  const stream = Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream<Uint8Array>);
   const fileStream = createWriteStream(localPath);
   await pipeline(stream, fileStream);
 

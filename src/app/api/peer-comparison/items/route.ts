@@ -95,7 +95,21 @@ export async function GET(req: NextRequest) {
     // (heavy multi-CTE with CROSS JOIN over peer outlets — vulnerable to slow plans).
     // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
     // with pre-computed OutletPeriodSales table.
-    const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+    // Row shape produced by the SELECT below. SUM fields may be bigint.
+    interface PeerComparisonItemRawRow {
+      itemId: number | bigint;
+      itemName: string;
+      targetQtyDeviasi: number | bigint;
+      targetDevBom: number | bigint;
+      targetNominal: number | bigint;
+      outletCode: string;
+      outletName: string;
+      isTarget: boolean;
+      peerQtyDeviasi: number | bigint | null;
+      peerDevBom: number | bigint | null;
+      peerNominal: number | bigint | null;
+    }
+    const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerComparisonItemRawRow[]>`
       WITH sales_mode AS (
         SELECT ops."outletId", ops."salesMode" as sales
         FROM "OutletPeriodSales" ops
@@ -165,7 +179,22 @@ export async function GET(req: NextRequest) {
     `);
 
     // Group rows by itemId → { itemName, target, peers: [{outletCode, outletName, isTarget, qtyDeviasi, devBom, nominal}] }
-    const itemMap = new Map<number, any>();
+    interface PeerOutletEntry {
+      outletCode: string;
+      outletName: string;
+      isTarget: boolean;
+      qtyDeviasi: number;
+      devBom: number;
+      nominal: number;
+      missing: boolean;
+    }
+    interface GroupedItem {
+      itemId: number;
+      itemName: string;
+      target: { qtyDeviasi: number; devBom: number; nominal: number };
+      peers: PeerOutletEntry[];
+    }
+    const itemMap = new Map<number, GroupedItem>();
     for (const r of rows) {
       const itemId = Number(r.itemId);
       if (!itemMap.has(itemId)) {
@@ -181,6 +210,10 @@ export async function GET(req: NextRequest) {
         });
       }
       const item = itemMap.get(itemId);
+      // `item` is always defined here — we just set it on the first iteration
+      // for this itemId. The `if (!item) continue` is a TS-only guard against
+      // Map.get's `T | undefined` return type.
+      if (!item) continue;
       // Skip NULL rows (item not in that peer outlet's inventory)
       if (r.peerQtyDeviasi === null || r.peerNominal === null) {
         item.peers.push({
@@ -206,20 +239,20 @@ export async function GET(req: NextRequest) {
     }
 
     // Compute peer avg / peer best / gap per item (exclude target row from peer stats)
-    const items = Array.from(itemMap.values()).map((item: any) => {
-      const otherPeers = item.peers.filter((p: any) => !p.isTarget && !p.missing);
+    const items = Array.from(itemMap.values()).map((item) => {
+      const otherPeers = item.peers.filter((p) => !p.isTarget && !p.missing);
       const n = otherPeers.length;
       const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
       const peerAvg = {
-        qtyDeviasi: n > 0 ? otherPeers.reduce((s: number, p: any) => s + p.qtyDeviasi, 0) / n : 0,
-        devBom: n > 0 ? otherPeers.reduce((s: number, p: any) => s + p.devBom, 0) / n : 0,
-        nominal: n > 0 ? otherPeers.reduce((s: number, p: any) => s + p.nominal, 0) / n : 0,
+        qtyDeviasi: n > 0 ? otherPeers.reduce((s, p) => s + p.qtyDeviasi, 0) / n : 0,
+        devBom: n > 0 ? otherPeers.reduce((s, p) => s + p.devBom, 0) / n : 0,
+        nominal: n > 0 ? otherPeers.reduce((s, p) => s + p.nominal, 0) / n : 0,
       };
       // Peer best: lowest is best for these bad metrics
       const peerBest = {
-        qtyDeviasi: n > 0 ? Math.min(...otherPeers.map((p: any) => p.qtyDeviasi)) : 0,
-        devBom: n > 0 ? Math.min(...otherPeers.map((p: any) => p.devBom)) : 0,
-        nominal: n > 0 ? Math.min(...otherPeers.map((p: any) => p.nominal)) : 0,
+        qtyDeviasi: n > 0 ? Math.min(...otherPeers.map((p) => p.qtyDeviasi)) : 0,
+        devBom: n > 0 ? Math.min(...otherPeers.map((p) => p.devBom)) : 0,
+        nominal: n > 0 ? Math.min(...otherPeers.map((p) => p.nominal)) : 0,
       };
       const gap = {
         qtyDeviasi: item.target.qtyDeviasi - peerBest.qtyDeviasi,

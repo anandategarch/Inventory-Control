@@ -9,6 +9,7 @@
 //  Default limit 50, max 500. Frontend can implement "Load More" button.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { validateQuery, drilldownQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
       ? monthLabel.split(',').map((m) => m.trim()).filter(Boolean).map((m) => resolveMonthLabel(m, monthResolver) || m)
       : [];
 
-    const where: any = {};
+    const where: Prisma.InventoryRecordWhereInput = {};
     if (outletCode) where.outlet = { code: outletCode };
     // FIX H4 (AUDIT-4): itemName was case-sensitive — `itemName=bumbu pasta kuah` returned 0
     // while `BUMBU PASTA KUAH (V.20)` existed. Use mode:'insensitive' (PostgreSQL-native).

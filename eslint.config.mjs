@@ -9,10 +9,12 @@ const __dirname = dirname(__filename);
 const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
   rules: {
     // TypeScript rules
-    "@typescript-eslint/no-explicit-any": "off",
-    "@typescript-eslint/no-unused-vars": "off",
-    "@typescript-eslint/no-non-null-assertion": "off",
-    "@typescript-eslint/ban-ts-comment": "off",
+    // P2-4: Re-enabled as 'warn' (was 'off') — catches type safety issues + dead code.
+    // Transition plan: warn → error after `any` cleanup (P2-3) is complete.
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "@typescript-eslint/no-non-null-assertion": "warn",
+    "@typescript-eslint/ban-ts-comment": "warn",
     "@typescript-eslint/prefer-as-const": "off",
     "@typescript-eslint/no-unused-disable-directive": "off",
     
@@ -30,7 +32,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     
     // General JavaScript rules
     "prefer-const": "off",
-    "no-unused-vars": "off",
+    "no-unused-vars": "warn",
     "no-console": "off",
     "no-debugger": "off",
     "no-empty": "off",

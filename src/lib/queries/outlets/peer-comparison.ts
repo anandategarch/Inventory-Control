@@ -75,7 +75,32 @@ export async function queryPeerComparison(
   // the same period as the original weekFilter (cumulative-week MAX fix
   // preserved). nominalSales is outlet-level denormalized so the precomputed
   // MODE matches the inline CTE output.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+  // Row shape produced by the SELECT below. Sales/nominal/qty fields may be
+  // bigint (PostgreSQL SUM) — coerced to Number in the .map() step.
+  interface PeerComparisonRawRow {
+    outletCode: string;
+    outletName: string;
+    area: string;
+    pic: string | null;
+    sales: number | bigint;
+    nominalDeviasi: number | bigint;
+    devBom: number | bigint;
+    qtyBom: number | bigint;
+    qtyDeviasi: number | bigint;
+    qtyWaste: number | bigint;
+    qtySusut: number | bigint;
+    qtyTrial: number | bigint;
+    qtyLossSurplus: number | bigint;
+    totalLoss: number | bigint;
+    totalSurplus: number | bigint;
+    residualQty: number | bigint;
+    itemCount: number | bigint;
+    topItem: string | null;
+    topItemNominal: number | bigint;
+    direction: string;
+    isTarget: boolean;
+  }
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerComparisonRawRow[]>`
     WITH sales_mode AS (
       SELECT ops."outletId", ops."salesMode" as sales
       FROM "OutletPeriodSales" ops
@@ -179,10 +204,10 @@ export async function queryPeerComparison(
     LIMIT ${limit + 1}
   `);
 
-  const targetRow = rows.find((r: any) => r.isTarget);
+  const targetRow = rows.find((r) => r.isTarget);
   const targetSales = targetRow ? Number(targetRow.sales) : 0;
 
-  const peers: PeerComparisonRow[] = rows.map((r: any) => ({
+  const peers: PeerComparisonRow[] = rows.map((r) => ({
     outletCode: r.outletCode,
     outletName: r.outletName,
     area: r.area,
@@ -264,7 +289,20 @@ export async function queryPeerItemComparison(
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
   // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
   // with pre-computed OutletPeriodSales table.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+  // Row shape produced by the SELECT below. SUM fields may be bigint.
+  interface PeerItemRawRow {
+    itemName: string;
+    outletCode: string;
+    outletName: string;
+    qtyDeviasi: number | bigint;
+    qtyBom: number | bigint;
+    nominalDeviasi: number | bigint;
+    devBom: number | bigint;
+    direction: string;
+    isTarget: boolean;
+    itemRank: number | bigint;
+  }
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerItemRawRow[]>`
     WITH sales_mode AS (
       SELECT ops."outletId", ops."salesMode" as sales
       FROM "OutletPeriodSales" ops
@@ -328,7 +366,7 @@ export async function queryPeerItemComparison(
     ORDER BY ti.item_rank, o.code
   `);
 
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     itemName: r.itemName,
     outletCode: r.outletCode,
     outletName: r.outletName,
@@ -372,7 +410,15 @@ export async function queryPeerTrend(
   const allCodes = [outletCode, ...peerOutletCodes];
 
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+  // Row shape produced by the SELECT below.
+  interface PeerTrendRawRow {
+    weekLabel: string;
+    targetDevBom: number | bigint;
+    peerAvgDevBom: number | bigint;
+    targetNominal: number | bigint;
+    peerAvgNominal: number | bigint;
+  }
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerTrendRawRow[]>`
     WITH outlet_weekly AS (
       SELECT
         ir."weekLabel",
@@ -398,7 +444,7 @@ export async function queryPeerTrend(
     ORDER BY ow."weekLabel"
   `);
 
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     weekLabel: r.weekLabel,
     targetDevBom: Number(r.targetDevBom),
     peerAvgDevBom: Number(r.peerAvgDevBom),

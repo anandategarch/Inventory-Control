@@ -70,7 +70,7 @@ export async function queryParetoByItem(
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
-  const typed = rows.map((r: any) => ({
+  const typed = rows.map((r) => ({
     name: r.itemName,
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -103,7 +103,7 @@ export async function queryParetoByOutlet(
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
-  const typed = rows.map((r: any) => ({
+  const typed = rows.map((r) => ({
     name: r.outletName,
     code: r.outletCode,
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -137,7 +137,7 @@ export async function queryParetoByArea(
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
-  const typed = rows.map((r: any) => ({
+  const typed = rows.map((r) => ({
     name: r.area,
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -176,7 +176,7 @@ export async function queryParetoByKelompok(
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
-  const typed = rows.map((r: any) => ({
+  const typed = rows.map((r) => ({
     name: r.kelompok,
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -211,7 +211,7 @@ export async function queryParetoByPIC(
     HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ORDER BY "totalAbsNominal" DESC
   `);
-  const typed = rows.map((r: any) => ({
+  const typed = rows.map((r) => ({
     name: r.pic,
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -273,14 +273,14 @@ export async function queryParetoNestedItemOutlet(
 
   if (topItems.length === 0) return { items: [], totalAbsNominal: 0 };
 
-  const grandTotal = topItems.reduce((s, r: any) => s + Number(r.totalAbsNominal), 0);
+  const grandTotal = topItems.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
   let itemCumPct = 0;
 
   // FIX (BUG2-PARETO-2): Parallelize the per-item outlet breakdown queries.
   // Old code ran 10 sequential queries (N+1 pattern) — 3-5s latency.
   // Now runs all 10 in parallel via Promise.all — ~0.5s latency.
   // Also wrap each query in withStatementTimeout (was missing → hang risk under PgBouncer).
-  const outletRowsByItem = await Promise.all(topItems.map((item: any) => {
+  const outletRowsByItem = await Promise.all(topItems.map((item) => {
     const itemName = item.itemName;
     return withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
       SELECT o.code as "outletCode", o.name as "outletName", o.area,
@@ -306,7 +306,7 @@ export async function queryParetoNestedItemOutlet(
 
   const items: NestedParetoItem[] = [];
   for (let idx = 0; idx < topItems.length; idx++) {
-    const item = topItems[idx] as any;
+    const item = topItems[idx];
     const itemName = item.itemName;
     const itemTotal = Number(item.totalAbsNominal);
     const itemNominal = Number(item.nominalDeviasi);
@@ -315,9 +315,9 @@ export async function queryParetoNestedItemOutlet(
 
     const outletRows = outletRowsByItem[idx];
 
-    const outletTotal = outletRows.reduce((s, r: any) => s + Number(r.totalAbsNominal), 0);
+    const outletTotal = outletRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
     let outletCumPct = 0;
-    const allOutlets = outletRows.map((r: any) => {
+    const allOutlets = outletRows.map((r) => {
       const sharePct = outletTotal > 0 ? (Number(r.totalAbsNominal) / outletTotal) * 100 : 0;
       outletCumPct += sharePct;
       return {

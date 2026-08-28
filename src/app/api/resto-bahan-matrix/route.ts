@@ -301,8 +301,9 @@ export async function GET(req: NextRequest) {
       stats,
       durationMs: Date.now() - startedAt,
     }, { headers: CACHE_ANALYSIS });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     console.error('[resto-bahan-matrix] error:', e);
-    return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ success: false, error: message || String(e) }, { status: 500 });
   }
 }

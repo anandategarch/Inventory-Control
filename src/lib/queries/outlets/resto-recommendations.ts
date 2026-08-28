@@ -73,8 +73,52 @@ export async function queryRestoRecommendations(
   // FIX (AUDIT8-ROLLBACK-1, Item 8): each raw SQL is wrapped in withStatementTimeout
   // so a hung query in one Promise.all branch is killed at 30s rather than blocking
   // the whole batch indefinitely.
+  // Row shape returned by the SELECT in the curr CTE. Used by both the
+  // `currRows.map(...)` reduction and for prevMap / histMap typing below.
+  interface RestoRecCurrRow {
+    outletCode: string;
+    outletName: string;
+    area: string;
+    sales: number | bigint;
+    nominalDeviasi: number | bigint;
+    devBom: number | bigint;
+    totalLoss: number | bigint;
+    totalSurplus: number | bigint;
+    residualQty: number | bigint;
+    qtyLossSurplus: number | bigint;
+    itemCount: number | bigint;
+    deviatingItems: number | bigint;
+    totalQtyDeviasi: number | bigint;
+    totalQtyBom: number | bigint;
+    grossAbsNominal: number | bigint;
+    qtyDeviasiLoss: number | bigint;
+    residualNominal: number | bigint;
+    toleranceBreachCount: number | bigint;
+    toleranceBreachHighCount: number | bigint;
+    zScoreAbnormalCount: number | bigint;
+    zScoreWarningCount: number | bigint;
+    benchmarkHighCount: number | bigint;
+    benchmarkWarningCount: number | bigint;
+    overExplainedCount: number | bigint;
+    hasNoTolerance: number | bigint;
+    highLossItem: number | bigint;
+    direction: string;
+    topItem: string | null;
+    topItemNominal: number | bigint;
+  }
+  interface RestoRecPrevRow {
+    outletCode: string;
+    prevNominalDeviasi: number | bigint;
+    prevDevBom: number | bigint;
+    prevDirection: string;
+  }
+  interface RestoRecHistRow {
+    outletCode: string;
+    histAvgNominalDeviasi: number | bigint;
+    histPeriodCount: number | bigint;
+  }
   const [currRows, prevRows, histRows] = await Promise.all([
-    withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+    withStatementTimeout((tx) => tx.$queryRaw<RestoRecCurrRow[]>`
       WITH outlet_aggs AS (
         SELECT
           ir."outletId",
@@ -184,7 +228,7 @@ export async function queryRestoRecommendations(
       ORDER BY ABS(COALESCE(oa."nominalDeviasi", 0)) DESC
     `),
     prevWeek && prevMonth
-      ? withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+      ? withStatementTimeout((tx) => tx.$queryRaw<RestoRecPrevRow[]>`
         SELECT
           o.code as "outletCode",
           SUM(ir."nominalDeviasi") as "prevNominalDeviasi",
@@ -201,7 +245,7 @@ export async function queryRestoRecommendations(
           ${f}
         GROUP BY o.code
       `)
-      : Promise.resolve([]),
+      : Promise.resolve([] as RestoRecPrevRow[]),
     // FIX: Historical average — same weekLabel across ALL months BEFORE current month
     // FIX (BUG-HUNT-CALC): was AVG(ABS(per-record nominalDeviasi)) — scale mismatch with
     // current |SUM(nominalDeviasi)|. Now uses 2-level CTE: weekly_dev (per outlet+month+week)
@@ -210,7 +254,7 @@ export async function queryRestoRecommendations(
     // to exclude FUTURE months from the baseline. Latent bug — active if future
     // months exist in DB (test data, planned uploads). Fallback to `monthLabel != ${month}`
     // when currentMonthKey is unavailable (e.g. legacy caller).
-    withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+    withStatementTimeout((tx) => tx.$queryRaw<RestoRecHistRow[]>`
       WITH weekly_dev AS (
         SELECT o.code as "outletCode",
           ir."monthLabel", ir."weekLabel",
@@ -240,7 +284,7 @@ export async function queryRestoRecommendations(
   ]);
 
   // Build prev lookup
-  const prevMap = new Map<string, any>();
+  const prevMap = new Map<string, RestoRecPrevRow>();
   for (const r of prevRows) {
     prevMap.set(r.outletCode, r);
   }
@@ -268,7 +312,7 @@ export async function queryRestoRecommendations(
   // REC-7: totalNetworkDeviasi was computed but never used — removed
 
   // Compute Priority Score per outlet
-  const recommendations: RestoRecommendation[] = currRows.map((r: any) => {
+  const recommendations: RestoRecommendation[] = currRows.map((r) => {
     const outletCode = r.outletCode;
     const prev = prevMap.get(outletCode);
     const devBom = Number(r.devBom);

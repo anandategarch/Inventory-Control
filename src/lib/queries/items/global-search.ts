@@ -80,7 +80,7 @@ export async function queryGlobalItemSearch(
     LIMIT ${limit}
   `);
   // Coerce BigInt/Decimal to Number (PostgreSQL SUM returns bigint for integer columns)
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     ...r,
     qtyBom: Number(r.qtyBom),
     qtyDeviasi: Number(r.qtyDeviasi),
@@ -123,7 +123,7 @@ export async function queryItemAutocomplete(
     ORDER BY "totalAbsNominal" DESC
     LIMIT ${limit}
   `);
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     itemName: r.itemName,
     outletCount: Number(r.outletCount),
     totalAbsNominal: Number(r.totalAbsNominal),
@@ -199,7 +199,7 @@ export async function queryItemTrend(
     ORDER BY sf."monthKey", ir."weekLabel", o.code
     LIMIT ${limit}
   `);
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     ...r,
     nominalDeviasi: Number(r.nominalDeviasi),
     devBom: r.devBom != null ? Number(r.devBom) : null,

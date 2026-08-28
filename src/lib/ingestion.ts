@@ -11,8 +11,8 @@ import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
-import { normalizeRow, deriveRecord } from '@/engine/transform';
-import { validateRow, summarizeDQ } from '@/engine/validator';
+import { normalizeRow, deriveRecord, type NumberLocale } from '@/engine/transform';
+import { validateRow, summarizeDQ, type DQIssueRow } from '@/engine/validator';
 import { parseOutletCode } from '@/lib/outlet';
 import { convertExcelToCsv, getCachedCsvPath, csvCacheExists } from '@/lib/excel-to-csv';
 import { parseCsvStream } from '@/lib/csv-parser';
@@ -85,13 +85,28 @@ export async function findExcelFiles(dirOverride?: string): Promise<string[]> {
   }
 }
 
+export interface IngestRequestBody {
+  /** Optional single-file path (resolved against DATA_DIR) */
+  filePath?: string;
+  /** Optional directory path (resolved against DATA_DIR) */
+  dir?: string;
+  /** Optional single-file name (resolved against DATA_DIR) */
+  fileName?: string;
+  /** Optional user-provided override for the original filename */
+  manualFileName?: string;
+  /** Pre-computed file hash (skip recomputation when provided) */
+  precomputedHash?: string;
+  /** Number format locale ('auto' | 'id' | 'us') for CSV separator parsing */
+  numberLocale?: NumberLocale;
+}
+
 // ============================================================
 //  processIngestion — shared business logic
 //  Bug 1 fix: skip rows with ERROR severity
 //  Bug 3 fix: dedup by monthLabel (delete old SourceFile for same period)
 //  Bug 3 fix: race condition lock per file
 // ============================================================
-export async function processIngestion(body: any, fastMode?: boolean): Promise<IngestResult[]> {
+export async function processIngestion(body: IngestRequestBody, fastMode?: boolean): Promise<IngestResult[]> {
   const startedAt = Date.now();
   let files: string[] = [];
 
@@ -245,7 +260,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       const itemDbMap = new Map<string, { id: number; satuan: string | null }>(allItems.map(i => [i.name, { id: i.id, satuan: i.satuan }]));
 
       const seenKeys = new Set<string>();
-      const allIssues: any[] = [];
+      const allIssues: DQIssueRow[] = [];
       const weekDbMap = new Map<string, number>();
 
       // FIX (BUG2-INGEST-1): Wrap dedup-delete + create + insert + update + DQ in a
@@ -281,7 +296,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
           });
 
           const BATCH_SIZE = 2000;
-          let batchRecords: any[] = [];
+          let batchRecords: Prisma.InventoryRecordCreateManyInput[] = [];
           let totalInserted = 0;
           let totalRows = 0;
           let skippedErrors = 0;
@@ -298,7 +313,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 
             if (!fastMode) {
               // Validate
-              const issues = validateRow(rawRow, rowNumber, seenKeys, (rawRow as any)._sheetName, body.numberLocale || 'auto');
+              const issues = validateRow(rawRow, rowNumber, seenKeys, rawRow._sheetName, body.numberLocale || 'auto');
               allIssues.push(...issues);
 
               const hasError = issues.some((i) => i.severity === 'ERROR');
@@ -503,7 +518,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
             const dqRecords = allIssues.map((i) => ({
               sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
               message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
-              sheetName: (i as any).sheetName ?? null, // P1-9 fix
+              sheetName: i.sheetName ?? null, // P1-9 fix
             }));
             for (let i = 0; i < dqRecords.length; i += 500) {
               await tx.dQIssue.createMany({ data: dqRecords.slice(i, i + 500) });
@@ -569,7 +584,7 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
 export interface ProcessRowsResult {
   inserted: number;
   skippedErrors: number;
-  dqIssues: any[];
+  dqIssues: DQIssueRow[];
 }
 
 /**
@@ -616,9 +631,9 @@ export async function processRowsForImport(
   const _outletDbMap = outletDbMap ?? new Map<string, number>();
   const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
   const _seenKeys = seenKeys ?? new Set<string>();
-  const allIssues: any[] = [];
+  const allIssues: DQIssueRow[] = [];
   const BATCH_SIZE = 500;
-  let batchRecords: any[] = [];
+  let batchRecords: Prisma.InventoryRecordCreateManyInput[] = [];
   let inserted = 0;
   let skippedErrors = 0;
 
@@ -630,7 +645,7 @@ export async function processRowsForImport(
     // Validation can be run separately later via /api/dq-check (or similar).
     // ~3-5x faster because validateRow() is the bottleneck for large files.
     if (!fastMode) {
-      const issues = validateRow(rawRow, rowNumber, _seenKeys, (rawRow as any)._sheetName, numberLocale || 'auto');
+      const issues = validateRow(rawRow, rowNumber, _seenKeys, rawRow._sheetName, numberLocale || 'auto');
       allIssues.push(...issues);
 
       const hasError = issues.some((iss) => iss.severity === 'ERROR');

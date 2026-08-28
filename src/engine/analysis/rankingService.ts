@@ -157,7 +157,7 @@ export function computePrioritiesFromFlags(
     const tolBreach = curr.tolerancePct != null && curr.pctQtyDeviasiToBom != null
       ? Math.max(0, Math.abs(curr.pctQtyDeviasiToBom) - Math.abs(curr.tolerancePct))
       : Math.abs(curr.pctQtyDeviasiToBom ?? 0) * 0.5;
-    const evidence = top.evidence as any;
+    const evidence = top.evidence as Record<string, number | null | undefined>;
     const growthScore = Math.max(
       Math.abs(evidence.qtyDeviasiGrowth ?? 0),
       Math.abs(evidence.nominalDeviasiGrowth ?? 0),

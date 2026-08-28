@@ -29893,3 +29893,64 @@ Stage Summary:
 - Security Score: 8/10
 - Production-ready: YES (single-user internal tool). Multi-user: fix SEC-01 first.
 - Full report below in main response.
+
+---
+Task ID: FIX-CODE-QUALITY
+Agent: Main (Z.ai Code)
+Task: Fix P1/P2 code quality issues from review
+      - P2-4: Re-enable eslint rules (no-explicit-any, no-unused-vars) as warn
+      - P2-3: Replace `any` usage with proper types in API/lib files
+      - P1-1: Add baseline tests for 0% coverage modules
+      - P2-2: Verify god function split (/api/analysis already done in Fase 3)
+
+Work Log:
+- P2-4 (eslint rules): Re-enabled in eslint.config.mjs:
+  · `@typescript-eslint/no-explicit-any`: off → warn
+  · `@typescript-eslint/no-unused-vars`: off → warn (with argsIgnorePattern: ^_)
+  · `@typescript-eslint/no-non-null-assertion`: off → warn
+  · `@typescript-eslint/ban-ts-comment`: off → warn
+  · `no-unused-vars`: off → warn
+  Result: 0 errors, 404 warnings (rules now active, catching issues going forward).
+  Transition plan: warn → error after `any` cleanup is complete.
+
+- P2-3 (any replacement): Fixed in API/library files:
+  · src/lib/drive-import.ts: `res.body as any` → `as unknown as import('stream/web').ReadableStream<Uint8Array>` (2 occurrences)
+  · src/engine/analysis/rankingService.ts: `top.evidence as any` → `as Record<string, number | null | undefined>`
+  · Remaining: 19 `any` in src/ (mostly safe `as unknown as DrillRow[]` casts in CardDrillDown.tsx for table rendering — Record<string, unknown> pattern is type-safe)
+  · Total `any` in src/ (excl tests): 19 (down from estimated 80 — many were already fixed in Fase 1-4)
+
+- P1-1 (tests): Added 4 new test files for 0% coverage modules:
+  · tests/queries/health-ranking.test.ts — 6 tests (queryOutletHealthRanking, queryVarianceAnalysis, queryHistoricalCriticalItems)
+  · tests/queries/historical.test.ts — 5 tests (queryHistoricalStats: empty, mean/stdDev/n, Bessel correction, n=1 edge case, multiple pairs)
+  · tests/queries/growth-drivers.test.ts — 1 test (queryGrowthDrivers with up/down drivers)
+  · tests/queries/top-outlets.test.ts — 3 tests (queryTopOutlets, queryTopOutletsBySales)
+  Total: 21 test files, 395 tests, all passing.
+  Coverage: 24.41% → 27.2% lines (+2.79%), 26.65% → 31.93% functions (+5.28%).
+  Note: Review agent claimed "~2% coverage, 5 test files" — this was INACCURATE.
+  Actual before this task: 17 test files, 380 tests, 24.41% coverage.
+  After this task: 21 test files, 395 tests, 27.2% coverage.
+
+- P2-2 (god function split): Verified /api/analysis is ALREADY split:
+  · Was 910 lines → now 100 lines (thin orchestrator)
+  · 8 service files already exist in src/app/api/analysis/services/:
+    validate-and-resolve.ts, fetch-records.ts, run-queries.ts, post-process.ts,
+    assemble-response.ts, exec-summary.ts, deviation-drivers.ts, trend-builder.ts
+  · /api/ingest-process is 703 lines with clear mode separation (detect/import/import-all)
+    — partial split already exists (services/parse-excel.ts, services/validate-input.ts)
+    — full mode extraction deferred (high risk, 700 lines of complex ingestion logic)
+
+Verification:
+- Lint: 0 errors, 404 warnings (rules now active)
+- Tests: 21 files, 395 tests, all passing
+- Coverage: 27.2% lines, 31.93% functions
+- Dev server: running, /api/analysis returns HTTP 200 in 11.9s
+- `any` count: 19 in src/ (excl tests) — down from estimated 80
+
+Stage Summary:
+- 3 of 4 P1/P2 items fully resolved:
+  1. ✅ P2-4: Eslint rules re-enabled (warn) — 0 errors
+  2. ✅ P2-3: `any` reduced to 19 (safe casts remain in components)
+  3. ✅ P1-1: Tests added — 395 tests, 27.2% coverage (was 24.4%)
+  4. ✅ P2-2: /api/analysis already split (910→100 lines). /api/ingest-process deferred.
+- Code quality health score: 6.0 → 7.0/10 (estimated)
+- Biggest remaining gap: /api/ingest-process split (703 lines) + more test coverage for outlet queries

@@ -121,9 +121,26 @@ export async function queryTopItemsByDeviasiRank(
   // only for the top-50 (ranked CTE + top_items filter). Reduces self-join from
   // N×N to 50×N — ~720× less work for the bucket_avg step.
   //
-  // FIX H4 (AUDIT-7): wrap in withStatementTimeout to enforce 30s query timeout
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap in withStatementTimeout to enforce 30s query timeout
   // (PgBouncer tx mode strips the URL-level statement_timeout param).
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+  // Row shape matches the SELECT in the SQL below: 13 fields, with
+  // avgDeviasiByBom + pctLossSurplusToBom + rankBom being NULLABLE (CASE-NULL).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    itemName: string;
+    outletCode: string;
+    outletName: string;
+    pic: string | null;
+    satuan: string | null;
+    qtyDeviasi: number | bigint;
+    qtyWaste: number | bigint;
+    qtyLossSurplus: number | bigint;
+    pctLossSurplusToBom: number | null;
+    qtyBom: number | bigint;
+    nominalDeviasi: number | bigint;
+    avgDeviasiByBom: number | null;
+    rankNominal: number | bigint;
+    rankBom: number | null;
+  }>>`
     WITH item_per_outlet AS (
       SELECT
         i.name as "itemName",
@@ -200,7 +217,7 @@ export async function queryTopItemsByDeviasiRank(
     ORDER BY ti."rankNominal"
   `);
   // Coerce BigInt/Decimal to Number
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     ...r,
     qtyDeviasi: Number(r.qtyDeviasi),
     qtyWaste: Number(r.qtyWaste),
@@ -252,7 +269,22 @@ export async function queryTopItemsByDeviasiRankForOutlet(
 }>> {
   // Compute per-(item,outlet) aggregates for ALL outlets (needed for national
   // rank + peer benchmark), then filter to the target outlet's top-N.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    itemName: string;
+    outletCode: string;
+    outletName: string;
+    pic: string | null;
+    satuan: string | null;
+    qtyDeviasi: number | bigint;
+    qtyWaste: number | bigint;
+    qtyLossSurplus: number | bigint;
+    pctLossSurplusToBom: number | null;
+    qtyBom: number | bigint;
+    nominalDeviasi: number | bigint;
+    avgDeviasiByBom: number | null;
+    rankNominal: number | bigint;
+    rankBom: number | null;
+  }>>`
     WITH all_item_per_outlet AS (
       SELECT
         i.name as "itemName",
@@ -327,7 +359,7 @@ export async function queryTopItemsByDeviasiRankForOutlet(
     ORDER BY ti."outletRank"
   `);
   // Coerce BigInt/Decimal to Number (matches queryTopItemsByDeviasiRank coercion)
-  return rows.map((r: any) => ({
+  return rows.map((r) => ({
     ...r,
     qtyDeviasi: Number(r.qtyDeviasi),
     qtyWaste: Number(r.qtyWaste),
@@ -606,10 +638,10 @@ export async function queryParetoByDevBom(
     return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: threshold };
   }
 
-  const grandTotal = topItems.reduce((s, r: any) => s + Number(r.absNominal), 0);
+  const grandTotal = topItems.reduce((s, r) => s + Number(r.absNominal), 0);
   let cumPct = 0;
 
-  const outletRowsByItem = await Promise.all(topItems.map((item: any) => {
+  const outletRowsByItem = await Promise.all(topItems.map((item) => {
     const itemName = item.itemName;
     return withStatementTimeout((tx) => tx.$queryRaw<Array<{
       outletCode: string; outletName: string; area: string;
@@ -641,16 +673,16 @@ export async function queryParetoByDevBom(
     `);
   }));
 
-  const drivers: ParetoDevBomRow[] = topItems.map((item: any, idx: number) => {
+  const drivers: ParetoDevBomRow[] = topItems.map((item, idx) => {
     const itemName = item.itemName;
     const itemAbsNominal = Number(item.absNominal);
     const sharePct = grandTotal > 0 ? (itemAbsNominal / grandTotal) * 100 : 0;
     cumPct += sharePct;
 
     const outletRows = outletRowsByItem[idx];
-    const outletTotal = outletRows.reduce((s, r: any) => s + Number(r.absNominal), 0);
+    const outletTotal = outletRows.reduce((s, r) => s + Number(r.absNominal), 0);
     let outletCum = 0;
-    const outlets: ParetoDevBomOutletRow[] = outletRows.map((r: any) => {
+    const outlets: ParetoDevBomOutletRow[] = outletRows.map((r) => {
       const oShare = outletTotal > 0 ? (Number(r.absNominal) / outletTotal) * 100 : 0;
       outletCum += oShare;
       return {
