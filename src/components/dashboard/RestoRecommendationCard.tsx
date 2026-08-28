@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +9,57 @@ import { Target, Loader2, AlertTriangle, TrendingUp, TrendingDown } from 'lucide
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+
+// FIX #15: PRIORITY_TOOLTIP extracted as a const so it can be reused across
+// the recommendation card + PrioritySummaryCard without text drift.
+export const PRIORITY_TOOLTIP =
+  'Priority Score (0-100) = weighted combination of Dev/BOM ratio, nominal loss, residual ratio, direction flip, trend deterioration, tolerance breach count, anomaly count, dan benchmark deviation. TINGGI (>=55), SEDANG (>=30), RENDAH (<30).';
+
+// FIX #15: signal consolidation — show top 3 signals by severity, hide the
+// rest behind an overflow chip (clickable to toggle expansion).
+type SignalBadge = {
+  key: string;
+  label: string;
+  tone: 'red' | 'amber' | 'emerald' | 'neutral';
+  rank: number; // lower = more important (rendered first)
+};
+
+function buildSignalBadges(r: RestoRecommendation): SignalBadge[] {
+  const badges: SignalBadge[] = [];
+  // Direction is always rendered (rank 0)
+  badges.push({
+    key: 'direction',
+    label: r.metrics.direction,
+    tone: r.metrics.direction === 'LOSS' ? 'red' : r.metrics.direction === 'SURPLUS' ? 'emerald' : 'neutral',
+    rank: 0,
+  });
+  if (r.signals.directionFlip)
+    badges.push({ key: 'flip', label: 'Flip', tone: 'amber', rank: 10 });
+  if (r.signals.trendDeteriorating)
+    badges.push({ key: 'memburuk', label: 'Memburuk', tone: 'red', rank: 11 });
+  if (r.signals.residualRatio > 0.4)
+    badges.push({ key: 'residual', label: `Residual ${(r.signals.residualRatio * 100).toFixed(0)}%`, tone: 'red', rank: 12 });
+  if (r.signals.toleranceBreachHighCount > 0)
+    badges.push({ key: 'tol', label: `Tol Breach: ${r.signals.toleranceBreachHighCount}`, tone: 'red', rank: 13 });
+  if (r.signals.overExplainedCount > 0)
+    badges.push({ key: 'anomali', label: `Anomali: ${r.signals.overExplainedCount}`, tone: 'red', rank: 14 });
+  if (r.signals.highLossItemCount > 0)
+    badges.push({ key: 'highloss', label: `High Loss: ${r.signals.highLossItemCount}`, tone: 'red', rank: 15 });
+  if (r.signals.noToleranceItems > 0)
+    badges.push({ key: 'notol', label: `No Tol: ${r.signals.noToleranceItems}`, tone: 'amber', rank: 16 });
+  // NOTE: benchmarkHighCount deliberately omitted — BUG2-RESTO-3 removed
+  // Benchmark High from the backend signal groups; the frontend branch was
+  // dead code that produced misleading badges.
+  return badges.sort((a, b) => a.rank - b.rank);
+}
+
+const TONE_CLASS: Record<SignalBadge['tone'], string> = {
+  red: 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900',
+  amber: 'text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900',
+  emerald: 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900',
+  neutral: '',
+};
 
 interface RestoRecommendation {
   outletCode: string;
@@ -49,6 +101,14 @@ interface RestoRecommendation {
 
 export function RestoRecommendationCard() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic, setFocusOutlet } = useDashboard();
+  const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
+  const toggleSignals = (key: string) =>
+    setExpandedSignals((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic],
@@ -80,11 +140,12 @@ export function RestoRecommendationCard() {
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2.5">
+          <CardTitle className="text-sm flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
               <Target className="h-3.5 w-3.5" />
             </span>
             Resto Prioritas Analisa
+            <InfoTooltip content={PRIORITY_TOOLTIP} />
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
           </CardTitle>
           <p className="text-xs text-muted-foreground ml-9">Memuat rekomendasi...</p>
@@ -154,11 +215,12 @@ export function RestoRecommendationCard() {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
             <Target className="h-3.5 w-3.5" />
           </span>
           Resto Prioritas Analisa
+          <InfoTooltip content={PRIORITY_TOOLTIP} />
           {isFetching && !isLoading && (
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
           )}
@@ -234,55 +296,39 @@ export function RestoRecommendationCard() {
               ))}
             </div>
 
-            {/* Direction + trend indicators */}
+            {/* Direction + trend indicators — consolidated (max 3 + overflow) */}
             <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t">
               <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">Signals:</span>
-              <Badge variant="outline" className={`text-[11px] h-4 ${
-                r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' :
-                r.metrics.direction === 'SURPLUS' ? 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900' : ''
-              }`}>
-                {r.metrics.direction}
-              </Badge>
-              {r.signals.directionFlip && (
-                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-                  <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Flip
-                </Badge>
-              )}
-              {r.signals.trendDeteriorating && (
-                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  <TrendingUp className="h-2.5 w-2.5 mr-0.5" /> Memburuk
-                </Badge>
-              )}
-              {r.signals.residualRatio > 0.4 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Residual <span className="tabular-nums ml-0.5">{(r.signals.residualRatio * 100).toFixed(0)}%</span>
-                </Badge>
-              )}
-              {r.signals.toleranceBreachHighCount > 0 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Tol Breach: <span className="tabular-nums ml-0.5">{r.signals.toleranceBreachHighCount}</span>
-                </Badge>
-              )}
-              {r.signals.overExplainedCount > 0 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  Anomali: <span className="tabular-nums ml-0.5">{r.signals.overExplainedCount}</span>
-                </Badge>
-              )}
-              {r.signals.highLossItemCount > 0 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-                  High Loss: <span className="tabular-nums ml-0.5">{r.signals.highLossItemCount}</span>
-                </Badge>
-              )}
-              {r.signals.noToleranceItems > 0 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-                  No Tol: <span className="tabular-nums ml-0.5">{r.signals.noToleranceItems}</span>
-                </Badge>
-              )}
-              {r.signals.benchmarkHighCount > 0 && (
-                <Badge variant="outline" className="text-[11px] h-4 text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-                  Bench High: <span className="tabular-nums ml-0.5">{r.signals.benchmarkHighCount}</span>
-                </Badge>
-              )}
+              {(() => {
+                const all = buildSignalBadges(r);
+                const isExpanded = expandedSignals.has(r.outletCode);
+                const visible = isExpanded ? all : all.slice(0, 3);
+                const hidden = all.length - visible.length;
+                return (
+                  <>
+                    {visible.map((b) => (
+                      <Badge key={b.key} variant="outline" className={`text-[11px] h-4 ${TONE_CLASS[b.tone]}`}>
+                        {b.label}
+                      </Badge>
+                    ))}
+                    {hidden > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSignals(r.outletCode);
+                        }}
+                        className="inline-flex items-center"
+                        aria-label={isExpanded ? 'Sembunyikan signal' : `Tampilkan ${hidden} signal lainnya`}
+                      >
+                        <Badge variant="outline" className="text-[11px] h-4 cursor-pointer hover:bg-muted/50">
+                          {isExpanded ? '− Kurang' : `+${hidden} lagi`}
+                        </Badge>
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         ))}

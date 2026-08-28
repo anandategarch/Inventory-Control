@@ -169,6 +169,15 @@ export const dataDeleteQuerySchema = z.object({
   confirm: z.enum(['true', '1', 'yes']).optional(),
 });
 
+// FIX (AUDIT8-ROLLBACK-1, Item 9): GET /api/data had NO Zod validation —
+// `fileId` was parsed via raw `parseInt(fileIdParam)` + `isNaN` check only.
+// Adding dataGetQuerySchema enforces the same shape as DELETE and protects
+// against non-numeric / negative / overly-large fileIds reaching the DQIssue
+// query (which uses fileId in a Prisma where clause — safe, but unprincipled).
+export const dataGetQuerySchema = z.object({
+  fileId: z.coerce.number().int().positive().optional(),
+});
+
 // /api/migrate-direction (POST — no body params needed, but add for completeness)
 export const migrateDirectionQuerySchema = z.object({}).optional();
 
@@ -222,6 +231,18 @@ export const ingestProcessBodySchema = z.object({
   weekLabel: z.string().max(30).optional(),
   monthLabel: z.string().max(30).optional(),
 });
+
+// FIX (AUDIT8-ROLLBACK-1, Item 10): DELETE /api/ingest-process had NO Zod
+// body validation — raw `const { fileHash } = body` was used to delete chunks.
+// This is the cleanup-after-import endpoint, so the fileHash must match the
+// same hex-string shape enforced by POST (SAFE_FILEHASH_RE in the route).
+// Validation lives here (not the route) so the schema is co-located with
+// ingestProcessBodySchema for consistency.
+// fileHash is OPTIONAL because the DELETE handler treats missing fileHash as
+// "delete nothing" (no-op return) — preserving existing behavior.
+export const ingestProcessDeleteBodySchema = z.object({
+  fileHash: z.string().min(8).max(128).regex(/^[a-f0-9]{8,128}$/i).optional(),
+}).strict();
 
 // /api/import-drive POST body: { url, manualFileName?, numberLocale? }
 export const importDriveBodySchema = z.object({

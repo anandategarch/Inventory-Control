@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Utensils } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { fmtNum, fmtPct, directionColor } from './helpers';
 import type { OutletItemsResponse } from './types';
 import type { OutletItem } from '@/components/dashboard/PrioritySummaryCard';
@@ -94,14 +95,15 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
             <Utensils className="h-3.5 w-3.5" />
           </span>
           Menu Analysis — Outlier Detection
+          <InfoTooltip content="Outlier = Dev/BOM > (avg + 2σ) DAN > 1.5× avg menu. Group by 2 kata pertama nama bahan." />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Group by menu (kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama
+          Group by menu (2 kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama
         </p>
       </CardHeader>
       <CardContent>

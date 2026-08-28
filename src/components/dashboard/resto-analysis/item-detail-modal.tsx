@@ -36,6 +36,8 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<ItemHistoryResponse>;
     },
+    // FIX #18: cache for 5 min so reopening the modal doesn't refetch
+    staleTime: 300_000,
   });
 
   return (

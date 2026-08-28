@@ -3,7 +3,6 @@
 //  Used by Cmd+K modal in the dashboard.
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface GlobalItemSearchRow {
@@ -108,7 +107,8 @@ export async function queryItemAutocomplete(
   q: string,
   limit: number = 10
 ): Promise<Array<{ itemName: string; outletCount: number; totalAbsNominal: number }>> {
-  const rows = await db.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number | bigint }>>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number | bigint }>>`
     SELECT
       i.name as "itemName",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
@@ -122,7 +122,7 @@ export async function queryItemAutocomplete(
     GROUP BY i.name
     ORDER BY "totalAbsNominal" DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows.map((r: any) => ({
     itemName: r.itemName,
     outletCount: Number(r.outletCount),

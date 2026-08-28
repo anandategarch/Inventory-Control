@@ -52,7 +52,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
             <Heart className="h-3.5 w-3.5" />
           </span>
@@ -202,7 +202,7 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
             <Link2 className="h-3.5 w-3.5" />
           </span>
@@ -273,7 +273,7 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
             <MapPin className="h-3.5 w-3.5" />
           </span>

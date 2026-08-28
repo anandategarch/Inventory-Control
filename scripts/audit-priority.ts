@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
-// Run real outlets.ts queryRestoRecommendations to verify priority scoring
+// Run real outlets queryRestoRecommendations to verify priority scoring
 import { PrismaClient } from '@prisma/client';
 const db = new PrismaClient({ log: ['error'] });
-import { queryRestoRecommendations } from '../src/lib/queries/outlets';
+// FIX (AUDIT8-ROLLBACK-1, Item 1): monolith outlets.ts deleted — import from
+// the split sub-module outlets/resto-recommendations.ts instead.
+import { queryRestoRecommendations } from '../src/lib/queries/outlets/resto-recommendations';
 
 async function main() {
   const recs = await queryRestoRecommendations(

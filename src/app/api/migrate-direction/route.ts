@@ -15,6 +15,7 @@ import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, migrateDirectionQuerySchema } from '@/lib/validation';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // may take time on large DBs
@@ -159,7 +160,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Check if migration needed: count rows where direction doesn't match nominalLossSurplus sign
-    const inverted = await db.$queryRaw<Array<{ count: bigint }>>`
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+    // (full-table COUNT(*) on InventoryRecord can be slow on large DBs).
+    const inverted = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*) as count FROM "InventoryRecord"
       WHERE "nominalLossSurplus" IS NOT NULL
         AND (
@@ -167,7 +170,7 @@ export async function GET(req: NextRequest) {
           OR ("nominalLossSurplus" > 0 AND direction != 'SURPLUS')
           OR ("nominalLossSurplus" = 0 AND direction != 'NEUTRAL')
         )
-    `;
+    `);
 
     const invertedCount = Number(inverted[0]?.count ?? 0);
 

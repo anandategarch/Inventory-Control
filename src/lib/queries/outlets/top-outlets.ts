@@ -5,7 +5,6 @@
 //  All aggregation done in SQL (PostgreSQL + SQLite portable).
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ============================================================
@@ -31,7 +30,8 @@ export async function queryTopOutlets(
   limit: number = 10
 ): Promise<TopOutletRow[]> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<TopOutletRow[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<TopOutletRow[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -81,7 +81,7 @@ export async function queryTopOutlets(
     LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
     ORDER BY oa."absNominal" DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows;
 }
 
@@ -95,7 +95,8 @@ export async function queryTopOutletsBySales(
   limit: number = 10
 ): Promise<Array<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }>> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -133,7 +134,7 @@ export async function queryTopOutletsBySales(
     LEFT JOIN outlet_nominal on2 ON sm."outletId" = on2."outletId"
     ORDER BY sm.sales DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows;
 }
 

@@ -12,8 +12,7 @@
 //  Returns ~N rows (outlet+item pairs) instead of 540K raw records
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { buildSqlFilters, type SqlFilterOpts } from './shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 export async function queryHistoricalStats(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
@@ -32,7 +31,9 @@ export async function queryHistoricalStats(
   // Two-level aggregation:
   // 1. weekly_dev: per outlet+item+week → 1 observation = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))
   // 2. final: per outlet+item → mean/stddev/n across weekly observations
-  const rows = await db.$queryRaw<{
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+  // (heavy two-level aggregation across many periods — vulnerable to slow plans).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
     outletId: number; itemId: number; mean: number; sumSq: number; n: number;
   }[]>`
     WITH weekly_dev AS (
@@ -52,7 +53,7 @@ export async function queryHistoricalStats(
     FROM weekly_dev
     WHERE "weeklyDevBom" IS NOT NULL
     GROUP BY "outletId", "itemId"
-  `;
+  `);
 
   const map = new Map<string, { mean: number; stdDev: number; n: number }>();
   for (const r of rows) {

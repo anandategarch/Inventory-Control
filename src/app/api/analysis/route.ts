@@ -45,6 +45,7 @@ import {
 } from '@/lib/queries';
 import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { withStatementTimeout } from '@/lib/queries/shared';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 // FIX (RESTORE-BACKEND-2): use shared buildInventoryWhere instead of inline closure
@@ -115,9 +116,26 @@ export async function GET(req: NextRequest) {
     let compareWeek: string | null = null;
     let compareMonthExplicit: string | null = null;
     if (compareWeekRaw && compareWeekRaw.includes('|||')) {
-      const [wk, ml] = compareWeekRaw.split('|||');
-      compareWeek = wk;
-      compareMonthExplicit = ml;
+      // FIX (AUDIT8-ROLLBACK-1, Item 14): format validation for compareWeek.
+      // A value like "WEEK 1|||" (trailing separator, empty month) used to pass
+      // Zod (length-only check) and silently destructure to `wk="WEEK 1"` +
+      // `ml=undefined` → compareMonthExplicit became undefined → caller treated
+      // it as "no explicit compare month" and ran the auto-previous path, which
+      // might pick a DIFFERENT month than the user intended. Now we reject any
+      // `|||`-separated value that doesn't have BOTH a non-empty week AND a
+      // non-empty month label after the separator. Also reject values with more
+      // than one `|||` (e.g. "WEEK 1|||Juli|||2026") — destructure takes only
+      // the first 2 segments, silently dropping the rest.
+      const parts = compareWeekRaw.split('|||');
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid compareWeek format. Expected "WEEK N" or "WEEK N|||MonthLabel Year" (e.g. "WEEK 1|||Juli 2026").' },
+          { status: 400 },
+        );
+      }
+      const [wk, ml] = parts as [string, string];
+      compareWeek = wk.trim();
+      compareMonthExplicit = ml.trim();
     } else if (compareWeekRaw) {
       compareWeek = compareWeekRaw;
     }
@@ -221,7 +239,9 @@ export async function GET(req: NextRequest) {
         select: { monthLabel: true, monthKey: true },
       }),
       pic
-        ? db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`
+        // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+        // so a hung PIC lookup doesn't block the whole Promise.all batch.
+        ? withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`)
             .then((r) => r.map((p) => p.outletCode))
             .catch((e) => {
               logger.error("OutletPIC query failed (table may not exist)", { error: e instanceof Error ? e.message : String(e) });

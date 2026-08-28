@@ -14,6 +14,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
   LabelList, Legend,
 } from 'recharts';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { CHART, TOOLTIP_STYLE } from './constants';
 import type { Recommendation, OutletItem } from './types';
 import {
@@ -353,26 +354,28 @@ export function SignalChart({ name, r, items }: { name: string; r: Recommendatio
       }
       return (
         <div className="h-[170px] overflow-auto rounded-md border border-border/60">
-          <table className="w-full text-xs">
-            <thead className="bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm sticky top-0 z-10">
-              <tr>
-                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">#</th>
-                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Item</th>
-                <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground">% Deviasi</th>
-                <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground">Nominal</th>
-              </tr>
-            </thead>
-            <tbody>
+          {/* FIX #24: replaced raw <table> with shadcn Table for consistency
+              with the other 19+ tables in the codebase. */}
+          <Table className="text-xs">
+            <TableHeader className="bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm sticky top-0 z-10">
+              <TableRow className="border-b hover:bg-transparent">
+                <TableHead className="text-left px-3 py-1.5 font-semibold text-muted-foreground h-auto">#</TableHead>
+                <TableHead className="text-left px-3 py-1.5 font-semibold text-muted-foreground h-auto">Item</TableHead>
+                <TableHead className="text-right px-3 py-1.5 font-semibold text-muted-foreground h-auto">% Deviasi</TableHead>
+                <TableHead className="text-right px-3 py-1.5 font-semibold text-muted-foreground h-auto">Nominal</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((row) => (
-                <tr key={row.idx} className="border-t border-border/40">
-                  <td className="px-3 py-1.5 text-muted-foreground">{row.idx}</td>
-                  <td className="px-3 py-1.5 truncate" title={row.name}>{row.name}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums text-amber-600 dark:text-amber-400">{row.pct}%</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtIDR(row.nominal)}</td>
-                </tr>
+                <TableRow key={row.idx} className="border-t border-border/40">
+                  <TableCell className="px-3 py-1.5 text-muted-foreground">{row.idx}</TableCell>
+                  <TableCell className="px-3 py-1.5 truncate" title={row.name}>{row.name}</TableCell>
+                  <TableCell className="px-3 py-1.5 text-right tabular-nums text-amber-600 dark:text-amber-400">{row.pct}%</TableCell>
+                  <TableCell className="px-3 py-1.5 text-right tabular-nums">{fmtIDR(row.nominal)}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       );
     }

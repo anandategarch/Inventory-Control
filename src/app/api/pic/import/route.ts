@@ -134,12 +134,13 @@ export async function POST(req: NextRequest) {
     // assignments for up to 5 min (TTL) without this invalidation.
     invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
-    await db.auditLog.create({
+    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+    db.auditLog.create({
       data: {
         action: 'PIC_IMPORT',
         detail: `${imported} PIC entries imported (${errors.length} errors)`,
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

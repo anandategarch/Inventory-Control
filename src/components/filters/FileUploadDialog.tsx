@@ -10,6 +10,10 @@ import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X, Pencil,
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+// FIX (AUDIT8-ROLLBACK-1, Item 7): extract shared upload helpers to a sibling
+// module so MONTH_NAMES stays in sync with the server-side MONTH_MAP (was the
+// cause of AUDIT-RENAME-9 — client ✓ then server 400 due to month-list drift).
+import { validateManualFileName, renameModeDefault } from './upload-utils';
 
 interface WeekResult {
   weekLabel: string;
@@ -54,34 +58,9 @@ interface DetectResult {
   message?: string;
 }
 
-// Client-side manual filename validation.
-// Must contain an Indonesian month name + 2-4 digit year, and end with .xlsx/.csv.
-// AUDIT-RENAME-9 fix: aligned with server-side MONTH_MAP in src/lib/excel.ts
-// (server also accepts: may, agt, pebruari, okteber, nopember)
-const MONTH_NAMES = [
-  'januari','jan','februari','pebruari','feb','maret','mar','april','apr',
-  'mei','may','juni','jun','juli','jul','agustus','agu','agt',
-  'september','sep','oktober','okt','okteber','november','nopember','nov','desember','des',
-];
-
-function validateManualFileName(raw: string): { ok: boolean; error?: string; cleaned?: string } {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: false, error: 'Nama file tidak boleh kosong.' };
-  // Strip filesystem-unsafe chars (mirror server-side sanitize)
-  const cleaned = trimmed.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/^\.+/, '').trim();
-  if (!cleaned) return { ok: false, error: 'Nama file mengandung karakter tidak valid.' };
-  // Ensure extension
-  const hasExt = /\.(xlsx|csv)$/i.test(cleaned);
-  const withExt = hasExt ? cleaned : `${cleaned}.xlsx`;
-  // Must contain month name + year
-  const lower = withExt.toLowerCase();
-  const hasMonth = MONTH_NAMES.some(m => lower.includes(m));
-  const hasYear = /\b(20\d{2}|\d{2})\b/.test(lower);
-  if (!hasMonth || !hasYear) {
-    return { ok: false, error: 'Format harus "BULAN TAHUN.xlsx". Contoh: "MEI 2026.xlsx" atau "17.JULI 2026.xlsx".', cleaned: withExt };
-  }
-  return { ok: true, cleaned: withExt };
-}
+// Client-side manual filename validation now lives in ./upload-utils
+// (FIX AUDIT8-ROLLBACK-1, Item 7 — was duplicated here, drifting from server).
+// Re-exporting would be unused; consumers import directly from upload-utils.
 
 export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -860,6 +839,3 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
   );
 }
 
-function renameModeDefault(): 'auto' | 'manual' {
-  return 'auto';
-}

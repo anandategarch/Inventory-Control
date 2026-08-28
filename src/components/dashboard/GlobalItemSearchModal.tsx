@@ -106,6 +106,8 @@ export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; o
     },
     enabled: Boolean(open && deferredQuery.length >= 2 && monthLabel && currentWeek && !selectedItem),
     staleTime: 60_000, // cache autocomplete for 1 min (item list rarely changes)
+    // FIX #34: keepPreviousData so old results stay visible while new query loads
+    placeholderData: keepPreviousData,
   });
 
   // Stage 2: cross-outlet view

@@ -80,8 +80,11 @@
   --chart-loss: #dc2626;
   --chart-surplus: #10b981;
   --chart-waste: #f59e0b;
-  --chart-susut: #7c3aed;
-  --chart-trial: #65a30d;
+  /* FIX #23 (AUDIT8-FE-2): --chart-susut violet #7c3aed -> cyan-600 #0891b2
+     to comply with the warm-tone-only UI modernization spec. */
+  --chart-susut: #0891b2;
+  /* FIX #23 (AUDIT8-FE-2): --chart-trial lime #65a30d -> amber-600 #ca8a04. */
+  --chart-trial: #ca8a04;
   --chart-residual: #71717a;
   --chart-neutral: #64748b;
   --chart-warning: #eab308;
@@ -123,8 +126,10 @@
   --chart-loss: #f87171;
   --chart-surplus: #34d399;
   --chart-waste: #fbbf24;
-  --chart-susut: #a78bfa;
-  --chart-trial: #84cc16;
+  /* FIX #23 (AUDIT8-FE-2): dark mode cyan + amber variants (matches
+     light-mode color shift). */
+  --chart-susut: #22d3ee;
+  --chart-trial: #facc15;
   --chart-residual: #a1a1aa;
   --chart-neutral: #94a3b8;
   --chart-warning: #facc15;

@@ -17,7 +17,7 @@ import { validateManualFileName } from '@/lib/filename';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { summarizeDQ } from '@/engine/validator';
 import { processRowsForImport } from '@/lib/ingestion';
-import { validateBody, ingestProcessBodySchema } from '@/lib/validation';
+import { validateBody, ingestProcessBodySchema, ingestProcessDeleteBodySchema } from '@/lib/validation';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -513,13 +513,15 @@ export async function POST(req: NextRequest) {
       }
 
       // Audit log — always created (even in fast mode) for traceability.
-      await db.auditLog.create({
+      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+      // A DB hiccup here must NOT roll back the surrounding transaction or surface as 500.
+      db.auditLog.create({
         data: {
           action: 'INGEST_WEEK',
           detail: `${fileName} [${weekLabel}]: ${inserted} rows imported [FAST MODE]`,
           duration: Date.now() - startedAt,
         },
-      });
+      }).catch(() => {});
 
       // FIX (DEEP-AUDIT-API-1, DEEP-AUDIT-FLOW-1): clear BOTH caches after import.
       // analysisCache was already cleared; statusCache must also be cleared because
@@ -752,7 +754,8 @@ export async function POST(req: NextRequest) {
       await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
 
       // Audit log
-      await db.auditLog.create({
+      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+      db.auditLog.create({
         data: {
           action: 'INGEST_ALL_WEEKS',
           detail: `${fileName}: ${totalInserted} rows across ${importedWeeks.length} weeks [FAST MODE]`,
@@ -792,7 +795,17 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Rate limit.' }, { status: 429 });
     }
     const body = await req.json();
-    const { fileHash } = body;
+    // FIX (AUDIT8-ROLLBACK-1, Item 10): Zod body validation for DELETE.
+    // Previously the DELETE handler destructured `fileHash` directly from the
+    // raw JSON body with no shape check — an attacker could pass arbitrary
+    // shapes (objects, arrays, very long strings) that Prisma would then
+    // attempt to use in a `where: { fileHash }` clause. Now validated against
+    // ingestProcessDeleteBodySchema (hex string, 8-128 chars, optional).
+    const validation = validateBody(ingestProcessDeleteBodySchema, body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+    const { fileHash } = validation.data;
     if (fileHash) {
       await db.fileChunk.deleteMany({ where: { fileHash } });
     }

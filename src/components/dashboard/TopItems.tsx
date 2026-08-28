@@ -20,7 +20,7 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
             <Coins className="h-3.5 w-3.5" />
           </span>
@@ -81,7 +81,7 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
             <Percent className="h-3.5 w-3.5" />
           </span>
@@ -146,7 +146,7 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
             <Store className="h-3.5 w-3.5" />
           </span>

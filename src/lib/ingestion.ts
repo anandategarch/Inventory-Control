@@ -468,7 +468,8 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
       // Audit log — outside the transaction so a failure here doesn't roll back the
       // ingestion. AuditLog is non-critical: a missing audit entry is preferable to
       // losing the ingested data.
-      await db.auditLog.create({
+      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+      db.auditLog.create({
         data: {
           action: 'INGEST',
           detail: `${fileName} → ${ext === '.xlsx' ? 'Excel direct' : 'CSV'}: ${totalInserted} rows (${skippedErrors} skipped due to ERROR)${fastMode ? ' [FAST MODE]' : ''}`,

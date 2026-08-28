@@ -18,6 +18,58 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
+// FIX #42: ParetoDimension mirror of backend enum (see src/lib/queries/pareto.ts)
+type ParetoDimension = 'item' | 'outlet' | 'area' | 'kelompok' | 'pic';
+
+const DIM_LABELS: Record<ParetoDimension, string> = {
+  item: 'Item',
+  outlet: 'Outlet',
+  area: 'Area',
+  kelompok: 'Kelompok',
+  pic: 'PIC',
+};
+
+// FIX #28: countSuffix helper — picks the short label for the dimension
+// shown under each row in a QuadrantCard (e.g. "3 out", "5 klp", "2 pic").
+function countSuffix(title: string): string {
+  const t = title.toLowerCase();
+  if (t.includes('kelompok')) return 'klp';
+  if (t.includes('pic')) return 'pic';
+  if (t.includes('outlet')) return 'out';
+  if (t.includes('area')) return 'area';
+  return ''; // items have no count suffix
+}
+
+// FIX #23: per-quadrant tooltip text describing what each card shows.
+const QUADRANT_TOOLTIPS: Record<string, string> = {
+  'Top Items (80% Deviation)': 'Top item yang menyumbang 80% total |nominalDeviasi|. Sisa item hanya 20%.',
+  'Top Outlets (80% Deviation)': 'Top outlet yang menyumbang 80% total |nominalDeviasi|. Fokus ke sini untuk impact maksimal.',
+  'Top Kelompok (80% Deviation)': 'Top kelompok (segment) yang menyumbang 80% total |nominalDeviasi|. Bisa signalkan masalah sistemik di kelompok tersebut.',
+  'Top Areas (80% Deviation)': 'Top area geografis yang menyumbang 80% total |nominalDeviasi|.',
+  'Top PIC (80% Deviation)': 'Top PIC (Person In Charge) yang menyumbang 80% total |nominalDeviasi|.',
+};
+
+// FIX #42: nestedGeneralized child row shape (mirrors NestedParetoResultItem.children)
+interface NestedChild {
+  name: string;
+  totalAbsNominal: number;
+  nominalDeviasi: number;
+  qtyDeviasi: number;
+  sharePct: number;
+  cumPct: number;
+}
+// FIX #42: nestedGeneralized parent row shape (mirrors NestedParetoResultItem)
+interface NestedGeneralizedItem {
+  name: string;
+  totalAbsNominal: number;
+  nominalDeviasi: number;
+  qtyDeviasi: number;
+  outletCount: number;
+  sharePct: number;
+  cumPct: number;
+  children: NestedChild[];
+}
+
 interface ParetoRow {
   name: string;
   code?: string;
@@ -66,10 +118,21 @@ interface ParetoData {
   byKelompok: ParetoResult;
   byPIC: ParetoResult;
   nested: { items: NestedItem[]; totalAbsNominal: number };
+  // FIX #42: optional generalized nested response (set when both parentDim +
+  // childDim query params are sent to /api/pareto)
+  nestedGeneralized?: {
+    items: NestedGeneralizedItem[];
+    totalAbsNominal: number;
+    parentDim: ParetoDimension;
+    childDim: ParetoDimension;
+  };
+  parentDim?: ParetoDimension;
+  childDim?: ParetoDimension;
   durationMs?: number;
 }
 
-function QuadrantCard({ title, icon, data, color, barColor }: { title: string; icon: React.ReactNode; data: ParetoResult; color: string; barColor: string }) {
+function QuadrantCard({ title, icon, data, color, barColor, tooltip }: { title: string; icon: React.ReactNode; data: ParetoResult; color: string; barColor: string; tooltip?: string }) {
+  const suffix = countSuffix(title);
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
@@ -77,6 +140,7 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
           <CardTitle className="text-sm flex items-center gap-2.5">
             <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${color}`}>{icon}</span>
             {title}
+            {tooltip && <InfoTooltip content={tooltip} />}
           </CardTitle>
           {data && data.totalCount > 0 && (
             <Badge variant="secondary" className="text-[10px]">
@@ -113,7 +177,7 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
                     </TableCell>
                     <TableCell className="p-1">
                       <div className="font-medium text-xs truncate max-w-[180px]" title={d.name}>{d.name}</div>
-                      {d.outletCount != null && <div className="text-[10px] text-muted-foreground tabular-nums">{d.outletCount} outlet</div>}
+                      {d.outletCount != null && suffix && <div className="text-[10px] text-muted-foreground tabular-nums">{d.outletCount} {suffix}</div>}
                     </TableCell>
                     <TableCell className={`text-right text-xs tabular-nums p-1 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</TableCell>
                     <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</TableCell>
@@ -148,17 +212,23 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
 export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  // FIX #42: parent + child dimension state for the generalized nested query.
+  // Defaults to 'item' → 'outlet' (same as the hardcoded nested breakdown).
+  const [parentDim, setParentDim] = useState<ParetoDimension>('item');
+  const [childDim, setChildDim] = useState<ParetoDimension>('outlet');
+  const [expandedGen, setExpandedGen] = useState<Set<string>>(new Set());
 
   // Reset expanded items when filter changes (stale state cleanup)
-  const filterKey = `${monthLabel}|${currentWeek}|${area}|${kelompok}|${pic}`;
+  const filterKey = `${monthLabel}|${currentWeek}|${area}|${kelompok}|${pic}|${parentDim}|${childDim}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (prevFilterKey !== filterKey) {
     setPrevFilterKey(filterKey);
     setExpandedItems(new Set());
+    setExpandedGen(new Set());
   }
 
-  const { data: paretoData, isLoading, error } = useQuery<ParetoData>({
-    queryKey: ['pareto', monthLabel, currentWeek, area, kelompok, pic],
+  const { data: paretoData, isLoading, error, refetch } = useQuery<ParetoData>({
+    queryKey: ['pareto', monthLabel, currentWeek, area, kelompok, pic, parentDim, childDim],
     queryFn: async () => {
       const p = new URLSearchParams({
         month: monthLabel!,
@@ -167,6 +237,10 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
+      // FIX #42: send parentDim + childDim so backend runs queryParetoNested
+      // and returns the nestedGeneralized field.
+      p.set('parentDim', parentDim);
+      p.set('childDim', childDim);
       const res = await fetch(`/api/pareto?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
@@ -183,8 +257,17 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       return next;
     });
   };
+  const toggleGen = (name: string) => {
+    setExpandedGen(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   const nestedItems = paretoData?.nested?.items || [];
+  const nestedGen = paretoData?.nestedGeneralized;
 
   if (isLoading) {
     return (
@@ -199,6 +282,10 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       <div className="text-center py-12">
         <p className="text-red-600 dark:text-red-400 font-medium">Gagal memuat Pareto: {error.message}</p>
         <p className="text-xs text-muted-foreground mt-1">Coba refresh halaman atau ganti periode.</p>
+        {/* FIX #29: retry button using the dead RotateCcw import */}
+        <Button onClick={() => refetch()} variant="outline" size="sm" className="mt-3">
+          <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+        </Button>
       </div>
     );
   }
@@ -210,16 +297,44 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
           <TrendingDown className="h-4 w-4" />
         </span>
-        <div>
+        <div className="flex-1 min-w-0">
           <h2 className="text-base font-semibold">Pareto 80/20 Analysis</h2>
           <p className="text-xs text-muted-foreground">
             Top contributors yang menyumbang 80% total deviation
             {paretoData.durationMs != null && ` · ${paretoData.durationMs}ms`}
           </p>
+        </div>
+        {/* FIX #42: parent + child dimension selectors for the generalized
+            nested breakdown. Backend supports any (parentDim, childDim)
+            combination where the two differ. */}
+        <div className="flex items-center gap-2">
+          <Select value={parentDim} onValueChange={(v) => setParentDim(v as ParetoDimension)}>
+            <SelectTrigger className="h-8 w-[120px] text-xs">
+              <SelectValue placeholder="Parent" />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(DIM_LABELS) as ParetoDimension[]).map((d) => (
+                <SelectItem key={d} value={d}>{DIM_LABELS[d]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-xs text-muted-foreground">→</span>
+          <Select value={childDim} onValueChange={(v) => setChildDim(v as ParetoDimension)}>
+            <SelectTrigger className="h-8 w-[120px] text-xs">
+              <SelectValue placeholder="Child" />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(DIM_LABELS) as ParetoDimension[])
+                .filter((d) => d !== parentDim)
+                .map((d) => (
+                  <SelectItem key={d} value={d}>{DIM_LABELS[d]}</SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -231,6 +346,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           data={paretoData.byItem}
           color="bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
           barColor="bg-amber-500"
+          tooltip={QUADRANT_TOOLTIPS['Top Items (80% Deviation)']}
         />
         <QuadrantCard
           title="Top Outlets (80% Deviation)"
@@ -238,6 +354,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           data={paretoData.byOutlet}
           color="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400"
           barColor="bg-emerald-500"
+          tooltip={QUADRANT_TOOLTIPS['Top Outlets (80% Deviation)']}
         />
         <QuadrantCard
           title="Top Kelompok (80% Deviation)"
@@ -245,6 +362,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           data={paretoData.byKelompok}
           color="bg-cyan-100 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400"
           barColor="bg-cyan-500"
+          tooltip={QUADRANT_TOOLTIPS['Top Kelompok (80% Deviation)']}
         />
         <QuadrantCard
           title="Top Areas (80% Deviation)"
@@ -252,6 +370,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           data={paretoData.byArea}
           color="bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400"
           barColor="bg-violet-500"
+          tooltip={QUADRANT_TOOLTIPS['Top Areas (80% Deviation)']}
         />
         <QuadrantCard
           title="Top PIC (80% Deviation)"
@@ -259,6 +378,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           data={paretoData.byPIC}
           color="bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400"
           barColor="bg-red-500"
+          tooltip={QUADRANT_TOOLTIPS['Top PIC (80% Deviation)']}
         />
       </div>
 
@@ -330,6 +450,84 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
                             <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
                             <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
                             <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{o.cumPct.toFixed(0)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* FIX #42: Generalized nested breakdown (parentDim → childDim) —
+          rendered when the user-selected combo differs from the default
+          Item→Outlet (which is already shown by the card above). */}
+      {nestedGen && nestedGen.items.length > 0 && (parentDim !== 'item' || childDim !== 'outlet') && (
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2.5">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </span>
+                {DIM_LABELS[parentDim]} → {DIM_LABELS[childDim]} Breakdown
+                <InfoTooltip content={`Top 10 ${DIM_LABELS[parentDim].toLowerCase()} by |nominalDeviasi|, with per-parent ${DIM_LABELS[childDim].toLowerCase()} breakdown (80% cutoff).`} />
+              </CardTitle>
+              <Badge variant="secondary" className="text-[10px]">Klik untuk expand</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-2">
+              Top 10 {DIM_LABELS[parentDim].toLowerCase()} by deviation. Klik untuk lihat {DIM_LABELS[childDim].toLowerCase()} mana yang menyumbang 80% per parent.
+            </p>
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
+              <span className="w-5 shrink-0">#</span>
+              <span className="w-3 shrink-0"></span>
+              <span className="min-w-[120px] flex-1 shrink-0">Nama</span>
+              <span className="w-20 text-right shrink-0">QTY</span>
+              <span className="w-24 text-right shrink-0">Nominal</span>
+              <span className="w-10 text-right shrink-0">%</span>
+              <span className="w-10 text-right shrink-0">Cum</span>
+            </div>
+            <div className="space-y-0.5 max-h-[500px] overflow-y-auto">
+              {nestedGen.items.map((item, i) => {
+                const isExpanded = expandedGen.has(item.name);
+                return (
+                  <div key={`${item.name}-${i}`}>
+                    <button
+                      onClick={() => toggleGen(item.name)}
+                      aria-expanded={isExpanded}
+                      className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left"
+                    >
+                      <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
+                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.name}>{item.name}</span>
+                      <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
+                      <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
+                      <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
+                      <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
+                    </button>
+                    {isExpanded && item.children.length > 0 && (
+                      <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
+                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
+                          <span className="w-4 shrink-0"></span>
+                          <span className="min-w-[100px] flex-1 shrink-0">{DIM_LABELS[childDim]}</span>
+                          <span className="w-20 text-right shrink-0">QTY</span>
+                          <span className="w-24 text-right shrink-0">Nominal</span>
+                          <span className="w-10 text-right shrink-0">%</span>
+                          <span className="w-10 text-right shrink-0">Cum</span>
+                        </div>
+                        {item.children.map((c, j) => (
+                          <div key={`${c.name}-${j}`} className="flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20">
+                            <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
+                            <span className="min-w-[100px] flex-1 truncate" title={c.name}>{c.name}</span>
+                            <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(c.qtyDeviasi)}`}>{fmtNum(c.qtyDeviasi)}</span>
+                            <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(c.nominalDeviasi)}`}>{fmtIDR(c.nominalDeviasi)}</span>
+                            <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{c.sharePct.toFixed(0)}%</span>
+                            <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{c.cumPct.toFixed(0)}%</span>
                           </div>
                         ))}
                       </div>

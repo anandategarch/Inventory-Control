@@ -11,6 +11,21 @@ import { clickableRowProps } from '@/lib/a11y';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+
+// FIX #8: per-KPI tooltip text (mirrors spec from AUDIT8-FE-2 #8)
+const KPI_TOOLTIPS = {
+  sales: 'Total penjualan. Dihitung via MODE per outlet (bukan SUM).',
+  nominalDeviasi: 'Selisih aktual vs BOM. Negatif=LOSS, positif=SURPLUS.',
+  qtyBom: 'Total kuantitas Bill of Materials berdasarkan resep.',
+  grossDeviation: 'Layer 1: Stok Fisik - Sistem.',
+  explained: 'Layer 2: Waste + Susut + Trial.',
+  netLossSurplus: 'Layer 3: Gross - Explained. Deviasi tidak terjelaskan.',
+  totalLoss: 'Total rugi (nominalLossSurplus < 0).',
+  totalSurplus: 'Total surplus (nominalLossSurplus > 0).',
+  residualLoss: 'Deviasi tidak terjelaskan. >70% = critical.',
+  deviationBom: 'Volume-weighted: SUM(|qtyDeviasi|) / SUM(|qtyBom|).',
+};
 
 // ============================================================
 //  Rule category labels (Indonesian, human-readable)
@@ -59,11 +74,12 @@ interface KPI {
   previous?: number | null;
   inverse?: boolean;
   hint?: string;
+  tooltip?: string; // FIX #8: InfoTooltip content for this KPI
   drillDown?: string; // card key for drill-down modal
   accent?: 'emerald' | 'amber' | 'zinc' | 'red' | 'blue'; // left border accent color
 }
 
-function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDown, accent }: KPI) {
+function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, drillDown, accent }: KPI) {
   const { setCardDrillDown } = useDashboard();
   const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
@@ -107,7 +123,10 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, drillDow
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/10 to-transparent" aria-hidden />
       <CardContent className="p-4 pt-3.5 pl-5">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider line-clamp-2 leading-tight" title={label}>{label}</p>
+          <div className="flex items-center gap-1 min-w-0">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider line-clamp-2 leading-tight" title={label}>{label}</p>
+            {tooltip && <InfoTooltip content={tooltip} />}
+          </div>
           {growthStr && (
             <span className={`inline-flex items-center gap-0.5 text-xs font-semibold shrink-0 rounded-full px-2 py-0.5 ${pillCls}`}>
               <Icon className="h-3 w-3" />
@@ -152,20 +171,23 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
         </Badge>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" accent="emerald" />
-        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" accent="amber" />
-        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" accent="zinc" />
+        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" accent="emerald" tooltip={KPI_TOOLTIPS.sales} />
+        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" accent="amber" tooltip={KPI_TOOLTIPS.nominalDeviasi} />
+        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" accent="zinc" tooltip={KPI_TOOLTIPS.qtyBom} />
         {/* Bug 5 fix: Three-layer deviation labels — Gross / Explained / Net */}
-        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" accent="amber" />
-        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" accent="zinc" />
-        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" accent="red" />
+        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" accent="amber" tooltip={KPI_TOOLTIPS.grossDeviation} />
+        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" accent="zinc" tooltip={KPI_TOOLTIPS.explained} />
+        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" accent="red" tooltip={KPI_TOOLTIPS.netLossSurplus} />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
         <Card className="cursor-pointer hover:shadow-lg hover:shadow-red-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('loss'))}>
           <div className="absolute inset-y-0 left-0 w-1 bg-red-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
+                <InfoTooltip content={KPI_TOOLTIPS.totalLoss} />
+              </div>
               <TrendingDown className="h-3.5 w-3.5 text-red-500/70" />
             </div>
             <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalLoss} format={fmtIDR} /></p>
@@ -176,7 +198,10 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
           <div className="absolute inset-y-0 left-0 w-1 bg-emerald-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
+                <InfoTooltip content={KPI_TOOLTIPS.totalSurplus} />
+              </div>
               <TrendingUp className="h-3.5 w-3.5 text-emerald-500/70" />
             </div>
             <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalSurplus} format={fmtIDR} /></p>
@@ -187,7 +212,10 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
           <div className="absolute inset-y-0 left-0 w-1 bg-amber-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Residual Loss</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Residual Loss</p>
+                <InfoTooltip content={KPI_TOOLTIPS.residualLoss} />
+              </div>
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500/70" />
             </div>
             <p className="text-lg font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5"><AnimatedValue value={s.residualLossQty} format={(v) => fmtNum(v, '')} /></p>
@@ -198,7 +226,10 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
           <div className="absolute inset-y-0 left-0 w-1 bg-zinc-400/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Deviation/BOM</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Deviation/BOM</p>
+                <InfoTooltip content={KPI_TOOLTIPS.deviationBom} />
+              </div>
               <BarChart3 className="h-3.5 w-3.5 text-muted-foreground/70" />
             </div>
             <p className="text-lg font-bold tabular-nums mt-0.5"><AnimatedValue value={s.deviationToBom} format={(v) => fmtPct(v, false)} /></p>
@@ -259,7 +290,7 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center justify-between">
+        <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
               <Activity className="h-3.5 w-3.5" />

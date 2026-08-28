@@ -20,6 +20,7 @@ import {
 } from '@/lib/metrics';
 import { calcGrowthAbs } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -84,7 +85,8 @@ export async function GET(req: NextRequest) {
     //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT so the prev lookup
     //    can be keyed by (outletCode, itemName, akunPenyesuaian).
     // ============================================================
-    const rows = await db.$queryRaw<Array<{
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+    const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
       outletCode: string; outletName: string; area: string;
       itemName: string; satuan: string | null; akunPenyesuaian: string | null;
       qtyBom: number | null; qtyDeviasi: number | null;
@@ -117,7 +119,7 @@ export async function GET(req: NextRequest) {
       GROUP BY ir."outletId", o.code, o.name, ir.area, ir."itemId", i.name, i.satuan, ir."akunPenyesuaian"
       ORDER BY SUM(ir."absNominalLossSurplus") DESC
       LIMIT ${limit * 3}
-    `;
+    `);
 
     // ============================================================
     //  Get area avg devBom per item for benchmark
@@ -132,7 +134,8 @@ export async function GET(req: NextRequest) {
     //  with portable `AVG(CASE WHEN ... THEN ... END)`. AVG ignores NULLs
     //  naturally, so CASE-THEN-NULL reproduces FILTER semantics.
     // ============================================================
-    const itemAreaBench = await db.$queryRaw<Array<{
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+    const itemAreaBench = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
       itemName: string; avgDevBom: number; outletCount: number;
     }>>`
       SELECT i.name as "itemName",
@@ -143,7 +146,7 @@ export async function GET(req: NextRequest) {
       WHERE ir."monthLabel" = ${month}
         AND ir."weekLabel" = ${week}
       GROUP BY i.name
-    `;
+    `);
     const benchMap = new Map(itemAreaBench.map(b => [b.itemName, { avgDevBom: Number(b.avgDevBom), outletCount: Number(b.outletCount) }]));
 
     // Get previous period for historical trend
@@ -182,7 +185,8 @@ export async function GET(req: NextRequest) {
     // ============================================================
     let prevDevBomMap = new Map<string, number | null>();
     if (prevPeriod) {
-      const prevRows = await db.$queryRaw<Array<{ outletCode: string; itemName: string; akunPenyesuaian: string | null; pctDevBom: number | null }>>`
+      // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+      const prevRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; itemName: string; akunPenyesuaian: string | null; pctDevBom: number | null }>>`
         SELECT o.code as "outletCode", i.name as "itemName", ir."akunPenyesuaian",
           MAX(ir."pctQtyDeviasiToBom") as "pctDevBom"
         FROM "InventoryRecord" ir
@@ -191,7 +195,7 @@ export async function GET(req: NextRequest) {
         WHERE ir."monthLabel" = ${prevPeriod.monthLabel}
           AND ir."weekLabel" = ${prevPeriod.weekLabel}
         GROUP BY o.code, i.name, ir."akunPenyesuaian"
-      `;
+      `);
       prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
     }
 

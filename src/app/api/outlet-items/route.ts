@@ -36,6 +36,7 @@ import {
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
 import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-items';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -143,19 +144,18 @@ export async function GET(req: NextRequest) {
     //  documented here for clarity.
     // ============================================================
     // Fire top deviasi rank for this outlet in PARALLEL with the main queries
-    // (powers RankingNasionalCard — top 30 items for this outlet with national rank).
-    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, 30);
+    // (powers RankingNasionalCard — top N items for this outlet with national rank).
+    // FIX (AUDIT8-ROLLBACK-1, Item 15): read TOP_N_DEVIASI_RANK from Settings
+    // (was hardcoded 30). thresholds is fetched above (line ~85) so this is a
+    // synchronous read — no extra DB round-trip.
+    const topDeviasiRankN = thresholds.TOP_N_DEVIASI_RANK || 30;
+    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, topDeviasiRankN);
 
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+    // so a hung query in one Promise.all branch is killed at 30s rather than
+    // blocking the whole batch indefinitely.
     const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
-      // Current period records for this outlet.
-      // FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
-      //   SUM/MAX aggregates so duplicate source-file rows for the same
-      //   (outlet, item, akun) collapse to a single row. Previously each
-      //   source-file contribution appeared as a separate UI row and inflated
-      //   priority counts.
-      // FIX (BUG-1-4): Added ir."akunPenyesuaian" to SELECT so prev lookup can
-      //   be keyed by (itemId, akunPenyesuaian).
-      db.$queryRaw<Array<{
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{
         itemId: number; itemName: string; satuan: string | null;
         akunPenyesuaian: string | null;
         qtyBom: number | null; qtyCom: number | null; qtyDeviasi: number | null;
@@ -210,11 +210,8 @@ export async function GET(req: NextRequest) {
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
         GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian", i.name, i.satuan
-      `,
-      // Previous period records.
-      // FIX (BUG-1-6): Same GROUP BY + aggregates as currentRecs.
-      // FIX (BUG-1-4): Include akunPenyesuaian so prev lookup can key by it.
-      prevWeek && prevMonth ? db.$queryRaw<Array<{ itemId: number; akunPenyesuaian: string | null; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
+      `),
+      prevWeek && prevMonth ? withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemId: number; akunPenyesuaian: string | null; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
         SELECT ir."itemId", ir."akunPenyesuaian",
           SUM(ir."qtyDeviasi") as "qtyDeviasi",
           SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -230,12 +227,12 @@ export async function GET(req: NextRequest) {
           AND ir."monthLabel" = ${prevMonth}
           AND ir."weekLabel" = ${prevWeek}
         GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian"
-      ` : Promise.resolve([]),
+      `) : Promise.resolve([]),
       // Area benchmark — Phase 3: SUM(ABS)/SUM(ABS) matching computeDevBomAggregate
       // FIX H1 (AUDIT-3): was `WHERE ir.area = ${outlet.area}` — silently returned 0
       // when denormalized ir.area diverged from Outlet.area (e.g. MLGPAR: outlet="JAWA
       // TIMUR 1" vs ir="BAKSO"). JOIN Outlet and filter by o.area for correctness.
-      db.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
         SELECT
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
             THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
@@ -246,9 +243,9 @@ export async function GET(req: NextRequest) {
         WHERE o.area = ${outlet.area}
           AND ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
-      `,
+      `),
       // Network benchmark — Phase 3: SUM(ABS)/SUM(ABS)
-      db.$queryRaw<Array<{ avgDevBom: number }>>`
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number }>>`
         SELECT
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
             THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
@@ -256,7 +253,7 @@ export async function GET(req: NextRequest) {
         FROM "InventoryRecord" ir
         WHERE ir."monthLabel" = ${month}
           AND ir."weekLabel" = ${week}
-      `,
+      `),
       // PIC
       db.outletPIC.findUnique({ where: { outletCode: outlet.code } }).catch(() => null),
     ]);

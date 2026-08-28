@@ -79,12 +79,13 @@ export async function POST(req: NextRequest) {
     // FIX H2 (AUDIT-P1): invalidate DB-level AggregationCache after single PIC mutation.
     invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
-    await db.auditLog.create({
+    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+    db.auditLog.create({
       data: {
         action: 'PIC_UPDATE',
         detail: `${outletCode} → ${pic}`,
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json({ success: true, pic: result });
   } catch (e: unknown) {
@@ -129,12 +130,13 @@ export async function DELETE(req: NextRequest) {
     // FIX H2 (AUDIT-P1): invalidate DB-level AggregationCache after PIC delete.
     invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
 
-    await db.auditLog.create({
+    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+    db.auditLog.create({
       data: {
         action: 'PIC_DELETE',
         detail: `Outlet ${outletCode}`,
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {

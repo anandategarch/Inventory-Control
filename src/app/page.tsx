@@ -298,14 +298,21 @@ export default function DashboardPage() {
         return;
       }
       // 1 / 2 / 3 / 4 → switch tabs (only when not typing in an input)
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4')) {
+      // FIX #6: Also block when a SearchableComboBox dropdown is open
+      // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
+      const isDropdownOpen = Boolean(
+        document.querySelector('[role="combobox"][aria-expanded="true"], [data-state="open"][role="listbox"], [data-state="open"][role="combobox"]')
+      );
+      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4')) {
         const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto' };
         setActiveTab(tabMap[e.key]);
         return;
       }
       // Escape → close any open dialog/drawer (Radix handles its own; this
-      // covers dashboard-controlled state + ExportDialog as a safety net)
-      if (e.key === 'Escape') {
+      // covers dashboard-controlled state + ExportDialog as a safety net).
+      // FIX #7: Guard with !isTyping so Escape inside a SearchableComboBox
+      // search box only closes that dropdown (Radix bubbles Escape to window).
+      if (e.key === 'Escape' && !isTyping) {
         setExportDialogOpen(false);
         setItemSearchOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
@@ -587,17 +594,32 @@ export default function DashboardPage() {
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
             <TabsContent value="resto" className="space-y-4 mt-2 animate-fade-in-up">
-              <RestoAnalysis analysisData={analysis.data} />
+              {/* FIX #32: wrap RestoAnalysis in FetchAware so the refetch
+                  indicator stays visible while the dashboard refreshes. */}
+              <FetchAware isFetching={analysis.isFetching}>
+                <RestoAnalysis analysisData={analysis.data} />
+              </FetchAware>
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
             <TabsContent value="peer" className="space-y-4 mt-2 animate-fade-in-up">
-              <PeerComparison />
+              {/* FIX #32: FetchAware wraps PeerComparison — it has its own
+                  internal isFetching indicator too, but this keeps the
+                  dashboard-wide refetch indicator visible. */}
+              <FetchAware isFetching={analysis.isFetching}>
+                <PeerComparison />
+              </FetchAware>
             </TabsContent>
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
             <TabsContent value="pareto" className="space-y-4 mt-2 animate-fade-in-up">
-              <ParetoDashboard analysisData={analysis.data} />
+              {/* FIX #32: FetchAware wraps ParetoDashboard — the component
+                  previously had no awareness of the dashboard refetch
+                  (its own query has staleTime 120s and doesn't refetch on
+                  global filter change). */}
+              <FetchAware isFetching={analysis.isFetching}>
+                <ParetoDashboard analysisData={analysis.data} />
+              </FetchAware>
             </TabsContent>
           </Tabs>
         ) : null}

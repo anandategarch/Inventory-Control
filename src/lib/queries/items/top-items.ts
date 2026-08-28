@@ -3,7 +3,6 @@
 //  historicalCategoryAvg, itemConsistency, deviasiRankForOutlet.
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface TopItemRow {
@@ -22,7 +21,8 @@ export async function queryTopItemsByNominal(
   const f = buildSqlFilters(filters);
   // Rev 3: Sort by ABS(nominalDeviasi), but return signed nominalDeviasi for display.
   // Previous version sorted/displayed absNominalLossSurplus (NET) — user wants nominalDeviasi (GROSS).
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       ABS(SUM(ir."nominalDeviasi")) as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -38,7 +38,7 @@ export async function queryTopItemsByNominal(
     GROUP BY i.name, o.code
     ORDER BY "absNominal" DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows;
 }
 
@@ -51,7 +51,8 @@ export async function queryTopItemsByDevBom(
   const f = buildSqlFilters(filters);
   // Rev 4: Sort by ABS(devBom), but return signed devBom for display.
   // Signed devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) — can be negative (SURPLUS) or positive (LOSS).
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
@@ -73,7 +74,7 @@ export async function queryTopItemsByDevBom(
     GROUP BY i.name, o.code
     ORDER BY "devBomAbs" DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows;
 }
 
@@ -364,7 +365,8 @@ export async function queryTopItemsByCategory(
   const qtyRef = Prisma.raw(`ir."${qtyCol}"`);
   const nomRef = Prisma.raw(`ir."${nomCol}"`);
 
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ABS(${qtyRef})) as qty,
       SUM(ABS(${nomRef})) as nominal,
@@ -380,7 +382,7 @@ export async function queryTopItemsByCategory(
     GROUP BY i.name, o.code
     ORDER BY qty DESC
     LIMIT ${limit}
-  `;
+  `);
   return rows;
 }
 
@@ -412,7 +414,8 @@ export async function queryHistoricalCategoryAvg(
   const historicalMonths = [...new Set(historicalPeriods.map(p => p.monthLabel))];
   const monthClauses = Prisma.join(historicalMonths, ', ');
 
-  const rows = await db.$queryRaw<{ itemName: string; outletCode: string; avgQty: number; avgNominal: number }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; avgQty: number; avgNominal: number }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       AVG(ABS(${qtyRef})) as "avgQty",
       AVG(ABS(${nomRef})) as "avgNominal"
@@ -424,7 +427,7 @@ export async function queryHistoricalCategoryAvg(
       AND ${qtyRef} IS NOT NULL AND ${qtyRef} != 0
       ${f}
     GROUP BY i.name, o.code
-  `;
+  `);
   const map = new Map<string, { avgQty: number; avgNominal: number }>();
   for (const r of rows) {
     map.set(`${r.itemName}|${r.outletCode}`, {
@@ -453,7 +456,8 @@ export async function queryItemConsistency(
   consistency: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED';
 }>> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
     itemName: string;
     outletCount: number;
     lossOutlets: number;
@@ -488,7 +492,7 @@ export async function queryItemConsistency(
       END as consistency
     FROM item_outlets
     ORDER BY "totalAbsNominal" DESC
-  `;
+  `);
   return rows;
 }
 

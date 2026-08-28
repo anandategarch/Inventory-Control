@@ -195,6 +195,18 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     dataType: 'number',
     defaultValue: '10',
   },
+  // FIX (AUDIT8-ROLLBACK-1, Item 15): TOP_N_DEVIASI_RANK was hardcoded to 30
+  // in outlet-items/route.ts. Adding as a Settings-configurable value so the
+  // RankingNasionalCard row count can be tuned without a code change. Default
+  // 30 matches the previous hardcoded value.
+  {
+    key: 'TOP_N_DEVIASI_RANK',
+    label: 'Jumlah Item di Top Deviasi Rank (per Outlet)',
+    description: 'Jumlah item yang ditampilkan di RankingNasionalCard untuk setiap outlet (top items by |nominalDeviasi|). Default 30.',
+    category: 'GENERAL',
+    dataType: 'number',
+    defaultValue: '30',
+  },
   {
     key: 'HIGH_LOSS_NOMINAL_THRESHOLD',
     label: 'Threshold Nominal Loss Tinggi (IDR) — P1',
@@ -476,6 +488,8 @@ export interface RuntimeThresholds {
   WEIGHT_HISTORY: number;
   TOP_N_ITEMS: number;
   TOP_N_OUTLETS: number;
+  // FIX (AUDIT8-ROLLBACK-1, Item 15): configurable via Settings (was hardcoded 30).
+  TOP_N_DEVIASI_RANK: number;
   HIGH_LOSS_NOMINAL_THRESHOLD: number;
   P2_NOMINAL_THRESHOLD: number;
   HEALTH_WEIGHT_DEV_BOM: number;
@@ -526,6 +540,9 @@ export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
     WEIGHT_HISTORY: num('WEIGHT_HISTORY', 10),
     TOP_N_ITEMS: num('TOP_N_ITEMS', 10),
     TOP_N_OUTLETS: num('TOP_N_OUTLETS', 10),
+    // FIX (AUDIT8-ROLLBACK-1, Item 15): read from Settings (fallback 30 matches
+    // the previous hardcoded value in outlet-items/route.ts).
+    TOP_N_DEVIASI_RANK: num('TOP_N_DEVIASI_RANK', 30),
     HIGH_LOSS_NOMINAL_THRESHOLD: num('HIGH_LOSS_NOMINAL_THRESHOLD', 50_000_000),
     P2_NOMINAL_THRESHOLD: num('P2_NOMINAL_THRESHOLD', 10_000_000),
     HEALTH_WEIGHT_DEV_BOM: num('HEALTH_WEIGHT_DEV_BOM', 30),

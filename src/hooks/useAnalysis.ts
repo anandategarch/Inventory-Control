@@ -510,6 +510,9 @@ export interface SourceFileInfo {
 
 export interface StatusData {
   success: boolean;
+  // FIX (AUDIT8-ROLLBACK-1, Item 12): backend EMPTY_STATE returns setupRequired:true
+  // when DB tables are not yet created — frontend uses this to redirect to /setup.
+  setupRequired?: boolean;
   files: SourceFileInfo[];
   months: Array<{ label: string; key: string }>;
   weeksByMonth: Record<string, string[]>;

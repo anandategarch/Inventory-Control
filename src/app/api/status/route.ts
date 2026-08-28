@@ -18,7 +18,13 @@ export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 // so that other routes (/api/data, /api/pic) can clear it after mutations.
 
 const EMPTY_STATE = {
-  success: true,
+  // FIX (AUDIT8-ROLLBACK-1, Item 12): EMPTY_STATE must NOT report success:true.
+  // Frontend uses success:false + setupRequired:true to distinguish "DB tables
+  // not created yet" (redirect to /api/setup) from "DB exists, no uploads yet"
+  // (show empty dashboard). Returning success:true here caused the dashboard to
+  // render with no setup redirect.
+  success: false,
+  setupRequired: true,
   files: [],
   months: [],
   weeksByMonth: {},

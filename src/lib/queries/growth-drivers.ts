@@ -22,8 +22,7 @@
 //    - bom / qtyDeviasi:       |delta| >= 0.01
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { buildSqlFilters, computePareto8020, type SqlFilterOpts } from './shared';
+import { buildSqlFilters, computePareto8020, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 export interface DriverEntry {
   item: string;
@@ -111,7 +110,9 @@ async function aggregateMetric(
     : Prisma.sql`SELECT NULL::text as name, 0::float as val WHERE 1=0`;
 
   // FULL OUTER JOIN — combine curr + prev per group name
-  const rows = await db.$queryRaw<Array<{ name: string; curr: number | bigint | null; prev: number | bigint | null }>>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+  // (FULL OUTER JOIN on 2 CTEs over InventoryRecord — can be slow on large tables).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ name: string; curr: number | bigint | null; prev: number | bigint | null }>>`
     WITH curr_agg AS (${currCte}),
          prev_agg AS (${prevCte})
     SELECT
@@ -120,7 +121,7 @@ async function aggregateMetric(
       COALESCE(p.val, 0) as prev
     FROM curr_agg c
     FULL OUTER JOIN prev_agg p ON c.name = p.name
-  `;
+  `);
 
   const map = new Map<string, { curr: number; prev: number }>();
   for (const r of rows) {

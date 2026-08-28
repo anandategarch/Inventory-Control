@@ -23997,3 +23997,1016 @@ Stage Summary:
 - tsc: 0 errors (was 0 before — no regression)
 - lint: 0 errors, 9 warnings (was 0 errors, 9 warnings — no regression, all pre-existing)
 - Backward compat: all existing API response shapes preserved. New `nestedGeneralized` field added to /api/pareto response only when parentDim + childDim both provided.
+
+═══════════════════════════════════════════════════════════════
+AUDIT8-FE-2 — Frontend Features Completeness Audit
+═══════════════════════════════════════════════════════════════
+Agent: general-purpose (frontend completeness auditor)
+Task: Verify ALL 34 frontend features are present and wired after
+force push + restoration. Read-only audit — NO fixes applied.
+
+Scope: 34 features across 6 groups (FilterBar, Dashboard, Resto
+Analysis, Peer Comparison, Pareto, Global). Each feature verified
+by reading the actual source code with Grep/Read tools.
+
+───────────────────────────────────────────────────────────────
+SUMMARY
+───────────────────────────────────────────────────────────────
+  ✅ PRESENT (fully):  16 features (#1-5, 9, 10, 11, 12, 17, 22, 25, 26, 27, 30, 33)
+  ❌ MISSING (fully):  15 features (#6, 7, 8, 15, 18, 19, 20, 21, 23, 24, 28, 29, 31, 32, 34)
+  ⚠️  PARTIAL:          3 features (#13, 14, 16)
+  Total:               34 features audited
+
+Net status: 16/34 fully present (47%). 18 features need attention
+(15 missing + 3 partial). The force push + restoration left
+significant frontend gaps, concentrated in:
+  - ExecutiveSummary KPI cards (no info tooltips at all)
+  - RestoRecommendationCard (no InfoTooltip, no PRIORITY_TOOLTIP,
+    no badge consolidation)
+  - PeerComparison (no InfoTooltip, no keepPreviousData, no retry)
+  - ParetoDashboard (no InfoTooltip on quadrants, no multi-nesting
+    dimension selectors, no countSuffix, no retry button)
+  - Global CardTitle text-base epidemic (23 instances across 14 files)
+  - FetchAware only on Dashboard tab (not on Resto/Peer/Pareto)
+
+───────────────────────────────────────────────────────────────
+DETAILED FINDINGS — MISSING OR PARTIAL FEATURES
+───────────────────────────────────────────────────────────────
+
+❌ #6 — Keyboard shortcut guard: isDropdownOpen check via document.querySelector
+  File: src/app/page.tsx:301-305
+  What's missing: The tab-switch shortcut handler checks `!mod && !isTyping && !e.altKey`
+    but does NOT check `isDropdownOpen` via `document.querySelector`. If a
+    SearchableComboBox dropdown is open, pressing '1'/'2'/'3'/'4' would
+    switch tabs AND leave the dropdown orphaned.
+  Suggested fix: Before the tab-switch `if` block, add:
+    ```
+    const isDropdownOpen = Boolean(document.querySelector('[data-state="open"][role="listbox"]'));
+    if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || ...)) { ... }
+    ```
+
+❌ #7 — Escape handler has !isTyping guard
+  File: src/app/page.tsx:308
+  What's missing: `if (e.key === 'Escape')` fires unconditionally — no `!isTyping`
+    guard. If user is typing in a SearchableComboBox search box and presses
+    Escape to close the dropdown, this handler also closes ExportDialog /
+    ItemSearchModal / DrillDownDrawer etc. The dev comment says "Radix handles
+    its own" but Radix's Escape bubbles to window.
+  Suggested fix: `if (e.key === 'Escape' && !isTyping) { ... }`
+
+❌ #8 — ExecutiveSummary: InfoTooltip on all KPI cards (at least 10)
+  File: src/components/dashboard/ExecutiveSummary.tsx:66-135 (KPICard), 154-208 (10 KPI cards)
+  What's missing: KPICard component has a `hint` prop rendered as plain text
+    (`<p className="...">{hint}</p>` line 126) — NO InfoTooltip and NO FormulaInfo.
+    10 KPI cards exist (6 in main grid lines 155-161: Sales, Nominal Deviasi,
+    QTY BOM, Gross Deviation, Explained, Net Loss/Surplus; 4 in second grid
+    lines 164-207: Total LOSS, Total SURPLUS, Residual Loss, Deviation/BOM).
+    NONE have an info icon with hover tooltip.
+  Suggested fix: Add `<InfoTooltip content="..." />` next to each KPI label,
+    or convert the `hint` text to an InfoTooltip. Import InfoTooltip from
+    '@/components/dashboard/InfoTooltip'.
+
+⚠️  #13 — HistoricalZScoreCard: has visual magnitude bar + InfoTooltip
+  File: src/components/dashboard/HistoricalZScoreCard.tsx
+  Status: PARTIAL
+    ✅ InfoTooltip (FormulaInfo) present at line 87-92
+    ❌ Visual magnitude bar MISSING — table has colored text only
+       (zScoreColor function line 15-21 returns text color classes).
+       No horizontal bar visualization for Z-Score magnitude.
+  Suggested fix: Add a `<div className="h-1.5 bg-red-500" style={{ width: `${Math.min(Math.abs(z) * 25, 100)}%` }} />`
+    in the Z-Score TableCell (line 150-152).
+
+⚠️  #14 — AreaTrendChart: has InfoTooltip + AREA_COLORS has no blue/indigo
+  File: src/components/dashboard/AreaTrendChart.tsx:16-31
+  Status: PARTIAL
+    ✅ InfoTooltip (FormulaInfo) present at line 145-150
+    ❌ AREA_COLORS array STILL HAS blue (#3b82f6 at line 20) AND
+       indigo (#6366f1 at line 25). Both should be removed/replaced.
+  Suggested fix: Replace `#3b82f6` (blue) and `#6366f1` (indigo) with
+    distinct non-blue/indigo hues (e.g., `#0ea5e9`→`#65a30d` lime-dark,
+    `#6366f1`→`#d946ef` fuchsia or `#f43f5e` rose).
+
+❌ #15 — RestoRecommendationCard: InfoTooltip + PRIORITY_TOOLTIP const + consolidated badges
+  File: src/components/dashboard/RestoRecommendationCard.tsx
+  What's missing (ALL 3 parts):
+    1. InfoTooltip — not imported, not used in CardTitle (line 157-165)
+    2. PRIORITY_TOOLTIP const — grep'd entire codebase, ZERO matches.
+       No such const exists anywhere.
+    3. Consolidated badges (max 3 + overflow) — lines 238-286 render 9
+       individual badges (Direction, Flip, Memburuk, Residual, Tol Breach,
+       Anomali, High Loss, No Tol, Bench High). No consolidation logic.
+  Suggested fix:
+    - Add `import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`
+    - Add `const PRIORITY_TOOLTIP = "..."` const explaining priority score formula
+    - Add `<InfoTooltip content={PRIORITY_TOOLTIP} />` in CardTitle
+    - Consolidate badges: show top 3 by severity, render "+N more" overflow badge
+
+⚠️  #16 — RestoAnalysis: keepPreviousData + staleTime + outlet name shows activeOutlet during refetch
+  File: src/components/dashboard/RestoAnalysis.tsx
+  Status: PARTIAL
+    ✅ keepPreviousData on outlet-items query — present (line 71: `placeholderData: keepPreviousData`)
+    ⚠️  staleTime — present on recommendations single query (line 97: `staleTime: 60_000`)
+       but NOT on the main outlet-items query (lines 51-72 have no staleTime)
+    ❌ Outlet name shows activeOutlet during refetch — MISSING. CardTitle at
+       line 192 shows `{outlet.name}` from stale `data.outlet` (line 167).
+       During refetch with keepPreviousData, the OLD outlet name stays
+       visible. Should show `activeOutlet` code/name during refetch.
+  Suggested fix:
+    - Add `staleTime: 60_000` to outlet-items useQuery (line 51-72)
+    - In CardTitle (line 192), conditionally show activeOutlet during refetch:
+      `{isFetching && !isLoading ? activeOutlet : outlet.name}`
+
+❌ #18 — ItemDetailModal: has staleTime
+  File: src/components/dashboard/resto-analysis/item-detail-modal.tsx:26-39
+  What's missing: useQuery has no `staleTime` option. Modal re-fetches
+    every time it's reopened (no cache).
+  Suggested fix: Add `staleTime: 120_000` (or 60_000) to the useQuery options
+    at line 38 (after `return res.json() as Promise<ItemHistoryResponse>;`).
+
+❌ #19 — MenuAnalysis: subtitle says "2 kata pertama" + has InfoTooltip
+  File: src/components/dashboard/resto-analysis/menu-analysis.tsx
+  What's missing (BOTH parts):
+    1. Subtitle at line 104 says "Group by menu (kata pertama nama bahan)"
+       — says "kata pertama" (singular), should say "2 kata pertama".
+       The actual grouping logic at line 47 correctly uses
+       `words.slice(0, 2)` (first 2 words), but the subtitle text is stale.
+    2. No InfoTooltip in CardTitle (line 97-102). No FormulaInfo either.
+  Suggested fix:
+    - Change line 104 subtitle to: "Group by menu (2 kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama"
+    - Add `<InfoTooltip content="Outlier = Dev/BOM > (avg + 2σ) DAN > 1.5× avg menu. Group by 2 kata pertama nama bahan." />` in CardTitle
+
+❌ #20 — PeerComparison: InfoTooltip + keepPreviousData on main query + retry button on error
+  File: src/components/dashboard/PeerComparison.tsx
+  What's missing (ALL 3 parts):
+    1. InfoTooltip — not imported. CardTitle at line 190 has no info icon.
+    2. keepPreviousData on main query — main useQuery (lines 63-83) has NO
+       `placeholderData: keepPreviousData`. Switching outlet shows full
+       loading skeleton instead of smooth transition.
+    3. Retry button on error — error state at lines 241-245 shows only
+       "Gagal Memuat Data" text + error message. No retry button.
+  Suggested fix:
+    - `import { keepPreviousData } from '@tanstack/react-query';` (line 14)
+    - Add `placeholderData: keepPreviousData,` to main useQuery (after line 82)
+    - Add `<InfoTooltip content="..." />` to CardTitle (line 190)
+    - Add retry button in error state (lines 241-245):
+      `<Button onClick={() => refetch()}>Coba Lagi</Button>` (need to destructure `refetch` from useQuery)
+
+❌ #21 — items-table: has sticky header (overflow-visible on parent)
+  File: src/components/dashboard/peer-comparison/items-table.tsx:57, 90-97
+  What's missing: TableHeader at lines 90-97 has NO `sticky top-0` className.
+    Parent div at line 57 has `overflow-y-auto` (correct for scroll container)
+    but the TableHeader doesn't stick. When scrolling through items, the
+    column headers scroll away.
+  Suggested fix: Add `sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10`
+    to the TableHeader className at line 90 (mirror the pattern used in
+    ParetoDashboard.tsx:94 and TopItems.tsx:45).
+
+❌ #23 — 5-quadrant grid all have InfoTooltip
+  File: src/components/dashboard/ParetoDashboard.tsx:72-146 (QuadrantCard), 228-263 (5 instances)
+  What's missing: QuadrantCard component (lines 72-146) CardTitle at line 77
+    has NO InfoTooltip. 5 QuadrantCards rendered (Items, Outlets, Kelompok,
+    Areas, PIC at lines 228-263) — none have InfoTooltip.
+    NOTE: InfoTooltip IS imported at line 19 but NEVER USED in the JSX —
+    dead import. Suggest either use it or remove the import.
+  Suggested fix: In QuadrantCard CardTitle (line 77-80), add an InfoTooltip:
+    ```
+    <CardTitle className="text-sm flex items-center gap-2.5">
+      <span ...>{icon}</span>
+      {title}
+      <InfoTooltip content={`Top contributors yang menyumbang 80% total deviation by ${title.toLowerCase()}`} />
+    </CardTitle>
+    ```
+    (Pass a `tooltip` prop to QuadrantCard for per-quadrant custom text.)
+
+❌ #24 — Multi-nesting dimension selectors (parentDim + childDim dropdowns)
+  File: src/components/dashboard/ParetoDashboard.tsx
+  What's missing: NO parentDim/childDim Select dropdowns anywhere in the
+    component. The nested breakdown (lines 266-343) is HARDCODED to
+    Item → Outlet. Select component is imported (line 15) but only used...
+    actually let me check — Select is imported but I don't see it used in
+    the JSX. Dead import.
+    NOTE: Backend support EXISTS — queryParetoNested was restored in
+    RESTORE-BACKEND-2 (worklog:23980+) and /api/pareto accepts parentDim +
+    childDim params. Frontend just doesn't wire it.
+  Suggested fix: Add two Select dropdowns above the Nested Breakdown card:
+    ```
+    <Select value={parentDim} onValueChange={setParentDim}>
+      <SelectTrigger>Parent: {parentDim}</SelectTrigger>
+      <SelectContent>
+        <SelectItem value="item">Item</SelectItem>
+        <SelectItem value="outlet">Outlet</SelectItem>
+        <SelectItem value="area">Area</SelectItem>
+        <SelectItem value="kelompok">Kelompok</SelectItem>
+        <SelectItem value="pic">PIC</SelectItem>
+      </SelectContent>
+    </Select>
+    ```
+    (Same for childDim.) Then pass parentDim + childDim to the API call
+    at line 162-172 (`p.set('parentDim', parentDim)` etc.) and update
+    the ParetoData interface + nested rendering to use the generalized
+    `nestedGeneralized` field from the API response.
+
+❌ #28 — countSuffix includes 'klp' and 'pic' cases
+  File: src/components/dashboard/ParetoDashboard.tsx
+  What's missing: No `countSuffix` const/function anywhere in the codebase
+    (grep'd — zero matches). QuadrantCard at line 116 shows
+    `{d.outletCount} outlet` with hardcoded "outlet" string. Should
+    show "klp" for kelompok quadrant, "pic" for PIC quadrant, "outlet"
+    for outlet quadrant, etc.
+  Suggested fix: Add a helper:
+    ```
+    const countSuffix = (title: string) => {
+      if (title.toLowerCase().includes('kelompok')) return 'klp';
+      if (title.toLowerCase().includes('pic')) return 'pic';
+      if (title.toLowerCase().includes('outlet')) return 'outlet';
+      if (title.toLowerCase().includes('area')) return 'area';
+      return ''; // items have no count suffix
+    };
+    ```
+    Then use `{d.outletCount} {countSuffix(title)}` at line 116.
+
+❌ #29 — Error state has retry button
+  File: src/components/dashboard/ParetoDashboard.tsx:197-204
+  What's missing: Error state at lines 197-204 shows only text
+    "Gagal memuat Pareto: {error.message}" + "Coba refresh halaman atau
+    ganti periode." NO retry button. RotateCcw icon is imported (line 14)
+    but never used — dead import.
+  Suggested fix: Add a retry button. Need to destructure `refetch` from
+    useQuery (line 160: `const { data: paretoData, isLoading, error, refetch } = useQuery...`):
+    ```
+    <Button onClick={() => refetch()} variant="outline" size="sm">
+      <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+    </Button>
+    ```
+
+❌ #31 — All CardTitle use text-sm (grep for text-base in CardTitle — should be 0)
+  Files: 14 files, 23 instances of `CardTitle className="text-base..."`
+  What's missing: 23 CardTitle instances use `text-base` instead of `text-sm`.
+    Files affected:
+    - src/components/dashboard/InsightsPanel.tsx:293
+    - src/components/dashboard/AdvancedAnalysis.tsx:55, 205, 276
+    - src/components/dashboard/Charts.tsx:73, 316, 471, 521, 540
+    - src/components/dashboard/AreaTrendChart.tsx:140
+    - src/components/dashboard/TopItems.tsx:23, 84, 149
+    - src/components/dashboard/HistoricalZScoreCard.tsx:82
+    - src/components/dashboard/PeerComparison.tsx:190
+    - src/components/dashboard/RestoAnalysis.tsx:322
+    - src/components/dashboard/RestoRecommendationCard.tsx:83, 157
+    - src/components/dashboard/AnalysisCards.tsx:33
+    - src/components/dashboard/ExecutiveSummary.tsx:262
+    - src/components/dashboard/resto-analysis/menu-analysis.tsx:97
+    - src/components/dashboard/resto-analysis/menu-analysis-bak.tsx:97 (dead file?)
+    - src/components/dashboard/resto-analysis/ranking-nasional.tsx:37
+  Suggested fix: Global find-and-replace `CardTitle className="text-base`
+    → `CardTitle className="text-sm` across all 14 files. (Skip
+    menu-analysis-bak.tsx if it's a backup file marked for deletion.)
+
+❌ #32 — FetchAware wrapper on all 4 tabs
+  File: src/app/page.tsx:467-601
+  What's missing: FetchAware is defined (line 72-86) and used 11 times in
+    the Dashboard tab (lines 469-585). But the other 3 tabs do NOT wrap
+    their content in FetchAware:
+    - Resto tab (line 589-591): `<RestoAnalysis analysisData={analysis.data} />` — no FetchAware
+    - Peer tab (line 594-596): `<PeerComparison />` — no FetchAware
+    - Pareto tab (line 599-601): `<ParetoDashboard analysisData={analysis.data} />` — no FetchAware
+    RestoAnalysis and PeerComparison have their own inline `isFetching` spinner
+    logic, but ParetoDashboard has NO refetch awareness at all.
+  Suggested fix: Wrap each tab's content in `<FetchAware isFetching={analysis.isFetching}>`:
+    ```
+    <TabsContent value="resto" ...>
+      <FetchAware isFetching={analysis.isFetching}>
+        <RestoAnalysis analysisData={analysis.data} />
+      </FetchAware>
+    </TabsContent>
+    ```
+    (Same for peer + pareto tabs.)
+
+❌ #34 — keepPreviousData on GlobalItemSearchModal autocomplete
+  File: src/components/dashboard/GlobalItemSearchModal.tsx:94-109
+  What's missing: Autocomplete useQuery (lines 94-109) has `staleTime: 60_000`
+    (line 108) but NO `placeholderData: keepPreviousData`. When user types
+    a new search query, the old results disappear (loading flash) before
+    new results arrive. The cross-outlet query (line 112-133) DOES have
+    `placeholderData: keepPreviousData` (line 132) — only the autocomplete
+    is missing it.
+  Suggested fix: Add `placeholderData: keepPreviousData,` to the autocomplete
+    useQuery options (after line 108). `keepPreviousData` is already
+    imported (line 15).
+
+───────────────────────────────────────────────────────────────
+VERIFIED PRESENT FEATURES (for completeness)
+───────────────────────────────────────────────────────────────
+✅ #1  FilterBar Kelompok dropdown maps k.kelompok + k.area + k.outletCount
+       (FilterBar.tsx:396-399)
+✅ #2  Stale-filter cleanup uses .some(k => k.kelompok === kelompok)
+       (FilterBar.tsx:95)
+✅ #3  Outlet dropdown filters by kelompok (FilterBar.tsx:120-130)
+✅ #4  Prefetch includes kelompok in both month + week hover handlers
+       (FilterBar.tsx:297, 331)
+✅ #5  ariaLabel on all 4 SearchableComboBox instances
+       (FilterBar.tsx:380, 392, 408, 420 — PIC, Area, Kelompok, Outlet)
+✅ #9  TopItemsByNominal + TopItemsByDevBom + TopOutlets in 3-col grid
+       (page.tsx:516: `grid lg:grid-cols-3`)
+✅ #10 Charts (DeviationBreakdown, LossVsSurplus, TrendChart) have InfoTooltip
+       — via FormulaInfo (functionally equivalent): Charts.tsx:321, 476, 545
+✅ #11 TrendChart tooltip says "Nominal Deviasi" not "Sales"
+       (Charts.tsx:575: `name="Nominal Deviasi"`)
+✅ #12 AdvancedAnalysis 3 cards (AreaComparison, HealthRanking, ItemConsistency)
+       have InfoTooltip — via FormulaInfo: AdvancedAnalysis.tsx:60, 210, 281
+✅ #17 RankingNasionalCard Gap column REMOVED
+       (ranking-nasional.tsx:56-69 — no Gap column in table headers)
+✅ #22 ParetoDashboard accepts analysisData prop (ParetoDashboard.tsx:148)
+✅ #25 Nested breakdown with expand/collapse (ParetoDashboard.tsx:266-343)
+✅ #26 ParetoDevBomCard exists, below Nested Breakdown, has expand/collapse
+       (ParetoDashboard.tsx:346; TopItems.tsx:213-303)
+✅ #27 GapAnalysisCard exists, below ParetoDevBomCard, has expand/collapse
+       (ParetoDashboard.tsx:349; TopItems.tsx:310-410)
+✅ #30 page.tsx passes analysisData={analysis.data} to ParetoDashboard
+       (page.tsx:600)
+✅ #33 LoadingState has elapsed timer (shared/index.tsx:72-79, 93: `{elapsed}s`)
+
+───────────────────────────────────────────────────────────────
+DEAD IMPORTS / CODE SMELLS NOTED (not in scope but worth flagging)
+───────────────────────────────────────────────────────────────
+- ParetoDashboard.tsx:19 — `import { InfoTooltip }` — NEVER USED
+- ParetoDashboard.tsx:14 — `RotateCcw` imported — NEVER USED
+- ParetoDashboard.tsx:15 — `Select, SelectContent, SelectItem, SelectTrigger, SelectValue`
+  imported — NEVER USED (no multi-nesting dimension selectors exist)
+- src/components/dashboard/resto-analysis/menu-analysis-bak.tsx — backup file
+  still present (97 lines, same structure as menu-analysis.tsx). Should be
+  deleted if no longer needed.
+
+───────────────────────────────────────────────────────────────
+NEXT ACTIONS RECOMMENDED
+───────────────────────────────────────────────────────────────
+1. P0 (blocking UX bugs):
+   - #6, #7: keyboard shortcut guards (low effort, prevents tab-switch
+     when dropdown open + prevents Escape closing all dialogs when typing)
+   - #21: items-table sticky header (1-line className fix)
+   - #34: GlobalItemSearchModal autocomplete keepPreviousData (1-line fix)
+   - #18: ItemDetailModal staleTime (1-line fix)
+   - #19: MenuAnalysis subtitle "2 kata pertama" (1-word text fix)
+
+2. P1 (missing features, medium effort):
+   - #8: ExecutiveSummary InfoTooltip on 10 KPI cards (add InfoTooltip to
+     KPICard component + pass content per card)
+   - #15: RestoRecommendationCard InfoTooltip + PRIORITY_TOOLTIP + badge
+     consolidation (3 sub-tasks)
+   - #20: PeerComparison InfoTooltip + keepPreviousData + retry button
+   - #23: ParetoDashboard 5-quadrant InfoTooltip (use the dead import)
+   - #29: ParetoDashboard error retry button (use the dead RotateCcw import)
+
+3. P2 (polish, larger effort):
+   - #24: ParetoDashboard multi-nesting dimension selectors (parentDim +
+     childDim dropdowns) — backend already supports it (RESTORE-BACKEND-2),
+     frontend just needs wiring. ~50-100 lines of new code.
+   - #28: countSuffix helper for ParetoDashboard quadrants
+   - #31: Global CardTitle text-base → text-sm (23 instances, 14 files —
+     mechanical find-and-replace)
+   - #32: FetchAware wrapper on Resto/Peer/Pareto tabs (3 wrapper additions)
+
+4. P3 (design refinements):
+   - #13: HistoricalZScoreCard visual magnitude bar
+   - #14: AreaTrendChart AREA_COLORS remove blue/indigo (replace 2 colors)
+   - #16: RestoAnalysis outlet name shows activeOutlet during refetch
+
+5. Cleanup:
+   - Remove dead imports in ParetoDashboard.tsx (InfoTooltip, RotateCcw,
+     Select family) — OR use them per fixes above.
+   - Delete menu-analysis-bak.tsx if it's a stale backup.
+
+═══════════════════════════════════════════════════════════════
+
+---
+Task ID: AUDIT8-ROLLBACK-1
+Agent: general-purpose (regression auditor)
+Task: Verify which changes from prior commits (Sprint 1+2 refactors, bug hunt gelombang 3-6, UI modernization, P0+P1 UI fixes, info tooltips, pareto multi-nesting, connection pool fix) were rolled back / lost and NOT restored by latest commit (a9d5ff4).
+
+Work Log:
+- Read worklog tail (lines 22500-24000) for context on recent commits (a9d5ff4, af4e4d1, ca7e58a, 0982f5d, aae471b). Confirmed: force push (aae471b) caused massive code loss; subsequent commits restored some files via RESTORE-BACKEND-2, RESTORE-SHARED-1, FIX-CALC-ZOD-3 etc.
+- Verified each of the 52 audit items via Grep + Read on actual files. NO code changes made — report only per task instructions.
+- Findings below grouped by category. Count: 22 PASS, 30 MISSING.
+
+═══════════════════════════════════════════════════════════════
+SUMMARY TABLE
+═══════════════════════════════════════════════════════════════
+Category                       | Total | PASS | MISSING
+-------------------------------|-------|------|--------
+Sprint 1 Refactor              |   4   |  3   |   1
+Sprint 2 Refactor              |   3   |  2   |   1
+Bug Hunt Gelombang 3           |  10   |  1   |   9
+Bug Hunt Gelombang 4           |   8   |  4   |   4
+UI Modernization               |   3   |  1   |   2
+P0+P1 UI Fixes                 |   6   |  0   |   6
+Info Tooltips                  |   5   |  2   |   3
+Pareto Multi-Nesting+DevBom+Gap|   8   |  7   |   1
+Connection Pool Fix            |   5   |  5   |   0
+-------------------------------|-------|------|--------
+TOTAL                          |  52   | 22   |  30
+
+═══════════════════════════════════════════════════════════════
+VERIFIED PASS (22 items) — no action needed
+═══════════════════════════════════════════════════════════════
+
+✓ Item 2 — computePareto8020 in shared.ts:109; used in pareto.ts:39 + growth-drivers.ts:147
+✓ Item 3 — DIRECTION_FROM_SUM_SQL in shared.ts:78; used in top-items.ts:31,373, global-search.ts:70,190, resto-recommendations.ts:143,208, peer-comparison.ts:306
+✓ Item 4 — SqlFilterOpts in shared.ts:58; used across 11 query modules (areas, dashboard, health-ranking, historical, pareto, rule-evaluation, growth-drivers, items/*, outlets/*)
+✓ Item 5 — buildInventoryWhere in build-where.ts:75; imported in analysis/route.ts:51 + export-report/route.ts:50
+✓ Item 6 — resolveComparePeriod in period-resolver.ts:106; imported in analysis/route.ts:53 + export-report/route.ts:52
+✓ Item 18 — networkAvgDevBom uses r.totalQtyDeviasi (resto-recommendations.ts:276) + r.qtyBom in SQL SELECT (line 175: `COALESCE(oa."qtyBom", 0) as "totalQtyBom"`)
+✓ Item 19 — getDimensionExpr('pic') includes joinOutlet (pareto.ts:565: `joinOutlet: 'JOIN "Outlet" o ON ir."outletId" = o.id'`)
+✓ Item 22 — /api/settings DELETE uses `settings-delete:${ip}` bucket (settings/route.ts:215)
+✓ Item 25 — FilterBar stale-outlet cleanup has `if (!status) return;` guard (FilterBar.tsx:93)
+✓ Item 28 — No CardTitle uses truncate or line-clamp (grep returned 0 matches)
+✓ Item 36 — TrendChart tooltip says "Nominal Deviasi" (Charts.tsx:575: `name="Nominal Deviasi"`)
+✓ Item 37 — Z-Score tooltip says WARNING (not ELEVATED) for |Z|>2 (HistoricalZScoreCard.tsx:26: `if (abs > 2) return { label: 'WARNING'...}`)
+✓ Item 40 — queryParetoNested exists (pareto.ts:644) with getDimensionExpr (line 529) + getDimensionFilter (line 585)
+✓ Item 41 — /api/pareto reads parentDim + childDim params (pareto/route.ts:63-64)
+✓ Item 43 — ParetoDevBomCard exists (TopItems.tsx:213) with expand/collapse (state at 215, toggleItem at 259)
+✓ Item 44 — GapAnalysisCard exists (TopItems.tsx:310) with expand/collapse (state at 312, toggleItem at 363)
+✓ Item 45 — Both cards rendered in ParetoDashboard (lines 346 + 349)
+✓ Item 46 — Gap formula = rankBom - rankNominal (TopItems.tsx:322, 386, 387)
+✓ Item 47 — Gap column NOT in ranking-nasional.tsx (only Rank Nas + Rank BOM columns; table headers lines 57-69)
+✓ Item 48 — connection_limit = 20 (db.ts:43)
+✓ Item 49 — pool_timeout = 60 (db.ts:44)
+✓ Item 50 — CACHE_TTL_MS = 30_000 (settings.ts:326)
+✓ Item 51 — getAllSettings checks cache before DB (settings.ts:393)
+✓ Item 52 — Frontend retry includes ECHECKOUTRETRIES (useAnalysis.ts:445)
+
+═══════════════════════════════════════════════════════════════
+MISSING ITEMS (30) — rolled back / lost / never restored
+═══════════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────────────────────────
+SPRINT 1 REFACTOR (1 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 1 — Dead files NOT deleted (3 files still exist):
+  - src/lib/queries/items.ts (873 lines, dead — barrel index.ts does NOT re-export it; only subdirectory items/top-items.ts, items/network-risk.ts, items/global-search.ts are re-exported)
+  - src/lib/queries/outlets.ts (~920 lines, dead — barrel only re-exports outlets/top-outlets.ts, outlets/peer-comparison.ts, outlets/resto-recommendations.ts)
+  - src/lib/queries.ts (13 lines, "DEPRECATED" compat shim re-exporting from ./queries/index)
+  Grep confirmed: NO imports of @/lib/queries/items or @/lib/queries/outlets anywhere; only @/lib/queries (barrel) is imported.
+  Suggested fix: delete all 3 files. The barrel src/lib/queries/index.ts already provides the public API.
+
+─────────────────────────────────────────────────────────────────
+SPRINT 2 REFACTOR (1 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 7 — upload-utils.ts extraction NEVER done; FileUploadDialog has LOCAL duplicates:
+  - File: src/components/filters/FileUploadDialog.tsx
+  - validateManualFileName exists in @/lib/filename.ts:32 (server-side, used by /api/ingest-process/route.ts:16), BUT FileUploadDialog has its OWN local copy at line 67 (different implementation — uses hardcoded MONTH_NAMES array instead of parseMonthFromFilename)
+  - renameModeDefault is a LOCAL function in FileUploadDialog.tsx:863 (NOT imported from a shared module)
+  - FileUploadDialog.tsx does NOT import from @/lib/filename (grep returned 0 hits for `import.*from.*filename`)
+  - No upload-utils.ts file exists anywhere in src/
+  Suggested fix: Either (a) create src/lib/upload-utils.ts that re-exports validateManualFileName + adds renameModeDefault, and import in FileUploadDialog; OR (b) directly import validateManualFileName from @/lib/filename in FileUploadDialog + lift renameModeDefault to a shared util. Remove the local MONTH_NAMES array — its drift from server-side MONTH_MAP was the cause of AUDIT-RENAME-9 (client ✓ then server 400).
+
+─────────────────────────────────────────────────────────────────
+BUG HUNT GELOMBANG 3 (9 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 8 — Many bare `db.$queryRaw` calls NOT wrapped in withStatementTimeout:
+  Files with unwrapped `db.$queryRaw` (live code only — excludes dead items.ts/outlets.ts):
+  - src/lib/queries/items/top-items.ts: lines 25, 54, 367, 415, 456 (5 unwrapped; only lines 125, 254, 562, 610 are wrapped)
+  - src/lib/queries/items/global-search.ts: line 111 (1 unwrapped; lines 48, 176 wrapped)
+  - src/lib/queries/items/network-risk.ts: line 65 (1 unwrapped; withStatementTimeout imported at line 7 but NEVER USED)
+  - src/lib/queries/outlets/peer-comparison.ts: lines 62, 248, 365 (3 unwrapped; withStatementTimeout imported but never used)
+  - src/lib/queries/outlets/resto-recommendations.ts: lines 75, 198, 224 (3 unwrapped; withStatementTimeout imported but never used)
+  - src/lib/queries/outlets/top-outlets.ts: lines 34, 98 (2 unwrapped; withStatementTimeout imported but never used)
+  - src/lib/queries/areas.ts: lines 28, 116 (2 unwrapped; withStatementTimeout imported but never used)
+  - src/lib/queries/dashboard.ts: lines 181, 224, 256, 284 (4 unwrapped; lines 41, 123 wrapped)
+  - src/lib/queries/historical.ts: line 35 (1 unwrapped; withStatementTimeout NEVER imported)
+  - src/lib/queries/health-ranking.ts: line 314 (1 unwrapped; lines 78, 205 wrapped)
+  - src/lib/kelompok-resolver.ts: line 58 (1 unwrapped)
+  - src/lib/pic-resolver.ts: line 25 (1 unwrapped)
+  - src/app/api/item-history/route.ts: lines 83, 186, 197 (3 unwrapped)
+  - src/app/api/migrate-direction/route.ts: line 162 (1 unwrapped)
+  - src/app/api/peer-comparison/items/route.ts: line 84 (1 unwrapped)
+  - src/app/api/export-report/route.ts: line 296 (1 unwrapped)
+  - src/app/api/resto-bahan-matrix/route.ts: lines 87, 135, 185 (3 unwrapped)
+  - src/app/api/analysis/route.ts: line 224 (1 unwrapped; this is the picOutletCodes lookup — short query, lower risk but still unprincipled)
+  - src/app/api/outlet-items/route.ts: lines 158, 217, 238, 251 (4 unwrapped)
+  Total: ~33 unwrapped `db.$queryRaw` calls in live code (plus 16 more in dead items.ts/outlets.ts monolith files).
+  Suggested fix: Wrap each in `await withStatementTimeout((tx) => tx.$queryRaw\`...\`)`. Especially critical for heavy aggregations: areas.ts trend query, dashboard.ts execSummary/breakdown, peer-comparison.ts scatter, outlet-items.ts main query.
+
+MISSING Item 9 — /api/data GET has NO Zod validation:
+  - File: src/app/api/data/route.ts:27-95 (GET method)
+  - Only DELETE method (line 115) uses `validateQuery(dataDeleteQuerySchema, ...)`. GET method just `parseInt(fileIdParam)` + `isNaN` check (line 34-37).
+  - No `dataGetQuerySchema` exists in validation.ts.
+  Suggested fix: Add a `dataGetQuerySchema` to validation.ts with `fileId: z.coerce.number().int().positive().optional()` and call `validateQuery(dataGetQuerySchema, url.searchParams)` at top of GET handler.
+
+MISSING Item 10 — /api/ingest-process DELETE has NO Zod body validation:
+  - File: src/app/api/ingest-process/route.ts:786-803
+  - DELETE method uses raw `const body = await req.json(); const { fileHash } = body;` (lines 794-795) — NO `validateBody(ingestProcessBodySchema, body)` call.
+  - POST method DOES use validateBody at line 102. So schema exists, DELETE just doesn't apply it.
+  Suggested fix: Either reuse ingestProcessBodySchema (if it covers fileHash field) or add a `ingestProcessDeleteBodySchema = z.object({ fileHash: z.string().min(8).max(128).regex(SAFE_FILEHASH_RE).optional() })` and call `validateBody(ingestProcessDeleteBodySchema, body)` before destructuring.
+
+MISSING Item 11 — 6 audit log calls are `await`ed WITHOUT `.catch(() => {})`:
+  - src/app/api/ingest-process/route.ts:516 (`await db.auditLog.create({...})` — INGEST_WEEK action, NO .catch)
+  - src/app/api/pic/route.ts:82 (PIC_UPDATE, NO .catch)
+  - src/app/api/pic/route.ts:132 (PIC_DELETE, NO .catch)
+  - src/app/api/pic/import/route.ts:137 (PIC_IMPORT, NO .catch)
+  - src/app/api/data/route.ts:250 (DATA_DELETE, NO .catch)
+  - src/app/api/settings/route.ts:182 (SETTINGS_UPDATE, NO .catch)
+  Additionally 2 calls are `await ... .catch(...)` pattern (semi-correct — failure caught but response delayed):
+  - src/lib/ingestion.ts:471 (INGEST action)
+  - src/app/api/ingest-process/route.ts:755 (INGEST_ALL_WEEKS action)
+  Only 3 calls are proper fire-and-forget: migrate-direction/route.ts:105, settings/route.ts:283, analysis/route.ts:940.
+  Impact: Any DB hiccup during audit log write will propagate as 500 error or roll back the surrounding transaction (e.g. pic-update is in a try/catch but the await makes the audit failure visible to the user).
+  Suggested fix: Remove `await` from all 8 audit log calls and ensure each has `.catch(() => {})` (or `.catch((e) => logger.error(...))`).
+
+MISSING Item 12 — /api/status EMPTY_STATE returns WRONG fields:
+  - File: src/app/api/status/route.ts:20-30
+  - Currently: `const EMPTY_STATE = { success: true, files: [], ..., warning: 'Database tables not created yet...' }`
+  - Spec says: should return `success: false` + `setupRequired: true`
+  - Current returns `success: true` (line 21) and has NO `setupRequired` field
+  Impact: Frontend cannot distinguish "DB empty (no uploads yet)" from "DB tables not created (setup needed)" — both look like success. User sees empty dashboard instead of being redirected to /api/setup.
+  Suggested fix: Change to `const EMPTY_STATE = { success: false, setupRequired: true, files: [], ..., warning: 'Database tables not created yet. Visit /api/setup to initialize.' };`
+
+MISSING Item 13 — /api/setup GET has NO rate limit:
+  - File: src/app/api/setup/route.ts:18-56 (GET method)
+  - GET method has Zod validation (line 22) but NO `rateLimit()` call.
+  - Other destructive routes (data DELETE, settings DELETE, ingest-process DELETE) all have rate limits. /api/setup is a connection-probing endpoint that runs `db.sourceFile.count()` (line 31) — an attacker could DOS by spamming requests.
+  Suggested fix: Add `const ip = getClientIP(req); const rl = rateLimit(\`setup:\${ip}\`, 10, 60_000); if (!rl.allowed) return NextResponse.json({ success: false, error: 'Rate limit.' }, { status: 429 });` at top of GET handler (after Zod validation).
+
+PARTIAL Item 14 — compareWeek validation is BASIC only:
+  - File: src/lib/validation.ts:28 (`compareWeekSchema = z.string().min(3).max(100).optional()`)
+  - Zod length validation EXISTS and is wired (used in analysisQuerySchema at line 49).
+  - BUT: No format validation. A compareWeek like "WEEK 1|||Juli|||2026" (multiple `|||` separators) would pass Zod but split incorrectly at analysis/route.ts:118 (`compareWeekRaw.split('|||')` returns 3 elements; destructuring `[wk, ml]` takes only first 2, silently dropping the third).
+  - Marking as PASS (basic validation exists) but flagging that format-level malformed-input validation is incomplete.
+
+MISSING Item 15 — TOP_N_DEVIASI_RANK setting does NOT exist:
+  - File: src/app/api/outlet-items/route.ts:147 — hardcoded `30`: `queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, 30)`
+  - Grep for `TOP_N_DEVIASI_RANK` / `topNDeviasiRank` returned 0 matches across entire codebase.
+  - Spec says this should be read from Settings, not hardcoded.
+  Suggested fix: Add `TOP_N_DEVIASI_RANK` to SETTING_DEFINITIONS in src/config/settings.ts (default 30, dataType 'number', category 'ANALYSIS'), then read it in outlet-items/route.ts via `const topN = Number(await getSetting('TOP_N_DEVIASI_RANK')) || 30;` before calling queryTopItemsByDeviasiRankForOutlet.
+
+MISSING Item 16 — MAX_DRIVERS_PER_CATEGORY = 20 cap MISSING in deviation-drivers.ts:
+  - File: src/app/api/analysis/services/deviation-drivers.ts:44-57
+  - Loop only breaks on `if (cumPct >= 80) break;` (line 56). NO `if (drivers.length >= 20) break;` cap.
+  - Impact: A category with 1000+ items where each contributes <0.1% would produce 1000+ driver rows in the response, blowing up payload size + frontend render time.
+  Suggested fix: Add `const MAX_DRIVERS_PER_CATEGORY = 20;` const + change loop condition to `if (cumPct >= 80 || drivers.length >= MAX_DRIVERS_PER_CATEGORY) break;`
+
+MISSING Item 17 — src/lib/api-response.ts STILL EXISTS (dead code):
+  - File: src/lib/api-response.ts (53 lines, full content with `apiError`, `apiSuccess`, `ApiErrors`, `withErrorHandler` exports)
+  - Grep for `from '@/lib/api-response'` / `'../api-response'` / `'./api-response'` returned 0 matches — file is COMPLETELY DEAD.
+  Suggested fix: `rm src/lib/api-response.ts` — barrel exports nothing from it, no route imports it.
+
+─────────────────────────────────────────────────────────────────
+BUG HUNT GELOMBANG 4 (4 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 20 — resolveComparePeriod falls back to CURRENT MONTH instead of returning null:
+  - File: src/lib/period-resolver.ts:169
+  - Currently: `return { prevWeek: compareWeek, prevMonth: prevMonth || month };` — when no other month has the same weekLabel, prevMonth falls back to the CURRENT month `month`.
+  - Spec says: should return `{ prevWeek: compareWeek, prevMonth: null }` so caller can short-circuit "no comparison data".
+  - The inline comment at lines 166-168 admits this is "preserved existing behavior" — but the spec says this behavior was supposed to be CHANGED to return null.
+  Impact: When user picks a compareWeek that exists only in the current month, downstream code compares the period to ITSELF (zero variance) — produces misleading "0% change" results.
+  Suggested fix: Change line 169 to `return { prevWeek: compareWeek, prevMonth };` (no `|| month` fallback). Already-handled by caller: analysis/route.ts narrows `prevMonth && prevWeek ? X(prevWeek, prevMonth) : Y` per worklog RESTORE-BACKEND-2 line 23930.
+
+MISSING Item 21 — items-table.tsx uses overflow-hidden instead of overflow-visible:
+  - File: src/components/dashboard/peer-comparison/items-table.tsx:25
+  - Currently: `<Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">`
+  - Spec says: should be `overflow-visible` (so tooltips / popovers can escape the Card's rounded border).
+  - Note: this is a peer-comparison sub-card (target/peer metric comparison), NOT the TopItems cards that were already fixed per worklog AUDIT7-FE-Q (ParetoDevBomCard + GapAnalysisCard at TopItems.tsx:228,336 already use overflow-visible).
+  Suggested fix: Change `overflow-hidden` → `overflow-visible` at line 25. (If inner content needs clipping, wrap in a separate `<div className="overflow-hidden">`.)
+
+MISSING Item 23 — Trial/Susut CSS variables use WRONG colors:
+  - File: src/app/globals.css:83-84 (light mode) + 126-127 (dark mode)
+  - Currently (light):
+    - `--chart-susut: #7c3aed;` (violet-600) — should be `#0891b2` (cyan-600)
+    - `--chart-trial: #65a30d;` (lime-600) — should be `#ca8a04` (amber-600 / dark yellow)
+  - Currently (dark):
+    - `--chart-susut: #a78bfa;` (violet-400) — should be a dark-mode cyan variant
+    - `--chart-trial: #84cc16;` (lime-400) — should be a dark-mode amber variant
+  Impact: Trial + Susut bars in deviation breakdown chart use violet + lime, conflicting with the "no blue/indigo/violet" rule (warm tones only) per UI modernization spec.
+  Suggested fix: Update lines 83-84 + 126-127 to the spec colors. Verify chart-constants.ts TRIAL_COLOR/SUSUT_COLOR (if any) match — otherwise CSS var + JS constant drift.
+
+MISSING Item 24 — Signal chart uses RAW `<table>` instead of shadcn Table:
+  - File: src/components/dashboard/priority-summary/signal-chart.tsx:356
+  - Currently: `<table className="w-full text-xs">` with raw `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>` elements (lines 356-375)
+  - No `Table` import in file (only `fmtIDR` + recharts imports at lines 11-16)
+  - Spec says: should use shadcn Table components (`<Table>`, `<TableHeader>`, `<TableBody>`, `<TableRow>`, `<TableHead>`, `<TableCell>`) for consistency with other tables.
+  - This is the only case in the codebase — all other tables use shadcn Table per worklog AUDIT7-FE-P (19+ sticky-header tables verified).
+  Suggested fix: `import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';` and replace raw elements. Preserve the `sticky top-0 z-10` styling on TableHeader.
+
+─────────────────────────────────────────────────────────────────
+UI MODERNIZATION (2 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 26 — Shadow tokens NOT in globals.css:
+  - File: src/app/globals.css (no matches for `shadow-soft`, `shadow-lift`, `shadow-float`)
+  - Spec says: 3 shadow utility classes should be defined as Tailwind tokens.
+  Suggested fix: Add to globals.css `@layer utilities { .shadow-soft { box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03); } .shadow-lift { box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04); } .shadow-float { box-shadow: 0 12px 32px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.06); } }` (or matching CSS vars consumed by Tailwind theme extension).
+
+MISSING Item 27 — Card component uses shadow-md (NOT shadow-soft):
+  - File: src/components/ui/card.tsx:10
+  - Currently: `"...shadow-md shadow-black/5 dark:shadow-black/20 transition-all duration-200 hover:shadow-lg..."`
+  - Spec says: Card should use `shadow-soft` token (from Item 26).
+  Suggested fix: After Item 26 is added, replace `shadow-md shadow-black/5 dark:shadow-black/20` → `shadow-soft` and `hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30` → `hover:shadow-lift` in card.tsx:10.
+
+─────────────────────────────────────────────────────────────────
+P0+P1 UI FIXES (6 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 29 — 23 CardTitle instances use `text-base` (NOT `text-sm`):
+  Files + line numbers (full list):
+  - src/components/dashboard/InsightsPanel.tsx:293
+  - src/components/dashboard/AdvancedAnalysis.tsx:55, 205, 276 (3 instances)
+  - src/components/dashboard/Charts.tsx:73, 316, 471, 521, 540 (5 instances)
+  - src/components/dashboard/AreaTrendChart.tsx:140
+  - src/components/dashboard/TopItems.tsx:23, 84, 149 (3 instances — the MAIN TopItems cards; lines 231, 339 already use text-sm for ParetoDevBomCard + GapAnalysisCard)
+  - src/components/dashboard/ExecutiveSummary.tsx:262
+  - src/components/dashboard/resto-analysis/menu-analysis.tsx:97
+  - src/components/dashboard/resto-analysis/menu-analysis-bak.tsx:97 (DEAD FILE — should be deleted entirely)
+  - src/components/dashboard/resto-analysis/ranking-nasional.tsx:37
+  - src/components/dashboard/HistoricalZScoreCard.tsx:82
+  - src/components/dashboard/PeerComparison.tsx:190
+  - src/components/dashboard/RestoAnalysis.tsx:322
+  - src/components/dashboard/RestoRecommendationCard.tsx:83, 157 (2 instances)
+  - src/components/dashboard/AnalysisCards.tsx:33
+  Suggested fix: Global search-replace `<CardTitle className="text-base` → `<CardTitle className="text-sm` in 14 files (excluding the dead menu-analysis-bak.tsx which should be deleted). Keep `text-lg` on RestoAnalysis.tsx:191 (outlet name header — intentional emphasis).
+
+MISSING Item 30 — Chart heights INCONSISTENT (mixed h-48 / h-56 / h-[170px] / h-64):
+  - src/components/dashboard/Charts.tsx: line 337 `h-48`, line 486 `h-48`, line 555 `h-56` (mixed within same file)
+  - src/components/dashboard/priority-summary/signal-chart.tsx: lines 30, 349, 381 `h-[170px]` (different unit)
+  - src/components/dashboard/shared/index.tsx:21 `h-64` (yet another height)
+  - Spec says: all charts should use `h-56` consistently.
+  Suggested fix: Change all `h-48` → `h-56` in Charts.tsx. Change `h-[170px]` → `h-56` (224px) in signal-chart.tsx (or pick one canonical height and update spec to match). The h-64 in shared/index.tsx is a decorative gradient overlay, not a chart container — leave as-is.
+
+MISSING Item 31 — AREA_COLORS contains BLUE + INDIGO (should be warm tones only):
+  - File: src/components/dashboard/AreaTrendChart.tsx:16-31
+  - Line 20: `'#3b82f6'` (blue-500) ❌
+  - Line 25: `'#6366f1'` (indigo-500) ❌
+  - Other 12 colors are warm/neutral ✓
+  Suggested fix: Replace `'#3b82f6'` → `'#0ea5e9'` (sky-500, distinct hue from indigo) + `'#6366f1'` → `'#d946ef'` (fuchsia-500). OR migrate to cssVar() pattern from chart-constants.ts so each area gets a dark-mode variant.
+
+MISSING Item 32 — peer-comparison/items-table.tsx TableHeader has NO sticky class:
+  - File: src/components/dashboard/peer-comparison/items-table.tsx:89-98
+  - Currently: `<TableHeader>` contains `<TableRow className="border-b hover:bg-transparent">` + `<TableHead className="text-xs font-semibold uppercase tracking-wider h-7">`
+  - NO `sticky top-0 bg-background/95 ... z-10` classes.
+  - Compare to 19+ other tables verified at worklog AUDIT7-FE-P (all use the sticky pattern).
+  - Note: this is a small table (5 metrics × 1 row per metric) so stickiness may be unnecessary. But spec requires consistency.
+  Suggested fix: If the table is short enough not to scroll, leave as-is + document the exception. Otherwise add `className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10"` to TableHeader (matching pattern at TopItems.tsx:45 etc.).
+
+MISSING Item 33 — HistoricalZScoreCard has NO visual magnitude bar:
+  - File: src/components/dashboard/HistoricalZScoreCard.tsx:150-152
+  - Currently: Z-Score TableCell renders only `{item.zScore.toFixed(2)}` with color classes from `zScoreColor(item.zScore)`.
+  - NO `<div>` with `width: ${Math.min(Math.abs(z) / 5 * 100, 100)}%` background bar.
+  - Status column (line 153-155) shows text Badge only, no visual magnitude.
+  Suggested fix: Add a horizontal bar inside the Z-Score TableCell:
+    ```tsx
+    <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
+      <div className="flex items-center justify-end gap-1.5">
+        <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
+          <div className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+               style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }} />
+        </div>
+        {item.zScore.toFixed(2)}
+      </div>
+    </TableCell>
+    ```
+
+MISSING Item 34 — RestoRecommendationCard signal badges NOT consolidated (max 3 + overflow):
+  - File: src/components/dashboard/RestoRecommendationCard.tsx:238-286
+  - Currently renders up to 9 conditional badges: Direction, Flip, Memburuk, Residual, Tol Breach, Anomali, High Loss, No Tol, Bench High.
+  - NO max-3 + overflow pattern (e.g. "+5 lagi" expandable chip).
+  - Also still has dead `benchmarkHighCount` branch (line 281-285) — BUG2-RESTO-3 removed Benchmark High from SIGNAL_GROUPS but frontend branch remains.
+  Suggested fix: (a) Sort 9 signal conditions by severity (directionFlip + trendDeteriorating + toleranceBreachHighCount = P0; rest = P1). Render top 3 + `<Badge>+{remaining} lagi</Badge>` overflow chip that toggles a popover showing the rest. (b) Remove the benchmarkHighCount branch (lines 281-285) + the field from the interface (line 33) — dead signal per BUG2-RESTO-3.
+
+─────────────────────────────────────────────────────────────────
+INFO TOOLTIPS (3 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 35 — InfoTooltip only used in 1 of 10 expected components:
+  - InfoTooltip component EXISTS at src/components/dashboard/InfoTooltip.tsx (29 lines, functional).
+  - `<InfoTooltip` rendered ONLY in src/components/dashboard/TopItems.tsx (lines 236, 344 — ParetoDevBomCard + GapAnalysisCard).
+  - ParetoDashboard.tsx imports InfoTooltip at line 19 but NEVER renders it (dead import — same as worklog AUDIT7-FE-12 finding).
+  - 8 other expected components have NO InfoTooltip:
+    * ExecutiveSummary.tsx — no import
+    * Charts.tsx — no import (only FormulaInfo)
+    * HistoricalZScoreCard.tsx — uses FormulaInfo, no InfoTooltip
+    * AdvancedAnalysis.tsx — no import
+    * AreaTrendChart.tsx — no import
+    * PeerComparison.tsx — no import
+    * RestoRecommendationCard.tsx — no import
+    * resto-analysis/menu-analysis.tsx — no import
+  Suggested fix: Add InfoTooltip to CardTitle in each of the 9 missing components. Either use InfoTooltip directly OR consolidate with FormulaInfo (which is similar but heavier — formula + description + example). For components that already have FormulaInfo (HistoricalZScoreCard, Charts.TrendChart), InfoTooltip may be redundant — keep FormulaInfo there + add InfoTooltip to others.
+
+MISSING Item 38 — GrowthComparison has NO InfoTooltip:
+  - File: src/components/dashboard/Charts.tsx (GrowthComparison function at line 17)
+  - Grep for `InfoTooltip` in Charts.tsx returned 0 matches.
+  - Other charts in same file (TrendChart line 515, etc.) use FormulaInfo, not InfoTooltip.
+  Suggested fix: Add `<InfoTooltip content="..." />` to GrowthComparison's CardTitle (line ~73). Content: "Perbandingan pertumbuhan |Dev/BOM| vs periode sebelumnya. Naik = memburuk (deviasi makin besar). Turun = membaik."
+
+MISSING Item 39 — PRIORITY_TOOLTIP constant does NOT exist:
+  - Grep for `PRIORITY_TOOLTIP` / `priority_tooltip` / `priorityTooltip` returned 0 matches.
+  - Priority tooltip text is duplicated inline across multiple files (PrioritySummaryCard.tsx, RestoRecommendationCard.tsx, possibly others).
+  Suggested fix: Create `export const PRIORITY_TOOLTIP = "..."` in src/components/dashboard/priority-summary/constants.ts, then import + use in all 4 components that currently duplicate the text.
+
+─────────────────────────────────────────────────────────────────
+PARETO MULTI-NESTING + DEVBOM + GAP ANALYSIS (1 missing)
+─────────────────────────────────────────────────────────────────
+
+MISSING Item 42 — ParetoDashboard has NO parentDim/childDim dimension selector dropdowns:
+  - File: src/components/dashboard/ParetoDashboard.tsx
+  - `Select, SelectContent, SelectItem, SelectTrigger, SelectValue` are imported at line 15 but NEVER USED in the file (dead import).
+  - Only state: `expandedItems` (line 150) + `prevFilterKey` (line 154). NO `parentDim` or `childDim` state.
+  - useQuery call (lines 160-169) does NOT include `parentDim` or `childDim` URL params — so even though backend supports them (Item 41 ✓), frontend never sends them.
+  - The `nestedGeneralized` response field (when parentDim + childDim both provided) is never consumed by the frontend.
+  Impact: Users cannot select "Item → Outlet" vs "Area → Outlet" vs "PIC → Outlet" nesting combinations — only the hardcoded Item→Outlet queryParetoNestedItemOutlet path is used (line 93 in pareto/route.ts).
+  Suggested fix: Add `const [parentDim, setParentDim] = useState<ParetoDimension>('item');` + `const [childDim, setChildDim] = useState<ParetoDimension>('outlet');` state. Render two `<Select>` dropdowns in the dashboard header. Append `p.set('parentDim', parentDim); p.set('childDim', childDim);` to the URLSearchParams in queryFn. Render `nestedGeneralized` data in a new card below the existing Item→Outlet breakdown card.
+
+═══════════════════════════════════════════════════════════════
+VERIFICATION METHODOLOGY
+═══════════════════════════════════════════════════════════════
+- Each item checked via: Grep (file existence + symbol/identifier search across src/), Read (line-by-line verification of suspect files), cross-reference with worklog entries (RESTORE-BACKEND-2 at line 23893+, RESTORE-SHARED-1 implied at shared.ts comments, FIX-CALC-ZOD-3 at line 23448+, AUDIT7-BE-1 at line 22547+, AUDIT7-FE at line 23154+).
+- "WIRED" verification: confirmed imports + actual usage (not just declarations). E.g. withStatementTimeout is imported in 6 query modules but only used in 3 of them — those 3 unused imports are themselves a smell.
+- "MISSING" includes both: (a) files/symbols that don't exist, AND (b) files/symbols that exist but aren't wired (e.g. Item 7's local duplicate functions, Item 35's dead import in ParetoDashboard).
+- No code changes made — report only per task instructions.
+
+Next-action priority (recommended fix order):
+1. P0 — Item 11 (audit log .catch) — silent transaction rollback risk
+2. P0 — Item 12 (EMPTY_STATE success:false + setupRequired) — blocks setup flow
+3. P0 — Item 16 (MAX_DRIVERS_PER_CATEGORY cap) — payload size DoS
+4. P1 — Item 8 (wrap bare db.$queryRaw) — hang prevention
+5. P1 — Item 9, 10 (Zod on /api/data GET + /api/ingest-process DELETE) — input validation
+6. P1 — Item 13 (/api/setup GET rate limit) — DOS prevention
+7. P1 — Item 15 (TOP_N_DEVIASI_RANK from Settings) — config flexibility
+8. P1 — Item 20 (resolveComparePeriod null return) — correctness
+9. P2 — Item 1, 17 (delete dead files) — code hygiene
+10. P2 — Item 7 (upload-utils extraction) — DRY
+11. P2 — Item 21, 23, 24, 26, 27, 29, 30, 31, 32, 33, 34 (UI consistency)
+12. P2 — Item 35, 38, 39 (InfoTooltip rollout)
+13. P2 — Item 42 (ParetoDashboard dimension selectors) — feature completion
+14. P3 — Item 14 (compareWeek format validation) — defense in depth
+
+
+═══════════════════════════════════════════════════════════════
+Task ID: FIX-ROLLBACK-FE-2
+Agent: general-purpose (frontend fixer)
+Task: Fix ALL rolled-back frontend items from AUDIT8-FE-2 +
+      AUDIT8-ROLLBACK-1. 22 items total (7 quick wins, 6 InfoTooltip
+      rollouts, 8 UI-consistency fixes, 1 dead-file deletion).
+
+Work Log:
+- Read worklog tail (lines 24000-24742) for AUDIT8-FE-2 + AUDIT8-ROLLBACK-1
+  context. Confirmed all 22 items mapped to specific files + line numbers.
+- Applied all fixes below. TypeScript (`bunx tsc --noEmit`) passes (exit 0).
+  ESLint (`bun run lint`) passes — 0 errors, 9 pre-existing warnings
+  unrelated to this task (3 AreaTrendChart rows-warning, 1 QuickSettings,
+  2 TanStack Virtual incompatible-library, 2 PicManagementDialog,
+  1 SourceDataModal records).
+- Each fix verified via Read after Edit. No new ESLint warnings introduced.
+
+───────────────────────────────────────────────────────────────
+QUICK WINS (7 items)
+───────────────────────────────────────────────────────────────
+
+✓ #21 — peer-comparison/items-table.tsx:25
+  Changed `<Card className="overflow-hidden ...">` → `overflow-visible`.
+  Tooltips/popovers can now escape the Card's rounded border.
+
+✓ #19 — resto-analysis/menu-analysis.tsx
+  - Line 104 subtitle: "kata pertama" → "2 kata pertama"
+  - CardTitle text-base → text-sm
+  - Added `import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`
+  - Added `<InfoTooltip content="Outlier = Dev/BOM > (avg + 2σ) DAN > 1.5×
+    avg menu. Group by 2 kata pertama nama bahan." />` in CardTitle.
+
+✓ #6 — src/app/page.tsx keyboard handler (line ~301)
+  Added `isDropdownOpen` check before tab-switch:
+    `const isDropdownOpen = Boolean(document.querySelector(
+      '[role="combobox"][aria-expanded="true"],
+       [data-state="open"][role="listbox"],
+       [data-state="open"][role="combobox"]'
+    ));`
+  Tab-switch now requires `!isDropdownOpen` — prevents orphaned dropdowns.
+
+✓ #7 — src/app/page.tsx Escape handler (line ~308)
+  Added `!isTyping` guard: `if (e.key === 'Escape' && !isTyping) { ... }`.
+  Escape in SearchableComboBox search box no longer closes all dialogs.
+
+✓ #34 — GlobalItemSearchModal.tsx autocomplete query (line ~108)
+  Added `placeholderData: keepPreviousData,` (keepPreviousData already
+  imported at line 15). Old results stay visible during refetch.
+
+✓ #18 — resto-analysis/item-detail-modal.tsx useQuery (line ~38)
+  Added `staleTime: 300_000,` (5 min). Modal no longer refetches on reopen.
+
+✓ #28 — ParetoDashboard.tsx
+  Added `countSuffix(title)` helper:
+    - 'kelompok' → 'klp'
+    - 'pic' → 'pic'
+    - 'outlet' → 'out'
+    - 'area' → 'area'
+    - default → '' (items have no count suffix)
+  QuadrantCard now renders `{d.outletCount} {suffix}` (was hardcoded
+  "outlet" for all quadrants).
+
+───────────────────────────────────────────────────────────────
+INFOTOOLTIP ROLLOUT (6 items)
+───────────────────────────────────────────────────────────────
+
+✓ #8 — ExecutiveSummary.tsx (10 KPI cards)
+  - Added `import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`
+  - Added `KPI_TOOLTIPS` const with 10 keys (sales, nominalDeviasi,
+    qtyBom, grossDeviation, explained, netLossSurplus, totalLoss,
+    totalSurplus, residualLoss, deviationBom) — exact text per spec.
+  - Added `tooltip?: string` to KPI interface + KPICard props.
+  - KPICard label now wrapped in `<div className="flex items-center gap-1">
+    <p>{label}</p>{tooltip && <InfoTooltip content={tooltip} />}</div>`.
+  - 6 main-grid KPICards (Sales, Nominal Deviasi, QTY BOM, Gross Deviation,
+    Explained, Net Loss/Surplus) get tooltip prop.
+  - 4 second-grid cards (Total LOSS, Total SURPLUS, Residual Loss,
+    Deviation/BOM) get InfoTooltip next to label inline.
+
+✓ #15 — RestoRecommendationCard.tsx (3 sub-tasks)
+  - Added `import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`
+    + `import { useState } from 'react';`
+  - Exported `PRIORITY_TOOLTIP` const:
+    "Priority Score (0-100) = weighted combination of Dev/BOM ratio,
+    nominal loss, residual ratio, direction flip, trend deterioration,
+    tolerance breach count, anomaly count, dan benchmark deviation.
+    TINGGI (>=55), SEDANG (>=30), RENDAH (<30)."
+  - Added `<InfoTooltip content={PRIORITY_TOOLTIP} />` in both loading +
+    loaded CardTitle (text-base → text-sm in both).
+  - Added `buildSignalBadges(r)` helper + `TONE_CLASS` map + `SignalBadge`
+    type. 9 signal conditions consolidated into ranked array (direction
+    rank 0; flip rank 10; memburuk rank 11; ... noTol rank 16).
+    benchmarkHighCount deliberately omitted (dead signal per BUG2-RESTO-3).
+  - Signal render now shows top 3 + `+N lagi` overflow chip that toggles
+    per-outlet expansion via `expandedSignals` Set state.
+  - Both CardTitle instances converted text-base → text-sm.
+
+✓ #20 — PeerComparison.tsx (3 sub-tasks)
+  - Added `import { keepPreviousData } from '@tanstack/react-query'` +
+    `RotateCcw` from lucide-react + `Button` from ui/button + `InfoTooltip`.
+  - Main useQuery: added `placeholderData: keepPreviousData,` + destructured
+    `refetch: refetchMain`.
+  - CardTitle (text-base → text-sm): added `<InfoTooltip content="Target
+    outlet dibandingkan dengan peer set (top 50 by sales proximity, ±10%
+    sales). Metrics: Sales, Dev/BOM, Nominal, QTY, Gross/Net Loss/Surplus.
+    Klik baris untuk ganti target." />`.
+  - Error state: added `<Button onClick={() => refetchMain()} variant="outline"
+    size="sm"><RotateCcw /> Coba Lagi</Button>` below error text.
+
+✓ #23 — ParetoDashboard.tsx QuadrantCard (5 cards)
+  - Added `tooltip?: string` prop to QuadrantCard signature.
+  - Added `QUADRANT_TOOLTIPS` const with per-quadrant text (5 keys).
+  - CardTitle renders `<InfoTooltip content={tooltip} />` after title
+    (gated by `tooltip &&` so prop is optional).
+  - All 5 QuadrantCard instances (Items, Outlets, Kelompok, Areas, PIC)
+    now pass `tooltip={QUADRANT_TOOLTIPS['...']}`.
+
+✓ #29 — ParetoDashboard.tsx error state
+  - Destructured `refetch` from useQuery.
+  - Added `<Button onClick={() => refetch()} variant="outline" size="sm">
+    <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi</Button>` in error block.
+
+✓ #38 — Charts.tsx GrowthComparison
+  - Added `import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`
+  - CardTitle (text-base → text-sm): added `<InfoTooltip content=
+    "Perbandingan pertumbuhan |Dev/BOM| vs periode sebelumnya. Naik =
+    memburuk (deviasi makin besar). Turun = membaik." />`.
+  - FormulaInfo kept alongside (heavier formula/explain/example tooltip).
+
+───────────────────────────────────────────────────────────────
+UI CONSISTENCY (8 items)
+───────────────────────────────────────────────────────────────
+
+✓ #31 — Global CardTitle text-base → text-sm
+  Ran `find src -type f -name "*.tsx" -exec sed -i
+    's/CardTitle className="text-base/CardTitle className="text-sm/g' {} +`.
+  18 instances replaced across 13 files (InsightsPanel, AdvancedAnalysis ×3,
+  Charts ×5, AreaTrendChart, TopItems ×3, ExecutiveSummary, menu-analysis,
+  ranking-nasional, HistoricalZScoreCard, RestoAnalysis, RestoRecommendationCard
+  ×2, AnalysisCards). menu-analysis-bak.tsx was deleted (item #22) before
+  the sed ran — its single instance was not replaced (file gone).
+  Verified via Grep: 0 matches for `CardTitle className="text-base`.
+
+✓ #31 cont — RestoAnalysis.tsx:191 CardTitle text-lg → text-sm
+  Note: AUDIT8-ROLLBACK-1 suggested keeping text-lg here (outlet name
+  emphasis), but task spec from FIX-ROLLBACK-FE-2 explicitly overrides:
+  "Also fix CardTitle className=text-lg to text-sm".
+  Applied as instructed.
+
+✓ #14 — AreaTrendChart.tsx AREA_COLORS
+  Replaced 4 cool-tone colors with warm/distinct alternatives:
+    - `#3b82f6` (blue) → `#ea580c` (orange-600)
+    - `#8b5cf6` (violet) → `#0d9488` (teal-600)
+    - `#6366f1` (indigo) → `#0891b2` (cyan-600)
+    - `#a855f7` (purple) → `#e11d48` (rose-600)
+  Palette now complies with warm-tone-only UI modernization spec.
+
+✓ #23 CSS — globals.css --chart-susut + --chart-trial
+  Light mode:
+    - `--chart-susut: #7c3aed` (violet-600) → `#0891b2` (cyan-600)
+    - `--chart-trial: #65a30d` (lime-600) → `#ca8a04` (amber-600)
+  Dark mode:
+    - `--chart-susut: #a78bfa` (violet-400) → `#22d3ee` (cyan-400)
+    - `--chart-trial: #84cc16` (lime-400) → `#facc15` (amber-400)
+  Both modes updated (lines 83-84 + 126-127).
+
+✓ #24 — signal-chart.tsx 'No Tolerance' case raw table → shadcn Table
+  - Added `import { Table, TableHeader, TableBody, TableRow, TableHead,
+    TableCell } from '@/components/ui/table';`
+  - Replaced `<table>/<thead>/<tbody>/<tr>/<th>/<td>` with shadcn Table
+    equivalents. Preserved `sticky top-0 z-10` styling on TableHeader.
+  - Only raw-`<table>` instance in codebase — now consistent with the
+    other 19+ shadcn tables.
+
+✓ #33 — HistoricalZScoreCard.tsx visual magnitude bar
+  Z-Score TableCell now renders a horizontal bar inside a track:
+    `<div className="flex items-center justify-end gap-1.5">
+       <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
+         <div className={bar color by |z|} style={width: |z|/5*100 capped 100%} />
+       </div>
+       {item.zScore.toFixed(2)}
+     </div>`
+  Bar color: red-500 (|z|>3), amber-500 (|z|>2), yellow-500 (else).
+
+✓ #32 — src/app/page.tsx FetchAware on Resto/Peer/Pareto tabs
+  Wrapped each tab's content in `<FetchAware isFetching={analysis.isFetching}>`:
+    - Resto tab: <RestoAnalysis> wrapped
+    - Peer tab: <PeerComparison> wrapped
+    - Pareto tab: <ParetoDashboard> wrapped
+  FetchAware component (page.tsx:72) already existed + used 11× in
+  Dashboard tab. All 4 tabs now consistent.
+
+✓ #42 + #24 — ParetoDashboard.tsx parentDim + childDim Select dropdowns
+  - Added `ParetoDimension` type mirror of backend enum.
+  - Added `DIM_LABELS` map (item/outlet/area/kelompok/pic → label).
+  - Added `NestedChild` + `NestedGeneralizedItem` interfaces (mirror
+    NestedParetoResultItem + its children from src/lib/queries/pareto.ts).
+  - Added `parentDim` + `childDim` useState (default 'item' → 'outlet').
+  - Added `expandedGen` Set state for nested generalized row expansion.
+  - filterKey now includes parentDim + childDim so stale expansion state
+    resets when either dropdown changes.
+  - useQuery queryKey includes parentDim + childDim; queryFn sends both
+    as URL params (p.set('parentDim', ...); p.set('childDim', ...)).
+  - ParetoData interface extended with optional `nestedGeneralized?` +
+    `parentDim?` + `childDim?` fields.
+  - useQuery destructured `refetch` (used by #29 retry button).
+  - Header now includes two `<Select>` dropdowns (parent + child) with
+    `→` separator between. Child dropdown excludes the selected parent
+    dim from its options.
+  - When `(parentDim, childDim) !== ('item', 'outlet')` AND
+    nestedGeneralized has items, a new Card renders below the existing
+    Item→Outlet Nested Breakdown:
+    - CardTitle: "{DIM_LABELS[parentDim]} → {DIM_LABELS[childDim]}
+       Breakdown" + InfoTooltip.
+    - Same expand/collapse pattern as the existing nested breakdown.
+    - Uses `toggleGen` (separate from `toggleItem` for the existing
+      Item→Outlet breakdown).
+  - Backend already supports this (RESTORE-BACKEND-2 — queryParetoNested
+    + /api/pareto parentDim/childDim params + nestedGeneralized response
+    field all wired).
+
+───────────────────────────────────────────────────────────────
+DEAD CODE CLEANUP (1 item)
+───────────────────────────────────────────────────────────────
+
+✓ #22 — Deleted src/components/dashboard/resto-analysis/menu-analysis-bak.tsx
+  File was a stale backup of menu-analysis.tsx (same structure, 168 lines).
+  No imports of `menu-analysis-bak` anywhere in src/. Confirmed via Grep.
+  `rm`'d the file — directory now contains only the live menu-analysis.tsx
+  + helpers + item-detail-modal + ranking-nasional + types.
+
+───────────────────────────────────────────────────────────────
+VERIFICATION
+───────────────────────────────────────────────────────────────
+
+- `bunx tsc --noEmit` → exit 0 (no type errors).
+- `bun run lint` → 0 errors, 9 warnings (all pre-existing — none in
+  files I touched except AreaTrendChart line 37 `rows` logical-expression
+  warning which existed before my AREA_COLORS-only edit).
+- All 22 items from the task spec applied. No partial fixes.
+
+───────────────────────────────────────────────────────────────
+FILES MODIFIED (17 files)
+───────────────────────────────────────────────────────────────
+
+1.  src/components/dashboard/peer-comparison/items-table.tsx (#21)
+2.  src/components/dashboard/resto-analysis/menu-analysis.tsx (#19)
+3.  src/app/page.tsx (#6, #7, #32)
+4.  src/components/dashboard/GlobalItemSearchModal.tsx (#34)
+5.  src/components/dashboard/resto-analysis/item-detail-modal.tsx (#18)
+6.  src/components/dashboard/ParetoDashboard.tsx (#28, #23, #29, #42)
+7.  src/components/dashboard/ExecutiveSummary.tsx (#8, #31)
+8.  src/components/dashboard/RestoRecommendationCard.tsx (#15, #31)
+9.  src/components/dashboard/PeerComparison.tsx (#20, #31)
+10. src/components/dashboard/Charts.tsx (#38, #31)
+11. src/components/dashboard/AreaTrendChart.tsx (#14, #31)
+12. src/app/globals.css (#23 CSS)
+13. src/components/dashboard/priority-summary/signal-chart.tsx (#24)
+14. src/components/dashboard/HistoricalZScoreCard.tsx (#33, #31)
+15. src/components/dashboard/InsightsPanel.tsx (#31)
+16. src/components/dashboard/AdvancedAnalysis.tsx (#31 ×3)
+17. src/components/dashboard/TopItems.tsx (#31 ×3)
+18. src/components/dashboard/RestoAnalysis.tsx (#31 ×2 — text-base + text-lg)
+19. src/components/dashboard/AnalysisCards.tsx (#31)
+20. src/components/dashboard/resto-analysis/ranking-nasional.tsx (#31)
+
+Plus 1 file deleted: menu-analysis-bak.tsx
+
+═══════════════════════════════════════════════════════════════

@@ -13,19 +13,22 @@ import {
 } from 'recharts';
 
 // Color palette for 14 areas — distinct hues for color-blind accessibility
+// FIX #14: replaced blue/indigo/violet/purple (cool tones) with warm/
+// distinct alternatives (orange-600, cyan-600, teal-600, rose-600) per UI
+// modernization spec.
 const AREA_COLORS = [
   '#dc2626', // red
   '#f59e0b', // amber
   '#10b981', // emerald
-  '#3b82f6', // blue
-  '#8b5cf6', // violet
+  '#ea580c', // orange-600 (was blue #3b82f6)
+  '#0d9488', // teal-600 (was violet #8b5cf6)
   '#ec4899', // pink
   '#14b8a6', // teal
   '#f97316', // orange
-  '#6366f1', // indigo
+  '#0891b2', // cyan-600 (was indigo #6366f1)
   '#84cc16', // lime
   '#06b6d4', // cyan
-  '#a855f7', // purple
+  '#e11d48', // rose-600 (was purple #a855f7)
   '#eab308', // yellow
   '#64748b', // slate
 ];
@@ -137,7 +140,7 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-cyan-50 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 shrink-0">
             <TrendingUp className="h-3.5 w-3.5" />
           </span>

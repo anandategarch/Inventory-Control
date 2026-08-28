@@ -22,7 +22,7 @@ export function ItemLevelComparison({
   error: Error | null;
 }) {
   return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
+    <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">

@@ -4,7 +4,6 @@
 //  mode: 'week' = filter by weekLabel, 'month' = aggregate all weeks
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout } from '../shared';
 
 export interface PeerComparisonRow {
@@ -59,7 +58,8 @@ export async function queryPeerComparison(
     ? Prisma.sql`AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`
     : Prisma.sql``;
 
-  const rows = await db.$queryRaw<any[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -171,7 +171,7 @@ export async function queryPeerComparison(
       ${peerKelompokFilter}
     ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
     LIMIT ${limit + 1}
-  `;
+  `);
 
   const targetRow = rows.find((r: any) => r.isTarget);
   const targetSales = targetRow ? Number(targetRow.sales) : 0;
@@ -245,7 +245,8 @@ export async function queryPeerItemComparison(
         WHERE ir2."monthLabel" = ${month}
       )`;
 
-  const rows = await db.$queryRaw<any[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
     WITH sales_counts AS (
       SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
       FROM "InventoryRecord" ir
@@ -317,7 +318,7 @@ export async function queryPeerItemComparison(
     WHERE ti.item_rank <= ${topItems}
     GROUP BY ti."itemName", ti."itemId", ti.item_rank, o.code, o.name
     ORDER BY ti.item_rank, o.code
-  `;
+  `);
 
   return rows.map((r: any) => ({
     itemName: r.itemName,
@@ -362,7 +363,8 @@ export async function queryPeerTrend(
   // so allCodes always has at least one entry.
   const allCodes = [outletCode, ...peerOutletCodes];
 
-  const rows = await db.$queryRaw<any[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
     WITH outlet_weekly AS (
       SELECT
         ir."weekLabel",
@@ -386,7 +388,7 @@ export async function queryPeerTrend(
     FROM outlet_weekly ow
     GROUP BY ow."weekLabel"
     ORDER BY ow."weekLabel"
-  `;
+  `);
 
   return rows.map((r: any) => ({
     weekLabel: r.weekLabel,

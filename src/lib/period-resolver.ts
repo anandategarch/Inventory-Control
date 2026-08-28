@@ -90,9 +90,11 @@ export async function resolvePreviousPeriod(
  *  - Case 3 (compareWeek set, compareMonthExplicit null): find the same
  *    weekLabel in the most recent month BEFORE the current month. If not
  *    found searching backwards, fall back to searching FORWARD (after
- *    current). If neither found, fall back to the current month itself
- *    (preserves existing behavior — caller is responsible for handling
- *    "no comparison data" downstream).
+ *    current). If neither found, return { prevWeek: compareWeek, prevMonth: null }
+ *    so the caller can short-circuit "no comparison data" cleanly.
+ *    FIX (AUDIT8-ROLLBACK-1, Item 20): previously fell back to the current
+ *    month itself (`prevMonth || month`) which caused downstream code to
+ *    compare the period to ITSELF, producing misleading "0% change" results.
  *
  * FIX (RESTORE-BACKEND-2): replaces ~60 lines of inline logic in
  * /api/analysis/route.ts and ~15 lines in /api/export-report/route.ts.
@@ -163,8 +165,12 @@ export async function resolveComparePeriod(
       }
     }
   }
-  // Preserve existing behavior: fall back to the current month itself when
-  // no other month has the same weekLabel. Downstream code will see prevMonth
-  // === month and can short-circuit (no comparison data).
-  return { prevWeek: compareWeek, prevMonth: prevMonth || month };
+  // FIX (AUDIT8-ROLLBACK-1, Item 20): do NOT fall back to the current month.
+  // The previous inline comment claimed "downstream code will see prevMonth
+  // === month and can short-circuit" — but downstream code in analysis/route.ts
+  // + outlet-items/route.ts treats `prevWeek && prevMonth` as "comparison data
+  // exists" and runs the comparison query, producing misleading "0% change"
+  // results (period compared to itself). Return null instead so callers
+  // short-circuit cleanly (e.g. `prevWeek && prevMonth ? X : Y`).
+  return { prevWeek: compareWeek, prevMonth };
 }

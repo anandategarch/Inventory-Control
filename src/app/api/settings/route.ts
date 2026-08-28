@@ -179,12 +179,13 @@ export async function POST(req: NextRequest) {
     invalidateSettingsCache();
 
     // Audit log
-    await db.auditLog.create({
+    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+    db.auditLog.create({
       data: {
         action: 'SETTINGS_UPDATE',
         detail: `Updated ${updates.length} settings: ${updates.map((u) => u.key).join(', ')}`,
       },
-    });
+    }).catch(() => {});
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     // FIX Medium #1: invalidate DB-level AggregationCache too.

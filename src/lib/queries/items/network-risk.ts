@@ -3,7 +3,6 @@
 //  Surfaces SYSTEMIC issues (many outlets) vs ISOLATED (few outlets).
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface NetworkItemRiskOutlet {
@@ -62,7 +61,9 @@ export async function queryNetworkItemRisk(
   //   Final: GROUP BY item — aggregate across outlets, LEFT JOIN top_outlets
   //     JSON. Risk scores computed in JS (Math.min/round keeps SQL portable
   //     across PostgreSQL + SQLite).
-  const rows = await db.$queryRaw<NetworkItemRiskRawRow[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+  // (heavy multi-CTE query with json_agg + window functions).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<NetworkItemRiskRawRow[]>`
     WITH item_per_outlet AS (
       SELECT i.id as "itemId", i.name as "itemName", MAX(ir."satuan") as "satuan",
         ir."outletId",
@@ -135,7 +136,7 @@ export async function queryNetworkItemRisk(
     FROM item_aggs ia
     LEFT JOIN top_outlets to2 ON ia."itemId" = to2."itemId"
     ORDER BY ia."totalAbsNominal" DESC
-  `;
+  `);
 
   // Compute risk scores in JS — keeps SQL portable + testable.
   const FINANCIAL_IMPACT_DENOMINATOR = 100_000_000; // Rp 100jt = score 100

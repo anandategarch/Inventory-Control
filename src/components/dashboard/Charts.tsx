@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { getTooltipStyle } from '@/lib/chart-constants';
 import {
@@ -70,11 +71,12 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
             <TrendingUp className="h-3.5 w-3.5" />
           </span>
           Growth Comparison
+          <InfoTooltip content="Perbandingan pertumbuhan |Dev/BOM| vs periode sebelumnya. Naik = memburuk (deviasi makin besar). Turun = membaik." />
           <FormulaInfo
             formula="Growth = (Current - Previous) / |Previous|"
             description="Persentase perubahan vs periode pembanding. Klik metric untuk lihat Pareto 80% — item penyebab terbesar."
@@ -313,7 +315,7 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
             <PieChart className="h-3.5 w-3.5" />
           </span>
@@ -468,7 +470,7 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
             <BarChart3 className="h-3.5 w-3.5" />
           </span>
@@ -518,7 +520,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2.5">
+          <CardTitle className="text-sm flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
               <Activity className="h-3.5 w-3.5" />
             </span>
@@ -537,7 +539,7 @@ export function TrendChart({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
             <Activity className="h-3.5 w-3.5" />
           </span>

@@ -4,7 +4,6 @@
 //  Returns top N outlets needing attention + analysis summary
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ============================================================
@@ -71,8 +70,11 @@ export async function queryRestoRecommendations(
 
   // Fetch current period outlet aggregates + previous period + historical avg
   // FIX: add historical comparison (same weekLabel across ALL previous months)
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): each raw SQL is wrapped in withStatementTimeout
+  // so a hung query in one Promise.all branch is killed at 30s rather than blocking
+  // the whole batch indefinitely.
   const [currRows, prevRows, histRows] = await Promise.all([
-    db.$queryRaw<any[]>`
+    withStatementTimeout((tx) => tx.$queryRaw<any[]>`
       WITH sales_counts AS (
         SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
         FROM "InventoryRecord" ir
@@ -193,9 +195,9 @@ export async function queryRestoRecommendations(
       LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
       LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
       ORDER BY ABS(COALESCE(oa."nominalDeviasi", 0)) DESC
-    `,
+    `),
     prevWeek && prevMonth
-      ? db.$queryRaw<any[]>`
+      ? withStatementTimeout((tx) => tx.$queryRaw<any[]>`
         SELECT
           o.code as "outletCode",
           SUM(ir."nominalDeviasi") as "prevNominalDeviasi",
@@ -211,7 +213,7 @@ export async function queryRestoRecommendations(
         WHERE ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}
           ${f}
         GROUP BY o.code
-      `
+      `)
       : Promise.resolve([]),
     // FIX: Historical average — same weekLabel across ALL months BEFORE current month
     // FIX (BUG-HUNT-CALC): was AVG(ABS(per-record nominalDeviasi)) — scale mismatch with
@@ -221,7 +223,7 @@ export async function queryRestoRecommendations(
     // to exclude FUTURE months from the baseline. Latent bug — active if future
     // months exist in DB (test data, planned uploads). Fallback to `monthLabel != ${month}`
     // when currentMonthKey is unavailable (e.g. legacy caller).
-    db.$queryRaw<any[]>`
+    withStatementTimeout((tx) => tx.$queryRaw<any[]>`
       WITH weekly_dev AS (
         SELECT o.code as "outletCode",
           ir."monthLabel", ir."weekLabel",
@@ -247,7 +249,7 @@ export async function queryRestoRecommendations(
       FROM weekly_dev
       WHERE "weeklyTotal" IS NOT NULL
       GROUP BY "outletCode"
-    `,
+    `),
   ]);
 
   // Build prev lookup

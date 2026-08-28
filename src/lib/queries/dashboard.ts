@@ -5,7 +5,6 @@
 //  All aggregation done in SQL (PostgreSQL + SQLite portable).
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 // ============================================================
@@ -178,7 +177,8 @@ export async function queryDeviationBreakdown(
   filters: SqlFilterOpts
 ): Promise<{ waste: number; susut: number; trial: number; residual: number; total: number }> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ waste: number; susut: number; trial: number; residual: number; total: number }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ waste: number; susut: number; trial: number; residual: number; total: number }[]>`
     SELECT
       COALESCE(SUM(ABS(ir."qtyWaste")), 0) as waste,
       COALESCE(SUM(ABS(ir."qtySusut")), 0) as susut,
@@ -188,7 +188,7 @@ export async function queryDeviationBreakdown(
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
-  `;
+  `);
   return rows[0] || { waste: 0, susut: 0, trial: 0, residual: 0, total: 0 };
 }
 
@@ -221,7 +221,8 @@ export async function queryDeviationBreakdownDrivers(
   filters: SqlFilterOpts
 ): Promise<DeviationDriverItemRow[]> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<DeviationDriverItemRow[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<DeviationDriverItemRow[]>`
     SELECT
       i.name as "itemName",
       COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
@@ -240,7 +241,7 @@ export async function queryDeviationBreakdownDrivers(
     -- FIX M-D (AUDIT-1): cap at 500 items to prevent unbounded payload if
     -- catalog grows. Currently ~109 items, but no safeguard existed.
     LIMIT 500
-  `;
+  `);
   return rows;
 }
 
@@ -253,7 +254,8 @@ export async function queryLossVsSurplus(
   filters: SqlFilterOpts
 ): Promise<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
     SELECT
       -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
       CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as loss,
@@ -263,7 +265,7 @@ export async function queryLossVsSurplus(
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
-  `;
+  `);
   return rows[0] || { loss: 0, surplus: 0, lossNominal: 0, surplusNominal: 0 };
 }
 
@@ -281,7 +283,8 @@ export async function queryCostImpact(
   wasteToSales: number; susutToSales: number; trialToSales: number; residualToSales: number; totalCostToSales: number;
 }> {
   const f = buildSqlFilters(filters);
-  const rows = await db.$queryRaw<{
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
     wasteCost: number; susutCost: number; trialCost: number; residualCost: number; totalCost: number;
   }[]>`
     SELECT
@@ -296,7 +299,7 @@ export async function queryCostImpact(
     FROM "InventoryRecord" ir
     WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
       ${f}
-  `;
+  `);
   const r = rows[0] || { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0 };
   // BUG 2.3 fix: if totalCost is 0, percentages should be 0 (not wasteCost/1 = 10000%).
   // Previously `total = totalCost || 1` produced 10000% values when columns were NULL.

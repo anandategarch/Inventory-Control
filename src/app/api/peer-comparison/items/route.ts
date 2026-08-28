@@ -18,7 +18,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { buildSqlFilters } from '@/lib/queries/shared';
+import { buildSqlFilters, withStatementTimeout } from '@/lib/queries/shared';
 import { validateQuery, peerComparisonItemsQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
@@ -81,7 +81,9 @@ export async function GET(req: NextRequest) {
     //    the same items across all peer outlets in the sales ±10% band.
     //
     // The query below joins: target items × peer outlets × item metrics.
-    const rows = await db.$queryRaw<any[]>`
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+    // (heavy multi-CTE with CROSS JOIN over peer outlets — vulnerable to slow plans).
+    const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
       WITH sales_counts AS (
         SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
         FROM "InventoryRecord" ir
@@ -158,7 +160,7 @@ export async function GET(req: NextRequest) {
                tti."targetDevBom", tti."targetNominal",
                po."outletId", po."outletCode", po."outletName", po."isTarget"
       ORDER BY tti."targetNominal" DESC, po."outletCode"
-    `;
+    `);
 
     // Group rows by itemId → { itemName, target, peers: [{outletCode, outletName, isTarget, qtyDeviasi, devBom, nominal}] }
     const itemMap = new Map<number, any>();

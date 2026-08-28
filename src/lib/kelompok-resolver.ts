@@ -14,6 +14,7 @@
 // ============================================================
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 /**
  * Extract kelompok (3-char prefix) from an outlet code.
@@ -55,10 +56,13 @@ export async function resolveKelompokOutletCodes(
 ): Promise<string[]> {
   if (!kelompok || kelompok === 'all') return [];
   try {
-    const rows = await db.$queryRaw<Array<{ code: string }>>`
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+    // so a hung query (PgBouncer pool exhaustion, slow plan) is killed at
+    // 30s rather than blocking the request indefinitely.
+    const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ code: string }>>`
       SELECT code FROM "Outlet"
       WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${kelompok})
-    `;
+    `);
     return rows.map((r) => r.code);
   } catch (e) {
     logger.error('[kelompok-resolver] resolveKelompokOutletCodes failed', {

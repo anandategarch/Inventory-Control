@@ -290,7 +290,7 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
               <Lightbulb className="h-3.5 w-3.5" />
             </span>
             <div>
-              <CardTitle className="text-base">Insight Otomatis</CardTitle>
+              <CardTitle className="text-sm">Insight Otomatis</CardTitle>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 <span className="font-medium tabular-nums">{insights.length}</span> insight dari analisis periode <span className="font-medium">{data.period.weekLabel} {data.period.monthLabel}</span>
               </p>

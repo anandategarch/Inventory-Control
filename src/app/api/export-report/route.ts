@@ -53,6 +53,7 @@ import { resolveComparePeriod } from '@/lib/period-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -290,10 +291,11 @@ export async function GET(req: NextRequest) {
     const thresholds = await getRuntimeThresholds();
 
     // Resolve PIC outlets — FIX FILTER-3: case-insensitive via raw SQL LOWER()
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
     let picOutletCodes: string[] | null = null;
     if (pic) {
       try {
-        const pics = await db.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`;
+        const pics = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string }>>`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})`);
         picOutletCodes = pics.map(p => p.outletCode);
       } catch (e) {
         logger.error("[export-report] OutletPIC query failed:", { error: e instanceof Error ? e.message : String(e) });

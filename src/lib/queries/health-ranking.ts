@@ -29,7 +29,6 @@
 //      to compute zScore + build criticalItems[] (top 50 by |zScore|).
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 // ============================================================
@@ -311,7 +310,7 @@ export async function queryHistoricalCriticalItems(
   );
   const tuples = Prisma.join(tupleValues, ', ');
 
-  const rows = await db.$queryRaw<HistoricalCriticalRow[]>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<HistoricalCriticalRow[]>`
     SELECT
       c."outletId",
       c."itemId",
@@ -331,7 +330,7 @@ export async function queryHistoricalCriticalItems(
     WHERE c."monthLabel" = ${month}
       AND c."weekLabel" = ${week}
       ${f}
-  `;
+  `);
 
   return rows.map((r) => ({
     outletId: Number(r.outletId),

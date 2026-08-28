@@ -11,15 +11,17 @@
 //  Sub-components live in ./peer-comparison/*.
 // ============================================================
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Users, Loader2, BarChart3 } from 'lucide-react';
+import { Users, Loader2, BarChart3, RotateCcw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
 import type {
   PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
@@ -60,7 +62,7 @@ export function PeerComparison() {
   //  fetch with empty peers that would auto-compute per-week and
   //  then immediately refetch).
   // ============================================================
-  const { data: mainData, isLoading: mainLoading, isFetching: mainFetching, error: mainError } = useQuery({
+  const { data: mainData, isLoading: mainLoading, isFetching: mainFetching, error: mainError, refetch: refetchMain } = useQuery({
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok added to queryKey so TanStack
     // refetches when kelompok changes. Without this, switching kelompok would
     // show stale (unfiltered) peer data.
@@ -80,6 +82,9 @@ export function PeerComparison() {
       return res.json();
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // FIX #20: keepPreviousData so switching outlet shows smooth transition
+    // (old peers stay visible) instead of a full loading skeleton flash.
+    placeholderData: keepPreviousData,
   });
 
   // Derive peer set from main query result (empty while loading).
@@ -187,7 +192,10 @@ export function PeerComparison() {
                 <Users className="h-3.5 w-3.5" />
               </span>
               <div>
-                <CardTitle className="text-base">Peer Comparison</CardTitle>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  Peer Comparison
+                  <InfoTooltip content="Target outlet dibandingkan dengan peer set (top 50 by sales proximity, ±10% sales). Metrics: Sales, Dev/BOM, Nominal, QTY, Gross/Net Loss/Surplus. Klik baris untuk ganti target." />
+                </CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
                   <span className="font-medium text-foreground">{activeOutlet}</span> vs <span className="font-medium tabular-nums">{otherPeers.length}</span> resto dengan sales ±10%{currentWeek ? ` (WEEK ${currentWeek})` : ''}
                 </p>
@@ -242,6 +250,10 @@ export function PeerComparison() {
             <div className="py-10 text-center">
               <p className="text-red-600 dark:text-red-400 font-medium">Gagal Memuat Data</p>
               <p className="text-xs text-muted-foreground mt-1">{mainError?.message || mainData?.error || 'Unknown'}</p>
+              {/* FIX #20: retry button so users can recover from transient errors */}
+              <Button onClick={() => refetchMain()} variant="outline" size="sm" className="mt-3">
+                <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+              </Button>
             </div>
           ) : peers.length === 0 ? (
             <div className="text-center text-muted-foreground text-xs py-6 space-y-2">

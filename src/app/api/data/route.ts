@@ -15,7 +15,7 @@ import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
-import { validateQuery, dataDeleteQuerySchema } from '@/lib/validation';
+import { validateQuery, dataDeleteQuerySchema, dataGetQuerySchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -27,14 +27,21 @@ export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const fileIdParam = url.searchParams.get('fileId');
+
+    // FIX (AUDIT8-ROLLBACK-1, Item 9): Zod input validation for GET /api/data.
+    // Previously only DELETE was validated — GET just did `parseInt(fileIdParam)`
+    // + `isNaN` check, which accepts non-numeric strings as NaN (returning 400
+    // but only after parsing) and silently allows negative / over-large fileIds.
+    // Now we coerce to a positive int upfront; the isNaN guard below becomes a
+    // belt-and-suspenders check (the Zod schema already enforces positive int).
+    const validation = validateQuery(dataGetQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+    const fileId = validation.data.fileId;
 
     // If fileId specified, return DQ issues for that file
-    if (fileIdParam) {
-      const fileId = parseInt(fileIdParam);
-      if (isNaN(fileId)) {
-        return NextResponse.json({ success: false, error: 'fileId tidak valid' }, { status: 400 });
-      }
+    if (fileId) {
       const dqIssues = await db.dQIssue.findMany({
         where: { sourceFileId: fileId },
         select: { severity: true, code: true, message: true, rowNumber: true, rawValue: true },
@@ -247,12 +254,13 @@ export async function DELETE(req: NextRequest) {
     // the old (now-deleted) DB-case label.
     clearMonthResolverCache();
 
-    await db.auditLog.create({
+    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
+    db.auditLog.create({
       data: {
         action: 'DATA_DELETE',
         detail,
       },
-    });
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

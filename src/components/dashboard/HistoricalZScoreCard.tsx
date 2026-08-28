@@ -79,7 +79,7 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2.5">
+        <CardTitle className="text-sm flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 shrink-0">
             <History className="h-3.5 w-3.5" />
           </span>
@@ -148,7 +148,16 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
                       <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
-                        {item.zScore.toFixed(2)}
+                        {/* FIX #33: visual magnitude bar — width = |z|/5 * 100 (capped 100%). */}
+                        <div className="flex items-center justify-end gap-1.5">
+                          <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden" aria-hidden>
+                            <div
+                              className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+                              style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }}
+                            />
+                          </div>
+                          {item.zScore.toFixed(2)}
+                        </div>
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-center">
                         <Badge variant={badge.variant} className="text-[11px] h-4 px-1 font-medium">{badge.label}</Badge>

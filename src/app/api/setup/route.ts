@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateQuery, statusQuerySchema } from '@/lib/validation';
+import { rateLimit, getClientIP } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -22,6 +23,17 @@ export async function GET(req: NextRequest) {
   const validation = validateQuery(statusQuerySchema, url.searchParams);
   if (!validation.success) {
     return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+  }
+
+  // FIX (AUDIT8-ROLLBACK-1, Item 13): rate-limit GET /api/setup.
+  // This endpoint runs `db.sourceFile.count()` (a real DB round-trip) per
+  // request — an attacker spamming it could DOS the connection pool. Other
+  // destructive endpoints (data DELETE, settings DELETE, ingest-process
+  // DELETE) all have rate limits; setup should too. Bucket: 10 req/min/IP.
+  const ip = getClientIP(req);
+  const rl = rateLimit(`setup:${ip}`, 10, 60_000);
+  if (!rl.allowed) {
+    return NextResponse.json({ success: false, error: 'Rate limit.' }, { status: 429 });
   }
 
   const results: string[] = [];

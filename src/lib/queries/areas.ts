@@ -6,8 +6,7 @@
 //  All aggregation done in SQL (PostgreSQL + SQLite portable).
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { db } from '@/lib/db';
-import { buildSqlFilters, type SqlFilterOpts } from './shared';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 // ============================================================
 //  Area Analysis — GROUP BY area (Phase 2)
@@ -25,7 +24,9 @@ export async function queryAreaAnalysis(
   lossToSales: number | null;
 }>> {
   const f = buildSqlFilters({ ...filters, area: null });
-  const rows = await db.$queryRaw<{
+  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
+  // (heavy multi-CTE aggregation — vulnerable to slow plans on large tables).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
     area: string;
     outletCount: number;
     totalSales: number;
@@ -76,7 +77,7 @@ export async function queryAreaAnalysis(
     FROM area_aggs aa
     LEFT JOIN area_sales ast ON aa.area = ast.area
     ORDER BY aa."totalAbsNominal" DESC
-  `;
+  `);
   return rows;
 }
 
@@ -113,7 +114,7 @@ export async function queryTrendByArea(filters: SqlFilterOpts & {
     ? Prisma.sql`AND ir.area = ${filters.area}`
     : Prisma.empty;
 
-  const rows = await db.$queryRaw<AreaTrendRow[]>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<AreaTrendRow[]>`
     WITH sales_counts AS (
       SELECT ir.area, ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales",
         COUNT(*) as cnt
@@ -168,6 +169,6 @@ export async function queryTrendByArea(filters: SqlFilterOpts & {
       LIMIT 1
     ) sf ON true
     ORDER BY apa.area, COALESCE(sf."monthKey", '0000-00'), apa."weekLabel"
-  `;
+  `);
   return rows;
 }

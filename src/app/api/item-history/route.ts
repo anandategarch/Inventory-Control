@@ -25,6 +25,7 @@ import {
 } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
+import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -80,7 +81,8 @@ export async function GET(req: NextRequest) {
     }
 
     // Get ALL periods for this outlet+item (across all months/weeks)
-    const allRecs = await db.$queryRaw<Array<{
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+    const allRecs = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
       monthLabel: string; weekLabel: string;
       qtyBom: number | null; qtyDeviasi: number | null; qtyCom: number | null;
       qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
@@ -117,7 +119,7 @@ export async function GET(req: NextRequest) {
       WHERE o.code = ${outletCode}
         AND i.name = ${itemName}
       ORDER BY COALESCE(sf."monthKey", '0000-00') ASC, ir."weekLabel" ASC
-    `;
+    `);
 
     if (allRecs.length === 0) {
       return NextResponse.json({ success: false, error: `No records found for ${itemName} at ${outletCode}` }, { status: 404 });
@@ -182,8 +184,9 @@ export async function GET(req: NextRequest) {
     //  so CASE-THEN-NULL reproduces FILTER semantics. Works on both SQLite
     //  (local testing) and PostgreSQL (production).
     // ============================================================
+    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
     const [areaBench, networkBench] = await Promise.all([
-      db.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number; outletCount: number }>>`
         SELECT
           COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
           CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
@@ -193,8 +196,8 @@ export async function GET(req: NextRequest) {
           AND ir.area = ${outlet.area}
           AND ir."monthLabel" = ${currentPeriod.monthLabel}
           AND ir."weekLabel" = ${currentPeriod.weekLabel}
-      `,
-      db.$queryRaw<Array<{ avgDevBom: number; outletCount: number; bestDevBom: number | null }>>`
+      `),
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number; outletCount: number; bestDevBom: number | null }>>`
         SELECT
           COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
           CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
@@ -204,7 +207,7 @@ export async function GET(req: NextRequest) {
         WHERE i.name = ${itemName}
           AND ir."monthLabel" = ${currentPeriod.monthLabel}
           AND ir."weekLabel" = ${currentPeriod.weekLabel}
-      `,
+      `),
     ]);
 
     // ============================================================
