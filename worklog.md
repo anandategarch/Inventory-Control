@@ -28999,3 +28999,897 @@ Stage Summary:
   · Prisma query logging in dev mode (automatic, no command needed)
 - Files changed: next.config.ts, package.json, src/lib/db.ts,
   src/lib/excel.ts, src/lib/excel-to-csv.ts, scripts/enable-pg-stat-statements.ts (new)
+
+---
+Task ID: REVIEW-UX
+Agent: general-purpose (UX/UI Reviewer)
+Task: Review UI/UX for usability, accessibility, mobile, loading/error/empty states
+
+Work Log:
+- Read tail of worklog.md (Fase 1-4 context: performance optimizations on Next.js 16 dashboard with 333 outlets × 109 items × 14 areas, Indonesian analyst users, shadcn/ui + Tailwind 4 + Recharts)
+- Audited src/app/page.tsx (695 lines) — main dashboard with 4 tabs (Dashboard / Resto / Peer / Pareto), sticky header with 2-tier compact layout, FilterBar, FetchAware wrapper, ScrollToTop, keyboard shortcuts (Cmd+E/R/K, 1-4, Esc)
+- Audited src/app/layout.tsx, loading.tsx, error.tsx — solid Next.js route-level skeletons + error boundary with Indonesian text + retry/home buttons
+- Audited src/components/dashboard/shared/index.tsx — EmptyState (with CTAs + filename tip), LoadingState (with elapsed timer + 15s slow warning), ErrorState (with 504 detection + actionable hints), SectionHeader, ScrollToTop
+- Audited src/components/ui/error-boundary.tsx — per-card ErrorBoundary with label + retry
+- Audited src/components/ui/toaster.tsx, toast.tsx, hooks/use-toast.ts — sonner-like system, TOAST_LIMIT=3 (was 1), 5s remove delay (was 16.7min leak)
+- Audited src/components/ui/global-loading-bar.tsx — NProgress-style top bar via useIsFetching
+- Audited src/components/filters/FilterBar.tsx (597 lines) — 6 SearchableComboBox dropdowns + 3 primary actions + 3 icon-only secondary actions with tooltips, custom-event bridge for EmptyState CTAs
+- Audited src/components/filters/SearchableComboBox.tsx — has ariaLabel prop, aria-expanded, Command-based popover with search
+- Audited src/components/filters/FileUploadDialog.tsx — chunked upload (4MB), rename mode, validation, progress log, toast feedback
+- Audited src/components/drilldown/DrillDownDrawer.tsx — cursor pagination + virtualized table, but plain-text loading/error
+- Audited src/components/drilldown/SourceDataModal.tsx — CSV export, virtualized table, 28 columns
+- Audited src/components/dashboard/TopItems.tsx, AdvancedAnalysis.tsx, InsightsPanel.tsx, ExecutiveSummary.tsx — FormulaInfo popovers, clickableRowProps (tabIndex+role+onKeyDown), zebra striping, sticky headers, severity-colored insights
+- Audited src/components/dashboard/ParetoDashboard.tsx (605 lines) — 4-quadrant view + nested Item→Outlet breakdown + generalized parent→child + action plan footer
+- Audited src/components/dashboard/RestoAnalysis.tsx — outlet focus mode, health ring SVG, multi-state (empty/loading/error)
+- Audited src/components/dashboard/RestoRecommendationCard.tsx — silently returns null on error (UX gap)
+- Audited src/components/dashboard/PeerComparison.tsx — 3 parallel queries (main/items/trend), 8 sub-cards, empty state with explanation
+- Audited src/components/dashboard/Charts.tsx — GrowthComparison with expandable Pareto per metric, mismatch badges
+- Audited src/components/dashboard/HistoricalZScoreCard.tsx — sortable table with z-score color coding
+- Audited src/components/dashboard/GlobalItemSearchModal.tsx — Cmd+K, two-stage (autocomplete → cross-outlet), z-score outlier detection, trend chart toggle
+- Audited src/components/dashboard/ExportDialog.tsx — section picker, 11 sections, select all/deselect all
+- Audited src/components/dashboard/resto-analysis/menu-analysis.tsx — outlier detection (avg + 2σ), clickable items
+- Audited src/lib/a11y.ts — clickableRowProps helper
+- Audited src/components/providers.tsx — QueryClient (staleTime 30s, retry 1, no refetchOnWindowFocus), ThemeProvider (defaultTheme=light, enableSystem=false)
+- Audited src/app/globals.css — prefers-reduced-motion respected with WCAG essential-motion exemption for spinners/skeletons
+- Ran greps: 68 aria/role occurrences across 30 files; 64 sm:/md:/lg: occurrences across 32 files; 5 sr-only usages (mostly in shadcn primitives); 0 skip-link / 0 href="#main"; 0 aria-live / aria-busy / role="status" / role="alert"; only 1 aria-current (pagination)
+- Confirmed: 0 URL state sync (Zustand only) — refresh loses tab + filters
+
+Stage Summary:
+- Total findings: 28 (4 P1, 9 P2, 11 P3, 4 P4)
+- P1 (critical): RestoRecommendationCard silent error suppression; no URL state (refresh loses everything); no skip-link + no <main id> landmark; charts/Recharts SVGs not accessible to screen readers
+- P2 (high): inconsistent empty states (some have icon+CTA, most just say "Tidak ada data"); DrillDownDrawer plain-text loading/error (no skeleton/retry); lazy-loaded dialogs return null while loading (first-open flash); no toast on drilldown error; toast duration 5000ms too short for error messages with long descriptions; mixed Indonesian/English in card titles; tables use min-w-[600px] forcing horizontal scroll on mobile; no breadcrumb context in drill-down layers; mobile footer hint hidden; HistoricalZScoreCard unbounded table (no pagination); no visual indicator for keyboard tab shortcuts
+- P3 (medium): color-only direction encoding in charts; no "recently viewed" outlet/item history; TopItems ScrollArea h-72 shows only ~7 rows; charts in h-40 too short; ExecutiveSummary 14 KPIs visually busy; ParetoDashboard nested breakdown no pagination; no undo for destructive actions; focus indicator contrast (oklch 0.708 low contrast on white); SourceDataModal 28-column table unusable on mobile; tooltip-only help for keyboard shortcuts; TabsList flex-wrap may push tab labels off-screen on mobile
+- P4 (low): mixed "Deviasi"/"Deviation"/"Dev/BOM" terminology (no glossary); icon-only buttons in FilterBar rely on Tooltip; ambient glow effects may render slowly on low-end devices; toast auto-dismiss prevents reading long error details
+- UX Maturity Score: 7/10 (justification: solid foundational patterns — skeleton loaders, per-card ErrorBoundary, retry buttons with 504 detection, FetchAware badge, keyboard shortcuts, scroll-to-top, helpful EmptyState with CTAs. But gaps in: WCAG landmarks (no skip-link, no <main id>), URL state persistence, breadcrumb context, accessibility of Recharts SVGs, consistency of empty/error states across 30+ components, mobile usability of wide tables, and several silent-failure paths)
+- Top 5 UX Quick Wins (highest impact / lowest effort):
+  1. Add `role="status"` + `aria-live="polite"` to toast viewport (S, 1 file) — screen readers will finally announce "✅ Export berhasil"
+  2. Add `<main id="main">` landmark + skip-link in layout.tsx (S, 2 files) — keyboard users skip 8+ filter controls
+  3. Replace `return null` in RestoRecommendationCard.tsx:194 with inline error card + retry (S, 1 file) — silent failure becomes visible
+  4. Add skeleton loader for DrillDownDrawer (replace `<p>Memuat data sumber...</p>` with table-shaped Skeleton) (S, 1 file)
+  5. Sync active tab + filters to URL query params via useSearchParams (M, 2-3 files) — refresh no longer loses context, enables deep-linking / sharing
+- Comparison vs typical enterprise dashboard (Tableau / Power BI / Looker):
+  - HAS that enterprise tools also have: skeleton loaders, retry buttons, empty state CTAs, dark mode, keyboard shortcuts, virtualized tables, per-card error boundaries, toast notifications, scroll-to-top
+  - MISSING that enterprise tools usually have: URL state (deep linking), saved views / favorites, PDF export (only Word here), annotations on data points, scheduled reports / email delivery, audit log, multi-user collaboration, custom dashboard builder, drill-through with filter persistence, print-friendly layout, onboarding tour, recently-viewed history, undo for destructive actions, accessible SVG charts (title/desc/aria-label), role-based access control
+
+---
+Task ID: REVIEW-FEATURE
+Agent: general-purpose (Feature Gap Analyst)
+Task: Compare app features vs typical F&B inventory analytics platform
+
+Work Log:
+- Read worklog.md tail (FASE-1 to FASE-4 + AUDIT-1..4 + FIX-HIGH/MEDIUM)
+- Read MASTER_CONTEXT.md (609 lines) for project overview, schema, 21 API endpoints, feature list, known issues
+- Audited src/app/api/ — 27 route files, no auth/scheduling/notification/comments endpoints
+- Audited src/components/dashboard/ — 41 components, no case mgmt / DQ / saved views / geo map / multi-user UI
+- Audited prisma/schema.prisma — 11 models, no User/Role/Comment/Case/SavedFilter/Notification/Subscription models
+- Audited src/middleware.ts — single ADMIN_TOKEN (no users, no roles, no UI for login)
+- Confirmed: AuditLog model exists + writes in 11 sites BUT no UI to view it
+- Confirmed: DQIssue model exists (populated at ingest) BUT no UI to view issues
+- Confirmed: Investigation table script exists (scripts/create-investigation-table.ts for legacy SQLite/Turso) but NEVER migrated to PostgreSQL schema + no API + no UI
+- Confirmed: forecast.ts uses simple OLS linear regression (4-week projection only) — NOT real ML
+- Confirmed: examples/websocket/ exists but NOT integrated into src/
+- Confirmed: Export = Word .docx ONLY (export-report route). Client-side CSV exists for drilldown source only.
+- Confirmed: No PWA manifest, no service worker (public/ has only logo.svg + robots.txt)
+- Confirmed: AI narrative engine was REMOVED (src/engine/narrative/narrative.ts is empty stub)
+- Compared against 6 reference platforms: Power BI, SAP Inventory, Odoo, Zoho, MarketMan/Toast, NetSuite
+
+Stage Summary:
+- Total findings: 32 missing features (10 P1, 14 P2, 8 P3)
+- Feature Completeness Score: 6.5/10 vs typical F&B inventory analytics platform
+- Strengths: deep variance/deviation analytics, 17-rule engine, Pareto, peer comparison, historical z-score, strong SQL optimization
+- Critical gaps: NO multi-user/RBAC, NO case/ticket workflow, NO alerts/notifications, NO audit UI, NO Excel/PDF export, NO mobile/PWA, NO POS/ERP integration, NO saved filters, NO comments/annotations, NO proper ML forecasting
+- See detailed findings below.
+
+---
+
+## DETAILED FINDINGS
+
+### CATEGORY A: CORE INVENTORY FEATURES (Missing)
+
+### Finding [FEAT-01]: Case / Investigation Workflow (Ticketing)
+- **Priority**: P1 (must-have)
+- **Category**: Core
+- **What**: Persistent investigation tracking — assign flagged deviation to PIC/analyst, set status (OPEN/INVESTIGATING/RESOLVED/CLOSED), add notes, due date, resolution. Schema already drafted in scripts/create-investigation-table.ts (legacy SQLite) but never migrated to PostgreSQL + no API + no UI.
+- **Why Missing**: With 333 outlets × 109 items × multiple weeks = thousands of flagged deviations per month. Currently the dashboard only SHOWS anomalies — there's no way to track WHO is investigating, WHAT was found, WHAT action was taken. Without this, audit findings pile up unactioned. This is the #1 feature of MarketMan/Toast Inventory.
+- **Reference**: MarketMan (Investigation module), Toast Inventory (Variance Tickets), SAP Inventory Management (exception workflow)
+- **Effort**: L
+
+### Finding [FEAT-02]: Comments / Annotations on Records
+- **Priority**: P1 (must-have)
+- **Category**: Collaboration
+- **What**: Per-record or per-card comment thread — analyst can annotate "Called outlet, mereka bilang supplier delivery telat" or attach evidence. Stored in DB with author + timestamp.
+- **Why Missing**: Deviation analysis is a collaborative process between HQ analyst + area manager + outlet PIC. Currently the only output channel is Word export — no in-app discussion. Comments persist the institutional knowledge that's currently lost in WhatsApp groups.
+- **Reference**: Power BI (report comments), Tableau (commenting), every BI tool
+- **Effort**: M
+
+### Finding [FEAT-03]: Multi-User Authentication & RBAC
+- **Priority**: P1 (must-have)
+- **Category**: User Management
+- **What**: Login UI + roles (Super Admin / Analyst / Area Manager / Outlet PIC / Viewer). Each role sees different data scope. E.g., Area Manager JATIM 1 only sees outlets in their area. Outlet PIC only sees their outlet.
+- **Why Missing**: Currently single-user with ADMIN_TOKEN (no UI). For 333 outlets operation, multiple analysts + 14 area managers + outlet PICs NEED scoped access. Without RBAC, the platform is unusable as a multi-stakeholder operational tool.
+- **Reference**: Every enterprise platform (SAP, NetSuite, Odoo, Zoho all have RBAC). NextAuth.js is the standard Next.js solution.
+- **Effort**: XL
+
+### Finding [FEAT-04]: Audit Trail UI (Compliance)
+- **Priority**: P1 (must-have)
+- **Category**: Audit
+- **What**: AuditLog model exists and is written by 11 sites (ingest/pic/settings/data/migrate/analysis) but there's NO UI to view it. Need: searchable timeline of "who did what when", filter by action/user/date, export for compliance.
+- **Why Missing**: SOX-style compliance + internal audit requirement. Without visible audit trail, fraud detection loses its teeth (an analyst can change thresholds without trace). The data is being captured — just not surfaced.
+- **Reference**: NetSuite (Audit Trail), SAP (Change History), Zoho (Audit Logs)
+- **Effort**: S (data already captured)
+
+### Finding [FEAT-05]: Data Quality Dashboard
+- **Priority**: P1 (must-have)
+- **Category**: Core
+- **What**: DQIssue model is populated at ingest (MISSING_BOM, DUPLICATE, INVALID_NUMBER, TOLERANCE_NOT_SET, etc.) but no UI. Need: dashboard showing DQ issues per SourceFile/Outlet/Item, severity breakdown, drill-to-raw-row, "fix" workflow.
+- **Why Missing**: Garbage in = garbage out. If 5% of records have bad BOM, the entire deviation analysis is skewed. Analysts need to see DQ issues BEFORE trusting dashboard numbers. Currently they have to query DB directly.
+- **Reference**: SAP (Data Quality dashboard), Power BI (data lineage + quality), Odoo (data validation views)
+- **Effort**: M
+
+### Finding [FEAT-06]: Saved Filters / Bookmarks / Shareable URLs
+- **Priority**: P1 (must-have)
+- **Category**: UX
+- **What**: Analysts run the SAME analysis repeatedly: "JATIM 1, WEEK 4, top 10 deviasi". Currently they must re-select 4-5 dropdowns every time. Need: (a) persist current filter state to URL (deep-linkable), (b) "Save View" button to name+store a filter combo, (c) "My Views" dropdown to recall.
+- **Why Missing**: Every BI tool supports this. Analysts waste 30+ seconds per analysis re-selecting filters. With 14 areas × 4 weeks × multiple PICs × multiple items = analysts do 50+ filter combos per day.
+- **Reference**: Power BI (bookmarks), Tableau (saved views), Looker (Look saves)
+- **Effort**: M
+
+### Finding [FEAT-07]: Export to Excel/CSV/PDF (Beyond Word)
+- **Priority**: P1 (must-have)
+- **Category**: Export
+- **What**: Currently only Word .docx (export-report route). Client-side CSV exists for drilldown source only. Need: (a) Excel .xlsx export with formulas/charts, (b) PDF export (printable), (c) JSON export for API integration, (d) scheduled email of report.
+- **Why Missing**: Word is for narrative reports. Excel is for data manipulation (analysts sort/filter/pivot further). PDF is for executive distribution. Different stakeholders want different formats.
+- **Reference**: Power BI (export to Excel/PDF/PowerPoint), Tableau (export to crosstab PDF), every BI tool
+- **Effort**: M (exceljs already installed, jsPDF needs adding)
+
+### Finding [FEAT-08]: Scheduled Alerts / Notifications
+- **Priority**: P1 (must-have)
+- **Category**: Automation
+- **What**: Currently analyst must manually open dashboard + select week + scan for anomalies. Need: (a) email/WhatsApp notification when new data ingested, (b) alert when rule fires for high-priority outlet (HIGH_LOSS_NOMINAL > Rp 10jt), (c) weekly digest email with top 10 anomalies, (d) cron job to auto-run analysis.
+- **Why Missing**: Analysts can't watch dashboard 24/7. With weekly cadence, missing a high-impact anomaly by 1 day = Rp 10jt+ additional loss. WhatsApp is the de-facto communication channel in Indonesian F&B.
+- **Reference**: MarketMan (low stock alerts), Toast (variance alerts), Zoho (workflow alerts)
+- **Effort**: L (needs cron + WhatsApp Business API or Resend/email)
+
+### Finding [FEAT-09]: PWA / Mobile-First Responsive
+- **Priority**: P1 (must-have)
+- **Category**: UX
+- **What**: No PWA manifest, no service worker. Outlet PICs (333 of them) need to view dashboard on phone during stock opname. Area managers check status from the field.
+- **Why Missing**: F&B operations happen on the floor, not at a desk. Without PWA, outlet PICs use WhatsApp screenshots of desktop view (lossy, error-prone). PWA = installable + offline-capable + push notifications.
+- **Reference**: MarketMan (mobile app), Toast (mobile app), all modern dashboards (PWA support)
+- **Effort**: M (next-pwa or manual manifest+SW; dashboard already mobile-responsive per screenshots)
+
+### Finding [FEAT-10]: POS / ERP Integration
+- **Priority**: P1 (must-have)
+- **Category**: Integration
+- **What**: Currently only Excel upload + Google Drive import (manual). Need: (a) direct POS integration (Moka, iSeller, Majoo, Moneymade — Indonesian F&B POS), (b) ERP sync (SAP, Odoo, NetSuite), (c) API webhook for automated daily/weekly ingest, (d) SFTP/Google Sheets scheduled pull.
+- **Why Missing**: Manual Excel upload = 1-2 day lag + human error. Real F&B operations need daily (not weekly) data. Without POS integration, the platform is "interesting analytics tool" instead of "operational system of record".
+- **Reference**: MarketMan (POS integrations list — Toast, Square, Clover), Odoo (native POS)
+- **Effort**: XL (each POS has different API)
+
+### CATEGORY B: ANALYTICS (Missing)
+
+### Finding [FEAT-11]: Inventory Turnover & Days of Supply
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Industry-standard inventory KPIs not computed: Inventory Turnover Ratio (COGS/avg inventory), Days of Sales of Inventory (DSI), Days Until Stockout. Currently dashboard shows Deviasi, Sales, BOM but not turnover.
+- **Why Missing**: Turnover is THE primary inventory efficiency metric. Without it, "high deviation" doesn't tell you if it's because stock is moving slowly (aging) or fast (turnover).
+- **Reference**: SAP Inventory (turnover reports), Zoho (DSI), Odoo (stock aging)
+- **Effort**: M
+
+### Finding [FEAT-12]: Stock Aging Analysis
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Identify items sitting in stock too long (>30/60/90 days) — risk of expiration/spoilage. Per outlet + per item, aging buckets.
+- **Why Missing**: Critical for F&B (perishable goods). Deviation analysis tells you "you used too much". Aging tells you "you bought too much and it's expiring". Different problem, different action.
+- **Reference**: Odoo (stock aging report), SAP (FIFO aging), Zoho (aging report)
+- **Effort**: L (requires stock balance table that doesn't exist yet — current schema only has movements)
+
+### Finding [FEAT-13]: Slow-Moving / Dead Stock Detection
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Items with near-zero usage over N weeks. Auto-flag for write-off or transfer to another outlet.
+- **Why Missing**: Ties capital. Common pattern in 333-outlet chains: one outlet over-stocks, another runs out. Dead stock = frozen cash.
+- **Reference**: Odoo (dead stock report), SAP (slow mover analysis)
+- **Effort**: M
+
+### Finding [FEAT-14]: ABC/XYZ Inventory Classification
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Pareto 80/20 exists but only for deviation. Need full ABC classification: A items (top 20% value, tight control), B (next 30%, medium), C (bottom 50%, loose). Plus XYZ (X=stable demand, Y=variable, Z=irregular) for forecasting accuracy.
+- **Why Missing**: Determines cycle count frequency, safety stock levels, supplier negotiation priority. Currently all 109 items treated equally.
+- **Reference**: SAP (ABC/XYZ matrix), NetSuite (item classification)
+- **Effort**: M
+
+### Finding [FEAT-15]: Geospatial / Map Visualization
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: 333 outlets across 14 areas (Indonesia archipelago) — currently only tabular by-area breakdown. Need: interactive map showing outlet locations colored by deviation/health score. Identify geographic clusters of anomalies (e.g., "all JATIM outlets spiking = supplier issue").
+- **Why Missing**: Pattern recognition across geography. Tables hide spatial correlation that maps reveal instantly.
+- **Reference**: Power BI (ArcGIS maps), Tableau (built-in geocoding)
+- **Effort**: L (needs outlet lat/long + leaflet/mapbox)
+
+### Finding [FEAT-16]: What-If / Scenario Simulation
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: "If I reduce JATIM 1 deviation by 20%, what's the rupiah impact?" or "If I change tolerance from 5% to 3%, how many more outlets get flagged?" Sliders for thresholds → real-time recompute.
+- **Why Missing**: Helps leadership justify investment in inventory control programs. Currently thresholds are fixed in Settings (change = full re-fetch).
+- **Reference**: Power BI (What-If parameters), Tableau (parameters)
+- **Effort**: M (settings are already DB-backed — just add live preview)
+
+### Finding [FEAT-17]: Budget vs Actual Comparison
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Compare actual deviation/usage against budgeted/target. Currently only vs previous period + vs peer/network. Missing "vs target".
+- **Why Missing**: Companies set targets. "Target loss < 1% of sales" is the actual KPI, not "vs last month".
+- **Reference**: SAP (budget variance), NetSuite (budget vs actual)
+- **Effort**: M (needs budget table + UI to upload target)
+
+### Finding [FEAT-18]: Cost of Deviation ($) P&L Impact
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Translate deviation into rupiah impact on COGS, gross margin, net profit. Currently shows nominalDeviasi as absolute but doesn't connect to P&L.
+- **Why Missing**: CFO/CEO speak in P&L impact, not deviation counts. "Rp 500jt loss this quarter due to deviation" is actionable; "Dev/BOM = 12%" is not.
+- **Reference**: NetSuite (financial impact), SAP (CO-PA profitability analysis)
+- **Effort**: M
+
+### Finding [FEAT-19]: Supplier Performance / Yield Analysis
+- **Priority**: P2 (should-have)
+- **Category**: Analytics
+- **What**: Track yield variance (actual vs theoretical yield from BOM). If supplier A's ayam consistently yields 80% vs spec 85%, that's a supplier problem not an outlet problem.
+- **Why Missing**: Currently the dashboard blames the outlet. Supplier quality is often the real root cause for F&B. Without supplier dimension, can't differentiate.
+- **Reference**: SAP MM (vendor evaluation), MarketMan (supplier management)
+- **Effort**: L (needs supplier table + supplier-item mapping)
+
+### Finding [FEAT-20]: Cycle Count Tracking
+- **Priority**: P2 (should-have)
+- **Category**: Core
+- **What**: Schedule + track cycle counts (partial stock opname per item class A/B/C on different cadences). Currently only full SO per week.
+- **Why Missing**: Full weekly SO is heavy. ABC-based cycle counting is industry best practice. Counts audit-readiness.
+- **Reference**: SAP (cycle counting), Odoo (inventory recurring operations)
+- **Effort**: L
+
+### CATEGORY C: COLLABORATION (Missing)
+
+### Finding [FEAT-21]: Mention / @tag in Comments
+- **Priority**: P3 (nice-to-have)
+- **Category**: Collaboration
+- **What**: @-mention a user in comment → triggers notification. Tightly coupled to FEAT-03 (multi-user) and FEAT-02 (comments).
+- **Why Missing**: Standard collaboration pattern — without it, comments are static notes not conversation.
+- **Reference**: Power BI, Slack, every modern tool
+- **Effort**: M
+
+### Finding [FEAT-22]: Report Sharing & Embedding
+- **Priority**: P2 (should-have)
+- **Category**: Collaboration
+- **What**: Generate shareable read-only URL for a specific dashboard view (e.g., "JATIM 1 week 4 anomaly report"). Embed in iframe for intranet portal. Optional: time-expiring links.
+- **Why Missing**: Currently the only "share" mechanism is Word export emailed as attachment. Live links would let leadership self-serve.
+- **Reference**: Power BI (publish to web), Tableau (embedded analytics), Looker (embed)
+- **Effort**: M
+
+### Finding [FEAT-23]: Real-time Multi-User Editing (Cursor Presence)
+- **Priority**: P3 (nice-to-have)
+- **Category**: Collaboration
+- **What**: When two analysts view same outlet, see their cursors / "X is viewing this". WebSocket example exists in examples/ but not integrated.
+- **Why Missing**: Avoids duplicate work + enables live discussion. Lower priority because workflow is async (weekly cadence).
+- **Reference**: Figma (multiplayer), Google Docs (presence)
+- **Effort**: L
+
+### CATEGORY D: AUTOMATION (Missing)
+
+### Finding [FEAT-24]: Scheduled Data Refresh (Cron)
+- **Priority**: P1 (must-have)
+- **Category**: Automation
+- **What**: Auto-pull from Google Drive / SFTP on schedule (daily 06:00, weekly Monday). Auto-run analysis + cache. Currently analyst must manually click "Refresh" + wait 7-8s.
+- **Why Missing**: Removes 5-10 manual clicks per week. Vercel Cron Jobs or GitHub Actions can trigger /api/ingest.
+- **Reference**: Power BI (scheduled refresh), Tableau (scheduled extract)
+- **Effort**: S (Vercel Cron + existing /api/ingest endpoint)
+
+### Finding [FEAT-25]: Webhook Outbound
+- **Priority**: P2 (should-have)
+- **Category**: Automation
+- **What**: POST to external URL when: anomaly detected, threshold breached, ingest completed, DQ issue found. Enables integration with Slack/Teams/custom systems.
+- **Why Missing**: Lets platform be a node in larger automation (e.g., auto-create Jira ticket when HIGH_LOSS_NOMINAL fires).
+- **Reference**: Zoho (webhooks), NetSuite (SuiteScript hooks)
+- **Effort**: M
+
+### Finding [FEAT-26]: Auto-Resolution Suggestions (Action Recommendation)
+- **Priority**: P2 (should-have)
+- **Category**: AI
+- **What**: For each flagged deviation, suggest top 3 likely root causes based on historical patterns + similar outlets' resolutions. "90% of similar cases were resolved by [supplier change / retraining / recipe adjustment]".
+- **Why Missing**: Analysts spend hours per case investigating. Prescriptive AI shortens MTTR (mean time to resolution).
+- **Reference**: NetSuite (SuiteAnalytics), Anaplan (prescriptive planning)
+- **Effort**: XL (needs case mgmt data first — depends on FEAT-01)
+
+### CATEGORY E: DATA SOURCES / INTEGRATION (Missing)
+
+### Finding [FEAT-27]: REST API for External Consumption (BI Tools)
+- **Priority**: P2 (should-have)
+- **Category**: Integration
+- **What**: Public/read-only JSON API with API key auth. Enables Power BI/Tableau/Looker to query the data directly. Currently 27 internal endpoints exist but no documented public API.
+- **Why Missing**: Lets org use best-of-breed BI tool on top of curated inventory data. Also enables custom integrations (e.g., data warehouse ETL).
+- **Reference**: Every SaaS analytics platform exposes public API
+- **Effort**: M
+
+### Finding [FEAT-28]: Sales / POS Data Integration (Beyond Manual)
+- **Priority**: P1 (must-have) — overlaps FEAT-10
+- **Category**: Integration
+- **What**: Currently `nominalSales` is denormalized from Excel. Need direct POS pull (daily sales by item by outlet) to enable daily (not weekly) deviation tracking.
+- **Why Missing**: Weekly cadence misses intra-week spikes. Daily data = faster anomaly detection.
+- **Reference**: MarketMan/Toast (real-time POS sync)
+- **Effort**: XL
+
+### CATEGORY F: AI/ML (Missing)
+
+### Finding [FEAT-29]: Proper ML Forecasting (Beyond OLS)
+- **Priority**: P2 (should-have)
+- **Category**: AI
+- **What**: Current `projectTrend` is OLS linear regression on 4 weeks — statistically weak. Need: Prophet/ARIMA/exponential smoothing, seasonality handling, confidence intervals, automatic outlier detection.
+- **Why Missing**: 4-week linear projection on noisy F&B data = misleading. Real forecast needs proper time-series model + uncertainty bounds.
+- **Reference**: Power BI (AI visuals w/ Python), Tableau (forecasting), NetSuite (Demand Planning)
+- **Effort**: L (use `tsmd` or call Python via serverless)
+
+### Finding [FEAT-30]: Anomaly Detection via Unsupervised ML
+- **Priority**: P2 (should-have)
+- **Category**: AI
+- **What**: Currently 17 hand-crafted rules. Add unsupervised: Isolation Forest / DBSCAN to catch anomalies the rules don't cover. The rules only catch KNOWN patterns — ML catches UNKNOWN.
+- **Why Missing**: Rules are deterministic + transparent but limited to analyst imagination. ML finds new patterns (e.g., "outlet X has unusual waste pattern on Tuesdays" — no rule for that).
+- **Reference**: Power BI (anomaly detection), AWS Lookout for Metrics, Anodot
+- **Effort**: L
+
+### Finding [FEAT-31]: LLM Natural-Language Query
+- **Priority**: P3 (nice-to-have)
+- **Category**: AI
+- **What**: "Top 5 outlets in Jakarta with highest waste this week" → generates SQL → renders chart. ZAI/Anthropic API.
+- **Why Missing**: Lowers barrier for non-analyst users (area managers, outlet PICs). Currently must learn filter UI.
+- **Reference**: Tableau (Ask Data), Power BI (Q&A), Looker (Lookerbot)
+- **Effort**: M (LLM call + schema-aware prompt + SQL validator)
+
+### Finding [FEAT-32]: AI Narrative Summary (Re-enable)
+- **Priority**: P3 (nice-to-have)
+- **Category**: AI
+- **What**: src/engine/narrative/narrative.ts is empty stub (AI removed for performance). Re-enable with caching for weekly auto-summary in Word export.
+- **Why Missing**: Saves analyst 30 min/week writing executive summary. Currently must manually read all charts.
+- **Reference**: Power BI (Smart Narrative), Tableau (Ask Data narrative)
+- **Effort**: M
+
+---
+
+## TOP 10 MISSING FEATURES (Highest Impact for F&B Analyst)
+
+| Rank | ID | Feature | Priority | Effort | Impact |
+|------|-----|---------|----------|--------|--------|
+| 1 | FEAT-01 | Case / Investigation Workflow | P1 | L | Without this, anomalies are seen but never resolved |
+| 2 | FEAT-03 | Multi-User Auth & RBAC | P1 | XL | 333 outlets = multi-stakeholder tool, currently single-user |
+| 3 | FEAT-08 | Scheduled Alerts (WhatsApp/Email) | P1 | L | Analysts can't watch dashboard 24/7, daily losses compound |
+| 4 | FEAT-10 | POS / ERP Integration | P1 | XL | Manual Excel = 1-2 day lag, weekly cadence too slow |
+| 5 | FEAT-04 | Audit Trail UI | P1 | S | Data captured but invisible — quick win, compliance win |
+| 6 | FEAT-05 | Data Quality Dashboard | P1 | M | Garbage-in-garbage-out, analysts need to trust data first |
+| 7 | FEAT-07 | Excel/PDF Export | P1 | M | Word-only is limiting, Excel is analyst's native tool |
+| 8 | FEAT-09 | PWA / Mobile | P1 | M | 333 outlet PICs need phone access during stock opname |
+| 9 | FEAT-02 | Comments / Annotations | P1 | M | Knowledge currently lost in WhatsApp, no in-app discussion |
+| 10 | FEAT-06 | Saved Filters / Bookmarks | P1 | M | Analysts waste 30s+ per analysis re-selecting filters |
+
+## FEATURE COMPLETENESS SCORE: 6.5 / 10
+
+**Justification:**
+- **Analytics Depth**: 9/10 — exceptional. 17-rule engine, Pareto, peer comparison, z-score, deviation decomposition (Waste/Susut/Trial/Residual), multi-period, historical. Better than MarketMan/Toast on analytics depth.
+- **Visualization**: 7/10 — solid charts (recharts), 4 tabs, drilldown. Missing geo-map, what-if, scenario.
+- **Data Management**: 6/10 — Excel + Drive import OK, but no POS/ERP, no DQ dashboard UI, no scheduled refresh.
+- **Collaboration**: 1/10 — essentially zero. Single-user, no comments, no case mgmt, no sharing.
+- **User Management**: 1/10 — single ADMIN_TOKEN, no RBAC, no audit UI.
+- **Automation**: 2/10 — no alerts, no cron, no webhooks, manual refresh only.
+- **Export**: 4/10 — Word only. No Excel/PDF/JSON/embed.
+- **Mobile**: 3/10 — responsive CSS, but no PWA, no offline, no native app.
+- **AI/ML**: 3/10 — OLS forecast (weak), rules engine (good but deterministic), no ML, no LLM, narrative was removed.
+- **Integration**: 3/10 — Google Drive + Excel. No POS, no ERP, no public API.
+
+Weighted average ≈ 6.5. Platform is strong as "analyst's personal variance discovery tool" but weak as "multi-stakeholder operational system". Closer to "Tableau dashboard with rules engine" than to "SAP/NetSuite inventory management".
+
+## ROADMAP RECOMMENDATION (Suggested Order)
+
+### Phase 1: Foundation (2-3 weeks) — Quick wins + enablers
+1. **FEAT-04** Audit Trail UI (S) — data exists, just surface it
+2. **FEAT-05** Data Quality Dashboard (M) — DQIssue data exists, surface + workflow
+3. **FEAT-06** Saved Filters + URL state (M) — analyst productivity ×10
+4. **FEAT-07** Excel + PDF export (M) — exceljs already installed
+5. **FEAT-24** Scheduled refresh via Vercel Cron (S) — eliminates manual click
+
+### Phase 2: Collaboration (4-6 weeks) — Becomes multi-user tool
+6. **FEAT-03** Multi-User Auth + RBAC (XL) — NextAuth.js + role middleware
+7. **FEAT-01** Case / Investigation Workflow (L) — depends on users existing
+8. **FEAT-02** Comments / Annotations (M) — per-record + per-card
+9. **FEAT-08** Alerts (WhatsApp/Email) (L) — needs cron + notification provider
+10. **FEAT-22** Shareable URLs / Embed (M) — leadership self-service
+
+### Phase 3: Operations (4-6 weeks) — Becomes operational system
+11. **FEAT-09** PWA / Mobile (M) — for outlet PICs
+12. **FEAT-10** POS Integration (XL) — start with 1 POS (Moka or iSeller)
+13. **FEAT-28** Daily Sales Sync (XL) — daily cadence
+14. **FEAT-25** Webhook Outbound (M) — for Jira/Slack integration
+15. **FEAT-27** Public REST API (M) — for Power BI/Tableau consumers
+
+### Phase 4: Intelligence (4-6 weeks) — Becomes smart platform
+16. **FEAT-29** Proper ML Forecasting (L) — Prophet/ARIMA
+17. **FEAT-30** Unsupervised Anomaly Detection (L) — Isolation Forest
+18. **FEAT-26** Auto-Resolution Suggestions (XL) — depends on FEAT-01 case data accumulating
+19. **FEAT-16** What-If Simulation (M) — threshold preview
+20. **FEAT-31** NL Query (M) — for non-analyst users
+
+### Phase 5: Advanced Analytics (Optional, 6+ weeks)
+21. **FEAT-11** Inventory Turnover (M)
+22. **FEAT-12** Stock Aging (L)
+23. **FEAT-13** Dead Stock (M)
+24. **FEAT-14** ABC/XYZ (M)
+25. **FEAT-15** Geo Map (L)
+26. **FEAT-17** Budget vs Actual (M)
+27. **FEAT-18** P&L Impact (M)
+28. **FEAT-19** Supplier Performance (L)
+29. **FEAT-20** Cycle Count (L)
+30. **FEAT-32** AI Narrative (M) — re-enable with cache
+
+## KEY INSIGHTS
+
+1. **Single-user assumption is the #1 blocker.** The platform was built as "analyst's personal tool" but the business is a 333-outlet chain needing multi-stakeholder access. FEAT-03 (RBAC) unlocks FEAT-01/02/08/21/22/23.
+
+2. **AuditLog + DQIssue + Investigation script are "zombie features"** — schema/data exist but UI was never built. These are the highest ROI quick wins (Phase 1).
+
+3. **Analytics is the strength; operations is the weakness.** Score: 9/10 analytics, 2/10 operations. Phase 2-3 closes the operations gap.
+
+4. **Manual Excel import is the workflow bottleneck.** Without FEAT-10/24/28, the platform can never be more than weekly. Daily cadence requires POS integration.
+
+5. **Forecasting is misleadingly weak.** OLS on 4 data points is not a forecast — it's a trend line. For executives trusting the projection, FEAT-29 is critical.
+
+6. **Mobile is table stakes for F&B.** Outlet PICs do stock opname with phone in hand. Without PWA, the platform isn't usable by 333 people who need it most.
+
+7. **The platform's positioning**: Today it's a "BI tool for inventory analyst". To become "operational system" needs Phase 2+3. To become "smart platform" needs Phase 4. The current state is ~30% of the way to a typical F&B inventory platform like MarketMan.
+
+---
+Task ID: REVIEW-CODE
+Agent: general-purpose (Code Quality Reviewer)
+Task: Review codebase for technical debt, code smells, test gaps, error handling,
+      TODO markers, type safety, dead code, inconsistent patterns.
+
+Work Log:
+- Read worklog tail (Fase 1-4 context: performance optimization phases complete)
+- Scanned src/ for TODO/FIXME/HACK/XXX/DEPRECATED markers
+- Audited `any` / `as any` / `as unknown` type-safety escape hatches (~80 occurrences)
+- Searched for stray console.log/error outside logger.ts
+- Inventoried test files (only 5 unit-test files for ~38,885 LOC codebase)
+- Measured largest files (>500 LOC) and god functions in route handlers
+- Audited 71 try/catch blocks for swallowing patterns
+- Looked for duplicate SQL patterns (ABS(SUM(ir."nominalDeviasi")) duplicated 27×;
+  "FROM InventoryRecord ir" boilerplate in 57 query sites)
+- Identified dead code: queryNetworkItemRisk (236 LOC file unused) and
+  queryPeerItemComparison (exported but only mentioned in comments)
+- Reviewed eslint.config.mjs (multiple safety rules disabled)
+- Reviewed prisma/schema.prisma for normalisation debt
+- Reviewed lib/aggregation-cache.ts + rate-limit.ts for known limitations
+- No code changes made (analysis only, per constraints)
+
+Stage Summary:
+- Total findings: 14 (1 P1, 4 P2, 6 P3, 3 P4)
+- Files investigated: src/app/api/ (21 routes), src/lib/ (queries, ingestion,
+  cache, rate-limit, logger, db), src/engine/ (rules + analysis), src/components/
+  (dashboard + filters), src/hooks/, prisma/schema.prisma, tests/
+- Health Score: 6.0/10 — code WORKS and has been hardened (security audit,
+  deep-audit, P1/P2 fixes visible in comments), but carries significant
+  maintainability debt (god functions, type-safety holes, test gaps, dead
+  code, disabled lint rules). For a production-grade internal tool this is
+  borderline acceptable; for a multi-developer product it would block
+  long-term velocity. The 38K LOC codebase is largely understood only by
+  the original author + AI agents (every file has rich fix-history comments
+  but few humans have touched it).
+
+FINDINGS (grouped by category):
+
+==============================================================
+A. TEST COVERAGE GAPS
+==============================================================
+
+### Finding [CODE-01]: Test coverage is critically low (~2% of codebase)
+- **Severity**: P1 (critical)
+- **Location**: src/**/*.test.ts (only 5 files, 854 LOC tests for 38,885 LOC src)
+- **Issue**: Only 5 unit test files exist:
+    src/lib/validation.test.ts     (135 LOC — Zod input validation)
+    src/lib/format.test.ts         (152 LOC — number/currency formatters)
+    src/lib/metrics/growth.test.ts (115 LOC — calcGrowth helpers)
+    src/lib/metrics/historical.test.ts (161 LOC — zScore helpers)
+    src/engine/rules/evaluator.test.ts (291 LOC — legacy JS rule evaluator)
+  ZERO coverage on:
+    - All 21 API routes (analysis, export-report, ingest-process, etc.)
+    - All 14 query modules in src/lib/queries/ (4576 LOC of SQL — the
+      heart of the Fase 1-4 optimisation; one typo can silently break
+      dashboard numbers)
+    - src/lib/ingestion.ts (745 LOC of file-parsing + DB-write logic —
+      data-loss risk)
+    - src/lib/aggregation-cache.ts (DB cache; bad code = stale dashboard
+      for 5 minutes)
+    - src/lib/rate-limit.ts (security control; bad code = DoS vector)
+    - src/lib/queries/rule-evaluation.ts (the new SQL rule evaluator
+      that replaced the JS loop in Fase 3 — 270 LOC of complex CTE/LATERAL
+      SQL with zero tests)
+- **Impact**: Every Fase 1-4 refactor (BE-03, BE-04, DB-06, etc.) was
+  verified manually via Agent Browser screenshots, NOT automated tests.
+  Future refactors will either (a) require expensive manual re-verification
+  each time, or (b) ship with regressions that nobody notices until
+  production users complain. The SQL query modules in particular are
+  deterministic and easily unit-testable with a test DB — low-hanging
+  fruit for high ROI.
+- **Effort to fix**: L (1-2 weeks to add baseline tests for queries +
+  ingestion + cache; full coverage of API routes is multi-month)
+
+==============================================================
+B. GOD FUNCTIONS / LARGE FILES
+==============================================================
+
+### Finding [CODE-02]: /api/analysis GET handler is a 910-line god function
+- **Severity**: P2 (high)
+- **Location**: src/app/api/analysis/route.ts:82-992 (function body = 910 LOC)
+- **Issue**: Single GET function handles: rate limiting, input validation,
+  month/week resolution, cache lookup, in-flight Promise dedup, 16-parallel
+  SQL Promise.all batching, rule evaluation (SQL + JS hybrid), growth
+  metrics, trend building, variance analysis, historical analysis, Pareto
+  analysis, post-processing, response shaping, error handling. Phase 3
+  already extracted 3 helper files (services/exec-summary.ts,
+  services/deviation-drivers.ts, services/trend-builder.ts) but the main
+  function is still 910 lines.
+- **Impact**: Hard to test (cannot unit-test a sub-section without running
+  the whole 910-line flow), hard to reason about (cognitive load), high
+  risk of merge conflicts when multiple devs touch the same endpoint,
+  easy to introduce subtle ordering bugs (e.g. the BE-03 await-reordering
+  fix shows how fragile the Promise.all batching is).
+- **Effort to fix**: M (split into ~5 named orchestrator functions, each
+  ~100-200 LOC; existing services/*.ts files already prove the pattern works)
+
+### Finding [CODE-03]: /api/ingest-process POST handler is a 700-line god function
+- **Severity**: P2 (high)
+- **Location**: src/app/api/ingest-process/route.ts (POST body = 700 LOC)
+- **Issue**: Same pattern as analysis: single function handles file
+  reassembly, chunk validation, Excel parsing, week detection, partial
+  import (one week at a time), DQ issue tracking, cache invalidation,
+  transactional delete+insert, audit log. Multiple inlined try/catch
+  blocks. Compare to src/lib/ingestion.ts which already extracted a
+  `processRowsForImport` helper — same extraction pattern should be
+  applied to the route-specific orchestration.
+- **Impact**: This route handles user file uploads (data-loss risk).
+  Untestable in current form → cannot guarantee integrity of the
+  ingest pipeline. The fix history (BUG2-INGEST-1, BUG2-INGEST-3,
+  FIX-A-1) shows multiple near-data-loss bugs already caught here.
+- **Effort to fix**: M
+
+### Finding [CODE-04]: /api/export-report GET handler is a 646-line god function
+- **Severity**: P3 (medium)
+- **Location**: src/app/api/export-report/route.ts:238-884 (function body = 646 LOC)
+- **Issue**: Mixes data fetching, transformation, .docx generation, table
+  formatting all in one function. Many small inline helpers (fmtIDR,
+  fmtNum, fmtPct, heading, paragraph, divider, tableCell, makeTable) are
+  defined at module scope but only used here — could move to a separate
+  `lib/docx-helpers.ts`.
+- **Impact**: Lower priority than CODE-02/CODE-03 because export-report
+  is a read-only endpoint (no data-loss risk). Still affects maintainability
+  when adding new export sections.
+- **Effort to fix**: M
+
+### Finding [CODE-05]: 8 files exceed 500 LOC without internal split
+- **Severity**: P3 (medium)
+- **Location**:
+    src/app/api/analysis/route.ts          991 LOC (see CODE-02)
+    src/app/api/export-report/route.ts     883 LOC (see CODE-04)
+    src/components/filters/FileUploadDialog.tsx 841 LOC (chunked-upload UI)
+    src/app/api/ingest-process/route.ts    816 LOC (see CODE-03)
+    src/lib/queries/pareto.ts              794 LOC (12 exported queries)
+    src/lib/ingestion.ts                   744 LOC
+    src/app/page.tsx                       694 LOC (dashboard composition)
+    src/lib/queries/items/top-items.ts     690 LOC (8 exported queries)
+    src/hooks/useAnalysis.ts               633 LOC (huge AnalysisData type)
+    src/app/api/outlet-items/route.ts      611 LOC
+    src/components/dashboard/ParetoDashboard.tsx 604 LOC
+    src/components/filters/FilterBar.tsx   596 LOC
+    src/components/dashboard/Charts.tsx    584 LOC
+    src/lib/settings.ts                    561 LOC
+    src/lib/queries/outlets/resto-recommendations.ts 502 LOC
+- **Impact**: Long files are hard to navigate, hard to review in PRs,
+  and tend to accumulate "just one more function" until they become
+  unmanageable. The 2 query files (pareto.ts, top-items.ts) in particular
+  have 12 + 8 exported queries with significant SQL duplication that
+  could be DRYed via a query-builder helper.
+- **Effort to fix**: M per file (some are easy splits, e.g. FileUploadDialog
+  can extract the chunk-upload logic; pareto.ts can split by dimension)
+
+==============================================================
+C. TYPE SAFETY ISSUES
+==============================================================
+
+### Finding [CODE-06]: ~80 occurrences of `any` / `as any` / `as unknown`
+- **Severity**: P2 (high)
+- **Location**: Heavy concentration in:
+    src/app/api/export-report/route.ts    36 occurrences (mostly docx type
+                                            escapes + `(s as any)._prevMetrics`)
+    src/lib/queries/pareto.ts             10 occurrences (raw SQL row → typed)
+    src/lib/queries/items/top-items.ts     7 occurrences (same pattern)
+    src/lib/queries/outlets/peer-comparison.ts 4 occurrences
+    src/lib/ingestion.ts                   6 occurrences (processIngestion
+                                            `body: any`, allIssues: any[],
+                                            rawRow as any._sheetName)
+    src/components/filters/FilterBar.tsx   4 occurrences (driveResult: any,
+                                            filter results by status: any)
+    src/components/dashboard/CardDrillDown.tsx 9 `as unknown as DrillRow[]`
+                                            (type-system escape hatch for
+                                            heterogeneous drill sources)
+- **Issue**: Three recurring anti-patterns:
+    1. `rows.map((r: any) => ...)` — raw SQL result rows typed as `any`
+       instead of using the `Array<{...}>` generic on $queryRaw that
+       Prisma already supports (and is already used in the same files!)
+    2. `catch (e: any)` instead of `catch (e: unknown)` (CsvUploadDialog,
+       DataManagementDialog, PicManagementDialog, SettingsDialog,
+       resto-bahan-matrix, import-drive:80)
+    3. `as any` to silence docx lib type mismatches (export-report:
+       `border: { bottom: { style: 'single' as any, ... } }`) — should
+       import the proper BorderStyle enum from `docx`
+- **Impact**: The SQL-row `any` pattern is the most insidious — when a
+  query's SELECT columns are renamed/removed, TypeScript will NOT catch
+  the consumer breakage (e.g. `r.totalAbsNominal` becomes `undefined`,
+  NaN propagates, dashboard shows 0 silently). The catch-(e:any) pattern
+  prevents `instanceof Error` narrowing. The docx `as any` hides real
+  type drift in the docx library.
+- **Effort to fix**: S per occurrence (mechanical); M total to clean up
+  the SQL-row pattern across all 14 query files. The eslint rule
+  @typescript-eslint/no-explicit-any is currently DISABLED (see CODE-13)
+  which is why this debt accumulated.
+
+### Finding [CODE-07]: `body: any` on the main ingestion entrypoint
+- **Severity**: P2 (high)
+- **Location**: src/lib/ingestion.ts:94 `processIngestion(body: any, fastMode?: boolean)`
+- **Issue**: The most critical data-write function in the codebase accepts
+  an untyped `body` parameter. Callers (api/ingest, api/import-drive,
+  scripts/upload-to-turso) pass ad-hoc objects with filePath/dir/fileName
+  fields. There is a Zod schema (ingestProcessBodySchema) but it is only
+  used in /api/ingest-process, NOT in processIngestion itself.
+- **Impact**: A typo'd field name (e.g. `body.filepath` instead of
+  `body.filePath`) silently falls through to the `else { files = await
+  findExcelFiles(); }` branch and processes the entire data dir —
+  unexpected behaviour with no type error. Should be `body: IngestionRequest`
+  with a typed interface + runtime validation at the entrypoint.
+- **Effort to fix**: S (define interface + Zod schema, replace `any`)
+
+==============================================================
+D. DEAD CODE
+==============================================================
+
+### Finding [CODE-08]: queryNetworkItemRisk — 236 LOC of dead code
+- **Severity**: P3 (medium)
+- **Location**: src/lib/queries/items/network-risk.ts (entire file, 236 LOC)
+- **Issue**: `queryNetworkItemRisk` + its supporting interfaces
+  (NetworkItemRisk, NetworkItemRiskOutlet, NetworkItemRiskRawRow) are
+  exported but NEVER imported anywhere in src/ or scripts/. The only
+  reference is a comment in src/lib/queries/outlets/resto-recommendations.ts:325
+  ("See queryNetworkItemRisk for true z-score") — a forward-reference
+  that suggests the function was planned for integration but never
+  wired up.
+- **Impact**: 236 LOC of untested, unused code inflates the bundle
+  surface area (the file IS re-exported via src/lib/queries/index.ts
+  barrel), confuses readers (looks important because it's exported),
+  and risks bit-rot (the SQL may break if schema changes and nobody
+  will notice because nothing calls it).
+- **Effort to fix**: S (delete file + remove barrel re-export)
+
+### Finding [CODE-09]: queryPeerItemComparison — dead exported function
+- **Severity**: P4 (low)
+- **Location**: src/lib/queries/outlets/peer-comparison.ts:234-345
+- **Issue**: Exported function `queryPeerItemComparison` (112 LOC) is
+  only mentioned in a code comment on line 348. No caller in src/ or
+  scripts/. Compare to its siblings queryPeerComparison (used by
+  /api/peer-comparison) and queryPeerTrend (used by /api/peer-comparison/trend).
+- **Impact**: Same as CODE-08 but smaller blast radius (112 vs 236 LOC).
+  Possibly a leftover from when item-level peer comparison was tried
+  and then moved into /api/peer-comparison/items/route.ts (which builds
+  its own logic from queryPeerComparison results).
+- **Effort to fix**: S
+
+==============================================================
+E. ESLINT CONFIG — SAFETY RULES DISABLED
+==============================================================
+
+### Finding [CODE-10]: eslint.config.mjs disables 5 critical TS safety rules
+- **Severity**: P2 (high)
+- **Location**: eslint.config.mjs (lines 11-16)
+- **Issue**: The following rules are set to "off":
+    @typescript-eslint/no-explicit-any      → off (allows `any` everywhere)
+    @typescript-eslint/no-unused-vars       → off (allows dead code)
+    @typescript-eslint/no-non-null-assertion → off (allows unsafe `foo!.bar`)
+    @typescript-eslint/ban-ts-comment       → off (allows @ts-ignore)
+    @typescript-eslint/prefer-as-const      → off (minor)
+    @typescript-eslint/no-unused-disable-directive → off (minor)
+- **Impact**: These 6 rules are the primary automated guardrails for
+  TypeScript maintainability. Disabling them is the upstream cause of
+  findings CODE-06, CODE-07, CODE-08, CODE-09. The worklog shows lint
+  consistently reports "0 errors, 9 pre-existing warnings" — but that
+  is BECAUSE the rules that would catch the issues are off, not because
+  the code is clean. Re-enabling them would surface hundreds of errors
+  at once (unmanageable); a phased re-enable (warn first, then error)
+  is the pragmatic path.
+- **Effort to fix**: S to change config; L to clean up the resulting
+  errors (do it incrementally, one rule at a time, warn→error transition)
+
+==============================================================
+F. ERROR HANDLING — INCONSISTENCIES
+==============================================================
+
+### Finding [CODE-11]: resto-bahan-matrix bypasses logger + uses `catch (e: any)`
+- **Severity**: P3 (medium)
+- **Location**: src/app/api/resto-bahan-matrix/route.ts:304-307
+- **Issue**: This is the ONLY API route that:
+    (a) uses `console.error` directly instead of `logger.error` (line 305)
+    (b) catches as `any` instead of `unknown` (line 304)
+    (c) accesses `e?.message` directly (line 306)
+  All other 20 API routes follow the established pattern:
+    `catch (e: unknown) { logger.error('...', { error: e instanceof Error ? e.message : String(e) }); return NextResponse.json({ ... }); }`
+- **Impact**: Inconsistency means error logs from this route don't show
+  up in the structured log format (no timestamp, no level tag, no JSON
+  data field) — harder to grep in production logs. Also: `e?.message`
+  will be `undefined` for non-Error throws (string, number, plain object),
+  producing "error: undefined" in the response.
+- **Effort to fix**: S (4-line mechanical edit; matches the pattern
+  used everywhere else)
+
+### Finding [CODE-12]: One non-null assertion in /api/ingest-process
+- **Severity**: P4 (low)
+- **Location**: src/app/api/ingest-process/route.ts:641 `rowsByWeek.get(wk)!.push(row)`
+- **Issue**: Uses `!` (non-null assertion) instead of a guard. If
+  `rowsByWeek.get(wk)` returns undefined (Map miss), this throws a
+  cryptic TypeError ("Cannot read properties of undefined") instead
+  of a useful error message. Total of 4 non-null assertions across
+  the codebase — most are benign, but the eslint rule that would
+  catch them is disabled (see CODE-10).
+- **Impact**: Low for this specific case (the Map is populated in the
+  same function so the key is guaranteed to exist), but the pattern
+  sets a bad example for new code.
+- **Effort to fix**: S
+
+==============================================================
+G. DUPLICATION / INCONSISTENT PATTERNS
+==============================================================
+
+### Finding [CODE-13]: SQL query boilerplate duplicated 27-57× across query files
+- **Severity**: P3 (medium)
+- **Location**: src/lib/queries/*.ts (14 files, 4576 LOC total)
+- **Issue**: The following SQL fragments are copy-pasted into nearly
+  every query function:
+    `ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal"` — 27 occurrences
+    `FROM "InventoryRecord" ir JOIN "Outlet" o ...` — 57 occurrences
+    `WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+       AND ir."absNominalDeviasi" IS NOT NULL
+       AND ir."absNominalDeviasi" > 0` — appears in nearly every query
+    `rows.map((r: any) => ({ ...Number(r.x), ... }))` — 25+ occurrences
+       of the BigInt→Number coercion dance (PostgreSQL SUM returns bigint
+       for integer columns; the JS layer needs Number() conversion).
+  The `DIRECTION_FROM_SUM_SQL` constant in shared.ts (5-branch CASE)
+  is the good pattern — but only 4 of 14 query files use it. The
+  other 10 inlined the same 6-line CASE WHEN before the RESTORE-SHARED-1
+  fix unified them.
+- **Impact**: When the schema changes (e.g. column rename, new index
+  hint), every copy must be updated in lockstep. The BigInt-coercion
+  pattern in particular is easy to forget (silent NaN propagation).
+  A query-builder helper (e.g. `buildParetoAggregateQuery(dimension)`)
+  would eliminate ~80% of the duplication.
+- **Effort to fix**: L (significant refactor — would touch all 14
+  query files; best done as a dedicated sprint with parity tests,
+  which currently don't exist per CODE-01)
+
+### Finding [CODE-14]: Deprecated analysis.ts file still imported by main route
+- **Severity**: P4 (low)
+- **Location**: src/engine/analysis/analysis.ts (10 LOC, header says
+  "DEPRECATED — use src/engine/analysis/ directory instead") + the
+  one consumer: src/app/api/analysis/route.ts:19
+  `import { detectPatterns } from '@/engine/analysis/analysis';`
+- **Issue**: The deprecated file is just a barrel re-export
+  (`export * from './index';`). The main /api/analysis route imports
+  `detectPatterns` from this deprecated path instead of from
+  `@/engine/analysis` or `@/engine/analysis/patternEngine` directly.
+  Other imports in the same file (e.g. line 64 `evaluateRulesSql`)
+  correctly import from the new location.
+- **Impact**: Low — the re-export works, no runtime issue. But the
+  inconsistency signals that the Fase 1-4 split was incomplete: the
+  deprecated file was supposed to be deleted after all imports moved.
+  Adds 1 unnecessary indirection layer for new readers.
+- **Effort to fix**: S (change 1 import line + delete the 10-LOC file)
+
+==============================================================
+TOP 5 TECHNICAL DEBT (highest priority to fix)
+==============================================================
+
+1. **CODE-01 (P1)**: Add baseline unit tests for the 14 SQL query
+   modules in src/lib/queries/ + lib/ingestion.ts + lib/aggregation-cache.ts.
+   Without tests, every future refactor (including the next phase of
+   optimisations) ships on hope. ROI is highest here because queries
+   are pure functions of (week, month, filters) — easy to test with
+   a seed-and-assert pattern against a test DB.
+
+2. **CODE-06 (P2)**: Replace `rows.map((r: any) => ...)` with the
+   Prisma generic `$queryRaw<Array<{...}>>` that's already declared
+   on the same line. ~40 mechanical edits across 14 query files,
+   zero runtime change, eliminates an entire class of silent breakage.
+
+3. **CODE-02 (P2)**: Split the 910-line /api/analysis GET into 4-5
+   named orchestrator functions (cacheLayer, queryBatch, ruleEval,
+   postProcess, responseShape). Same pattern that already worked for
+   services/exec-summary.ts etc. Makes the function unit-testable.
+
+4. **CODE-10 (P2)**: Phase eslint rules back on. Start with
+   `@typescript-eslint/no-unused-vars: warn` (catches CODE-08, CODE-09
+   + the dead investigationWorklist field noted in useAnalysis.ts:267).
+   Then `@typescript-eslint/no-explicit-any: warn` (surfaces CODE-06,
+   CODE-07). Run for 2 weeks as warn, then promote to error.
+
+5. **CODE-13 (P3)**: Build a `buildParetoAggregateQuery` (or similar)
+   helper to DRY the 27-occurrence SQL boilerplate. Best done AFTER
+   CODE-01 lands tests, so refactors are verifiable. Reduces 14
+   query files by ~30% LOC and makes schema changes one-edit instead
+   of 14-edits.
+
+==============================================================
+HEALTH SCORE: 6.0 / 10
+==============================================================
+
+Justification:
+- **+2 points**: Code WORKS in production. Extensive fix-history
+  comments (BUG-1-7, AUDIT-7, DEEP-AUDIT, FIX-A-1, RESTORE-SHARED-1,
+  etc.) show that real bugs have been found and fixed methodically.
+  Security audit done (path traversal, rate limiting, SQL injection
+  via Prisma.sql parameterization, XFF spoofing). Schema is sensible
+  with appropriate indexes.
+- **+2 points**: Architecture is reasonable — clean separation between
+  API routes / queries / engine / components. Phase 3 service-extraction
+  pattern (services/exec-summary.ts, services/deviation-drivers.ts,
+  services/trend-builder.ts) proves the team knows how to refactor.
+- **+1 point**: Observability is decent — structured logger, DB-level
+  cache, in-flight Promise dedup, statement timeouts, pg_stat_statements
+  enabled (Fase 4). Better than typical prototype.
+- **+1 point**: Error handling is consistent across 20/21 routes (the
+  one exception is CODE-11, a 4-line fix). Catch-as-unknown pattern
+  is the modern best practice and is followed almost everywhere.
+- **-2 points**: Test coverage is the single biggest weakness. ~2%
+  coverage on a 38K LOC production app is below the bar for any
+  team >1 person. The Fase 1-4 optimisation work (DB-06 in particular,
+  which refactored 11 query call sites) shipped with zero automated
+  regression protection — only manual Agent Browser verification.
+- **-1 point**: Type safety is structurally undermined by CODE-10
+  (eslint rules disabled) + CODE-06 (~80 `any` escapes). This is the
+  root cause that will keep generating new findings every sprint.
+- **-1 point**: God functions (CODE-02, CODE-03, CODE-04) make the
+  codebase harder to extend safely. The 910-line /api/analysis GET
+  is the worst offender — every new dashboard feature touches it.
+
+Verdict: This is a **production-grade internal tool with prototype-
+grade maintainability**. Acceptable for now if the team is small (1-3
+devs) and the original author is still around. Becomes a liability
+the moment a new developer needs to make non-trivial changes without
+the original author's tribal knowledge. The CODE-01 + CODE-06 +
+CODE-10 trio is the highest-leverage place to start paying down debt.
+
+
+---
+Task ID: REVIEW-SEC
+Agent: general-purpose (Security Reviewer - retry)
+Task: Focused security review of Fase 1-4 completion state
+
+Work Log:
+- Read worklog tail (last 80 lines) — DEEP-AUDIT + CODE-AUDIT context
+- Read src/middleware.ts (full) — auth model + fail-closed in prod verified
+- Grep $queryRawUnsafe / $executeRawUnsafe in src/ → ZERO matches (good)
+- Grep dangerouslySetInnerHTML → 1 match (chart.tsx:83, shadcn/ui static CSS — safe)
+- Grep validateQuery/validateBody in API routes → 18/20 routes have Zod validation
+- Checked .gitignore → `.env*` excluded, `.env.example` whitelisted (good)
+- Grep console.log/console.error in API → 1 leak (resto-bahan-matrix:305)
+- Grep rateLimit coverage → 22/23 route files (status + root /api/route.ts miss it)
+- Grep hardcoded secrets → only process.env.ADMIN_TOKEN references (good)
+- Per-route matrix: rl × validation coverage
+- Reviewed src/lib/rate-limit.ts — in-memory Map (serverless-unsafe)
+- Reviewed src/app/api/resto-bahan-matrix/route.ts — manual parsing, error leakage
+
+Stage Summary:
+- 7 findings (0 P1, 1 P2, 4 P3, 2 P4)
+- Top risk: ADMIN_TOKEN query-param fallback leaks in logs/Referer (SEC-01)
+- Security Score: 8/10
+- Production-ready: YES (single-user internal tool). Multi-user: fix SEC-01 first.
+- Full report below in main response.
