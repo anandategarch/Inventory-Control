@@ -29954,3 +29954,659 @@ Stage Summary:
   4. ✅ P2-2: /api/analysis already split (910→100 lines). /api/ingest-process deferred.
 - Code quality health score: 6.0 → 7.0/10 (estimated)
 - Biggest remaining gap: /api/ingest-process split (703 lines) + more test coverage for outlet queries
+
+---
+Task ID: DEEP-UX
+Agent: general-purpose (UX/UI Deep Auditor)
+Task: Exhaustive UX/UI audit
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (last 150 lines) for context
+  (CODE-AUDIT 6.0/10, REVIEW-SEC 8/10, FIX-CODE-QUALITY 7.0/10)
+- Read src/app/page.tsx (694 lines) — 4 tabs (Dashboard/Resto/Peer/Pareto),
+  10 dashboard sections, sticky 2-tier header, FetchAware refetch overlay
+- Read src/app/layout.tsx — lang="id", Toaster + QueryProvider + GlobalLoadingBar
+- Read src/hooks/useAnalysis.ts — AbortController 90s timeout, retry 3x on 504/timeout,
+  keepPreviousData, staleTime 120s, gcTime 10min, content-type guard
+- Read src/hooks/useDashboard.ts — Zustand store (NO URL persistence, all in-memory)
+- Read src/components/dashboard/shared/index.tsx — EmptyState, LoadingState,
+  ErrorState, SectionHeader, ScrollToTop
+- Read src/components/filters/FilterBar.tsx — bare-content design, prefetch on hover
+- Read src/components/filters/SearchableComboBox.tsx — Radix Combobox pattern
+- Read src/components/filters/FileUploadDialog.tsx — 3-phase upload, client-side
+  filename validation, confirmation panel
+- Read src/components/filters/SettingsDialog.tsx — dirty tracking, save mutation
+- Read src/components/filters/DataManagementDialog.tsx — AlertDialog for destructive
+- Read src/components/filters/PicManagementDialog.tsx — inline editing
+- Read src/components/drilldown/DrillDownDrawer.tsx — virtualized table, cursor pagination
+- Read src/components/drilldown/SourceDataModal.tsx — CSV export, virtualized table
+- Read src/components/dashboard/ExecutiveSummary.tsx — KPI cards w/ QuickSettings
+- Read src/components/dashboard/TopItems.tsx — 3 tables (Top Nominal / DevBom / Outlets)
+- Read src/components/dashboard/Charts.tsx — GrowthComparison, DeviationBreakdown,
+  LossVsSurplus, TrendChart
+- Read src/components/dashboard/AdvancedAnalysis.tsx — HealthRanking, Consistency, AreaComparison
+- Read src/components/dashboard/AnalysisCards.tsx — MultiPeriodComparisonCard
+- Read src/components/dashboard/HistoricalZScoreCard.tsx — sortable table
+- Read src/components/dashboard/AreaTrendChart.tsx — multi-line chart w/ area chips
+- Read src/components/dashboard/ParetoDashboard.tsx — 5-quadrant + nested
+- Read src/components/dashboard/PeerComparison.tsx — 8-feature parallel queries
+- Read src/components/dashboard/RestoRecommendationCard.tsx — silently fails on error
+- Read src/components/dashboard/RestoAnalysis.tsx — outlet deep dive
+- Read src/components/dashboard/GlobalItemSearchModal.tsx — Cmd+K cross-outlet search
+- Read src/components/dashboard/CardDrillDown.tsx — generic card drill
+- Read src/components/dashboard/ItemDeepDive.tsx — item detail modal
+- Read src/components/dashboard/QuickSettings.tsx — inline popover settings w/ autosave
+- Read src/components/ui/error-boundary.tsx — class-based boundary
+- Read src/app/error.tsx + loading.tsx — Next conventions
+- Read src/lib/a11y.ts — clickableRowProps helper
+- Read src/lib/format.ts — fmtIDR/fmtNum/fmtPct (Indonesian M/Jt/Rb)
+- Grep: aria-* usage (52 occurrences, 19 files — partial coverage)
+- Grep: URL state (`useSearchParams`/`pushState`) — ZERO matches in src/components
+  (all URL state lives in /api routes only — NO frontend URL state at all)
+- Grep: native confirm() — 5 usages (DataManagement ×2, PicManagement, Settings ×2)
+- Grep: min-w-[1000px]+ on tables — 3 occurrences (1000, 1200, 1400px)
+- Grep: English strings in components — ~30+ occurrences ("Close", "No trend data",
+  "Top Items (80% Deviation)", "Sales vs Deviasi MISMATCH", etc.)
+- Grep: silent failure pattern — RestoRecommendationCard returns null on error
+
+Stage Summary:
+- 36 findings (3 P1, 14 P2, 13 P3, 6 P4)
+- UX Maturity Scores (1-10):
+  · Information Architecture: 5/10
+  · Loading States: 4/10
+  · Error States: 4/10
+  · Empty States: 5/10
+  · Forms & Inputs: 6/10
+  · Mobile Responsiveness: 5/10
+  · Accessibility (WCAG AA): 4/10
+  · Performance UX: 7/10
+  · Feedback & Confirmation: 5/10
+  · Data Visualization: 6/10
+  · Internationalization: 5/10
+  · Navigation Patterns: 3/10
+  · OVERALL: 4.9/10
+- Top 10 UX Issues + Quick Wins below in main response.
+
+---
+Task ID: DEEP-PERF
+Agent: general-purpose (Performance Deep Auditor)
+Task: Find remaining performance bottlenecks after Fase 1-4
+
+Work Log:
+- Read worklog tail (Fase 1-4 context + CODE-AUDIT + SEC-AUDIT + FIX-CODE-QUALITY)
+- Read src/lib/db.ts, src/lib/aggregation-cache.ts, prisma/schema.prisma, next.config.ts
+- Audited all 14 query files in src/lib/queries/ (4,698 LOC total)
+- Audited all 21 API routes in src/app/api/*/route.ts (5,225 LOC total)
+- Audited src/hooks/useAnalysis.ts, useDashboard.ts, src/components/providers.tsx
+- Read src/components/dashboard/{ExecutiveSummary, TopItems, InsightsPanel, AnalysisCards}.tsx (sampling memo coverage)
+- Read src/components/filters/FilterBar.tsx (597 LOC — found setInterval edge case)
+- Ran `bun run lint` (0 errors, 404 warnings — all pre-existing per FIX-CODE-QUALITY)
+- Verified dynamic() coverage for all 8 recharts importers (ItemTrendChart, Charts, AreaTrendChart, HistoricalZScoreCard, ItemDeepDive, AnalysisCards.MultiPeriod, peer-comparison/*, priority-summary/signal-chart) — all lazy-loaded ✓
+- Verified exceljs + docx are dynamically imported (Fase 4) ✓
+- Cross-checked buildSqlFilters subquery patterns vs schema indexes
+- Confirmed Fase 1-4 wins are NOT re-flagged: DB indexes (DB-01 to DB-06), Cache-Control headers, lazy-load, optimizePackageImports, useShallow, React.memo (29 components), overlapping batch, SQL evaluator, pre-computed CTE (OutletPeriodSales), bundle analyzer
+
+Stage Summary:
+- 33 findings total: 0 P1, 7 P2, 23 P3, 3 P4
+- Performance scores (1-10) per category:
+  · DB Queries: 7/10 (excellent indexes + SQL push-down; few redundant indexes, missing partial index on absNominalDeviasi)
+  · API Routes: 6/10 (analysis is well-optimized; 6 routes still have sequential awaits that could parallelize; only analysis uses DB-level cache)
+  · Frontend Bundle: 8/10 (recharts fully lazy-loaded; exceljs/docx dynamic; minor: GlobalItemSearchModal static import)
+  · React Rendering: 7/10 (29 memo'd components, useShallow everywhere; minor: FilterBar not split by state slice, FetchAware wrapper not memoized)
+  · Data Fetching: 8/10 (TanStack config is solid: staleTime 120s, gcTime 10min, prefetch on hover; minor: no debounce on itemName typing)
+  · Memory Leaks: 9/10 (no obvious leaks; minor: setInterval in FilterBar handleDriveImport not cleaned on unmount)
+  · Caching Strategy: 6/10 (only /api/analysis uses DB AggregationCache; 6 other heavy routes rely on CDN-only cache, cold path = full recompute every 5min)
+  · Build & Deploy: 8/10 (gzip + immutable static + optimizePackageImports; minor: no output:'standalone', no experimental.optimizeCss)
+  · DB Connection Pool: 6/10 (connection_limit=20 — risky with 3+ concurrent users on analysis route which uses 6 connections per request)
+  · Prisma Schema: 7/10 (good index coverage; 1 redundant index, 1 missing partial index, 1 missing functional index on Outlet)
+- Overall: 7.2/10 (excellent Fase 1-4 baseline; ~3-5s of additional savings available)
+- Top 10 issues + quick wins detailed in main response
+
+
+---
+Task ID: DEEP-SEC
+Agent: general-purpose (Security Deep Auditor)
+Task: Exhaustive security audit
+
+Work Log:
+- Read worklog tail (last 150 lines) — REVIEW-SEC + FIX-CODE-QUALITY context
+  (prior audits: DEEP-AUDIT-SECURITY-1..3, REVIEW-SEC, AUDIT-SECURITY-PERF).
+- Read src/middleware.ts (full) — auth model verified:
+  - 9 protected paths, GET /api/ingest protected too (BUG2-SEC-3 fix verified)
+  - Fail-closed in production (line 70-76) ✓
+  - Constant-time token comparison (line 22-29) ✓
+  - Query-param fallback (?admin_token=) STILL present (REVIEW-SEC SEC-01 still open)
+- Mapped all 23 route files: 21/23 have rateLimit, 21/23 use Zod validation.
+  Exceptions: /api/route.ts (trivial hello world), /api/status (no rate limit),
+  /api/resto-bahan-matrix (no Zod — manual parsing).
+- Grep $queryRawUnsafe / $executeRawUnsafe → ZERO matches ✓
+- Grep Prisma.raw usage → 17 sites, ALL with internal enum/literal (no user input)
+- Grep dangerouslySetInnerHTML → 1 site (chart.tsx:83, shadcn/ui static CSS — safe)
+- Grep console.* in src/ → only 2 leaks (error.tsx:24 client boundary,
+  resto-bahan-matrix:306 server-side — re-flagged)
+- Inspected drive-import.ts: SSRF allowlist + confirm-URL re-validation ✓
+- Inspected ingest-upload/ingest-process: size limits, fileHash hex regex,
+  ext allowlist, path.join-safe reassembly ✓
+- Inspected prisma/schema.prisma: cascade deletes explicit; onDelete: Restrict
+  on Outlet + Item (no accidental data loss on Outlet/Item delete) ✓
+- Inspected buildSqlFilters + buildInventoryWhere: all user input via Prisma.sql
+  parameterized placeholders (no string concat) ✓
+- Inspected next.config.ts: 5/6 security headers present (X-Frame, X-Content,
+  Referrer, Permissions, HSTS); CSP STILL MISSING (DEEP-AUDIT-SECURITY-7 still open)
+- Ran `bun audit` → 70 vulnerabilities (40 high, 26 moderate, 4 low).
+  Most critical: Next.js 16.1.1 has 30+ advisories incl. 14 HIGH
+  (SSRF via WebSocket upgrades, Middleware bypass, DoS via Cache Components).
+- CRITICAL DISCOVERY: MASTER_CONTEXT.md:96 (git-tracked, committed in 97ca146)
+  leaks LIVE Supabase DB password `***REDACTED-SUPABASE-PASSWORD-ROTATED***` in plaintext. DIFFERENT
+  password from prior DEEP-AUDIT-SECURITY-1 leak (***REDACTED-SUPABASE-PASSWORD-ROTATED*** — that one
+  was in worklog.md). Anyone with repo read access has DB write.
+- Confirmed .env file at project root contains the same password (gitignored,
+  not in git history — local filesystem access only).
+
+Stage Summary:
+- 17 findings (2 P1, 5 P2, 6 P3, 4 P4)
+  - P1: DS-01 (Supabase password in MASTER_CONTEXT.md git history),
+         DS-02 (live .env on filesystem)
+  - P2: DS-03 (Next.js 16.1.1 — 14 HIGH CVEs), DS-04 (70 dep vulns total),
+         DS-05 (console.error leak in resto-bahan-matrix), DS-06 (/api/status
+         no rate limit), DS-07 (resto-bahan-matrix no Zod validation)
+  - P3: DS-08 (ADMIN_TOKEN query-param leak), DS-09 (in-memory rate limiter
+         fails on serverless), DS-10 (no CSP), DS-11 (AuditLog lacks IP/userId),
+         DS-12 (/api/setup returns raw DB errors), DS-13 (every route returns
+         e.message in 500 responses)
+  - P4: DS-14 (error.tsx client console.error), DS-15 (resto-bahan-matrix
+         bypasses logger), DS-16 (/api/route.ts trivial no-rl), DS-17 (global
+         BigInt.prototype.toJSON polyfill)
+- Security Score: 6.5/10 (down from REVIEW-SEC's 8/10 due to NEW credential
+  leak in MASTER_CONTEXT.md + Next.js 16.1.1 14 HIGH CVEs)
+- Production-ready: NO — until DS-01 (rotate password + scrub git history)
+  and DS-03 (upgrade Next.js to 16.2.5+) are resolved. Single-user internal
+  deploy OK if MASTER_CONTEXT.md is purged from git history.
+- Acknowledged prior fixes (NOT re-flagged): fail-closed middleware in prod,
+  constant-time token comparison, GET /api/ingest protected, path traversal
+  prevention (safePath + safeFileHash + SAFE_EXT_ALLOWLIST), SSRF allowlist in
+  Caddyfile + drive-import.ts, .env in .gitignore, ESLint rules re-enabled,
+  Zod validation across 20/21 routes, in-flight Promise dedup, statement
+  timeouts, $transaction for multi-step ops, parameterized Prisma.sql throughout.
+
+---
+Task ID: DEEP-CODE
+Agent: general-purpose (Code Quality Deep Auditor)
+Task: Exhaustive code quality audit across entire codebase
+
+Work Log:
+- Read worklog tail (last 150 lines) — Fase 1-4 + FIX-CODE-QUALITY context
+- Listed src/ tree (178 TS/TSX files). Confirmed scope:
+  24 API routes, 13 query modules, 7 engine modules, 8 metrics modules,
+  50+ components, 3 hooks, 12 scripts.
+- Ran `bun run lint` → 0 errors, 404 warnings. Captured to /tmp/lint.txt
+  and aggregated per-rule + per-file via Python.
+- Aggregated warning breakdown:
+    • no-unused-vars (base rule):        272 (75 files) — DUPLICATE of @typescript-eslint rule
+    • @typescript-eslint/no-unused-vars: 102 (48 files) — distinct unused-var issues ≈136
+    • @typescript-eslint/no-non-null-assertion: 66 (22 files)
+    • @typescript-eslint/no-explicit-any: 54 (15 files) — src has 19, scripts/tests 35
+    • react-hooks/exhaustive-deps:        7 (4 files)
+    • @typescript-eslint/ban-ts-comment:   3 (2 files: instrumentation.ts, lib/db.ts)
+- Grep'd for `: any|as any|as unknown` in src/ — 19 sites (mostly CardDrillDown
+  safe `as unknown as DrillRow[]` casts + filter dialogs `(e: any)` onError)
+- Grep'd for `@ts-ignore` → 3 sites (instrumentation.ts:13,15 + lib/db.ts:100)
+- Grep'd for `!.` non-null assertions → 5 crash-risk sites outside lint:
+    evaluator.ts:74, ingest-process/route.ts:641, parse-excel.ts:210,
+    TopItems.tsx:317, resto-analysis/menu-analysis.tsx:50
+- Grep'd for empty catch blocks → 0 (good — Bug 6 fix held)
+- Grep'd for `catch (e: unknown)` consistency → 50 sites across 22 API files
+  (consistent). Only `resto-bahan-matrix:306` uses `console.error` instead
+  of `logger.error` (known from SEC audit).
+- Grep'd for TODO/FIXME/HACK → 0 (clean)
+- Found error response shape consistency: all 22 routes use
+  `{ success: false, error: ... }` pattern. Only `status/route.ts:168`
+  adds `hint:` field (intentional, documented).
+- Found error handling inconsistency: `ingest-process/route.ts:587,601`
+  casts `e as Error` instead of using the standard
+  `e instanceof Error ? e.message : String(e)` pattern.
+- Listed all functions >100 lines (per-file awk pass on 15 largest files):
+  WORST 10 god functions:
+    1. ingest-process POST — 700 lines (87-786) — was deferred in FIX-CODE-QUALITY
+    2. export-report GET — 659 lines (259-917) — NEW finding, not previously noted
+    3. outlet-items GET — 565 lines (47-611) — NEW finding
+    4. queryRestoRecommendations — 494 lines (53-546) — single SQL function
+    5. processIngestion — 468 lines (lib/ingestion.ts:109-576)
+    6. resto-bahan-matrix GET — 275 lines (35-309)
+    7. queryPeerComparison — 203 lines (33-235)
+    8. queryParetoNested — 151 lines (644-794)
+    9. processRowsForImport — 147 lines (ingestion.ts:613-759)
+    10. queryTopItemsByDeviasiRank — 141 lines (top-items.ts:92-232)
+  Plus 8 component god functions (FileUploadDialog 776L, FilterBar 546L,
+  GlobalItemSearchModal 414L, PicManagementDialog 408L, DataManagementDialog
+  398L, ParetoDashboard 392L, SettingsDialog 389L, RestoAnalysis 384L).
+- Identified 12 files >500 lines (god files): export-report, ingest-process,
+  FileUploadDialog, pareto.ts, ingestion.ts, outlet-items, FilterBar, Charts,
+  settings.ts, DataManagementDialog, GlobalItemSearchModal, PicManagementDialog.
+- Audited dead code (unused exports / unreachable branches):
+  • src/types/inventory.ts:159-173 — `DashboardData` interface exported but
+    NEVER imported anywhere (confirmed via grep).
+  • src/types/inventory.ts:182 — `FilterState` interface exported but never imported.
+  • src/types/inventory.ts:169 — `investigationWorklist` field is dead
+    (already commented out at useAnalysis.ts:267 + assemble-response.ts:145).
+  • src/engine/analysis/rankingService.ts:82-445 — 5 exported functions are
+    dead code (replaced by SQL in lib/queries/health-ranking.ts but never
+    removed from JS):
+      - buildWorklistFromFlags (62 lines)
+      - computePrioritiesFromFlags (64 lines)
+      - computeVarianceAnalysis (83 lines)
+      - computeOutletHealthRanking (120 lines)
+      - computeHistoricalAnalysis (32 lines)
+    TOTAL: ~360 lines of dead code in one file.
+  • src/engine/narrative/narrative.ts — entire file is 74 lines, only export
+    `buildRecommendations` is never called from any active route.
+  • src/lib/settings.ts:454-463 — `_thresholdsVersionCache`,
+    `_thresholdsVersionAt`, `VERSION_CACHE_TTL_MS`, `getThresholdsVersion`
+    are all assigned/set but never read by any caller (grep confirmed).
+    ~10 lines of dead cache infrastructure.
+  • src/app/api/export-report/route.ts:110 — `ExecSummaryWithPrev` type
+    declared but never used.
+  • src/app/api/export-report/route.ts:538,544 — `sortKey` parameter
+    declared but never used in two table-builder helpers.
+  • src/lib/queries/items/top-items.ts:556-590 — 3 exported interfaces
+    (`ParetoDevBomOutletRow`, `ParetoDevBomRow`, `ParetoDevBomResult`) never
+    imported outside their own file.
+  • src/components/filters/FilterBar.tsx — MASSIVE dead code from
+    DriveImportDialog extraction (lines 231-297: handleDriveImport,
+    handleCloseDialog + state vars driveImporting, driveResult, progressLog,
+    setDriveTab, driveManualValid, renameAllowedForTab + unused imports
+    Dialog/DialogContent/DialogHeader/DialogTitle/DialogDescription/
+    DialogFooter/Input/Label/Tabs/TabsContent/TabsList/TabsTrigger +
+    icons CheckCircle2/XCircle/Folder/FileSpreadsheet/Pencil).
+    TOTAL: ~150 lines of dead code + 18 unused imports in one file.
+  • src/app/page.tsx — 7 unused imports: Card, CardContent, Upload,
+    CloudDownload, Sparkles, ArrowUp, RefreshCw.
+  • src/lib/ingestion.ts — 5 unused imports: parseOutletCode,
+    convertExcelToCsv, getCachedCsvPath, csvCacheExists, existsSync.
+  • src/components/filters/PicManagementDialog.tsx — unused imports
+    `Save` (icon) + `PicListResponse` (type).
+  • scripts/audit-data-qa-2.ts — appears to be a stale duplicate of
+    audit-data-qa.ts (similar purpose, 192 vs 656 lines, neither referenced
+    in package.json scripts).
+- Identified duplicate SQL boilerplate (CODE-13 still open):
+  `ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}` appears 36 times
+  across 12 query files (dashboard.ts ×6, pareto.ts ×9, top-items.ts ×8,
+  areas.ts ×2, top-outlets.ts ×3, resto-recommendations.ts ×2,
+  health-ranking.ts ×2, network-risk.ts ×2, rule-evaluation.ts ×1,
+  growth-drivers.ts ×1).
+  `ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal"` appears 9 times in
+  pareto.ts alone.
+  This is the 27-occurrence SQL boilerplate noted in prior CODE-13.
+- Audited test coverage — ran `bun run test:coverage`:
+  Overall: 27.2% lines, 28.05% branches, 31.93% functions, 27.65% stmts.
+  21 test files, 395 tests, all passing.
+  UNTESTED critical modules (0% coverage):
+    • src/lib/ingestion.ts (758 lines) — main ingest pipeline, 0%
+    • src/lib/settings.ts (562 lines) — runtime thresholds, 0%
+    • src/lib/drive-import.ts (484 lines) — Drive download/parse, 0%
+    • src/lib/excel.ts (262 lines) — Excel parse, 0%
+    • src/lib/excel-to-csv.ts (177 lines) — 0%
+    • src/lib/csv-parser.ts — 0%
+    • src/lib/aggregation-cache.ts (194 lines) — cache layer, 0%
+    • src/lib/cache.ts — 0%
+    • src/lib/cache-headers.ts — 0%
+    • src/lib/month-resolver.ts — 0%
+    • src/lib/pic-resolver.ts — 0%
+    • src/lib/rate-limit.ts — 0%
+    • src/lib/filename.ts — 0%
+    • src/lib/outlet.ts — 0%
+    • src/lib/a11y.ts — 0%
+    • src/lib/utils.ts — 0% (5 lines, trivial)
+    • src/lib/chart-constants.ts — 0%
+    • src/lib/logger.ts — 27% (boilerplate console wrappers)
+    • src/engine/validator.ts (258 lines) — 0%
+    • src/engine/transform.ts (294 lines) — 0%
+    • src/engine/analysis/* — 0% across all 7 files (rankingService is
+      mostly dead code; patternEngine + rootCauseEngine + ruleService are
+      ACTIVE business logic with 0% coverage).
+    • src/engine/narrative/narrative.ts — 0% (mostly dead)
+    • src/lib/queries/items/global-search.ts (203 lines) — 0%
+    • src/lib/queries/items/network-risk.ts (213 lines) — 0%
+    • src/lib/queries/items/top-items.ts (722 lines) — 11% (only 1 of 8
+      exported query functions covered)
+    • src/lib/queries/outlets/peer-comparison.ts (455 lines) — 0%
+    • src/lib/queries/outlets/resto-recommendations.ts (546 lines) — 0%
+    • src/lib/queries/pareto.ts (794 lines) — 13.46% (only 2 of 9 exports
+      covered)
+    • src/engine/rules/evaluator.ts — 58% (rule engine core, 16 rules
+      with 24 tests — decent but missing edge cases on lines 271-372,381,483)
+  WELL-TESTED modules (>=90% lines):
+    • src/lib/format.ts (100%), validation.ts (100%), build-where.ts (100%)
+    • src/lib/period-resolver.ts (100%), kelompok-resolver.ts (100%)
+    • src/lib/metrics/{deviation,growth,historical,sales,benchmark,definitions}.ts (all 96-100%)
+    • src/lib/queries/{shared,top-outlets,historical,rule-evaluation,health-ranking,areas,dashboard,growth-drivers}.ts (all 72-100%)
+- Audited dependencies:
+  UNUSED in src/ (confirmed via grep):
+    • `date-fns` — listed in next.config.ts optimizePackageImports but
+      NO `import from 'date-fns'` anywhere in src/ or scripts/. Pure dead
+      config + dep.
+    • `@tanstack/react-table` — 0 imports in src/. Unused dep.
+    • `sharp` — 0 direct imports. (Note: Next.js Image component uses it
+      implicitly for optimization, but no `<Image>` is used either — all
+      images are SVG via `<img>` or inline. Likely safe to remove.)
+    • `@next/bundle-analyzer` — only used when ANALYZE=true (correct dev dep)
+  POSSIBLY UNDERUSED:
+    • `csv-stringify` — used in src/lib/excel-to-csv.ts + 2 scripts (legit)
+    • `exceljs` — only used in 3 scripts (not in src/). Consider moving
+      scripts to devDeps if they're one-off migration tools.
+  NO outdated dependencies detected (all on latest majors: Next 16, React 19,
+  Prisma 6, TanStack Query 5, Zod 4).
+  NO duplicate functionality found — single solution per concern (csv-parse
+  for parsing, exceljs for Excel, docx for Word export, recharts for charts).
+- Audited documentation:
+  JSDoc coverage is GOOD in lib/metrics/* (every function JSDoc'd),
+  lib/queries/shared.ts, lib/aggregation-cache.ts (7 JSDocs), and
+  hooks/useAnalysis.ts (every interface documented).
+  JSDoc MISSING on:
+    • All 21 API route handlers (zero `/** ... */` on GET/POST/PUT/DELETE)
+    • src/lib/queries/pareto.ts — 9 exported functions, 3 JSDocs (6 missing)
+    • src/lib/queries/items/top-items.ts — 8 exports, 0 JSDocs
+    • src/lib/queries/items/network-risk.ts, global-search.ts — 0 JSDocs
+    • src/lib/queries/outlets/* — 0 JSDocs on query functions
+    • src/engine/analysis/* — mostly 0 JSDocs (except patternEngine types)
+    • src/lib/ingestion.ts — 0 JSDocs on processIngestion + processRowsForImport
+  Stale comments: 0 found (extensive FIX/BUG/AUDIT comments are accurate).
+  TODO/FIXME/HACK: 0 (clean).
+- Audited circular dependencies:
+  lib/ingestion.ts → lib/excel.ts → engine/transform.ts (linear, fine)
+  lib/aggregation-cache.ts → lib/db.ts → (singleton Proxy, fine)
+  NO circular imports detected in src/ tree.
+- Audited Prisma schema (prisma/schema.prisma, 287 lines):
+  • 8 models, all with sensible indexes
+  • PERF-FASE1-DB01 index on (outletId, itemId, akunPenyesuaian, monthLabel,
+    weekLabel) is good
+  • All cascade rules documented
+  • No schema issues found
+
+Stage Summary:
+- 32 findings (3 P1, 11 P2, 13 P3, 5 P4)
+- Health scores (1-10):
+  • TypeScript Safety:      6/10 (54 any, 66 non-null, 3 @ts-ignore)
+  • Code Organization:      5/10 (12 god files, 18 god functions, ~750 LOC dead code)
+  • Error Handling:         8/10 (consistent catch-as-unknown, 0 empty catches)
+  • Testing:                4/10 (27.2% line coverage, 0% on 23 critical modules)
+  • Lint/Format:            7/10 (0 errors, 404 warnings — mostly unused vars)
+  • Documentation:          6/10 (good in lib/metrics, missing on API routes + queries)
+  • Dependencies:           8/10 (3 unused deps, no outdated, no duplicates)
+  • Prisma Schema:          9/10 (clean, well-indexed, documented)
+  OVERALL:                  6.5/10
+
+- Top 10 Critical Issues (must fix):
+  1. [DC-01 P1] src/engine/analysis/rankingService.ts — 360 lines of dead code
+     (5 exported functions replaced by SQL but never removed)
+  2. [DC-02 P1] src/components/filters/FilterBar.tsx — 150 lines + 18 unused
+     imports of dead DriveImport code (handleDriveImport, handleCloseDialog,
+     progress state, all unused after DriveImportDialog extraction)
+  3. [DC-03 P1] src/lib/ingestion.ts (758 lines, 0% test coverage) — main
+     ingest pipeline has ZERO regression protection. Any refactor is a coin
+     flip on breaking 272K-record ingestion.
+  4. [DC-04 P1] src/app/api/ingest-process/route.ts — 700-line POST handler
+     (was deferred in FIX-CODE-QUALITY, still unsplit). Hardest file in
+     codebase to modify safely.
+  5. [DC-05 P2] src/app/api/export-report/route.ts — 659-line GET handler
+     (NEW god function — not previously audited). Word export mixes query
+     fetching, formatting, document building in one function.
+  6. [DC-06 P2] src/app/api/outlet-items/route.ts — 565-line GET handler
+     (NEW god function). Mixes 6+ raw SQL queries + transformation in one
+     function.
+  7. [DC-07 P2] src/lib/queries/outlets/resto-recommendations.ts —
+     queryRestoRecommendations is a 494-line single function (53-546) with
+     3 inline SQL CTEs. Untestable, 0% coverage.
+  8. [DC-08 P2] 36 duplicate `ir."monthLabel" = ${month} AND ir."weekLabel}
+     = ${week}` SQL fragments across 12 query files (CODE-13 still open).
+     Refactor to shared CTE builder would cut ~150 LOC + make schema
+     changes one-edit instead of 36.
+  9. [DC-09 P2] FilterBar.tsx:206 — `const text = await res.text()` is
+     read but NEVER USED in the thrown error message. The parallel
+     handleDriveImport (line 267-268) DOES include `text.slice(0, 300)`.
+     Real bug: non-JSON ingest errors lose their body context.
+  10. [DC-10 P2] src/components/dashboard/priority-summary/chart-data-builders.ts
+      — 12 non-null assertions (`!`) on `it.devBom`, `it.nominalLossSurplus`,
+      etc. These CAN crash if the Recommendation/OutletItem shape changes
+      (the filter on line 56 doesn't guarantee non-null after sort).
+
+- Quick wins (high impact, low effort):
+  • Delete dead code in rankingService.ts (360 LOC, zero risk — confirmed
+    unreferenced). 1 commit, 5-min job.
+  • Delete dead code in FilterBar.tsx (handleDriveImport, handleCloseDialog,
+    unused state, unused imports). 1 commit, 15-min job. Eliminates 52
+    lint warnings.
+  • Delete dead `DashboardData` + `FilterState` interfaces + dead
+    `getThresholdsVersion` function + `ExecSummaryWithPrev` type. 5-min job.
+  • Delete 7 unused imports in src/app/page.tsx. 2-min job.
+  • Delete 5 unused imports in src/lib/ingestion.ts. 2-min job.
+  • Delete unused dep `date-fns` from package.json + next.config.ts.
+    2-min job, removes 200KB tree-shaking hint overhead.
+  • Delete unused dep `@tanstack/react-table` from package.json.
+  • Delete scripts/audit-data-qa-2.ts (stale duplicate). 1-min job.
+  • Replace `e as Error` cast in ingest-process/route.ts:587,601 with
+    standard `e instanceof Error ? e.message : String(e)` pattern. 5-min job.
+  • Fix FilterBar.tsx:206 — include `text.slice(0, 300)` in error message
+    (matches the handleDriveImport pattern). 1-line fix.
+  • Replace `console.error` in resto-bahan-matrix/route.ts:306 with
+    `logger.error`. 1-line fix.
+  • Replace 2 `@ts-ignore` in instrumentation.ts with `@ts-expect-error`
+    (lint rule recommendation). 2-line fix.
+
+- Full findings table below in main response.
+
+
+---
+Task ID: DEEP-PROD
+Agent: general-purpose (Product Auditor - retry)
+Task: Product feature audit
+
+Work Log:
+- Read worklog tail (prior CODE-QUALITY audit, 6.5/10 score)
+- Read src/app/page.tsx (695 lines) — 4 tabs: Dashboard, Resto Analysis, Peer Comparison, Pareto
+- Read prisma/schema.prisma (287 lines, 11 models)
+- Listed 20 API routes + 1 root health route = 21 endpoints
+- Traced AuditLog usage: 11 write sites, 0 read/UI sites → pure zombie
+- Traced DQIssue usage: 1 read in /api/data (DQ summary), minimal UI surface
+- Traced OutletPIC: 1 read in /api/data + 1 in /api/pic — basic CRUD only
+- Traced Investigation: type-only, InvestigationItem flows into narrative buildRecommendations, no investigation UI workflow
+- Cross-referenced dashboard sections (12) vs API surface vs schema
+
+Stage Summary:
+### [DP-01]: Dashboard tab — 12 sections
+- **Priority**: P2
+- **Category**: Feature
+- **What**: Executive Summary, RestoRecommendation, Insights, HealthAlert/Growth/DevBreakdown, MultiPeriod, TopItems×2+TopOutlets, AreaCompare+OutletRanking, ItemConsistency, HistoricalZ+AreaTrend, LossVsSurplus+Trend
+- **Effort**: — (existing)
+
+### [DP-02]: Zombie AuditLog
+- **Priority**: P1
+- **Category**: Ops
+- **What**: 11 write sites (ingest/analysis/pic/settings/migrate) record every action with detail+duration, but ZERO UI to view, filter, or export audit trail. Wasted signal, no compliance story.
+- **Effort**: S (1 day — table + filter + drawer)
+
+### [DP-03]: Zombie DQIssue detail UI
+- **Priority**: P2
+- **Category**: Feature/UX
+- **What**: /api/data returns DQIssue summary counts only; per-row issues (with sheetName, rowNumber, rawValue) are stored but never browseable. Users can't see WHICH rows failed validation.
+- **Effort**: M (2-3 days)
+
+### [DP-04]: Zombie InvestigationItem workflow
+- **Priority**: P2
+- **Category**: Feature
+- **What**: engine/analysis builds investigationWorklist + recommendations; narrative.ts builds recs. Worklist flows into InsightsPanel text only — no "assign → investigate → resolve" workflow, no status field, no owner.
+- **Effort**: L (1-2 weeks)
+
+### [DP-05]: Zombie OutletPIC — CRUD-only, no reporting
+- **Priority**: P3
+- **Category**: Feature
+- **What**: /api/pic supports CRUD + import; used only for filter dropdown. No "PIC leaderboard", "PIC accountability scorecard", or "PIC × deviasi heatmap".
+- **Effort**: M
+
+### [DP-06]: Missing URL state for filters
+- **Priority**: P1
+- **Category**: UX
+- **What**: monthLabel/week/area/outlet/pic/itemName/activeTab live in zustand only. Reload = lose context. Can't share deep links to specific filter views. Bad for collaboration.
+- **Effort**: M (1-2 days — sync store ↔ URLSearchParams)
+
+### [DP-07]: Missing multi-user / auth
+- **Priority**: P1
+- **Category**: Ops
+- **What**: No login, no roles. Anyone can delete SourceFiles, edit Settings, run migrate-direction. AuditLog.updatedBy is nullable string but never populated from session.
+- **Effort**: L (NextAuth + role enum + RLS-lite middleware)
+
+### [DP-08]: Missing alerting / notifications
+- **Priority**: P2
+- **Category**: Integration
+- **What**: HealthAlert is in-app only. No email/Slack/WhatsApp when new ingest produces P1 deviasi, no scheduled "weekly digest" of top movers.
+- **Effort**: L
+
+### [DP-09]: Missing scheduled reports
+- **Priority**: P2
+- **Category**: Ops
+- **What**: ExportDialog does on-demand Word/Excel. No cron-driven monthly auto-export to shared Drive folder, no email distribution list.
+- **Effort**: M (Vercel cron + reuse export pipeline)
+
+### [DP-10]: Missing PDF export
+- **Priority**: P3
+- **Category**: UX
+- **What**: Only Word + Excel. PDF preferred for executive distribution / archival.
+- **Effort**: M (puppeteer or react-pdf)
+
+### [DP-11]: Missing Recipe Costing
+- **Priority**: P2
+- **Category**: F&B
+- **What**: Item table has satuan+category only. No BOM (Bill of Material) recipe linking finished goods → raw ingredients with yield %. Can't compute theoretical vs actual cost per menu.
+- **Effort**: XL (new Recipe model + UI + costing engine)
+
+### [DP-12]: Missing POS / Sales integration
+- **Priority**: P2
+- **Category**: F&B/Integration
+- **What**: nominalSales denormalized from Excel column only. No live POS pull (Moka, Majoo, Raptor, Mekari). Can't reconcile sales vs inventory in real-time.
+- **Effort**: XL
+
+### [DP-13]: Missing HACCP / food safety
+- **Priority**: P3
+- **Category**: F&B
+- **What**: No expiry tracking, no cold-chain log, no HACCP checklist. Critical for regulatory compliance in F&B.
+- **Effort**: XL
+
+### [DP-14]: Missing Supplier Management
+- **Priority**: P3
+- **Category**: F&B
+- **What**: No Supplier model, no PO, no GRN, no supplier scorecard. Item.purchases can't be traced to source.
+- **Effort**: XL
+
+### [DP-15]: Missing Stock Count / Adjustment workflow
+- **Priority**: P3
+- **Category**: F&B
+- **What**: StockOpname (cycle count) UI missing. Deviations are read from Excel; no in-app recount/adjust with reason codes.
+- **Effort**: L
+
+### [DP-16]: Missing Natural-Language query
+- **Priority**: P2
+- **Category**: AI
+- **What**: No "tampilkan 10 item dengan deviasi tertinggi di area Jawa Barat minggu lalu" → SQL/Answer box. Power users want this.
+- **Effort**: L (LLM + validated SQL gen + sandbox read-only)
+
+### [DP-17]: Missing ML anomaly detection
+- **Priority**: P3
+- **Category**: AI
+- **What**: HistoricalZ-Score uses stats; no ML (Isolation Forest, Prophet) for forecasting expected BOM and flagging anomalies beyond z>2.
+- **Effort**: XL (model training + serving)
+
+### [DP-18]: Missing Demand Forecasting
+- **Priority**: P3
+- **Category**: AI
+- **What**: No "expected next-week BOM" forecast per item per outlet. Limits proactive ordering.
+- **Effort**: XL
+
+### [DP-19]: Missing OCR / paper intake
+- **Priority**: P4
+- **Category**: AI
+- **What**: Ingest is Excel-only. Outlets that scribble counts on paper have no OCR path.
+- **Effort**: XL
+
+### [DP-20]: Quick win — Audit Log viewer
+- **Priority**: P1
+- **Category**: Quick Win
+- **What**: /admin/audit page — table with action/detail/duration/createdAt + filter by action type. Reuses existing 11 write sites. Demonstrates compliance story in 1 day.
+- **Effort**: S
+
+### [DP-21]: Quick win — DQ issue drilldown drawer
+- **Priority**: P2
+- **Category**: Quick Win
+- **What**: Click "WARNING: 12 issues" in DQ summary → drawer lists row-by-row with sheetName + rowNumber + rawValue + suggested fix. Data already in DB.
+- **Effort**: S
+
+### [DP-22]: Quick win — URL state sync
+- **Priority**: P1
+- **Category**: Quick Win
+- **What**: useSearchParams ↔ zustand store. Refresh-safe + shareable links. ~2 days, touches only useDashboard hook.
+- **Effort**: M
+
+### [DP-23]: Quick win — Export to PDF (Print-to-PDF fallback)
+- **Priority**: P3
+- **Category**: Quick Win
+- **What**: Add window.print() with print-CSS, or `@react-pdf/renderer` for 1 template. 1 day.
+- **Effort**: S
+
+### [DP-24]: Quick win — OutletPIC leaderboard
+- **Priority**: P3
+- **Category**: Quick Win
+- **What**: Reuse peer-comparison query — group by PIC, show avg deviasi + rank. Data already linked.
+- **Effort**: S
+
+### [DP-25]: Quick win — Investigation status enum
+- **Priority**: P2
+- **Category**: Quick Win
+- **What**: Add `status` + `assigneeId` + `resolvedAt` to InvestigationItem (in-memory type → new table). Lets users mark "investigating/resolved".
+- **Effort**: M
+
+**Product Completeness Score: 5/10**
+- Strong analytics engine + 12 dashboard sections, but operational loop is open (no actions tracked to closure), no auth, no scheduling, no F&B-specific modules. Solid MVP, missing the "platform" layer.
+
+**Top 5 Missing Features** (by impact):
+1. URL state sync (DP-06) — breaks sharing/collaboration
+2. Multi-user auth + roles (DP-07) — blocks enterprise adoption
+3. Audit Log viewer (DP-02/DP-20) — required for compliance story
+4. Recipe Costing (DP-11) — core F&B value prop
+5. POS integration (DP-12) — closes real-time loop
+
+**Top 5 Quick Wins** (effort ≤ S, impact high):
+1. Audit Log viewer page (1 day)
+2. URL state sync via useSearchParams (2 days)
+3. DQ issue drilldown drawer (1 day)
+4. Print-to-PDF export (1 day)
+5. OutletPIC leaderboard (1 day)
+
+**Roadmap**:
+- 3-month: URL state (DP-06), Audit viewer (DP-20), DQ drilldown (DP-21), PDF export (DP-23), Investigation status (DP-25), PIC leaderboard (DP-24), Auth scaffold (DP-07)
+- 6-month: Scheduled reports (DP-09), Alerting (DP-08), NL query v1 (DP-16), Stock count workflow (DP-15), PIC scorecard (DP-05)
+- 12-month: Recipe costing (DP-11), POS integration (DP-12), ML anomaly (DP-17), Demand forecasting (DP-18), HACCP (DP-13), Supplier mgmt (DP-14), OCR intake (DP-19)
+
+---
+Task ID: DEEP-API
+Agent: general-purpose (API Deep Auditor - retry)
+Task: Backend logic audit
+
+Work Log:
+- Read worklog.md tail (prior DEEP-CODEQUAL findings) to align scope.
+- Listed 21 API routes under src/app/api/. Scanned each for: Zod validation, rate limiting, error handling, Cache-Control headers.
+- Read src/lib/ingestion.ts (760 lines) — transaction usage, partial failure, idempotency.
+- Read src/lib/aggregation-cache.ts (196 lines) — cache invalidation, key collisions.
+- Read src/lib/month-resolver.ts (79 lines) + src/lib/period-resolver.ts (177 lines) — year boundary, edge cases.
+- Read src/lib/build-where.ts (131 lines) — filter bypass, NULL handling.
+- Read src/engine/rules/evaluator.ts (491 lines) — 17-rule evaluator.
+- Read src/lib/queries/rule-evaluation.ts (270 lines) — SQL rule evaluator vs JS divergence.
+- Read src/lib/validation.ts (290 lines) — Zod schema library.
+- Read src/lib/rate-limit.ts (94 lines) + src/lib/cache-headers.ts (43 lines).
+- Read key routes: ingest, data, pic, settings, ingest-process, analysis, migrate-direction, setup, import-drive, ingest-upload, status, drilldown, pareto, resto-bahan-matrix, item-search, peer-comparison (+items +trend), recommendations, item-history, export-report, pic/import, root /api/route.ts.
+- Verified config/rules.yaml: 17 rules (matches RULE_MAP 12 + evaluateHistoricalRulesJs 5).
+- Cross-checked AuditLog model fields (action, detail, duration) against all callsites.
+
+Stage Summary:
+- 16 findings (3 P1, 6 P2, 5 P3, 2 P4)
+- Backend Health Score: 7.5/10
+
+Full findings in main response.
