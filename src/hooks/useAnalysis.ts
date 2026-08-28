@@ -465,7 +465,7 @@ export interface StatusData {
   outlets: Array<{ code: string; name: string; area: string; pic: string | null }>;
   areas: string[];
   pics: string[];
-  kelompokOptions?: string[];
+  kelompokOptions?: Array<{ kelompok: string; outletCount: number; area: string }>;
   stats: { totalFiles: number; totalOutlets: number; totalItems: number; totalRecords: number };
   warning?: string;
   cached?: boolean;

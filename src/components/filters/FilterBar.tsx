@@ -92,7 +92,7 @@ export function FilterBar() {
   useEffect(() => {
     if (!status) return;
     const kelompokOpts = status.kelompokOptions || [];
-    if (kelompok && kelompok !== 'all' && kelompokOpts.length > 0 && !kelompokOpts.includes(kelompok)) {
+    if (kelompok && kelompok !== 'all' && kelompokOpts.length > 0 && !kelompokOpts.some(k => k.kelompok === kelompok)) {
       setKelompok(null);
     }
     if (area && status.areas.length > 0 && !status.areas.includes(area)) {
@@ -393,7 +393,11 @@ export function FilterBar() {
           />
 
           <SearchableComboBox
-            options={(status?.kelompokOptions || []).map((k: string) => ({ value: k, label: k }))}
+            options={(status?.kelompokOptions || []).map((k) => ({
+              value: k.kelompok,
+              label: k.kelompok,
+              description: `${k.area} · ${k.outletCount} outlet`,
+            }))}
             value={kelompok}
             onValueChange={setKelompok}
             placeholder="Semua Kelompok"
