@@ -22542,3 +22542,904 @@ Stage Summary:
 - 2 subagents completed parallel work (peer comparison + ingest safety).
 - All TS errors from dead code resolved.
 - Dead code cleanup removed ~3000+ lines of unused code.
+
+---
+Task ID: AUDIT7-BE-1
+Agent: Backend Auditor (general-purpose sub-agent)
+Task: Full audit of backend code after multiple force pushes that lost and restored files. Verify existence + wiring of 10 previously-implemented features (a–j), 3 critical import chains, 6 API response fields, 3 Zod schemas, rate limiting on 9 heavy routes, and withStatementTimeout coverage on all $queryRaw calls. Report issues only — DO NOT fix.
+
+Work Log:
+- Read worklog tail (~22544 lines, last ~300 lines for context on recent force-push losses + FIX-P0-P1-GEL2/P1-INGEST-2 work).
+- Grepped + Read all target files. Verified each of the 10 features, 3 import chains, 6 response fields, 3 Zod schemas, 9 rate-limited routes, and counted wrapped vs unwrapped $queryRaw calls.
+- Findings below grouped by severity (P0/P1/P2/P3). No code changes made — report only.
+
+Stage Summary — Issues Found (19 total: 1 P0, 7 P1, 7 P2, 4 P3)
+=================================================================
+
+═══════════════════════════════════════════════════════════════
+P0 ISSUES (1) — Missing feature
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-BE-1 (P0) — queryParetoNested multi-nesting function is MISSING
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/pareto.ts:261 (only `queryParetoNestedItemOutlet` exists — single fixed Item→Outlet nesting)
+  - src/app/api/pareto/route.ts:12 (imports only `queryParetoNestedItemOutlet`)
+Spec said: `queryParetoNested` (multi-nesting) exists; `getDimensionExpr` includes `joinOutlet` for 'pic' case; `childJoinsSql` uses `Prisma.raw(joinParts.join(' '))`.
+Description:
+  - No `queryParetoNested` function exists. Only `queryParetoNestedItemOutlet` (hardcoded Item→Outlet).
+  - No `getDimensionExpr` function — pareto.ts uses an inline ternary `groupExpr` (lines 402-410) inside `queryParetoHistorical` only.
+  - No `childJoinsSql` function anywhere.
+  - No `Prisma.raw(joinParts.join(' '))` pattern anywhere.
+  - The `pic` case in `queryParetoHistorical` does NOT explicitly include `joinOutlet` via `getDimensionExpr`; it uses `dimension !== 'item'` for joinOutlet (line 415) which is incidental, not via a `getDimensionExpr` helper.
+Expected: A generalized `queryParetoNested(parentDim, childDim, ...)` that supports any dimension pair (e.g. Item→Outlet, Area→Outlet, PIC→Outlet, Kelompok→Outlet).
+Actual: Only Item→Outlet nesting supported. Other dimension pairs are not nestable.
+Suggested fix: Implement `queryParetoNested(week, month, parentDim: 'item'|'outlet'|'area'|'pic'|'kelompok', childDim: 'item'|'outlet'|'area'|'pic'|'kelompok', filters, maxParents)` in pareto.ts using a `getDimensionExpr(dim)` helper and a `childJoinsSql(childDim)` builder, then wire into /api/pareto with a `parentDim`+`childDim` query param + Zod schema.
+
+═══════════════════════════════════════════════════════════════
+P1 ISSUES (7) — Broken / missing critical safety net
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-BE-2 (P1) — buildInventoryWhere / src/lib/build-where.ts is MISSING (logic duplicated inline)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/build-where.ts (file does NOT exist)
+  - src/app/api/analysis/route.ts:320-364 (`const buildWhere = (wk, mLabel) => { ... }` — inline closure)
+  - src/app/api/export-report/route.ts:313-340 (`const buildWhere = (wk, mLabel) => { ... }` — inline closure, near-identical)
+Spec said: `buildInventoryWhere` exists in `src/lib/build-where.ts`? Imported in analysis + export-report routes?
+Description:
+  - The shared helper was never extracted. Both routes declare a private `buildWhere` closure with the same logic (area / kelompok / outletCode / picOutletCodes / itemName filtering, sentinel `__NO_MATCH__` for empty arrays, `kelompokOutletCodes` closure capture).
+  - Two near-identical ~45-line closures exist; any bug fix must be applied in both places.
+Expected: A single shared `buildInventoryWhere(week, month, filterCtx)` in `src/lib/build-where.ts` imported by both routes.
+Actual: Duplicated inline closures.
+Suggested fix: Extract `buildInventoryWhere` to `src/lib/build-where.ts`, import in both routes.
+
+AUDIT7-BE-3 (P1) — resolveComparePeriod is MISSING; resolvePreviousPeriod is DEAD CODE
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/period-resolver.ts:29 (exports `resolvePreviousPeriod` — NOT `resolveComparePeriod`)
+  - src/app/api/analysis/route.ts (does NOT import period-resolver; uses inline logic at lines 256-310)
+  - src/app/api/export-report/route.ts (does NOT import period-resolver; uses inline logic at lines 374-410)
+  - src/app/api/outlet-items/route.ts:120-129 (inline period resolution)
+  - src/app/api/recommendations/route.ts:52-95 (inline period resolution)
+Spec said: `resolveComparePeriod` exists in `src/lib/period-resolver.ts`? Returns `{ prevWeek: string | null, prevMonth: string | null }`? Imported in analysis + export-report routes?
+Description:
+  - The function exists but is named `resolvePreviousPeriod` (returns the correct shape `{ prevWeek, prevMonth }` per the `ResolvedPeriod` interface at line 16-19).
+  - Worse: the function is NEVER imported anywhere (dead code). All 4 routes that need prev-period resolution (analysis, export-report, outlet-items, recommendations) duplicate the logic INLINE (~30-50 lines each).
+Expected: `resolveComparePeriod` (or the existing `resolvePreviousPeriod`) imported + used by analysis + export-report.
+Actual: Helper exists but is dead code; routes inline duplicate.
+Suggested fix: Either (a) rename `resolvePreviousPeriod` → `resolveComparePeriod` and add imports, or (b) just add imports to the 4 routes.
+
+AUDIT7-BE-4 (P1) — /api/pareto has NO Zod validation (paretoQuerySchema missing)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/pareto/route.ts:26-30 (uses raw `url.searchParams.get()` for month, week, area, pic, kelompok)
+  - src/lib/validation.ts (no `paretoQuerySchema` defined)
+Spec said: /api/pareto has `paretoQuerySchema` with `parentDim` + `childDim`?
+Description:
+  - The route reads query params directly without validation. A 10KB `month` value or a malformed `week` would pass through unvalidated.
+  - No `parentDim`/`childDim` parameters are accepted (consistent with AUDIT7-BE-1 — multi-nesting feature not implemented).
+Expected: Zod schema validating month/week/area/pic/kelompok + (optionally) parentDim/childDim.
+Actual: No validation; raw searchParams.
+Suggested fix: Add `paretoQuerySchema` to validation.ts and call `validateQuery` in the route (mirrors analysis/outlet-items pattern).
+
+AUDIT7-BE-5 (P1) — withStatementTimeout coverage is INCOMPLETE (~25+ unwrapped $queryRaw calls)
+─────────────────────────────────────────────────────────────────
+Files (unwrapped `db.$queryRaw` / `db.$executeRaw` — NOT inside `withStatementTimeout((tx) => tx.$queryRaw …)`):
+  src/lib/queries/:
+    - items/top-items.ts: lines 25, 57, 370, 421, 462  (5 calls — note: lines 128, 257, 568, 616 ARE wrapped)
+    - items/global-search.ts: line 115
+    - items/network-risk.ts: line 65
+    - dashboard.ts: lines 181, 224, 256, 284  (4 calls — all unwrapped)
+    - health-ranking.ts: line 314
+    - historical.ts: line 35  (HEAVY query — 2-level CTE aggregate, can hang under PgBouncer)
+    - growth-drivers.ts: line 114  (HEAVY query)
+    - outlets/top-outlets.ts: lines 34, 98
+    - outlets/resto-recommendations.ts: lines 67, 190, 217  (3 calls)
+    - outlets/peer-comparison.ts: lines 62, 248, 368  (3 calls)
+    - areas.ts: lines 28, 116
+    - kelompok-resolver.ts: line 58
+    - pic-resolver.ts: line 25
+  src/app/api/:
+    - outlet-items/route.ts: lines 158, 217, 238, 251  (4 calls — HEAVY multi-CTE query)
+    - analysis/route.ts: line 220  (small OutletPIC lookup — low risk)
+    - resto-bahan-matrix/route.ts: lines 87, 135, 185  (3 calls — HEAVY)
+    - export-report/route.ts: line 292  (small OutletPIC lookup — low risk)
+    - peer-comparison/items/route.ts: line 84
+    - migrate-direction/route.ts: lines 48, 56, 64, 74, 83, 162  (6 $executeRaw + 1 $queryRaw — mutations)
+    - item-history/route.ts: lines 83, 186, 197  (3 calls)
+Spec said: Check if ALL `$queryRaw` calls are wrapped in `withStatementTimeout`.
+Description:
+  - Counted 61 total `db.$queryRaw/$executeRaw` calls vs 22 wrapped `tx.$queryRaw/$executeRaw` calls. ~39 unwrapped calls remain.
+  - Critically, the heaviest queries (historical.ts, growth-drivers.ts, dashboard.ts, outlet-items multi-CTE, resto-bahan-matrix multi-CTE) are NOT wrapped → can hang indefinitely under PgBouncer transaction mode (which silently strips URL-level `statement_timeout`).
+Expected: All $queryRaw calls wrapped per the AUDIT-7 H4 fix pattern documented in shared.ts:9-17.
+Actual: ~39 unwrapped calls (mix of heavy + light queries).
+Suggested fix: Wrap each `db.$queryRaw\`...\`` in `withStatementTimeout((tx) => tx.$queryRaw\`...\`)`. Light OutletPIC lookups can be left unwrapped (low risk), but heavy aggregations MUST be wrapped.
+
+AUDIT7-BE-6 (P1) — DIRECTION_FROM_SUM_SQL shared constant is MISSING (SQL fragment duplicated in 4+ files)
+─────────────────────────────────────────────────────────────────
+Files (inline duplicates of `CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS' WHEN ... > 0 THEN 'SURPLUS' ELSE 'NEUTRAL' END`):
+  - src/lib/queries/items/top-items.ts:30, 375  (2 occurrences)
+  - src/lib/queries/items.ts:40, 400  (2 occurrences — DEAD FILE, see AUDIT7-BE-15)
+  - src/lib/queries/outlets/peer-comparison.ts:305  (1 occurrence)
+  - src/lib/queries/outlets.ts:438  (1 occurrence — DEAD FILE)
+  - src/lib/queries/items/global-search.ts — does NOT use the direction SQL at all (uses simpler query)
+  - src/lib/queries/outlets/resto-recommendations.ts — uses a different `direction` extraction pattern
+Spec said: `DIRECTION_FROM_SUM_SQL` exists in `src/lib/queries/shared.ts`? Used in top-items, global-search, resto-recommendations, peer-comparison?
+Description:
+  - The shared `Prisma.sql` fragment was never extracted. The same 4-line CASE expression is duplicated across 4 active query modules.
+  - Divergence risk: peer-comparison.ts:305 has slightly different NULL-handling than top-items.ts:30 (one uses `IS NOT NULL` first; both branches now agree after BUG2-PARETO-9 fix, but a future change to one site would silently diverge).
+Expected: A shared `DIRECTION_FROM_SUM_SQL` constant in shared.ts, used by all 4 modules.
+Actual: Inline duplicates.
+Suggested fix: Export `export const DIRECTION_FROM_SUM_SQL = Prisma.sql\`CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS' WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS' WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS' WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS' ELSE 'NEUTRAL' END\`;` and reference via `${DIRECTION_FROM_SUM_SQL}` in each query.
+
+AUDIT7-BE-7 (P1) — computePareto8020 shared function is MISSING (two private duplicates)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/pareto.ts:29-59 (private `function computePareto<T extends ...>` — used 5 times in same file)
+  - src/lib/queries/growth-drivers.ts:140-221 (private `function computePareto(...)` — used 2 times in same file, lines 220-221)
+Spec said: `computePareto8020` exists in `src/lib/queries/shared.ts`? Used in pareto.ts + growth-drivers.ts?
+Description:
+  - The shared Pareto 80/20 function was never extracted. Two private implementations exist with slightly different signatures:
+    - pareto.ts: generic `<T extends { totalAbsNominal; name; nominalDeviasi; qtyDeviasi }>` returns `{ drivers, remainderCount, remainderPct, totalAbsNominal, totalCount }`.
+    - growth-drivers.ts: non-generic, takes `{ name, curr, prev }` rows and splits into up/down drivers — different output shape.
+  - The two implementations share the core "sort by totalAbsNominal DESC → cumulative sum → cut at 80%" logic but neither is exported.
+Expected: A single shared `computePareto8020` in shared.ts.
+Actual: Two private near-duplicates.
+Suggested fix: Export `computePareto8020` from shared.ts (generic version). Growth-drivers.ts can keep its variant if the output shape genuinely differs, but should call the shared helper internally and post-process the result.
+
+AUDIT7-BE-8 (P1) — /api/settings DELETE has NO rate limit AND NO Zod validation
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/settings/route.ts:207-286 (DELETE handler — no rateLimit call, no validateQuery call)
+  - src/app/api/settings/route.ts:74-84 (POST handler HAS rate limit at line 78)
+Spec said: /api/settings DELETE — has rate limit?
+Description:
+  - POST is rate-limited (`settings:${ip}`, line 78) but DELETE is NOT.
+  - DELETE accepts `?key=` query param without Zod validation (line 210 — raw `url.searchParams.get('key')`).
+  - A malicious caller could spam DELETE to trigger 30 upserts per request (line 239-256 — `db.$transaction(SETTING_DEFINITIONS.map(...))`), causing DB write contention.
+Expected: DELETE handler rate-limited at the same `RATE_LIMITS.settings` bucket as POST.
+Actual: No rate limit; no input validation.
+Suggested fix: Add `rateLimit(\`settings-delete:${ip}\`, RATE_LIMITS.settings.maxRequests, RATE_LIMITS.settings.windowMs)` at top of DELETE; add a `settingsDeleteQuerySchema = z.object({ key: z.string().max(50).optional() })` and validate.
+
+═══════════════════════════════════════════════════════════════
+P2 ISSUES (7) — Inconsistent / fragile
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-BE-9 (P2) — /api/resto-bahan-matrix has NO Zod validation (uses raw parseInt)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/resto-bahan-matrix/route.ts:42-48 (raw `url.searchParams.get(...)` + `parseInt(... || '100')` for limit)
+  - src/lib/validation.ts (no `restoBahanMatrixQuerySchema` defined)
+Spec said: /api/resto-bahan-matrix — has schema with `z.coerce.number()` for limit?
+Description:
+  - Uses `Math.min(parseInt(url.searchParams.get('limit') || '100'), 500)` (line 48). `parseInt('', 10)` → `NaN` → falls back to 100 silently; `parseInt('abc')` → `NaN`; `parseInt('-5')` → -5 (then Math.min keeps it, no `Math.max` clamp).
+  - No validation of `month` / `week` / `area` / `priority` query params either.
+Expected: A `restoBahanMatrixQuerySchema` with `z.coerce.number().int().min(1).max(500).optional()` for limit (mirrors `limitSchema` in validation.ts:31).
+Actual: Raw parseInt with no lower-bound clamp + no param validation.
+Suggested fix: Add schema to validation.ts; call `validateQuery` in the route.
+
+AUDIT7-BE-10 (P2) — /api/pareto response field is `nested` not `nestedDims` (spec/code mismatch)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/pareto/route.ts:105 (response includes `nested`, not `nestedDims`)
+  - src/components/dashboard/ParetoDashboard.tsx:187 (frontend reads `paretoData?.nested?.items`)
+Spec said: `nestedDims` in /api/pareto response.
+Description:
+  - The audit spec mentions `nestedDims` but the actual codebase (both backend and frontend) uses `nested`. Internal consistency is OK.
+Expected (per spec): Response field named `nestedDims`.
+Actual: Response field named `nested`.
+Suggested fix: Either (a) update the spec to match the code (preferred — no breaking change), or (b) rename `nested` → `nestedDims` in backend + frontend together.
+
+AUDIT7-BE-11 (P2) — /api/resto-bahan-matrix uses `console.error` instead of shared logger
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/resto-bahan-matrix/route.ts:300 (`console.error('[resto-bahan-matrix] error:', e);`)
+Description:
+  - Every other API route uses the shared `logger.error` from `@/lib/logger` (structured JSON log). This route uses raw `console.error` — logs won't be captured by the production logging pipeline / Vercel structured logs.
+Expected: `logger.error('[resto-bahan-matrix] error', { error: ... });`
+Actual: `console.error`.
+Suggested fix: Replace with `logger.error`; add `import { logger } from '@/lib/logger';`.
+
+AUDIT7-BE-12 (P2) — /api/recommendations duplicates prev-period resolution inline (resolvePreviousPeriod unused)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/recommendations/route.ts:52-95 (~44 lines of inline period resolution)
+  - src/lib/period-resolver.ts:29 (`resolvePreviousPeriod` exists but unused — see AUDIT7-BE-3)
+Description:
+  - Same issue as AUDIT7-BE-3, but specifically affects /api/recommendations. The route re-implements the prev-period lookup instead of calling the shared helper.
+Expected: `const { prevWeek, prevMonth } = await resolvePreviousPeriod(week, month);`
+Actual: 44-line inline duplication.
+Suggested fix: Replace inline logic with `resolvePreviousPeriod` call.
+
+AUDIT7-BE-13 (P2) — /api/outlet-items duplicates prev-period resolution inline
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/outlet-items/route.ts:100-130 (~30 lines of inline period resolution)
+Description:
+  - Same as AUDIT7-BE-12. The route has its own copy of the same-weekLabel-in-prev-month lookup.
+Suggested fix: Use `resolvePreviousPeriod`.
+
+AUDIT7-BE-14 (P2) — `buildWhere` closures in analysis + export-report diverge on PIC sentinel handling
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/analysis/route.ts:341-358 (PIC branch: `picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__']`)
+  - src/app/api/export-report/route.ts:330-335 (PIC branch: `let codes = picOutletCodes; // already has sentinel applied`)
+Description:
+  - The two `buildWhere` closures have drifted: analysis/route.ts re-applies the `__NO_MATCH__` sentinel inside `buildWhere` (defensive); export-report/route.ts assumes the sentinel was applied upstream (line 296-301) and does NOT re-apply.
+  - The result is correct in both cases (because export-report does apply the sentinel before calling buildWhere), but the divergence means a refactor that moves the buildWhere call to a different point in export-report could silently break the empty-PIC case.
+Expected: Identical `buildWhere` logic in both routes (via shared `buildInventoryWhere`).
+Actual: Two drifted variants.
+Suggested fix: Extract to shared `buildInventoryWhere` (see AUDIT7-BE-2).
+
+AUDIT7-BE-15 (P2) — barrel `index.ts` does NOT re-export `./pareto` (orphan module)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/index.ts:1-22 (re-exports shared, dashboard, items/{top-items,network-risk,global-search}, outlets/{top-outlets,peer-comparison,resto-recommendations}, areas, historical, health-ranking)
+  - NOTE: `./pareto` is NOT re-exported (only direct imports work).
+  - NOTE: `./rule-evaluation` is NOT re-exported either (analysis/route.ts imports it directly at line 58).
+Description:
+  - Callers must know to import `@/lib/queries/pareto` directly (not `@/lib/queries`). This works for the pareto route, but breaks the barrel pattern's promise of "import everything from `@/lib/queries`".
+  - Same applies to `./rule-evaluation` and (intentionally) `./growth-drivers` (comment at line 19-21 explains the collision avoidance for growth-drivers only).
+Expected: Barrel re-exports `./pareto` and `./rule-evaluation` too.
+Actual: Direct imports required.
+Suggested fix: Add `export * from './pareto';` and `export * from './rule-evaluation';` to index.ts. (Keep growth-drivers out per the existing comment about name collision.)
+
+═══════════════════════════════════════════════════════════════
+P3 ISSUES (4) — Polish / dead code
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-BE-16 (P3) — src/lib/queries/items.ts (993 lines) is DEAD CODE
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/items.ts (993 lines, 11 exported functions)
+  - Grep confirms NO file imports from `@/lib/queries/items` (only `@/lib/queries/items/top-items`, `@/lib/queries/items/network-risk`, `@/lib/queries/items/global-search`)
+Description:
+  - The pre-split monolithic `items.ts` file was left behind after the refactor that created `items/top-items.ts` + `items/network-risk.ts` + `items/global-search.ts`. The barrel only re-exports the split files.
+  - The file duplicates 7 of the 11 exports in `items/top-items.ts` (queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByDeviasiRank, queryTopItemsByDeviasiRankForOutlet, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency) and 3 in the other split files (queryNetworkItemRisk, queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend).
+  - Risk: 993 lines of stale code that looks "live" — a future maintainer might edit items.ts thinking it's used.
+Suggested fix: Delete `src/lib/queries/items.ts`. Verify no test files import it first.
+
+AUDIT7-BE-17 (P3) — src/lib/queries/outlets.ts (1017 lines) is DEAD CODE
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/outlets.ts (1017 lines, 6 exported functions)
+  - Grep confirms NO file imports from `@/lib/queries/outlets`
+Description:
+  - Same issue as AUDIT7-BE-16. Pre-split monolithic `outlets.ts` was left behind. Barrel only re-exports `outlets/top-outlets`, `outlets/peer-comparison`, `outlets/resto-recommendations`.
+  - The file duplicates `queryTopOutlets` + `queryTopOutletsBySales` (in top-outlets.ts) + `queryPeerComparison` + `queryPeerItemComparison` + `queryPeerTrend` (in peer-comparison.ts) + `queryRestoRecommendations` (in resto-recommendations.ts).
+Suggested fix: Delete `src/lib/queries/outlets.ts`.
+
+AUDIT7-BE-18 (P3) — `queryTopItemsByDeviasiRankForOutlet` `rankBom` is global cross-item rank (misleading semantics)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/lib/queries/items/top-items.ts:161-163 (`rankBom = ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)`)
+Description:
+  - (Pre-existing issue, documented in BUGHUNT2-RESTO-15 line 22360+. Verified still present after force pushes.)
+  - The PARTITION BY creates 2 partitions (zero-BOM vs non-zero-BOM), so `rankBom` is a GLOBAL rank of ABS(qtyBom) across all item-outlet pairs in the result set.
+  - For an outlet-scoped view (RankingNasionalCard), this is misleading: the user expects either per-item or per-outlet rank.
+Suggested fix: Either (a) `ROW_NUMBER() OVER (PARTITION BY "itemName" ORDER BY ABS(qtyBom) DESC)` for per-item rank, or (b) remove the rankBom column if it's not meaningful.
+
+AUDIT7-BE-19 (P3) — `analysis/route.ts:220` and `export-report/route.ts:292` have inline OutletPIC lookup (resolvePICOutletCodes unused)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/api/analysis/route.ts:220 (`db.$queryRaw\`SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})\``)
+  - src/app/api/export-report/route.ts:292 (same inline query)
+  - src/lib/pic-resolver.ts:20 (`resolvePICOutletCodes` exists — used by recommendations, item-search, pareto routes but NOT analysis/export-report)
+Description:
+  - Two routes bypass the shared `resolvePICOutletCodes` helper and inline the same SQL. The helper returns the `['__NO_MATCH__']` sentinel for empty results; the inline versions return `null` (then later coerce to `['__NO_MATCH__']` at analysis/route.ts:384-386).
+  - Functionally equivalent but fragile — a change to the sentinel logic in pic-resolver.ts would not propagate to these 2 routes.
+Suggested fix: Replace inline query with `resolvePICOutletCodes(pic)` call.
+
+═══════════════════════════════════════════════════════════════
+VERIFIED OK (no issues found)
+═══════════════════════════════════════════════════════════════
+
+✓ AUDIT7-BE-A — `queryParetoByDevBom`: EXISTS at top-items.ts:559, exported via barrel (index.ts:8 re-exports `./items/top-items`), imported in analysis/route.ts:44, called in Promise.all at line 526-537 (with `.catch()` non-blocking wrapper), included in response at line 964 as `paretoDevBom`. Returns `{ drivers: [{ itemName, outletCount, devBom, devBomAbs, nominalDeviasi, absNominal, sharePct, cumPct, outlets: [...] }], remainderCount, remainderPct, totalAbsNominal, totalCount, thresholdPct }`. Drivers + outlets array confirmed.
+
+✓ AUDIT7-BE-B — `resolveKelompokOutletCodes`: EXISTS at kelompok-resolver.ts:53, imported in analysis/route.ts:49 + export-report/route.ts:48, called at analysis:375 + export-report:307.
+
+✓ AUDIT7-BE-C — `invalidateAnalysisCache`: EXISTS at aggregation-cache.ts:192, uses `\x1f` delimiter (line 194: `invalidateCache(\`analysis\x1f\`)`), called from all 7 mutation routes (ingestion.ts:485, ingest-process:531+748, pic:80+130, pic/import:135, data:242, migrate-direction:99, settings:191+264).
+
+✓ AUDIT7-BE-D — Settings cache: `CACHE_TTL_MS = 30_000` at settings.ts:326, `getAllSettings` checks cache before DB at line 393 (`if (!forceRefresh && _settingsCache && (Date.now() - _cacheLoadedAt) < CACHE_TTL_MS) return _settingsCache;`). Plus `_defaultsEnsured` flag (line 353) skips createMany on warm invocations (BUG2-INGEST-5 fix verified intact).
+
+✓ AUDIT7-BE-E — `SqlFilterOpts` type: EXISTS at shared.ts:58, used across all 11 active query modules (areas, dashboard, growth-drivers, health-ranking, historical, items/{top-items,global-search,network-risk}, outlets/{top-outlets,peer-comparison,resto-recommendations}, pareto, rule-evaluation).
+
+✓ AUDIT7-BE-F — Rate limiting on 9 heavy routes: ALL PRESENT.
+  - /api/analysis:85, /api/pareto:21, /api/recommendations:15, /api/item-search:42, /api/peer-comparison:19, /api/outlet-items:49, /api/item-history:37, /api/export-report:248, /api/resto-bahan-matrix:37.
+
+✓ AUDIT7-BE-G — API response shape (analysis route):
+  - `paretoDevBom` (with drivers + outlets array): ✓ line 964
+  - `topDeviasiRank` (with rankNominal + rankBom): ✓ line 973, shape at top-items.ts:112-113
+  - `trendProjection`: ✓ line 989 (computed at line 873)
+  - `patterns`: ✓ line 990 (computed at line 900)
+  - `filters` (with kelompok + pic): ✓ line 951 — `{ area, kelompok, outletCode, itemName, pic }`
+
+✓ AUDIT7-BE-H — Import chain analysis/route.ts → @/lib/queries barrel: barrel re-exports `./items/top-items` (line 8) which exports `queryParetoByDevBom`. Import resolves correctly (verified by tsc-clean state per FIX-P0-P1-GEL2 stage summary).
+
+✓ AUDIT7-BE-I — Import chain pareto/route.ts → @/lib/queries/pareto: direct import (NOT via barrel — see AUDIT7-BE-15). Works correctly.
+
+
+---
+
+Task ID: AUDIT7-CALC-3
+Agent: general-purpose (sub-agent)
+Task: Full audit of all calculations and data correctness after multiple force pushes. Verify that no calculation logic was lost or changed across 12 dimensions: direction convention, Dev/BOM ratio, Z-Score, networkAvgDevBom, residual, health score, variance direction, future month filter, BENCHMARK rules, cache invalidation, threshold values, gap formula.
+
+Work Log:
+- Read MASTER_CONTEXT.md (608 lines) for canonical spec of each calculation. Read tail of worklog.md (lines 21680-21880) for recent context (BUG2-INGEST-22, BUG2-INGEST-23, BUG2-INGEST-26).
+- Audited all 12 dimensions in parallel via Grep + Read across 20+ source files.
+
+**AUDIT7-CALC-1 (P3 — informational, NOT a bug):** `DIRECTION_FROM_SUM_SQL` constant mentioned in the task spec does NOT exist as a named export in `src/lib/queries/shared.ts` (the file only exports `withStatementTimeout`, `SqlFilterOpts`, `buildSqlFilters`). Instead, each SQL query has its own inline `CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS' ... WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS' ... ELSE 'NEUTRAL' END` block. Verified the SAME logic (LOSS = `nominalLossSurplus < 0`, qtyDeviasi NULL fallback) appears in 8+ query files: `dashboard.ts`, `items.ts`, `items/top-items.ts`, `outlets.ts`, `outlets/peer-comparison.ts`, `outlets/resto-recommendations.ts`, `health-ranking.ts`, `app/api/outlet-items/route.ts`. `computeDirectionFromData` in `ruleService.ts:68-81` and `rankingService.ts:28-41` matches the same logic. **Behavior is correct + consistent — only the "named constant" abstraction is missing.**
+
+**AUDIT7-CALC-2 (✓ CORRECT):** All SQL queries use `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` (volume-weighted) for devBom aggregate. Verified across 30+ sites in 13+ files (`areas.ts:60,143`, `peer-comparison.ts:105,301,374`, `resto-recommendations.ts:89,195`, `top-outlets.ts:59`, `outlets.ts:64,239,434,507,620,726`, `historical.ts:41`, `items.ts:78,514,630`, `dashboard.ts:69`, `network-risk.ts:79`, `top-items.ts:63,479,579,590,625,639`, `historical.ts:176`, `benchmark.ts:97`, `outlet-items/route.ts:241,254`, `peer-comparison/items/route.ts:122,147`). The only divergent form is `items.ts:60` + `top-items.ts:60` which computes a SIGNED `devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom))` for DISPLAY (alongside `devBomAbs` which uses the correct ABS formula for SORTING). Comment at top-items.ts:56 explicitly documents this intentional dual-form.
+
+**AUDIT7-CALC-3 (✓ CORRECT):** Z-Score uses:
+- ABS values for current + historical: `historical.ts:64` `Math.abs(v)`, `historical.ts:92` `Math.abs(currentValue)`, `historical.ts:157` `Math.abs(value)`, `rule-evaluation.ts:236` `Math.abs(curr.pctQtyDeviasiToBom ?? 0)`
+- Sample variance (N-1, Bessel's correction): `historical.ts:85-87` `Math.sqrt(... / (n - 1))`, `historical.ts queries:65` `(sumSq - n * mean * mean) / (n - 1)` (mathematically equivalent to STDDEV_SAMP). Note: queryHistoricalStats doesn't use `STDDEV_SAMP()` SQL function directly — it returns sumSq+mean+n and computes variance in JS. `queryParetoHistorical` (pareto.ts:451) DOES use `STDDEV_SAMP("weeklyTotal")` directly in SQL. Both produce the same result.
+- Guards: `historical.ts:91` `stdDev > 0`, `historical.ts:69` `n < minWeeks`, `ruleService.ts:43` `historicalStats.stdDev > 0 && historicalStats.n >= HISTORICAL_MIN_WEEKS`, `rule-evaluation.ts:234` `stats.stdDev <= 0 || stats.n < minWeeks → continue`, `calcZScoreFromStats:156` `value == null || stdDev === 0 → null`. **Spec says "n >= 2?" — actual guard is `n >= HISTORICAL_MIN_WEEKS ?? 4` (default 4, configurable).** Stricter than spec — acceptable.
+
+**AUDIT7-CALC-4 (P1 — DATA CORRECTNESS BUG):** `networkAvgDevBom` in `resto-recommendations.ts:255-257` uses ARITHMETIC MEAN of per-outlet `devBom` ratios:
+```ts
+const networkAvgDevBom = currRows.length > 0
+  ? currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length
+  : 0;
+```
+Expected: Volume-weighted `SUM(r.totalQtyDeviasi) / SUM(r.totalQtyBom)` (per master context §7 "Dev/BOM Ratio" + master context §1 "Volume-weighted aggregate (bukan AVG per record). Diterapkan di semua level: outlet, area, network, trend").
+Actual: Simple mean of per-outlet ratios. Outlets with small BOM get equal weight to outlets with large BOM, skewing the network average. This biases Signal 1 (Dev/BOM vs Peer, 15% weight of priority score) — outlets in low-volume networks appear more/less abnormal than they really are.
+SQL CTE at `resto-recommendations.ts:91` computes `SUM(ABS(ir."qtyBom")) as "qtyBom"` but the final SELECT (lines 156-187) does NOT expose this field — only `totalQtyDeviasi` (line 167) is exposed. So the JS code can't compute volume-weighted average even if it wanted to. Same issue applies to `outlets.ts:580` (legacy `queryRestoRecommendations` — DEAD CODE per worklog:19937, but same bug pattern).
+Already documented: worklog:7488, 12744. Not yet fixed.
+
+**AUDIT7-CALC-5 (✓ CORRECT):** Residual formula `residualQty = max(0, |deviasi| - (|waste| + |susut| + |trial|))`:
+- `transform.ts:258` `explained = Math.abs(w) + Math.abs(s) + Math.abs(t)` (abs-each-then-sum)
+- `transform.ts:263` `absResidual = Math.max(0, absDev - explained)` (clamped, magnitude)
+- `transform.ts:265` `residualQty = sign * absResidual` (signed for display: negative=LOSS, positive=SURPLUS)
+- `deviation.ts:76` `residualQty = Math.max(0, absDev - explained)` (unsigned, used by Metric Engine)
+- `outlet-items/route.ts:301` aggregate uses `Math.abs(toNum(r.residualQty) ?? 0)` ✓ (ABS, not signed)
+- `outlet-items/route.ts:202` SQL `residualRatio` uses `SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi"))` ✓ (ABS, not signed)
+- `outlet-items/route.ts:199` per-item `SUM(ir."residualQty")` is SIGNED — intentional for direction display (LOSS shows negative residual, SURPLUS shows positive). NOT a bug — direction preserved for UI; magnitude via ABS for math.
+- `health-ranking.ts:117` aggregate SQL uses `SUM(ABS(ir."residualQty")) as "totalResidualQty"` ✓ (ABS)
+- `resto-recommendations.ts:103` SQL uses `SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty"` ✓ (LOSS-only ABS)
+
+**AUDIT7-CALC-6 (✓ CORRECT):** Health score:
+- Weights: `definitions.ts:168-173` `devBom: 0.30, residual: 0.25, lossToSales: 0.25, abnormal: 0.20` (sums to 1.00) ✓
+- Clamp to [0, 100]: `deviation.ts:189` `clamp = (n) => Math.max(0, Math.min(100, n))`, `deviation.ts:248` `return clamp(finalScore)` ✓
+- Div-by-zero guards:
+  - `deviation.ts:196` `wSum > 0 ? {...} : HEALTH_SCORE_WEIGHTS` (weight normalization)
+  - `deviation.ts:209` `if (c.bad === c.good) return neutralScore` (threshold misconfigured)
+  - `deviation.ts:216` `input.totalQtyBom > 0 ? computeDevBomAggregate(input) : null` (else neutralScore)
+  - `deviation.ts:221` `input.totalQtyDeviasi > 0 ? computeResidualPctAggregate(input) : null` (else neutralScore)
+  - `deviation.ts:154` `if (input.totalSales <= 0) return null` (in computeLossToSales)
+  - `deviation.ts:237` `totalItemCount > 0 ? input.abnormalCount / totalItemCount : null` (else neutralScore)
+
+**AUDIT7-CALC-7 (P2 — DATA CONSISTENCY BUG):** Variance direction logic DIVERGENCE between SQL and JS paths:
+- **SQL path** (`health-ranking.ts:223-232` `queryVarianceAnalysis`): checks direction flip FIRST (SURPLUS→LOSS = WORSENED, LOSS→SURPLUS = IMPROVED), then falls back to delta (magnitude change). Applied fix per worklog:17342 ("Variance direction flip (health-ranking.ts:238-241) — LOSS↔SURPLUS sign change classified as 'WORSENED' (was 'STABLE' when magnitudes matched)"), then refined per worklog:18127 to split LOSS→SURPLUS as IMPROVED (was WORSENED).
+  ```sql
+  CASE
+    WHEN (c."nominalLossSurplus" < 0 AND p."nominalLossSurplus" > 0) THEN 'WORSENED'  -- SURPLUS→LOSS
+    WHEN (c."nominalLossSurplus" > 0 AND p."nominalLossSurplus" < 0) THEN 'IMPROVED'  -- LOSS→SURPLUS
+    WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") > 0 THEN 'WORSENED'
+    WHEN (c."absNominalDeviasi" - p."absNominalDeviasi") < 0 THEN 'IMPROVED'
+    ELSE 'STABLE'
+  END
+  ```
+- **JS path** (`rankingService.ts:234-239` `computeVarianceAnalysis`): ONLY uses delta (magnitude change). Does NOT check direction flip.
+  ```ts
+  const delta = curr.absNominalDeviasi - prev.absNominalDeviasi;
+  const varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
+  ```
+- **Impact:** Same input produces different `varianceDirection` depending on path. SQL path used by `/api/analysis` route. JS path used by `/api/export-report` route (worklog:16571: "export-report/route.ts:21 imports `evaluateRules` from `@/engine/rules/evaluator` (the legacy JS loop over raw records)"). Word export may show different variance classification than dashboard for items with direction flips. Example: prev=+100M SURPLUS, curr=-100M LOSS (full reversal). SQL path: WORSENED (flip detected). JS path: STABLE (delta=0). Critical divergence — affects "top worsened/improved" lists in Word export vs dashboard.
+- The spec mentions "BUG3-DATA-1 fix" — searching worklog for "BUG3-DATA-1" returns no matches. The actual fix IDs in worklog are "DEEP-AUDIT-LOGIC #4 + AUDIT-CALC-SQL EDGE-2" (SQL path) — but NO corresponding fix was applied to the JS path. The fix is asymmetric.
+
+**AUDIT7-CALC-8 (P1 — DATA CORRECTNESS BUG):** Future month filter NOT applied in `queryRestoRecommendations` historical query:
+- `resto-recommendations.ts:217-236` historical query uses `WHERE ir."weekLabel" = ${week} AND ir."monthLabel" != ${month}` — INCLUDES future months if they exist in DB.
+- Does NOT JOIN `SourceFile` table.
+- Does NOT filter `sf."monthKey" < currentMonthKey`.
+- Function signature `queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit)` does NOT accept `currentMonthKey` parameter.
+- `recommendations/route.ts:100` does NOT compute or pass `currentMonthKey`.
+- Compare to `queryParetoHistorical` (`pareto.ts:384-468`) which CORRECTLY JOINs SourceFile + filters `sf."monthKey" < currentMonthKey` (per BUG2-PARETO-1 fix, worklog:22523). The pareto route (pareto/route.ts:70-88) computes `currentMonthKey` from `db.sourceFile.findFirst({ where: { monthLabel: month } })` and passes it to all 5 `queryParetoHistorical` calls. The recommendations route has NO equivalent logic.
+- **Impact:** If future months exist in DB (e.g., test data, planned uploads), `histAvgNominalDeviasi` and `histPeriodCount` for Signal 2 (Deviasi Growth Historical, 10% weight) and Signal 7 (Trend Memburuk, 8% weight) are computed using FUTURE data — inflates the baseline and corrupts the priority score. Priority ranking of outlets becomes unreliable.
+- Note: production DB currently has months Januari–Agustus 2026 (worklog says 8 SourceFiles). If user is viewing Agustus 2026, there are no future months yet — bug is latent. But if test data with future months is loaded (e.g., September 2026), the bug becomes active.
+
+**AUDIT7-CALC-9 (P2 — DEAD/DUPLICATE RULES, NOT REMOVED):** BENCHMARK rules NOT removed from `evaluateHistoricalRulesJs`:
+- `rule-evaluation.ts:257-265` still has `BENCHMARK_ABOVE_AREA` (priority 50) and `BENCHMARK_ABOVE_NETWORK` (priority 72) as direct aliases of `HISTORICAL_WARNING` (priority 58) and `HISTORICAL_HIGH` (priority 78) respectively:
+  ```ts
+  // BENCHMARK_ABOVE_AREA (benchmarkFlag = HISTORICAL_WARNING)
+  if (zScore > zWarn && zScore <= zHigh) {
+    flags.push({ ..., ruleCode: 'BENCHMARK_ABOVE_AREA', ..., priority: 50 });
+  }
+  // BENCHMARK_ABOVE_NETWORK (benchmarkFlag = HISTORICAL_HIGH)
+  if (zScore > zHigh) {
+    flags.push({ ..., ruleCode: 'BENCHMARK_ABOVE_NETWORK', ..., priority: 72 });
+  }
+  ```
+- `rules.yaml:180-198` still has BENCHMARK_ABOVE_AREA and BENCHMARK_ABOVE_NETWORK defined (checking `benchmarkFlag eq "HISTORICAL_WARNING"` / `"HISTORICAL_HIGH"` respectively). These are evaluated by the JS rule engine (`evaluateRules` from `evaluator.ts`), which is used by `/api/export-report` route.
+- The spec asks: "Removed from `evaluateHistoricalRulesJs`? Still exist in `rules.yaml` (for JS path)?" — Answer: **NOT removed from `evaluateHistoricalRulesJs`** (lines 257-265 still present) AND still in `rules.yaml` (lines 180-198).
+- **Impact in /api/analysis route:** `analysis/route.ts` keeps only the HIGHEST priority flag per record (`topFlagByKey`). BENCHMARK_ABOVE_AREA (50) is always overridden by HISTORICAL_WARNING (58). BENCHMARK_ABOVE_NETWORK (72) is always overridden by HISTORICAL_ABNORMAL (78). BENCHMARK rules are effectively DEAD in the analysis path — produced but never surfaced.
+- **Impact in /api/export-report route:** Uses JS rule engine (`evaluateRules` from `evaluator.ts`) which evaluates rules.yaml. BENCHMARK rules WILL fire (because `benchmarkFlag` is set in rule context). All flags are kept (export-report/route.ts:439). So Word export shows BOTH HISTORICAL_WARNING and BENCHMARK_ABOVE_AREA for the same record — duplicate flags.
+- Already documented as BUG2-INGEST-22 (worklog:21690-21723). Suggested fixes: (a) remove BENCHMARK rules from both `evaluateHistoricalRulesJs` and `rules.yaml`; (b) increase BENCHMARK priorities above HISTORICAL; (c) keep multiple flags per record.
+
+**AUDIT7-CALC-10 (✓ CORRECT):** Cache invalidation:
+- `aggregation-cache.ts:61` `buildCacheKey` uses `'\x1f'` (ASCII Unit Separator) as delimiter ✓
+- `aggregation-cache.ts:194` `invalidateAnalysisCache()` calls `invalidateCache('analysis\x1f')` (correct prefix with same delimiter) ✓
+- All 8 mutation sites use `invalidateAnalysisCache()` (verified via grep — no `invalidateCache('analysis|')` calls remain):
+  - `ingestion.ts:485` ✓
+  - `ingest-process/route.ts:531, 748` ✓
+  - `pic/route.ts:80, 130` ✓ (POST + DELETE)
+  - `pic/import/route.ts:135` ✓
+  - `data/route.ts:242` ✓ (DELETE)
+  - `migrate-direction/route.ts:99` ✓
+  - `settings/route.ts:191, 264` ✓ (POST + DELETE — AUDIT-8 fix applied per worklog:22530)
+  - `DriveImportDialog.tsx:83` ✓ (client-side after drive import)
+- The old `invalidateCache('analysis|')` pattern was correctly migrated to `invalidateAnalysisCache()` everywhere per BUG2-PERF-1 fix (worklog:20059-20079).
+
+**AUDIT7-CALC-11 (P1 — HARDCODED THRESHOLD, NOT RUNTIME-CONFIGURABLE):** Signal 11 (High Loss Nominal Items) in `resto-recommendations.ts:127` uses HARDCODED `-10000000` (10jt) threshold:
+```sql
+COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem"
+```
+Expected: Use the runtime `HIGH_LOSS_NOMINAL_THRESHOLD` setting (default 50,000,000 = 50jt per `settings.ts:204` and `thresholds.ts:43`).
+Actual: Hardcoded 10jt. The function signature `queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit)` does NOT accept a `thresholds` parameter — so even if the route wanted to pass it, it can't.
+- The JS comment at line 359 confirms the intent: `// Signal 11: High Loss Nominal Items (5%) — HIGH_LOSS_NOMINAL rule (>10M per item)`. The comment says "HIGH_LOSS_NOMINAL rule" but uses 10M, while the actual HIGH_LOSS_NOMINAL rule (rules.yaml:162-173, settings.ts:199-205) uses `highLossNominalThreshold` = 50M.
+- **Impact:** Signal 11 captures items with >10jt loss (5% priority weight). The actual HIGH_LOSS_NOMINAL rule only fires at >50jt. So Signal 11 captures a BROADER set than the rule — priority score (5% weight) is inflated for outlets with many 10-50jt loss items. Modifying `HIGH_LOSS_NOMINAL_THRESHOLD` in Settings UI has NO effect on Signal 11.
+- Worklog:18124 documents this as known P1 bug ("BUG-3 (outlets.ts:889): S11 hardcoded 10jt threshold. Thread `thresholds` param through queryRestoRecommendations. Requires caller change too."). NOT YET FIXED.
+- The same hardcoded `-10000000` appears in legacy `outlets.ts:658, 577-998` (DEAD CODE per worklog:19937 — `queryRestoRecommendations` in `outlets.ts` is not imported anywhere in `src/`). Same bug pattern, but dead code.
+
+**AUDIT7-CALC-12 (✓ CORRECT):** Gap formula:
+- `TopItems.tsx:322` `const gaps = outlets.map(o => o.rankBom - o.rankNominal);` ✓ (matches spec `gap = rankBom - rankNominal`)
+- `TopItems.tsx:387` `const oGap = o.rankBom - o.rankNominal;` ✓
+- `TopItems.tsx:308` comment "Gap = rankBom - rankNominal. +N = qty dominan, -N = nominal dominan." ✓
+- `ranking-nasional.tsx`: Gap column REMOVED ✓ (grep for `gap|Gap` returns only CSS classes `gap-2.5` and `gap-2` at lines 37, 48 — no Gap column in table headers or rows)
+
+**AUDIT7-CALC-13 (P3 — STALE DOCUMENTATION, bonus finding):** `deviation.ts:267-268` PriorityInput threshold comments are stale:
+```ts
+HIGH_LOSS_NOMINAL_THRESHOLD: number;   // P1 nominal threshold (default 1M)        ← WRONG: actual default 50M
+P2_NOMINAL_THRESHOLD: number;           // P2 nominal threshold (default 100K) ← NEW  ← WRONG: actual default 10M
+```
+The actual defaults (in both `settings.ts:204,212` and `thresholds.ts:43-44`) are:
+- `HIGH_LOSS_NOMINAL_THRESHOLD` = 50,000,000 (50jt) — was 1M before BUG 10 fix (worklog:21816 references "was 1M, mismatch with settings.ts")
+- `P2_NOMINAL_THRESHOLD` = 10,000,000 (10jt) — was missing entirely before BUG 10 fix
+The comments still reflect pre-BUG-10 values. No runtime impact (comments only), but misleading for developers.
+
+**Summary table:**
+
+| ID | Severity | Status | File:Line | Description |
+|----|----------|--------|-----------|-------------|
+| AUDIT7-CALC-1 | P3 | ✓ OK (informational) | shared.ts (N/A) | `DIRECTION_FROM_SUM_SQL` constant doesn't exist; logic inlined consistently across 8+ files. `computeDirectionFromData` matches. |
+| AUDIT7-CALC-2 | — | ✓ OK | multiple | All devBom aggregates use `SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))`. Signed devBom (display) is intentional dual-form. |
+| AUDIT7-CALC-3 | — | ✓ OK | historical.ts, rule-evaluation.ts | Z-Score: ABS values, N-1 sample variance, stdDev>0 guard, n≥HISTORICAL_MIN_WEEKS (default 4, stricter than spec's n≥2). |
+| AUDIT7-CALC-4 | **P1** | ❌ BUG | resto-recommendations.ts:255-257 | `networkAvgDevBom` = arithmetic mean of per-outlet devBom (biased). Should be `SUM(totalQtyDeviasi)/SUM(totalQtyBom)` (volume-weighted). SQL exposes `totalQtyDeviasi` but NOT `qtyBom`. Affects Signal 1 (15% weight). |
+| AUDIT7-CALC-5 | — | ✓ OK | transform.ts:263, deviation.ts:76, outlet-items/route.ts:301,202 | Residual `max(0, |dev|-|w+s+t|)`. Aggregate uses ABS (JS + SQL ratio). Per-item display signed (intentional). |
+| AUDIT7-CALC-6 | — | ✓ OK | deviation.ts:184-249, definitions.ts:168-180 | Weights 30/25/25/20=100. Clamp [0,100]. 6 div-by-zero guards (wSum, c.bad===c.good, totalQtyBom, totalQtyDeviasi, totalSales, totalItemCount). |
+| AUDIT7-CALC-7 | **P2** | ❌ BUG | rankingService.ts:234-239 vs health-ranking.ts:223-232 | JS path `computeVarianceAnalysis` does NOT check direction flip; SQL path `queryVarianceAnalysis` does. SURPLUS→LOSS with delta=0 → JS=STABLE, SQL=WORSENED. Dashboard vs Word export divergence. |
+| AUDIT7-CALC-8 | **P1** | ❌ BUG | resto-recommendations.ts:217-236 + recommendations/route.ts:100 | Historical query uses `monthLabel != ${month}` (includes future months). No SourceFile JOIN, no `monthKey < currentMonthKey` filter. Function doesn't accept `currentMonthKey`. Compare to pareto route which correctly applies the filter. Latent bug — active if future months exist in DB. |
+| AUDIT7-CALC-9 | P2 | ❌ BUG (dead rules) | rule-evaluation.ts:257-265 + rules.yaml:180-198 | BENCHMARK_ABOVE_AREA/NETWORK still in `evaluateHistoricalRulesJs` (lines 257-265) AND in `rules.yaml`. In /api/analysis: always overridden by HISTORICAL_* (lower priority). In /api/export-report: duplicate flags shown. Already documented as BUG2-INGEST-22. |
+| AUDIT7-CALC-10 | — | ✓ OK | aggregation-cache.ts:61,194 + 8 mutation sites | `buildCacheKey` uses `\x1f`. `invalidateAnalysisCache()` uses `analysis\x1f` prefix. All 8 mutation sites use `invalidateAnalysisCache()` (no `invalidateCache('analysis|')` remains). |
+| AUDIT7-CALC-11 | **P1** | ❌ BUG | resto-recommendations.ts:127 | Signal 11 hardcoded `-10000000` (10jt). Should use runtime `HIGH_LOSS_NOMINAL_THRESHOLD` (50jt). Function doesn't accept `thresholds` param. Affects Signal 11 (5% weight). Settings UI changes to HIGH_LOSS_NOMINAL_THRESHOLD have NO effect on Signal 11. Documented as worklog:18124. |
+| AUDIT7-CALC-12 | — | ✓ OK | TopItems.tsx:322,387 + ranking-nasional.tsx | TopItems GapAnalysisCard: `gap = rankBom - rankNominal` ✓. ranking-nasional.tsx: Gap column removed (only CSS `gap-2`/`gap-2.5` remain). |
+| AUDIT7-CALC-13 | P3 | ❌ (stale docs) | deviation.ts:267-268 | PriorityInput threshold comments say "default 1M" and "default 100K" — actual defaults are 50M and 10M (post-BUG-10 fix). No runtime impact. |
+
+Stage Summary:
+- **Total findings: 13.** Of which: 3× P1 (AUDIT7-CALC-4, AUDIT7-CALC-8, AUDIT7-CALC-11), 2× P2 (AUDIT7-CALC-7, AUDIT7-CALC-9), 2× P3 (AUDIT7-CALC-1 informational, AUDIT7-CALC-13 stale docs), 6× ✓ OK (AUDIT7-CALC-2, -3, -5, -6, -10, -12).
+- **No calculation logic was LOST** during the force pushes. The 6 verified-correct dimensions (Dev/BOM ratio, Z-Score, Residual, Health score, Cache invalidation, Gap formula) all match MASTER_CONTEXT.md spec.
+- **3 P1 bugs are pre-existing** (documented in worklog but NOT yet fixed):
+  - AUDIT7-CALC-4 (networkAvgDevBom not volume-weighted) — worklog:7488, 12744.
+  - AUDIT7-CALC-8 (future month filter missing in queryRestoRecommendations) — NEW finding, related to BUG2-PARETO-1 fix that was applied to queryParetoHistorical but NOT to queryRestoRecommendations.
+  - AUDIT7-CALC-11 (Signal 11 hardcoded 10jt threshold) — worklog:18124.
+- **2 P2 bugs** affect data consistency:
+  - AUDIT7-CALC-7 (variance direction JS/SQL divergence) — NEW finding. The DEEP-AUDIT-LOGIC #4 + AUDIT-CALC-SQL EDGE-2 fix was applied ONLY to SQL path (`queryVarianceAnalysis`), NOT to JS path (`computeVarianceAnalysis` in `rankingService.ts`). Affects dashboard vs Word export consistency.
+  - AUDIT7-CALC-9 (BENCHMARK rules not removed) — already documented as BUG2-INGEST-22.
+- **P3 informational:** `DIRECTION_FROM_SUM_SQL` constant mentioned in task spec doesn't exist as a named export — but the underlying logic is correctly inlined in all SQL queries + `computeDirectionFromData` JS function. No bug, just a missing abstraction.
+- **P3 stale docs:** PriorityInput threshold comments in `deviation.ts:267-268` still say "1M" and "100K" — actual defaults are 50M and 10M (post-BUG-10 fix).
+- **No issues were fixed** (report-only per task instructions). All findings are documented above with file:line, expected vs actual, and (where applicable) suggested fix.
+- **Highest-priority next actions** (if fixes are pursued):
+  1. **AUDIT7-CALC-8** (P1): Add `currentMonthKey?: string` parameter to `queryRestoRecommendations`. In recommendations/route.ts, compute `currentMonthKey` from `db.sourceFile.findFirst({ where: { monthLabel: month } })` (same pattern as pareto/route.ts:73-77). Pass to `queryRestoRecommendations`. Update historical query SQL to JOIN SourceFile + filter `sf."monthKey" < ${currentMonthKey}` (with fallback to `ir."monthLabel" != ${month}` if currentMonthKey is null).
+  2. **AUDIT7-CALC-4** (P1): Add `COALESCE(oa."qtyBom", 0) as "totalQtyBom"` to the final SELECT in `resto-recommendations.ts:156-187`. Change `networkAvgDevBom` computation to `currRows.reduce((s, r) => s + Number(r.totalQtyDeviasi), 0) / currRows.reduce((s, r) => s + Number(r.totalQtyBom), 0)` (with div-by-zero guard).
+  3. **AUDIT7-CALC-11** (P1): Add `thresholds?: RuntimeThresholds` parameter to `queryRestoRecommendations`. Replace hardcoded `-10000000` at line 127 with `${thresholds.HIGH_LOSS_NOMINAL_THRESHOLD}`. Update recommendations/route.ts to fetch thresholds via `getRuntimeThresholds()` and pass to `queryRestoRecommendations`.
+  4. **AUDIT7-CALC-7** (P2): Update `computeVarianceAnalysis` in `rankingService.ts:234-239` to check direction flip first (matching SQL path). Add `prev.nominalLossSurplus` lookup + flip detection before falling back to delta. OR alternatively, delete the JS function and only use SQL path (but export-report route still calls it — would need refactor).
+  5. **AUDIT7-CALC-9** (P2): Remove BENCHMARK_ABOVE_AREA and BENCHMARK_ABOVE_NETWORK from `evaluateHistoricalRulesJs` (rule-evaluation.ts:257-265) AND from `rules.yaml:180-198`. They duplicate HISTORICAL_WARNING/HISTORICAL_HIGH.
+
+---
+Task ID: AUDIT7-FE-2
+Agent: general-purpose (sub-agent, frontend auditor)
+Task: Full audit of frontend code after multiple force pushes that lost and restored files. Check for missing components, broken imports, lost UI features, and inconsistencies.
+
+Work Log:
+- Read worklog tail (~300 lines, sections FIX-P1-PEER-1, FIX-P1-INGEST-2, FIX-P0-P1-GEL2) for context on recent force push issues. Confirmed commit af4e4d1 restored InfoTooltip + ParetoDevBomCard + GapAnalysisCard + paretoDevBom type + analysisData prop. Backend AUDIT7-BE-1 confirmed multi-nesting function (queryParetoNested with parentDim/childDim) was never implemented on either side.
+- Ran `bunx tsc --noEmit` → 0 errors. Ran `bun run lint` → 0 errors, 9 pre-existing warnings (all react-hooks/exhaustive-deps + react-hooks/incompatible-library, all in unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal, PicManagementDialog).
+- Audited 19 dashboard component files + FilterBar + SearchableComboBox + useAnalysis.ts + page.tsx. Verified each of the 6 audit areas (component existence, type safety, FilterBar, CardTitle consistency, rendering, missing UI features).
+
+Stage Summary — Issues Found (13 total: 0 P0, 5 P1, 6 P2, 2 P3)
+=================================================================
+
+═══════════════════════════════════════════════════════════════
+P1 ISSUES (5) — Missing/lost feature with clear user-facing impact
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-FE-1 (P1) — InfoTooltip only imported in 2 of 10 expected files
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/InfoTooltip.tsx (component EXISTS, 29 lines, restored in commit af4e4d1)
+  - src/components/dashboard/ParetoDashboard.tsx:19 (imported, used 0× — imported but never rendered in this file's JSX)
+  - src/components/dashboard/TopItems.tsx:15 (imported, used 2× — ParetoDevBomCard:236 + GapAnalysisCard:344)
+Spec said: InfoTooltip should be imported in ExecutiveSummary, Charts, ParetoDashboard, TopItems, HistoricalZScoreCard, AdvancedAnalysis, AreaTrendChart, PeerComparison, RestoRecommendationCard, menu-analysis.
+Description:
+  - Component file exists ✓ and is functional (29 lines, wraps Tooltip/TooltipTrigger/TooltipContent from shadcn/ui).
+  - But only 2 of the 10 expected consumers actually import it.
+  - 8 expected consumers do NOT import InfoTooltip:
+    1. ExecutiveSummary.tsx — uses INLINE Tooltip pattern (TooltipProvider/Tooltip/TooltipTrigger/TooltipContent) at lines 270-283 + 368-378. Functionally equivalent but inconsistent code style.
+    2. Charts.tsx — uses recharts <Tooltip> (chart tooltip, NOT info icon). No info icon next to CardTitle at all.
+    3. HistoricalZScoreCard.tsx — uses <FormulaInfo> (different component, larger pattern with formula+description+example).
+    4. AdvancedAnalysis.tsx — NO tooltip/info icon anywhere (grep: 0 hits for InfoTooltip|Tooltip|Info className|InfoIcon).
+    5. AreaTrendChart.tsx — uses recharts <Tooltip> only (chart tooltip).
+    6. PeerComparison.tsx — NO tooltip/info icon anywhere (grep: 0 hits).
+    7. RestoRecommendationCard.tsx — NO tooltip/info icon anywhere (grep: 0 hits).
+    8. resto-analysis/menu-analysis.tsx — NO tooltip/info icon anywhere (grep: 0 hits).
+  - Net effect: 5 cards (Charts, AdvancedAnalysis, AreaTrendChart, PeerComparison, RestoRecommendationCard, menu-analysis) have NO info/help affordance on their CardTitle at all. Users have no way to discover what a card computes or what its threshold is.
+  - In ParetoDashboard.tsx, InfoTooltip is imported at line 19 but never rendered in any JSX (dead import).
+Expected: InfoTooltip rendered next to all major CardTitle elements across all 10 files.
+Actual: Only ParetoDevBomCard + GapAnalysisCard (in TopItems.tsx) actually render it.
+Suggested fix:
+  (a) For the 6 cards with NO info affordance (Charts, AdvancedAnalysis, AreaTrendChart, PeerComparison, RestoRecommendationCard, menu-analysis): add `<InfoTooltip content="..." />` next to each CardTitle with a 1-2 sentence explanation of the metric + threshold.
+  (b) For ExecutiveSummary + HistoricalZScoreCard: optionally refactor inline Tooltip/FormulaInfo → InfoTooltip wrapper for code consistency (low priority — they already have functional tooltips).
+  (c) For ParetoDashboard.tsx: either render InfoTooltip on the 5 QuadrantCard titles, or remove the dead import at line 19.
+
+AUDIT7-FE-2 (P1) — Multi-nesting dimension selectors (parentDim/childDim) MISSING in ParetoDashboard
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/ParetoDashboard.tsx (only `expandedItems` state, no parentDim/childDim state, no Select for dimension pair)
+Spec said: Multi-nesting dimension selectors exist in ParetoDashboard.tsx? parentDim + childDim state? Sent to API?
+Description:
+  - ParetoDashboard.tsx:148-176 declares only `expandedItems` state + filterKey for stale-state cleanup. The useQuery at line 160-176 sends only `month/week/area/kelompok/pic` to /api/pareto — NO `parentDim` or `childDim` query param.
+  - Grep across src/ for `parentDim|childDim|nestingDim|nestDimension|nestBy` → 0 hits. The feature is entirely absent on the frontend.
+  - This is CONSISTENT with backend AUDIT7-BE-1 (P0) which confirmed `queryParetoNested(parentDim, childDim, ...)` was never implemented — only `queryParetoNestedItemOutlet` (hardcoded Item→Outlet) exists.
+  - The current "Item → Outlet Breakdown" card at ParetoDashboard.tsx:265-343 always shows Item→Outlet nesting — users cannot switch to Area→Outlet, PIC→Outlet, or Kelompok→Outlet.
+Expected: Two `<Select>` dropdowns (Parent Dimension / Child Dimension) wired to state, with state passed to /api/pareto as `parentDim` + `childDim` query params, and added to useQuery's queryKey.
+Actual: No dimension selector UI; no parentDim/childDim state; no query params sent.
+Suggested fix:
+  (a) Backend first: implement `queryParetoNested(week, month, parentDim, childDim, filters, maxParents)` per AUDIT7-BE-1.
+  (b) Then frontend: add `const [parentDim, setParentDim] = useState<'item'|'outlet'|'area'|'pic'|'kelompok'>('item');` + `const [childDim, setChildDim] = useState<'item'|'outlet'|'area'|'pic'|'kelompok'>('outlet');` + two `<Select>` components above the nested breakdown card + include `parentDim, childDim` in queryKey + URLSearchParams.
+  (c) Update CardTitle from hardcoded "Item → Outlet Breakdown" to `${parentDim} → ${childDim} Breakdown`.
+
+AUDIT7-FE-3 (P1) — Retry buttons MISSING in ParetoDashboard + PeerComparison error states
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/ParetoDashboard.tsx:197-204 (error state)
+  - src/components/dashboard/PeerComparison.tsx:241-245 (error state, inside Card)
+Spec said: Retry buttons exist in ParetoDashboard error state? PeerComparison error state?
+Description:
+  - ParetoDashboard error state (line 197-204): renders `<p>Gagal memuat Pareto: {error.message}</p>` + `<p>Coba refresh halaman atau ganti periode.</p>`. NO button. User must manually click "Refresh Data" in FilterBar (which invalidates queries globally — overkill) or change a filter.
+  - PeerComparison error state (line 241-245): renders `<p>Gagal Memuat Data</p>` + `<p>{mainError?.message || mainData?.error || 'Unknown'}</p>`. NO button. Same issue.
+  - useAnalysis already supports retry config (lines 417-425: 3 retries on 504/502/503/timeout/Server error/ECHECKOUTRETRIES with 2s/4s/5s backoff) — but only for the analysis query. ParetoDashboard's useQuery and PeerComparison's useQuery have NO `retry:` config, so they use TanStack default (3 retries on any error) but no UI affordance to retry after exhaustion.
+  - The PeerComparison card at line 217 has `overflow-hidden` — retry button would need to be inside CardContent (where the error is currently rendered).
+Expected: A `<Button onClick={() => refetch()}>Coba Lagi</Button>` in both error states.
+Actual: Only text message; user must use FilterBar's "Refresh Data" button (invalidates ALL queries) or change filter.
+Suggested fix:
+  - ParetoDashboard: destructure `refetch` from useQuery at line 160, add `<Button variant="outline" size="sm" onClick={() => refetch()}><RotateCcw className="h-3 w-3 mr-1.5" />Coba Lagi</Button>` after the `<p>Coba refresh halaman...</p>` line. RotateCcw is already imported (line 14).
+  - PeerComparison: destructure `refetch` from main query at line 63, add button at line 245.
+
+AUDIT7-FE-4 (P1) — AnalysisData.filters type MISSING kelompok + pic fields
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/hooks/useAnalysis.ts:186 (`filters: { area: string | null; outletCode: string | null; itemName: string | null };`)
+  - src/app/api/analysis/route.ts:951 (`filters: { area, kelompok, outletCode, itemName, pic }`)
+Spec said: AnalysisData.filters has kelompok + pic fields?
+Description:
+  - Backend emits 5 fields in `filters` object (analysis/route.ts:951, with explicit "FIX (BUG-PERF-11): include pic too" comment).
+  - Frontend type only declares 3 fields. The `kelompok` and `pic` fields sent by the backend are silently dropped from the type signature.
+  - Grep across src/components/dashboard/*.tsx for `.filters.kelompok` or `.filters.pic` → 0 hits. Currently no consumer reads these fields, so this is type-only dead-code (no runtime bug).
+  - However, the type inconsistency means any future component that wants to display the active filter state (e.g. "Active filters: Area=BDG, Kelompok=JKT") would get a TypeScript error trying to read `data.filters.kelompok`.
+Expected: `filters: { area: string | null; kelompok: string | null; outletCode: string | null; itemName: string | null; pic: string | null };`
+Actual: 3 of 5 fields declared.
+Suggested fix: Add `kelompok: string | null;` and `pic: string | null;` to the filters type at useAnalysis.ts:186. (Also add `kelompok?: string | null;` and `pic?: string | null;` to keep backward compat with mock/test data that doesn't set them.)
+
+AUDIT7-FE-5 (P1) — AnalysisData type MISSING trendProjection + patterns fields (dead backend data)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/hooks/useAnalysis.ts (AnalysisData interface, lines 183-267 — no trendProjection or patterns field declared)
+  - src/app/api/analysis/route.ts:989-990 (`trendProjection,` and `patterns,` emitted in response)
+  - src/lib/metrics/forecast.ts:52 (`export interface TrendProjection {`)
+Spec said: AnalysisData.trendProjection + patterns fields exist?
+Description:
+  - Backend computes both fields:
+    - `trendProjection` (forecast.ts:209 `projectTrend()` → TrendProjection | null) called at analysis/route.ts:873, emitted at line 989.
+    - `patterns` (pattern detection across outlets) emitted at line 990.
+  - Frontend `AnalysisData` interface does NOT declare either field. Grep across src/components/**/*.tsx for `.trendProjection` or `.patterns` → 0 hits.
+  - This is DOCUMENTED DEAD CODE per worklog FORECAST-3 (line 11313): "Both API response fields are dead data. The frontend AnalysisData type does not declare either field. The PrioritySummaryCard rebuild synthesizes trend projection chart data LOCALLY using hard-coded ratios (buildDeviasiGrowthData uses 1.18×, buildTrendMemburukData uses 1.25×) rather than consuming the real API field."
+  - The dead code adds ~500 bytes per /api/analysis response (TrendProjection object + patterns array).
+  - Note: the worklog mentions a proposed fix (FORECAST-3, line 11317): "Either (a) add `trendProjection?: TrendProjection | null` and `patterns?: PatternDetection[]` to AnalysisData, then wire them into PrioritySummaryCard; OR (b) drop the fields from the response until a consumer is built (YAGNI)."
+Expected: Either fields declared in AnalysisData type AND consumed by a component, OR removed from backend response.
+Actual: Neither — fields computed and sent, never consumed, never typed.
+Suggested fix: Pick one — (a) add types + wire to PrioritySummaryCard (replaces synthesized ratios with real data), or (b) delete the backend computation at analysis/route.ts:873 + 900 + 989-990 (saves ~50ms compute + 500 bytes/response).
+
+═══════════════════════════════════════════════════════════════
+P2 ISSUES (6) — Functional gap with workaround or non-critical UX issue
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-FE-6 (P2) — Keyboard shortcuts (1/2/3/4) fire when SearchableComboBox dropdown is open (no isDropdownOpen check)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/app/page.tsx:275-320 (keyboard handler)
+  - Grep across src/ for `isDropdownOpen|setIsDropdownOpen|popoverOpen|dropdownOpen|comboboxOpen` → 0 hits
+Spec said: Keyboard shortcuts: tab 1/2/3/4 + Cmd+K/E/R work? isDropdownOpen check exists?
+Description:
+  - Handler at page.tsx:275-320:
+    - Cmd/Ctrl+E → export dialog ✓
+    - Cmd/Ctrl+R → refresh ✓ (preventDefault blocks browser refresh)
+    - Cmd/Ctrl+K → global item search ✓
+    - 1/2/3/4 → tab switch, guarded by `!mod && !isTyping && !e.altKey` (line 301)
+    - Escape → close dialogs/drawers ✓
+  - `isTyping` check (line 280) catches INPUT/TEXTAREA/SELECT/contentEditable. BUT the SearchableComboBox dropdown (SearchableComboBox.tsx:76-96) opens via Popover — when the popover opens, the focus stays on the trigger Button (role="combobox"), NOT in an INPUT. The CommandInput at line 101-106 is only focused AFTER the user types or clicks the search box.
+  - User flow that breaks: user opens the "Kelompok" dropdown (popover opens, focus on trigger button). User presses "1" expecting to type "1..." in the search box (e.g. to find a kelompok starting with "1"). Instead, the tab switches to Dashboard.
+  - Same issue with shadcn Select dropdowns (month/week/compare period in FilterBar.tsx:271-369) — those use Radix Select which DOES manage focus, but pressing a number key triggers Radix's typeahead (jumps to option starting with that digit), not the page tab switch. So this is specifically a SearchableComboBox issue.
+Expected: An `isDropdownOpen` ref/state shared between page.tsx + FilterBar (or a document-level check for `[data-state="open"]` popovers) that suppresses 1/2/3/4 tab switching when any SearchableComboBox popover is open.
+Actual: No dropdown-open check; 1/2/3/4 fire unconditionally when not typing in an input.
+Suggested fix:
+  Option A (simplest, no plumbing): in the keyboard handler, check if any `[data-state="open"]` Popover exists in the DOM before firing tab switch:
+  ```ts
+  if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4')) {
+    if (document.querySelector('[data-state="open"][role="dialog"], [data-state="open"][role="listbox"]')) return;
+    const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto' };
+    setActiveTab(tabMap[e.key]);
+    return;
+  }
+  ```
+  Option B (cleaner): add `isDropdownOpen` state to useDashboard, set true on Popover open + false on close in SearchableComboBox, check it in page.tsx handler.
+
+AUDIT7-FE-7 (P2) — AREA_COLORS contains blue + indigo (audit spec: dark-mode palette should exclude these)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/AreaTrendChart.tsx:16-31 (AREA_COLORS array, 14 entries)
+Spec said: Dark mode chart colors (no blue/indigo in AREA_COLORS)?
+Description:
+  - AREA_COLORS at line 16-31:
+    - Line 20: `'#3b82f6', // blue` (Tailwind blue-500)
+    - Line 25: `'#6366f1', // indigo` (Tailwind indigo-500)
+  - The audit spec says AREA_COLORS should exclude blue + indigo — likely because these are very close to default Tailwind primary (zinc-900/indigo-600 brand color), causing visual confusion with the brand color, OR because they're hard to distinguish in dark mode (low contrast against zinc-950 background).
+  - Other colors in the palette are fine: red, amber, emerald, violet, pink, teal, orange, lime, cyan, purple, yellow, slate (12 distinct hues + 2 problem hues).
+  - The palette is hard-coded (not using CSS variables / dark-mode-aware), unlike CHART_COLORS in src/lib/chart-constants.ts which uses cssVar() to swap dark variants.
+  - Comment at line 15 says "distinct hues for color-blind accessibility" but doesn't address dark mode.
+Expected: 14 colors that are (a) distinct from each other, (b) have good contrast on both light + dark backgrounds, (c) don't include blue/indigo which conflict with brand.
+Actual: 2 of 14 colors fail the spec.
+Suggested fix: Replace `'#3b82f6'` (blue) and `'#6366f1'` (indigo) with two new hues that don't conflict — e.g. `'#0ea5e9'` (sky-500, more distinct from indigo) + `'#d946ef'` (fuchsia-500). OR migrate AREA_COLORS to use the cssVar() pattern from chart-constants.ts so each area gets a dark-mode variant.
+
+AUDIT7-FE-8 (P2) — Signal badge consolidation (max 3 + overflow) MISSING in RestoRecommendationCard
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/RestoRecommendationCard.tsx:238-286 (Signals section, 9 conditional badges)
+Spec said: Signal badge consolidation in RestoRecommendationCard (max 3 + overflow)?
+Description:
+  - The Signals section at lines 238-286 renders up to 9 badges, each conditional on a different signal:
+    1. Direction (LOSS/SURPLUS) — always rendered (line 240-245)
+    2. directionFlip → "Flip" badge (line 246-250)
+    3. trendDeteriorating → "Memburuk" badge (line 251-255)
+    4. residualRatio > 0.4 → "Residual N%" badge (line 256-260)
+    5. toleranceBreachHighCount > 0 → "Tol Breach: N" badge (line 261-265)
+    6. overExplainedCount > 0 → "Anomali: N" badge (line 266-270)
+    7. highLossItemCount > 0 → "High Loss: N" badge (line 271-275)
+    8. noToleranceItems > 0 → "No Tol: N" badge (line 276-280)
+    9. benchmarkHighCount > 0 → "Bench High: N" badge (line 281-285)
+  - For a TINGGI-priority outlet with many signals, all 9 badges render. The card gets visually cluttered, badges wrap to 2-3 rows, and the "Signals:" label is dwarfed.
+  - No max-3 + overflow pattern (e.g. show first 3 badges + "+5 more" expandable chip).
+  - Additionally, the "Bench High" badge (line 281-285) renders `benchmarkHighCount` — but the worklog FIX-P0-P1-GEL2 entry #3 said BUG2-RESTO-3 removed "Benchmark High" from SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS as a dead signal. The frontend type still declares `benchmarkHighCount: number;` (line 33) and the badge still renders it. This is a stale frontend branch for a backend-removed signal (the field may always be 0 now, but the dead branch + type remain).
+Expected: Render only the top 3 most-severe signals + an overflow chip "+N more" that expands to show the rest (or shows them in a tooltip).
+Actual: All conditional badges render independently with no consolidation; 1 stale branch for a removed signal.
+Suggested fix:
+  (a) Sort the 9 signal conditions by severity (e.g. directionFlip + trendDeteriorating + toleranceBreachHighCount are P0, the rest are P1). Render top 3, then `<Badge>+{remaining} lagi</Badge>` that toggles a popover/tooltip showing the rest.
+  (b) Remove the benchmarkHighCount branch (lines 281-285) + the field from the interface (line 33) — it's a dead signal per BUG2-RESTO-3.
+
+AUDIT7-FE-9 (P2) — Z-Score magnitude bar MISSING in HistoricalZScoreCard
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/HistoricalZScoreCard.tsx:138-159 (table row rendering)
+Spec said: Z-Score magnitude bar in HistoricalZScoreCard?
+Description:
+  - The Z-Score column (line 150-152) renders only the numeric value with color classes from `zScoreColor(z)`:
+    - |z| > 3 → red bold
+    - |z| > 2 → amber semibold
+    - |z| > 1 → yellow regular
+    - else → muted
+  - There is NO visual magnitude bar (e.g. a horizontal bar whose width is proportional to |z|, or a vertical bar in the cell background).
+  - The audit spec implies a bar existed (or was expected) for at-a-glance severity scanning — currently users must read the numeric value to compare items.
+  - The Status column (line 153-155) shows a text Badge (ABNORMAL/WARNING/ELEVATED/NORMAL) but no visual magnitude either.
+Expected: A `<div>` with `width: ${Math.min(Math.abs(z) / 5 * 100, 100)}%` and a colored background, rendered either as a horizontal bar in the Z-Score cell or as a left-border accent on the row.
+Actual: Only text + color classes; no magnitude visualization.
+Suggested fix: Add a horizontal bar inside the Z-Score TableCell:
+  ```tsx
+  <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
+    <div className="flex items-center justify-end gap-1.5">
+      <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
+        <div className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+             style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }} />
+      </div>
+      {item.zScore.toFixed(2)}
+    </div>
+  </TableCell>
+  ```
+
+AUDIT7-FE-10 (P2) — CardTitle sizing inconsistent (text-base dominant, text-sm in newer files)
+─────────────────────────────────────────────────────────────────
+Files (sample of 21 text-base vs 17 text-sm CardTitle instances):
+  text-base (older code, 21 instances):
+    - ExecutiveSummary.tsx:262, Charts.tsx:73,316,471,521,540, TopItems.tsx:23,84,149, AdvancedAnalysis.tsx:55,205,276, AreaTrendChart.tsx:140, HistoricalZScoreCard.tsx:82, InsightsPanel.tsx:293, PeerComparison.tsx:190, RestoAnalysis.tsx:322, RestoRecommendationCard.tsx:83,157, AnalysisCards.tsx:33, resto-analysis/menu-analysis.tsx:97, resto-analysis/ranking-nasional.tsx:37
+  text-sm (newer code, 17 instances):
+    - ParetoDashboard.tsx:77,270, TopItems.tsx:231,339 (ParetoDevBomCard + GapAnalysisCard), peer-comparison/* (7 instances), PrioritySummaryCard.tsx:120, item-detail-modal.tsx:81,96,143, RestoAnalysis.tsx:230,244,258,276,287,300 (6 inner sub-cards)
+  text-lg (1 instance):
+    - RestoAnalysis.tsx:191 (outlet name header — intentional, larger for emphasis)
+Spec said: All CardTitle use text-sm (not text-base)?
+Description:
+  - The card.tsx component (src/components/ui/card.tsx:31-38) sets no default text size for CardTitle — it relies on the className passed in.
+  - text-sm is the audit-specified standard (likely for compactness in a dense dashboard). Most older cards use text-base.
+  - The newer code (ParetoDashboard, peer-comparison sub-cards, item-detail-modal, ParetoDevBomCard, GapAnalysisCard) follows text-sm; older code (ExecutiveSummary, Charts, TopItems main cards, AdvancedAnalysis, etc.) uses text-base.
+  - Visual impact: cards in the same grid have differently-sized titles, looking visually inconsistent.
+Expected: All CardTitle instances use `text-sm`.
+Actual: 21 of 38 instances use `text-base`; 17 use `text-sm`; 1 uses `text-lg`.
+Suggested fix: Global search-replace `<CardTitle className="text-base` → `<CardTitle className="text-sm` in 14 files (ExecutiveSummary, Charts, TopItems [3 instances], AdvancedAnalysis [3], AreaTrendChart, HistoricalZScoreCard, InsightsPanel, PeerComparison, RestoAnalysis [1 — keep text-lg on outlet header], RestoRecommendationCard [2], AnalysisCards, menu-analysis, ranking-nasional). Keep text-lg on RestoAnalysis.tsx:191 (intentional emphasis on outlet name).
+
+AUDIT7-FE-11 (P2) — Dead backup file menu-analysis-bak.tsx
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/resto-analysis/menu-analysis-bak.tsx (167 lines)
+  - Grep across src/ for `menu-analysis-bak` → 0 hits (not imported anywhere)
+Description:
+  - A `.bak.tsx` file was left behind from the menu-analysis refactor (current live file is menu-analysis.tsx).
+  - Grep confirms NO imports of menu-analysis-bak — the file is dead.
+  - The file still uses `text-base` CardTitle (line 97) — if a global CardTitle refactor is done, this dead file would need updating too, but since it's dead it should just be deleted.
+  - Risk: future maintainer might edit the .bak file thinking it's live.
+Expected: No .bak files in production code.
+Actual: 1 dead .bak file (167 lines).
+Suggested fix: Delete `src/components/dashboard/resto-analysis/menu-analysis-bak.tsx`.
+
+═══════════════════════════════════════════════════════════════
+P3 ISSUES (2) — Polish / minor inconsistency
+═══════════════════════════════════════════════════════════════
+
+AUDIT7-FE-12 (P3) — ParetoDashboard InfoTooltip imported but never rendered (dead import)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/ParetoDashboard.tsx:19 (`import { InfoTooltip } from '@/components/dashboard/InfoTooltip';`)
+Description:
+  - Import is present at line 19, but grep for `<InfoTooltip` in this file → 0 hits.
+  - The 5 QuadrantCard titles (lines 228-262 — Top Items / Top Outlets / Top Kelompok / Top Areas / Top PIC) have NO InfoTooltip.
+  - The nested "Item → Outlet Breakdown" card title (line 270) also has NO InfoTooltip.
+  - The Action Plan footer card (line 352) has no InfoTooltip.
+  - This is a dead import — either should be removed, or InfoTooltip should be rendered on at least the 5 QuadrantCard titles (with content explaining "Top N {dimension} contributing to 80% of total deviation magnitude").
+Expected: Either import is used, or import is removed.
+Actual: Import present, no usage.
+Suggested fix: Add `<InfoTooltip content={`Top ${title} yang menyumbang 80% dari total |deviasi nominal|. Sisanya (${data.remainderCount} item) hanya 20%.`} />` to each QuadrantCard's CardTitle (lines 77-80), OR remove the import at line 19.
+
+AUDIT7-FE-13 (P3) — InfoTooltip tabIndex=0 + aria-label="Informasi" is generic (not contextual)
+─────────────────────────────────────────────────────────────────
+Files:
+  - src/components/dashboard/InfoTooltip.tsx:18-19 (`aria-label="Informasi"` + `tabIndex={0}`)
+Description:
+  - The InfoTooltip button has a hardcoded `aria-label="Informasi"` (Indonesian for "Information") regardless of the actual content.
+  - Screen reader users hear "Informasi" for every InfoTooltip on the page — they can't distinguish the ParetoDevBom tooltip from the GapAnalysis tooltip without entering the tooltip content.
+  - The `tabIndex={0}` makes the button keyboard-focusable (good), but combined with the generic aria-label, keyboard users navigating by tab hear repetitive "Informasi, Informasi, Informasi" announcements.
+Expected: `aria-label` should be derived from the `content` prop (e.g. first 50 chars) OR accept an optional `ariaLabel` prop for a short contextual label.
+Actual: Hardcoded "Informasi" for all instances.
+Suggested fix: Either (a) `aria-label={content.slice(0, 60)}` (auto-derive), or (b) add an optional `ariaLabel?: string` prop to InfoTooltipProps and let callers pass a short label like "Pareto Dev/BOM info".
+
+═══════════════════════════════════════════════════════════════
+VERIFIED OK (no issues found in these audit items)
+═══════════════════════════════════════════════════════════════
+
+✓ AUDIT7-FE-A — InfoTooltip component FILE EXISTS at src/components/dashboard/InfoTooltip.tsx (29 lines, restored in commit af4e4d1). Functional, uses shadcn Tooltip primitives.
+
+✓ AUDIT7-FE-B — ParetoDevBomCard EXISTS at TopItems.tsx:213 (exported function, ~90 lines). Imported + rendered at ParetoDashboard.tsx:16 + 346 (`<ParetoDevBomCard data={analysisData} />`).
+
+✓ AUDIT7-FE-C — GapAnalysisCard EXISTS at TopItems.tsx:310 (exported function, ~100 lines). Imported + rendered at ParetoDashboard.tsx:16 + 349 (`<GapAnalysisCard data={analysisData} />`).
+
+✓ AUDIT7-FE-D — ParetoDashboard accepts `analysisData` prop (ParetoDashboard.tsx:148: `export function ParetoDashboard({ analysisData }: { analysisData?: any })`). page.tsx:600 passes `<ParetoDashboard analysisData={analysis.data} />`.
+
+✓ AUDIT7-FE-E — SearchableComboBox `ariaLabel` prop EXISTS (SearchableComboBox.tsx:30 + 44, with explanatory comment about BUG-FE-7 fix). Used in all 4 FilterBar dropdown instances (FilterBar.tsx:380 PIC, 392 Area, 408 Kelompok, 420 Outlet).
+
+✓ AUDIT7-FE-F — keepPreviousData present in all 3 expected components:
+  - RestoRecommendationCard.tsx:3 (import) + 76 (`placeholderData: keepPreviousData`)
+  - RestoAnalysis.tsx:13 (import) + 71 (`placeholderData: keepPreviousData`)
+  - GlobalItemSearchModal.tsx:15 (import) + 132 (`placeholderData: keepPreviousData`)
+  - Plus useAnalysis.ts:3 + 412 (analysis query itself uses keepPreviousData).
+
+✓ AUDIT7-FE-G — AnalysisData.paretoDevBom type EXISTS at useAnalysis.ts:212-239 with full shape: `drivers: Array<{ itemName, outletCount, devBom, devBomAbs, nominalDeviasi, absNominal, sharePct, cumPct, outlets: Array<{ outletCode, outletName, area, devBom, devBomAbs, nominalDeviasi, absNominal, sharePct, cumPct }> }>, remainderCount, remainderPct, totalAbsNominal, totalCount, thresholdPct`. Type matches backend emission at analysis/route.ts:964.
+
+✓ AUDIT7-FE-H — StatusData.kelompokOptions type EXISTS at useAnalysis.ts:497 as `Array<{ kelompok: string; outletCount: number; area: string }>`. Type matches backend emission at status/route.ts:99-106 (kelompok + outletCount + area as comma-joined string). Restored in commit ca7e58a after type was lost in force push.
+
+✓ AUDIT7-FE-I — FilterBar kelompok dropdown maps `k.kelompok` + `k.area` + `k.outletCount` correctly (FilterBar.tsx:396-400):
+  ```ts
+  options={(status?.kelompokOptions || []).map((k) => ({
+    value: k.kelompok,
+    label: k.kelompok,
+    description: `${k.area} · ${k.outletCount} outlet`,
+  }))}
+  ```
+
+✓ AUDIT7-FE-J — FilterBar stale-filter cleanup uses `.some(k => k.kelompok === kelompok)` (FilterBar.tsx:95, NOT `.includes`). Pattern: `if (kelompok && kelompok !== 'all' && kelompokOpts.length > 0 && !kelompokOpts.some(k => k.kelompok === kelompok)) setKelompok(null);`. Same pattern for area (uses `.includes` because `status.areas` is `string[]`), pic (`.includes`), outlet (`.some(o => o.code === outletCode)`).
+
+✓ AUDIT7-FE-K — FilterBar outlet dropdown filters by kelompok (FilterBar.tsx:120-130): extracts last dot-segment of outlet code, first 3 chars, uppercase — matches backend kelompok extraction. Also filters by area + pic.
+
+✓ AUDIT7-FE-L — FilterBar prefetchAnalysis calls include kelompok (FilterBar.tsx:287-301 month hover + 324-336 week hover). Comment at line 287-290 explicitly mentions BUG-FE-1 fix.
+
+✓ AUDIT7-FE-M — FilterBar `ariaLabel` on all 4 SearchableComboBox instances: "Filter PIC" (380), "Filter Area" (392), "Filter Kelompok" (408), "Filter Outlet" (420).
+
+✓ AUDIT7-FE-N — page.tsx rendering:
+  - Dashboard tab: TopItemsByNominal + TopItemsByDevBom + TopOutlets in `grid lg:grid-cols-3 gap-4` (page.tsx:516-520).
+  - Pareto tab: `<ParetoDashboard analysisData={analysis.data} />` (page.tsx:600).
+  - Resto Analysis tab: `<RestoAnalysis analysisData={analysis.data} />` (page.tsx:590).
+  - Peer Comparison tab: `<PeerComparison />` (page.tsx:595).
+  - TabsList has 4 TabsTriggers: dashboard, resto, peer, pareto (page.tsx:452-463).
+
+✓ AUDIT7-FE-O — Keyboard shortcuts (1/2/3/4 + Cmd+K/E/R) all IMPLEMENTED at page.tsx:275-320:
+  - Cmd/Ctrl+E → open export dialog (line 283-287)
+  - Cmd/Ctrl+R → refresh data, preventDefault (line 289-293)
+  - Cmd/Ctrl+K → open global item search (line 295-299)
+  - 1/2/3/4 → tab switch with `!mod && !isTyping && !e.altKey` guard (line 301-305)
+  - Escape → close dialogs/drawers (line 308-316)
+  - Comment at line 273 mentions "1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)" — slightly outdated (4 tabs exist now including Pareto) but code handles 4.
+
+✓ AUDIT7-FE-P — Sticky headers PRESENT on 19+ tables across:
+  - ParetoDashboard.tsx:94 (QuadrantCard tables)
+  - TopItems.tsx:45, 106, 171, 248, 354 (5 tables)
+  - AdvancedAnalysis.tsx:82, 224, 300 (3 tables)
+  - HistoricalZScoreCard.tsx:113
+  - PeerComparison.tsx:254
+  - RestoAnalysis.tsx:346
+  - CardDrillDown.tsx:186
+  - ItemDeepDive.tsx:228
+  - GlobalItemSearchModal.tsx:372
+  - priority-summary/signal-chart.tsx:357 (uses `<thead>` instead of `<TableHeader>`)
+  - resto-analysis/ranking-nasional.tsx:55
+  - resto-analysis/item-detail-modal.tsx:100
+  All use consistent pattern: `sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10`.
+
+✓ AUDIT7-FE-Q — `overflow-visible` on cards with sticky headers PRESENT on the 2 cards that need it:
+  - TopItems.tsx:228 (ParetoDevBomCard)
+  - TopItems.tsx:336 (GapAnalysisCard)
+  Both cards have InfoTooltip inside CardTitle — overflow-visible lets the TooltipContent escape the Card's rounded border. Other cards use overflow-hidden + inner scroll div (sticky headers work because scroll context is the inner div, not the Card).
+
+✓ AUDIT7-FE-R — `tsc --noEmit`: 0 errors. `bun run lint`: 0 errors, 9 pre-existing warnings (all react-hooks/exhaustive-deps + react-hooks/incompatible-library in unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal, PicManagementDialog). No new errors or warnings introduced by the recent force push + restore.
+
+═══════════════════════════════════════════════════════════════
+SUMMARY TABLE
+═══════════════════════════════════════════════════════════════
+
+Severity | Count | IDs
+---------|-------|--------------------------------------------------
+P0       |   0   | —
+P1       |   5   | AUDIT7-FE-1, -2, -3, -4, -5
+P2       |   6   | AUDIT7-FE-6, -7, -8, -9, -10, -11
+P3       |   2   | AUDIT7-FE-12, -13
+Total    |  13   |
+
+Top-priority fixes (recommended order):
+1. AUDIT7-FE-1 (P1) — Add InfoTooltip to 6 cards with no info affordance. Quick win, big UX improvement.
+2. AUDIT7-FE-3 (P1) — Add Retry buttons in ParetoDashboard + PeerComparison error states. ~10 lines each.
+3. AUDIT7-FE-4 (P1) — Add `kelompok` + `pic` to AnalysisData.filters type. 1-line fix.
+4. AUDIT7-FE-6 (P2) — Add isDropdownOpen check to keyboard handler. ~3 lines.
+5. AUDIT7-FE-8 (P2) — Signal badge consolidation in RestoRecommendationCard. ~30 lines.
+6. AUDIT7-FE-2 (P1) — Multi-nesting selectors. Blocked by backend AUDIT7-BE-1 (P0).
+7. AUDIT7-FE-5 (P1) — trendProjection/patterns wiring OR backend removal. Pick one direction.
+
+Files verified (39 total):
+- src/app/page.tsx (653 lines)
+- src/hooks/useAnalysis.ts (609 lines)
+- src/components/filters/FilterBar.tsx (553 lines)
+- src/components/filters/SearchableComboBox.tsx (157 lines)
+- src/components/dashboard/InfoTooltip.tsx (29 lines)
+- src/components/dashboard/ParetoDashboard.tsx (397 lines)
+- src/components/dashboard/TopItems.tsx (411 lines)
+- src/components/dashboard/PeerComparison.tsx (355 lines)
+- src/components/dashboard/HistoricalZScoreCard.tsx (167 lines)
+- src/components/dashboard/RestoRecommendationCard.tsx (292 lines)
+- src/components/dashboard/RestoAnalysis.tsx (418 lines)
+- src/components/dashboard/GlobalItemSearchModal.tsx (verified keepPreviousData)
+- src/components/dashboard/ExecutiveSummary.tsx (verified inline Tooltip pattern)
+- src/components/dashboard/Charts.tsx (verified recharts Tooltip only, no InfoTooltip)
+- src/components/dashboard/AdvancedAnalysis.tsx (verified NO tooltip)
+- src/components/dashboard/AreaTrendChart.tsx (verified AREA_COLORS contains blue + indigo)
+- src/components/dashboard/resto-analysis/menu-analysis.tsx (verified NO tooltip)
+- src/components/dashboard/resto-analysis/menu-analysis-bak.tsx (dead file)
+- src/components/ui/card.tsx (verified no default text size on CardTitle)
+- src/lib/chart-constants.ts (verified CHART_COLORS dark mode variants)
+- src/app/api/analysis/route.ts (verified backend emits kelompok + pic + trendProjection + patterns)
+- src/app/api/status/route.ts (verified kelompokOptions shape)
+
+No code changes made — report only per task instructions.
