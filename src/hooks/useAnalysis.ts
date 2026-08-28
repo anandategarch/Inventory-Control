@@ -384,13 +384,16 @@ export function useAnalysis(params: AnalysisParams) {
     // FIX (504-RETRY): retry once on 504/timeout — gateway proxy may timeout
     // before the heavy query (with outlet filter) completes. The 2nd attempt
     // usually hits the in-flight cache or completes faster (DB warm).
+    // FIX (BUG6-POOL): also retry on ECHECKOUTRETRIES (connection pool exhaustion).
     retry: (failureCount, error) => {
-      if (failureCount >= 2) return false; // max 2 retries
+      if (failureCount >= 3) return false; // max 3 retries (was 2 — increased for pool errors)
       const msg = error instanceof Error ? error.message : '';
-      // Retry on 504, 502, 503, or timeout messages
-      return msg.includes('504') || msg.includes('502') || msg.includes('503') || msg.includes('timeout') || msg.includes('Server error');
+      // Retry on 504, 502, 503, timeout, Server error, or connection pool errors
+      return msg.includes('504') || msg.includes('502') || msg.includes('503') ||
+        msg.includes('timeout') || msg.includes('Server error') ||
+        msg.includes('ECHECKOUTRETRIES') || msg.includes('connection');
     },
-    retryDelay: (attemptIndex) => Math.min(1000 * (attemptIndex + 1), 3000), // 1s, 2s, 3s
+    retryDelay: (attemptIndex) => Math.min(2000 * (attemptIndex + 1), 5000), // 2s, 4s, 5s — longer delays for pool recovery
     // PERF-OPT: staleTime 60s → 120s. Analysis is expensive (6-8s cold,
     // 100ms warm). 2 min keeps the data fresh enough for filter toggles
     // without re-fetching on every tab switch.

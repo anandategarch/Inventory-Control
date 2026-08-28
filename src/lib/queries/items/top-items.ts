@@ -517,3 +517,176 @@ export async function queryItemConsistency(
 //  `deviationThreshold` = STD_DEVIASI_BOM_PCT (passed from runtime thresholds)
 //  so an outlet is counted as "deviating" when its abs(Dev/BOM) > threshold.
 // ============================================================
+
+// ============================================================
+//  Pareto 80/20 untuk Item dengan |Dev/BOM| > 50%
+//  Group by item, drill-down ke outlet. Konsep seperti Nested Pareto.
+// ============================================================
+
+export interface ParetoDevBomOutletRow {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  devBom: number;
+  devBomAbs: number;
+  nominalDeviasi: number;
+  absNominal: number;
+  sharePct: number;
+  cumPct: number;
+}
+
+export interface ParetoDevBomRow {
+  itemName: string;
+  outletCount: number;
+  devBom: number;
+  devBomAbs: number;
+  nominalDeviasi: number;
+  absNominal: number;
+  sharePct: number;
+  cumPct: number;
+  outlets: ParetoDevBomOutletRow[];
+}
+
+export interface ParetoDevBomResult {
+  drivers: ParetoDevBomRow[];
+  remainderCount: number;
+  remainderPct: number;
+  totalAbsNominal: number;
+  totalCount: number;
+  thresholdPct: number;
+}
+
+export async function queryParetoByDevBom(
+  week: string,
+  month: string,
+  filters: SqlFilterOpts,
+  maxDrivers: number = 20,
+  threshold: number = 0.50,
+): Promise<ParetoDevBomResult> {
+  const f = buildSqlFilters(filters);
+
+  const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    itemName: string; outletCount: number; devBom: number; devBomAbs: number;
+    nominalDeviasi: number; absNominal: number;
+  }>>`
+    WITH abnormal_item_outlets AS (
+      SELECT i.name as "itemName", ir."outletId",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        ABS(SUM(ir."nominalDeviasi")) as "absNominal",
+        SUM(ir."qtyDeviasi") as "totalQtyDeviasi",
+        SUM(ABS(ir."qtyBom")) as "totalQtyBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBomAbs"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
+        ${f}
+      GROUP BY i.name, ir."outletId"
+      HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END > ${threshold}
+    )
+    SELECT "itemName",
+      CAST(COUNT(DISTINCT "outletId") AS INTEGER) as "outletCount",
+      CASE WHEN SUM("totalQtyBom") > 0
+        THEN SUM("totalQtyDeviasi") / SUM("totalQtyBom") ELSE 0 END as "devBom",
+      CASE WHEN SUM("totalQtyBom") > 0
+        THEN SUM(ABS("totalQtyDeviasi")) / SUM("totalQtyBom") ELSE 0 END as "devBomAbs",
+      SUM("nominalDeviasi") as "nominalDeviasi",
+      ABS(SUM("nominalDeviasi")) as "absNominal"
+    FROM abnormal_item_outlets
+    GROUP BY "itemName"
+    ORDER BY "absNominal" DESC
+    LIMIT ${maxDrivers}
+  `);
+
+  if (topItems.length === 0) {
+    return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: threshold };
+  }
+
+  const grandTotal = topItems.reduce((s, r: any) => s + Number(r.absNominal), 0);
+  let cumPct = 0;
+
+  const outletRowsByItem = await Promise.all(topItems.map((item: any) => {
+    const itemName = item.itemName;
+    return withStatementTimeout((tx) => tx.$queryRaw<Array<{
+      outletCode: string; outletName: string; area: string;
+      devBom: number; devBomAbs: number; nominalDeviasi: number; absNominal: number;
+    }>>`
+      SELECT o.code as "outletCode", o.name as "outletName", o.area,
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBom",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END as "devBomAbs",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        ABS(SUM(ir."nominalDeviasi")) as "absNominal"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
+        AND i.name = ${itemName}
+        ${f}
+      GROUP BY o.code, o.name, o.area
+      HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE 0 END > ${threshold}
+      ORDER BY "absNominal" DESC
+      LIMIT 20
+    `);
+  }));
+
+  const drivers: ParetoDevBomRow[] = topItems.map((item: any, idx: number) => {
+    const itemName = item.itemName;
+    const itemAbsNominal = Number(item.absNominal);
+    const sharePct = grandTotal > 0 ? (itemAbsNominal / grandTotal) * 100 : 0;
+    cumPct += sharePct;
+
+    const outletRows = outletRowsByItem[idx];
+    const outletTotal = outletRows.reduce((s, r: any) => s + Number(r.absNominal), 0);
+    let outletCum = 0;
+    const outlets: ParetoDevBomOutletRow[] = outletRows.map((r: any) => {
+      const oShare = outletTotal > 0 ? (Number(r.absNominal) / outletTotal) * 100 : 0;
+      outletCum += oShare;
+      return {
+        outletCode: r.outletCode,
+        outletName: r.outletName,
+        area: r.area,
+        devBom: Number(r.devBom) || 0,
+        devBomAbs: Number(r.devBomAbs) || 0,
+        nominalDeviasi: Number(r.nominalDeviasi) || 0,
+        absNominal: Number(r.absNominal) || 0,
+        sharePct: Number(oShare.toFixed(1)),
+        cumPct: Number(outletCum.toFixed(1)),
+      };
+    });
+
+    return {
+      itemName,
+      outletCount: Number(item.outletCount),
+      devBom: Number(item.devBom) || 0,
+      devBomAbs: Number(item.devBomAbs) || 0,
+      nominalDeviasi: Number(item.nominalDeviasi) || 0,
+      absNominal: itemAbsNominal,
+      sharePct: Number(sharePct.toFixed(1)),
+      cumPct: Number(cumPct.toFixed(1)),
+      outlets,
+    };
+  });
+
+  return {
+    drivers,
+    remainderCount: 0,
+    remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
+    totalAbsNominal: grandTotal,
+    totalCount: topItems.length,
+    thresholdPct: threshold,
+  };
+}

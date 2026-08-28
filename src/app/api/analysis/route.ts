@@ -41,6 +41,7 @@ import {
   queryOutletHealthRanking,
   queryVarianceAnalysis,
   queryHistoricalCriticalItems,
+  queryParetoByDevBom,
 } from '@/lib/queries';
 import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -520,13 +521,19 @@ export async function GET(req: NextRequest) {
       queryTopItemsByCategory(week!, month!, filterOpts, 'trial', topNItems),
     ]);
 
-    // Batch 2: lossSurplus category + area analysis + top outlets + breakdown
-    const [topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, breakdown] = await Promise.all([
+    // Batch 2: lossSurplus category + area analysis + top outlets + breakdown + Pareto DevBom
+    // FIX (BUG6-1+BUG6-POOL): paretoDevBom back in Promise.all with .catch() wrapper.
+    const safeParetoDevBom = queryParetoByDevBom(week!, month!, filterOpts, 20, 0.50).catch((e: unknown) => {
+      logger.error('[analysis] queryParetoByDevBom failed (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+      return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: 0.50 };
+    });
+    const [topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, breakdown, paretoDevBom] = await Promise.all([
       queryTopItemsByCategory(week!, month!, filterOpts, 'lossSurplus', topNItems),
       queryAreaAnalysis(week!, month!, filterOpts),
       queryTopOutlets(week!, month!, filterOpts, topNOutlets),
       queryTopOutletsBySales(week!, month!, filterOpts, topNOutlets),
       queryDeviationBreakdown(week!, month!, filterOpts),
+      safeParetoDevBom,
     ]);
 
     // Batch 3: loss vs surplus + trend + cost + consistency + DQ issues
@@ -953,6 +960,8 @@ export async function GET(req: NextRequest) {
       growthComparison: growthComparisonWithHist,
       topItemsByNominal: topNominal,
       topItemsByDevBom: topDevBom,
+      // FIX (BUG6-POOL): paretoDevBom in response
+      paretoDevBom,
       topOutlets: topOut,
       topOutletsBySales: topOutletsSales,
       growthDrivers, // FIX: Pareto 80% drivers per metric

@@ -35,13 +35,13 @@ function createPrismaClient(): PrismaClient {
     if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
     // FIX (DEEP-AUDIT-ZEROS): FORCE connection_limit + pool_timeout — do NOT
     // check if already set. The .env file includes `connection_limit=3&pool_timeout=10`
-    // which is too low for the analysis route (20+ parallel queries). With only 3
-    // connections, queries queue → pool_timeout (10s) → "Unable to start a
-    // transaction" errors → analysis returns 500 or hangs → dashboard shows 0s.
-    // Previous code used `if (!url.searchParams.has(...))` which skipped the
-    // override when the .env already had the param — defeating the fix entirely.
-    url.searchParams.set('connection_limit', '10');
-    url.searchParams.set('pool_timeout', '30');
+    // which is too low for the analysis route (20+ parallel queries).
+    // FIX (BUG6-POOL): increased from 10→20 because /api/analysis has 6 concurrent
+    // withStatementTimeout calls per request (each holds a connection). With 2
+    // concurrent users = 12 connections → pool exhaustion with limit=10.
+    // Supabase transaction pooler allows up to 200 concurrent connections.
+    url.searchParams.set('connection_limit', '20');
+    url.searchParams.set('pool_timeout', '60');
     // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
     url.searchParams.set('statement_timeout', '30000');
     url.searchParams.set('idle_timeout', '20');

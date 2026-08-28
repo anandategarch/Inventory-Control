@@ -313,12 +313,17 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
 //  Settings cache — DISABLED on serverless (Vercel)
 //  In-memory cache is per-instance: when user changes a setting,
 //  invalidateSettingsCache() only clears the CURRENT instance's cache.
-//  Other instances still return stale values for up to 30s.
-//  Fix: always read from DB (Setting table is tiny — 20 rows, <5ms).
+//  Other instances still return stale values for up to CACHE_TTL_MS.
+//
+//  FIX (BUG6-POOL): Re-enabled cache with 30s TTL. Previously CACHE_TTL_MS=0
+//  (disabled) meant EVERY getRuntimeThresholds() call hit the DB — that's
+//  1 extra DB connection per /api/analysis request, contributing to pool
+//  exhaustion. Settings table is tiny (20 rows) and rarely changes.
+//  invalidateSettingsCache() is called on POST/DELETE /api/settings.
 // ============================================================
 let _settingsCache: Map<string, string> | null = null;
 let _cacheLoadedAt = 0;
-const CACHE_TTL_MS = 0; // 0 = disabled (always read from DB)
+const CACHE_TTL_MS = 30_000; // 30 seconds — settings rarely change
 
 async function loadSettingsFromDB(): Promise<Map<string, string>> {
   const settings = await db.setting.findMany({ select: { key: true, value: true } });
@@ -382,10 +387,13 @@ export async function ensureDefaultSettings(): Promise<void> {
 }
 
 // Get all settings (merged: DB overrides defaults)
-// NOTE: cache disabled (CACHE_TTL_MS = 0) — always reads from DB
-// to ensure consistency across Vercel serverless instances.
+// FIX (BUG6-POOL): Re-enabled cache with 30s TTL to avoid DB hit on every request.
 export async function getAllSettings(forceRefresh = false): Promise<Map<string, string>> {
-  // Cache disabled — always read from DB
+  // Check cache first (unless forceRefresh)
+  if (!forceRefresh && _settingsCache && (Date.now() - _cacheLoadedAt) < CACHE_TTL_MS) {
+    return _settingsCache;
+  }
+
   await ensureDefaultSettings();
   const dbSettings = await loadSettingsFromDB();
 
@@ -394,6 +402,10 @@ export async function getAllSettings(forceRefresh = false): Promise<Map<string, 
   for (const def of SETTING_DEFINITIONS) {
     merged.set(def.key, dbSettings.get(def.key) ?? def.defaultValue);
   }
+
+  // Update cache
+  _settingsCache = merged;
+  _cacheLoadedAt = Date.now();
 
   return merged;
 }
