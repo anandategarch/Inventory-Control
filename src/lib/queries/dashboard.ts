@@ -36,30 +36,36 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
   const weekFilter = filters.weekLabel
     ? Prisma.sql`AND ir."weekLabel" = ${filters.weekLabel}`
     : Prisma.empty;
+  // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
+  // Used by the refactored sales_per_period CTE.
+  const weekFilterOps = filters.weekLabel
+    ? Prisma.sql`AND ops."weekLabel" = ${filters.weekLabel}`
+    : Prisma.empty;
   // FIX H4 (AUDIT-7): wrap in withStatementTimeout — trend query scans all periods.
+  // DB-06: sales_counts → ranked_sales → sales_per_period CTE pipeline replaced
+  // with pre-computed OutletPeriodSales table. The `f` filter (which can include
+  // itemName) is applied via the `filtered_periods` subquery — this returns the
+  // (outletId, monthLabel, weekLabel) tuples that match `f`+weekFilter on
+  // InventoryRecord, preserving the original semantics where only outlets with
+  // matching records in a given period contribute to that period's SUM.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<TrendAggRow[]>`
-    WITH sales_counts AS (
-      SELECT ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales",
-        COUNT(*) as cnt
+    WITH filtered_periods AS (
+      SELECT DISTINCT ir."outletId", ir."monthLabel", ir."weekLabel"
       FROM "InventoryRecord" ir
-      WHERE ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+      WHERE 1=1
         ${f}
         ${weekFilter}
-      GROUP BY ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT "monthLabel", "weekLabel", "outletId", "nominalSales",
-        ROW_NUMBER() OVER (
-          PARTITION BY "monthLabel", "weekLabel", "outletId"
-          ORDER BY cnt DESC, "nominalSales" ASC
-        ) as rn
-      FROM sales_counts
     ),
     sales_per_period AS (
-      SELECT "monthLabel", "weekLabel", SUM("nominalSales") as sales
-      FROM ranked_sales
-      WHERE rn = 1
-      GROUP BY "monthLabel", "weekLabel"
+      SELECT ops."monthLabel", ops."weekLabel", SUM(ops."salesMode") as sales
+      FROM "OutletPeriodSales" ops
+      JOIN filtered_periods fp
+        ON fp."outletId" = ops."outletId"
+        AND fp."monthLabel" = ops."monthLabel"
+        AND fp."weekLabel" = ops."weekLabel"
+      WHERE 1=1
+        ${weekFilterOps}
+      GROUP BY ops."monthLabel", ops."weekLabel"
     ),
     period_aggs AS (
       SELECT ir."monthLabel", ir."weekLabel",
@@ -119,22 +125,22 @@ export async function queryExecSummary(
 ): Promise<ExecSummaryRow | null> {
   const f = buildSqlFilters(filters);
   // FIX H4 (AUDIT-7): wrap in withStatementTimeout — exec summary is critical path.
+  // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline (Variant D —
+  // grand total of MODE per outlet) replaced with pre-computed OutletPeriodSales
+  // table. The `f` filter is applied via the InventoryRecord subquery so only
+  // outlets matching `f` (area/kelompok/outletCode/picOutletCodes/itemName)
+  // contribute to the grand total — preserves original semantics.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<ExecSummaryRow[]>`
-    WITH sales_counts AS (
-      SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-        ${f}
-      GROUP BY ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT SUM("nominalSales") as sales FROM ranked_sales WHERE rn = 1
+    WITH sales_mode AS (
+      SELECT SUM(ops."salesMode") as sales
+      FROM "OutletPeriodSales" ops
+      WHERE ops."monthLabel" = ${month} AND ops."weekLabel" = ${week}
+        AND ops."outletId" IN (
+          SELECT DISTINCT ir."outletId"
+          FROM "InventoryRecord" ir
+          WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+            ${f}
+        )
     ),
     aggs AS (
       SELECT

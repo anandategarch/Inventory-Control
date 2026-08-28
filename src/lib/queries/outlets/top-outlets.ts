@@ -31,24 +31,14 @@ export async function queryTopOutlets(
 ): Promise<TopOutletRow[]> {
   const f = buildSqlFilters(filters);
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  // DB-06: sales_mode CTE pipeline replaced with LEFT JOIN to pre-computed
+  // OutletPeriodSales table (populated at ingest time, see
+  // src/lib/ingestion.ts STEP 3.5). The `f` filter on outlet_aggs already
+  // restricts the outlet set; the LEFT JOIN to OutletPeriodSales naturally
+  // matches only outlets present in outlet_aggs. nominalSales is outlet-level
+  // denormalized so the precomputed MODE matches the inline CTE output.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<TopOutletRow[]>`
-    WITH sales_counts AS (
-      SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-        ${f}
-      GROUP BY ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
-    ),
-    outlet_aggs AS (
+    WITH outlet_aggs AS (
       SELECT ir."outletId",
         -- FIX (MASTER-CONTEXT): ABS(SUM(nominalDeviasi)) — ABS of sum, not sum of per-item ABS
         ABS(SUM(ir."nominalDeviasi")) as "absNominal",
@@ -72,13 +62,16 @@ export async function queryTopOutlets(
       CASE WHEN oa."lossAmount" > oa."surplusAmount" THEN 'LOSS'
            WHEN oa."surplusAmount" > oa."lossAmount" THEN 'SURPLUS'
            ELSE 'NEUTRAL' END as direction,
-      COALESCE(sm.sales, 0) as sales,
+      COALESCE(ops."salesMode", 0) as sales,
       COALESCE(oa."lossAmount", 0) as "lossAmount",
       COALESCE(oa."surplusAmount", 0) as "surplusAmount",
       o.area
     FROM outlet_aggs oa
     JOIN "Outlet" o ON oa."outletId" = o.id
-    LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
+    LEFT JOIN "OutletPeriodSales" ops
+      ON ops."outletId" = oa."outletId"
+      AND ops."monthLabel" = ${month}
+      AND ops."weekLabel" = ${week}
     ORDER BY oa."absNominal" DESC
     LIMIT ${limit}
   `);
@@ -96,22 +89,17 @@ export async function queryTopOutletsBySales(
 ): Promise<Array<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }>> {
   const f = buildSqlFilters(filters);
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  // DB-06: sales_mode CTE pipeline replaced with OutletPeriodSales as the
+  // primary table (was: FROM sales_mode sm). The `f` filter (area/kelompok/
+  // outletCode/picOutletCodes/itemName) is applied via the same InventoryRecord
+  // subquery pattern — preserves the original semantics where only outlets
+  // matching `f` are returned.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }[]>`
-    WITH sales_counts AS (
-      SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
+    WITH filtered_outlets AS (
+      SELECT DISTINCT ir."outletId"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
         ${f}
-      GROUP BY ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
     ),
     outlet_nominal AS (
       SELECT ir."outletId",
@@ -125,14 +113,16 @@ export async function queryTopOutletsBySales(
       GROUP BY ir."outletId"
     )
     SELECT o.code as "outletCode", o.name as "outletName",
-      COALESCE(sm.sales, 0) as sales,
+      COALESCE(ops."salesMode", 0) as sales,
       COALESCE(on2."absNominal", 0) as "absNominal",
       COALESCE(on2."nominalDeviasi", 0) as "nominalDeviasi",
       o.area
-    FROM sales_mode sm
-    JOIN "Outlet" o ON sm."outletId" = o.id
-    LEFT JOIN outlet_nominal on2 ON sm."outletId" = on2."outletId"
-    ORDER BY sm.sales DESC
+    FROM "OutletPeriodSales" ops
+    JOIN "Outlet" o ON ops."outletId" = o.id
+    JOIN filtered_outlets fo ON ops."outletId" = fo."outletId"
+    LEFT JOIN outlet_nominal on2 ON ops."outletId" = on2."outletId"
+    WHERE ops."monthLabel" = ${month} AND ops."weekLabel" = ${week}
+    ORDER BY ops."salesMode" DESC
     LIMIT ${limit}
   `);
   return rows;

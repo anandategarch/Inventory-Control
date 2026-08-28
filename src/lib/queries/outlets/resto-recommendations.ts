@@ -75,23 +75,7 @@ export async function queryRestoRecommendations(
   // the whole batch indefinitely.
   const [currRows, prevRows, histRows] = await Promise.all([
     withStatementTimeout((tx) => tx.$queryRaw<any[]>`
-      WITH sales_counts AS (
-        SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-        FROM "InventoryRecord" ir
-        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-          AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-          ${f}
-        GROUP BY ir."outletId", ir."nominalSales"
-      ),
-      ranked_sales AS (
-        SELECT "outletId", "nominalSales",
-          ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-        FROM sales_counts
-      ),
-      sales_mode AS (
-        SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
-      ),
-      outlet_aggs AS (
+      WITH outlet_aggs AS (
         SELECT
           ir."outletId",
           SUM(ir."nominalDeviasi") as "nominalDeviasi",
@@ -164,7 +148,7 @@ export async function queryRestoRecommendations(
       )
       SELECT
         o.code as "outletCode", o.name as "outletName", o.area,
-        COALESCE(sm.sales, 0) as "sales",
+        COALESCE(ops."salesMode", 0) as "sales",
         COALESCE(oa."nominalDeviasi", 0) as "nominalDeviasi",
         COALESCE(oa."devBom", 0) as "devBom",
         COALESCE(oa."totalLoss", 0) as "totalLoss",
@@ -192,7 +176,10 @@ export async function queryRestoRecommendations(
         COALESCE(ti."topItemNominal", 0) as "topItemNominal"
       FROM outlet_aggs oa
       JOIN "Outlet" o ON oa."outletId" = o.id
-      LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
+      LEFT JOIN "OutletPeriodSales" ops
+        ON ops."outletId" = oa."outletId"
+        AND ops."monthLabel" = ${month}
+        AND ops."weekLabel" = ${week}
       LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
       ORDER BY ABS(COALESCE(oa."nominalDeviasi", 0)) DESC
     `),

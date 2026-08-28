@@ -30,6 +30,7 @@ model SourceFile {
   records     InventoryRecord[]
   weeks       Week[]
   dqIssues    DQIssue[]
+  outletPeriodSales OutletPeriodSales[]
 }
 
 // ------------------------------------------------------------
@@ -63,6 +64,7 @@ model Outlet {
   outletCode String  // numeric part "1030" or "1001"
   area      String   // "JAWA BARAT 1"
   records   InventoryRecord[]
+  outletPeriodSales OutletPeriodSales[]
 }
 
 // ------------------------------------------------------------
@@ -157,6 +159,35 @@ model InventoryRecord {
   // OPTIMIZE-ENGINE: speed up cascade delete when a SourceFile is removed
   // (PostgreSQL FK columns do NOT get an automatic index — without this,
   // deleting a SourceFile triggers a full-table scan on InventoryRecord).
+  @@index([sourceFileId])
+}
+
+// ------------------------------------------------------------
+//  OutletPeriodSales — pre-computed MODE(nominalSales) per outlet+period
+//  (DB-06). Replaces the duplicated sales_counts → ranked_sales →
+//  sales_mode CTE pipeline in 10+ query call sites. Populated at
+//  ingest time (src/lib/ingestion.ts STEP 3.5) and backfilled from
+//  existing InventoryRecord data via scripts/backfill-outlet-period-sales.ts.
+//  Cascade-deleted with the parent SourceFile (latest wins on conflict).
+// ------------------------------------------------------------
+model OutletPeriodSales {
+  id           Int      @id @default(autoincrement())
+  outletId     Int
+  outlet       Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  monthLabel   String   // "Juli 2026"
+  weekLabel    String   // "WEEK 1"
+  // MODE(nominalSales) — most frequent nominalSales value for this
+  // (outletId, monthLabel, weekLabel) triple, with smaller-value-wins
+  // tie-break (matches computeSalesModePerOutlet in src/lib/metrics/sales.ts
+  // and the inline sales_mode CTE it replaces).
+  salesMode    Float
+  sourceFileId Int
+  sourceFile   SourceFile @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
+  computedAt   DateTime @default(now())
+
+  @@unique([outletId, monthLabel, weekLabel])
+  @@index([monthLabel, weekLabel])
+  @@index([monthLabel, weekLabel, outletId])
   @@index([sourceFileId])
 }
 

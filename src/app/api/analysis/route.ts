@@ -439,10 +439,15 @@ export async function GET(req: NextRequest) {
     // ============================================================
 
     // Group 1: Exec summary (curr + prev) — independent, parallel
-    const [currSummary, prevSummary, sqlFlags] = await Promise.all([
+    // PERF-FASE2-BE03: Drop sqlFlagsPromise from this await — it was blocking
+    // Batches 1-4 from starting until evaluateRulesSql (~3s) completed.
+    // sqlFlagsPromise continues firing in background during Batches 1-4,
+    // and is awaited just before post-processing (line ~562). Same pattern
+    // already used by healthRankingSql/varianceAnalysis/growthDrivers (lines 429-431).
+    // Expected: ~1-2s off cold cache path.
+    const [currSummary, prevSummary] = await Promise.all([
       queryExecSummary(week!, month!, filterOpts),
       prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
-      sqlFlagsPromise,
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month!, week!, prevWeek);
 
@@ -556,6 +561,11 @@ export async function GET(req: NextRequest) {
       historicalByOutletItem,
       thresholds,
     );
+
+    // PERF-FASE2-BE03: Await sqlFlagsPromise here (not in Group 1) — by now
+    // Batches 1-4 have finished, and evaluateRulesSql has been running in
+    // parallel the whole time. If it's already resolved, this await is ~0ms.
+    const sqlFlags = await sqlFlagsPromise;
 
     // topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian) record
     // that fired at least one rule. Keeps the highest-priority flag.

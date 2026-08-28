@@ -448,6 +448,56 @@ export async function processIngestion(body: any, fastMode?: boolean): Promise<I
             },
           });
 
+          // STEP 3.5 (DB-06): Pre-compute sales MODE per (outlet, period).
+          // Replaces the duplicated `sales_counts → ranked_sales → sales_mode`
+          // CTE pipeline inlined across 10+ query call sites
+          // (areas.ts, dashboard.ts, outlets/*.ts, health-ranking.ts,
+          // /api/peer-comparison/items). The MODE is computed exactly the
+          // same way as the inline CTE (ROW_NUMBER OVER PARTITION BY
+          // outlet+period ORDER BY COUNT(*) DESC, nominalSales ASC WHERE
+          // rn=1, with smaller-value-wins tie-break) — see
+          // scripts/backfill-outlet-period-sales.ts for parity validation.
+          //
+          // Source-filtered to this ingestion's records only; ON CONFLICT
+          // DO UPDATE handles the (rare) case where the same (outlet, period)
+          // appears in multiple SourceFiles (latest wins). Cascade-deleted
+          // with the parent SourceFile at re-ingest time.
+          //
+          // Cost: ~50-150ms (single INSERT...SELECT over ~13K rows).
+          // Negligible vs total ingest time of 5-15s.
+          await tx.$executeRaw`
+            INSERT INTO "OutletPeriodSales"
+              ("outletId", "monthLabel", "weekLabel", "salesMode", "sourceFileId", "computedAt")
+            SELECT
+              ranked."outletId",
+              ranked."monthLabel",
+              ranked."weekLabel",
+              ranked."nominalSales"   AS "salesMode",
+              ${sourceFile.id}        AS "sourceFileId",
+              NOW()
+            FROM (
+              SELECT
+                ir."outletId",
+                ir."monthLabel",
+                ir."weekLabel",
+                ir."nominalSales",
+                ROW_NUMBER() OVER (
+                  PARTITION BY ir."outletId", ir."monthLabel", ir."weekLabel"
+                  ORDER BY COUNT(*) DESC, ir."nominalSales" ASC
+                ) AS rn
+              FROM "InventoryRecord" ir
+              WHERE ir."sourceFileId" = ${sourceFile.id}
+                AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+              GROUP BY ir."outletId", ir."monthLabel", ir."weekLabel", ir."nominalSales"
+            ) ranked
+            WHERE ranked.rn = 1
+            ON CONFLICT ("outletId", "monthLabel", "weekLabel") DO UPDATE
+            SET
+              "salesMode"     = EXCLUDED."salesMode",
+              "sourceFileId"  = EXCLUDED."sourceFileId",
+              "computedAt"    = NOW()
+          `;
+
           // Insert DQ issues — skip entirely in fast mode (allIssues stays empty).
           if (!fastMode && allIssues.length > 0) {
             const dqRecords = allIssues.map((i) => ({

@@ -74,25 +74,17 @@ export async function queryOutletHealthRanking(
   // is the same regardless, but we match the existing behaviour exactly.)
   // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — 3 CTEs with window funcs
   // can hang under PgBouncer tx mode.
+  //
+  // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
+  // with pre-computed OutletPeriodSales table. Per the comment above (and
+  // the INVESTIGATE report's edge-case analysis), nominalSales is outlet-level
+  // denormalized so the precomputed MODE matches the inline CTE output even
+  // when the inline CTE applied the `NOT zeroDevExpr` filter. The LEFT JOIN
+  // to OutletPeriodSales naturally yields NULL (→ COALESCE 0) for outlets
+  // with no sales records — same behaviour as the original LEFT JOIN to
+  // sales_mode.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<OutletHealthRow[]>`
-    WITH sales_counts AS (
-      SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-        AND NOT ${zeroDevExpr}
-        ${f}
-      GROUP BY ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
-    ),
-    -- Per-outlet counts of zero-dev vs non-zero-dev records (over ALL records,
+    WITH -- Per-outlet counts of zero-dev vs non-zero-dev records (over ALL records,
     -- not just non-zero-dev — zeroDevCount needs the unfiltered count).
     outlet_counts AS (
       SELECT ir."outletId",
@@ -134,12 +126,15 @@ export async function queryOutletHealthRanking(
       COALESCE(oa."totalQtyTrial", 0) as "totalQtyTrial",
       COALESCE(oa."totalResidualQty", 0) as "totalResidualQty",
       COALESCE(oa."lossNominal", 0) as "lossNominal",
-      COALESCE(sm.sales, 0) as sales,
+      COALESCE(ops."salesMode", 0) as sales,
       COALESCE(oc."zeroDevCount", 0) as "zeroDevCount",
       COALESCE(oc."nonZeroDevCount", 0) as "nonZeroDevCount"
     FROM outlet_aggs oa
     JOIN "Outlet" o ON oa."outletId" = o.id
-    LEFT JOIN sales_mode sm ON oa."outletId" = sm."outletId"
+    LEFT JOIN "OutletPeriodSales" ops
+      ON ops."outletId" = oa."outletId"
+      AND ops."monthLabel" = ${month}
+      AND ops."weekLabel" = ${week}
     LEFT JOIN outlet_counts oc ON oa."outletId" = oc."outletId"
     ORDER BY "absNominal" DESC
   `);

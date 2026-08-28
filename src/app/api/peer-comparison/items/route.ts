@@ -64,6 +64,16 @@ export async function GET(req: NextRequest) {
           WHERE ir2."monthLabel" = ${month}
         )`;
 
+    // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
+    // Used by the refactored sales_mode CTE to select the right period's
+    // precomputed MODE value. Mirrors queryPeerComparison's pattern.
+    const weekFilterOps = mode === 'week' && week
+      ? Prisma.sql`AND ops."weekLabel" = ${week}`
+      : Prisma.sql`AND ops."weekLabel" = (
+          SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
+          WHERE ir2."monthLabel" = ${month}
+        )`;
+
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok filter scopes the PEER set
     // only (peer_outlets CTE). The focus outlet is ALWAYS included via
     // `o.code = ${outletCode}` so it is never dropped from the result set
@@ -83,22 +93,14 @@ export async function GET(req: NextRequest) {
     // The query below joins: target items × peer outlets × item metrics.
     // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
     // (heavy multi-CTE with CROSS JOIN over peer outlets — vulnerable to slow plans).
+    // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
+    // with pre-computed OutletPeriodSales table.
     const rows = await withStatementTimeout((tx) => tx.$queryRaw<any[]>`
-      WITH sales_counts AS (
-        SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-        FROM "InventoryRecord" ir
-        WHERE ir."monthLabel" = ${month}
-          AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-          ${weekFilter}
-        GROUP BY ir."outletId", ir."nominalSales"
-      ),
-      ranked_sales AS (
-        SELECT "outletId", "nominalSales",
-          ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-        FROM sales_counts
-      ),
-      sales_mode AS (
-        SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
+      WITH sales_mode AS (
+        SELECT ops."outletId", ops."salesMode" as sales
+        FROM "OutletPeriodSales" ops
+        WHERE ops."monthLabel" = ${month}
+          ${weekFilterOps}
       ),
       target AS (
         SELECT sm.sales, o.id as "outletId"

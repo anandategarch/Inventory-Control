@@ -26,6 +26,12 @@ export async function queryAreaAnalysis(
   const f = buildSqlFilters({ ...filters, area: null });
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
   // (heavy multi-CTE aggregation — vulnerable to slow plans on large tables).
+  // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
+  // with pre-computed OutletPeriodSales table (populated at ingest time,
+  // see src/lib/ingestion.ts STEP 3.5). The `f` filter is applied via
+  // the InventoryRecord subquery in `area_sales` (mirrors original semantics
+  // where sales_counts also filtered by `f`). nominalSales is outlet-level
+  // denormalized so the precomputed MODE matches the inline CTE output.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
     area: string;
     outletCount: number;
@@ -34,24 +40,23 @@ export async function queryAreaAnalysis(
     avgDevBom: number;
     lossToSales: number | null;
   }[]>`
-    WITH sales_counts AS (
-      SELECT ir.area, ir."outletId", ir."nominalSales", COUNT(*) as cnt
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-        ${f}
-      GROUP BY ir.area, ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT area, "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY area, "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT area, "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
-    ),
-    area_sales AS (
-      SELECT area, SUM(sales) as "totalSales" FROM sales_mode GROUP BY area
+    WITH area_sales AS (
+      -- DB-06: OutletPeriodSales provides the precomputed MODE; the area
+      -- comes from InventoryRecord (NOT Outlet.area) to match the original
+      -- CTE semantics — some outlets have InventoryRecord.area values that
+      -- differ from Outlet.area (data drift from reassignments), and the
+      -- original sales_counts CTE grouped by ir.area. Using o.area
+      -- would shift sales between areas and break API parity.
+      SELECT fp.area, SUM(ops."salesMode") as "totalSales"
+      FROM "OutletPeriodSales" ops
+      JOIN (
+        SELECT DISTINCT ir."outletId", ir.area
+        FROM "InventoryRecord" ir
+        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+          ${f}
+      ) fp ON ops."outletId" = fp."outletId"
+      WHERE ops."monthLabel" = ${month} AND ops."weekLabel" = ${week}
+      GROUP BY fp.area
     ),
     area_aggs AS (
       SELECT ir.area,
@@ -113,30 +118,30 @@ export async function queryTrendByArea(filters: SqlFilterOpts & {
   const areaFilter = filters.area
     ? Prisma.sql`AND ir.area = ${filters.area}`
     : Prisma.empty;
+  // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
+  const weekFilterOps = filters.weekLabel
+    ? Prisma.sql`AND ops."weekLabel" = ${filters.weekLabel}`
+    : Prisma.empty;
 
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<AreaTrendRow[]>`
-    WITH sales_counts AS (
-      SELECT ir.area, ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales",
-        COUNT(*) as cnt
+    WITH filtered_periods AS (
+      SELECT DISTINCT ir.area, ir."outletId", ir."monthLabel", ir."weekLabel"
       FROM "InventoryRecord" ir
-      WHERE ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+      WHERE 1=1
         ${weekFilter}
         ${areaFilter}
         ${f}
-      GROUP BY ir.area, ir."monthLabel", ir."weekLabel", ir."outletId", ir."nominalSales"
-    ),
-    ranked_sales AS (
-      SELECT area, "monthLabel", "weekLabel", "outletId", "nominalSales",
-        ROW_NUMBER() OVER (PARTITION BY area, "monthLabel", "weekLabel", "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-      FROM sales_counts
-    ),
-    sales_mode AS (
-      SELECT area, "monthLabel", "weekLabel", "outletId", "nominalSales" as sales
-      FROM ranked_sales WHERE rn = 1
     ),
     area_period_sales AS (
-      SELECT area, "monthLabel", "weekLabel", SUM(sales) as "totalSales"
-      FROM sales_mode GROUP BY area, "monthLabel", "weekLabel"
+      SELECT fp.area, fp."monthLabel", fp."weekLabel", SUM(ops."salesMode") as "totalSales"
+      FROM "OutletPeriodSales" ops
+      JOIN filtered_periods fp
+        ON fp."outletId" = ops."outletId"
+        AND fp."monthLabel" = ops."monthLabel"
+        AND fp."weekLabel" = ops."weekLabel"
+      WHERE 1=1
+        ${weekFilterOps}
+      GROUP BY fp.area, fp."monthLabel", fp."weekLabel"
     ),
     area_period_aggs AS (
       SELECT ir.area, ir."monthLabel", ir."weekLabel",

@@ -3,14 +3,10 @@
 //  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=
 //  Fetches analysis data server-side, generates .docx, returns as download.
 //
-//  KNOWN DIVERGENCE (DEEP-AUDIT-BACKEND C2): This route uses the legacy JS
-//  rule evaluator (evaluateRules + computeVarianceAnalysis + computeHistoricalAnalysis
-//  from @/engine/analysis/analysis), while the dashboard's /api/analysis route
-//  uses the SQL-pushed versions (evaluateRulesSql + queryVarianceAnalysis +
-//  queryHistoricalCriticalItems). Results should be similar but may differ in
-//  edge cases. Full sync requires refactoring the export's per-record loop to
-//  use the SQL batch approach — deferred to a future sprint to avoid breaking
-//  the Word export format.
+//  PERF-FASE3-BE04: Migrated from legacy JS rule evaluator (35K-record loop
+//  calling evaluateRules per record) to SQL-pushed evaluators (evaluateRulesSql
+//  + queryVarianceAnalysis + queryHistoricalCriticalItems). Matches the
+//  dashboard's /api/analysis route — 3-5s faster per export.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,13 +18,7 @@ import {
 import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import {
-  buildRuleContext,
-  computeVarianceAnalysis,
-  computeHistoricalAnalysis,
-} from '@/engine/analysis/analysis';
-import { evaluateRules } from '@/engine/rules/evaluator';
-import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
+import { calcGrowth, computeNominalDeviationGrowth, calcZScoreFromStats } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -43,6 +33,8 @@ import {
   queryOutletHealthRanking,
   queryGlobalItemSearch,
 } from '@/lib/queries';
+import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
+import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -50,15 +42,12 @@ import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 // FIX (RESTORE-BACKEND-2): use shared resolveComparePeriod instead of inline ~15-line block
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
-
-type RecWithRels = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 
 // ============================================================
 //  Helpers (same as analysis route)
@@ -381,22 +370,26 @@ export async function GET(req: NextRequest) {
     const historicalPeriods = allPeriods.filter(p => p.weekLabel === week && p.monthLabel !== month)
       .filter(p => { const cur = allPeriods.find(ap => ap.monthLabel === month && ap.weekLabel === week); return !cur || p.sortKey < cur.sortKey; });
 
-    // Fetch records + historical stats in parallel
-    const [currentRecs, prevRecs, historicalByOutletItem] = await Promise.all([
+    // PERF-FASE3-BE04: Slim projection (5 columns × 35K rows = ~700KB) instead of
+    // full 25-column include. evaluateHistoricalRulesJs is the only consumer.
+    // Also fire evaluateRulesSql + queryVarianceAnalysis in parallel (they were
+    // previously sequential 35K-record JS loops).
+    const [currSlim, historicalByOutletItem, sqlFlags, varianceAnalysis] = await Promise.all([
       db.inventoryRecord.findMany({
         where: buildWhere(week, month),
-        include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
-      }) as Promise<RecWithRels[]>,
-      prevMonth && prevWeek ? db.inventoryRecord.findMany({
-        where: buildWhere(prevWeek, prevMonth),
-        include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
-      }) as Promise<RecWithRels[]> : Promise.resolve([] as RecWithRels[]),
+        select: {
+          outletId: true, itemId: true, akunPenyesuaian: true,
+          nominalLossSurplus: true, pctQtyDeviasiToBom: true,
+        },
+      }),
       historicalPeriods.length > 0
         ? queryHistoricalStats(historicalPeriods, filterOpts)
         : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
+      evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
+      queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
     ]);
 
-    if (currentRecs.length === 0) {
+    if (currSlim.length === 0) {
       // BUG FIX (BUG-NORECORDS-11): include filter context in error message for debugging
       const filterSummary = [
         `month="${month}"`, `week="${week}"`,
@@ -408,24 +401,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 });
     }
 
-    // Rule evaluation
-    const prevByOutletItem = new Map<string, RecWithRels>();
-    for (const r of prevRecs) {
-      prevByOutletItem.set(`${r.outletId}|${r.itemId}|${r.akunPenyesuaian ?? ''}`, r);
-    }
+    // PERF-FASE3-BE04: Historical zScore rules in JS (reads slim 5-col projection).
+    // Replaces the 35K-record evaluateRules loop — same logic, batch-processed.
+    const histFlags = evaluateHistoricalRulesJs(
+      currSlim,
+      historicalByOutletItem,
+      thresholds,
+    );
 
-    const recsWithFlags: Array<{ curr: RecWithRels; flags: ReturnType<typeof evaluateRules> }> = [];
-
-    for (const curr of currentRecs) {
-      if ((curr.qtyDeviasi === null || curr.qtyDeviasi === 0) && (curr.absNominalDeviasi === null || curr.absNominalDeviasi === 0)) {
-        continue;
+    // Build topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian)
+    // that fired at least one rule. Keeps the highest-priority flag.
+    const allFlags = [...sqlFlags, ...histFlags];
+    const topFlagByKey = new Map<string, SqlRuleFlag>();
+    for (const flag of allFlags) {
+      const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;
+      const existing = topFlagByKey.get(key);
+      if (!existing || flag.priority > existing.priority) {
+        topFlagByKey.set(key, flag);
       }
-      const key = `${curr.outletId}|${curr.itemId}|${curr.akunPenyesuaian ?? ''}`;
-      const prev = prevByOutletItem.get(key) ?? null;
-      const historicalStats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`) ?? null;
-      const ctx = buildRuleContext(curr, prev, historicalStats, thresholds);
-      const flags = evaluateRules(ctx);
-      recsWithFlags.push({ curr, flags });
     }
     // SQL queries
     const [currSummary, prevSummary] = await Promise.all([
@@ -529,8 +522,30 @@ export async function GET(req: NextRequest) {
       return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
     }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
-    const varianceAnalysis = computeVarianceAnalysis(currentRecs, prevByOutletItem);
-    const historicalAnalysis = computeHistoricalAnalysis(recsWithFlags, historicalByOutletItem);
+    // PERF-FASE3-BE04: varianceAnalysis already computed via SQL in the
+    // Promise.all block above (queryVarianceAnalysis). Historical analysis
+    // now uses queryHistoricalCriticalItems SQL instead of 35K-record JS loop.
+    const histCriticalKeys = [...topFlagByKey.values()]
+      .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
+      .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
+    const histCriticalRows = await queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
+    const histCriticalItems = histCriticalRows.map(row => {
+      const key = `${row.outletId}|${row.itemId}`;
+      const stats = historicalByOutletItem.get(key);
+      if (!stats || stats.stdDev <= 0) return null;
+      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+      return {
+        itemName: row.itemName,
+        outletCode: row.outletCode,
+        area: row.area,
+        currentDevBom: row.pctQtyDeviasiToBom ?? 0,
+        historicalAvg: stats.mean,
+        zScore: zScore ?? 0,
+        absNominal: row.absNominalDeviasi ?? 0,
+      };
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
+    histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
+    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 50) };
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
     // FIX: fetch additional data for new export sections (restoPriority + itemCrossOutlet)
