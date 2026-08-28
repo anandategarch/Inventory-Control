@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
   // `optimizePackageImports` rewrites these to per-file imports at build time.
   // Expected: ~120-200KB saved from initial bundle.
   experimental: {
-    optimizePackageImports: ['recharts', 'lucide-react', 'date-fns', '@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-popover'],
+    optimizePackageImports: ['recharts', 'lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-popover'],
   },
   // PERF-FASE2-INFRA04: Immutable cache for Next.js static assets.
   // /_next/static/* files are content-hashed (filename changes when content

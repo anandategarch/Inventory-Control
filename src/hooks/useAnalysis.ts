@@ -3,7 +3,7 @@
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import type { ExecutiveSummary, InvestigationItem } from '@/types/inventory';
+import type { ExecutiveSummary } from '@/types/inventory';
 // FIX (AUDIT7-FE-5): import TrendProjection + PatternDetection so the API
 // response fields (`trendProjection`, `patterns`) emitted by /api/analysis
 // (analysis/route.ts:989-990) are properly typed on the frontend. Previously

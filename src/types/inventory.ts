@@ -122,21 +122,6 @@ export interface PriorityScore {
   topAnomaly: AnomalyFlagResult | null;
 }
 
-export interface InvestigationItem {
-  priority: 'P1' | 'P2' | 'P3';
-  outletCode: string;
-  outletName: string;
-  area: string;
-  itemName: string;
-  issue: string;
-  evidence: string;
-  recommendedAction: string;
-  ruleCodes: string[];
-  absNominalDeviasi: number;
-  deviationToBom: number | null;
-  direction: Direction;
-}
-
 export interface ExecutiveSummary {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null };
   sales: { current: number; previous: number | null; growth: number | null };
@@ -156,36 +141,9 @@ export interface ExecutiveSummary {
   residualLossPct: number | null;
 }
 
-export interface DashboardData {
-  executiveSummary: ExecutiveSummary;
-  healthStatus: { normal: number; warning: number; abnormal: number };
-  dqStatus: { ok: number; warnings: number; errors: number; issues: DQIssueSummary[] };
-  growthComparison: GrowthMetrics;
-  topItemsByNominal: Array<{ itemName: string; outletCode: string; absNominal: number; direction: Direction }>;
-  topItemsByDevBom: Array<{ itemName: string; outletCode: string; devBom: number; tolerance: number | null }>;
-  topOutlets: Array<{ outletCode: string; outletName: string; area: string; absNominal: number; devBom: number; areaAvg: number }>;
-  deviationBreakdown: { waste: number; susut: number; trial: number; residual: number; total: number };
-  lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
-  investigationWorklist: InvestigationItem[];
-  narrative: string;
-  trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
-  drilldownPath: string[];
-}
-
 export interface DQIssueSummary {
   code: string;
   severity: DQSeverity;
   message: string;
   count: number;
-}
-
-export interface FilterState {
-  monthLabel: string | null;
-  currentWeek: string | null;
-  comparisonWeek: string | null;
-  comparisonMonth: string | null;
-  area: string | null;
-  outletCode: string | null;
-  itemName: string | null;
-  comparisonMode: 'previous_week' | 'historical_average';
 }

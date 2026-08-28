@@ -48,7 +48,6 @@ const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparis
 const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => (
   <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
 ) });
-import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,10 +60,8 @@ import {
   Activity, Boxes, BarChart3, ShieldAlert,
   MapPin,
   Calendar, Loader2, Store,
-  FileDown, Upload, CloudDownload, Sparkles,
+  FileDown,
   History,
-  ArrowUp,
-  RefreshCw,
   Keyboard,
   Search,
   TrendingDown,

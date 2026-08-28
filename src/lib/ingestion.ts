@@ -10,17 +10,13 @@ import { Prisma } from '@prisma/client';
 import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
-import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
+import { parseMonthFromFilename, parseExcelFile, hashFile } from '@/lib/excel';
 import { normalizeRow, deriveRecord, type NumberLocale } from '@/engine/transform';
 import { validateRow, summarizeDQ, type DQIssueRow } from '@/engine/validator';
-import { parseOutletCode } from '@/lib/outlet';
-import { convertExcelToCsv, getCachedCsvPath, csvCacheExists } from '@/lib/excel-to-csv';
 import { parseCsvStream } from '@/lib/csv-parser';
-import { hashFile } from '@/lib/excel';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import path from 'path';
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
 
 export interface IngestResult {
   fileName: string;

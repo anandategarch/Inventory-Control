@@ -10,19 +10,13 @@
 import dynamic from 'next/dynamic';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
+import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, Settings, Users, Upload } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
 import { useState, useMemo, useEffect } from 'react';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -73,38 +67,11 @@ export function FilterBar() {
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
 
-  // Google Drive import dialog state
+  // Drive dialog open state (the DriveImportDialog component manages its own internal state)
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
-  const [driveUrl, setDriveUrl] = useState('');
-  const [driveImporting, setDriveImporting] = useState(false);
-  const [driveResult, setDriveResult] = useState<any>(null);
-  const [progressLog, setProgressLog] = useState<string[]>([]);
-  // Manual rename for Drive import — overrides downloaded filename (fixes "Loading Google Sheet")
-  const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
-  const [driveManualName, setDriveManualName] = useState('');
-  // Number locale for parsing CSV values — default 'us' (Google exports use US format)
-  const [driveNumberLocale, setDriveNumberLocale] = useState<'auto' | 'id' | 'us'>('us');
-  // Active Drive import tab: 'folder' | 'file' | 'sheets' — rename only allowed for file/sheets
-  const [driveTab, setDriveTab] = useState<string>('folder');
-  // Local file upload dialog (alternative to Drive import)
+  // Local file upload dialog
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const queryClient = useQueryClient();
-
-  // Client-side validation for Drive manual filename (mirrors server-side validateManualFileName)
-  const driveManualValid = useMemo(() => {
-    if (driveRenameMode !== 'manual') return true;
-    const trimmed = driveManualName.trim();
-    if (!trimmed) return false;
-    // Must contain an Indonesian month name + 2-4 digit year
-    const monthNames = ['januari','februari','maret','april','mei','juni','juli','agustus','september','oktober','november','desember','jan','feb','mar','apr','jun','jul','agu','sep','okt','nov','des'];
-    const lower = trimmed.toLowerCase();
-    const hasMonth = monthNames.some(m => lower.includes(m));
-    const hasYear = /\b(20\d{2}|\d{2})\b/.test(lower);
-    return hasMonth && hasYear;
-  }, [driveRenameMode, driveManualName]);
-
-  // Rename is only applicable to single-file imports (file/sheets tabs), NOT folder
-  const renameAllowedForTab = driveTab === 'file' || driveTab === 'sheets';
 
   // Settings dialog state
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -117,7 +84,7 @@ export function FilterBar() {
   // so the "Upload File" / "Import dari Drive" buttons in the empty state actually open the dialogs.
   useEffect(() => {
     const openUpload = () => setUploadDialogOpen(true);
-    const openDrive = () => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); };
+    const openDrive = () => { setDriveDialogOpen(true); };
     document.addEventListener('open-upload-dialog', openUpload);
     document.addEventListener('open-drive-dialog', openDrive);
     return () => {
@@ -204,7 +171,7 @@ export function FilterBar() {
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         const text = await res.text();
-        throw new Error(`Server returned non-JSON response (HTTP ${res.status}). The server may have crashed or timed out. Try importing fewer files at once.`);
+        throw new Error(`Server returned non-JSON response (HTTP ${res.status}). ${text.slice(0, 300)}`);
       }
       const d = await res.json();
       if (d.success) {
@@ -226,74 +193,6 @@ export function FilterBar() {
       setIngesting(false);
       setTimeout(() => setIngestMsg(null), 8000);
     }
-  }
-
-  async function handleDriveImport() {
-    if (!driveUrl.trim()) return;
-    setDriveImporting(true);
-    setDriveResult(null);
-    setProgressLog([]);
-
-    // Simulated progress steps (non-streaming, estimated)
-    const steps = [
-      '⏳ Downloading from Google Drive...',
-      '⏳ Parsing Excel...',
-      '⏳ Validating data...',
-      '⏳ Inserting records to database...',
-    ];
-    let stepIdx = 0;
-    setProgressLog([steps[0]]);
-    const stepInterval = setInterval(() => {
-      stepIdx++;
-      if (stepIdx < steps.length) {
-        setProgressLog(prev => [...prev, steps[stepIdx]]);
-      }
-    }, 5000); // Show next step every 5s
-
-    try {
-      const res = await fetch('/api/import-drive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: driveUrl.trim(),
-          numberLocale: driveNumberLocale,
-          // Pass manual filename if user chose to rename
-          ...(driveRenameMode === 'manual' && driveManualName.trim() ? { manualFileName: driveManualName.trim() } : {}),
-        }),
-      });
-
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 300)}`);
-      }
-
-      const d = await res.json();
-      clearInterval(stepInterval);
-      setProgressLog([]);
-      setDriveResult(d);
-      if (d.success) {
-        queryClient.invalidateQueries({ queryKey: ['status'] });
-        // FIX: Invalidate ALL data-dependent queries after import-drive
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
-      }
-    } catch (e: unknown) {
-      clearInterval(stepInterval);
-      setProgressLog([]);
-      setDriveResult({ success: false, error: (e instanceof Error ? e.message : String(e)) });
-    } finally {
-      setDriveImporting(false);
-    }
-  }
-
-  function handleCloseDialog() {
-    setDriveDialogOpen(false);
-    setDriveUrl('');
-    setDriveResult(null);
   }
 
   return (
@@ -540,7 +439,7 @@ export function FilterBar() {
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
-            onClick={() => { setDriveDialogOpen(true); setDriveResult(null); setDriveRenameMode('auto'); setDriveManualName(''); setDriveNumberLocale('us'); }}
+            onClick={() => { setDriveDialogOpen(true); }}
           >
             <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
             <span className="hidden md:inline">Import Drive</span>
