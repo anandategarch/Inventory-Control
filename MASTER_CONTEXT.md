@@ -93,11 +93,12 @@ Z-Score selalu positif (magnitude), bukan signed. Historical baseline menggunaka
 
 ### Connection String (Supabase)
 ```
-postgresql://postgres.vefkgapveggbmkloaslw:***REDACTED-SUPABASE-PASSWORD-ROTATED***@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+postgresql://postgres.vefkgapveggbmkloaslw:***@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
 - **Port 6543** (transaction mode / PgBouncer) — untuk serverless
 - **Port 5432** (session mode) — untuk migrasi
 - `src/lib/db.ts` auto-switches ke 6543 + adds `pgbouncer=true`, `connection_limit=3`
+- **DS-01 SECURITY**: Password redacted — never commit real credentials. Set via `.env` (gitignored) or Vercel env vars.
 
 ### Environment Variables
 ```bash

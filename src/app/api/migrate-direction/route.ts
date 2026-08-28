@@ -45,50 +45,49 @@ export async function POST(req: NextRequest) {
     const beforeLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });
     const beforeSurplus = await db.inventoryRecord.count({ where: { direction: 'SURPLUS' } });
 
-    // Recompute direction from nominalLossSurplus sign (IDEMPOTENT)
-    const lossUpdated = await db.$executeRaw`
-      UPDATE "InventoryRecord"
-      SET direction = 'LOSS'
-      WHERE "nominalLossSurplus" IS NOT NULL
-        AND "nominalLossSurplus" < 0
-        AND direction != 'LOSS'
-    `;
-
-    const surplusUpdated = await db.$executeRaw`
-      UPDATE "InventoryRecord"
-      SET direction = 'SURPLUS'
-      WHERE "nominalLossSurplus" IS NOT NULL
-        AND "nominalLossSurplus" > 0
-        AND direction != 'SURPLUS'
-    `;
-
-    const neutralUpdated = await db.$executeRaw`
-      UPDATE "InventoryRecord"
-      SET direction = 'NEUTRAL'
-      WHERE "nominalLossSurplus" IS NOT NULL
-        AND "nominalLossSurplus" = 0
-        AND direction != 'NEUTRAL'
-    `;
-
-    // FIX SIGN-2: Fallback for rows with NULL nominalLossSurplus — use qtyDeviasi sign
-    // (computeDirection falls back to qtyDeviasi when nominalLossSurplus is null)
-    const lossFallback = await db.$executeRaw`
-      UPDATE "InventoryRecord"
-      SET direction = 'LOSS'
-      WHERE "nominalLossSurplus" IS NULL
-        AND "qtyDeviasi" IS NOT NULL
-        AND "qtyDeviasi" < 0
-        AND direction != 'LOSS'
-    `;
-
-    const surplusFallback = await db.$executeRaw`
-      UPDATE "InventoryRecord"
-      SET direction = 'SURPLUS'
-      WHERE "nominalLossSurplus" IS NULL
-        AND "qtyDeviasi" IS NOT NULL
-        AND "qtyDeviasi" > 0
-        AND direction != 'SURPLUS'
-    `;
+    // DA-02 FIX: Wrap all 5 UPDATEs in a single transaction — prevents partial
+    // migration if one fails (e.g., DB timeout, connection drop). Without this,
+    // a failure midway leaves the DB with inconsistent direction values.
+    const [lossUpdated, surplusUpdated, neutralUpdated, lossFallback, surplusFallback] = await db.$transaction([
+      db.$executeRaw`
+        UPDATE "InventoryRecord"
+        SET direction = 'LOSS'
+        WHERE "nominalLossSurplus" IS NOT NULL
+          AND "nominalLossSurplus" < 0
+          AND direction != 'LOSS'
+      `,
+      db.$executeRaw`
+        UPDATE "InventoryRecord"
+        SET direction = 'SURPLUS'
+        WHERE "nominalLossSurplus" IS NOT NULL
+          AND "nominalLossSurplus" > 0
+          AND direction != 'SURPLUS'
+      `,
+      db.$executeRaw`
+        UPDATE "InventoryRecord"
+        SET direction = 'NEUTRAL'
+        WHERE "nominalLossSurplus" IS NOT NULL
+          AND "nominalLossSurplus" = 0
+          AND direction != 'NEUTRAL'
+      `,
+      // FIX SIGN-2: Fallback for rows with NULL nominalLossSurplus — use qtyDeviasi sign
+      db.$executeRaw`
+        UPDATE "InventoryRecord"
+        SET direction = 'LOSS'
+        WHERE "nominalLossSurplus" IS NULL
+          AND "qtyDeviasi" IS NOT NULL
+          AND "qtyDeviasi" < 0
+          AND direction != 'LOSS'
+      `,
+      db.$executeRaw`
+        UPDATE "InventoryRecord"
+        SET direction = 'SURPLUS'
+        WHERE "nominalLossSurplus" IS NULL
+          AND "qtyDeviasi" IS NOT NULL
+          AND "qtyDeviasi" > 0
+          AND direction != 'SURPLUS'
+      `,
+    ]);
 
     // Count after
     const afterLoss = await db.inventoryRecord.count({ where: { direction: 'LOSS' } });

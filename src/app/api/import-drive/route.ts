@@ -4,6 +4,7 @@
 //  Optimized: direct Excel parse + cached lookups + batch 5000
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 import { importFromDriveUrl } from '@/lib/drive-import';
 import { processIngestion, type IngestResult } from '@/lib/ingestion';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
@@ -125,6 +126,15 @@ export async function POST(req: NextRequest) {
         dqStatus: 'ERROR', dqErrors: 1, dqWarnings: 0, error: 'No result',
       });
     }
+
+    // DA-03: Add audit log for Drive import (forensic trail for external URL fetches)
+    db.auditLog.create({
+      data: {
+        action: 'IMPORT_DRIVE',
+        detail: `URL: ${url.substring(0, 100)} → ${successful.length} downloaded, ${failed.length} failed, ${ingestResults.length} ingested`,
+        duration: Date.now() - startedAt,
+      },
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

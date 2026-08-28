@@ -187,7 +187,10 @@ export async function POST(req: NextRequest) {
         const bulan = String(row.bulan ?? row.BULAN ?? '').trim();
         const bulan2 = String(row.bulan2 ?? row['BULAN 2'] ?? row.bulan_2 ?? '').trim();
         // Try BULAN first (has year info)
-        for (const candidate of [bulan, bulan2, `${bulan2} 2026`]) {
+        // DA-01 FIX: Use current year instead of hardcoded "2026" — prevents
+        // cross-year data corruption in 2027+ when BULAN2 contains only month name.
+        const currentYear = new Date().getFullYear();
+        for (const candidate of [bulan, bulan2, `${bulan2} ${currentYear}`]) {
           if (candidate) {
             const parsed = parseMonthFromFilename(candidate);
             if (parsed) return parsed.monthLabel;

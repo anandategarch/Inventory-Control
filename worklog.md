@@ -1408,10 +1408,10 @@ Task: Fix P2 — overlap LLM narrative with CPU work + fire-and-forget audit log
 
 Work Log:
 - Read worklog.md to understand P0 (parallel SQL aggregates) + P1 (parallel pre-SQL queries) context
-- User provided Supabase PostgreSQL URL: postgresql://postgres:[***REDACTED-SUPABASE-PASSWORD-ROTATED***]@db.fmnfutshaqycabuxzizq.supabase.co:5432/postgres
-  * Brackets were formatting delimiters — actual password = ***REDACTED-SUPABASE-PASSWORD-ROTATED***
+- User provided Supabase PostgreSQL URL: postgresql://postgres:[***]@db.fmnfutshaqycabuxzizq.supabase.co:5432/postgres
+  * Brackets were formatting delimiters — actual password = ***
   * Direct connection (db.xxx.supabase.co) fails in sandbox (IPv6-only per Task 12 worklog)
-  * Converted to pooler URL: postgresql://postgres.fmnfutshaqycabuxzizq:***REDACTED-SUPABASE-PASSWORD-ROTATED***@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+  * Converted to pooler URL: postgresql://postgres.fmnfutshaqycabuxzizq:***@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
   * Updated .env file, but shell env var DATABASE_URL=file:...custom.db was overriding .env
   * Fixed by passing DATABASE_URL explicitly in server start command
 
@@ -4408,11 +4408,11 @@ Work Log:
 - Audited ingest-upload — fileHash NOT validated (no SAFE_FILEHASH_RE check unlike ingest-process). chunkIndex/totalChunks NOT validated as positive integers. fileName not sanitized here (sanitized downstream in ingest-process).
 - Audited ingest-process DELETE — fileHash taken from body WITHOUT validation (inconsistent with POST which validates).
 - Audited Caddyfile — found CRITICAL SSRF: XTransformPort query param proxies to any localhost port.
-- Searched git history — found Supabase DB password "***REDACTED-SUPABASE-PASSWORD-ROTATED***" committed in worklog.md (line 1412, 1414) in commit 4b39b6e.
+- Searched git history — found Supabase DB password "***" committed in worklog.md (line 1412, 1414) in commit 4b39b6e.
 - Verified .env is gitignored (not tracked). No .env.example exists.
 
 Stage Summary:
-- **DEEP-AUDIT-SECURITY-1** | CRITICAL | `worklog.md:1412,1414` (commit 4b39b6e) | Supabase database password `***REDACTED-SUPABASE-PASSWORD-ROTATED***` committed in plaintext to git history. Full connection string exposed: `postgresql://postgres.fmnfutshaqycabuxzizq:***REDACTED-SUPABASE-PASSWORD-ROTATED***@aws-0-ap-south-1.pooler.supabase.com:5432/postgres`. Anyone with repo read access has DB credentials. | Impact: Full database compromise — attacker can read all inventory data, PII (outlet codes, PIC names), modify/delete records, or drop tables. | Proposed Fix: (1) Rotate the Supabase password IMMEDIATELY in Supabase dashboard. (2) Use `git filter-repo` or BFG Repo-Cleaner to purge worklog.md from git history. (3) Force-push the cleaned history. (4) Redact the password from worklog.md (replace with `***`). (5) Add worklog.md to a pre-commit hook that scans for secrets (e.g., git-secrets or truffleHog).
+- **DEEP-AUDIT-SECURITY-1** | CRITICAL | `worklog.md:1412,1414` (commit 4b39b6e) | Supabase database password `***` committed in plaintext to git history. Full connection string exposed: `postgresql://postgres.fmnfutshaqycabuxzizq:***@aws-0-ap-south-1.pooler.supabase.com:5432/postgres`. Anyone with repo read access has DB credentials. | Impact: Full database compromise — attacker can read all inventory data, PII (outlet codes, PIC names), modify/delete records, or drop tables. | Proposed Fix: (1) Rotate the Supabase password IMMEDIATELY in Supabase dashboard. (2) Use `git filter-repo` or BFG Repo-Cleaner to purge worklog.md from git history. (3) Force-push the cleaned history. (4) Redact the password from worklog.md (replace with `***`). (5) Add worklog.md to a pre-commit hook that scans for secrets (e.g., git-secrets or truffleHog).
 
 - **DEEP-AUDIT-SECURITY-2** | CRITICAL | `src/middleware.ts:55-60` + all `src/components/filters/*.tsx` + `src/hooks/useAnalysis.ts` | Client-side fetch calls send NO Authorization header. Middleware expects `Authorization: Bearer <ADMIN_TOKEN>` or `?admin_token=`, but NO client code (FileUploadDialog, FilterBar, SettingsDialog, PicManagementDialog, DataManagementDialog, useAnalysis hook) sends either. The middleware's "insecure default" (`if (!adminToken) return NextResponse.next()` at line 57-60) means production likely runs with ADMIN_TOKEN unset → ALL destructive endpoints (POST /api/ingest, POST /api/ingest-upload, POST /api/ingest-process, POST /api/import-drive, POST/DELETE /api/settings, DELETE /api/data, POST/DELETE /api/pic, POST /api/pic/import) are WIDE OPEN to anyone on the internet. | Impact: If ADMIN_TOKEN unset (likely): unauthenticated attackers can upload malicious Excel files, delete all data (`DELETE /api/data?all=true&confirm=true`), change settings, import arbitrary PIC assignments, corrupt the entire database. If ADMIN_TOKEN set: all admin UI buttons return 401 (broken UX). | Proposed Fix: (1) Add an auth context/provider that stores the ADMIN_TOKEN (from a login form or localStorage) and injects `Authorization: Bearer <token>` into all fetch calls via a wrapper or fetch interceptor. (2) Change middleware default: if `NODE_ENV=production` and ADMIN_TOKEN is unset, REJECT all protected requests with 500 + error message "ADMIN_TOKEN must be set in production" instead of silently allowing. (3) Add a `?admin_token=` fallback for browser-accessible endpoints.
 
@@ -30097,8 +30097,8 @@ Work Log:
   Most critical: Next.js 16.1.1 has 30+ advisories incl. 14 HIGH
   (SSRF via WebSocket upgrades, Middleware bypass, DoS via Cache Components).
 - CRITICAL DISCOVERY: MASTER_CONTEXT.md:96 (git-tracked, committed in 97ca146)
-  leaks LIVE Supabase DB password `***REDACTED-SUPABASE-PASSWORD-ROTATED***` in plaintext. DIFFERENT
-  password from prior DEEP-AUDIT-SECURITY-1 leak (***REDACTED-SUPABASE-PASSWORD-ROTATED*** — that one
+  leaks LIVE Supabase DB password `***` in plaintext. DIFFERENT
+  password from prior DEEP-AUDIT-SECURITY-1 leak (*** — that one
   was in worklog.md). Anyone with repo read access has DB write.
 - Confirmed .env file at project root contains the same password (gitignored,
   not in git history — local filesystem access only).

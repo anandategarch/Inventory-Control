@@ -127,6 +127,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // DA-03: Add audit log on final chunk upload (forensic trail for file uploads)
+    if (chunkIndex === totalChunks - 1) {
+      db.auditLog.create({
+        data: {
+          action: 'INGEST_UPLOAD',
+          detail: `File: ${fileName} (${(totalBytes / 1024 / 1024).toFixed(1)}MB, ${totalChunks} chunks, hash: ${fileHash.slice(0, 16)})`,
+        },
+      }).catch(() => {});
+    }
+
     // Last chunk — return metadata for processing
     return NextResponse.json({
       success: true,
