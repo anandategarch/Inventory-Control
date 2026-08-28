@@ -37,6 +37,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
 import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-items';
 import { withStatementTimeout } from '@/lib/queries/shared';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -602,7 +603,7 @@ export async function GET(req: NextRequest) {
       topDeviasiRank,
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
-    });
+    }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[outlet-items] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

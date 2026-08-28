@@ -7,6 +7,7 @@ import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — queryRestoRecommendations is heavy (3 parallel CTEs)
@@ -127,7 +128,7 @@ export async function GET(req: NextRequest) {
       thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
     );
 
-    return NextResponse.json({ success: true, recommendations });
+    return NextResponse.json({ success: true, recommendations }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

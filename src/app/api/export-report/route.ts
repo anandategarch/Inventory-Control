@@ -856,6 +856,9 @@ export async function GET(req: NextRequest) {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'Content-Disposition': `attachment; filename="${fileName}"`,
+        // PERF-FASE1-BE01: CDN cache for 5 min, stale grace 10 min. Same report
+        // for same period+filters won't change until underlying data changes.
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',
       },
     });
   } catch (e: unknown) {

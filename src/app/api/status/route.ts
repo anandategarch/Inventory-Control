@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { validateQuery, statusQuerySchema } from '@/lib/validation';
+import { CACHE_METADATA } from '@/lib/cache-headers';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
     // Phase 1c: check cache first
     const cached = statusCache.get('status');
     if (cached) {
-      return NextResponse.json({ ...(cached as object), cached: true });
+      return NextResponse.json({ ...(cached as object), cached: true }, { headers: CACHE_METADATA });
     }
 
     const files = await db.sourceFile.findMany({
@@ -156,7 +157,7 @@ export async function GET(req: NextRequest) {
     // Phase 1c: cache the result for 5 minutes
     statusCache.set('status', result);
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: CACHE_METADATA });
   } catch (e: unknown) {
     const errMsg = (e instanceof Error ? e.message : String(e));
     // If tables don't exist, return empty state (not error 500)

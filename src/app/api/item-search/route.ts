@@ -20,6 +20,7 @@ import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
+import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — cross-outlet + trend queries scan full table
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
         q,
         results,
         durationMs: Date.now() - startedAt,
-      });
+      }, { headers: CACHE_INTERACTIVE });
     }
 
     // mode === 'cross-outlet' OR 'trend' — both need `item` param
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest) {
         item,
         results: [],
         durationMs: Date.now() - startedAt,
-      });
+      }, { headers: CACHE_INTERACTIVE });
     }
 
     // mode === 'trend' — return per-(period, outlet) data across ALL periods
@@ -105,7 +106,7 @@ export async function GET(req: NextRequest) {
         filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
         results,
         durationMs: Date.now() - startedAt,
-      });
+      }, { headers: CACHE_INTERACTIVE });
     }
 
     // mode === 'cross-outlet' — needs month + week (already resolved above)
@@ -127,7 +128,7 @@ export async function GET(req: NextRequest) {
       filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
       results,
       durationMs: Date.now() - startedAt,
-    });
+    }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     logger.error('[item-search] error:', { error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

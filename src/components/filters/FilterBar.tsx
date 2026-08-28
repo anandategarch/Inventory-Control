@@ -1,6 +1,13 @@
 'use client';
 
-// REDesign: Card import removed — FilterBar renders bare content now (parent wraps in sticky container)
+// PERF-FASE1-FE01: Lazy-load 5 modal dialogs via next/dynamic.
+// These dialogs are modal-only (rendered when `open` is true), but static
+// imports pull their code + ALL transitive deps into the main bundle even
+// when the dialogs are never opened. Lazy-loading saves ~80-120KB from the
+// initial bundle (FileUploadDialog 841L, DataManagementDialog 486L,
+// PicManagementDialog 469L, SettingsDialog 444L, DriveImportDialog 278L).
+// The dialog chunk loads on-demand when the user first opens the dialog.
+import dynamic from 'next/dynamic';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
@@ -17,11 +24,28 @@ import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
-import { SettingsDialog } from '@/components/filters/SettingsDialog';
-import { DataManagementDialog } from '@/components/filters/DataManagementDialog';
-import { PicManagementDialog } from '@/components/filters/PicManagementDialog';
-import { FileUploadDialog } from '@/components/filters/FileUploadDialog';
-import { DriveImportDialog } from '@/components/filters/DriveImportDialog';
+
+// Lazy-loaded dialogs (code-split — only loaded when first opened)
+const SettingsDialog = dynamic(
+  () => import('@/components/filters/SettingsDialog').then(m => ({ default: m.SettingsDialog })),
+  { ssr: false, loading: () => null },
+);
+const DataManagementDialog = dynamic(
+  () => import('@/components/filters/DataManagementDialog').then(m => ({ default: m.DataManagementDialog })),
+  { ssr: false, loading: () => null },
+);
+const PicManagementDialog = dynamic(
+  () => import('@/components/filters/PicManagementDialog').then(m => ({ default: m.PicManagementDialog })),
+  { ssr: false, loading: () => null },
+);
+const FileUploadDialog = dynamic(
+  () => import('@/components/filters/FileUploadDialog').then(m => ({ default: m.FileUploadDialog })),
+  { ssr: false, loading: () => null },
+);
+const DriveImportDialog = dynamic(
+  () => import('@/components/filters/DriveImportDialog').then(m => ({ default: m.DriveImportDialog })),
+  { ssr: false, loading: () => null },
+);
 
 export function FilterBar() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard();

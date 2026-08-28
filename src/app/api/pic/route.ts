@@ -17,6 +17,7 @@ import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateQuery, validateBody, picQuerySchema, picPostBodySchema } from '@/lib/validation';
+import { CACHE_METADATA } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
       orderBy: [{ outletCode: 'asc' }],
       select: { id: true, outletCode: true, pic: true, updatedAt: true },
     });
-    return NextResponse.json({ success: true, pics });
+    return NextResponse.json({ success: true, pics }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }

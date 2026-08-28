@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, paretoQuerySchema } from '@/lib/validation';
 import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
@@ -139,7 +140,7 @@ export async function GET(req: NextRequest) {
         ? { nestedGeneralized, parentDim: nestedGeneralized.parentDim, childDim: nestedGeneralized.childDim }
         : {}),
       durationMs: Date.now() - startedAt,
-    });
+    }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error('[pareto] error:', { error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

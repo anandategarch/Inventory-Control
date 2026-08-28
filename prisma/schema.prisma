@@ -147,6 +147,13 @@ model InventoryRecord {
   @@index([outletId, itemId])
   @@index([area, monthLabel, weekLabel])
   @@index([monthLabel, weekLabel, outletId])
+  // PERF-FASE1-DB01: Composite index for prev-period LATERAL JOIN in
+  // evaluateRulesSql + queryVarianceAnalysis. These queries filter by
+  // (outletId, itemId, akunPenyesuaian, monthLabel, weekLabel) to find
+  // the previous-period record. Without this index, PostgreSQL does a
+  // full-scan hash join over ~13.5K rows × 35K = 472M row examines.
+  // Expected: -4 to -6 seconds on /api/analysis cold cache.
+  @@index([outletId, itemId, akunPenyesuaian, monthLabel, weekLabel])
   // OPTIMIZE-ENGINE: speed up cascade delete when a SourceFile is removed
   // (PostgreSQL FK columns do NOT get an automatic index — without this,
   // deleting a SourceFile triggers a full-table scan on InventoryRecord).

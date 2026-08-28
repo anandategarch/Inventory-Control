@@ -26,6 +26,7 @@ import {
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { toNum } from '@/lib/format';
 import { withStatementTimeout } from '@/lib/queries/shared';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -310,7 +311,7 @@ export async function GET(req: NextRequest) {
       current: currentPeriod,
       priority,
       durationMs: Date.now() - startedAt,
-    });
+    }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[item-history] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

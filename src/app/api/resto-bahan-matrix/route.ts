@@ -21,6 +21,7 @@ import {
 import { calcGrowthAbs } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { withStatementTimeout } from '@/lib/queries/shared';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -299,7 +300,7 @@ export async function GET(req: NextRequest) {
       matrix: result,
       stats,
       durationMs: Date.now() - startedAt,
-    });
+    }, { headers: CACHE_ANALYSIS });
   } catch (e: any) {
     console.error('[resto-bahan-matrix] error:', e);
     return NextResponse.json({ success: false, error: e?.message || String(e) }, { status: 500 });

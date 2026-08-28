@@ -52,6 +52,7 @@ import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 // FIX (RESTORE-BACKEND-2): use shared resolveComparePeriod instead of inline ~60-line block
 import { resolveComparePeriod } from '@/lib/period-resolver';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 // Phase 3: ExecutiveSummary type no longer needed here — buildExecSummaryFromSql
@@ -201,7 +202,7 @@ export async function GET(req: NextRequest) {
         const r = inflightResult as Record<string, unknown>;
         r.cached = true;
         r.durationMs = Date.now() - startedAt;
-        return NextResponse.json(r);
+        return NextResponse.json(r, { headers: CACHE_ANALYSIS });
       }
     }
 
@@ -211,7 +212,7 @@ export async function GET(req: NextRequest) {
       const cachedResult = cached as Record<string, unknown>;
       cachedResult.cached = true;
       cachedResult.durationMs = Date.now() - startedAt;
-      return NextResponse.json(cachedResult);
+      return NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS });
     }
 
     // FIX M3 (AUDIT-5): Register in-flight Promise to prevent cache stampede.
@@ -968,7 +969,7 @@ export async function GET(req: NextRequest) {
       logger.error("Audit log write failed (non-blocking)", { error: e instanceof Error ? e.message : String(e) });
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     // FIX (DEEP-AUDIT-ZEROS): reject the in-flight Promise so concurrent
     // requests awaiting it don't hang forever. Previously only resolve was

@@ -16,6 +16,7 @@ import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, dataDeleteQuerySchema, dataGetQuerySchema } from '@/lib/validation';
+import { CACHE_METADATA, CACHE_INTERACTIVE } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
         success: true,
         issues: dqIssues,
         summary: Object.values(byCode).sort((a, b) => b.count - a.count),
-      });
+      }, { headers: CACHE_INTERACTIVE });
     }
 
     const files = await db.sourceFile.findMany({
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
       success: true,
       files,
       months: Object.values(byMonth).sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
-    });
+    }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }

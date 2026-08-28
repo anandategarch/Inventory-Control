@@ -9,6 +9,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryPeerComparison } from '@/lib/queries';
 import { validateQuery, peerComparisonQuerySchema } from '@/lib/validation';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — peer comparison CROSS JOIN can be slow
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       targetSales,
       mode,
       peers,
-    });
+    }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[peer-comparison] error:", { error: e });
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });

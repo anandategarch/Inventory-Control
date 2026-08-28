@@ -13,6 +13,7 @@ import { validateQuery, drilldownQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -153,7 +154,7 @@ export async function GET(req: NextRequest) {
         bulan: r.bulan,
         bulan2: r.bulan2,
       })),
-    });
+    }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
   }
