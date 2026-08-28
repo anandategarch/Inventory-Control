@@ -597,7 +597,7 @@ export default function DashboardPage() {
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
             <TabsContent value="pareto" className="space-y-4 mt-2 animate-fade-in-up">
-              <ParetoDashboard />
+              <ParetoDashboard analysisData={analysis.data} />
             </TabsContent>
           </Tabs>
         ) : null}

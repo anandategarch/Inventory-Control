@@ -1,16 +1,18 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
-import { ExternalLink, Coins, Percent, Store } from 'lucide-react';
+import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
 export function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
@@ -199,6 +201,209 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
             </TableBody>
           </Table>
         </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Pareto Dev/BOM — 80/20 untuk item dengan |Dev/BOM| > 50%
+//  Group by item, drill-down ke outlet.
+// ============================================================
+export function ParetoDevBomCard({ data }: { data: AnalysisData }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const pareto = data.paretoDevBom;
+  const drivers = pareto?.drivers || [];
+
+  const toggleItem = (name: string) => {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  return (
+    <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5" />
+            </span>
+            Pareto Item Abnormal (|Dev/BOM| &gt; {(pareto?.thresholdPct ?? 0.50) * 100}%)
+            <InfoTooltip content={`Item dengan |Dev/BOM| > ${(pareto?.thresholdPct ?? 0.50) * 100}% — diabsolute-kan dulu, lalu dibuat Pareto 80/20 berdasarkan |nominal deviasi|. Klik item untuk expand outlet.`} />
+          </CardTitle>
+          {pareto && pareto.totalCount > 0 && (
+            <Badge variant="secondary" className="text-[10px]">{drivers.length} item · {pareto.totalCount} total</Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {drivers.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada item dengan |Dev/BOM| &gt; {(pareto?.thresholdPct ?? 0.50) * 100}% pada periode ini.</p>
+        ) : (
+          <div className="max-h-[400px] overflow-auto">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1 sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm z-10">
+              <span className="w-5 shrink-0">#</span>
+              <span className="w-3 shrink-0"></span>
+              <span className="min-w-[120px] flex-1 shrink-0">Item</span>
+              <span className="w-16 text-right shrink-0">Dev/BOM</span>
+              <span className="w-24 text-right shrink-0">Nominal</span>
+              <span className="w-10 text-right shrink-0">%</span>
+              <span className="w-10 text-right shrink-0">Cum</span>
+            </div>
+            <div className="space-y-0.5">
+              {drivers.map((item, i) => {
+                const isExpanded = expandedItems.has(item.itemName);
+                return (
+                  <div key={`${item.itemName}-${i}`}>
+                    <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
+                      <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
+                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                      <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} out</span>
+                      <span className="w-16 text-right tabular-nums font-bold shrink-0 text-red-600 dark:text-red-400">{(item.devBomAbs * 100).toFixed(0)}%</span>
+                      <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
+                      <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
+                      <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
+                    </button>
+                    {isExpanded && item.outlets.length > 0 && (
+                      <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
+                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
+                          <span className="w-4 shrink-0"></span>
+                          <span className="min-w-[100px] flex-1 shrink-0">Outlet</span>
+                          <span className="w-16 text-right shrink-0">Dev/BOM</span>
+                          <span className="w-24 text-right shrink-0">Nominal</span>
+                          <span className="w-10 text-right shrink-0">%</span>
+                          <span className="w-10 text-right shrink-0">Cum</span>
+                        </div>
+                        {item.outlets.map((o, j) => (
+                          <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
+                            <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
+                            <span className="min-w-[100px] flex-1 truncate" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
+                            <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${numberColor(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</span>
+                            <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
+                            <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
+                            <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{o.cumPct.toFixed(0)}%</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Gap Analysis Card — Rank BOM vs Rank Nasional
+//  Group by item, drill-down ke outlet.
+//  Gap = rankBom - rankNominal. +N = qty dominan, -N = nominal dominan.
+// ============================================================
+export function GapAnalysisCard({ data }: { data: AnalysisData }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const items = (data.topDeviasiRank || []).filter((it: any) => it.rankBom != null && it.rankBom > 0);
+
+  const grouped = items.reduce((acc, it) => {
+    if (!acc.has(it.itemName)) acc.set(it.itemName, []);
+    acc.get(it.itemName)!.push(it);
+    return acc;
+  }, new Map<string, any[]>());
+
+  const itemGaps = Array.from(grouped.entries()).map(([itemName, outlets]) => {
+    const gaps = outlets.map(o => o.rankBom - o.rankNominal);
+    const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+    return { itemName, outlets, avgGap, outletCount: outlets.length };
+  }).sort((a, b) => b.avgGap - a.avgGap);
+
+  const toggleItem = (name: string) => {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  return (
+    <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
+              <Coins className="h-3.5 w-3.5" />
+            </span>
+            Gap Analysis: Rank BOM vs Rank Nasional
+            <InfoTooltip content="Gap = Rank BOM - Rank Nasional. +N (merah) = qty BOM lebih dominan → cek portioning/operasional. -N (kuning) = nominal lebih dominan → cek harga/procurement." />
+          </CardTitle>
+          {itemGaps.length > 0 && <Badge variant="secondary" className="text-[10px]">{itemGaps.length} item</Badge>}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {itemGaps.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada data rank untuk periode ini.</p>
+        ) : (
+          <div className="max-h-[400px] overflow-auto">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1 sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm z-10">
+              <span className="w-5 shrink-0">#</span>
+              <span className="w-3 shrink-0"></span>
+              <span className="min-w-[120px] flex-1 shrink-0">Item</span>
+              <span className="w-16 text-right shrink-0">Avg Gap</span>
+              <span className="w-10 text-right shrink-0">Outlets</span>
+            </div>
+            <div className="space-y-0.5">
+              {itemGaps.map((item, i) => {
+                const isExpanded = expandedItems.has(item.itemName);
+                const gap = Math.round(item.avgGap);
+                const isQtyDriven = gap > 0;
+                const isPriceDriven = gap < 0;
+                return (
+                  <div key={`${item.itemName}-${i}`}>
+                    <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
+                      <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
+                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                      <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${isQtyDriven ? 'text-red-600 dark:text-red-400' : isPriceDriven ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{gap > 0 ? `+${gap}` : gap}</span>
+                      <span className="w-10 text-right text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount}</span>
+                    </button>
+                    {isExpanded && item.outlets.length > 0 && (
+                      <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
+                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
+                          <span className="w-4 shrink-0"></span>
+                          <span className="min-w-[80px] flex-1 shrink-0">Outlet</span>
+                          <span className="w-12 text-center shrink-0">Rank N</span>
+                          <span className="w-12 text-center shrink-0">Rank B</span>
+                          <span className="w-12 text-center shrink-0">Gap</span>
+                          <span className="w-24 text-right shrink-0">Nominal</span>
+                        </div>
+                        {[...item.outlets].sort((a, b) => (b.rankBom - b.rankNominal) - (a.rankBom - a.rankNominal)).map((o, j) => {
+                          const oGap = o.rankBom - o.rankNominal;
+                          return (
+                            <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
+                              <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
+                              <span className="min-w-[80px] flex-1 truncate" title={o.outletCode}>{o.outletCode}</span>
+                              <span className="w-12 text-center tabular-nums shrink-0">{o.rankNominal}</span>
+                              <span className="w-12 text-center tabular-nums shrink-0">{o.rankBom}</span>
+                              <span className={`w-12 text-center tabular-nums font-bold shrink-0 ${oGap > 0 ? 'text-red-600 dark:text-red-400' : oGap < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{oGap > 0 ? `+${oGap}` : oGap}</span>
+                              <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

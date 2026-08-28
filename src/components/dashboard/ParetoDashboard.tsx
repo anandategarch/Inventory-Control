@@ -7,12 +7,16 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, TrendingDown, Package, Store, MapPin, Users, Boxes, ChevronDown, ChevronRight, Target } from 'lucide-react';
+import { Loader2, TrendingDown, Package, Store, MapPin, Users, Boxes, ChevronDown, ChevronRight, Target, RotateCcw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ParetoDevBomCard, GapAnalysisCard } from '@/components/dashboard/TopItems';
 import { useDashboard } from '@/hooks/useDashboard';
 import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
+import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
 interface ParetoRow {
   name: string;
@@ -141,7 +145,7 @@ function QuadrantCard({ title, icon, data, color, barColor }: { title: string; i
   );
 }
 
-export function ParetoDashboard() {
+export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
@@ -337,6 +341,12 @@ export function ParetoDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Pareto Item Abnormal (|Dev/BOM| > 50%) — full width, below Nested Breakdown */}
+      <ParetoDevBomCard data={analysisData} />
+
+      {/* Gap Analysis: Rank BOM vs Rank Nasional — full width */}
+      <GapAnalysisCard data={analysisData} />
 
       {/* Insight Footer — Action Plan */}
       <Card className="bg-gradient-to-br from-amber-50/60 to-amber-50/20 dark:from-amber-950/30 dark:to-amber-950/10 border-amber-300/50 dark:border-amber-800/50 shadow-md shadow-amber-500/5">

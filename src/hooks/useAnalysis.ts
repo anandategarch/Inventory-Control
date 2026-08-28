@@ -208,6 +208,35 @@ export interface AnalysisData {
   };
   topItemsByNominal: TopItemByNominal[];
   topItemsByDevBom: TopItemByDevBom[];
+  // Pareto 80/20 for items with |Dev/BOM| > 50%
+  paretoDevBom?: {
+    drivers: Array<{
+      itemName: string;
+      outletCount: number;
+      devBom: number;
+      devBomAbs: number;
+      nominalDeviasi: number;
+      absNominal: number;
+      sharePct: number;
+      cumPct: number;
+      outlets: Array<{
+        outletCode: string;
+        outletName: string;
+        area: string;
+        devBom: number;
+        devBomAbs: number;
+        nominalDeviasi: number;
+        absNominal: number;
+        sharePct: number;
+        cumPct: number;
+      }>;
+    }>;
+    remainderCount: number;
+    remainderPct: number;
+    totalAbsNominal: number;
+    totalCount: number;
+    thresholdPct: number;
+  };
   topOutlets: TopOutlet[];
   topOutletsBySales: TopOutletBySales[];
   topItemsByWaste: TopItemByCategory[];
