@@ -663,9 +663,14 @@ export async function queryParetoNested(
   const parentJoinsRaw = [parentExpr.joinItem, parentExpr.joinOutlet, parentExpr.joinPIC]
     .filter(Boolean)
     .join(' ');
-  const childJoinsRaw = [childExpr.joinItem, childExpr.joinOutlet, childExpr.joinPIC]
-    .filter(Boolean)
-    .join(' ');
+  // FIX (BUG4-DATA-2 / FEAT-PARETO-NEST-BUG): child query needs JOINs from
+  // BOTH parent (for parentFilter) AND child (for groupExpr). Merge + dedupe
+  // by using a Set to avoid duplicate JOINs (e.g., both parent+child need Outlet).
+  const allChildJoins = [
+    parentExpr.joinItem, parentExpr.joinOutlet, parentExpr.joinPIC,
+    childExpr.joinItem, childExpr.joinOutlet, childExpr.joinPIC,
+  ].filter(Boolean);
+  const childJoinsRaw = [...new Set(allChildJoins)].join(' ');
   const parentJoins = Prisma.raw(parentJoinsRaw);
   const childJoins = Prisma.raw(childJoinsRaw);
   const parentGroupExpr = Prisma.raw(parentExpr.groupExpr);

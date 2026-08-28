@@ -237,10 +237,12 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
-      // FIX #42: send parentDim + childDim so backend runs queryParetoNested
-      // and returns the nestedGeneralized field.
-      p.set('parentDim', parentDim);
-      p.set('childDim', childDim);
+      // FIX: only send parentDim/childDim when NOT default (item→outlet)
+      // to avoid unnecessary queryParetoNested call on every request.
+      if (parentDim !== 'item' || childDim !== 'outlet') {
+        p.set('parentDim', parentDim);
+        p.set('childDim', childDim);
+      }
       const res = await fetch(`/api/pareto?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
