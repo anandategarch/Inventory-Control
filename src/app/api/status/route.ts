@@ -83,14 +83,27 @@ export async function GET(req: NextRequest) {
     const areas = [...new Set(outlets.map((o) => o.area))].sort();
     const pics = [...new Set(outletPics.map((p) => p.pic).filter(Boolean))].sort();
     // Kelompok: 3-char prefix from outlet NAME segment (after the LAST dot).
-    // FIX (BUG-PERF-5): use shared extractKelompokFromCode helper instead of
-    // inline duplication. Also fixes BUG-BE-4/BUG-EDGE-2: removed the
-    // `if (segs.length < 2) return ''` guard that excluded single-segment
-    // codes — the shared helper handles them correctly (returns first 3 chars),
-    // consistent with the SQL extraction in buildSqlFilters.
-    const kelompokOptions = [...new Set(
-      outlets.map((o) => extractKelompokFromCode(o.code)).filter(Boolean)
-    )].sort();
+    // FIX (BUG-PERF-5): use shared extractKelompokFromCode helper.
+    // FIX (USER-REQ): only show kelompok with >1 outlet, and include area info
+    // so the frontend dropdown can display "BDG · JAWA BARAT 1 (5 outlet)".
+    // FIX (BUG6-LOST): restore object format that was lost during force push.
+    const kelompokMap = new Map<string, { outletCount: number; areas: Set<string> }>();
+    for (const o of outlets) {
+      const k = extractKelompokFromCode(o.code);
+      if (!k) continue;
+      if (!kelompokMap.has(k)) kelompokMap.set(k, { outletCount: 0, areas: new Set() });
+      const entry = kelompokMap.get(k)!;
+      entry.outletCount++;
+      if (o.area) entry.areas.add(o.area);
+    }
+    const kelompokOptions = Array.from(kelompokMap.entries())
+      .filter(([, v]) => v.outletCount > 1)
+      .map(([kelompok, v]) => ({
+        kelompok,
+        outletCount: v.outletCount,
+        area: Array.from(v.areas).sort().join(', '),
+      }))
+      .sort((a, b) => a.kelompok.localeCompare(b.kelompok));
 
     const itemsCount = await db.item.count();
     const recordsCount = await db.inventoryRecord.count();
