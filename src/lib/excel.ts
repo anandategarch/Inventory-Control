@@ -1,10 +1,22 @@
 // ============================================================
 //  Excel parser — multi-sheet aware (Mode A: flat sheet with WEEK column)
 //  Reads .xlsx via exceljs, normalizes headers, returns raw rows.
+//
+//  PERF-FASE4-INFRA12: exceljs (23MB) is dynamically imported inside
+//  parseExcelFile() instead of at module scope. This ensures exceljs is
+//  only loaded when Excel parsing is actually needed — not when other
+//  modules import lightweight utils like HEADER_ALIASES or
+//  parseMonthFromFilename from this file.
 // ============================================================
-import ExcelJS from 'exceljs';
 import path from 'path';
 import { createHash } from 'crypto';
+
+// Structural type for ExcelJS.Cell — only the fields we actually access.
+// This avoids importing the full exceljs type definitions at module scope.
+interface ExcelCell {
+  value: unknown;
+  result?: unknown;
+}
 
 // Header normalization map: raw → canonical
 export const HEADER_ALIASES: Record<string, string> = {
@@ -95,7 +107,7 @@ export function normalizeHeader(raw: string): string {
   );
 }
 
-function cellToValue(cell: ExcelJS.Cell): unknown {
+function cellToValue(cell: ExcelCell): unknown {
   let v: unknown = cell.value;
   // FIX (BUG 8): Date objects fall through to JSON.stringify → ISO string with timezone shift.
   // Handle Date BEFORE the generic object check.
@@ -122,6 +134,8 @@ function cellToValue(cell: ExcelJS.Cell): unknown {
 }
 
 export async function parseExcelFile(filePath: string): Promise<ParsedWorkbook> {
+  // PERF-FASE4-INFRA12: Dynamic import — exceljs (23MB) loaded only when needed.
+  const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
   const fileHash = await hashFile(filePath);

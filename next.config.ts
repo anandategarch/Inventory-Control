@@ -1,4 +1,14 @@
 import type { NextConfig } from "next";
+// PERF-FASE4-ANALYZER: Bundle analyzer wraps nextConfig to visualize
+// JS bundle composition. Run with: ANALYZE=true bun run build
+// Opens a treemap at .next/analyze/client.html showing which modules
+// take the most space — helps identify dead code, duplicate imports,
+// and heavy dependencies that could be lazy-loaded.
+import bundleAnalyzer from "@next/bundle-analyzer";
+
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+});
 
 const nextConfig: NextConfig = {
   typescript: {
@@ -52,4 +62,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

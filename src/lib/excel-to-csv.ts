@@ -3,12 +3,21 @@
 //  ----------------------------------------------------------
 //  On Vercel/serverless: use in-process conversion (no spawn)
 //  On local/Railway: use child_process for isolated memory
+//
+//  PERF-FASE4-INFRA12: exceljs (23MB) is dynamically imported inside
+//  convertInProcess() instead of at module scope. This ensures exceljs
+//  is only loaded when Excel→CSV conversion is actually needed.
 // ============================================================
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import ExcelJS from 'exceljs';
 import { stringify } from 'csv-stringify/sync';
+
+// Structural type for ExcelJS.Cell — avoids importing exceljs at module scope.
+interface ExcelCell {
+  value: unknown;
+  result?: unknown;
+}
 
 export interface ConvertResult {
   csvPath: string;
@@ -16,7 +25,7 @@ export interface ConvertResult {
   sheetName: string;
 }
 
-function cellToValue(cell: ExcelJS.Cell): unknown {
+function cellToValue(cell: ExcelCell): unknown {
   let v: unknown = cell.value;
   if (v && typeof v === 'object') {
     if ('richText' in v && Array.isArray(v.richText)) {
@@ -36,6 +45,8 @@ function cellToValue(cell: ExcelJS.Cell): unknown {
 
 // In-process conversion (for Vercel serverless)
 async function convertInProcess(excelPath: string, csvPath: string): Promise<ConvertResult> {
+  // PERF-FASE4-INFRA12: Dynamic import — exceljs (23MB) loaded only when needed.
+  const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(excelPath);
 

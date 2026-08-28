@@ -45,8 +45,15 @@ function createPrismaClient(): PrismaClient {
     // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
     url.searchParams.set('statement_timeout', '30000');
     url.searchParams.set('idle_timeout', '20');
+    // PERF-FASE4-PGSTAT: Enable Prisma query logging in dev mode only.
+    // Logs every SQL query with duration — helps identify slow queries during
+    // development. In production, only 'error' + 'warn' are logged (perf).
+    // Combine with Supabase pg_stat_statements extension for production monitoring.
+    const isDev = process.env.NODE_ENV === 'development';
     return new PrismaClient({
-      log: ['error', 'warn'],
+      log: isDev
+        ? ['error', 'warn', { emit: 'stdout', level: 'query' }]
+        : ['error', 'warn'],
       datasources: { db: { url: url.toString() } },
     });
   }
