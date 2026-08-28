@@ -25010,3 +25010,527 @@ FILES MODIFIED (17 files)
 Plus 1 file deleted: menu-analysis-bak.tsx
 
 ═══════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════
+Task ID: AUDIT9-FINAL-FE
+Agent: general-purpose (final auditor — frontend)
+Task: Final verification that ALL frontend features are present
+      and wired. Report ONLY items still MISSING or BROKEN.
+Methodology: Grep (existence + usage), Read (line-by-line verify),
+  cross-reference with FIX-ROLLBACK-FE-2 entries above (lines
+  24744-25010). No code changes made — report only.
+═══════════════════════════════════════════════════════════════
+
+RESULTS — 28 OK / 2 ISSUES (1 partial, 1 missing)
+
+───────────────────────────────────────────────────────────────
+ITEM-BY-ITEM
+───────────────────────────────────────────────────────────────
+
+1. InfoTooltip.tsx — file exists? Used in 10 listed files?
+   ⚠️ PARTIAL — file exists (src/components/dashboard/InfoTooltip.tsx).
+   Used in 7 of 10 listed files:
+     ✓ ExecutiveSummary.tsx       (imported; KPI_TOOLTIPS const used)
+     ✓ Charts.tsx                 (GrowthComparison CardTitle)
+     ✓ ParetoDashboard.tsx        (QuadrantCards + generalized nested card)
+     ✓ TopItems.tsx               (GapAnalysisCard CardTitle)
+     ✓ PeerComparison.tsx         (CardTitle)
+     ✓ RestoRecommendationCard.tsx (CardTitle — both loading + loaded)
+     ✓ menu-analysis.tsx          (CardTitle)
+   ❌ MISSING in 3 files (use FormulaInfo instead — heavier formula/example
+      tooltip, NOT the lightweight InfoTooltip component):
+     • HistoricalZScoreCard.tsx — uses FormulaInfo (lines 87-92), no
+       InfoTooltip import.
+     • AdvancedAnalysis.tsx — uses FormulaInfo in 3 CardTitles
+       (lines 60, 210, 281), no InfoTooltip import.
+     • AreaTrendChart.tsx — uses FormulaInfo (lines 148-153), no
+       InfoTooltip import.
+   NOTE: FIX-ROLLBACK-FE-2 worklog (lines 24866-24871) explicitly
+   targeted InfoTooltip rollout to only 6 components (ExecutiveSummary,
+   RestoRecommendationCard, PeerComparison, ParetoDashboard, Charts,
+   menu-analysis) — these 3 files were never in scope. May be
+   intentional (FormulaInfo provides more detail). Flag for product
+   owner decision.
+
+2. ParetoDevBomCard — in TopItems.tsx? Imported + rendered in
+   ParetoDashboard?
+   ✅ OK — TopItems.tsx:213 (export function ParetoDevBomCard);
+   ParetoDashboard.tsx:16 (import), 544 (rendered).
+
+3. GapAnalysisCard — in TopItems.tsx? Imported + rendered in
+   ParetoDashboard?
+   ✅ OK — TopItems.tsx:310 (export function GapAnalysisCard);
+   ParetoDashboard.tsx:16 (import), 547 (rendered).
+
+4. Multi-nesting selectors — parentDim + childDim Select dropdowns in
+   ParetoDashboard?
+   ✅ OK — ParetoDashboard.tsx:217-218 (state), 315 (parent <Select>),
+   326 (child <Select>), 332 (child excludes parent dim). queryKey +
+   queryFn send parentDim/childDim (lines 231, 242-243).
+
+5. ParetoDashboard accepts analysisData prop? page.tsx passes it?
+   ✅ OK — ParetoDashboard.tsx:212 (`{ analysisData }: { analysisData?:
+   any }`); page.tsx:621 (`<ParetoDashboard analysisData={analysis.data}
+   />`).
+
+6. FilterBar kelompok dropdown — maps k.kelompok + k.area +
+   k.outletCount?
+   ✅ OK — FilterBar.tsx:396-399:
+     value: k.kelompok,
+     label: k.kelompok,
+     description: `${k.area} · ${k.outletCount} outlet`.
+
+7. FilterBar stale-filter — uses .some(k => k.kelompok === kelompok)?
+   ✅ OK — FilterBar.tsx:95
+     (`!kelompokOpts.some(k => k.kelompok === kelompok)`).
+
+8. FilterBar prefetch — includes kelompok?
+   ✅ OK — FilterBar.tsx:297 (month hover prefetch), 331 (week hover
+   prefetch) — both pass `kelompok` to prefetchAnalysis.
+
+9. FilterBar ariaLabel on all dropdowns?
+   ✅ OK — FilterBar.tsx:380 (PIC), 392 (Area), 408 (Kelompok), 420
+   (Outlet). Native shadcn <Select> dropdowns (month/week/compareWeek)
+   have visible SelectValue placeholders — also accessible.
+
+10. Keyboard shortcuts — isDropdownOpen check? !isTyping on Escape?
+    ✅ OK — page.tsx:303-306 (isDropdownOpen guard before tab-switch);
+    315 (`if (e.key === 'Escape' && !isTyping)`).
+
+11. All CardTitle use text-sm (grep for text-base in CardTitle —
+    should be 0)?
+    ✅ OK — Grep `CardTitle className="text-base` in src/ → 0 matches.
+
+12. AREA_COLORS — no blue/indigo?
+    ✅ OK — AreaTrendChart.tsx:19-33. Verified no #3b82f6, #8b5cf6,
+    #6366f1, #a855f7, #2563eb, #1d4ed8, #4f46e5, #7c3aed (only the
+    historical comments mentioning "was blue" etc. — values themselves
+    replaced with warm/distinct alternatives).
+
+13. CSS vars — --chart-susut = #0891b2? --chart-trial = #ca8a04?
+    ✅ OK — globals.css:85 (`--chart-susut: #0891b2`), 87
+    (`--chart-trial: #ca8a04`). Dark mode variants at 131-132
+    (#22d3ee cyan-400, #facc15 amber-400).
+
+14. HistoricalZScoreCard — visual magnitude bar?
+    ✅ OK — HistoricalZScoreCard.tsx:151-160: `<div className="h-1.5
+    w-12 rounded-full bg-muted overflow-hidden">` with inner `<div
+    style={{ width: |z|/5*100 capped 100% }}>` color-coded red/amber/
+    yellow.
+
+15. RestoRecommendationCard — PRIORITY_TOOLTIP const? Consolidated
+    badges (max 3)?
+    ✅ OK — PRIORITY_TOOLTIP exported at line 16; used at 148, 223.
+    Consolidated badges: buildSignalBadges (line 28), visible =
+    isExpanded ? all : all.slice(0, 3) (line 305), overflow chip
+    toggles per-outlet via expandedSignals Set (line 104).
+
+16. PeerComparison — keepPreviousData? InfoTooltip? Retry button?
+    ✅ OK — keepPreviousData: PeerComparison.tsx:14 (import), 87
+    (placeholderData). InfoTooltip: 24 (import), 197 (rendered in
+    CardTitle). Retry button: 254-255 (`<Button onClick={() =>
+    refetchMain()} ...> <RotateCcw /> Coba Lagi`).
+
+17. signal-chart — uses shadcn Table (not raw <table>)?
+    ✅ OK — signal-chart.tsx:17 imports `Table, TableHeader, TableBody,
+    TableRow, TableHead, TableCell` from `@/components/ui/table`. No
+    raw <table>/<thead>/<tbody>/<tr>/<th>/<td> found.
+
+18. FetchAware on all 4 tabs?
+    ✅ OK — page.tsx: Dashboard tab wrapped (lines 476-592, multiple
+    FetchAware instances); Resto tab (599-601); Peer tab (609-611);
+    Pareto tab (620-622).
+
+19. GlobalItemSearchModal autocomplete — keepPreviousData?
+    ✅ OK — GlobalItemSearchModal.tsx:15 (import keepPreviousData),
+    110 (`placeholderData: keepPreviousData`).
+
+20. item-detail-modal — staleTime?
+    ✅ OK — item-detail-modal.tsx:40 (`staleTime: 300_000` — 5 min).
+
+21. items-table — overflow-visible?
+    ✅ OK — items-table.tsx:25 (`<Card className="overflow-visible
+    shadow-md shadow-black/5 dark:shadow-black/20">`).
+
+22. menu-analysis — subtitle says "2 kata pertama"? Has InfoTooltip?
+    ✅ OK — menu-analysis.tsx:103 (InfoTooltip content with "2 kata
+    pertama"), 106 (subtitle: "Group by menu (2 kata pertama nama
+    bahan)...").
+
+23. countSuffix — has klp/pic cases?
+    ✅ OK — ParetoDashboard.tsx:34-40: countSuffix(title) returns
+    'klp' for kelompok, 'pic' for pic, 'out' for outlet, 'area' for
+    area, '' default. Used at line 135 + rendered at 180.
+
+24. Retry buttons — ParetoDashboard error? PeerComparison error?
+    ✅ OK — ParetoDashboard.tsx:286-287 (`<Button onClick={() =>
+    refetch()} ...> <RotateCcw /> Coba Lagi`); PeerComparison.tsx:254
+    (`<Button onClick={() => refetchMain()} ...>`).
+
+25. Gap formula — rankBom - rankNominal (not reversed)?
+    ✅ OK — TopItems.tsx:322 (`const gaps = outlets.map(o => o.rankBom
+    - o.rankNominal)`), 387 (`const oGap = o.rankBom - o.rankNominal`).
+    Comment at 308 documents: "Gap = rankBom - rankNominal. +N = qty
+    dominan, -N = nominal dominan."
+
+26. Gap column removed from ranking-nasional.tsx?
+    ✅ OK — Grep `[Gg]ap` in ranking-nasional.tsx returns only CSS
+    utility classes (`gap-2.5`, `gap-2`). No Gap column header / cell.
+
+27. menu-analysis-bak.tsx deleted?
+    ✅ OK — Glob `**/menu-analysis-bak.tsx` → 0 matches. Directory
+    contains only: menu-analysis.tsx, helpers.tsx, item-detail-modal.tsx,
+    types.ts, ranking-nasional.tsx.
+
+28. AnalysisData type — filters has kelompok+pic? paretoDevBom type
+    exists? trendProjection+patterns exist?
+    ✅ OK — useAnalysis.ts:
+      • filters.kelompok (line 198) + filters.pic (line 201).
+      • paretoDevBom? (line 228).
+      • trendProjection? (line 284).
+      • patterns?: PatternDetection[] (line 285).
+
+29. StatusData.kelompokOptions — Array<{ kelompok, outletCount, area
+    }>?
+    ✅ OK — useAnalysis.ts:522
+      `kelompokOptions?: Array<{ kelompok: string; outletCount:
+      number; area: string }>`.
+
+30. Shadow tokens — .shadow-soft in globals.css?
+   ❌ MISSING — Grep `shadow-soft` across /home/z/my-project/src → 0
+   matches. Grep `shadow-soft` in src/app/globals.css → 0 matches.
+   No tailwind.config.ts in project root (Tailwind v4 via @theme
+   in globals.css). globals.css contains only:
+     • line 180: `transition: ... box-shadow 0.15s ease` (raw CSS,
+       not a token).
+   NO `.shadow-soft` utility class, NO `--shadow-soft` CSS var, NO
+   `@theme { --shadow-soft: ... }` directive.
+   Impact: components referencing `className="shadow-soft"` would
+   silently render with no shadow. None currently reference it (Grep
+   `shadow-soft` in src → 0 matches), so impact is latent — the token
+   is purely missing from the design system, not actively broken in
+   any rendered component.
+
+───────────────────────────────────────────────────────────────
+SUMMARY — Items still MISSING or BROKEN
+───────────────────────────────────────────────────────────────
+
+❌ Item 30 (P0 latent) — `.shadow-soft` token MISSING from
+    globals.css. No active breakage (no component references it),
+    but design-system token is absent. Suggested fix: add
+    `@theme { --shadow-soft: 0 2px 8px -2px rgb(0 0 0 / 0.08),
+    0 4px 16px -4px rgb(0 0 0 / 0.04); }` to globals.css (Tailwind v4
+    @theme block) OR add `.shadow-soft { box-shadow: ... }` class.
+
+⚠️ Item 1 (P3 partial) — InfoTooltip NOT used in 3 of 10 listed
+    files (HistoricalZScoreCard, AdvancedAnalysis, AreaTrendChart).
+    All 3 use FormulaInfo instead (heavier tooltip with formula/
+    example/description). May be intentional product decision —
+    flag for owner. If lightweight InfoTooltip is required in
+    addition to FormulaInfo, the 3 files need the import + render
+    added (pattern: see ExecutiveSummary.tsx KPI_TOOLTIPS const).
+
+All other 27 items: ✅ OK (verified present + wired).
+
+No code changes made — report only per task instructions.
+
+═══════════════════════════════════════════════════════════════
+Task ID: AUDIT9-FINAL-BE
+Agent: general-purpose (final backend auditor)
+Task: Final verification that ALL backend features are present
+      and wired after the massive rollback + restoration
+      (commits f8af5b8, a9d5ff4). Report ONLY items still
+      MISSING or BROKEN — do NOT fix.
+═══════════════════════════════════════════════════════════════
+
+Work Log:
+- Read worklog tail (lines 24712-25013) for context on prior
+  AUDIT8-FE-2 + FIX-ROLLBACK-FE-2 frontend restoration work.
+- Verified each of the 24 audit items via Grep + Read on src/.
+- No code changes made — report only per task instructions.
+
+───────────────────────────────────────────────────────────────
+VERIFICATION RESULTS (24 items)
+───────────────────────────────────────────────────────────────
+
+1. computePareto8020 — ✅ OK
+   - Defined: src/lib/queries/shared.ts:109
+   - Used in: src/lib/queries/pareto.ts:39
+                (computePareto8020(rows, row => row.totalAbsNominal, threshold, maxDrivers))
+              src/lib/queries/growth-drivers.ts:148
+                (computePareto8020(arr, d => d.delta))
+
+2. DIRECTION_FROM_SUM_SQL — ✅ OK
+   - Defined: src/lib/queries/shared.ts:78
+   - Used in 4 query modules (8 sites):
+     · items/top-items.ts:31, 375
+     · items/global-search.ts:69, 190
+     · outlets/resto-recommendations.ts:145, 210
+     · outlets/peer-comparison.ts:307
+
+3. SqlFilterOpts — ✅ OK
+   - Defined: src/lib/queries/shared.ts:58
+   - Used across 9 query modules (areas, peer-comparison, resto-recommendations,
+     top-outlets, growth-drivers, historical, rule-evaluation, health-ranking,
+     pareto, dashboard, items/network-risk, items/global-search, items/top-items).
+
+4. buildInventoryWhere — ✅ OK
+   - Defined: src/lib/build-where.ts:75
+   - Imported + used in:
+     · src/app/api/analysis/route.ts:52 (call at line 317)
+     · src/app/api/export-report/route.ts:50 (call at line 321)
+
+5. resolveComparePeriod — ✅ OK
+   - Defined: src/lib/period-resolver.ts:108
+   - Imported + used in:
+     · src/app/api/analysis/route.ts:54 (call at line 288)
+     · src/app/api/export-report/route.ts:52 (call at line 373)
+   - Returns null when not found:
+     · Case 1 (compareWeek null): delegates to resolvePreviousPeriod
+       → returns `{prevWeek: null, prevMonth: null}` (line 73)
+     · Case 3 (compareWeek set, no match): returns
+       `{prevWeek: compareWeek, prevMonth: null}` (line 175)
+
+6. resolveKelompokOutletCodes — ✅ OK
+   - Defined: src/lib/kelompok-resolver.ts:54
+   - Imported + used in:
+     · src/app/api/analysis/route.ts:50 (call at line 310)
+     · src/app/api/export-report/route.ts:48 (call at line 313)
+   - Uses withStatementTimeout wrapper (line 62)
+
+7. invalidateAnalysisCache — ✅ OK
+   - Defined: src/lib/aggregation-cache.ts:192
+   - Uses \x1f delimiter (line 194: `invalidateCache('analysis\x1f')`)
+     — matches buildCacheKey's SEP constant (line 61)
+   - All mutation routes call it (fire-and-forget with .catch):
+     · lib/ingestion.ts:486 (processIngestion — covers /api/ingest,
+       /api/import-drive, /api/ingest-process indirect)
+     · /api/ingest-process:533 (POST INGEST_WEEK), 750 (POST INGEST_ALL_WEEKS)
+     · /api/pic:80 (POST), 131 (DELETE)
+     · /api/pic/import:135 (POST)
+     · /api/data:249 (DELETE)
+     · /api/migrate-direction:100 (POST)
+     · /api/settings:192 (POST), 279 (DELETE)
+   - /api/ingest-upload: NO direct call — only stores file chunks to FileChunk
+     table (no InventoryRecord mutation); actual data ingestion happens via
+     /api/ingest-process which calls invalidateAnalysisCache. ✓ correct.
+
+8. queryParetoNested — ✅ OK
+   - Defined: src/lib/queries/pareto.ts:644
+   - getDimensionExpr at pareto.ts:529 — pic case (line 560-567) correctly
+     sets `joinOutlet: 'JOIN "Outlet" o ON ir."outletId" = o.id'` (line 565)
+     so the subsequent `LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"`
+     (line 566) has its required `o` alias.
+   - /api/pareto reads parentDim + childDim URL params: route.ts:63-64
+   - Conditional invocation: route.ts:94-96 (useGeneralizedNested gate)
+   - Echoes nestedGeneralized + dims in response: route.ts:138-139
+
+9. queryParetoByDevBom — ✅ OK
+   - Defined: src/lib/queries/items/top-items.ts:557
+   - Imported in analysis route: src/app/api/analysis/route.ts:44
+   - Called: route.ts:477 (with .catch wrapper for non-blocking failure)
+   - In response: route.ts:915 (`paretoDevBom`)
+   - Frontend consumes it: src/components/dashboard/TopItems.tsx:216
+     (`const pareto = data.paretoDevBom;`)
+
+10. Settings cache — ✅ OK
+    - CACHE_TTL_MS = 30_000 (src/lib/settings.ts:338)
+    - getAllSettings checks cache first: settings.ts:405
+      `if (!forceRefresh && _settingsCache && (Date.now() - _cacheLoadedAt) < CACHE_TTL_MS)`
+
+11. Dead files deleted — ✅ OK
+    Confirmed NOT existing:
+    · src/lib/queries/items.ts ❌ (deleted)
+    · src/lib/queries/outlets.ts ❌ (deleted)
+    · src/lib/queries/queries.ts ❌ (deleted)
+    · src/lib/queries/api-response.ts ❌ (deleted)
+    · src/lib/api-response.ts ❌ (deleted)
+
+12. Audit logs — ✅ OK
+    All 11 `db.auditLog.create({...})` callsites use fire-and-forget
+    (`.catch(() => {})` or `.catch((e) => logger.error(...))`):
+    · lib/ingestion.ts:472-478
+    · /api/ingest-process:518-524, 758-764
+    · /api/pic:83-88, 134-139
+    · /api/pic/import:138-143
+    · /api/analysis:960-969
+    · /api/data:258-263
+    · /api/migrate-direction:106-114
+    · /api/settings:183-188, 284-289
+    No `await db.auditLog.create(...)` patterns found.
+
+13. EMPTY_STATE — ✅ OK
+    - src/app/api/status/route.ts:20-32
+    - Returns `success: false` (line 26) + `setupRequired: true` (line 27)
+    - Frontend consumer: src/hooks/useAnalysis.ts:513-515
+
+14. Zod validation — ❌ PARTIAL (3 of 4 OK; 1 MISSING)
+    · /api/pareto ✅ — validateQuery(paretoQuerySchema) at route.ts:34
+    · /api/data GET ✅ — validateQuery(dataGetQuerySchema) at route.ts:37
+    · /api/ingest-process DELETE ✅ — validateBody(ingestProcessDeleteBodySchema)
+      at route.ts:804
+    · /api/resto-bahan-matrix ❌ MISSING — no Zod validation.
+      Uses raw `url.searchParams.get('month')`, `parseInt(url.searchParams.get('limit') || '100')`
+      (route.ts:45-49). No `restoBahanMatrixQuerySchema` defined in
+      src/lib/validation.ts (verified — schema list at lines 10-185 contains
+      no resto/bahan/matrix entry). Malformed `limit=abc` silently coerces
+      to NaN, `month=`/`week=` empty strings only caught by the
+      `if (!month || !week)` guard at line 51 (no format check).
+
+15. Rate limiting — ✅ OK
+    · /api/setup GET — rate-limited (10 req/60s/IP) at route.ts:34
+    · /api/settings DELETE — rate-limited at route.ts:216
+      (separate `settings-delete:${ip}` bucket so POST-exhausted attacker
+      can't spam DELETE)
+
+16. networkAvgDevBom — ✅ OK (volume-weighted)
+    - src/lib/queries/outlets/resto-recommendations.ts:278-280
+      · `sumQtyDeviasi = currRows.reduce((s, r) => s + Number(r.totalQtyDeviasi ?? 0), 0)`
+      · `sumQtyBom     = currRows.reduce((s, r) => s + Number(r.totalQtyBom ?? 0), 0)`
+      · `networkAvgDevBom = sumQtyBom > 0 ? sumQtyDeviasi / sumQtyBom : 0`
+    - Volume-weighted (SUM/SUM) — matches master context §1 convention.
+    - NOTE: actual JS field name is `r.totalQtyBom` (not `r.qtyBom` as
+      task spec states) — the SQL CTE at line 176-177 exposes the per-outlet
+      aggregates as `totalQtyDeviasi` + `totalQtyBom` (renamed from the
+      inner CTE's `qtyDeviasi`/`qtyBom` at lines 101-102 via COALESCE).
+      Volume-weighted intent is correctly implemented.
+
+17. Future-month filter — ✅ OK
+    - queryRestoRecommendations has currentMonthKey param:
+      src/lib/queries/outlets/resto-recommendations.ts:62
+    - JOINs SourceFile when currentMonthKey provided (line 234):
+      `JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`
+    - Filters `sf."monthKey" < ${currentMonthKey}` (line 239)
+    - Fallback to `monthLabel != ${month}` for legacy callers (line 240)
+    - Caller /api/recommendations/route.ts:93-97 resolves currentMonthKey
+      from SourceFile table; passes at route.ts:126
+
+18. Signal 11 — ✅ OK (runtime threshold)
+    - src/lib/queries/outlets/resto-recommendations.ts:141
+      `COUNT(CASE WHEN ir."nominalLossSurplus" < -${highLossThreshold} THEN 1 END) as "highLossItem"`
+    - highLossThreshold is a function parameter (default 50_000_000,
+      line 67) — NOT hardcoded 10jt
+    - Caller /api/recommendations/route.ts:103 fetches getRuntimeThresholds()
+      and passes `thresholds.HIGH_LOSS_NOMINAL_THRESHOLD` at line 127
+      (default 50jt, configurable via Settings UI)
+
+19. Variance direction — ✅ OK (checks direction flip first)
+    - src/engine/analysis/rankingService.ts:computeVarianceAnalysis
+      (line 208)
+    - Line 251: `if (currDir !== 'NEUTRAL' && prevDir !== 'NEUTRAL' && currDir !== prevDir)`
+      → classifies as WORSENED (LOSS) or IMPROVED (SURPLUS)
+    - Line 258: only falls back to magnitude delta (`delta > 0 ? WORSENED : delta < 0 ? IMPROVED : STABLE`)
+      when no flip is detected
+    - Comment at lines 240-247 explicitly notes the JS path now mirrors
+      the SQL path's direction-flip detection (AUDIT7-CALC-7 fix)
+
+20. Connection pool — ✅ OK
+    - src/lib/db.ts:43 — `url.searchParams.set('connection_limit', '20');`
+    - src/lib/db.ts:44 — `url.searchParams.set('pool_timeout', '60');`
+    - Forces override (line 36-42 comment) — doesn't trust .env values
+      (which had `connection_limit=3&pool_timeout=10` — too low)
+
+21. Bare $queryRaw — ✅ OK (0 unwrapped)
+    - Grep for `db.$queryRaw` across src/ returns 2 matches, BOTH in
+      comments (documentation/example only):
+      · src/lib/queries/shared.ts:14 — `// Usage: const rows = await withStatementTimeout(() => db.$queryRaw\`...\`);`
+      · src/lib/pic-resolver.ts:7 — `//    const picRows = await db.$queryRaw\`SELECT ...\``
+    - No actual `await db.$queryRaw\`...\`` code callsites.
+    - All runtime $queryRaw calls go through `withStatementTimeout((tx) => tx.$queryRaw\`...\`)`
+      (tx-scoped, statement_timeout=30s enforced).
+    - No `$queryRawUnsafe` or `$executeRawUnsafe` calls anywhere.
+
+22. BENCHMARK rules — ❌ MISSING (NOT removed from evaluateHistoricalRulesJs)
+    - BENCHMARK_ABOVE_AREA still at src/lib/queries/rule-evaluation.ts:257-260
+      (flags.push with ruleCode: 'BENCHMARK_ABOVE_AREA', priority: 50)
+    - BENCHMARK_ABOVE_NETWORK still at rule-evaluation.ts:262-265
+      (flags.push with ruleCode: 'BENCHMARK_ABOVE_NETWORK', priority: 72)
+    - Also still present in src/config/rules.yaml:180-198 + src/config/rules.ts:166
+    - Already documented as AUDIT7-CALC-9 (worklog:22944-22960, 23015,
+      23030, 23039) + BUG2-INGEST-22 (worklog:21690-21723).
+      Suggested fix: remove from BOTH rule-evaluation.ts:257-265 AND
+      rules.yaml:180-198 — they duplicate HISTORICAL_WARNING/
+      HISTORICAL_ABNORMAL (lower priority, always overridden).
+    - NOT yet applied — pre-existing P2 issue, not a regression from
+      the rollback.
+
+23. upload-utils.ts — ✅ OK
+    - Exists: src/components/filters/upload-utils.ts (66 lines)
+    - FileUploadDialog imports from it:
+      src/components/filters/FileUploadDialog.tsx:16
+      `import { validateManualFileName, renameModeDefault } from './upload-utils';`
+
+24. compareWeek validation — ❌ MISSING (does NOT reject malformed format)
+    - src/lib/validation.ts:28
+      `export const compareWeekSchema = z.string().min(3).max(100).optional();`
+    - Only checks length 3-100 chars — accepts ANY string of that length
+      (e.g. "abc", "FOO BAR BAZ", "???"). No regex/format check.
+    - Comment at line 27 claims accepted formats are
+      `"WEEK 1"` or `"WEEK 1|||Juli 2026"` (cross-month), but no
+      `regex(/^WEEK\s+\d+(\|\|\|[A-Za-z]+\s+20\d{2})?$/)` is applied.
+    - No tests for compareWeek format validation
+      (src/lib/validation.test.ts only tests weekLabelSchema).
+    - Already noted as P3 — defense-in-depth item in
+      AUDIT8-ROLLBACK-1 next-action priority list (worklog:23728+).
+
+───────────────────────────────────────────────────────────────
+SUMMARY
+───────────────────────────────────────────────────────────────
+
+✅ OK: 21 of 24 items
+❌ MISSING/BROKEN: 3 items (all pre-existing P2/P3, NOT rollback regressions):
+
+  #14 /api/resto-bahan-matrix — NO Zod validation
+      (file: src/app/api/resto-bahan-matrix/route.ts:43-49;
+       missing schema in src/lib/validation.ts)
+      Severity: P2 — input validation gap. Malformed `limit=abc` silently
+      coerces to NaN; `priority=P9` accepts unknown enum. Other matrix-style
+      routes (/api/pareto, /api/data) have Zod; this one was missed.
+
+  #22 BENCHMARK rules NOT removed from evaluateHistoricalRulesJs
+      (file: src/lib/queries/rule-evaluation.ts:257-265;
+       also src/config/rules.yaml:180-198 + src/config/rules.ts:166)
+      Severity: P2 — dead/duplicate rules. Always overridden by
+      HISTORICAL_WARNING/HISTORICAL_ABNORMAL (lower priority).
+      Pre-existing — documented as AUDIT7-CALC-9 + BUG2-INGEST-22.
+
+  #24 compareWeekSchema does NOT reject malformed format
+      (file: src/lib/validation.ts:28)
+      Severity: P3 — defense-in-depth. Only length-checked (3-100 chars).
+      Should use regex `/^WEEK\s+\d+(\|\|\|[A-Za-z]+\s+20\d{2})?$/`.
+      Pre-existing — noted in AUDIT8-ROLLBACK-1 priority list.
+
+ROLLBACK RESTORATION STATUS: ✅ COMPLETE
+  All items 1-13, 15-21, 23 verified present + wired after the
+  f8af5b8 + a9d5ff4 restoration commits. No rollback regressions
+  detected. The 3 missing items (#14, #22, #24) are pre-existing
+  gaps that predate the rollback — they were never implemented in
+  the first place (not lost during the force push).
+
+Next-action priority (recommended fix order):
+1. P2 — #14 (Zod on /api/resto-bahan-matrix) — input validation gap
+2. P2 — #22 (remove BENCHMARK rules from evaluateHistoricalRulesJs
+   + rules.yaml + rules.ts) — dead/duplicate rule cleanup
+3. P3 — #24 (compareWeek regex validation) — defense-in-depth
+
+───────────────────────────────────────────────────────────────
+VERIFICATION METHODOLOGY
+───────────────────────────────────────────────────────────────
+- Each item checked via: Grep (file existence + symbol/identifier
+  search across src/), Read (line-by-line verification of suspect
+  files), cross-reference with worklog entries (RESTORE-BACKEND-2,
+  RESTORE-SHARED-1, FIX-CALC-ZOD-3, AUDIT7-BE-1, AUDIT8-ROLLBACK-1,
+  FIX-ROLLBACK-FE-2).
+- "WIRED" verification: confirmed imports + actual usage (not just
+  declarations) for items 1-9.
+- For item 7 (mutation routes): enumerated all 12 mutation handlers
+  (POST/PUT/DELETE/PATCH) across 9 route files; verified each calls
+  invalidateAnalysisCache directly OR via processIngestion delegation.
+- For item 12 (audit logs): enumerated all 11 `db.auditLog.create`
+  callsites; verified each uses `.catch(() => {})` or
+  `.catch((e) => logger.error(...))` fire-and-forget pattern. No
+  `await db.auditLog.create(...)` patterns found.
+- For item 21 (bare $queryRaw): grep returned 2 matches — both
+  confirmed to be in code comments (documentation), not actual
+  runtime calls.
+- No code changes made — report only per task instructions.
