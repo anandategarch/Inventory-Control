@@ -23443,3 +23443,557 @@ Files verified (39 total):
 - src/app/api/status/route.ts (verified kelompokOptions shape)
 
 No code changes made — report only per task instructions.
+
+---
+Task ID: FIX-CALC-ZOD-3
+Agent: general-purpose (sub-agent, bug fixer — calculation bugs + Zod + frontend types)
+Task: Fix 7 P1 bugs from AUDIT7 audit (CALC-4, CALC-7, CALC-8, CALC-11, BE-4, BE-8, FE-4/5).
+
+Work Log:
+- Read worklog tail (lines 22880-23299) for AUDIT7-CALC + AUDIT7-FE context.
+  Confirmed all 7 bugs were previously REPORTED ONLY (no fixes applied) — see
+  worklog:23034-23039 (suggested fixes list) + worklog:23133 + worklog:23152.
+- Read each affected file BEFORE editing (resto-recommendations.ts 491 lines,
+  recommendations/route.ts 107 lines, rankingService.ts 425 lines, pareto/route.ts
+  113 lines, settings/route.ts 286 lines, validation.ts 254 lines, useAnalysis.ts
+  300+ lines). Cross-referenced health-ranking.ts:200-268 for the SQL-path
+  variance-direction pattern to mirror in the JS path.
+- Applied 7 fixes:
+  1. AUDIT7-CALC-4 — volume-weighted networkAvgDevBom
+  2. AUDIT7-CALC-8 — future-month filter via SourceFile JOIN + monthKey
+  3. AUDIT7-CALC-11 — runtime-configurable highLossThreshold (50jt default)
+  4. AUDIT7-CALC-7 — direction-flip detection in JS variance path
+  5. AUDIT7-BE-4 — Zod paretoQuerySchema + validateQuery in /api/pareto
+  6. AUDIT7-BE-8 — rate limit on /api/settings DELETE (separate bucket)
+  7. AUDIT7-FE-4 + AUDIT7-FE-5 — AnalysisData type fixes (filters + trend/patterns)
+- Ran `bunx tsc --noEmit` → 0 errors. Ran `bun run lint` → 0 errors, 9 pre-existing
+  warnings (all react-hooks/exhaustive-deps + react-hooks/incompatible-library in
+  unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal,
+  PicManagementDialog). NO new errors or warnings introduced.
+
+═══════════════════════════════════════════════════════════════
+FIX 1 — AUDIT7-CALC-4: networkAvgDevBom volume-weighted
+═══════════════════════════════════════════════════════════════
+File: src/lib/queries/outlets/resto-recommendations.ts
+Before:
+  - SQL SELECT (line 156-187) did NOT expose `qtyBom` — only `totalQtyDeviasi`
+    was exposed via `COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi"`.
+  - JS (line 255-257) computed `networkAvgDevBom` as ARITHMETIC MEAN of
+    per-outlet `devBom` ratios: `SUM(devBom) / currRows.length`. Biased —
+    small-BOM outlets got equal weight to large-BOM outlets, skewing Signal 1
+    (15% weight on priority score).
+After:
+  - SQL SELECT now exposes `COALESCE(oa."qtyBom", 0) as "totalQtyBom"` (new
+    line 180, between `totalQtyDeviasi` and `grossAbsNominal`).
+  - JS now computes VOLUME-WEIGHTED aggregate:
+      const sumQtyDeviasi = currRows.reduce((s, r) => s + Number(r.totalQtyDeviasi ?? 0), 0);
+      const sumQtyBom     = currRows.reduce((s, r) => s + Number(r.totalQtyBom ?? 0), 0);
+      const networkAvgDevBom = sumQtyBom > 0 ? sumQtyDeviasi / sumQtyBom : 0;
+    Matches the master context §1 "Volume-weighted aggregate (bukan AVG per
+    record)" convention used everywhere else (outlet, area, trend). Div-by-zero
+    guard for networks where every outlet has zero BOM.
+Impact: Signal 1 (Dev/BOM vs Peer, 15% weight on Priority Score) now reflects
+  the true network-wide deviation intensity. Outlets in low-volume networks no
+  longer appear artificially abnormal.
+
+═══════════════════════════════════════════════════════════════
+FIX 2 — AUDIT7-CALC-8: future-month filter in historical baseline
+═══════════════════════════════════════════════════════════════
+Files: src/lib/queries/outlets/resto-recommendations.ts + src/app/api/recommendations/route.ts
+Before:
+  - `queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit)`
+    signature did NOT accept a `currentMonthKey` parameter.
+  - Historical CTE filtered with `AND ir."monthLabel" != ${month}` — INCLUDES
+    future months if they exist in DB (test data, planned uploads).
+  - No SourceFile JOIN in the historical CTE.
+  - recommendations/route.ts:100 called the function without currentMonthKey.
+  - Latent bug — active if future months exist in DB. Compare to /api/pareto
+    which CORRECTLY applies the future-month filter (BUG2-PARETO-1 fix at
+    worklog:22523).
+After:
+  - Added `currentMonthKey?: string | null` parameter (default undefined).
+  - Historical CTE now conditionally JOINs SourceFile + filters by monthKey:
+      ${currentMonthKey
+        ? Prisma.sql`JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`
+        : Prisma.empty}
+      WHERE ir."weekLabel" = ${week}
+        ${currentMonthKey
+          ? Prisma.sql`AND sf."monthKey" < ${currentMonthKey}`
+          : Prisma.sql`AND ir."monthLabel" != ${month}`}
+    Falls back to the legacy `monthLabel != ${month}` filter when
+    currentMonthKey is null/undefined (backward-compat for legacy callers).
+  - recommendations/route.ts now resolves currentMonthKey via:
+      const currentSourceFile = await db.sourceFile.findFirst({
+        where: { monthLabel: month },
+        select: { monthKey: true },
+      });
+      const currentMonthKey = currentSourceFile?.monthKey ?? null;
+    And passes it to queryRestoRecommendations.
+Impact: Signal 2 (Deviasi Growth Historical, 10% weight) + Signal 7 (Trend
+  Memburuk, 8% weight) no longer include future-month data in their baseline.
+  Priority ranking of outlets becomes reliable when future months exist in DB.
+
+═══════════════════════════════════════════════════════════════
+FIX 3 — AUDIT7-CALC-11: runtime-configurable highLossThreshold
+═══════════════════════════════════════════════════════════════
+Files: src/lib/queries/outlets/resto-recommendations.ts + src/app/api/recommendations/route.ts
+Before:
+  - Signal 11 SQL hardcoded `ir."nominalLossSurplus" < -10000000` (10jt).
+  - The actual HIGH_LOSS_NOMINAL rule (rules.yaml + settings.ts:204 +
+    thresholds.ts:43) uses `HIGH_LOSS_NOMINAL_THRESHOLD` = 50jt (default,
+    configurable via Settings UI). The function did NOT accept a thresholds
+    parameter — Settings UI changes had NO effect on Signal 11 (5% weight).
+  - Function signature: `queryRestoRecommendations(month, week, prevWeek,
+    prevMonth, filters, limit)` — no thresholds slot.
+After:
+  - Added `highLossThreshold: number = 50_000_000` parameter (default
+    mirrors RuntimeThresholds.HIGH_LOSS_NOMINAL_THRESHOLD so legacy callers
+    that don't pass it get the correct 50jt, not the old 10jt).
+  - SQL now uses `ir."nominalLossSurplus" < -${highLossThreshold}` (Prisma
+    parameterized — no SQL injection risk).
+  - recommendations/route.ts now fetches `getRuntimeThresholds()` and passes
+    `thresholds.HIGH_LOSS_NOMINAL_THRESHOLD` to queryRestoRecommendations.
+  - Updated analysis bullet text from hardcoded "Rp 10Jt" to
+    `Rp ${Math.round(highLossThreshold / 1_000_000)}Jt` so the message stays
+    accurate when the threshold is changed in Settings.
+  - Updated comment at line 390-392 (removed ">10M per item" stale note).
+Impact: Signal 11 now uses the same threshold as the HIGH_LOSS_NOMINAL rule
+  (50jt default). Settings UI changes to HIGH_LOSS_NOMINAL_THRESHOLD now
+  propagate to Signal 11 priority score (5% weight). Pre-fix, an outlet with
+  many 10-50jt loss items got an inflated priority score (Signal 11 captured
+  a broader set than the rule intended). Post-fix, the two are aligned.
+
+═══════════════════════════════════════════════════════════════
+FIX 4 — AUDIT7-CALC-7: variance direction JS/SQL divergence
+═══════════════════════════════════════════════════════════════
+File: src/engine/analysis/rankingService.ts (computeVarianceAnalysis)
+Before:
+  - JS path (line 239): `const varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE'`. Only uses magnitude delta.
+  - SQL path (health-ranking.ts:228-232): checks direction flip FIRST
+    (SURPLUS→LOSS = WORSENED, LOSS→SURPLUS = IMPROVED), then falls back to
+    delta magnitude.
+  - Same input produced different `varianceDirection` depending on path:
+    prev=+100M SURPLUS, curr=-100M LOSS (full reversal) → SQL: WORSENED
+    (flip detected) vs JS: STABLE (delta=0).
+  - /api/analysis (SQL path) vs /api/export-report (JS path) diverged → Word
+    export showed different variance classification than dashboard for items
+    with direction flips. Affects "top worsened/improved" lists.
+After:
+  - JS path now mirrors the SQL CASE:
+      const currDir = computeDirectionFromData(curr);
+      const prevDir = computeDirectionFromData(prev);
+      let varianceDirection: string;
+      if (currDir !== 'NEUTRAL' && prevDir !== 'NEUTRAL' && currDir !== prevDir) {
+        // Sign flip detected.
+        // SURPLUS→LOSS = WORSENED, LOSS→SURPLUS = IMPROVED.
+        varianceDirection = currDir === 'LOSS' ? 'WORSENED' : 'IMPROVED';
+      } else {
+        // No flip — fall back to magnitude delta.
+        varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
+      }
+  - `computeDirectionFromData` already handles the NULL fallback (qtyDeviasi
+    when nominalLossSurplus is null), so the JS path matches the SQL CASE
+    which checks nominalLossSurplus sign with qtyDeviasi NULL fallback.
+  - Also reuses the computed `currDir` for the `direction` field (was calling
+    `computeDirectionFromData(curr)` twice — minor perf win).
+Impact: Dashboard (/api/analysis) and Word export (/api/export-report) now
+  produce identical variance classifications. SURPLUS→LOSS with equal
+  magnitude is now correctly WORSENED in both paths (was STABLE in JS).
+
+═══════════════════════════════════════════════════════════════
+FIX 5 — AUDIT7-BE-4: Zod validation for /api/pareto
+═══════════════════════════════════════════════════════════════
+Files: src/lib/validation.ts + src/app/api/pareto/route.ts
+Before:
+  - /api/pareto read query params via `url.searchParams.get(...)` with NO
+    `validateQuery` call. A 10KB `month` value or malformed `week` would
+    pass through unvalidated. Inconsistent with /api/analysis (line 95-98)
+    and /api/recommendations (line 23-26) which both use validateQuery.
+After:
+  - Added `paretoQuerySchema` to validation.ts (after recommendationsQuerySchema):
+      export const paretoQuerySchema = z.object({
+        month: monthLabelSchema,
+        week: weekLabelSchema,
+        area: areaSchema,
+        kelompok: kelompokSchema,
+        pic: picSchema,
+        parentDim: z.enum(['item', 'outlet', 'area', 'kelompok', 'pic']).optional(),
+        childDim: z.enum(['item', 'outlet', 'area', 'kelompok', 'pic']).optional(),
+      });
+    parentDim/childDim included for forward-compat with the multi-nesting
+    feature (AUDIT7-BE-1 — backend not yet implemented). Strict enum prevents
+    arbitrary strings from reaching downstream SQL/JS consumers.
+  - /api/pareto GET now calls `validateQuery(paretoQuerySchema, url.searchParams)`
+    immediately after the rate-limit check, before reading any param values.
+    Returns 400 with the Zod error message on validation failure.
+Impact: Malformed query params now return 400 instead of silently producing
+  empty results. /api/pareto is now consistent with /api/analysis +
+  /api/recommendations validation patterns. Forward-compatible with the
+  multi-nesting feature (parentDim/childDim already validated).
+
+═══════════════════════════════════════════════════════════════
+FIX 6 — AUDIT7-BE-8: rate limit on /api/settings DELETE
+═══════════════════════════════════════════════════════════════
+File: src/app/api/settings/route.ts (DELETE handler)
+Before:
+  - POST handler (line 78) was rate-limited via `rateLimit('settings:${ip}', ...)`.
+  - DELETE handler (line 207) had NO rate limit. An attacker could spam
+    DELETE requests to trigger 30 upserts per call (line 239-256:
+    `db.$transaction(SETTING_DEFINITIONS.map(...))`), causing DB write
+    contention + cache invalidation storms + audit log spam.
+After:
+  - DELETE handler now calls `rateLimit('settings-delete:${ip}', ...)` at the
+    top of the try block, before any DB work. Uses a SEPARATE bucket
+    (`settings-delete:${ip}`) so an attacker who exhausts the POST bucket
+    can't also exhaust the DELETE bucket on a separate counter — both
+    endpoints have their own independent 60-req/min budget (RATE_LIMITS.settings).
+  - Returns 429 with the same Indonesian error message as POST:
+    "Rate limit exceeded. Tunggu beberapa menit sebelum mencoba lagi."
+Impact: DELETE endpoint no longer has an unbounded DoS vector. Both POST and
+  DELETE are now independently rate-limited. Cache invalidation storms from
+  DELETE spam are now capped at RATE_LIMITS.settings.maxRequests per minute.
+
+═══════════════════════════════════════════════════════════════
+FIX 7 — AUDIT7-FE-4 + AUDIT7-FE-5: AnalysisData type fixes
+═══════════════════════════════════════════════════════════════
+File: src/hooks/useAnalysis.ts (AnalysisData interface)
+Before:
+  - `filters` type declared only 3 fields: `{ area, outletCode, itemName }`.
+    Backend (analysis/route.ts:951) emits 5 fields: `{ area, kelompok,
+    outletCode, itemName, pic }` (with explicit "FIX (BUG-PERF-11): include
+    pic too" comment). Frontend silently dropped the kelompok + pic fields
+    from the type signature.
+  - `trendProjection` and `patterns` fields were computed and emitted by
+    the backend (analysis/route.ts:989-990) but NOT declared in AnalysisData.
+    Dead data per worklog FORECAST-3 (line 11313).
+After:
+  - Added `kelompok: string | null` and `pic: string | null` to `filters`:
+      filters: {
+        area: string | null;
+        kelompok: string | null;
+        outletCode: string | null;
+        itemName: string | null;
+        pic: string | null;
+      };
+  - Added two new optional fields near the end of AnalysisData (after
+    `growthDrivers?` and before `durationMs`):
+      trendProjection?: TrendProjection | null;
+      patterns?: PatternDetection[];
+  - Imported the types:
+      import type { TrendProjection } from '@/lib/metrics/forecast';
+      import type { PatternDetection } from '@/engine/analysis/patternEngine';
+    Both already existed in the codebase (forecast.ts:52 + patternEngine.ts:116)
+    — no new type definitions needed.
+Impact: Future components that want to display the active filter state (e.g.
+  "Active filters: Area=BDG, Kelompok=JKT, PIC=John") no longer hit a
+  TypeScript error. Components that want to consume the trendProjection
+  forecast or pattern detection data (e.g. PrioritySummaryCard, which
+  currently synthesizes trend data locally using hard-coded 1.18×/1.25×
+  ratios per FORECAST-3) can now access the real API fields with proper
+  typing. NOTE: this fix is type-only — no consumer wiring was added. The
+  FORECAST-3 suggestion was to either wire the fields OR drop the backend
+  computation; this fix takes the "wire the types" approach to enable
+  future consumer wiring without breaking the response contract.
+
+═══════════════════════════════════════════════════════════════
+VERIFICATION
+═══════════════════════════════════════════════════════════════
+- `bunx tsc --noEmit` → 0 errors.
+- `bun run lint` → 0 errors, 9 pre-existing warnings (all react-hooks/*
+  in unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer,
+  SourceDataModal, PicManagementDialog). No new warnings introduced.
+
+Files changed (7 files):
+- src/lib/queries/outlets/resto-recommendations.ts (AUDIT7-CALC-4 + CALC-8 + CALC-11)
+- src/app/api/recommendations/route.ts (AUDIT7-CALC-8 + CALC-11 plumbing)
+- src/engine/analysis/rankingService.ts (AUDIT7-CALC-7)
+- src/lib/validation.ts (AUDIT7-BE-4 — added paretoQuerySchema)
+- src/app/api/pareto/route.ts (AUDIT7-BE-4 — wired validateQuery)
+- src/app/api/settings/route.ts (AUDIT7-BE-8)
+- src/hooks/useAnalysis.ts (AUDIT7-FE-4 + FE-5)
+
+Out of scope (per task brief — NOT touched):
+- AUDIT7-CALC-9 (BENCHMARK dead rules in rule-evaluation.ts + rules.yaml) —
+  P2, not in the 7-bug scope.
+- AUDIT7-CALC-13 (stale comments in deviation.ts:267-268) — P3, not in scope.
+- AUDIT7-BE-1 (multi-nesting pareto feature) — P0, blocked by backend
+  implementation, separate task.
+- Legacy dead code in outlets.ts (queryRestoRecommendations duplicate) —
+  per worklog:19937 the file is dead; same bug pattern but no live consumer.
+
+Next actions recommended:
+1. Add a unit test for the AUDIT7-CALC-7 fix: feed computeVarianceAnalysis
+   prev=+100M SURPLUS, curr=-100M LOSS → assert varianceDirection==='WORSENED'
+   (was 'STABLE' before fix). Mirror the SQL-path test if one exists.
+2. Add a unit test for AUDIT7-CALC-4: feed 3 outlets with devBom 0.5, 0.5, 0.5
+   but qtyBom 10, 10, 1000 → assert networkAvgDevBom is volume-weighted
+   (smaller than arithmetic mean because the large-BOM outlet dominates).
+3. Wire trendProjection + patterns into PrioritySummaryCard (per FORECAST-3
+   suggestion (a)) — replaces synthesized 1.18×/1.25× ratios with real API
+   data. Type-only fix here enables this wiring without further type changes.
+4. Consider removing the dead BENCHMARK rules per AUDIT7-CALC-9 (P2) — out of
+   scope for this task but the duplicate-flag issue in /api/export-report
+   remains open.
+
+═══════════════════════════════════════════════════════════════
+RESTORE-SHARED-1 — Restore shared abstractions in shared.ts
+═══════════════════════════════════════════════════════════════
+Agent: code restoration sub-agent
+Status: COMPLETED
+Files touched (7):
+  - src/lib/queries/shared.ts (added 2 exports)
+  - src/lib/queries/pareto.ts (refactored computePareto → delegates to shared)
+  - src/lib/queries/growth-drivers.ts (refactored computePareto → delegates to shared)
+  - src/lib/queries/items/top-items.ts (2 inline CASE WHEN replaced)
+  - src/lib/queries/items/global-search.ts (2 inline CASE WHEN replaced)
+  - src/lib/queries/outlets/resto-recommendations.ts (2 inline CASE WHEN replaced)
+  - src/lib/queries/outlets/peer-comparison.ts (1 inline CASE WHEN replaced)
+
+───────────────────────────────────────────────────────────────
+1. Added `DIRECTION_FROM_SUM_SQL` to src/lib/queries/shared.ts
+───────────────────────────────────────────────────────────────
+Position: immediately after `SqlFilterOpts` interface (after line 64).
+Shape: exported `Prisma.sql` fragment containing the 5-branch CASE WHEN
+that derives direction from `SUM(ir."nominalLossSurplus")` with a
+`SUM(ir."qtyDeviasi")` fallback when nominalLossSurplus is NULL.
+Branches: LOSS / SURPLUS / LOSS / SURPLUS / NEUTRAL.
+
+───────────────────────────────────────────────────────────────
+2. Added `computePareto8020` to src/lib/queries/shared.ts
+───────────────────────────────────────────────────────────────
+Position: immediately after `DIRECTION_FROM_SUM_SQL`.
+Exports added:
+  - `WithPareto<T>` type alias = `T & { sharePct: number; cumPct: number }`
+  - `ParetoResult8020<T>` interface (drivers / remainderCount /
+    remainderPct / totalMagnitude / totalCount)
+  - `computePareto8020<T>(rows, getValue, threshold=0.80, maxDrivers=20)`
+    function — sorts rows by `|getValue(row)|` desc, accumulates
+    `sharePct` + `cumPct`, breaks when `cumPct >= threshold*100` OR
+    `drivers.length >= maxDrivers`. Returns `{ drivers, remainderCount,
+    remainderPct, totalMagnitude, totalCount }`.
+Notes:
+  - Uses `[...rows].sort()` (copy) so input array is not mutated — unlike
+    the old inline version in growth-drivers.ts which mutated the caller's
+    array in-place. No call site relied on the in-place mutation (both
+    `arr` arguments were freshly-built `positive` / `negative` arrays).
+  - `totalMagnitude` (shared) replaces `totalAbsNominal` (pareto.ts) and
+    `totalDelta` (growth-drivers.ts) — same semantics: sum of |getValue|.
+
+───────────────────────────────────────────────────────────────
+3. Consumer updates
+───────────────────────────────────────────────────────────────
+3a. src/lib/queries/pareto.ts
+  - Import: added `computePareto8020` to the `from './shared'` import.
+  - Replaced the inline `computePareto<T extends { totalAbsNominal: ... }>`
+    body (~30 lines of sort+cumsum+threshold loop) with a thin adapter
+    (~10 lines) that calls `computePareto8020(rows, r => r.totalAbsNominal,
+    threshold, maxDrivers)` and maps `totalMagnitude → totalAbsNominal`
+    to preserve the existing `ParetoResult` interface (used by
+    `mergeHistoricalIntoPareto`). 5 call sites unchanged.
+
+3b. src/lib/queries/growth-drivers.ts
+  - Import: added `computePareto8020` to the `from './shared'` import.
+  - Replaced the inline `computePareto(arr)` body (~25 lines of
+    sort+cumsum+threshold loop) with a thin adapter (~6 lines) that
+    calls `computePareto8020(arr, d => d.delta)` and picks the 3 fields
+    `DriverResult` needs (drivers / remainderCount / remainderPct).
+    The shared function also returns `totalMagnitude` + `totalCount`
+    which DriverResult doesn't declare — those are simply not picked.
+    DriverEntry shape matches `WithPareto<{ item, delta, pct }>` exactly,
+    so `r.drivers as DriverEntry[]` is a safe cast.
+
+3c. src/lib/queries/items/top-items.ts
+  - Import: added `DIRECTION_FROM_SUM_SQL` to the `from '../shared'` import.
+  - 2 inline CASE WHEN patterns replaced:
+    * `queryTopItemsByNominal` (line 31): `as direction`
+    * `queryTopItemsByCategory` (line 373): `as direction`
+  Both replaced with `${DIRECTION_FROM_SUM_SQL} as direction`.
+
+3d. src/lib/queries/items/global-search.ts
+  - Import: added `DIRECTION_FROM_SUM_SQL` to the `from '../shared'` import.
+  - 2 inline CASE WHEN patterns replaced:
+    * `queryGlobalItemSearch` (line 70): `as "direction"`
+    * `queryItemTrend` (line 190): `as "direction"`
+  Both replaced with `${DIRECTION_FROM_SUM_SQL} as "direction"`.
+
+3e. src/lib/queries/outlets/resto-recommendations.ts
+  - Import: added `DIRECTION_FROM_SUM_SQL` to the `from '../shared'` import.
+  - 2 inline CASE WHEN patterns replaced:
+    * `outlet_aggs` CTE (line 143): `as "outletDirection"`
+    * prev-period query (line 208): `as "prevDirection"`
+  Both replaced with `${DIRECTION_FROM_SUM_SQL} as "outletDirection"`
+  / `as "prevDirection"` respectively (column aliases preserved).
+
+3f. src/lib/queries/outlets/peer-comparison.ts
+  - Import: added `DIRECTION_FROM_SUM_SQL` to the `from '../shared'` import.
+  - 1 inline CASE WHEN pattern replaced:
+    * `queryPeerItemComparison` (line 306): `as "direction"`
+  Replaced with `${DIRECTION_FROM_SUM_SQL} as "direction"`.
+
+───────────────────────────────────────────────────────────────
+4. Verification
+───────────────────────────────────────────────────────────────
+  - `bunx tsc --noEmit`: 0 errors. ✅
+  - `bun run lint`: 0 errors, 9 pre-existing warnings (all
+    react-hooks/exhaustive-deps + react-hooks/incompatible-library
+    in unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer,
+    SourceDataModal, PicManagementDialog). NO new warnings introduced
+    by this change. ✅
+  - Grep verification: `nominalLossSurplus" IS NOT NULL` now appears
+    ONLY in `shared.ts` (1 occurrence inside `DIRECTION_FROM_SUM_SQL`).
+    Zero occurrences remain in any of the 4 consumer query files,
+    confirming all 7 inline CASE WHEN patterns were swapped for the
+    shared import.
+  - `computePareto8020` now imported in both `pareto.ts` and
+    `growth-drivers.ts`; neither file retains the old inline
+    sort+cumsum+threshold loop.
+
+───────────────────────────────────────────────────────────────
+5. Net code delta
+───────────────────────────────────────────────────────────────
+  +  65 lines added to shared.ts (2 new exports + 2 doc-comment blocks)
+  -  ~55 lines removed from pareto.ts (inline computePareto body)
+  +  ~13 lines added to pareto.ts (thin adapter + doc comment)
+  -  ~25 lines removed from growth-drivers.ts (inline computePareto body)
+  +   ~8 lines added to growth-drivers.ts (thin adapter + doc comment)
+  -  ~5 lines × 7 occurrences = ~35 lines removed across the 4 consumer
+     files (inline CASE WHEN fragments), replaced with 1-line imports +
+     1-line `${DIRECTION_FROM_SUM_SQL}` substitutions (net ~-21 lines
+     across consumers)
+  Net: roughly +0 lines, but 2 abstractions centralized → future
+  direction-logic or Pareto-threshold changes now touch 1 file instead
+  of 4 (DIRECTION_FROM_SUM_SQL) or 2 (computePareto8020).
+
+───────────────────────────────────────────────────────────────
+6. Notes / follow-ups
+───────────────────────────────────────────────────────────────
+  - The `ParetoResult8020<T>` interface exposes `totalMagnitude` while
+    the legacy pareto.ts `ParetoResult` (internal, not exported) uses
+    `totalAbsNominal`. The thin adapter in pareto.ts maps the field
+    name. If a future refactor exports `ParetoResult` from pareto.ts,
+    consider replacing it with `ParetoResult8020<ParetoRow>` and
+    renaming `totalAbsNominal` → `totalMagnitude` at all consumers
+    (currently only `mergeHistoricalIntoPareto` reads it, internally).
+  - `queryParetoNestedItemOutlet` in pareto.ts has its own bespoke
+    sharePct/cumPct loop (lines ~330-345 + ~360-367) that does NOT
+    delegate to `computePareto8020` because it has a 2-level
+    (item → outlet) accumulation pattern with a different threshold
+    semantics (always 80% hardcoded, not configurable). Left as-is —
+    converting it would require either a 2-level variant of
+    `computePareto8020` or precomputing sharePct before calling. Out
+    of scope for RESTORE-SHARED-1 (which was about restoring the lost
+    shared abstractions, not refactoring additional call sites).
+  - The `queryParetoByDevBom` function in items/top-items.ts (lines
+    ~559-692) also has its own bespoke Pareto loop that does NOT use
+    the shared `computePareto8020`. Same reason — it has a nested
+    item→outlet structure with a separate threshold for Dev/BOM
+    filtering. Left as-is for the same scope reason.
+
+---
+Task ID: RESTORE-BACKEND-2
+Agent: general-purpose (sub agent)
+Task: Restore 3 backend features lost during force push (build-where + period-resolver + pareto nested)
+
+Work Log:
+- Read worklog.md (last ~300 lines) for context — confirmed pre-existing baseline: 0 tsc errors, 9 lint warnings (all pre-existing in unrelated files: AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal, PicManagementDialog).
+- Inspected current state of all 5 affected files:
+  * src/lib/period-resolver.ts — had resolvePreviousPeriod but NOT resolveComparePeriod
+  * src/lib/queries/pareto.ts — had queryParetoNestedItemOutlet (Item→Outlet specific) but NOT the generalized queryParetoNested
+  * src/app/api/analysis/route.ts — inline buildWhere closure at lines 320-364 (50 lines) + inline prevWeek/prevMonth resolution at lines 252-310 (~60 lines)
+  * src/app/api/export-report/route.ts — inline buildWhere closure at lines 313-340 (~30 lines) + inline prevWeek/prevMonth resolution at lines 360-376 (~15 lines, subtly buggy)
+  * src/app/api/pareto/route.ts — only ran queryParetoNestedItemOutlet; no parentDim/childDim param reads
+  * src/lib/queries/shared.ts — confirmed SqlFilterOpts shape + buildSqlFilters pattern
+  * src/lib/kelompok-resolver.ts — confirmed resolveKelompokOutletCodes helper (already used by both routes)
+
+- Created src/lib/build-where.ts (NEW, 119 lines):
+  * Exported BuildInventoryWhereOpts interface (week, month, area, itemName, kelompok, kelompokOutletCodes, picOutletCodes, outletCode)
+  * Exported buildInventoryWhere(opts) function returning Prisma.InventoryRecordWhereInput
+  * Sentinel pattern: empty PIC list → outlet.code IN ('__NO_MATCH__') → 0 rows (not "show all")
+  * Idempotent sentinel: works whether caller pre-sentineled picOutletCodes (export-report) or passes raw empty array (analysis)
+  * All intersections handled: kelompok∩PIC, kelompok∩outletCode, PIC∩outletCode
+  * Case-insensitive itemName (mode: 'insensitive') — preserves BUG-NORECORDS-2 fix
+  * 'all' string guards for area/outletCode/kelompok — preserves BUG-NORECORDS-1 fix
+
+- Updated src/app/api/analysis/route.ts:
+  * Added imports: buildInventoryWhere from '@/lib/build-where', resolveComparePeriod from '@/lib/period-resolver'
+  * Replaced inline ~60-line prevWeek/prevMonth resolution (lines 252-310) with `const { prevWeek, prevMonth } = await resolveComparePeriod(week!, month!, compareWeek, compareMonthExplicit)`
+  * Reordered: kelompokOutletCodes resolution now happens BEFORE buildWhere definition (was after, relying on closure hoisting)
+  * Replaced inline ~50-line buildWhere closure (lines 320-364) with 11-line delegation: `const buildWhere = (wk, mLabel) => buildInventoryWhere({ week: wk, month: mLabel, area, itemName, kelompok, kelompokOutletCodes, picOutletCodes, outletCode })`
+  * All 4 buildWhere call sites unchanged (buildWhere(week!, month!) at line 437, etc.)
+  * allPeriods + weeksRaw + fileMonthKeys fetches KEPT (still needed for historicalPeriods filtering at line 355)
+
+- Updated src/app/api/export-report/route.ts:
+  * Added imports: buildInventoryWhere, resolveComparePeriod
+  * Replaced inline ~30-line buildWhere closure (lines 313-340) with delegation to buildInventoryWhere
+  * Replaced inline ~15-line prevWeek/prevMonth resolution (lines 360-376) with resolveComparePeriod call
+  * FIXED subtle bug in old logic: when user set compareWeek WITHOUT compareMonth, old code searched for `week` (current week, e.g. WEEK 2) in previous month — not `userCompareWeek` (e.g. WEEK 4). New helper correctly searches for `compareWeek`.
+  * Fixed 6 tsc errors induced by type change: prevWeek is now `string | null` (was `string`). Updated 6 call sites from `prevMonth ? X(prevWeek, prevMonth) : Y` to `prevMonth && prevWeek ? X(prevWeek, prevMonth) : Y` — matches the pattern already used in analysis route line 423. This narrowing works because resolveComparePeriod guarantees prevWeek is null ONLY when prevMonth is also null.
+  * Pre-sentinel logic at lines 298-301 (picOutletCodes = ['__NO_MATCH__'] when empty) KEPT — buildInventoryWhere is idempotent w.r.t. sentinel.
+
+- Updated src/lib/period-resolver.ts:
+  * Added resolveComparePeriod(week, month, compareWeek, compareMonthExplicit) function (~95 lines including JSDoc)
+  * Case 1 (compareWeek null): delegates to existing resolvePreviousPeriod (auto-previous, same weekLabel in previous month, fallback to chronological)
+  * Case 2 (both set): returns { prevWeek: compareWeek, prevMonth: compareMonthExplicit } directly — no DB lookup
+  * Case 3 (compareWeek only): fetches weeks + sourceFiles, searches BACKWARDS then FORWARD for same weekLabel in different month, falls back to current month itself (preserves existing behavior)
+  * Return type matches ResolvedPeriod interface: { prevWeek: string | null; prevMonth: string | null }
+
+- Updated src/lib/queries/pareto.ts (appended ~310 lines, total file now 790 lines):
+  * Exported ParetoDimension type: 'item' | 'outlet' | 'area' | 'kelompok' | 'pic'
+  * Added private getDimensionExpr(dim) — returns { groupExpr, joinItem, joinOutlet, joinPIC }:
+    - 'item': groupExpr='i.name', joinItem only
+    - 'outlet': groupExpr='o.code', joinOutlet only
+    - 'area': groupExpr='o.area', joinOutlet only
+    - 'kelompok': groupExpr="LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)" (matches buildSqlFilters + queryParetoByKelompok), joinOutlet only
+    - 'pic': groupExpr="COALESCE(pic.pic, 'Unassigned')", joinOutlet + joinPIC (CRITICAL: joinOutlet MUST be present — pic LEFT JOIN references o.code)
+  * Added private getDimensionFilter(dim, value) — returns Prisma.Sql WHERE fragment:
+    - 'item': AND i.name = ${value}
+    - 'outlet': AND o.code = ${value}
+    - 'area': AND o.area = ${value}
+    - 'kelompok': AND LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = ${value}
+    - 'pic': special case — if value === 'Unassigned' → AND pic.pic IS NULL (matches COALESCE sentinel); else AND pic.pic = ${value}
+  * Exported NestedParetoResultItem interface (name, totals, sharePct, cumPct, children[])
+  * Exported queryParetoNested(week, month, filters, parentDim, childDim, maxItems=10):
+    - Step 1: query top N parents by |nominalDeviasi| (LIMIT maxItems)
+    - Step 2: per-parent child breakdown via Promise.all (parallelized — same pattern as queryParetoNestedItemOutlet BUG2-PARETO-2 fix)
+    - Pareto 80% cutoff applied to children (same pattern as queryParetoNestedItemOutlet)
+    - Returns { items, totalAbsNominal, parentDim, childDim }
+  * SQL SAFETY (per task spec): JOINs built as plain space-joined string, wrapped in Prisma.raw(). NO Prisma.empty interpolation. Static literal JOIN fragments are safe to interpolate (no user input). This avoids the PgBouncer prepared-statement parameter-shift bug that Prisma.empty caused before.
+  * Each query wrapped in withStatementTimeout (BUG2-PARETO-2 hang-prevention pattern)
+
+- Updated src/app/api/pareto/route.ts:
+  * Added imports: queryParetoNested + type ParetoDimension from '@/lib/queries/pareto'
+  * Added parentDim + childDim URL param reads (validated upstream by paretoQuerySchema Zod enum)
+  * Added useGeneralizedNested flag: true only when both parentDim + childDim provided AND they differ
+  * Added 7th element to Promise.all: `useGeneralizedNested ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10) : Promise.resolve(null)`
+  * Response conditionally includes nestedGeneralized + parentDim + childDim echo (only when both provided)
+  * Backward compat: existing `nested` field (Item→Outlet via queryParetoNestedItemOutlet) always returned
+
+- Ran `bunx tsc --noEmit`:
+  * Initial run: 6 errors in export-report/route.ts (prevWeek type widened to `string | null` by new helper)
+  * Fixed all 6 by adding `&& prevWeek` to ternary conditions (matches existing pattern in analysis route line 423)
+  * Final run: 0 errors
+
+- Ran `bun run lint`:
+  * 0 errors, 9 warnings — ALL pre-existing (AreaTrendChart, QuickSettings, DrillDownDrawer, SourceDataModal, PicManagementDialog)
+  * NO new warnings introduced by RESTORE-BACKEND-2
+
+- Smoke-tested dev server (port 3000):
+  * GET /api/pareto (no params) → 400 "month and week required" ✓
+  * GET /api/pareto?...&parentDim=invalid → 400 "Invalid option: expected one of item|outlet|area|kelompok|pic" ✓ (Zod validation works for new params)
+  * GET /api/pareto?...&parentDim=item&childDim=outlet → 500 "Invalid DATABASE_URL protocol" (env not configured — UNRELATED to my changes; route loaded + validated params + attempted DB query)
+  * GET /api/analysis → 500 DB error (route loads, fails at DB connection — unrelated)
+  * GET /api/export-report → 400 "month and week required" ✓
+
+Stage Summary:
+- 3 backend features fully restored:
+  1. src/lib/build-where.ts (NEW, 119 lines) — buildInventoryWhere helper, shared by analysis + export-report routes (was deleted by force push)
+  2. src/lib/period-resolver.ts — added resolveComparePeriod function (3-case logic: auto-previous / explicit / find-same-week-in-prev-month). Replaces ~60 inline lines in analysis route + ~15 inline lines in export-report route. Also fixes subtle bug in export-report where compareWeek without compareMonth was ignored.
+  3. src/lib/queries/pareto.ts — restored queryParetoNested (generalized multi-nesting). 5 dimensions (item/outlet/area/kelompok/pic) × any parent × child combination. SQL-safe JOINs via Prisma.raw() (avoids Prisma.empty interpolation bug).
+
+- Files created: 1 (src/lib/build-where.ts)
+- Files modified: 4 (analysis/route.ts, export-report/route.ts, pareto/route.ts, period-resolver.ts, queries/pareto.ts)
+- Net code reduction: ~110 inline lines replaced with helper calls (analysis: ~110→15, export-report: ~45→15)
+- Net code addition: ~310 lines in pareto.ts (queryParetoNested + helpers + types), ~95 lines in period-resolver.ts (resolveComparePeriod), ~119 lines in build-where.ts
+- tsc: 0 errors (was 0 before — no regression)
+- lint: 0 errors, 9 warnings (was 0 errors, 9 warnings — no regression, all pre-existing)
+- Backward compat: all existing API response shapes preserved. New `nestedGeneralized` field added to /api/pareto response only when parentDim + childDim both provided.

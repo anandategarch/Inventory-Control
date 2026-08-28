@@ -4,6 +4,12 @@ import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import type { ExecutiveSummary, InvestigationItem } from '@/types/inventory';
+// FIX (AUDIT7-FE-5): import TrendProjection + PatternDetection so the API
+// response fields (`trendProjection`, `patterns`) emitted by /api/analysis
+// (analysis/route.ts:989-990) are properly typed on the frontend. Previously
+// computed + sent but never typed — dead data per worklog FORECAST-3.
+import type { TrendProjection } from '@/lib/metrics/forecast';
+import type { PatternDetection } from '@/engine/analysis/patternEngine';
 
 // ============================================================
 //  Item-level top-N ranking shapes (mirror of API response)
@@ -183,7 +189,17 @@ export interface AreaTrendRow {
 export interface AnalysisData {
   success: boolean;
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
-  filters: { area: string | null; outletCode: string | null; itemName: string | null };
+  // FIX (AUDIT7-FE-4): backend emits 5 fields (area, kelompok, outletCode,
+  // itemName, pic) in `filters` (analysis/route.ts:951) — frontend type was
+  // missing `kelompok` + `pic`. Made all 5 nullable for back-compat with
+  // mock/test data that omits them.
+  filters: {
+    area: string | null;
+    kelompok: string | null;
+    outletCode: string | null;
+    itemName: string | null;
+    pic: string | null;
+  };
   executiveSummary: ExecutiveSummary;
   healthStatus: {
     normal: number;
@@ -261,6 +277,12 @@ export interface AnalysisData {
   // NEW: area trend for AreaTrendChart
   areaTrend?: AreaTrendRow[];
   growthDrivers?: GrowthDriverMetric[];
+  // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
+  // /api/analysis (analysis/route.ts:989-990) — were missing from the type.
+  // Optional + nullable so consumers can render a no-data state when the
+  // backend returns null (insufficient historical weeks for regression).
+  trendProjection?: TrendProjection | null;
+  patterns?: PatternDetection[];
   durationMs: number;
   cached?: boolean;
   message?: string;

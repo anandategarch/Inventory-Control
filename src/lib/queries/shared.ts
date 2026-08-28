@@ -64,6 +64,72 @@ export interface SqlFilterOpts {
 }
 
 // ============================================================
+//  DIRECTION_FROM_SUM_SQL — shared CASE WHEN fragment that
+//  derives LOSS/SURPLUS/NEUTRAL from SUM(ir."nominalLossSurplus")
+//  with a fallback to SUM(ir."qtyDeviasi") when nominalLossSurplus
+//  is NULL. Used by top-items, global-search, resto-recommendations,
+//  peer-comparison to avoid duplicating the 5-branch CASE across
+//  every query.
+//
+//  FIX (RESTORE-SHARED-1): this constant was lost during a force
+//  push and was inlined as a 6-line CASE WHEN in 4 query files.
+//  Restored here as a single shared Prisma.sql fragment.
+// ============================================================
+export const DIRECTION_FROM_SUM_SQL = Prisma.sql`
+  CASE
+    WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
+    WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
+    WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
+    WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
+    ELSE 'NEUTRAL'
+  END
+`;
+
+// ============================================================
+//  computePareto8020 — shared Pareto 80/20 driver extraction.
+//  Sorts rows by |getValue(row)| desc, accumulates share% until
+//  cumulative share crosses `threshold` (default 80%) or
+//  `maxDrivers` rows accumulated (default 20).
+//
+//  Used by pareto.ts (per dimension) + growth-drivers.ts (up/down
+//  per metric) to avoid duplicating the sort+cumsum+threshold loop.
+//
+//  FIX (RESTORE-SHARED-1): this function was lost during a force
+//  push and was inlined as ~30 lines of duplicate logic in both
+//  consumer files. Restored here as a single generic helper.
+// ============================================================
+export type WithPareto<T> = T & { sharePct: number; cumPct: number };
+export interface ParetoResult8020<T> {
+  drivers: WithPareto<T>[];
+  remainderCount: number;
+  remainderPct: number;
+  totalMagnitude: number;
+  totalCount: number;
+}
+export function computePareto8020<T>(
+  rows: T[],
+  getValue: (row: T) => number,
+  threshold: number = 0.80,
+  maxDrivers: number = 20,
+): ParetoResult8020<T> {
+  const sorted = [...rows].sort((a, b) => Math.abs(getValue(b)) - Math.abs(getValue(a)));
+  const totalMagnitude = sorted.reduce((s, r) => s + Math.abs(getValue(r)), 0);
+  if (totalMagnitude === 0) {
+    return { drivers: [], remainderCount: 0, remainderPct: 0, totalMagnitude: 0, totalCount: rows.length };
+  }
+  let cumPct = 0;
+  const drivers: WithPareto<T>[] = [];
+  for (const r of sorted) {
+    if (drivers.length >= maxDrivers) break;
+    const sharePct = (Math.abs(getValue(r)) / totalMagnitude) * 100;
+    cumPct += sharePct;
+    drivers.push({ ...r, sharePct: Number(sharePct.toFixed(1)), cumPct: Number(cumPct.toFixed(1)) });
+    if (cumPct >= threshold * 100) break;
+  }
+  return { drivers, remainderCount: rows.length - drivers.length, remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)), totalMagnitude, totalCount: rows.length };
+}
+
+// ============================================================
 //  Build filter conditions for raw SQL (Prisma.sql fragments)
 //  Returns an empty Prisma.sql fragment when no filters apply
 //  (Prisma.join requires ≥1 element, so handle empty case explicitly)

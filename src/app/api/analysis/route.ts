@@ -47,6 +47,10 @@ import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
+// FIX (RESTORE-BACKEND-2): use shared buildInventoryWhere instead of inline closure
+import { buildInventoryWhere } from '@/lib/build-where';
+// FIX (RESTORE-BACKEND-2): use shared resolveComparePeriod instead of inline ~60-line block
+import { resolveComparePeriod } from '@/lib/period-resolver';
 import { buildCacheKey, getCached, setCached, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 // Phase 3: ExecutiveSummary type no longer needed here — buildExecSummaryFromSql
@@ -253,115 +257,20 @@ export async function GET(req: NextRequest) {
     // Weeks are CUMULATIVE (W1=1-7, W2=1-14, W4=1-25). Comparing W4 vs W2 is NOT
     // apples-to-apples (25 days vs 14 days → always positive growth). Must compare
     // same weekLabel: W4 Juli vs W4 Juni, W2 Juli vs W2 Juni, etc.
-    let prevWeek = compareWeek;
-    let prevMonth: string | null = null;
-    if (!prevWeek) {
-      // Auto-compare: find same weekLabel in the most recent month BEFORE current
-      prevWeek = week; // SAME week as current — compare W4 vs W4 (prev month)
-      const currentPeriodIdx = allPeriods.findIndex(
-        (p) => p.monthLabel === month && p.weekLabel === week
-      );
-      // Search backwards from current period for same weekLabel in a different month
-      let foundMonth: string | null = null;
-      const startIdx = currentPeriodIdx >= 0 ? currentPeriodIdx - 1 : allPeriods.length - 1;
-      for (let i = startIdx; i >= 0; i--) {
-        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
-          foundMonth = allPeriods[i].monthLabel;
-          break;
-        }
-      }
-      prevMonth = foundMonth;
-      if (!prevMonth) {
-        // No previous month with same week — fall back to chronological previous period
-        if (currentPeriodIdx > 0) {
-          const prev = allPeriods[currentPeriodIdx - 1];
-          prevWeek = prev.weekLabel;
-          prevMonth = prev.monthLabel;
-        }
-      }
-    } else {
-      // Manual compare — user specified a weekLabel
-      if (compareMonthExplicit) {
-        prevMonth = compareMonthExplicit;
-      } else {
-        // FIX (BUG 2): Find same weekLabel in most recent month BEFORE current
-        // (exclude same month — was missing, caused W4 vs W2 same-month comparison)
-        const currentIdx = allPeriods.findIndex(
-          (p) => p.monthLabel === month && p.weekLabel === week
-        );
-        let foundMonth: string | null = null;
-        const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
-        for (let i = startIdx; i >= 0; i--) {
-          if (allPeriods[i].weekLabel === prevWeek && allPeriods[i].monthLabel !== month) {
-            foundMonth = allPeriods[i].monthLabel;
-            break;
-          }
-        }
-        if (!foundMonth) {
-          for (let i = (currentIdx >= 0 ? currentIdx + 1 : 0); i < allPeriods.length; i++) {
-            if (allPeriods[i].weekLabel === prevWeek && allPeriods[i].monthLabel !== month) {
-              foundMonth = allPeriods[i].monthLabel;
-              break;
-            }
-          }
-        }
-        prevMonth = foundMonth || month;
-      }
-    }
-
-    // ===== BUG FIX #4: buildWhere accepts monthLabel parameter (for cross-month) =====
-    // BUG FIX (BUG-NORECORDS-1): add area/outletCode 'all' guards (was missing — caused
-    // "No records found" if frontend sent 'all' as literal string).
-    // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter (mode: 'insensitive').
-    // FIX (BUG-KELOMPOK-EMPTY): add kelompok filter so currSlim (rule evaluation)
-    // also respects the kelompok dropdown. Without this, rule flags (NORMAL/WARNING/
-    // ABNORMAL) and health ranking counts would include ALL outlets, contradicting
-    // the SQL aggregates (which DO filter by kelompok via buildSqlFilters).
-    const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput => {
-      const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
-      if (area && area !== 'all') w.area = area;
-      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
-      // Kelompok: filter outlet by code prefix (last dot-segment, first 3 chars).
-      // Prisma startsWith on 'code' won't work (kelompok is in the middle/end),
-      // so we resolve kelompok → list of outlet codes first via a sub-query.
-      // Cheaper: use Prisma's relation filter with a startsWith on the LAST segment.
-      // Since Prisma can't easily express "LEFT(SUBSTRING(code, '[^.]+$'),3) = X",
-      // we resolve outlet codes here.
-      // FIX: deferred resolution — we compute kelompokOutletIds once below (after
-      // this function definition) and reference via closure. See kelompokOutletIds.
-      // FIX (BUG-BE-9): removed dead `kelompokOutletCodes !== null` check — it's
-      // always an array (never null). The empty-array check below handles the
-      // "no outlets match" case.
-      if (kelompok && kelompok !== 'all') {
-        if (kelompokOutletCodes.length === 0) {
-          // kelompok selected but no outlets match — sentinel to return 0 rows
-          w.outlet = { code: { in: ['__NO_MATCH__'] } };
-        } else {
-          // Intersect with PIC/outletCode filters if both set
-          if (picOutletCodes !== null) {
-            const picCodes = picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'];
-            const intersect = kelompokOutletCodes.filter((c: string) => picCodes.includes(c));
-            w.outlet = { code: { in: intersect.length > 0 ? intersect : ['__NO_MATCH__'] } };
-          } else if (outletCode && outletCode !== 'all') {
-            w.outlet = { code: kelompokOutletCodes.includes(outletCode) ? outletCode : '__NO_MATCH__' };
-          } else {
-            w.outlet = { code: { in: kelompokOutletCodes } };
-          }
-        }
-      } else if (picOutletCodes !== null) {
-        // PIC selected — filter to PIC's outlets (or sentinel if empty → 0 rows)
-        let codes = picOutletCodes.length > 0 ? picOutletCodes : ['__NO_MATCH__'];
-        // If outletCode also selected, intersect (outletCode must be in PIC list)
-        if (outletCode && outletCode !== 'all') {
-          codes = codes.includes(outletCode) ? [outletCode] : ['__NO_MATCH__'];
-        }
-        w.outlet = { code: { in: codes } };
-      } else if (outletCode && outletCode !== 'all') {
-        // Only outletCode selected (no PIC)
-        w.outlet = { code: outletCode };
-      }
-      return w;
-    };
+    //
+    // FIX (RESTORE-BACKEND-2): the inline ~60-line period-resolution block has been
+    // extracted to `@/lib/period-resolver.ts` as `resolveComparePeriod`. It handles
+    // 3 cases: (1) compareWeek=null → auto-previous, (2) compareWeek+compareMonthExplicit
+    // both set → use them directly, (3) compareWeek only → find same weekLabel in
+    // most recent month before current (fallback: after current, then current month).
+    // The helper does its own db.week + db.sourceFile fetch (~3ms — small tables);
+    // allPeriods above is still needed below for historicalPeriods filtering.
+    const { prevWeek, prevMonth } = await resolveComparePeriod(
+      week!,
+      month!,
+      compareWeek,
+      compareMonthExplicit,
+    );
 
     // FIX (BUG-KELOMPOK-EMPTY): resolve kelompok → outlet codes ONCE for buildWhere.
     // The raw SQL path (buildSqlFilters) uses an inline sub-select, but Prisma's
@@ -372,7 +281,29 @@ export async function GET(req: NextRequest) {
     // SQL filter (same LEFT(SUBSTRING(...)) expression as buildSqlFilters). This is
     // ~5x faster (1 SQL query vs fetch-all + JS loop) and deduplicates the logic
     // that was copy-pasted in export-report/route.ts.
+    //
+    // FIX (RESTORE-BACKEND-2): the inline `buildWhere` closure that lived here
+    // (50 lines) has been extracted to @/lib/build-where.ts as `buildInventoryWhere`
+    // and is shared with /api/export-report. The closure depended on `kelompokOutletCodes`
+    // via JS hoisting (resolved below); the extracted helper takes it as an explicit
+    // parameter, so we resolve kelompokOutletCodes BEFORE constructing buildWhere.
     const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
+
+    // FIX (RESTORE-BACKEND-2): buildWhere now delegates to the shared
+    // `buildInventoryWhere` helper. The helper handles area/itemName/kelompok
+    // /PIC/outletCode + all intersections. Sentinel for empty PIC list is
+    // applied inside the helper (idempotent if caller already sentineled).
+    const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput =>
+      buildInventoryWhere({
+        week: wk,
+        month: mLabel,
+        area,
+        itemName,
+        kelompok,
+        kelompokOutletCodes,
+        picOutletCodes,
+        outletCode,
+      });
 
     // Shared filter options for SQL aggregate queries
     // FIX FILTER-2: apply sentinel for empty PIC list (buildSqlFilters skips empty arrays)

@@ -5,7 +5,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ============================================================
 //  Resto Recommendation Engine — rank all outlets by priority
@@ -57,7 +57,15 @@ export async function queryRestoRecommendations(
   prevWeek: string | null,
   prevMonth: string | null,
   filters: SqlFilterOpts,
-  limit: number = 5
+  limit: number = 5,
+  // FIX (AUDIT7-CALC-8): currentMonthKey used to filter future months from
+  // the historical baseline. When omitted, falls back to `monthLabel != ${month}`.
+  currentMonthKey?: string | null,
+  // FIX (AUDIT7-CALC-11): Signal 11 (High Loss Nominal Items) threshold.
+  // Defaults to 50jt (matches RuntimeThresholds.HIGH_LOSS_NOMINAL_THRESHOLD).
+  // Callers should pass `thresholds.HIGH_LOSS_NOMINAL_THRESHOLD` so Settings UI
+  // changes propagate to the priority score.
+  highLossThreshold: number = 50_000_000,
 ): Promise<RestoRecommendation[]> {
   const f = buildSqlFilters(filters);
 
@@ -123,17 +131,16 @@ export async function queryRestoRecommendations(
           COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
           -- FIX REC-1: was MAX() returning 0/1; now COUNT() returns actual number of items without tolerance
           COUNT(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 END) as "hasNoTolerance",
-          -- FIX CALC-4: LOSS = negative nominalLossSurplus. High loss = < -10jt
-          COUNT(CASE WHEN ir."nominalLossSurplus" < -10000000 THEN 1 END) as "highLossItem",
+          -- FIX CALC-4: LOSS = negative nominalLossSurplus. High loss = < -threshold
+          -- FIX (AUDIT7-CALC-11): was hardcoded -10000000 (10jt) — diverged from
+          -- the actual HIGH_LOSS_NOMINAL rule (50jt default, runtime-configurable
+          -- via Settings UI). Now uses the highLossThreshold parameter so
+          -- Settings changes propagate to Signal 11 priority score (5% weight).
+          COUNT(CASE WHEN ir."nominalLossSurplus" < -${highLossThreshold} THEN 1 END) as "highLossItem",
           -- FIX CALC-5: compute outlet direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
           -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
-          CASE
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-            ELSE 'NEUTRAL'
-          END as "outletDirection"
+          -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
+          ${DIRECTION_FROM_SUM_SQL} as "outletDirection"
         FROM "InventoryRecord" ir
         WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
           ${f}
@@ -165,6 +172,7 @@ export async function queryRestoRecommendations(
         COALESCE(oa."itemCount", 0) as "itemCount",
         COALESCE(oa."deviatingItems", 0) as "deviatingItems",
         COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
+        COALESCE(oa."qtyBom", 0) as "totalQtyBom",
         COALESCE(oa."grossAbsNominal", 0) as "grossAbsNominal",
         COALESCE(oa."qtyDeviasiLoss", 0) as "qtyDeviasiLoss",
         COALESCE(oa."residualNominal", 0) as "residualNominal",
@@ -196,13 +204,8 @@ export async function queryRestoRecommendations(
             ELSE 0 END as "prevDevBom",
           -- FIX CALC-5: compute prev direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
           -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
-          CASE
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-            ELSE 'NEUTRAL'
-          END as "prevDirection"
+          -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
+          ${DIRECTION_FROM_SUM_SQL} as "prevDirection"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
         WHERE ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}
@@ -214,6 +217,10 @@ export async function queryRestoRecommendations(
     // FIX (BUG-HUNT-CALC): was AVG(ABS(per-record nominalDeviasi)) — scale mismatch with
     // current |SUM(nominalDeviasi)|. Now uses 2-level CTE: weekly_dev (per outlet+month+week)
     // → AVG(weeklyTotal). This matches queryParetoHistorical pattern.
+    // FIX (AUDIT7-CALC-8): JOIN SourceFile + filter `sf."monthKey" < currentMonthKey`
+    // to exclude FUTURE months from the baseline. Latent bug — active if future
+    // months exist in DB (test data, planned uploads). Fallback to `monthLabel != ${month}`
+    // when currentMonthKey is unavailable (e.g. legacy caller).
     db.$queryRaw<any[]>`
       WITH weekly_dev AS (
         SELECT o.code as "outletCode",
@@ -221,8 +228,15 @@ export async function queryRestoRecommendations(
           ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
+        ${currentMonthKey
+          ? Prisma.sql`JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`
+          : Prisma.empty
+        }
         WHERE ir."weekLabel" = ${week}
-          AND ir."monthLabel" != ${month}
+          ${currentMonthKey
+            ? Prisma.sql`AND sf."monthKey" < ${currentMonthKey}`
+            : Prisma.sql`AND ir."monthLabel" != ${month}`
+          }
           AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
           ${f}
         GROUP BY o.code, ir."monthLabel", ir."weekLabel"
@@ -252,9 +266,16 @@ export async function queryRestoRecommendations(
   }
 
   // Compute network averages for ratio
-  const networkAvgDevBom = currRows.length > 0
-    ? currRows.reduce((s, r) => s + Number(r.devBom), 0) / currRows.length
-    : 0;
+  // FIX (AUDIT7-CALC-4): was arithmetic mean of per-outlet devBom ratios — biased.
+  // Outlets with small BOM got equal weight to outlets with large BOM, skewing
+  // the network average. Now volume-weighted: SUM(totalQtyDeviasi) / SUM(totalQtyBom),
+  // matching the master context §1 "Volume-weighted aggregate (bukan AVG per record)"
+  // convention used everywhere else (outlet, area, trend). SQL CTE exposes
+  // `totalQtyDeviasi` + `totalQtyBom` per outlet — both needed for the weighted sum.
+  // With div-by-zero guard for networks where every outlet has zero BOM.
+  const sumQtyDeviasi = currRows.reduce((s, r) => s + Number(r.totalQtyDeviasi ?? 0), 0);
+  const sumQtyBom = currRows.reduce((s, r) => s + Number(r.totalQtyBom ?? 0), 0);
+  const networkAvgDevBom = sumQtyBom > 0 ? sumQtyDeviasi / sumQtyBom : 0;
   // REC-7: totalNetworkDeviasi was computed but never used — removed
 
   // Compute Priority Score per outlet
@@ -356,7 +377,9 @@ export async function queryRestoRecommendations(
     // Signal 10: Over-Explained / Fraud Indicator (7%) — OVER_EXPLAINED rule
     const s10Score = Math.min(100, overExplainedCount * 50);
 
-    // Signal 11: High Loss Nominal Items (5%) — HIGH_LOSS_NOMINAL rule (>10M per item)
+    // Signal 11: High Loss Nominal Items (5%) — HIGH_LOSS_NOMINAL rule
+    // FIX (AUDIT7-CALC-11): threshold now runtime-configurable via `highLossThreshold`
+    // parameter (default 50jt, mirrors RuntimeThresholds.HIGH_LOSS_NOMINAL_THRESHOLD).
     const s11Score = Math.min(100, highLossItem * 20);
 
     // Signal 12: No Tolerance Set (3%) — TOLERANCE_NOT_SET rule
@@ -412,7 +435,7 @@ export async function queryRestoRecommendations(
     if (itemConcentration > 0.3 && topItem) analysis.push(`Item "${topItem}" kontribusi ${(itemConcentration * 100).toFixed(0)}% dari total deviasi`);
     if (toleranceBreachHighCount > 0) analysis.push(`${toleranceBreachHighCount} item melebihi toleransi > 2× (TOLERANCE_BREACH_HIGH)`);
     if (overExplainedCount > 0) analysis.push(`${overExplainedCount} item Waste+Susut+Trial melebihi total deviasi — indikasi salah input atau fraud`);
-    if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp 10Jt (HIGH_LOSS_NOMINAL)`);
+    if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp ${Math.round(highLossThreshold / 1_000_000)}Jt (HIGH_LOSS_NOMINAL)`);
     if (hasNoTolerance > 0) analysis.push(`${hasNoTolerance} item belum diset toleransinya — tidak bisa deteksi breach`);
     if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item dengan deviasi > 50% BOM (proxy benchmark high — jauh di atas normal)`);
     if (toleranceBreachCount > 0 && toleranceBreachHighCount === 0) analysis.push(`${toleranceBreachCount} item melebihi toleransi (TOLERANCE_BREACH)`);

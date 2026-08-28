@@ -5,7 +5,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout } from '../shared';
+import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout } from '../shared';
 
 export interface PeerComparisonRow {
   outletCode: string;
@@ -302,11 +302,8 @@ export async function queryPeerItemComparison(
         ELSE 0 END as "devBom",
       -- FIX CALC-5: Excel convention: LOSS = negative nominalLossSurplus
       -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
-      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-           ELSE 'NEUTRAL' END as "direction",
+      -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
+      ${DIRECTION_FROM_SUM_SQL} as "direction",
       CASE WHEN o.code = ${outletCode} THEN true ELSE false END as "isTarget",
       ti.item_rank as "itemRank"
     FROM target_items ti

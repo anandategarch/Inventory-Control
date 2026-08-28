@@ -236,7 +236,28 @@ export function computeVarianceAnalysis(
     const currentNominal = curr.nominalDeviasi ?? 0;
     const previousNominal = prev.nominalDeviasi ?? 0;
     const selisih = currentNominal - previousNominal;
-    const varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
+
+    // FIX (AUDIT7-CALC-7): mirror the SQL path's direction-flip detection
+    // (health-ranking.ts:queryVarianceAnalysis CASE) so JS + SQL paths agree.
+    // The old JS-only check (delta-based) classed SURPLUS→LOSS with equal magnitude
+    // as STABLE — diverges from the SQL path which classes any sign flip as
+    // WORSENED / IMPROVED. Affects /api/export-report (JS) vs /api/analysis (SQL)
+    // — top worsened/improved lists diverged between Word export + dashboard.
+    // Use computeDirectionFromData for both curr + prev (matches the SQL CASE
+    // which checks nominalLossSurplus sign with qtyDeviasi NULL fallback).
+    const currDir = computeDirectionFromData(curr);
+    const prevDir = computeDirectionFromData(prev);
+    let varianceDirection: string;
+    if (currDir !== 'NEUTRAL' && prevDir !== 'NEUTRAL' && currDir !== prevDir) {
+      // Sign flip detected.
+      // SURPLUS→LOSS = deterioration (WORSENED), LOSS→SURPLUS = recovery (IMPROVED).
+      // Matches the SQL CASE at health-ranking.ts:228-229.
+      varianceDirection = currDir === 'LOSS' ? 'WORSENED' : 'IMPROVED';
+    } else {
+      // No flip — fall back to magnitude delta (absNominalDeviasi change).
+      varianceDirection = delta > 0 ? 'WORSENED' : delta < 0 ? 'IMPROVED' : 'STABLE';
+    }
+
     deltas.push({
       itemName: curr.item.name,
       outletCode: curr.outlet.code,
@@ -248,7 +269,7 @@ export function computeVarianceAnalysis(
       previousAbsNominal: prev.absNominalDeviasi,
       delta,
       // FIX FLOW-1: compute direction on-the-fly (not stored curr.direction)
-      direction: computeDirectionFromData(curr),
+      direction: currDir,
       varianceDirection,
     });
   }

@@ -46,6 +46,10 @@ import {
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
+// FIX (RESTORE-BACKEND-2): use shared buildInventoryWhere instead of inline closure
+import { buildInventoryWhere } from '@/lib/build-where';
+// FIX (RESTORE-BACKEND-2): use shared resolveComparePeriod instead of inline ~15-line block
+import { resolveComparePeriod } from '@/lib/period-resolver';
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
@@ -306,38 +310,22 @@ export async function GET(req: NextRequest) {
     // as buildSqlFilters, ~5x faster, and deduplicates the logic.
     const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
 
-    // Build where clause
-    // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter
-    // FIX (BUG-KELOMPOK-GLOBAL): add kelompok filter so currentRecs + prevRecs
-    // (used by rule evaluation + variance analysis) also respect kelompok.
-    const buildWhere = (wk: string, mLabel: string) => {
-      const w: Prisma.InventoryRecordWhereInput = { monthLabel: mLabel, weekLabel: wk };
-      if (area && area !== 'all') w.area = area;
-      if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
-      // Kelompok filter — intersect with PIC/outletCode if both set
-      // FIX (BUG-BE-9): removed dead `kelompokOutletCodes !== null` check
-      if (kelompok && kelompok !== 'all') {
-        if (kelompokOutletCodes.length === 0) {
-          w.outlet = { code: { in: ['__NO_MATCH__'] } };
-        } else if (picOutletCodes !== null) {
-          const intersect = kelompokOutletCodes.filter((c) => picOutletCodes.includes(c));
-          w.outlet = { code: { in: intersect.length > 0 ? intersect : ['__NO_MATCH__'] } };
-        } else if (outletCode && outletCode !== 'all') {
-          w.outlet = { code: kelompokOutletCodes.includes(outletCode) ? outletCode : '__NO_MATCH__' };
-        } else {
-          w.outlet = { code: { in: kelompokOutletCodes } };
-        }
-      } else if (picOutletCodes !== null) {
-        let codes = picOutletCodes; // already has sentinel if empty
-        if (outletCode && outletCode !== 'all') {
-          codes = codes.includes(outletCode) ? [outletCode] : ['__NO_MATCH__'];
-        }
-        w.outlet = { code: { in: codes } };
-      } else if (outletCode && outletCode !== 'all') {
-        w.outlet = { code: outletCode };
-      }
-      return w;
-    };
+    // FIX (RESTORE-BACKEND-2): buildWhere now delegates to the shared
+    // `buildInventoryWhere` helper from @/lib/build-where.ts. The helper
+    // handles area/itemName/kelompok/PIC/outletCode + all intersections,
+    // including sentinel for empty PIC list (idempotent — export-report
+    // pre-sentineled at line 300; helper passes it through unchanged).
+    const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput =>
+      buildInventoryWhere({
+        week: wk,
+        month: mLabel,
+        area,
+        itemName,
+        kelompok,
+        kelompokOutletCodes,
+        picOutletCodes,
+        outletCode,
+      });
 
     const filterOpts = {
       area: area === 'all' ? null : area,
@@ -373,21 +361,19 @@ export async function GET(req: NextRequest) {
 
     // BUG FIX (AUDIT-EXPORT-AI-2): use user's compareWeek/compareMonth if provided.
     // Fall back to auto-compute (same weekLabel in previous month) only when user didn't specify.
-    const currentPeriodIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-    let prevWeek = userCompareWeek || week;
-    let prevMonth: string | null = resolvedCompareMonth || null;
-    if (!prevMonth && currentPeriodIdx >= 0) {
-      for (let i = currentPeriodIdx - 1; i >= 0; i--) {
-        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
-          prevMonth = allPeriods[i].monthLabel;
-          break;
-        }
-      }
-      if (!prevMonth && currentPeriodIdx > 0) {
-        prevWeek = allPeriods[currentPeriodIdx - 1].weekLabel;
-        prevMonth = allPeriods[currentPeriodIdx - 1].monthLabel;
-      }
-    }
+    //
+    // FIX (RESTORE-BACKEND-2): the inline ~15-line period-resolution block has been
+    // extracted to `@/lib/period-resolver.ts` as `resolveComparePeriod`. This also
+    // fixes a subtle bug in the old logic: when the user set compareWeek WITHOUT
+    // compareMonth, the old code searched for the CURRENT week (not compareWeek) in
+    // the previous month — so setting compareWeek alone had no effect. The new
+    // helper correctly searches for `compareWeek` in the previous month.
+    const { prevWeek, prevMonth } = await resolveComparePeriod(
+      week,
+      month,
+      userCompareWeek,
+      resolvedCompareMonth,
+    );
 
     // Historical periods (same weekLabel only)
     const historicalPeriods = allPeriods.filter(p => p.weekLabel === week && p.monthLabel !== month)
@@ -399,7 +385,7 @@ export async function GET(req: NextRequest) {
         where: buildWhere(week, month),
         include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
       }) as Promise<RecWithRels[]>,
-      prevMonth ? db.inventoryRecord.findMany({
+      prevMonth && prevWeek ? db.inventoryRecord.findMany({
         where: buildWhere(prevWeek, prevMonth),
         include: { outlet: { select: { code: true, name: true, area: true } }, item: { select: { name: true } } },
       }) as Promise<RecWithRels[]> : Promise.resolve([] as RecWithRels[]),
@@ -442,7 +428,7 @@ export async function GET(req: NextRequest) {
     // SQL queries
     const [currSummary, prevSummary] = await Promise.all([
       queryExecSummary(week, month, filterOpts),
-      prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+      prevMonth && prevWeek ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
     ]);
     const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month, week, prevWeek);
 
@@ -468,10 +454,10 @@ export async function GET(req: NextRequest) {
       queryDeviationBreakdown(week, month, filterOpts),
       queryTrendAgg({ ...filterOpts, weekLabel: week }),
       // Rev 2: Previous period category data
-      prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'waste', 100) : Promise.resolve([]),
-      prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'susut', 100) : Promise.resolve([]),
-      prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'trial', 100) : Promise.resolve([]),
-      prevMonth ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'lossSurplus', 100) : Promise.resolve([]),
+      prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'waste', 100) : Promise.resolve([]),
+      prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'susut', 100) : Promise.resolve([]),
+      prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'trial', 100) : Promise.resolve([]),
+      prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'lossSurplus', 100) : Promise.resolve([]),
       // Rev 2: Historical category averages
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
       queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),

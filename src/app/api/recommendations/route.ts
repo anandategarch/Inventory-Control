@@ -5,6 +5,8 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryRestoRecommendations } from '@/lib/queries';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
+import { getRuntimeThresholds } from '@/lib/settings';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — queryRestoRecommendations is heavy (3 parallel CTEs)
@@ -50,7 +52,6 @@ export async function GET(req: NextRequest) {
     // Without this, 3 of 15 priority signals (Deviasi Growth, Direction Flip, Trend Memburuk —
     // total weight 26%) are ALWAYS zero unless user manually selects a compare period.
     if (!prevWeek || !prevMonth) {
-      const { db } = await import('@/lib/db');
       try {
         const periods = await db.week.findMany({
           select: { weekLabel: true, monthKey: true, sourceFile: { select: { monthLabel: true } } },
@@ -83,6 +84,24 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // FIX (AUDIT7-CALC-8): resolve currentMonthKey via SourceFile so the
+    // historical-baseline CTE in queryRestoRecommendations can filter out
+    // FUTURE months (matches the pattern used by /api/pareto per BUG2-PARETO-1).
+    // Without this, `histAvgNominalDeviasi` + `histPeriodCount` for Signal 2
+    // (Deviasi Growth Historical, 10% weight) + Signal 7 (Trend Memburuk, 8%
+    // weight) include future-month data → inflates baseline + corrupts priority.
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey ?? null;
+
+    // FIX (AUDIT7-CALC-11): fetch runtime thresholds so Signal 11 uses the
+    // configured HIGH_LOSS_NOMINAL_THRESHOLD (default 50jt, configurable via
+    // Settings UI) instead of the old hardcoded 10jt. Settings changes now
+    // propagate to the priority score (5% weight on Signal 11).
+    const thresholds = await getRuntimeThresholds();
+
     // Resolve PIC → outletCodes (shared logic)
     const picOutletCodes = await resolvePICOutletCodes(pic);
     // FIX (BUG-HUNT-RECENT): early-return if PIC has no outlets (sibling routes have this)
@@ -97,7 +116,16 @@ export async function GET(req: NextRequest) {
       picOutletCodes,
     };
 
-    const recommendations = await queryRestoRecommendations(month, week, prevWeek, prevMonth, filters, limit);
+    const recommendations = await queryRestoRecommendations(
+      month,
+      week,
+      prevWeek,
+      prevMonth,
+      filters,
+      limit,
+      currentMonthKey,
+      thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+    );
 
     return NextResponse.json({ success: true, recommendations });
   } catch (e: unknown) {

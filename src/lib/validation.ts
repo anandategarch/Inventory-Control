@@ -101,6 +101,22 @@ export const recommendationsQuerySchema = z.object({
   pic: picSchema,
 });
 
+// /api/pareto?month=&week=&area=&kelompok=&pic=&parentDim=&childDim=
+// FIX (AUDIT7-BE-4): was reading raw url.searchParams.get() with no Zod
+// validation — inconsistent with /api/analysis + /api/recommendations.
+// parentDim + childDim included for forward-compat with the multi-nesting
+// feature (AUDIT7-BE-1 — backend not yet implemented). Strict enum prevents
+// arbitrary strings from reaching downstream SQL/JS consumers.
+export const paretoQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  pic: picSchema,
+  parentDim: z.enum(['item', 'outlet', 'area', 'kelompok', 'pic']).optional(),
+  childDim: z.enum(['item', 'outlet', 'area', 'kelompok', 'pic']).optional(),
+});
+
 // /api/peer-comparison?outletCode=&month=&week=&mode=&limit=&kelompok=
 // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
 // the focus outlet is always queried by outletCode regardless.

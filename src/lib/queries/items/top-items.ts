@@ -4,7 +4,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 export interface TopItemRow {
   itemName: string;
@@ -26,12 +26,9 @@ export async function queryTopItemsByNominal(
     SELECT i.name as "itemName", o.code as "outletCode",
       ABS(SUM(ir."nominalDeviasi")) as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      -- FIX VERIFY3-8: add qtyDeviasi NULL fallback for direction computation
-      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-           ELSE 'NEUTRAL' END as direction
+      -- FIX VERIFY3-8: direction derived from SUM(nominalLossSurplus) with qtyDeviasi NULL fallback
+      -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
+      ${DIRECTION_FROM_SUM_SQL} as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id
@@ -371,12 +368,9 @@ export async function queryTopItemsByCategory(
     SELECT i.name as "itemName", o.code as "outletCode",
       SUM(ABS(${qtyRef})) as qty,
       SUM(ABS(${nomRef})) as nominal,
-      -- FIX VERIFY3-8: add qtyDeviasi NULL fallback for direction computation
-      CASE WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-           WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-           ELSE 'NEUTRAL' END as direction
+      -- FIX VERIFY3-8: direction derived from SUM(nominalLossSurplus) with qtyDeviasi NULL fallback
+      -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
+      ${DIRECTION_FROM_SUM_SQL} as direction
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
     JOIN "Outlet" o ON ir."outletId" = o.id

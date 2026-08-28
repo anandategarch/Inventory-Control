@@ -9,7 +9,8 @@ import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
-import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoHistorical, mergeHistoricalIntoPareto } from '@/lib/queries/pareto';
+import { validateQuery, paretoQuerySchema } from '@/lib/validation';
+import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -24,6 +25,17 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // FIX (AUDIT7-BE-4): Zod input validation — was reading raw searchParams.
+    // Matches the pattern used by /api/analysis + /api/recommendations.
+    // Rejects malformed month/week/area/kelompok/pic with 400 (was silently
+    // producing empty results). parentDim/childDim validated against strict
+    // enum — ready for the multi-nesting feature (AUDIT7-BE-1).
+    const validation = validateQuery(paretoQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     let month = url.searchParams.get('month') || '';
     const week = url.searchParams.get('week') || '';
     const area = url.searchParams.get('area');
@@ -43,6 +55,16 @@ export async function GET(req: NextRequest) {
     }
 
     const kelompok = url.searchParams.get('kelompok');
+    // FIX (RESTORE-BACKEND-2): read parentDim + childDim URL params. When BOTH
+    // are provided (and different), call the generalized `queryParetoNested`
+    // and include the result as `nestedGeneralized` in the response. The
+    // existing `nested` (Item→Outlet) is always returned for backward compat.
+    // The paretoQuerySchema already validates these as enum values.
+    const parentDim = url.searchParams.get('parentDim') as ParetoDimension | null;
+    const childDim = url.searchParams.get('childDim') as ParetoDimension | null;
+    const useGeneralizedNested =
+      !!parentDim && !!childDim && parentDim !== childDim;
+
     const filters = {
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
@@ -58,13 +80,20 @@ export async function GET(req: NextRequest) {
     // byArea, byPIC, nested) correctly include kelompok in their filters.
     // Do NOT "fix" by adding kelompok to byKelompok/histKelompok — it would
     // break the comparison feature.
-    const [byItem, byOutlet, byArea, byKelompok, byPIC, nested] = await Promise.all([
+    //
+    // FIX (RESTORE-BACKEND-2): when parentDim + childDim both provided,
+    // run the generalized `queryParetoNested` in parallel with the other 6
+    // queries and include its result as `nestedGeneralized` in the response.
+    const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized] = await Promise.all([
       queryParetoByItem(week, month, filters),
       queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
       queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
       queryParetoByPIC(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoNestedItemOutlet(week, month, filters, 10),
+      useGeneralizedNested
+        ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10)
+        : Promise.resolve(null),
     ]);
 
     // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
@@ -103,6 +132,12 @@ export async function GET(req: NextRequest) {
       byKelompok: byKelompokMerged,
       byPIC: byPICMerged,
       nested,
+      // FIX (RESTORE-BACKEND-2): include nestedGeneralized only when both
+      // parentDim + childDim were provided. Echo the dims so the client can
+      // verify which combination was computed.
+      ...(nestedGeneralized
+        ? { nestedGeneralized, parentDim: nestedGeneralized.parentDim, childDim: nestedGeneralized.childDim }
+        : {}),
       durationMs: Date.now() - startedAt,
     });
   } catch (e: unknown) {

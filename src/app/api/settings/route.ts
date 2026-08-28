@@ -206,6 +206,20 @@ export async function POST(req: NextRequest) {
 // Reset to defaults
 export async function DELETE(req: NextRequest) {
   try {
+    // FIX (AUDIT7-BE-8): DELETE handler had NO rate limit — POST was rate-limited
+    // (`settings:${ip}` bucket) but DELETE wasn't, leaving an unbounded DoS vector
+    // for the destructive reset endpoint (30 upserts per call when no `?key=` is
+    // provided). Uses a SEPARATE bucket `settings-delete:${ip}` so an attacker
+    // who exhausts the POST bucket can still spam DELETE on a separate counter.
+    const ip = getClientIP(req);
+    const rl = rateLimit(`settings-delete:${ip}`, RATE_LIMITS.settings.maxRequests, RATE_LIMITS.settings.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded. Tunggu beberapa menit sebelum mencoba lagi.' },
+        { status: 429 }
+      );
+    }
+
     const url = new URL(req.url);
     const key = url.searchParams.get('key');
 

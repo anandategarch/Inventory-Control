@@ -23,7 +23,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { buildSqlFilters, type SqlFilterOpts } from './shared';
+import { buildSqlFilters, computePareto8020, type SqlFilterOpts } from './shared';
 
 export interface DriverEntry {
   item: string;
@@ -134,33 +134,21 @@ async function aggregateMetric(
 }
 
 // ============================================================
-//  Pareto 80% — identical to existing JS computePareto
+//  Pareto 80% — delegates to shared computePareto8020 in ./shared.
 //  Sort by |delta| desc, take top 20 with cumulative share ≤ 80%.
+//  FIX (RESTORE-SHARED-1): previously ~25 lines of inline sort+cumsum
+//  loop duplicated from pareto.ts; now uses the shared helper. The
+//  shared function adds totalMagnitude + totalCount which DriverResult
+//  doesn't need — we just pick the 3 fields that DriverResult requires.
 // ============================================================
 function computePareto(
   arr: Array<{ item: string; delta: number; pct: number }>,
 ): DriverResult {
-  arr.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-  const totalDelta = arr.reduce((s, d) => s + Math.abs(d.delta), 0);
-  if (totalDelta === 0) return { drivers: [], remainderCount: 0, remainderPct: 0 };
-  let cumPct = 0;
-  const drivers: DriverEntry[] = [];
-  const MAX_DRIVERS = 20;
-  for (const d of arr) {
-    if (drivers.length >= MAX_DRIVERS) break;
-    const sharePct = (Math.abs(d.delta) / totalDelta) * 100;
-    cumPct += sharePct;
-    drivers.push({
-      ...d,
-      cumPct: Number(cumPct.toFixed(1)),
-      sharePct: Number(sharePct.toFixed(1)),
-    });
-    if (cumPct >= 80) break;
-  }
+  const r = computePareto8020(arr, (d) => d.delta);
   return {
-    drivers,
-    remainderCount: arr.length - drivers.length,
-    remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
+    drivers: r.drivers as DriverEntry[],
+    remainderCount: r.remainderCount,
+    remainderPct: r.remainderPct,
   };
 }
 
