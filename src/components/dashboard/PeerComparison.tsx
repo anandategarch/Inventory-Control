@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Users, Loader2, BarChart3, RotateCcw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { fmtIDR } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -42,7 +43,14 @@ export type {
 };
 
 export function PeerComparison() {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard(useShallow((s) => ({
+    focusOutlet: s.focusOutlet,
+    outletCode: s.outletCode,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    setFocusOutlet: s.setFocusOutlet,
+    kelompok: s.kelompok,
+  })));
   const activeOutlet = focusOutlet || outletCode;
   // Fixed: mode='week' (follows currentWeek from main FilterBar), peerLimit=50.
   // No dropdowns — peer scope is always top 50 by sales proximity for the

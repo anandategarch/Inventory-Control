@@ -5,7 +5,7 @@
 //  (architecture split: reduce page.tsx size)
 // ============================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
-export function EmptyState() {
+export const EmptyState = memo(function EmptyState() {
   return (
     <div className="relative flex flex-col items-center justify-center py-20 px-4 text-center">
       {/* Ambient backdrop glow */}
@@ -62,7 +62,7 @@ export function EmptyState() {
       </p>
     </div>
   );
-}
+});
 
 
 

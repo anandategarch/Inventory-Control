@@ -4,6 +4,7 @@
 //  Feature 4: Scatter Plot — Sales (X) vs Dev/BOM (Y)
 // ============================================================
 
+import { memo } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ResponsiveContainer, Cell,
@@ -20,7 +21,7 @@ interface ScatterPoint {
   isTarget: boolean;
 }
 
-export function ScatterPlotCard({
+export const ScatterPlotCard = memo(function ScatterPlotCard({
   peers,
   targetCode,
 }: {
@@ -112,4 +113,4 @@ export function ScatterPlotCard({
       </CardContent>
     </Card>
   );
-}
+});

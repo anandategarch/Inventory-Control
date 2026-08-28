@@ -1,4 +1,21 @@
 :81 {
+        # PERF-FASE2-INFRA10: Enable zstd + gzip compression for all responses.
+        # zstd ~30% better than gzip for text assets (HTML, JS, CSS, JSON).
+        # Order matters: Caddy tries zstd first, falls back to gzip.
+        encode zstd gzip
+
+        # PERF-FASE2-INFRA10: Bypass reverse_proxy for Next.js static assets.
+        # /_next/static/* files are content-hashed + cacheable forever — serving
+        # them directly via Caddy's file_server skips the Node.js round-trip
+        # entirely (~5-15ms saved per request). Matches the immutable
+        # Cache-Control header set in next.config.ts.
+        @static path /_next/static/*
+        handle @static {
+                header Cache-Control "public, max-age=31536000, immutable"
+                root * /home/z/my-project/.next
+                file_server
+        }
+
         # FIX (DEEP-AUDIT-SECURITY-3): SSRF via XTransformPort query param.
         # Previously `query XTransformPort=*` allowed proxying to ANY port
         # (e.g. =5432 → PostgreSQL, =6379 → Redis, =22 → SSH banner).

@@ -7,7 +7,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { ArrowUpDown, ArrowUp, ArrowDown, History } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
 type SortDir = 'asc' | 'desc';
@@ -33,7 +33,7 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
   return sortDir === 'desc' ? <ArrowDown className="h-3 w-3 inline ml-1" /> : <ArrowUp className="h-3 w-3 inline ml-1" />;
 }
 
-export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
+export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
   // FIX BUG 1: Filter out items with |Dev/BOM| > 500% — these are data anomalies
   // where BOM ≈ 0 (division by near-zero produces extreme pctQtyDeviasiToBom).
   // Z-Scores of 680.99 are meaningless and pollute the table.
@@ -173,4 +173,4 @@ export function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

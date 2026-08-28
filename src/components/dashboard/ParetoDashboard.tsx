@@ -15,6 +15,7 @@ import { Loader2, TrendingDown, Package, Store, MapPin, Users, Boxes, ChevronDow
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ParetoDevBomCard, GapAnalysisCard } from '@/components/dashboard/TopItems';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
@@ -210,7 +211,13 @@ function QuadrantCard({ title, icon, data, color, barColor, tooltip }: { title: 
 }
 
 export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
-  const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard();
+  const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    area: s.area,
+    kelompok: s.kelompok,
+    pic: s.pic,
+  })));
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   // FIX #42: parent + child dimension state for the generalized nested query.
   // Defaults to 'item' → 'outlet' (same as the hardcoded nested breakdown).

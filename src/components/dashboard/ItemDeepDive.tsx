@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -7,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
@@ -32,8 +34,14 @@ type TipPayload = TipPayloadEntry[] | undefined;
 //  ItemDeepDive
 //  Modal detail item (terbuka ketika deepDiveItem.itemName di-set)
 // ============================================================
-export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
-  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek } = useDashboard();
+export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
+  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek } = useDashboard(useShallow((s) => ({
+    deepDiveItem: s.deepDiveItem,
+    setDeepDiveItem: s.setDeepDiveItem,
+    setDrilldown: s.setDrilldown,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+  })));
   const open = Boolean(deepDiveItem?.itemName);
   const itemName = deepDiveItem?.itemName || null;
 
@@ -269,4 +277,4 @@ export function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
       </DialogContent>
     </Dialog>
   );
-}
+});

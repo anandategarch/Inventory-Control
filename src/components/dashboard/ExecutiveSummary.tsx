@@ -1,10 +1,12 @@
 'use client';
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, Info, BarChart3 } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { clickableRowProps } from '@/lib/a11y';
@@ -79,8 +81,10 @@ interface KPI {
   accent?: 'emerald' | 'amber' | 'zinc' | 'red' | 'blue'; // left border accent color
 }
 
-function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, drillDown, accent }: KPI) {
-  const { setCardDrillDown } = useDashboard();
+const KPICard = memo(function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, drillDown, accent }: KPI) {
+  const { setCardDrillDown } = useDashboard(useShallow((s) => ({
+    setCardDrillDown: s.setCardDrillDown,
+  })));
   const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
@@ -151,10 +155,12 @@ function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip,
       </CardContent>
     </Card>
   );
-}
+});
 
-export function ExecutiveSummary({ data }: { data: AnalysisData }) {
-  const { setCardDrillDown } = useDashboard();
+export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data: AnalysisData }) {
+  const { setCardDrillDown } = useDashboard(useShallow((s) => ({
+    setCardDrillDown: s.setCardDrillDown,
+  })));
   const s = data.executiveSummary;
   return (
     <div className="space-y-4">
@@ -239,9 +245,9 @@ export function ExecutiveSummary({ data }: { data: AnalysisData }) {
       </div>
     </div>
   );
-}
+});
 
-export function HealthAlert({ data }: { data: AnalysisData }) {
+export const HealthAlert = memo(function HealthAlert({ data }: { data: AnalysisData }) {
   const { normal, warning, abnormal, breakdown } = data.healthStatus;
   const total = normal + warning + abnormal;
   const dq = data.dqStatus;
@@ -444,4 +450,4 @@ export function HealthAlert({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

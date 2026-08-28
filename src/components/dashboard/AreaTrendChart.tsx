@@ -7,7 +7,7 @@ import type { AnalysisData, AreaTrendRow } from '@/hooks/useAnalysis';
 import { fmtPct } from '@/lib/format';
 import { TrendingUp } from 'lucide-react';
 import { getTooltipStyle } from '@/lib/chart-constants';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
@@ -33,7 +33,7 @@ const AREA_COLORS = [
   '#64748b', // slate
 ];
 
-export function AreaTrendChart({ data }: { data: AnalysisData }) {
+export const AreaTrendChart = memo(function AreaTrendChart({ data }: { data: AnalysisData }) {
   const rows = data.areaTrend || [];
   const [selectedAreas, setSelectedAreas] = useState<Set<string>>(new Set());
 
@@ -239,4 +239,4 @@ export function AreaTrendChart({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

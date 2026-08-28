@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { fmtIDR } from '@/lib/format';
@@ -24,7 +25,7 @@ type TipPayload = TipPayloadEntry[] | undefined;
 //  2.3 MultiPeriodComparisonCard
 //  Perbandingan multi-periode (trend sales/BOM/deviasi)
 // ============================================================
-export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
+export const MultiPeriodComparisonCard = memo(function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
   const multi = data.growthComparison.multiPeriodComparison;
 
   return (
@@ -90,4 +91,4 @@ export function MultiPeriodComparisonCard({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

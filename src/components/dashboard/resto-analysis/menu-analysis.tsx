@@ -7,7 +7,7 @@
 //  (split from RestoAnalysis.tsx — Phase 3)
 // ============================================================
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Utensils } from 'lucide-react';
@@ -17,7 +17,7 @@ import { fmtNum, fmtPct, directionColor } from './helpers';
 import type { OutletItemsResponse } from './types';
 import type { OutletItem } from '@/components/dashboard/PrioritySummaryCard';
 
-export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allItemsData }: {
+export const MenuAnalysis = memo(function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem, allItemsData }: {
   outletCode: string; monthLabel: string; currentWeek: string;
   onSelectItem: (item: { outletCode: string; itemName: string }) => void;
   allItemsData: OutletItemsResponse | undefined;
@@ -166,4 +166,4 @@ export function MenuAnalysis({ outletCode, monthLabel, currentWeek, onSelectItem
       </CardContent>
     </Card>
   );
-}
+});

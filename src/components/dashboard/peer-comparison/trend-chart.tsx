@@ -5,6 +5,7 @@
 //  Target vs peer avg line chart.
 // ============================================================
 
+import { memo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ResponsiveContainer, Legend,
@@ -13,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, TrendingUp } from 'lucide-react';
 import type { TrendResponse } from './types';
 
-export function TrendChartCard({
+export const TrendChartCard = memo(function TrendChartCard({
   data,
   isLoading,
   error,
@@ -113,4 +114,4 @@ export function TrendChartCard({
       </CardContent>
     </Card>
   );
-}
+});

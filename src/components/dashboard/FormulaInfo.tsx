@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Info } from 'lucide-react';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -22,7 +23,7 @@ interface FormulaInfoProps {
  * - Description text: text-primary-foreground/90 (slightly dimmed white)
  * - leading-relaxed for comfortable line height
  */
-export function FormulaInfo({ formula, description, example, side = 'top' }: FormulaInfoProps) {
+export const FormulaInfo = memo(function FormulaInfo({ formula, description, example, side = 'top' }: FormulaInfoProps) {
   return (
     <TooltipProvider>
       <Tooltip>
@@ -72,4 +73,4 @@ export function FormulaInfo({ formula, description, example, side = 'top' }: For
       </Tooltip>
     </TooltipProvider>
   );
-}
+});

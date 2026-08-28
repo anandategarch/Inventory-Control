@@ -8,6 +8,7 @@
 //  (split from PrioritySummaryCard.tsx — Phase 3)
 // ============================================================
 
+import { memo } from 'react';
 import { fmtIDR } from '@/lib/format';
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter, PieChart, Pie, Cell,
@@ -26,7 +27,7 @@ import {
 } from './chart-data-builders';
 
 // FIX DATA-2: empty state component for charts with no data
-export function ChartEmptyState({ message }: { message: string }) {
+export const ChartEmptyState = memo(function ChartEmptyState({ message }: { message: string }) {
   return (
     <div className="flex items-center justify-center h-[170px] text-xs text-muted-foreground">
       <div className="text-center">
@@ -35,7 +36,7 @@ export function ChartEmptyState({ message }: { message: string }) {
       </div>
     </div>
   );
-}
+});
 
 // Shared label formatter for nominal values (Rp)
 function fmtNominalLabel(v: number | string): string {
@@ -53,7 +54,7 @@ function fmtNominalLabel(v: number | string): string {
 //  Per spec: only render when accordion item is expanded.
 // ============================================================
 
-export function SignalChart({ name, r, items }: { name: string; r: Recommendation; items: OutletItem[] }) {
+export const SignalChart = memo(function SignalChart({ name, r, items }: { name: string; r: Recommendation; items: OutletItem[] }) {
   switch (name) {
     case 'Dev/BOM vs Peer': {
       const data = buildDevBomData(r);
@@ -386,4 +387,4 @@ export function SignalChart({ name, r, items }: { name: string; r: Recommendatio
         </div>
       );
   }
-}
+});

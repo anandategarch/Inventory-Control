@@ -5,6 +5,7 @@
 //  Top items at target outlet vs peer avg & peer best.
 // ============================================================
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -12,7 +13,7 @@ import { Loader2, BarChart3 } from 'lucide-react';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import type { ItemComparisonResponse } from './types';
 
-export function ItemLevelComparison({
+export const ItemLevelComparison = memo(function ItemLevelComparison({
   data,
   isLoading,
   error,
@@ -63,9 +64,9 @@ export function ItemLevelComparison({
       </CardContent>
     </Card>
   );
-}
+});
 
-function ItemComparisonBlock({
+const ItemComparisonBlock = memo(function ItemComparisonBlock({
   item,
 }: {
   item: ItemComparisonResponse['items'][number];
@@ -121,4 +122,4 @@ function ItemComparisonBlock({
       </Table>
     </div>
   );
-}
+});

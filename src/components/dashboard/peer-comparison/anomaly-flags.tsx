@@ -5,6 +5,7 @@
 //  Inline within the Peer Table's "Flags" column.
 // ============================================================
 
+import { memo } from 'react';
 import type { PeerRow, PeerAverages } from './types';
 
 interface Flag {
@@ -13,7 +14,7 @@ interface Flag {
   color: string;
 }
 
-export function AnomalyFlags({
+export const AnomalyFlags = memo(function AnomalyFlags({
   row,
   peerAvg,
 }: {
@@ -63,4 +64,4 @@ export function AnomalyFlags({
       ))}
     </div>
   );
-}
+});

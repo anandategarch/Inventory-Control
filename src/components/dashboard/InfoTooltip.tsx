@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
@@ -8,7 +9,7 @@ interface InfoTooltipProps {
   className?: string;
 }
 
-export function InfoTooltip({ content, className = '' }: InfoTooltipProps) {
+export const InfoTooltip = memo(function InfoTooltip({ content, className = '' }: InfoTooltipProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -26,4 +27,4 @@ export function InfoTooltip({ content, className = '' }: InfoTooltipProps) {
       </TooltipContent>
     </Tooltip>
   );
-}
+});

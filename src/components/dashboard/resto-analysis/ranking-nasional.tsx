@@ -8,6 +8,7 @@
 //  (split from RestoAnalysis.tsx — Phase 3)
 // ============================================================
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -15,7 +16,7 @@ import { Target } from 'lucide-react';
 import { fmtIDR, fmtNum } from './helpers';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 
-export function RankingNasionalCard({
+export const RankingNasionalCard = memo(function RankingNasionalCard({
   focusOutlet,
   analysisData,
   outletDeviasiRank,
@@ -101,4 +102,4 @@ export function RankingNasionalCard({
       </CardContent>
     </Card>
   );
-}
+});

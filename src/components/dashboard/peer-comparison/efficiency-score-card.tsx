@@ -4,12 +4,12 @@
 //  Feature 7: Efficiency Score — composite 0-100
 // ============================================================
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Gauge } from 'lucide-react';
 import type { PeerRow, PeerAverages } from './types';
 
-export function EfficiencyScoreCard({
+export const EfficiencyScoreCard = memo(function EfficiencyScoreCard({
   target,
   peerAvg,
 }: {
@@ -66,4 +66,4 @@ export function EfficiencyScoreCard({
       </CardContent>
     </Card>
   );
-}
+});

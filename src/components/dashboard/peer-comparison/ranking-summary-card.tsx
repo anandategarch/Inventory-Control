@@ -4,12 +4,13 @@
 //  Feature 1: Ranking Summary — target's rank per metric
 // ============================================================
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Award } from 'lucide-react';
 import type { PeerRow, MetricDef } from './types';
 
-export function RankingSummaryCard({
+export const RankingSummaryCard = memo(function RankingSummaryCard({
   target,
   peers,
   columns,
@@ -74,4 +75,4 @@ export function RankingSummaryCard({
       </CardContent>
     </Card>
   );
-}
+});

@@ -13,9 +13,9 @@ import {
   ComposedChart, Line, Legend, Cell,
 } from 'recharts';
 import { TrendingUp, TrendingDown, BarChart3, PieChart, Activity } from 'lucide-react';
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
-export function GrowthComparison({ data }: { data: AnalysisData }) {
+export const GrowthComparison = memo(function GrowthComparison({ data }: { data: AnalysisData }) {
   const g = data.growthComparison;
   const drivers = data.growthDrivers || [];
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -267,9 +267,9 @@ export function GrowthComparison({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
+export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
   const b = data.deviationBreakdown;
   const drivers = data.deviationDrivers || [];
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -456,9 +456,9 @@ export function DeviationBreakdownChart({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
+export const LossVsSurplusChart = memo(function LossVsSurplusChart({ data }: { data: AnalysisData }) {
   const l = data.lossVsSurplus;
   // FIX: l.loss/l.surplus are RECORD COUNTS, not QTY sums.
   // Label was "qty" (misleading) — changed to "records" for clarity.
@@ -512,9 +512,9 @@ export function LossVsSurplusChart({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-export function TrendChart({ data }: { data: AnalysisData }) {
+export const TrendChart = memo(function TrendChart({ data }: { data: AnalysisData }) {
   const trend = data.trend;
   if (!trend || trend.length === 0) {
     return (
@@ -581,4 +581,4 @@ export function TrendChart({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

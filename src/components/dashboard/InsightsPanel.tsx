@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -249,7 +250,7 @@ function buildInsights(data: AnalysisData): Insight[] {
 // ============================================================
 //  InsightsPanel — main component
 // ============================================================
-export function InsightsPanel({ data }: { data: AnalysisData }) {
+export const InsightsPanel = memo(function InsightsPanel({ data }: { data: AnalysisData }) {
   const setArea = useDashboard((s) => s.setArea);
   const setOutlet = useDashboard((s) => s.setOutlet);
   const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
@@ -365,4 +366,4 @@ export function InsightsPanel({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

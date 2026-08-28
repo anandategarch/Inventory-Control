@@ -16,7 +16,7 @@ import {
   Target, AlertTriangle, TrendingUp, ChevronDown, ChevronRight,
   BarChart3, Activity, Trophy,
 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import {
   SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS,
@@ -28,7 +28,7 @@ import type { SignalScore, Recommendation, OutletItem } from './priority-summary
 // Backward-compat re-exports — RestoAnalysis.tsx imports these from here.
 export type { Recommendation, OutletItem };
 
-export function PrioritySummaryCard({
+export const PrioritySummaryCard = memo(function PrioritySummaryCard({
   recommendation,
   outletItems = [],
 }: {
@@ -380,4 +380,4 @@ export function PrioritySummaryCard({
       </CardContent>
     </Card>
   );
-}
+});

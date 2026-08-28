@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Search, Package, X, TrendingUp, Table as TableIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtNum, fmtPctAbs, numberColor, directionColor } from '@/lib/format';
 
 // FIX: removed local numberColor + directionColor duplicates — now imported from @/lib/format
@@ -58,7 +59,15 @@ interface CrossOutletRow {
 }
 
 export function GlobalItemSearchModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { monthLabel, currentWeek, area, kelompok, pic, setFocusOutlet, setActiveTab } = useDashboard();
+  const { monthLabel, currentWeek, area, kelompok, pic, setFocusOutlet, setActiveTab } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    area: s.area,
+    kelompok: s.kelompok,
+    pic: s.pic,
+    setFocusOutlet: s.setFocusOutlet,
+    setActiveTab: s.setActiveTab,
+  })));
   const [query, setQuery] = useState('');
   // FIX (AUDIT-FRONTEND-V2): debounce autocomplete input — was firing query on every keystroke.
   const deferredQuery = useDeferredValue(query);

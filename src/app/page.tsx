@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { useAnalysis, useStatus, prefetchAnalysis, type AnalysisParams } from '@/hooks/useAnalysis';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
@@ -88,7 +89,26 @@ function FetchAware({ isFetching, children }: { isFetching: boolean; children: R
 // Fix #10: Scroll to Top button — appears after scrolling down 300px
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    comparisonWeek: s.comparisonWeek,
+    comparisonMonth: s.comparisonMonth,
+    area: s.area,
+    kelompok: s.kelompok,
+    outletCode: s.outletCode,
+    itemName: s.itemName,
+    pic: s.pic,
+    setMonth: s.setMonth,
+    setWeek: s.setWeek,
+    setCompareWeek: s.setCompareWeek,
+    activeTab: s.activeTab,
+    setActiveTab: s.setActiveTab,
+    setDrilldown: s.setDrilldown,
+    setSourceModal: s.setSourceModal,
+    setCardDrillDown: s.setCardDrillDown,
+    setDeepDiveItem: s.setDeepDiveItem,
+  })));
   const { data: status } = useStatus();
   const queryClient = useQueryClient();
   // PERF-OPT: track whether cache warming has already fired for this status

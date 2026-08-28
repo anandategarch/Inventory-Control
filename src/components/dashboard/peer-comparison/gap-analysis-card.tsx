@@ -4,13 +4,14 @@
 //  Feature 2: Gap Analysis — target vs peer BEST (not avg)
 // ============================================================
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Target } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import type { PeerRow, MetricDef } from './types';
 
-export function GapAnalysisCard({
+export const GapAnalysisCard = memo(function GapAnalysisCard({
   target,
   peers,
   columns: _columns,
@@ -83,4 +84,4 @@ export function GapAnalysisCard({
       </CardContent>
     </Card>
   );
-}
+});

@@ -6,6 +6,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import type { DrilldownRecord } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
@@ -14,7 +15,13 @@ import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function SourceDataModal() {
-  const { sourceModalOpen, setSourceModal, drilldown, monthLabel, currentWeek } = useDashboard();
+  const { sourceModalOpen, setSourceModal, drilldown, monthLabel, currentWeek } = useDashboard(useShallow((s) => ({
+    sourceModalOpen: s.sourceModalOpen,
+    setSourceModal: s.setSourceModal,
+    drilldown: s.drilldown,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+  })));
 
   const drill = useDrilldown({
     outletCode: drilldown.outletCode,

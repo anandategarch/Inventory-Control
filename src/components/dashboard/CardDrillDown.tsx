@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -7,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
 import { X } from 'lucide-react';
 import type { AnalysisData, TopOutlet } from '@/hooks/useAnalysis';
@@ -156,8 +158,11 @@ const CARD_CONFIG: Record<string, CardConfig> = {
   },
 };
 
-export function CardDrillDown({ data }: CardDrillDownProps) {
-  const { cardDrillDown, setCardDrillDown } = useDashboard();
+export const CardDrillDown = memo(function CardDrillDown({ data }: CardDrillDownProps) {
+  const { cardDrillDown, setCardDrillDown } = useDashboard(useShallow((s) => ({
+    cardDrillDown: s.cardDrillDown,
+    setCardDrillDown: s.setCardDrillDown,
+  })));
   const open = Boolean(cardDrillDown);
   const config = cardDrillDown ? CARD_CONFIG[cardDrillDown] : null;
 
@@ -225,4 +230,4 @@ export function CardDrillDown({ data }: CardDrillDownProps) {
       </DialogContent>
     </Dialog>
   );
-}
+});

@@ -4,6 +4,7 @@
 //  (split from RestoAnalysis.tsx — Phase 3)
 // ============================================================
 
+import { memo } from 'react';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 
 // ------------------------------------------------------------
@@ -38,7 +39,7 @@ export { directionColor } from '@/lib/format';
 //  Row — label/value row used inside profile cards and modal
 // ------------------------------------------------------------
 
-export function Row({ label, value, growth, sub, growthColor: gc }: {
+export const Row = memo(function Row({ label, value, growth, sub, growthColor: gc }: {
   label: string; value: string; growth?: number | null; sub?: string; growthColor?: string;
 }) {
   return (
@@ -53,13 +54,13 @@ export function Row({ label, value, growth, sub, growthColor: gc }: {
       </div>
     </div>
   );
-}
+});
 
 // ------------------------------------------------------------
 //  SummaryCard — small KPI card used in ItemDetailModal
 // ------------------------------------------------------------
 
-export function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+export const SummaryCard = memo(function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="rounded-lg border p-2 text-center">
       <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
@@ -67,7 +68,7 @@ export function SummaryCard({ label, value, sub, color }: { label: string; value
       {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
-}
+});
 
 // ------------------------------------------------------------
 //  Tiny re-exports so sub-modules can import format helpers

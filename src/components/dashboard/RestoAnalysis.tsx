@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Activity, Calendar, Gauge, ShieldAlert } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
@@ -42,7 +43,17 @@ export type {
 };
 
 export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData }) {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic } = useDashboard();
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic } = useDashboard(useShallow((s) => ({
+    focusOutlet: s.focusOutlet,
+    outletCode: s.outletCode,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    comparisonWeek: s.comparisonWeek,
+    comparisonMonth: s.comparisonMonth,
+    area: s.area,
+    kelompok: s.kelompok,
+    pic: s.pic,
+  })));
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');

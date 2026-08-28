@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -14,7 +14,7 @@ import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, Chevro
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
-export function TopItemsByNominal({ data }: { data: AnalysisData }) {
+export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByNominal || [];
   return (
@@ -73,9 +73,9 @@ export function TopItemsByNominal({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
+export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const items = data.topItemsByDevBom || [];
   return (
@@ -137,9 +137,9 @@ export function TopItemsByDevBom({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-export function TopOutlets({ data }: { data: AnalysisData }) {
+export const TopOutlets = memo(function TopOutlets({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
@@ -204,13 +204,13 @@ export function TopOutlets({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // ============================================================
 //  Pareto Dev/BOM — 80/20 untuk item dengan |Dev/BOM| > 50%
 //  Group by item, drill-down ke outlet.
 // ============================================================
-export function ParetoDevBomCard({ data }: { data: AnalysisData }) {
+export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const pareto = data.paretoDevBom;
@@ -300,14 +300,14 @@ export function ParetoDevBomCard({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // ============================================================
 //  Gap Analysis Card — Rank BOM vs Rank Nasional
 //  Group by item, drill-down ke outlet.
 //  Gap = rankBom - rankNominal. +N = qty dominan, -N = nominal dominan.
 // ============================================================
-export function GapAnalysisCard({ data }: { data: AnalysisData }) {
+export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const items = (data.topDeviasiRank || []).filter((it: any) => it.rankBom != null && it.rankBom > 0);
@@ -407,4 +407,4 @@ export function GapAnalysisCard({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

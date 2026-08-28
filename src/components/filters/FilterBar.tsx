@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, CheckCircle2, XCircle, Settings, Folder, FileSpreadsheet, Users, Upload, Pencil } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
 import { Badge } from '@/components/ui/badge';
 import { useState, useMemo, useEffect } from 'react';
@@ -48,7 +49,25 @@ const DriveImportDialog = dynamic(
 );
 
 export function FilterBar() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    comparisonWeek: s.comparisonWeek,
+    comparisonMonth: s.comparisonMonth,
+    area: s.area,
+    kelompok: s.kelompok,
+    outletCode: s.outletCode,
+    itemName: s.itemName,
+    pic: s.pic,
+    setMonth: s.setMonth,
+    setWeek: s.setWeek,
+    setCompareWeek: s.setCompareWeek,
+    setArea: s.setArea,
+    setKelompok: s.setKelompok,
+    setOutlet: s.setOutlet,
+    setPic: s.setPic,
+    reset: s.reset,
+  })));
   const { data: status, isLoading } = useStatus();
   const prefetchAnalysis = usePrefetchAnalysis();
   const [ingesting, setIngesting] = useState(false);

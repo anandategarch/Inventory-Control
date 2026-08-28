@@ -4,7 +4,7 @@
 //  Feature 9: Correlation Insight — auto-detected rules
 // ============================================================
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lightbulb } from 'lucide-react';
 import { fmtIDR } from '@/lib/format';
@@ -15,7 +15,7 @@ interface Insight {
   text: string;
 }
 
-export function CorrelationInsightCard({
+export const CorrelationInsightCard = memo(function CorrelationInsightCard({
   target,
   peers,
   peerAvg,
@@ -140,4 +140,4 @@ export function CorrelationInsightCard({
       </CardContent>
     </Card>
   );
-}
+});

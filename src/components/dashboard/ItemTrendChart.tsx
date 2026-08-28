@@ -9,7 +9,7 @@
 //  X = period (monthLabel + weekLabel), Y = nominalDeviasi (signed).
 // ============================================================
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { fmtIDR } from '@/lib/format';
 import { getTooltipStyle } from '@/lib/chart-constants';
@@ -24,7 +24,7 @@ interface ChartRow {
   [outletCode: string]: string | number;
 }
 
-export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
+export const ItemTrendChart = memo(function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
   // FIX (AUDIT-ANIMATION): memoize all derived chart data — 3 loops + sort + slice
   // were running on every render, causing frame drops during animation.
   // NOTE: useMemo must be called BEFORE any early return (rules-of-hooks).
@@ -132,4 +132,4 @@ export function ItemTrendChart({ data }: { data: ItemTrendRow[] }) {
       </div>
     </div>
   );
-}
+});

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Target, Loader2, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -100,7 +101,17 @@ interface RestoRecommendation {
 }
 
 export function RestoRecommendationCard() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic, setFocusOutlet } = useDashboard();
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic, setFocusOutlet } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    comparisonWeek: s.comparisonWeek,
+    comparisonMonth: s.comparisonMonth,
+    area: s.area,
+    kelompok: s.kelompok,
+    outletCode: s.outletCode,
+    pic: s.pic,
+    setFocusOutlet: s.setFocusOutlet,
+  })));
   const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
   const toggleSignals = (key: string) =>
     setExpandedSignals((prev) => {

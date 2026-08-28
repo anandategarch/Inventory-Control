@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -43,7 +44,7 @@ function lossToSalesColor(r: number | null | undefined): string {
 //  1.2 OutletHealthRanking
 //  Ranking kondisi outlet dengan skor gabungan
 // ============================================================
-export function OutletHealthRanking({ data }: { data: AnalysisData }) {
+export const OutletHealthRanking = memo(function OutletHealthRanking({ data }: { data: AnalysisData }) {
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const ranking = (data.outletHealthRanking || []).slice().sort((a, b) => a.healthScore - b.healthScore);
   const worstCount = ranking.filter((o) => o.healthScore < 50).length;
@@ -129,7 +130,7 @@ export function OutletHealthRanking({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // ============================================================
 //  1.3 ItemConsistencyAnalysis
@@ -144,7 +145,7 @@ function consistencyBadge(type: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED'): string 
   }
 }
 
-export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
+export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
 
@@ -258,13 +259,13 @@ export function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // ============================================================
 //  1.4 AreaComparison
 //  Perbandingan antar area
 // ============================================================
-export function AreaComparison({ data }: { data: AnalysisData }) {
+export const AreaComparison = memo(function AreaComparison({ data }: { data: AnalysisData }) {
   const setArea = useDashboard((s) => s.setArea);
   const areas = (data.areaAnalysis || [])
     .slice()
@@ -340,4 +341,4 @@ export function AreaComparison({ data }: { data: AnalysisData }) {
       </CardContent>
     </Card>
   );
-}
+});

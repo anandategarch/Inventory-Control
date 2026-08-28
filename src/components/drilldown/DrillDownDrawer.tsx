@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import type { DrilldownRecord } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
@@ -13,7 +14,13 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function DrillDownDrawer() {
-  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal } = useDashboard();
+  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal } = useDashboard(useShallow((s) => ({
+    drilldown: s.drilldown,
+    setDrilldown: s.setDrilldown,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    setSourceModal: s.setSourceModal,
+  })));
   const open = Boolean(drilldown.outletCode || drilldown.itemName);
 
   // FIX M1 (AUDIT-6): Track all loaded records across pages (cursor pagination).
