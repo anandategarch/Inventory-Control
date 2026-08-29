@@ -1,14 +1,15 @@
 'use client';
 
-import { memo, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { memo, useMemo, useState, useCallback } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useShallow } from 'zustand/shallow';
 import { useDashboard } from '@/hooks/useDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { fmtIDR, fmtNum, fmtPctAbs, fmtHeatmapCompact } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { Grid3x3 as HeatMapIcon } from 'lucide-react';
 
@@ -71,7 +72,6 @@ const METRIC_CONFIG: Record<HeatmapMetric, { label: string; format: (v: number) 
 function getHeatColor(value: number, max: number): string {
   if (max <= 0 || value <= 0) return 'transparent';
   const ratio = Math.min(1, value / max);
-  // Hue: 120 (green) → 0 (red), interpolated linearly
   const hue = 120 * (1 - ratio);
   const saturation = 70 + ratio * 20; // 70% → 90%
   const lightness = 90 - ratio * 35; // 90% → 55% (darker for high values)
@@ -79,11 +79,78 @@ function getHeatColor(value: number, max: number): string {
 }
 
 function getTextColor(value: number, max: number): string {
-  if (max <= 0 || value <= 0) return 'transparent';
+  if (max <= 0 || value <= 0) return 'text-foreground';
   const ratio = Math.min(1, value / max);
-  // Dark text for light backgrounds (low values), light text for dark (high values)
   return ratio > 0.5 ? 'text-white' : 'text-foreground';
 }
+
+/** Format cell value based on metric type — compact, no "Rp" prefix */
+function formatCellValue(metric: HeatmapMetric, value: number): string {
+  if (metric === 'pctQtyDeviasiToBom') {
+    const pct = Math.abs(value) * 100;
+    return `${pct < 10 ? pct.toFixed(1) : pct.toFixed(0)}%`.replace('.', ',');
+  }
+  if (metric === 'recordCount') return fmtNum(value);
+  return fmtHeatmapCompact(value);
+}
+
+// ============================================================
+//  Memoized Cell — avoids re-rendering 280 cells on hover
+//  Uses Radix Tooltip per cell (lazy, only 1 active at a time)
+// ============================================================
+interface CellProps {
+  areaName: string;
+  itemName: string;
+  cell: HeatmapCell | undefined;
+  maxVal: number;
+  metric: HeatmapMetric;
+}
+
+const HeatmapCellView = memo(function HeatmapCellView({
+  areaName,
+  itemName,
+  cell,
+  maxVal,
+  metric,
+}: CellProps) {
+  const value = cell?.value ?? 0;
+  const bg = getHeatColor(value, maxVal);
+  const textCls = getTextColor(value, maxVal);
+  const recordCount = cell?.recordCount ?? 0;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="h-9 rounded-sm flex items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform"
+          style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
+        >
+          {value > 0 && (
+            <span className={`text-[10px] font-medium ${textCls}`}>
+              {formatCellValue(metric, value)}
+            </span>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[300px] text-xs">
+        <div className="font-medium leading-snug">{areaName} → {itemName}</div>
+        <div className="text-primary-foreground/80 mt-0.5">
+          {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(value)}</span>
+        </div>
+        <div className="text-primary-foreground/80">
+          Jumlah record: <span className="font-medium text-primary-foreground">{recordCount}</span>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}, (prev, next) =>
+  prev.areaName === next.areaName &&
+  prev.itemName === next.itemName &&
+  prev.cell?.value === next.cell?.value &&
+  prev.cell?.recordCount === next.cell?.recordCount &&
+  prev.maxVal === next.maxVal &&
+  prev.metric === next.metric
+);
 
 // ============================================================
 //  Component
@@ -102,7 +169,6 @@ function AreaItemHeatmapInner() {
 
   const [metric, setMetric] = useState<HeatmapMetric>('absNominalDeviasi');
   const [itemLimit, setItemLimit] = useState(20);
-  const [hoveredCell, setHoveredCell] = useState<HeatmapCell | null>(null);
 
   // Build query params
   const params = useMemo(() => {
@@ -118,7 +184,7 @@ function AreaItemHeatmapInner() {
     return p;
   }, [monthLabel, currentWeek, metric, itemLimit, area, kelompok, outletCode, pic]);
 
-  const { data, isLoading, isError } = useQuery<HeatmapResponse>({
+  const { data, isLoading, isError, isFetching } = useQuery<HeatmapResponse>({
     queryKey: ['area-item-heatmap', params.toString()],
     queryFn: async () => {
       const res = await fetch(`/api/area-item-heatmap?${params.toString()}`);
@@ -128,6 +194,8 @@ function AreaItemHeatmapInner() {
     enabled: !!monthLabel && !!currentWeek,
     staleTime: 5 * 60 * 1000, // 5 min cache
     refetchOnWindowFocus: false,
+    // FIX FLICKER-04: keep previous data visible during refetch (no skeleton flash)
+    placeholderData: keepPreviousData,
   });
 
   // Build cell lookup map for O(1) access
@@ -141,9 +209,24 @@ function AreaItemHeatmapInner() {
     return m;
   }, [data]);
 
+  // FIX FLICKER-11: memoize aggregated stats
+  const totalRecords = useMemo(
+    () => data?.cells.reduce((s, c) => s + c.recordCount, 0) ?? 0,
+    [data],
+  );
+
   const maxVal = data?.maxValue ?? 0;
   const areas = data?.areas ?? [];
   const items = data?.items ?? [];
+
+  // FIX FLICKER-07: memoize grid template style objects
+  const gridTemplate = useMemo(
+    () => ({ gridTemplateColumns: `minmax(140px, auto) repeat(${items.length}, minmax(54px, 1fr))` }),
+    [items.length],
+  );
+
+  const handleMetricChange = useCallback((v: string) => setMetric(v as HeatmapMetric), []);
+  const handleItemLimitChange = useCallback((v: string) => setItemLimit(parseInt(v, 10)), []);
 
   if (!monthLabel || !currentWeek) {
     return (
@@ -168,12 +251,15 @@ function AreaItemHeatmapInner() {
           <CardTitle className="flex items-center gap-2 text-sm">
             <HeatMapIcon className="h-4 w-4 text-amber-600" />
             Heatmap Area × Item
+            {isFetching && !isLoading && (
+              <span className="text-[10px] text-amber-600 animate-pulse">memperbarui…</span>
+            )}
             <InfoTooltip content={METRIC_CONFIG[metric].description} />
           </CardTitle>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground">Metrik:</Label>
-              <Select value={metric} onValueChange={(v) => setMetric(v as HeatmapMetric)}>
+              <Select value={metric} onValueChange={handleMetricChange}>
                 <SelectTrigger className="h-8 text-xs w-[180px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -188,7 +274,7 @@ function AreaItemHeatmapInner() {
             </div>
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground">Top Items:</Label>
-              <Select value={String(itemLimit)} onValueChange={(v) => setItemLimit(parseInt(v, 10))}>
+              <Select value={String(itemLimit)} onValueChange={handleItemLimitChange}>
                 <SelectTrigger className="h-8 text-xs w-[70px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -208,7 +294,7 @@ function AreaItemHeatmapInner() {
         {isLoading && (
           <div className="space-y-2">
             <Skeleton className="h-6 w-full" />
-            <Skeleton className="h-[300px] w-full" />
+            <Skeleton className="h-[520px] w-full" />
           </div>
         )}
 
@@ -226,25 +312,34 @@ function AreaItemHeatmapInner() {
 
         {!isLoading && !isError && data && areas.length > 0 && (
           <div className="space-y-3">
-            {/* Heatmap grid */}
-            <div className="overflow-x-auto">
+            {/* Heatmap grid — scrollable with sticky header */}
+            <div
+              className="overflow-auto max-h-[520px] rounded border border-border/40"
+              style={{ contain: 'layout style' }}
+            >
               <div className="inline-block min-w-full">
-                {/* Column headers (items) */}
+                {/* Column headers (items) — sticky top */}
                 <div
-                  className="grid gap-px mb-px"
-                  style={{ gridTemplateColumns: `120px repeat(${items.length}, minmax(50px, 1fr))` }}
+                  className="grid gap-px mb-px sticky top-0 z-10 bg-background"
+                  style={gridTemplate}
                 >
-                  <div className="text-[10px] font-medium text-muted-foreground sticky left-0 bg-background z-10 flex items-end pb-1">
-                    Area → Item ↓
+                  <div className="text-[10px] font-semibold text-muted-foreground sticky left-0 bg-background z-20 flex flex-col items-start justify-end pb-1 px-2">
+                    <span>Area \ Item</span>
+                    <span className="text-[8px] text-muted-foreground/70 font-normal">(baris × kolom)</span>
                   </div>
-                  {items.map((item) => (
+                  {items.map((item, idx) => (
                     <div
                       key={item}
-                      className="text-[9px] font-medium text-muted-foreground text-center px-1 py-1 truncate"
+                      className="text-[10px] font-medium text-muted-foreground text-center px-1 py-1 leading-tight"
                       title={item}
-                      style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '70px' }}
+                      style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '120px' }}
                     >
-                      {item.length > 15 ? item.slice(0, 15) + '…' : item}
+                      <span className="inline-flex items-start gap-0.5">
+                        <span className="text-[7px] bg-muted text-muted-foreground rounded-full h-3.5 w-3.5 flex items-center justify-center not-italic" style={{ writingMode: 'horizontal-tb', transform: 'none' }}>
+                          {idx + 1}
+                        </span>
+                        <span className="line-clamp-1">{item}</span>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -254,30 +349,25 @@ function AreaItemHeatmapInner() {
                   <div
                     key={areaName}
                     className="grid gap-px mb-px"
-                    style={{ gridTemplateColumns: `120px repeat(${items.length}, minmax(50px, 1fr))` }}
+                    style={gridTemplate}
                   >
-                    <div className="text-[10px] font-medium text-foreground sticky left-0 bg-background z-10 flex items-center px-2 truncate" title={areaName}>
+                    <div
+                      className="text-[10px] font-medium text-foreground sticky left-0 bg-background z-10 flex items-center px-2 break-words leading-tight underline decoration-dotted underline-offset-2"
+                      title={areaName}
+                    >
                       {areaName}
                     </div>
                     {items.map((itemName) => {
                       const cell = cellMap.get(`${areaName}|${itemName}`);
-                      const value = cell?.value ?? 0;
-                      const bg = getHeatColor(value, maxVal);
-                      const textCls = getTextColor(value, maxVal);
                       return (
-                        <div
+                        <HeatmapCellView
                           key={itemName}
-                          className="h-8 rounded-sm flex items-center justify-center cursor-pointer transition-transform hover:scale-110 hover:z-20 hover:ring-2 hover:ring-amber-500 relative"
-                          style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
-                          onMouseEnter={() => cell && setHoveredCell(cell)}
-                          onMouseLeave={() => setHoveredCell(null)}
-                        >
-                          {value > 0 && (
-                            <span className={`text-[8px] font-medium ${textCls}`}>
-                              {value < 1000 ? fmtNum(value) : value < 1_000_000 ? `${(value / 1000).toFixed(0)}K` : `${(value / 1_000_000).toFixed(1)}M`}
-                            </span>
-                          )}
-                        </div>
+                          areaName={areaName}
+                          itemName={itemName}
+                          cell={cell}
+                          maxVal={maxVal}
+                          metric={metric}
+                        />
                       );
                     })}
                   </div>
@@ -286,7 +376,7 @@ function AreaItemHeatmapInner() {
             </div>
 
             {/* Color legend */}
-            <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground flex-wrap">
               <div className="flex items-center gap-2">
                 <span>Rendah</span>
                 <div
@@ -300,26 +390,28 @@ function AreaItemHeatmapInner() {
               </div>
             </div>
 
-            {/* Hover tooltip */}
-            {hoveredCell && (
-              <div className="text-xs p-3 border rounded bg-muted/50 space-y-1">
-                <div className="font-medium">{hoveredCell.area} → {hoveredCell.itemName}</div>
-                <div className="text-muted-foreground">
-                  {METRIC_CONFIG[metric].label}: <span className="font-medium text-foreground">{METRIC_CONFIG[metric].format(hoveredCell.value)}</span>
-                </div>
-                <div className="text-muted-foreground">
-                  Jumlah record: <span className="font-medium text-foreground">{hoveredCell.recordCount}</span>
-                </div>
-              </div>
-            )}
+            {/* Numbered item legend — full names reference */}
+            <details className="text-[10px] text-muted-foreground">
+              <summary className="cursor-pointer hover:text-foreground select-none">
+                Lihat daftar item lengkap ({items.length})
+              </summary>
+              <ol className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 mt-1 pl-4 list-decimal">
+                {items.map((item, idx) => (
+                  <li key={`${item}-${idx}`} className="break-words leading-tight" title={item}>
+                    <span className="text-muted-foreground/60 mr-1">{idx + 1}.</span>
+                    {item}
+                  </li>
+                ))}
+              </ol>
+            </details>
 
             {/* Summary stats */}
-            <div className="flex items-center gap-4 text-[10px] text-muted-foreground border-t pt-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground border-t pt-2">
               <span>{areas.length} area × {items.length} item = {areas.length * items.length} sel</span>
               <span>•</span>
               <span>{data.cells.length} sel dengan data</span>
               <span>•</span>
-              <span>{data.cells.reduce((s, c) => s + c.recordCount, 0)} total record</span>
+              <span>{totalRecords} total record</span>
             </div>
           </div>
         )}

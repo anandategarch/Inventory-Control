@@ -32,7 +32,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import dynamic from 'next/dynamic';
 
 const LoadingChart = () => (
-  <div className="flex flex-col items-center justify-center h-48 space-y-3">
+  <div className="flex flex-col items-center justify-center min-h-[520px] space-y-3">
     <Skeleton className="h-full w-full rounded-lg" />
   </div>
 );

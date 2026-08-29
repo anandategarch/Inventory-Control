@@ -67,6 +67,21 @@ export function fmtPctAbs(v: number | null | undefined, digits = 1): string {
   return `${(Math.abs(v) * 100).toFixed(digits).replace('.', ',')}%`;
 }
 
+/**
+ * Compact formatter for heatmap cells — ultra-short (no "Rp" prefix, 1 decimal).
+ * Matches fmtIDR suffix convention: M=Miliar, Jt=Juta, Rb=Ribu.
+ * Used in dense grid cells where space is extremely limited.
+ */
+export function fmtHeatmapCompact(v: number | null | undefined): string {
+  if (v == null || isNaN(v) || !isFinite(v) || v === 0) return '';
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  if (abs >= 1_000_000_000) return `${sign}${fmtDecimal(abs / 1_000_000_000, 1)}M`;
+  if (abs >= 1_000_000) return `${sign}${fmtDecimal(abs / 1_000_000, 1)}Jt`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(0)}Rb`;
+  return `${sign}${abs.toFixed(0)}`;
+}
+
 export function trendColor(v: number | null | undefined, inverse = false): string {
   if (v == null) return 'text-muted-foreground';
   if (v === 0) return 'text-muted-foreground';

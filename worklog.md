@@ -33817,3 +33817,51 @@ For a small F&B ops team (1 ops manager + 2 analysts + 2 outlet managers):
 - **OutletPIC is the cheapest path to per-outlet permissions.** Already a filter; just needs to be promoted from string to userId FK when User table exists. ~1 day once NextAuth is in.
 - **No URL state sync today** means even copy-pasting the dashboard URL to a colleague doesn't share the current view. This is a P1 quick win that doesn't even need auth.
 - **`examples/websocket/` is reference code, not production infrastructure.** Real-time co-editing (Notion-style) is P4 — defer until multi-user + comments land first.
+---
+Task ID: AUDIT-HEATMAP-TRUNC
+Agent: general-purpose (Heatmap Truncation Auditor)
+Task: Deep audit text truncation in AreaItemHeatmap
+
+Work Log:
+- Read MASTER_CONTEXT.md (350 lines) for app overview (14 areas, 109 items, F&B domain).
+- Read src/components/dashboard/AreaItemHeatmap.tsx (332 lines) line-by-line.
+- Read src/app/api/area-item-heatmap/route.ts (115 lines) — confirms full item/area names returned untruncated from API.
+- Read src/lib/queries/heatmap.ts (113 lines) — confirms SQL returns `i.name` (full) for items and `ir.area` (full) for areas. No SQL-side truncation.
+- Read src/lib/format.ts (115 lines) — confirmed convention: M=Miliar (1e9), Jt=Juta (1e6), Rb=Ribu (1e3), comma decimal separator.
+- Cross-referenced real item-name examples from worklog.md:765 ("UDANG KEJU FROZEN PREMIUM 500G PACK"=35c, "AYAM FILLET PAHA BONELESS"=25c) and worklog.md:11896 ("AYAM GORENG SPESIAL"=21c → signal-chart truncates to 10).
+- Cross-referenced area names from PRD_RETROAKTIF.md:49-50 (14 areas, "PAPUA & MALUKU"=14c is the longest).
+- Identified 9 truncation issues across 8 categories. Performed px/char math to confirm each.
+- Compared heatmap's `truncate` + JS-slice pattern against the codebase-wide fix in worklog.md:821 (tables migrated from `truncate` → `whitespace-normal`/`break-words` in FIX-19). Heatmap is the only remaining hard-truncate holdout.
+- Drafted concrete code snippets for each fix (see findings below).
+
+Stage Summary:
+- 9 truncation issues found (3×P1, 3×P2, 3×P3)
+- Top 3 solutions to implement:
+  1. TRUNC-01 fix: remove JS slice at line 247, increase header height from 70px → 120px (or auto), add numbered index legend below grid for full item names.
+  2. TRUNC-02+03 fix: replace inline cell formatter (lines 276-278) with new `fmtHeatmapCell(metric, value)` helper that uses consistent M/Jt/Rb suffixes (matching fmtIDR) and `%` for pctQtyDeviasiToBom.
+  3. TRUNC-04+05 fix: increase area column width from 120px → minmax(140px, auto), add `sticky top-0` to item header row so names stay visible when scrolling vertically through 14 areas.
+
+---
+Task ID: AUDIT-HEATMAP-FLICKER
+Agent: general-purpose (Heatmap Flickering Auditor)
+Task: Deep audit flickering causes in AreaItemHeatmap
+
+Work Log:
+- Read MASTER_CONTEXT.md (tech stack: Next 16, TanStack Query v5, Zustand v5 + useShallow, Tailwind 4)
+- Read worklog.md tail (last ~120 lines) for prior context — no prior heatmap-specific audit found
+- Audited /home/z/my-project/src/components/dashboard/AreaItemHeatmap.tsx (331 lines) line-by-line
+- Audited /home/z/my-project/src/app/page.tsx — confirmed heatmap mounted via `next/dynamic` with `loading: () => <LoadingChart />` (line 46), rendered at line 643 inside Dashboard TabsContent (NO FetchAware wrapper, no props passed)
+- Audited /home/z/my-project/src/hooks/useDashboard.ts — confirmed useShallow usage is correct; setMonth/setWeek nullify comparisonWeek (causes 2 store writes per filter change but expected)
+- Audited /home/z/my-project/src/components/dashboard/shared/index.tsx — FetchAware defined in page.tsx (lines 70-84), uses `transition-all duration-200` + `opacity-60 pointer-events-none` when fetching (not relevant to heatmap since heatmap is NOT wrapped in FetchAware)
+- Audited /home/z/my-project/src/app/api/area-item-heatmap/route.ts — confirmed `force-dynamic`, `maxDuration: 30`, CACHE_ANALYSIS headers (s-maxage=300). No server-side flicker cause.
+- Checked LoadingChart skeleton: `h-48` (192px) vs actual heatmap (~660-740px) — major height mismatch
+- Checked globals.css: TabsContent has `animate-fade-in-up 0.25s` on every tab activation (one-time, not a flicker)
+- Checked Card component: has `transition-all duration-200 hover:shadow-lg` — broad transition on parent
+- Identified 13 flickering causes: 3×P1, 4×P2, 6×P3
+
+Stage Summary:
+- 13 flickering causes found (3×P1, 4×P2, 6×P3)
+- Top 3 solutions to implement:
+  1. (P1) Reserve fixed min-height for tooltip area OR use absolute/fixed positioning so tooltip doesn't push content (FLICKER-01)
+  2. (P1) Eliminate double state update on cell-to-cell movement — replace per-cell onMouseLeave(null) with a single grid-level mousemove handler that only updates when the hovered cell identity actually changes (FLICKER-02)
+  3. (P1+P2) Memoize individual cells as a separate `HeatmapCell` component wrapped in `React.memo` with a custom comparator; memoize inline style objects via `useMemo` or move to CSS custom properties; add `placeholderData: keepPreviousData` to the useQuery options (FLICKER-03, FLICKER-04, FLICKER-07)
