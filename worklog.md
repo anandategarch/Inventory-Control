@@ -30610,3 +30610,97 @@ Stage Summary:
 - Backend Health Score: 7.5/10
 
 Full findings in main response.
+
+---
+Task ID: FIND-BUG-PERF
+Agent: general-purpose (Performance Bug Hunter)
+Task: Find real performance bugs
+
+Work Log:
+- Read worklog.md tail (prior DEEP-API + DP-XX product gaps). Acknowledged Fase 1-4 + Phase 1-3 fixes already shipped (statusCache, DP-07 Promise.all, DP-14 aggregation cache on pareto + recommendations, DP-30 connection_limit=30, Fase-2 optimizePackageImports, Fase-4 bundle-analyzer, PERF-OPT prefetch + staleTime/gcTime on useAnalysis).
+- Verified DP-07 fix in /api/status/route.ts:57-75 — Promise.all over 6 queries confirmed.
+- Verified DP-14 cache in /api/pareto/route.ts:80-90,159 — getCached/setCached confirmed. Verified DP-14 cache in /api/recommendations/route.ts:122-131,145.
+- Verified DP-30 in /src/lib/db.ts:46 — connection_limit=30, pool_timeout=60, statement_timeout=30000.
+- Read /api/outlet-items/route.ts (full) — found sequential awaits at lines 87+90 (thresholds+outlet), 104+108 (weeksRaw+fileMonthKeys). Big batch at line 230+ already Promise.all'd.
+- Read /api/resto-bahan-matrix/route.ts (full) — found 4 sequential awaits (lines 91, 140, 155, 159) that can be parallelized + MISSING DB cache (heavy raw SQL GROUP BY route).
+- Read /src/hooks/useAnalysis.ts — staleTime=120s, gcTime=600s, prefetchAnalysis, AbortController 90s. Solid.
+- Read /src/components/filters/FilterBar.tsx — useShallow correct, lazy dialogs (Fase-1), outlets.filter at L130 runs every render (minor — not memoized).
+- Read /src/components/dashboard/shared/index.tsx — setInterval in LoadingState L75 has proper cleanup (L78). ScrollToTop listener L248 has cleanup (L249). 
+- Read /src/components/dashboard/GlobalItemSearchModal.tsx — useDeferredValue debounce + setTimeout cleanup at L98. Good.
+- Grep: addEventListener sites — all have cleanup (FilterBar L90-93, page.tsx, QuickSettings L182, use-mobile L13).
+- Grep: 38 memo() wrappers across dashboard components — strong memoization discipline.
+- Confirmed next.config.ts: optimizePackageImports (recharts/lucide/radix), bundle-analyzer, compress, immutable static asset cache.
+- Verified getRuntimeThresholds has 30s TTL cache (settings.ts:402-420) + getMonthResolver is process-cached — so sequential awaits of these are cheap but still async-overhead.
+
+Stage Summary:
+- 5 perf bugs found (1 P1, 3 P2, 1 P3)
+- Acknowledged prior fixes: DP-07, DP-14, DP-30, Fase-1 lazy dialogs, Fase-2 optimizePackageImports, Fase-4 analyzer, PERF-OPT prefetch, BUG6-POOL retry, 504-RETRY.
+
+---
+Task ID: FIND-BUG-SEC
+Agent: general-purpose (Security Bug Hunter)
+Task: Find real security vulnerabilities
+
+Work Log:
+- Read src/middleware.ts (ADMIN_TOKEN handling, protected paths, matcher)
+- Read next.config.ts (CSP, security headers — DS-10)
+- Read src/lib/error-response.ts (sanitizer helper)
+- Read src/lib/rate-limit.ts (IP extraction, buckets)
+- Read src/lib/validation.ts (all Zod schemas — 21 routes)
+- Read src/lib/drive-import.ts (SSRF allowlist, regex bounds)
+- Read .env, .gitignore (credentials, ignore rules)
+- Read routes: setup, data, settings, pic, pic/import, ingest, ingest-upload, ingest-process, import-drive, migrate-direction, audit-log, status, drilldown, analysis, export-report
+- Grep $queryRawUnsafe / $executeRawUnsafe / dangerouslySetInnerHTML / eval / child_process — verified safe (only in scripts/, not src/)
+- Confirmed: no SQLi (Prisma.sql tagged templates everywhere), no XSS (only shadcn chart.tsx static CSS), no path traversal (SAFE_FILEHASH_RE + path.basename)
+- Verified Phase 1-3 fixes present: CSP header (DS-10), fail-closed prod (BUG2-SEC-3), constant-time token compare (BUG 8), ReDoS bounds (Bug 5), SSRF allowlist on confirm-URL (H2), chunk size server-validated (FIX-A-3), fileHash hex-validated (FIX-A-1)
+
+Stage Summary:
+- 11 bugs (2 P1, 3 P2, 6 P3)
+- Phase 1-3 fixes acknowledged and intact
+- Top critical: SEC-01 (errorResponse result not returned — sanitization defeated), SEC-02 (/api/audit-log unprotected)
+
+---
+Task ID: FIND-BUG-UI
+Agent: general-purpose (UI Bug Hunter)
+Task: Find real UI bugs
+
+Work Log:
+- Read worklog tail (DEEP-API precedes this task).
+- Read src/app/page.tsx (735 lines) — top-level dashboard, tabs, dialogs.
+- Read src/components/filters/FilterBar.tsx — dropdowns, ingest handler, dialog triggers.
+- Read src/components/filters/AuditLogDialog.tsx — paginated audit log viewer.
+- Read src/components/dashboard/RestoRecommendationCard.tsx — error/loading/empty states.
+- Read src/components/drilldown/DrillDownDrawer.tsx — virtualized drilldown + cursor pagination.
+- Read src/components/drilldown/SourceDataModal.tsx — full-record modal + CSV export.
+- Read src/components/dashboard/shared/index.tsx — EmptyState/LoadingState/ErrorState/ScrollToTop.
+- Read src/components/dashboard/CardDrillDown.tsx — generic card drilldown table.
+- Read src/hooks/useAnalysis.ts + src/hooks/useDashboard.ts — query keys + zustand store.
+- Grep for return null, !. null-assertions, `: any` type bug patterns, list .map key props.
+
+Stage Summary:
+- 9 bugs total: 0 P1 (crash), 5 P2 (broken feature), 4 P3 (minor)
+- ErrorBoundary coverage is good (every dashboard section wrapped); no crash-class bugs found.
+- Main risk: silent failures (return null, missing error branch, success:false swallowed).
+
+Full findings in main response.
+
+---
+Task ID: FIND-BUG-API
+Agent: general-purpose (API Bug Hunter)
+Task: Find real backend bugs
+
+Work Log:
+- Read worklog tail (DEEP-API prior context).
+- Listed 21 API routes + lib files (ingestion, aggregation-cache, period-resolver, build-where, kelompok-resolver, pic-resolver, validation, error-response, queries/shared, queries/outlets/top-outlets).
+- Read all key routes: ingest, ingest-process (821 lines), import-drive, data, pic, pic/import, settings, audit-log, status, setup, migrate-direction, drilldown, analysis (+ services/validate-and-resolve), peer-comparison, peer-comparison/items, item-search, item-history, outlet-items, recommendations, pareto, resto-bahan-matrix.
+- Verified migrate-direction transaction fix (correct: array-form $transaction with 5 UPDATEs, all-or-nothing).
+- Verified ingest-process hardcoded-2026 fix (correct: uses `new Date().getFullYear()`).
+- Cross-checked OutletPeriodSales schema (unique [outletId, monthLabel, weekLabel], cascade-delete on SourceFile).
+- Searched for $queryRawUnsafe / $executeRawUnsafe — none found (all raw SQL uses tagged templates — safe).
+- Traced OutletPeriodSales write path: only src/lib/ingestion.ts:480 (processIngestion) — processRowsForImport does NOT write it.
+- Traced errorResponse() callsites: 18 routes call without `return` — confirmed via grep.
+
+Stage Summary:
+- 6 bugs found (2 P1, 2 P2, 2 P3)
+- P1: errorResponse-without-return (18 routes); OutletPeriodSales not populated by UI upload path
+- Full findings in main response.
