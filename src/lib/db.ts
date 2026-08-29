@@ -40,7 +40,10 @@ function createPrismaClient(): PrismaClient {
     // withStatementTimeout calls per request (each holds a connection). With 2
     // concurrent users = 12 connections → pool exhaustion with limit=10.
     // Supabase transaction pooler allows up to 200 concurrent connections.
-    url.searchParams.set('connection_limit', '20');
+    // DP-30: Bumped from 20→30 — /api/analysis uses 6 concurrent withStatementTimeout
+    // calls per request (each holds a connection). With 3 concurrent users × 6 = 18
+    // connections — close to the old 20 limit. Supabase transaction pooler allows 200.
+    url.searchParams.set('connection_limit', '30');
     url.searchParams.set('pool_timeout', '60');
     // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
     url.searchParams.set('statement_timeout', '30000');

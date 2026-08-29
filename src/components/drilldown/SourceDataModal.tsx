@@ -130,8 +130,11 @@ export function SourceDataModal() {
             </div>
           )}
           {drill.error && (
-            <div className="p-4 text-sm text-red-600">
-              Error: {drill.error.message}
+            <div className="flex items-center gap-3 p-4 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+              <p className="text-sm text-red-600 flex-1">Error: {drill.error.message}</p>
+              <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => drill.refetch()}>
+                Coba Lagi
+              </Button>
             </div>
           )}
           {drill.data && records.length === 0 && (

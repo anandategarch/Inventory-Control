@@ -5,7 +5,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Target, Loader2, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Target, Loader2, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
@@ -121,7 +121,7 @@ export function RestoRecommendationCard() {
       return next;
     });
 
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -191,7 +191,37 @@ export function RestoRecommendationCard() {
   }
 
   if (error || !data?.success) {
-    return null; // silently fail — don't block dashboard
+    // DU-02 FIX: Show inline error card with retry instead of silent return null
+    return (
+      <Card className="border-amber-200 dark:border-amber-900">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Target className="h-4 w-4 text-amber-600" />
+            Resto Prioritas Analisa
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-amber-900 dark:text-amber-200">Gagal memuat rekomendasi</p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 truncate">
+                {error instanceof Error ? error.message : 'Terjadi kesalahan server'}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs shrink-0 border-amber-300 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-950/50"
+              onClick={() => refetch()}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Coba Lagi
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
 
   const recommendations: RestoRecommendation[] = data.recommendations || [];

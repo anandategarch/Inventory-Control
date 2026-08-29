@@ -461,7 +461,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 px-4 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto">
+      <main id="main-content" aria-label="Dashboard Inventory Control" className="flex-1 px-4 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto">
         {!statusLoaded ? (
           <LoadingState />
         ) : !hasData ? (
@@ -491,15 +491,21 @@ export default function DashboardPage() {
             <TabsContent value="dashboard" className="space-y-4 mt-2 animate-fade-in-up">
               {/* Section: Executive Summary */}
               <FetchAware isFetching={analysis.isFetching}>
-                <ExecutiveSummary data={analysis.data} />
+                <ErrorBoundary label="Executive Summary">
+                  <ExecutiveSummary data={analysis.data} />
+                </ErrorBoundary>
               </FetchAware>
 
               {/* Section: Resto Recommendation Engine */}
-              <RestoRecommendationCard />
+              <ErrorBoundary label="Resto Prioritas Analisa">
+                <RestoRecommendationCard />
+              </ErrorBoundary>
 
               {/* Section: Insights Panel */}
               <FetchAware isFetching={analysis.isFetching}>
-                <InsightsPanel data={analysis.data} />
+                <ErrorBoundary label="Insights Panel">
+                  <InsightsPanel data={analysis.data} />
+                </ErrorBoundary>
               </FetchAware>
 
               {/* Section: Health + Growth */}
@@ -525,7 +531,9 @@ export default function DashboardPage() {
                   isFetching={analysis.isFetching}
                 />
                 <FetchAware isFetching={analysis.isFetching}>
-                  <MultiPeriodComparisonCard data={analysis.data} />
+                  <ErrorBoundary label="Multi-Period Comparison">
+                    <MultiPeriodComparisonCard data={analysis.data} />
+                  </ErrorBoundary>
                 </FetchAware>
               </section>
 
@@ -538,9 +546,11 @@ export default function DashboardPage() {
                 />
                 <FetchAware isFetching={analysis.isFetching}>
                   <div className="grid lg:grid-cols-3 gap-4">
-                    <TopItemsByNominal data={analysis.data} />
-                    <TopItemsByDevBom data={analysis.data} />
-                    <TopOutlets data={analysis.data} />
+                    <ErrorBoundary label="Top Items & Outlets">
+                      <TopItemsByNominal data={analysis.data} />
+                      <TopItemsByDevBom data={analysis.data} />
+                      <TopOutlets data={analysis.data} />
+                    </ErrorBoundary>
                   </div>
                 </FetchAware>
               </section>
@@ -554,7 +564,9 @@ export default function DashboardPage() {
                     isFetching={analysis.isFetching}
                   />
                   <FetchAware isFetching={analysis.isFetching}>
-                    <AreaComparison data={analysis.data} />
+                    <ErrorBoundary label="Area Comparison">
+                      <AreaComparison data={analysis.data} />
+                    </ErrorBoundary>
                   </FetchAware>
                 </div>
                 <div>
@@ -564,7 +576,9 @@ export default function DashboardPage() {
                     isFetching={analysis.isFetching}
                   />
                   <FetchAware isFetching={analysis.isFetching}>
-                    <OutletHealthRanking data={analysis.data} />
+                    <ErrorBoundary label="Outlet Health Ranking">
+                      <OutletHealthRanking data={analysis.data} />
+                    </ErrorBoundary>
                   </FetchAware>
                 </div>
               </section>
@@ -577,7 +591,9 @@ export default function DashboardPage() {
                   isFetching={analysis.isFetching}
                 />
                 <FetchAware isFetching={analysis.isFetching}>
-                  <ItemConsistencyAnalysis data={analysis.data} />
+                  <ErrorBoundary label="Item Consistency Analysis">
+                    <ItemConsistencyAnalysis data={analysis.data} />
+                  </ErrorBoundary>
                 </FetchAware>
               </section>
 
@@ -603,8 +619,10 @@ export default function DashboardPage() {
               {/* Section: Loss/Surplus + Trend */}
               <FetchAware isFetching={analysis.isFetching}>
                 <section className="grid lg:grid-cols-2 gap-4">
-                  <LossVsSurplusChart data={analysis.data} />
-                  <TrendChart data={analysis.data} />
+                  <ErrorBoundary label="Loss vs Surplus + Trend">
+                    <LossVsSurplusChart data={analysis.data} />
+                    <TrendChart data={analysis.data} />
+                  </ErrorBoundary>
                 </section>
               </FetchAware>
             </TabsContent>
@@ -614,7 +632,9 @@ export default function DashboardPage() {
               {/* FIX #32: wrap RestoAnalysis in FetchAware so the refetch
                   indicator stays visible while the dashboard refreshes. */}
               <FetchAware isFetching={analysis.isFetching}>
-                <RestoAnalysis analysisData={analysis.data} />
+                <ErrorBoundary label="Resto Analysis">
+                  <RestoAnalysis analysisData={analysis.data} />
+                </ErrorBoundary>
               </FetchAware>
             </TabsContent>
 
@@ -624,7 +644,9 @@ export default function DashboardPage() {
                   internal isFetching indicator too, but this keeps the
                   dashboard-wide refetch indicator visible. */}
               <FetchAware isFetching={analysis.isFetching}>
-                <PeerComparison />
+                <ErrorBoundary label="Peer Comparison">
+                  <PeerComparison />
+                </ErrorBoundary>
               </FetchAware>
             </TabsContent>
 
@@ -635,7 +657,9 @@ export default function DashboardPage() {
                   (its own query has staleTime 120s and doesn't refetch on
                   global filter change). */}
               <FetchAware isFetching={analysis.isFetching}>
-                <ParetoDashboard analysisData={analysis.data} />
+                <ErrorBoundary label="Pareto Dashboard">
+                  <ParetoDashboard analysisData={analysis.data} />
+                </ErrorBoundary>
               </FetchAware>
             </TabsContent>
           </Tabs>

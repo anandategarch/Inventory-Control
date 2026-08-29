@@ -107,7 +107,14 @@ export function DrillDownDrawer() {
             has its own scroll container. No more double-scroll confusion. */}
         <div className="flex-1 overflow-hidden p-4 space-y-3">
           {drill.isLoading && <p className="text-sm text-muted-foreground">Memuat data sumber...</p>}
-          {drill.error && <p className="text-sm text-red-600">Error: {drill.error.message}</p>}
+          {drill.error && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+              <p className="text-sm text-red-600 flex-1">Error: {drill.error.message}</p>
+              <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => drill.refetch()}>
+                Coba Lagi
+              </Button>
+            </div>
+          )}
           {drill.data && (
             <>
               <div className="flex items-center gap-2 flex-wrap">
