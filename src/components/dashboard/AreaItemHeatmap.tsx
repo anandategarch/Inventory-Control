@@ -9,20 +9,40 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from '@/components/ui/sheet';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { fmtIDR, fmtNum, fmtPctAbs, fmtHeatmapCompact } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
-import { Grid3x3 as HeatMapIcon } from 'lucide-react';
+import { Grid3x3 as HeatMapIcon, X } from 'lucide-react';
 
 // ============================================================
 //  Types
 // ============================================================
 type HeatmapMetric = 'absNominalDeviasi' | 'nominalWaste' | 'nominalSusut' | 'pctQtyDeviasiToBom' | 'recordCount';
+type ItemSelectMode = 'pareto80' | 'top';
 
 interface HeatmapCell {
   area: string;
   itemName: string;
   value: number;
   recordCount: number;
+  qtyBom: number;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  nominalDeviasi: number;
+  nominalLossSurplus: number;
+}
+
+interface ParetoInfo {
+  totalItems: number;
+  selectedItems: number;
+  cumulativePct: number;
+  totalMagnitude: number;
 }
 
 interface HeatmapResponse {
@@ -32,6 +52,24 @@ interface HeatmapResponse {
   cells: HeatmapCell[];
   metric: HeatmapMetric;
   maxValue: number;
+  itemSelectMode: ItemSelectMode;
+  paretoInfo: ParetoInfo;
+}
+
+interface CellDetailRow {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  akunPenyesuaian: string;
+  qtyBom: number;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtySusut: number;
+  qtyTrial: number;
+  nominalDeviasi: number;
+  nominalLossSurplus: number;
+  pctQtyDeviasiToBom: number;
+  recordCount: number;
 }
 
 // ============================================================
@@ -67,14 +105,13 @@ const METRIC_CONFIG: Record<HeatmapMetric, { label: string; format: (v: number) 
 
 // ============================================================
 //  Color scale — green (low) → yellow (medium) → red (high)
-//  Uses HSL interpolation: hue 120 (green) → 60 (yellow) → 0 (red)
 // ============================================================
 function getHeatColor(value: number, max: number): string {
   if (max <= 0 || value <= 0) return 'transparent';
   const ratio = Math.min(1, value / max);
   const hue = 120 * (1 - ratio);
-  const saturation = 70 + ratio * 20; // 70% → 90%
-  const lightness = 90 - ratio * 35; // 90% → 55% (darker for high values)
+  const saturation = 70 + ratio * 20;
+  const lightness = 90 - ratio * 35;
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
@@ -84,7 +121,6 @@ function getTextColor(value: number, max: number): string {
   return ratio > 0.5 ? 'text-white' : 'text-foreground';
 }
 
-/** Format cell value based on metric type — compact, no "Rp" prefix */
 function formatCellValue(metric: HeatmapMetric, value: number): string {
   if (metric === 'pctQtyDeviasiToBom') {
     const pct = Math.abs(value) * 100;
@@ -95,8 +131,7 @@ function formatCellValue(metric: HeatmapMetric, value: number): string {
 }
 
 // ============================================================
-//  Memoized Cell — avoids re-rendering 280 cells on hover
-//  Uses Radix Tooltip per cell (lazy, only 1 active at a time)
+//  Memoized Cell — click opens drill-down Sheet
 // ============================================================
 interface CellProps {
   areaName: string;
@@ -104,14 +139,11 @@ interface CellProps {
   cell: HeatmapCell | undefined;
   maxVal: number;
   metric: HeatmapMetric;
+  onCellClick: (area: string, item: string) => void;
 }
 
 const HeatmapCellView = memo(function HeatmapCellView({
-  areaName,
-  itemName,
-  cell,
-  maxVal,
-  metric,
+  areaName, itemName, cell, maxVal, metric, onCellClick,
 }: CellProps) {
   const value = cell?.value ?? 0;
   const bg = getHeatColor(value, maxVal);
@@ -121,18 +153,21 @@ const HeatmapCellView = memo(function HeatmapCellView({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div
-          className="h-9 rounded-sm flex items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform"
+        <button
+          type="button"
+          className="h-9 w-full rounded-sm flex items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform"
           style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
+          onClick={() => onCellClick(areaName, itemName)}
+          aria-label={`Detail ${areaName} ${itemName}`}
         >
           {value > 0 && (
             <span className={`text-[10px] font-medium ${textCls}`}>
               {formatCellValue(metric, value)}
             </span>
           )}
-        </div>
+        </button>
       </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-[300px] text-xs">
+      <TooltipContent side="top" className="max-w-[320px] text-xs">
         <div className="font-medium leading-snug">{areaName} → {itemName}</div>
         <div className="text-primary-foreground/80 mt-0.5">
           {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(value)}</span>
@@ -140,6 +175,11 @@ const HeatmapCellView = memo(function HeatmapCellView({
         <div className="text-primary-foreground/80">
           Jumlah record: <span className="font-medium text-primary-foreground">{recordCount}</span>
         </div>
+        {cell && value > 0 && (
+          <div className="text-primary-foreground/80 border-t border-primary-foreground/20 mt-1 pt-1">
+            Klik untuk detail per resto →
+          </div>
+        )}
       </TooltipContent>
     </Tooltip>
   );
@@ -151,6 +191,164 @@ const HeatmapCellView = memo(function HeatmapCellView({
   prev.maxVal === next.maxVal &&
   prev.metric === next.metric
 );
+
+// ============================================================
+//  Drill-down Sheet — shows per-outlet detail for a cell
+// ============================================================
+function CellDetailSheet({
+  open, onOpenChange, areaName, itemName, monthLabel, currentWeek, filters,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  areaName: string;
+  itemName: string;
+  monthLabel: string | null;
+  currentWeek: string | null;
+  filters: { area?: string | null; kelompok?: string | null; outletCode?: string | null; pic?: string | null };
+}) {
+  const params = useMemo(() => {
+    const p = new URLSearchParams();
+    if (monthLabel) p.set('month', monthLabel);
+    if (currentWeek) p.set('week', currentWeek);
+    p.set('area', areaName);
+    p.set('item', itemName);
+    if (filters.kelompok && filters.kelompok !== 'all') p.set('kelompok', filters.kelompok);
+    if (filters.outletCode && filters.outletCode !== 'all') p.set('outlet', filters.outletCode);
+    if (filters.pic && filters.pic !== 'all') p.set('pic', filters.pic);
+    return p;
+  }, [monthLabel, currentWeek, areaName, itemName, filters]);
+
+  const { data, isLoading, isError } = useQuery<{ success: boolean; rows: CellDetailRow[] }>({
+    queryKey: ['heatmap-cell-detail', params.toString()],
+    queryFn: async () => {
+      const res = await fetch(`/api/area-item-heatmap/cell-detail?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: open && !!monthLabel && !!currentWeek && !!areaName && !!itemName,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const rows = data?.rows ?? [];
+  const totalNominal = useMemo(() => rows.reduce((s, r) => s + r.nominalDeviasi, 0), [rows]);
+  const totalQtyDeviasi = useMemo(() => rows.reduce((s, r) => s + r.qtyDeviasi, 0), [rows]);
+  const totalQtyBom = useMemo(() => rows.reduce((s, r) => s + r.qtyBom, 0), [rows]);
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col">
+        <SheetHeader className="px-4 py-3 border-b bg-muted/30">
+          <SheetTitle className="text-sm flex items-center gap-2 flex-wrap">
+            <HeatMapIcon className="h-4 w-4 text-amber-600" />
+            <span>Detail Resto</span>
+            <Badge variant="outline" className="text-[10px] font-normal">{areaName}</Badge>
+            <span className="text-muted-foreground">→</span>
+            <Badge variant="outline" className="text-[10px] font-normal break-all text-left max-w-[200px]">{itemName}</Badge>
+          </SheetTitle>
+          <SheetDescription className="text-xs">
+            {monthLabel} · {currentWeek}
+          </SheetDescription>
+        </SheetHeader>
+
+        {isLoading && (
+          <div className="p-4 space-y-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        )}
+
+        {isError && (
+          <div className="p-4 text-xs text-red-600">Gagal memuat detail. Coba tutup dan buka lagi.</div>
+        )}
+
+        {!isLoading && !isError && rows.length === 0 && (
+          <div className="p-4 text-xs text-muted-foreground">Tidak ada data detail untuk sel ini.</div>
+        )}
+
+        {!isLoading && !isError && rows.length > 0 && (
+          <>
+            {/* Aggregate summary */}
+            <div className="px-4 py-3 border-b bg-muted/20 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-[10px] text-muted-foreground">Total Resto</div>
+                <div className="text-sm font-semibold">{rows.length}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground">Total Qty Deviasi</div>
+                <div className="text-sm font-semibold tabular-nums">{fmtNum(totalQtyDeviasi)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground">Total Nominal</div>
+                <div className="text-sm font-semibold tabular-nums">{fmtIDR(totalNominal)}</div>
+              </div>
+            </div>
+
+            {/* Detail table */}
+            <ScrollArea className="flex-1">
+              <div className="p-2">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-background z-10">
+                    <tr className="border-b text-left">
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground">Resto</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Qty BOM</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Qty Deviasi</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Dev/BOM</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Waste</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Susut</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Trial</th>
+                      <th className="py-2 px-1.5 font-medium text-muted-foreground text-right">Nominal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, idx) => {
+                      const devBomPct = r.qtyBom > 0 ? r.qtyDeviasi / r.qtyBom : 0;
+                      const isLoss = r.nominalLossSurplus < 0;
+                      return (
+                        <tr key={`${r.outletCode}-${r.akunPenyesuaian}-${idx}`} className="border-b hover:bg-muted/30">
+                          <td className="py-1.5 px-1.5">
+                            <div className="font-medium truncate max-w-[120px]" title={r.outletName}>{r.outletName}</div>
+                            <div className="text-[9px] text-muted-foreground">{r.outletCode}</div>
+                            <div className="text-[9px] text-muted-foreground/70 truncate max-w-[120px]">{r.akunPenyesuaian}</div>
+                          </td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums">{fmtNum(r.qtyBom)}</td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums font-medium">{fmtNum(r.qtyDeviasi)}</td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums">
+                            <span className={devBomPct > 0.05 ? 'text-red-600 font-medium' : ''}>
+                              {(devBomPct * 100).toFixed(1).replace('.', ',')}%
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums text-muted-foreground">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums text-muted-foreground">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</td>
+                          <td className="py-1.5 px-1.5 text-right tabular-nums text-muted-foreground">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</td>
+                          <td className={`py-1.5 px-1.5 text-right tabular-nums font-medium ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>
+                            {fmtIDR(r.nominalLossSurplus)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 bg-muted/20 font-semibold">
+                      <td className="py-2 px-1.5">TOTAL ({rows.length} resto)</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(totalQtyBom)}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(totalQtyDeviasi)}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">
+                        {totalQtyBom > 0 ? `${((totalQtyDeviasi / totalQtyBom) * 100).toFixed(1).replace('.', ',')}%` : '—'}
+                      </td>
+                      <td colSpan={3} className="py-2 px-1.5 text-right text-muted-foreground text-[10px]">Qty Waste/Susut/Trial total</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtIDR(totalNominal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </ScrollArea>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
 
 // ============================================================
 //  Component
@@ -169,20 +367,22 @@ function AreaItemHeatmapInner() {
 
   const [metric, setMetric] = useState<HeatmapMetric>('absNominalDeviasi');
   const [itemLimit, setItemLimit] = useState(20);
+  const [mode, setMode] = useState<ItemSelectMode>('pareto80');
+  const [selectedCell, setSelectedCell] = useState<{ area: string; item: string } | null>(null);
 
-  // Build query params
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (monthLabel) p.set('month', monthLabel);
     if (currentWeek) p.set('week', currentWeek);
     p.set('metric', metric);
     p.set('itemLimit', String(itemLimit));
+    p.set('mode', mode);
     if (area && area !== 'all') p.set('area', area);
     if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
     if (outletCode && outletCode !== 'all') p.set('outlet', outletCode);
     if (pic && pic !== 'all') p.set('pic', pic);
     return p;
-  }, [monthLabel, currentWeek, metric, itemLimit, area, kelompok, outletCode, pic]);
+  }, [monthLabel, currentWeek, metric, itemLimit, mode, area, kelompok, outletCode, pic]);
 
   const { data, isLoading, isError, isFetching } = useQuery<HeatmapResponse>({
     queryKey: ['area-item-heatmap', params.toString()],
@@ -192,13 +392,11 @@ function AreaItemHeatmapInner() {
       return res.json();
     },
     enabled: !!monthLabel && !!currentWeek,
-    staleTime: 5 * 60 * 1000, // 5 min cache
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
-    // FIX FLICKER-04: keep previous data visible during refetch (no skeleton flash)
     placeholderData: keepPreviousData,
   });
 
-  // Build cell lookup map for O(1) access
   const cellMap = useMemo(() => {
     const m = new Map<string, HeatmapCell>();
     if (data?.cells) {
@@ -209,7 +407,6 @@ function AreaItemHeatmapInner() {
     return m;
   }, [data]);
 
-  // FIX FLICKER-11: memoize aggregated stats
   const totalRecords = useMemo(
     () => data?.cells.reduce((s, c) => s + c.recordCount, 0) ?? 0,
     [data],
@@ -218,8 +415,8 @@ function AreaItemHeatmapInner() {
   const maxVal = data?.maxValue ?? 0;
   const areas = data?.areas ?? [];
   const items = data?.items ?? [];
+  const paretoInfo = data?.paretoInfo;
 
-  // FIX FLICKER-07: memoize grid template style objects
   const gridTemplate = useMemo(
     () => ({ gridTemplateColumns: `minmax(140px, auto) repeat(${items.length}, minmax(54px, 1fr))` }),
     [items.length],
@@ -227,6 +424,8 @@ function AreaItemHeatmapInner() {
 
   const handleMetricChange = useCallback((v: string) => setMetric(v as HeatmapMetric), []);
   const handleItemLimitChange = useCallback((v: string) => setItemLimit(parseInt(v, 10)), []);
+  const handleModeChange = useCallback((v: string) => setMode(v as ItemSelectMode), []);
+  const handleCellClick = useCallback((a: string, i: string) => setSelectedCell({ area: a, item: i }), []);
 
   if (!monthLabel || !currentWeek) {
     return (
@@ -258,6 +457,18 @@ function AreaItemHeatmapInner() {
           </CardTitle>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5">
+              <Label className="text-xs text-muted-foreground">Mode:</Label>
+              <Select value={mode} onValueChange={handleModeChange}>
+                <SelectTrigger className="h-8 text-xs w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pareto80" className="text-xs">Pareto 80%</SelectItem>
+                  <SelectItem value="top" className="text-xs">Top N</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground">Metrik:</Label>
               <Select value={metric} onValueChange={handleMetricChange}>
                 <SelectTrigger className="h-8 text-xs w-[180px]">
@@ -273,7 +484,7 @@ function AreaItemHeatmapInner() {
               </Select>
             </div>
             <div className="flex items-center gap-1.5">
-              <Label className="text-xs text-muted-foreground">Top Items:</Label>
+              <Label className="text-xs text-muted-foreground">Maks Item:</Label>
               <Select value={String(itemLimit)} onValueChange={handleItemLimitChange}>
                 <SelectTrigger className="h-8 text-xs w-[70px]">
                   <SelectValue />
@@ -312,13 +523,34 @@ function AreaItemHeatmapInner() {
 
         {!isLoading && !isError && data && areas.length > 0 && (
           <div className="space-y-3">
-            {/* Heatmap grid — scrollable with sticky header */}
+            {/* Pareto info banner */}
+            {paretoInfo && paretoInfo.totalItems > 0 && (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/40 rounded px-2 py-1.5 flex-wrap">
+                {data.itemSelectMode === 'pareto80' ? (
+                  <>
+                    <Badge variant="secondary" className="text-[9px] h-4 px-1.5">Pareto 80%</Badge>
+                    <span>Menampilkan <span className="font-medium text-foreground">{paretoInfo.selectedItems}</span> dari <span className="font-medium text-foreground">{paretoInfo.totalItems}</span> item</span>
+                    <span>•</span>
+                    <span>Kontribusi: <span className="font-medium text-foreground">{paretoInfo.cumulativePct}%</span> dari total</span>
+                  </>
+                ) : (
+                  <>
+                    <Badge variant="secondary" className="text-[9px] h-4 px-1.5">Top {paretoInfo.selectedItems}</Badge>
+                    <span>Dari <span className="font-medium text-foreground">{paretoInfo.totalItems}</span> item</span>
+                    <span>•</span>
+                    <span>Kontribusi: <span className="font-medium text-foreground">{paretoInfo.cumulativePct}%</span></span>
+                  </>
+                )}
+                <span className="ml-auto text-amber-700 dark:text-amber-400">💡 Klik sel untuk detail per resto</span>
+              </div>
+            )}
+
+            {/* Heatmap grid */}
             <div
               className="overflow-auto max-h-[520px] rounded border border-border/40"
               style={{ contain: 'layout style' }}
             >
               <div className="inline-block min-w-full">
-                {/* Column headers (items) — sticky top */}
                 <div
                   className="grid gap-px mb-px sticky top-0 z-10 bg-background"
                   style={gridTemplate}
@@ -344,7 +576,6 @@ function AreaItemHeatmapInner() {
                   ))}
                 </div>
 
-                {/* Rows (areas) */}
                 {areas.map((areaName) => (
                   <div
                     key={areaName}
@@ -367,6 +598,7 @@ function AreaItemHeatmapInner() {
                           cell={cell}
                           maxVal={maxVal}
                           metric={metric}
+                          onCellClick={handleCellClick}
                         />
                       );
                     })}
@@ -390,7 +622,7 @@ function AreaItemHeatmapInner() {
               </div>
             </div>
 
-            {/* Numbered item legend — full names reference */}
+            {/* Numbered item legend */}
             <details className="text-[10px] text-muted-foreground">
               <summary className="cursor-pointer hover:text-foreground select-none">
                 Lihat daftar item lengkap ({items.length})
@@ -416,6 +648,19 @@ function AreaItemHeatmapInner() {
           </div>
         )}
       </CardContent>
+
+      {/* Drill-down Sheet */}
+      {selectedCell && (
+        <CellDetailSheet
+          open={!!selectedCell}
+          onOpenChange={(v) => { if (!v) setSelectedCell(null); }}
+          areaName={selectedCell.area}
+          itemName={selectedCell.item}
+          monthLabel={monthLabel}
+          currentWeek={currentWeek}
+          filters={{ area, kelompok, outletCode, pic }}
+        />
+      )}
     </Card>
   );
 }

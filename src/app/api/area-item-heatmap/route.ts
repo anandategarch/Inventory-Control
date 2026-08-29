@@ -13,7 +13,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
-import { queryAreaItemHeatmap, type HeatmapMetric } from '@/lib/queries/heatmap';
+import { queryAreaItemHeatmap, type HeatmapMetric, type ItemSelectMode } from '@/lib/queries/heatmap';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     const rawWeek = url.searchParams.get('week') || '';
     const metricParam = url.searchParams.get('metric') || 'absNominalDeviasi';
     const itemLimitParam = parseInt(url.searchParams.get('itemLimit') || '20', 10);
+    const modeParam = url.searchParams.get('mode') || 'pareto80';
     const area = url.searchParams.get('area') || null;
     const kelompok = url.searchParams.get('kelompok') || null;
     const outletCode = url.searchParams.get('outlet') || null;
@@ -57,6 +58,9 @@ export async function GET(req: NextRequest) {
 
     // Validate itemLimit (5-109 range)
     const itemLimit = Math.max(5, Math.min(109, isNaN(itemLimitParam) ? 20 : itemLimitParam));
+
+    // Validate mode
+    const mode: ItemSelectMode = modeParam === 'top' ? 'top' : 'pareto80';
 
     // Resolve month label
     const resolver = await getMonthResolver();
@@ -101,7 +105,7 @@ export async function GET(req: NextRequest) {
     // Note: queryAreaItemHeatmap uses buildSqlFilters internally,
     // so we don't need to build a Prisma WhereInput here.
 
-    const result = await queryAreaItemHeatmap(week, month, filterOpts, metric, itemLimit);
+    const result = await queryAreaItemHeatmap(week, month, filterOpts, metric, itemLimit, mode);
 
     return NextResponse.json({
       success: true,
