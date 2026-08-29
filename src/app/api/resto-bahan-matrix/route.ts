@@ -309,7 +309,7 @@ export async function GET(req: NextRequest) {
     };
 
     // PERF-02: Cache the result for 5 min
-    setCached(cacheKey, responseResult);
+    await setCached(cacheKey, responseResult, true);
 
     return NextResponse.json(responseResult, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
