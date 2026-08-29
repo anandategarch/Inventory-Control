@@ -260,4 +260,40 @@ export function ScrollToTop() {
   );
 }
 
+// ============================================================
+//  LoadingChart — used as the `loading` fallback for next/dynamic
+//  imports of heavy chart components (Recharts = 5.4MB). The min-h
+//  reserves layout space so the page doesn't shift when the chunk
+//  finishes loading.
+// ============================================================
+export function LoadingChart() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[520px] space-y-3">
+      <Skeleton className="h-full w-full rounded-lg" />
+    </div>
+  );
+}
+
+// ============================================================
+//  FetchAware — wrapper that dims its children + shows a
+//  "Memperbarui" badge while a refetch is in flight. Preserves
+//  the existing layout (no remount) so users see stale data with
+//  a clear indicator that an update is pending.
+// ============================================================
+export function FetchAware({ isFetching, children }: { isFetching: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`relative transition-all duration-200 ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+      {isFetching && (
+        <div className="absolute inset-0 z-10 flex items-start justify-end p-2">
+          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-background/85 backdrop-blur-sm h-5 shadow-sm">
+            <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+            Memperbarui
+          </Badge>
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
 

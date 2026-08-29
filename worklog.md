@@ -33865,3 +33865,44 @@ Stage Summary:
   1. (P1) Reserve fixed min-height for tooltip area OR use absolute/fixed positioning so tooltip doesn't push content (FLICKER-01)
   2. (P1) Eliminate double state update on cell-to-cell movement — replace per-cell onMouseLeave(null) with a single grid-level mousemove handler that only updates when the hovered cell identity actually changes (FLICKER-02)
   3. (P1+P2) Memoize individual cells as a separate `HeatmapCell` component wrapped in `React.memo` with a custom comparator; memoize inline style objects via `useMemo` or move to CSS custom properties; add `placeholderData: keepPreviousData` to the useQuery options (FLICKER-03, FLICKER-04, FLICKER-07)
+
+---
+Task ID: SPLIT-PAGE
+Agent: general-purpose (Page.tsx Splitter)
+Task: Split 734-line page.tsx into smaller, maintainable modules
+
+Work Log:
+- Read worklog.md tail (~270 lines from offset 33600) — context: prior tasks GAP-COLLAB, AUDIT-HEATMAP-TRUNC, AUDIT-HEATMAP-FLICKER (no prior page-split work).
+- Read full src/app/page.tsx (735 lines) — confirmed structure: imports + LoadingChart + FetchAware + DashboardPage with 5 useEffects, useCallback handlers, keyboard shortcut useEffect, derived state, header JSX, 4 TabsContents, footer, modals.
+- Read src/hooks/useAnalysis.ts (668 lines) — confirmed AnalysisData, AnalysisParams, StatusData types and useStatus/useAnalysis/prefetchAnalysis exports.
+- Read src/hooks/useDashboard.ts (74 lines) — confirmed store shape: monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, activeTab + setters + drilldown/sourceModal/deepDiveItem.
+- Read src/components/dashboard/shared/index.tsx (262 lines) — confirmed EmptyState, LoadingState, ErrorState, SectionHeader, ScrollToTop already live there; added FetchAware + LoadingChart to the same file (Skeleton + Badge + Loader2 already imported — zero new deps).
+- Created src/components/dashboard/DashboardHeader.tsx (156 lines) — sticky 2-tier header (logo + actions + FilterBar). Props: status, hasData, isExporting, analysisFetching, analysisData, onExportClick, onItemSearchClick, onAuditLogClick.
+- Created src/components/dashboard/DashboardFooter.tsx (48 lines) — sticky bottom footer (brand + stats + last-analysis perf). Props: status, analysisData.
+- Created src/components/dashboard/tabs/DashboardTab.tsx (187 lines) — the largest section, all 11 sub-sections (Exec Summary, Resto Recommendation, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency, Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 dynamic() imports (GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart, MultiPeriodComparisonCard, HistoricalZScoreCard, BomCorrelationCard, AreaItemHeatmap) — keeps Recharts (5.4MB) out of main bundle.
+- Created src/components/dashboard/tabs/RestoTab.tsx (39 lines) — wraps dynamic() RestoAnalysis in FetchAware + ErrorBoundary.
+- Created src/components/dashboard/tabs/PeerTab.tsx (34 lines) — wraps dynamic() PeerComparison in FetchAware + ErrorBoundary.
+- Created src/components/dashboard/tabs/ParetoTab.tsx (36 lines) — wraps static-import ParetoDashboard in FetchAware + ErrorBoundary.
+- Created src/hooks/useDashboardEffects.ts (156 lines) — extracted all 5 useEffect hooks + warmedStatusKey useRef (auto-select month, auto-select week, cache warming via prefetchAnalysis, auto-set compare period with BUG-1 fix logic, week validation BUG-8 fix). Pure side-effect hook, no return value. comparisonMonth referenced via `void` to keep exhaustive-deps satisfied without behavioral change.
+- Created src/hooks/useDashboardActions.ts (195 lines) — extracted handleExport (useCallback + isExporting state), handleRefresh (useCallback), and the keyboard shortcuts useEffect (Cmd+E/R/K, 1/2/3/4, Escape). Returns { handleExport, handleRefresh, isExporting }. Uses useToast internally. Setters for exportDialogOpen/itemSearchOpen passed in from page so the keyboard hook can close them on Escape (modals still rendered at page level).
+- Rewrote src/app/page.tsx (227 lines, down from 735) — thin orchestrator: imports all new modules, calls useDashboard + useStatus + useAnalysis + useDashboardEffects + useDashboardActions, derives isLoading/hasData/statusLoaded, renders <DashboardHeader> + <main> with <Tabs> (4 triggers + 4 tab components) + <DashboardFooter> + modals (DrillDownDrawer, SourceDataModal, ItemDeepDive [dynamic], ExportDialog, GlobalItemSearchModal, AuditLogDialog [dynamic], ScrollToTop). Extracted tabTriggerClass const to dedupe the 4 identical Tailwind class strings.
+- Ran `bunx tsc --noEmit` → EXIT 0 (0 errors).
+- Ran `bun run lint` → 0 errors, 345 pre-existing warnings (all in test files — `any`, `tx unused`, non-null assertions — unchanged by this refactor).
+- Ran `bun run test` → 22 files, 435 tests, all passing (4.76s).
+
+Stage Summary:
+- 9 new files created:
+  1. src/components/dashboard/DashboardHeader.tsx (156 lines)
+  2. src/components/dashboard/DashboardFooter.tsx (48 lines)
+  3. src/components/dashboard/tabs/DashboardTab.tsx (187 lines)
+  4. src/components/dashboard/tabs/RestoTab.tsx (39 lines)
+  5. src/components/dashboard/tabs/PeerTab.tsx (34 lines)
+  6. src/components/dashboard/tabs/ParetoTab.tsx (36 lines)
+  7. src/hooks/useDashboardEffects.ts (156 lines)
+  8. src/hooks/useDashboardActions.ts (195 lines)
+  9. src/components/dashboard/shared/index.tsx (extended with FetchAware + LoadingChart — was 262 lines, now 300)
+- page.tsx reduced from 735 → 227 lines (69% reduction; slightly above the 120-150 target because the 4 TabsTrigger elements each carry an identical 200-char Tailwind class string for the active-tab amber underline animation — extracted to a `tabTriggerClass` const for DRY but the lines still add up).
+- Behavior preserved 1:1: all dynamic() imports kept (LoadingChart fallback identical), all ErrorBoundary + FetchAware wrappers in the same order, all keyboard shortcuts (Cmd+E/R/K, 1/2/3/4, Escape) wired to the same setters, all 5 useEffect dependency arrays unchanged, file-naming logic for export preserved verbatim.
+- lint: 0 errors, 345 pre-existing warnings (unchanged)
+- tsc: 0 errors
+- test: 22 files / 435 tests passing (unchanged)
