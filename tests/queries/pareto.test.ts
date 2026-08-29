@@ -76,7 +76,7 @@ describe('queryParetoByItem', () => {
 
   it('coerces BigInt/Decimal DB rows to Number (outletCount, totalAbsNominal, etc.)', async () => {
     mockQueryRaw.mockResolvedValueOnce([
-      { itemName: 'Item A', outletCount: 5n, totalAbsNominal: 100n, nominalDeviasi: -100n, qtyDeviasi: -10n },
+      { itemName: 'Item A', outletCount: BigInt(5), totalAbsNominal: BigInt(100), nominalDeviasi: BigInt(-100), qtyDeviasi: BigInt(-10) },
     ]);
     const r = await queryParetoByItem('WEEK 1', 'M', {});
     expect(r.drivers[0].outletCount).toBe(5);
