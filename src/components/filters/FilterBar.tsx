@@ -127,7 +127,9 @@ export function FilterBar() {
   // an outlet outside the selected kelompok → backend returns 0 rows → misleading
   // "no data" error. Now filters by kelompok too, so the dropdown only shows
   // outlets consistent with the active kelompok filter.
-  const outlets = (status?.outlets || []).filter((o) => {
+  // PERF-05: useMemo outlets filter — was recomputed on every render (e.g., when
+  // ingestMsg state changes). Now only recomputes when status/area/pic/kelompok change.
+  const outlets = useMemo(() => (status?.outlets || []).filter((o) => {
     if (area && o.area !== area) return false;
     if (pic && o.pic !== pic) return false;
     if (kelompok) {
@@ -137,7 +139,7 @@ export function FilterBar() {
       if (oKelompok !== kelompok.toUpperCase()) return false;
     }
     return true;
-  });
+  }), [status?.outlets, area, pic, kelompok]);
   const areas = status?.areas || [];
 
   type Period = { label: string; monthLabel: string; weekLabel: string; sortKey: string };

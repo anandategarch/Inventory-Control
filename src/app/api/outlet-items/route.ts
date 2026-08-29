@@ -84,13 +84,14 @@ export async function GET(req: NextRequest) {
     // ============================================================
     //  Load runtime thresholds (Settings-driven, no hardcoding)
     // ============================================================
-    const thresholds = await getRuntimeThresholds();
-
-    // Resolve outlet
-    const outlet = await db.outlet.findFirst({
-      where: { code: outletCode },
-      select: { id: true, code: true, name: true, area: true },
-    });
+    // PERF-04: Parallelize thresholds + outlet lookup (independent)
+    const [thresholds, outlet] = await Promise.all([
+      getRuntimeThresholds(),
+      db.outlet.findFirst({
+        where: { code: outletCode },
+        select: { id: true, code: true, name: true, area: true },
+      }),
+    ]);
     if (!outlet) {
       return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
     }
@@ -101,11 +102,14 @@ export async function GET(req: NextRequest) {
     let prevWeek = compareWeek;
     let prevMonth = compareMonth || null;
     if (!prevWeek) {
-      const weeksRaw = await db.week.findMany({
-        select: { weekLabel: true, monthKey: true },
-        distinct: ['monthKey', 'weekLabel'],
-      });
-      const fileMonthKeys = await db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } });
+      // PERF-04: Parallelize weeksRaw + fileMonthKeys (independent)
+      const [weeksRaw, fileMonthKeys] = await Promise.all([
+        db.week.findMany({
+          select: { weekLabel: true, monthKey: true },
+          distinct: ['monthKey', 'weekLabel'],
+        }),
+        db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
+      ]);
       const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
       const allPeriods = weeksRaw.map(w => ({
         monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',

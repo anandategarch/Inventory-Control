@@ -23,6 +23,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { logger } from '@/lib/logger';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -61,6 +62,17 @@ export async function GET(req: NextRequest) {
     const monthResolver = await getMonthResolver();
     month = resolveMonthLabel(month, monthResolver) || month;
 
+    // PERF-02: DB-level AggregationCache — check before expensive queries.
+    const cacheKey = buildCacheKey({
+      route: 'resto-bahan-matrix', month, week, area: area && area !== 'all' ? area : null,
+      kelompok: null, outletCode: null, pic: null,
+    });
+    const MATRIX_CACHE_TTL = 5 * 60 * 1000;
+    const earlyCached = await getCached<unknown>(cacheKey, MATRIX_CACHE_TTL);
+    if (earlyCached && typeof earlyCached === 'object' && 'success' in earlyCached) {
+      return NextResponse.json(earlyCached, { headers: CACHE_ANALYSIS });
+    }
+
     // ============================================================
     //  Load runtime thresholds (Settings-driven)
     // ============================================================
@@ -88,7 +100,9 @@ export async function GET(req: NextRequest) {
     //    can be keyed by (outletCode, itemName, akunPenyesuaian).
     // ============================================================
     // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-    const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    // PERF-02: Parallelize rows + itemAreaBench + weeksRaw + fileMonthKeys (4 independent queries)
+    const [rows, itemAreaBench, weeksRaw, fileMonthKeys] = await Promise.all([
+    withStatementTimeout((tx) => tx.$queryRaw<Array<{
       outletCode: string; outletName: string; area: string;
       itemName: string; satuan: string | null; akunPenyesuaian: string | null;
       qtyBom: number | null; qtyDeviasi: number | null;
@@ -121,23 +135,12 @@ export async function GET(req: NextRequest) {
       GROUP BY ir."outletId", o.code, o.name, ir.area, ir."itemId", i.name, i.satuan, ir."akunPenyesuaian"
       ORDER BY SUM(ir."absNominalLossSurplus") DESC
       LIMIT ${limit * 3}
-    `);
+    `),
 
     // ============================================================
     //  Get area avg devBom per item for benchmark
-    //  NOTE: This is AVG(ABS(pctQtyDeviasiToBom)) — the AVERAGE OF PER-ROW
-    //  Dev/BOM ratios across outlets for the same item. This is CORRECT for
-    //  item-level benchmarking (each outlet = 1 equal observation for the same
-    //  item). This is DIFFERENT from DevBomAggregate (SUM/SUM) used for
-    //  outlet-level Dev/BOM. Field name "avgDevBom" = avgRowDevBom.
     // ============================================================
-    // ============================================================
-    //  FIX (BUG-1-2): Replaced PostgreSQL-specific `AVG(...) FILTER (WHERE ...)`
-    //  with portable `AVG(CASE WHEN ... THEN ... END)`. AVG ignores NULLs
-    //  naturally, so CASE-THEN-NULL reproduces FILTER semantics.
-    // ============================================================
-    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-    const itemAreaBench = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    withStatementTimeout((tx) => tx.$queryRaw<Array<{
       itemName: string; avgDevBom: number; outletCount: number;
     }>>`
       SELECT i.name as "itemName",
@@ -148,15 +151,17 @@ export async function GET(req: NextRequest) {
       WHERE ir."monthLabel" = ${month}
         AND ir."weekLabel" = ${week}
       GROUP BY i.name
-    `);
-    const benchMap = new Map(itemAreaBench.map(b => [b.itemName, { avgDevBom: Number(b.avgDevBom), outletCount: Number(b.outletCount) }]));
+    `),
 
     // Get previous period for historical trend
-    const weeksRaw = await db.week.findMany({
+    db.week.findMany({
       select: { weekLabel: true, monthKey: true },
       distinct: ['monthKey', 'weekLabel'],
-    });
-    const fileMonthKeys = await db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } });
+    }),
+    db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
+    ]);
+    const benchMap = new Map(itemAreaBench.map(b => [b.itemName, { avgDevBom: Number(b.avgDevBom), outletCount: Number(b.outletCount) }]));
+
     const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
     const allPeriods = weeksRaw.map(w => ({
       monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
@@ -295,13 +300,18 @@ export async function GET(req: NextRequest) {
       items: new Set(matrix.map(m => m.itemName)).size,
     };
 
-    return NextResponse.json({
+    const responseResult = {
       success: true,
       period: { month, week, prevWeek: prevPeriod?.weekLabel || null, prevMonth: prevPeriod?.monthLabel || null },
       matrix: result,
       stats,
       durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_ANALYSIS });
+    };
+
+    // PERF-02: Cache the result for 5 min
+    setCached(cacheKey, responseResult);
+
+    return NextResponse.json(responseResult, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     // DS-13 + DC-28: Use structured logger + sanitize error response
     logger.error('[resto-bahan-matrix] error', { error: e instanceof Error ? e.message : String(e) });

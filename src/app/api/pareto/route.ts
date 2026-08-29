@@ -101,7 +101,8 @@ export async function GET(req: NextRequest) {
     // FIX (RESTORE-BACKEND-2): when parentDim + childDim both provided,
     // run the generalized `queryParetoNested` in parallel with the other 6
     // queries and include its result as `nestedGeneralized` in the response.
-    const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized] = await Promise.all([
+    // PERF-03: Fold currentSourceFile into first Promise.all (8th entry — independent of the other 7)
+    const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized, currentSourceFile] = await Promise.all([
       queryParetoByItem(week, month, filters),
       queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
       queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
@@ -111,16 +112,12 @@ export async function GET(req: NextRequest) {
       useGeneralizedNested
         ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10)
         : Promise.resolve(null),
+      // PERF-03: was sequential await after the first Promise.all — now parallel
+      db.sourceFile.findFirst({ where: { monthLabel: month }, select: { monthKey: true } }),
     ]);
 
     // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
-    // from historical baseline. The old queryParetoHistorical only excluded
-    // `monthLabel != ${month}`, which included future months if they exist.
-    const currentSourceFile = await db.sourceFile.findFirst({
-      where: { monthLabel: month },
-      select: { monthKey: true },
-    });
-    const currentMonthKey = currentSourceFile?.monthKey;
+    const currentMonthKey = currentSourceFile?.monthKey ?? undefined;
 
     // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
     // + merge histAvg + zScore into Pareto results
