@@ -77,6 +77,20 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     dataType: 'number',
     defaultValue: '2.0',
   },
+  // FIX (FIX-SETTINGS / BUG-BOM-EVAL-03): New configurable threshold for the
+  // BOM_DEVIATION_DISPROPORTIONATE rule. Previously the rule-evaluation SQL
+  // hardcoded a 1.5× upper-bound coupled to BOM_DEVIATION_FACTOR — meaning
+  // if a user lowered BOM_DEVIATION_FACTOR ≤ 1.5, the disproportionate rule
+  // silently never fired (lower bound > upper bound). Decoupling to its own
+  // setting fixes that. Range 1.0–5.0, default 1.5×.
+  {
+    key: 'BOM_DISPROPORTIONATE_FACTOR',
+    label: 'Faktor Disproporsional BOM',
+    description: 'Rasio pertumbuhan deviasi vs BOM untuk memicu rule BOM_DEVIATION_DISPROPORTIONATE (default: 1.5×, artinya deviasi tumbuh 1.5× lebih cepat dari BOM). Range 1.0–5.0.',
+    category: 'GROWTH',
+    dataType: 'number',
+    defaultValue: '1.5',
+  },
   {
     key: 'RESIDUAL_LOSS_WARN_PCT',
     label: 'Ambang Peringatan Residual (%)',
@@ -458,6 +472,9 @@ export interface RuntimeThresholds {
   FALLBACK_TOLERANCE_PCT: number;
   SALES_DEVIATION_FACTOR: number;
   BOM_DEVIATION_FACTOR: number;
+  // FIX (FIX-SETTINGS / BUG-BOM-EVAL-03): configurable threshold for the
+  // BOM_DEVIATION_DISPROPORTIONATE rule (decoupled from BOM_DEVIATION_FACTOR).
+  BOM_DISPROPORTIONATE_FACTOR: number;
   RESIDUAL_LOSS_WARN_PCT: number;
   RESIDUAL_LOSS_HIGH_PCT: number;
   BENCHMARK_AREA_FACTOR: number;
@@ -510,6 +527,10 @@ export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
     FALLBACK_TOLERANCE_PCT: num('FALLBACK_TOLERANCE_PCT', 0.05),
     SALES_DEVIATION_FACTOR: num('SALES_DEVIATION_FACTOR', 2.0),
     BOM_DEVIATION_FACTOR: num('BOM_DEVIATION_FACTOR', 2.0),
+    // FIX (FIX-SETTINGS / BUG-BOM-EVAL-03): decoupled disproportionate
+    // threshold (default 1.5×). SQL rule evaluator consumes via
+    // thresholds.BOM_DISPROPORTIONATE_FACTOR — replaces hardcoded 1.5.
+    BOM_DISPROPORTIONATE_FACTOR: num('BOM_DISPROPORTIONATE_FACTOR', 1.5),
     RESIDUAL_LOSS_WARN_PCT: num('RESIDUAL_LOSS_WARN_PCT', 0.50),
     RESIDUAL_LOSS_HIGH_PCT: num('RESIDUAL_LOSS_HIGH_PCT', 0.70),
     BENCHMARK_AREA_FACTOR: num('BENCHMARK_AREA_FACTOR', 1.5),

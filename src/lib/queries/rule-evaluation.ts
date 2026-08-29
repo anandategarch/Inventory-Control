@@ -1,6 +1,7 @@
 // ============================================================
-//  SQL Rule Evaluation — pushes all 17 rule checks to PostgreSQL.
-//  Eliminates the 35K-record load to RAM + JS loop.
+//  SQL Rule Evaluation — pushes 16 rule checks to PostgreSQL
+//  (3 zScore-based rules evaluated via JS post-process below).
+//  Production total: 16 SQL + 3 JS post-process = 19 rules.
 //
 //  Returns: array of { outletId, itemId, akunPenyesuaian, ruleCode,
 //    severity, category, priority } — one row per fired rule per record.
@@ -9,7 +10,7 @@
 //  - CTE for current records (filtered by month/week/area/outlet/item/PIC)
 //  - LATERAL JOIN for prev period records (same outlet+item+akun)
 //  - LATERAL JOIN for historical stats (mean, stddev, n)
-//  - CASE WHEN for each of 17 rules
+//  - CASE WHEN for each of 16 SQL rules
 //  - UNNEST(ARRAY[...]) to produce one row per fired rule
 //
 //  Performance: single query, ~2-3s (was 6-8s with 35K record load + JS loop)
@@ -39,19 +40,6 @@ export async function evaluateRulesSql(
 ): Promise<SqlRuleFlag[]> {
   const f = buildSqlFilters(filters);
   const hasPrev = prevWeek && prevMonth;
-
-  // Threshold values injected as Prisma.sql parameters
-  const t = Prisma.join([
-    thresholds.STD_DEVIASI_BOM_PCT,
-    thresholds.RESIDUAL_LOSS_WARN_PCT,
-    thresholds.RESIDUAL_LOSS_HIGH_PCT,
-    thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-    thresholds.HISTORICAL_ZSCORE_WARN,
-    thresholds.HISTORICAL_ZSCORE_HIGH,
-    thresholds.HISTORICAL_MIN_WEEKS,
-    thresholds.SALES_DEVIATION_FACTOR,
-    thresholds.BOM_DEVIATION_FACTOR,
-  ], ', ');
 
   // Prev period filter (if no prev, use a sentinel that matches nothing)
   const prevFilter = hasPrev
@@ -153,7 +141,7 @@ export async function evaluateRulesSql(
         ((g."bomGrowth" < 0 AND g."trialGrowth" > 0) OR (g."bomGrowth" > 0 AND g."trialGrowth" < 0))
       THEN 1 ELSE 0 END as "f_trial_bom_mismatch",
       CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0
-        AND g."qtyDeviasiGrowth" > g."bomGrowth" * 1.5 AND g."qtyDeviasiGrowth" <= g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR}
+        AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DISPROPORTIONATE_FACTOR}
       THEN 1 ELSE 0 END as "f_bom_disproportionate"
     FROM curr c
     LEFT JOIN LATERAL (
@@ -238,9 +226,12 @@ export async function evaluateRulesSql(
 //  These rules need the historicalByOutletItem map (pre-fetched
 //  SQL aggregate) which can't be easily inlined in the main query.
 //
-//  Returns additional flags for: HISTORICAL_ABNORMAL,
-//  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING,
-//  BENCHMARK_ABOVE_AREA, BENCHMARK_ABOVE_NETWORK
+//  Returns additional flags for 3 rules: HISTORICAL_ABNORMAL,
+//  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING.
+//
+//  NOTE: BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK were removed
+//  in Phase A-2 (duplicate of HISTORICAL_WARNING/HIGH). YAML config
+//  entries deleted in FIX-RULE-CONFIG.
 // ============================================================
 export function evaluateHistoricalRulesJs(
   currentRecs: Array<{
@@ -254,8 +245,10 @@ export function evaluateHistoricalRulesJs(
   thresholds: RuntimeThresholds,
 ): SqlRuleFlag[] {
   const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
-  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 2;
-  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 3;
+  // EVAL-10 FIX: zScore fallback defaults must align with PRD §5.2 (warn=1.5, high=2).
+  // Previously `?? 2` / `?? 3` over-flagged when settings table row was missing.
+  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 1.5;
+  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 2;
   const flags: SqlRuleFlag[] = [];
 
   for (const curr of currentRecs) {

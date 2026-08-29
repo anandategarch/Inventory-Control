@@ -107,7 +107,7 @@ This pattern appears in:
 - `src/lib/query/weekly-deviation.ts`
 - `src/lib/queries/historical.ts` — `queryHistoricalStatsMultiMetric` (extended for multi-metric Z-Score: computes mean/stddev for Dev/BOM, Waste, Susut, and Trial in a single CTE pass)
 
-### 3.3 Rule Evaluation Architecture (21 Rules)
+### 3.3 Rule Evaluation Architecture (19 Rules)
 
 Rules are split across two evaluators for performance. See `src/lib/queries/rule-evaluation.ts`.
 
@@ -116,7 +116,7 @@ Rules are split across two evaluators for performance. See `src/lib/queries/rule
 | Stage | Where | Rules | Why |
 |-------|-------|-------|-----|
 | 1. SQL push-down | `evaluateRulesSql()` | 16 (all non-zScore rules) | Single query with `CASE WHEN` columns; runs in ~2–3s for 35K records |
-| 2. JS post-process | `evaluateHistoricalRulesJs()` | 5 (zScore-based: HISTORICAL_ABNORMAL, _SURPLUS, _WARNING, BENCHMARK_ABOVE_AREA/NETWORK) | Needs `historicalByOutletItem` Map (pre-fetched in parallel) — can't be inlined cleanly into the SQL query |
+| 2. JS post-process | `evaluateHistoricalRulesJs()` | 3 (zScore-based: HISTORICAL_ABNORMAL, _SURPLUS, _WARNING) | Needs `historicalByOutletItem` Map (pre-fetched in parallel) — can't be inlined cleanly into the SQL query. (BENCHMARK_ABOVE_AREA/NETWORK were removed in FIX-RULE-CONFIG CONFIG-05 as duplicates of HISTORICAL_WARNING/HISTORICAL_ABNORMAL.) |
 
 **Stage 1 SQL shape** (simplified — see `rule-evaluation.ts:62–195` for full):
 
@@ -165,6 +165,11 @@ ORDER BY c."outletId", c."itemId"
 - Div-by-zero guard: `prevX IS NOT NULL AND prevX != 0` before division; otherwise `NULL`.
 - Returns `NULL` (not 0) when prev is missing — rule conditions explicitly check `IS NOT NULL`.
 
+**Runtime threshold operands** (from `Setting` table, surfaced as operands in `rules.yaml` conditions):
+- `bomDeviationFactor` (default 2.0) — used by rule 3 (`BOM_DEVIATION_MISMATCH`).
+- `bomDisproportionateFactor` (default 1.5, range 1.0–5.0; `BOM_DISPROPORTIONATE_FACTOR` setting, added in FIX-SETTINGS) — used by rule 8 (`BOM_DEVIATION_DISPROPORTIONATE`). Decoupled from `bomDeviationFactor` so lowering the latter no longer silently disables rule 8.
+- `salesDeviationFactor`, `residualLossHighPct`, `residualLossWarnPct`, `historicalZscoreWarn`, `historicalZscoreHigh`, `stdDeviasiBomPct`, etc. — all read via `settings.ts:getSettings()` and passed into the SQL evaluator as bound parameters.
+
 ### 3.4 Forbidden Patterns
 
 - ❌ `$queryRawUnsafe` — anywhere. ESLint rule blocks it.
@@ -200,7 +205,9 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 
 **Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts`, `DriveImportDialog`.
 
-> **Cache key note for BOM Correlation:** the new BOM Correlation rules + card do NOT introduce a new cached route or filter dimension. They run inside `/api/analysis` and read the existing `executiveSummary.qty{Bom,Deviasi,Waste,Susut,Trial}.growth` fields. No changes to cache keys are required.
+> **Cache key note for BOM Correlation:** the BOM Correlation rules + card do NOT introduce a new cached route or filter dimension. They run inside `/api/analysis` and read the existing `executiveSummary.qty{Bom,Deviasi,Waste,Susut,Trial}.growth` fields (aggregate alignment table) plus a new `bomCorrelationFindings[]` array (per-record findings table) populated by `buildBomCorrelationFindings()` in `src/app/api/analysis/services/post-process.ts`. The findings array is bounded to the top-50 most-severe BOM flags and adds one extra SQL fetch per cold request (~50–600ms). No changes to cache keys are required.
+>
+> **Dead-code cleanup (FIX-DOCS):** `/api/analysis` no longer computes `areaTrend` (1 less DB query per cold request — `AreaTrendChart.tsx` was deleted). The `cardDrillDown` Zustand state was removed from `useDashboard`; ExecutiveSummary KPI cards are static display only (no click-through drilldown).
 
 ### 4.2 In-Memory Caches
 
@@ -532,10 +539,9 @@ src/
 ├── components/
 │   ├── ui/                                # shadcn/ui primitives
 │   └── dashboard/                         # Chart + KPI components (memoized)
-│       ├── BomCorrelationCard.tsx         # NEW: Dev/Waste/Susut/Trial vs BOM alignment table
+│       ├── BomCorrelationCard.tsx         # Per-record BOM findings table + count badges + aggregate alignment table + narrative
 │       ├── HistoricalZScoreCard.tsx       # Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
-│       ├── AreaTrendChart.tsx             # RETAINED but no longer imported into page.tsx
-│       └── ...                            # 22 other dashboard components
+│       └── ...                            # Other dashboard components (AreaTrendChart + CardDrillDown deleted in FIX-DOCS)
 ├── hooks/
 │   ├── useAnalysis.ts                     # TanStack Query wrapper (AnalysisData type)
 │   └── useFilters.ts                      # Zustand filter store
@@ -552,13 +558,12 @@ src/
 │   ├── queries/
 │   │   ├── buildSqlFilters.ts             # Parameterized WHERE builder
 │   │   ├── historical-stats.ts            # Two-level CTE (multi-metric)
-│   │   ├── rule-evaluation.ts             # 21-rule SQL push-down + 5-rule JS post-process
+│   │   ├── rule-evaluation.ts             # 19-rule SQL push-down + 3-rule JS post-process
 │   │   ├── z-score.ts                     # Z-score query
 │   │   └── month.ts                       # resolveMonthLabel()
 │   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs
 ├── config/
-│   ├── rules.yaml                         # 21 anomaly rules (source of truth)
-│   └── rules.ts                           # TS rule mirror (legacy)
+│   └── rules.yaml                         # 19 anomaly rules (sole source of truth; rules.ts deleted as dead code)
 ├── engine/rules/evaluator.ts              # Legacy JS rule evaluator (used by item-history, outlet-items)
 ├── middleware.ts                          # Auth gate (Edge runtime) — ADMIN_TOKEN middleware (fixed in DOC-UPDATE)
 └── next.config.ts                         # CSP, optimizePackageImports, headers

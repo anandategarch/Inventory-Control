@@ -773,11 +773,21 @@ export async function GET(req: NextRequest) {
     const trialDown = (s.qtyTrial.growth ?? 0) < 0;
 
     // Build correlation findings
+    // FIX (CONFIG-07 / EVAL-09): use configurable thresholds instead of hardcoded
+    // `> 2` and `> 1.5`. The `thresholds` object is fetched at line ~335 via
+    // getRuntimeThresholds(). BOM_DEVIATION_FACTOR (default 2.0) corresponds to
+    // the BOM_DEVIATION_MISMATCH SQL rule's multiplier; BOM_DISPROPORTIONATE_FACTOR
+    // (default 1.5) corresponds to the BOM_DEVIATION_DISPROPORTIONATE rule's lower
+    // bound (decoupled from BOM_DEVIATION_FACTOR by FIX-SETTINGS — was previously
+    // hardcoded to 1.5 in rule-evaluation.ts:156, which made the rule silently
+    // never fire if a user lowered BOM_DEVIATION_FACTOR ≤ 1.5).
+    const disproportionateFactor = thresholds.BOM_DISPROPORTIONATE_FACTOR ?? 1.5;
+    const deviationFactor = thresholds.BOM_DEVIATION_FACTOR ?? 2.0;
     const findings: string[] = [];
     if (bomUp && devUp) {
       const ratio = (s.qtyBom.growth ?? 0) > 0 ? (s.qtyDeviasi.growth ?? 0) / (s.qtyBom.growth ?? 1) : 0;
-      if (ratio > 2) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% jauh melebihi BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×)`);
-      else if (ratio > 1.5) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% tidak proporsional dengan BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×)`);
+      if (ratio > deviationFactor) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% jauh melebihi BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×, ambang ${deviationFactor}×)`);
+      else if (ratio > disproportionateFactor) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% tidak proporsional dengan BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×, ambang ${disproportionateFactor}×)`);
       else findings.push(`✓ Deviasi naik proporsional dengan BOM (rasio ${ratio.toFixed(1)}×)`);
     }
     if (bomDown && devUp) findings.push(`⚠ BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% tapi deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% — tidak sejalan`);
@@ -801,6 +811,196 @@ export async function GET(req: NextRequest) {
         (bomUp && trialUp) || (bomDown && trialDown) ? '✓ Ya' : '⚠ Tidak'],
     ]));
     for (const f of findings) children.push(paragraph(f));
+
+    // ==========================================================
+    // FIX (CONFIG-06): 5.1 Detail Per-Record Findings
+    // The aggregate analysis above only shows execSummary-level growth.
+    // Add a per-record table listing top outlets where BOM correlation
+    // rules actually fired (from sqlFlags, the SQL rule evaluator output).
+    // Previously the Word report's Section 5 duplicated BomCorrelationCard
+    // with the same divergences — now it adds actionable per-record detail.
+    // ==========================================================
+    const bomCategoryFlags = sqlFlags.filter(f => f.category === 'BOM');
+    const bomRuleCounts = new Map<string, number>();
+    for (const f of bomCategoryFlags) {
+      bomRuleCounts.set(f.ruleCode, (bomRuleCounts.get(f.ruleCode) ?? 0) + 1);
+    }
+    // Top 20 most severe (highest priority first). Task spec lists ascending
+    // sort `a.priority - b.priority` but the comment says "top 20" — using
+    // descending so ABNORMAL (priority 88, 82) appears before WARNING (53-56).
+    const bomFindings = [...bomCategoryFlags]
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 20);
+
+    if (bomFindings.length > 0) {
+      children.push(paragraph('5.1 Detail Per-Record Findings (BOM Correlation)', true));
+      // Count summary — total + per-rule breakdown (all BOM-category rules)
+      children.push(paragraph(`Total anomali korelasi BOM: ${bomCategoryFlags.length} record`));
+      const ruleOrder = [
+        'BOM_DEVIATION_MISMATCH',
+        'BOM_DOWN_DEV_UP',
+        'BOM_DEVIATION_DISPROPORTIONATE',
+        'WASTE_BOM_MISMATCH',
+        'SUSUT_BOM_MISMATCH',
+        'TRIAL_BOM_MISMATCH',
+      ];
+      for (const ruleCode of ruleOrder) {
+        const cnt = bomRuleCounts.get(ruleCode) ?? 0;
+        if (cnt > 0) children.push(paragraph(`- ${ruleCode}: ${cnt}`));
+      }
+
+      // Batch-fetch current + prev InventoryRecord rows for the top-20 keys.
+      // Includes outlet.outletCode + item.name for human-readable display.
+      // Prisma `OR` with nullable akunPenyesuaian generates `IS NULL` for null
+      // entries and `= 'value'` for non-null — same semantics as the SQL
+      // `IS NOT DISTINCT FROM` used in rule-evaluation.ts:166.
+      const bomKeys = bomFindings.map(f => ({
+        outletId: f.outletId,
+        itemId: f.itemId,
+        akunPenyesuaian: f.akunPenyesuaian,
+      }));
+      const bomKeyOf = (o: { outletId: number; itemId: number; akunPenyesuaian: string | null }) =>
+        `${o.outletId}|${o.itemId}|${o.akunPenyesuaian ?? ''}`;
+
+      const [currBomRecs, prevBomRecs] = await Promise.all([
+        db.inventoryRecord.findMany({
+          where: {
+            monthLabel: month,
+            weekLabel: week,
+            OR: bomKeys.map(k => ({
+              outletId: k.outletId,
+              itemId: k.itemId,
+              akunPenyesuaian: k.akunPenyesuaian,
+            })),
+          },
+          select: {
+            outletId: true,
+            itemId: true,
+            akunPenyesuaian: true,
+            qtyBom: true,
+            qtyDeviasi: true,
+            qtyWaste: true,
+            qtySusut: true,
+            qtyTrial: true,
+            outlet: { select: { outletCode: true } },
+            item: { select: { name: true } },
+          },
+        }),
+        prevMonth && prevWeek
+          ? db.inventoryRecord.findMany({
+              where: {
+                monthLabel: prevMonth,
+                weekLabel: prevWeek,
+                OR: bomKeys.map(k => ({
+                  outletId: k.outletId,
+                  itemId: k.itemId,
+                  akunPenyesuaian: k.akunPenyesuaian,
+                })),
+              },
+              select: {
+                outletId: true,
+                itemId: true,
+                akunPenyesuaian: true,
+                qtyBom: true,
+                qtyDeviasi: true,
+                qtyWaste: true,
+                qtySusut: true,
+                qtyTrial: true,
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      // Build lookup maps keyed by "outletId|itemId|akun"
+      type BomRec = {
+        qtyBom: number | null;
+        qtyDeviasi: number | null;
+        qtyWaste: number | null;
+        qtySusut: number | null;
+        qtyTrial: number | null;
+      };
+      const prevBomMap = new Map<string, BomRec>();
+      for (const r of prevBomRecs) {
+        prevBomMap.set(bomKeyOf(r), {
+          qtyBom: r.qtyBom, qtyDeviasi: r.qtyDeviasi, qtyWaste: r.qtyWaste,
+          qtySusut: r.qtySusut, qtyTrial: r.qtyTrial,
+        });
+      }
+      const currBomMap = new Map<string, BomRec & { outletCode: string; itemName: string }>();
+      for (const r of currBomRecs) {
+        currBomMap.set(bomKeyOf(r), {
+          qtyBom: r.qtyBom, qtyDeviasi: r.qtyDeviasi, qtyWaste: r.qtyWaste,
+          qtySusut: r.qtySusut, qtyTrial: r.qtyTrial,
+          outletCode: r.outlet.outletCode, itemName: r.item.name,
+        });
+      }
+
+      // Growth helper — matches rule-evaluation.ts:174-192 ABS magnitude formula
+      const growthAbs = (curr: number | null | undefined, prev: number | null | undefined): number | null => {
+        if (curr == null || prev == null || prev === 0) return null;
+        return (Math.abs(curr) - Math.abs(prev)) / Math.abs(prev);
+      };
+
+      // Render the per-record table. For each finding, pick the relevant
+      // metric growth based on rule code:
+      //   BOM_DEVIATION_MISMATCH / BOM_DOWN_DEV_UP / BOM_DEVIATION_DISPROPORTIONATE → qtyDeviasi
+      //   WASTE_BOM_MISMATCH → qtyWaste
+      //   SUSUT_BOM_MISMATCH → qtySusut
+      //   TRIAL_BOM_MISMATCH → qtyTrial
+      // Ratio = metricGrowth / bomGrowth (only when bomGrowth > 0 — otherwise
+      // opposite-sign or negative-BOM cases produce meaningless ratios).
+      const bomRows: string[][] = bomFindings.map(f => {
+        const key = bomKeyOf(f);
+        const c = currBomMap.get(key);
+        const p = prevBomMap.get(key);
+        if (!c) {
+          return [String(f.outletId), String(f.itemId), f.ruleCode, '—', '—', '—'];
+        }
+        const bomGrowth = growthAbs(c.qtyBom, p?.qtyBom ?? null);
+        let metricGrowth: number | null = null;
+        switch (f.ruleCode) {
+          case 'BOM_DEVIATION_MISMATCH':
+          case 'BOM_DOWN_DEV_UP':
+          case 'BOM_DEVIATION_DISPROPORTIONATE':
+            metricGrowth = growthAbs(c.qtyDeviasi, p?.qtyDeviasi ?? null);
+            break;
+          case 'WASTE_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtyWaste, p?.qtyWaste ?? null);
+            break;
+          case 'SUSUT_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtySusut, p?.qtySusut ?? null);
+            break;
+          case 'TRIAL_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtyTrial, p?.qtyTrial ?? null);
+            break;
+        }
+        // Ratio only meaningful when both growths are positive (same-direction
+        // disproportionate case). For sign-mismatch rules the ratio is negative
+        // or undefined — show '—'.
+        let ratio: number | null = null;
+        if (bomGrowth != null && metricGrowth != null && bomGrowth > 0 && metricGrowth > 0) {
+          ratio = metricGrowth / bomGrowth;
+        }
+        return [
+          c.outletCode,
+          c.itemName,
+          f.ruleCode,
+          bomGrowth != null ? fmtPct(bomGrowth, true) : '—',
+          metricGrowth != null ? fmtPct(metricGrowth, true) : '—',
+          ratio != null ? `${ratio.toFixed(2)}×` : '—',
+        ];
+      });
+
+      children.push(makeTable(
+        ['Outlet', 'Item', 'Rule', 'BOM Growth', 'Metric Growth', 'Ratio'],
+        bomRows,
+      ));
+      children.push(paragraph(
+        `Catatan: tabel menampilkan ${bomFindings.length} record teratas (diurutkan berdasarkan prioritas rule). ` +
+        `Ratio hanya ditampilkan ketika BOM growth dan metric growth keduanya positif (kasus disproportionate).`,
+      ));
+    }
+
     children.push(divider());
 
     }

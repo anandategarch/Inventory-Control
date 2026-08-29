@@ -324,6 +324,13 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                         </p>
                       </div>
                       <div className="space-y-2">
+                        {/* Data-driven rendering: every entry in SETTING_DEFINITIONS
+                            (settings.ts) is auto-rendered here as an Input row.
+                            To add a new setting, append to SETTING_DEFINITIONS —
+                            no markup changes needed here.
+                            (FIX-SETTINGS: BOM_DISPROPORTIONATE_FACTOR was added
+                            this way — appears under GROWTH category right after
+                            BOM_DEVIATION_FACTOR.) */}
                         {items.map((s) => {
                           const currentVal = effectiveValues[s.key] ?? s.value;
                           const isChanged = currentVal !== s.value;

@@ -26,8 +26,6 @@ interface DashboardStore {
   setDrilldown: (d: { outletCode: string | null; itemName: string | null }) => void;
   sourceModalOpen: boolean;
   setSourceModal: (b: boolean) => void;
-  cardDrillDown: string | null;
-  setCardDrillDown: (card: string | null) => void;
   deepDiveItem: { itemName: string | null; outletCode: string | null };
   setDeepDiveItem: (d: { itemName: string | null; outletCode: string | null }) => void;
   scorecardOutlet: string | null;
@@ -62,8 +60,6 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setDrilldown: (d) => set({ drilldown: d }),
   sourceModalOpen: false,
   setSourceModal: (b) => set({ sourceModalOpen: b }),
-  cardDrillDown: null,
-  setCardDrillDown: (card) => set({ cardDrillDown: card }),
   deepDiveItem: { itemName: null, outletCode: null },
   setDeepDiveItem: (d) => set({ deepDiveItem: d }),
   scorecardOutlet: null,

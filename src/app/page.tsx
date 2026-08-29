@@ -85,7 +85,7 @@ function FetchAware({ isFetching, children }: { isFetching: boolean; children: R
 // Fix #10: Scroll to Top button — appears after scrolling down 300px
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -102,7 +102,6 @@ export default function DashboardPage() {
     setActiveTab: s.setActiveTab,
     setDrilldown: s.setDrilldown,
     setSourceModal: s.setSourceModal,
-    setCardDrillDown: s.setCardDrillDown,
     setDeepDiveItem: s.setDeepDiveItem,
   })));
   const { data: status } = useStatus();
@@ -334,14 +333,13 @@ export default function DashboardPage() {
         setItemSearchOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
         setSourceModal(false);
-        setCardDrillDown(null);
         setDeepDiveItem({ itemName: null, outletCode: null });
         return;
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [analysis.data, handleRefresh, setActiveTab, setExportDialogOpen, setDrilldown, setSourceModal, setCardDrillDown, setDeepDiveItem]);
+  }, [analysis.data, handleRefresh, setActiveTab, setExportDialogOpen, setDrilldown, setSourceModal, setDeepDiveItem]);
 
   // PERF-OPT: derive isLoading/hasData once per render (cheap booleans — no
   // memoization needed; React already dedupes identical primitives).

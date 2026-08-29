@@ -6,6 +6,7 @@ export const CFG_THRESHOLDS = {
   // Growth mismatch — flag if deviation growth > salesGrowth * FACTOR
   SALES_DEVIATION_FACTOR: 2.0,      // dev growth > 2x sales growth → ABNORMAL
   BOM_DEVIATION_FACTOR: 2.0,        // dev growth > 2x BOM growth → ABNORMAL
+  BOM_DISPROPORTIONATE_FACTOR: 1.5, // dev growth > 1.5x BOM growth (but < 2x) → WARNING (disproportionate)
 
   // Residual Loss — fraction of deviation unexplained by waste+susut+trial
   RESIDUAL_LOSS_WARN_PCT: 0.50,     // >50% residual → WARNING

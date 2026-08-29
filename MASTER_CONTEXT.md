@@ -6,7 +6,7 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session DOC-UPDATE (BOM correlation feature)
+> **Last updated:** Session FIX-DOCS (rules.ts deletion, 19-rule cleanup, BOM_DISPROPORTIONATE_FACTOR setting, dead-code cleanup, BomCorrelationCard per-record rewrite)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -127,14 +127,13 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `AdvancedAnalysis` — Advanced analysis panel
 - `Charts` — 5 chart types (Deviation, Waste, Susut, Trial, Residual)
 - `HistoricalZScoreCard` — Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
-- `BomCorrelationCard` — BOM correlation analysis (Dev/Waste/Susut/Trial vs BOM growth direction) — *added in DOC-UPDATE*
+- `BomCorrelationCard` — Per-record BOM correlation findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate alignment table + narrative — *reads `bomCorrelationFindings` from `/api/analysis` response (added in FIX-BOM-UI rewrite)*
 - `ItemDeepDive` — Item-level deep dive
-- `CardDrillDown` — Card-based drill-down
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
 - `RestoAnalysis` — Restaurant analysis panel
 
-> **Removed from dashboard (DOC-UPDATE):** `AreaTrendChart` (file retained for reference, no longer rendered on dashboard) and the "Weekly Trend" component. The `RestoAnalisa` priority-score drilldown is now a static card display (no click-through).
+> **Removed (FIX-DOCS dead-code cleanup):** `AreaTrendChart.tsx`, `CardDrillDown.tsx` files deleted. `cardDrillDown` Zustand state removed from `useDashboard`. ExecutiveSummary KPI cards are now static display (no click-through drilldown). `RestoAnalisa` priority-score drilldown is also a static card display.
 
 ### Filters (`src/components/filters/` — 10 components)
 - `FilterBar` — Main filter bar
@@ -162,12 +161,12 @@ Deviation is decomposed into 4 categories for root cause identification:
 ## 6. Key Features
 
 ### Anomaly Engine
-- **21-rule engine** (17 original + 4 BOM correlation, YAML-configured, SQL-pushed evaluator)
-- Rules defined in `src/config/rules.yaml` (source of truth) and mirrored in `src/config/rules.ts`
-- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` (16 rules) + JS post-process for zScore-based rules (5 rules: HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING, BENCHMARK_ABOVE_AREA, BENCHMARK_ABOVE_NETWORK)
-- Analysis modules: `patternEngine`, `rootCauseEngine`, `ruleService`
+- **19-rule engine** (15 original + 4 BOM correlation, YAML-configured, SQL-pushed evaluator)
+- Rules defined in `src/config/rules.yaml` (sole source of truth — `src/config/rules.ts` was deleted as dead code in FIX-DOCS)
+- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` (16 rules) + JS post-process for zScore-based rules (3 rules: HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
+- Analysis modules: `patternEngine`, `rootCauseEngine`, `ruleService`. The `ROOT_CAUSE_MAPPINGS` table in `rootCauseEngine.ts` now includes 4 BOM correlation rule mappings (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH, BOM_DEVIATION_DISPROPORTIONATE); the 2 BENCHMARK mappings were removed alongside the rule deletions.
 
-### 21 Anomaly Rules
+### 19 Anomaly Rules
 
 | # | Code | Category | Severity | Priority | Trigger |
 |---|------|----------|----------|----------|---------|
@@ -186,20 +185,20 @@ Deviation is decomposed into 4 categories for root cause identification:
 | 13 | `RESIDUAL_LOSS_HIGH` | RESIDUAL | ABNORMAL | 75 | Residual ratio > `residualLossHighPct` AND direction = LOSS |
 | 14 | `RESIDUAL_LOSS_WARN` | RESIDUAL | WARNING | 60 | Residual ratio > `residualLossWarnPct` AND ≤ high AND LOSS |
 | 15 | `HIGH_LOSS_NOMINAL` | DIRECTION | ABNORMAL | 80 | `|nominalLossSurplus|` > `highLossNominalThreshold` AND LOSS |
-| 16 | `BENCHMARK_ABOVE_AREA` | BENCHMARK | WARNING | 50 | `benchmarkFlag = HISTORICAL_WARNING` |
-| 17 | `BENCHMARK_ABOVE_NETWORK` | BENCHMARK | ABNORMAL | 72 | `benchmarkFlag = HISTORICAL_HIGH` |
-| 18 | `DIRECTION_FLIP` | HISTORICAL | WARNING | 60 | Direction flipped LOSS ↔ SURPLUS vs previous period |
-| 19 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` AND LOSS |
-| 20 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
-| 21 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
+| 16 | `DIRECTION_FLIP` | HISTORICAL | WARNING | 60 | Direction flipped LOSS ↔ SURPLUS vs previous period |
+| 17 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` AND LOSS |
+| 18 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
+| 19 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
+
+> **Removed (FIX-RULE-CONFIG CONFIG-05):** `BENCHMARK_ABOVE_AREA` (was P50, WARNING) + `BENCHMARK_ABOVE_NETWORK` (was P72, ABNORMAL) — duplicates of `HISTORICAL_WARNING` / `HISTORICAL_ABNORMAL` (same zScore condition, different name). True area/network comparison lives in `computeBenchmark()` and surfaces as `ABOVE_AREA` / `ABOVE_NETWORK` flags on the Resto Profile, not as rules.
 
 ### BOM Correlation Analysis
-- 4 new rules detect when Waste/Susut/Trial growth diverges in sign from BOM growth, or when Deviation growth is disproportionate (1.5–2×) to BOM growth.
+- 4 rules detect when Waste/Susut/Trial growth diverges in sign from BOM growth, or when Deviation growth is disproportionate to BOM growth. The disproportionate threshold is configurable via the `BOM_DISPROPORTIONATE_FACTOR` setting (default `1.5`; range 1.0–5.0) — replaces the previously hardcoded 1.5× factor and is decoupled from `BOM_DEVIATION_FACTOR` (the 2× upper bound for rule 3).
 - Growth fields `wasteGrowth` / `susutGrowth` / `trialGrowth` (alongside existing `bomGrowth` / `qtyDeviasiGrowth` / `salesGrowth` / `nominalDeviasiGrowth`) are computed in the rule-evaluation CTE using `ABS(...)` magnitude and div-by-zero guards.
-- Dashboard component: `BomCorrelationCard` (`src/components/dashboard/BomCorrelationCard.tsx`) renders a Deviasi/Waste/Susut/Trial vs BOM alignment table on the Dashboard tab (under "Analisis Historis").
+- Dashboard component: `BomCorrelationCard` (`src/components/dashboard/BomCorrelationCard.tsx`) renders (1) a per-record findings table with per-rule count badges — read from the `bomCorrelationFindings` + `bomCorrelationCounts` fields on the `/api/analysis` response, and (2) an aggregate Deviasi/Waste/Susut/Trial vs BOM alignment table. The card lives on the Dashboard tab (under "Analisis Historis").
 
 ### Analytics
-- **BOM Correlation analysis** (Deviasi/Waste/Susut/Trial vs BOM growth direction) — surfaced as dashboard card + 4 rules
+- **BOM Correlation analysis** (per-record findings + aggregate alignment table) — surfaced as dashboard card + 4 rules
 - **Historical Z-Score** analysis (multi-metric: Dev/BOM + Waste + Susut + Trial)
 - **Pareto 80/20** analysis (5 dimensions: Item, Outlet, Area, Kelompok, PIC)
 - **Peer comparison** (outlet vs ±10% sales peers)
@@ -208,7 +207,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 ### Data Operations
 - Export laporan Word (`.docx`)
 - Import Excel + Google Drive
-- Settings (24 configurable thresholds, UI editable)
+- Settings (configurable thresholds incl. `BOM_DISPROPORTIONATE_FACTOR`, `BOM_DEVIATION_FACTOR`, residual/tolerance/zScore thresholds; UI editable)
 - Audit Log (11 write sites, UI viewer with filter + pagination)
 
 ### Caching
@@ -284,7 +283,7 @@ src/
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
 │   └── api/                        # 22 API routes (incl. pic/import)
 ├── components/
-│   ├── dashboard/                  # 25 components (+ BomCorrelationCard; AreaTrendChart retained but not rendered)
+│   ├── dashboard/                  # Dashboard components (incl. BomCorrelationCard; AreaTrendChart + CardDrillDown deleted in FIX-DOCS)
 │   ├── filters/                    # 10 components (FilterBar + 5 dialogs + SearchableComboBox)
 │   ├── drilldown/                  # 2 components
 │   └── ui/                         # 29 shadcn components
@@ -299,14 +298,13 @@ src/
 │   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/invalidateAll)
 │   ├── db.ts                       # Prisma client (connection_limit=30, pool_timeout=60)
 │   ├── rate-limit.ts               # In-memory rate limiter
-│   └── settings.ts                 # 24 configurable thresholds
+│   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)
 ├── engine/
 │   ├── rules/evaluator.ts          # Legacy JS rule evaluator (used by item-history, outlet-items)
 │   └── analysis/                   # patternEngine, rootCauseEngine, ruleService
-├── lib/queries/rule-evaluation.ts  # 21-rule SQL push-down evaluator (16 SQL + 5 JS post-process)
+├── lib/queries/rule-evaluation.ts  # 19-rule SQL push-down evaluator (16 SQL + 3 JS post-process)
 ├── config/
-│   ├── rules.yaml                  # 21 anomaly rules definition (source of truth)
-│   └── rules.ts                    # TypeScript rule configs (legacy mirror)
+│   └── rules.yaml                  # 19 anomaly rules definition (sole source of truth)
 └── middleware.ts                   # Auth (ADMIN_TOKEN, PROTECTED_PATHS)
 ```
 

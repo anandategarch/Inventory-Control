@@ -253,41 +253,6 @@ export const ROOT_CAUSE_MAPPINGS: Record<string, RootCauseMapping> = {
     category: 'OPERATIONAL',
   },
 
-  // ===== BENCHMARK =====
-  BENCHMARK_ABOVE_AREA: {
-    ruleCode: 'BENCHMARK_ABOVE_AREA',
-    possibleRootCauses: [
-      'Outlet berperforma di bawah peer area — prosedur operasional perlu improve',
-      'Staff training gap — skill tidak setara dengan outlet lain di area',
-      'Equipment issue — alat tidak optimal causing waste tinggi',
-    ],
-    recommendedActions: [
-      'Benchmarking vs best-in-class outlet di area yang sama',
-      'Training exchange — kirim staff ke outlet dengan performa terbaik',
-      'Audit equipment — pastikan alat produksi optimal',
-    ],
-    severity: 'MEDIUM',
-    category: 'OPERATIONAL',
-  },
-
-  BENCHMARK_ABOVE_NETWORK: {
-    ruleCode: 'BENCHMARK_ABOVE_NETWORK',
-    possibleRootCauses: [
-      'Outlet outlier di network — masalah sistemik perlu investigasi',
-      'Management/leadership issue di outlet tersebut',
-      'Pencatatan consistently salah — perlu audit proses',
-      'Kondisi lokal yang unik (demografi, kompetitor, supply chain)',
-    ],
-    recommendedActions: [
-      'Audit lengkap outlet — operasional, pencatatan, dan management',
-      'Bandingkan dengan top 3 outlet di network — identifikasi gap',
-      'Investigasi kondisi lokal yang mungkin unik',
-      'Action plan khusus dengan timeline perbaikan yang jelas',
-    ],
-    severity: 'HIGH',
-    category: 'OPERATIONAL',
-  },
-
   // ===== DIRECTION FLIP =====
   DIRECTION_FLIP: {
     ruleCode: 'DIRECTION_FLIP',
@@ -380,6 +345,72 @@ export const ROOT_CAUSE_MAPPINGS: Record<string, RootCauseMapping> = {
       'Verifikasi receiving & transfer — cari selisih kuantitas',
     ],
     severity: 'HIGH',
+    category: 'OPERATIONAL',
+  },
+
+  // ===== BOM CORRELATION (Waste/Susut/Trial vs BOM) — FIX-RULE-CONFIG (CONFIG-03) =====
+  // 4 new rules added in DOC-UPDATE; mappings were missing prior to this fix.
+  WASTE_BOM_MISMATCH: {
+    ruleCode: 'WASTE_BOM_MISMATCH',
+    possibleRootCauses: [
+      'Pencatatan waste tidak konsisten dengan aktivitas produksi',
+      'Salah input waste (sign atau magnitude)',
+      'Perubahan proses produksi tidak ter-refleksi di BOM',
+    ],
+    recommendedActions: [
+      'Sampling fisik waste vs pencatatan',
+      'Audit input waste oleh SPV',
+      'Rekonsiliasi BOM vs resep aktual',
+    ],
+    severity: 'MEDIUM',
+    category: 'OPERATIONAL',
+  },
+
+  SUSUT_BOM_MISMATCH: {
+    ruleCode: 'SUSUT_BOM_MISMATCH',
+    possibleRootCauses: [
+      'Pencatatan susut tidak konsisten dengan volume produksi',
+      'Susut aktual berbeda dari standar BOM',
+      'Kondisi penyimpanan atau pengolahan berubah',
+    ],
+    recommendedActions: [
+      'Audit fisik susut',
+      'Verifikasi kondisi penyimpanan',
+      'Update standar susut di BOM',
+    ],
+    severity: 'MEDIUM',
+    category: 'INVENTORY',
+  },
+
+  TRIAL_BOM_MISMATCH: {
+    ruleCode: 'TRIAL_BOM_MISMATCH',
+    possibleRootCauses: [
+      'Pencatatan trial tidak konsisten dengan BOM',
+      'Trial produk baru belum ter-refleksi di BOM master',
+      'Salah input qty trial',
+    ],
+    recommendedActions: [
+      'Verifikasi dokumentasi trial',
+      'Update BOM master untuk trial items',
+      'Audit input trial oleh SPV',
+    ],
+    severity: 'MEDIUM',
+    category: 'OPERATIONAL',
+  },
+
+  BOM_DEVIATION_DISPROPORTIONATE: {
+    ruleCode: 'BOM_DEVIATION_DISPROPORTIONATE',
+    possibleRootCauses: [
+      'Porsioning tidak konsisten saat volume naik',
+      'Mix produk bergeser ke high-deviasi item',
+      'BOM master tidak update',
+    ],
+    recommendedActions: [
+      'Audit porsioning saat peak volume',
+      'Analisa sales mix shift',
+      'Update BOM master',
+    ],
+    severity: 'MEDIUM',
     category: 'OPERATIONAL',
   },
 

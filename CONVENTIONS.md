@@ -131,7 +131,7 @@ const HeavyChart = dynamic(() => import('...'), { ssr: false, loading: () => <Lo
 
 ### 5.1 Detail-Heavy Card Template (BomCorrelationCard)
 
-For cards that render a small, dense comparison table + narrative findings (e.g. `BomCorrelationCard`), follow this template:
+For cards that render per-record findings + a small dense comparison table + narrative (e.g. `BomCorrelationCard` after the FIX-BOM-UI rewrite), follow this template:
 
 ```typescript
 'use client';
@@ -143,14 +143,20 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { fmtNum, fmtPct } from '@/lib/format';
 
-interface MetricRow { name: string; current: number | null; growth: number | null; previous: number | null; aligned: boolean | null }
+interface MetricRow { name: string; current: number | null; growth: number | null; previous: number | null; aligned: boolean | null, isBaseline?: boolean }
 
 function CardInner({ data }: { data: AnalysisData }) {
   const s = data.executiveSummary;
-  // 1. Pull growth values from exec summary (already server-computed)
-  // 2. Build rows array inside an IIFE so we can early-return [] when data is null
-  // 3. Build findings array (text + 'warning' | 'ok' type) inside another IIFE
-  // 4. Render Table + findings list
+  const findings = data.bomCorrelationFindings ?? [];
+  const counts = data.bomCorrelationCounts;
+  // 1. Per-record findings table (PRIMARY): render `findings` rows directly —
+  //    server pre-computed, sorted by rulePriority DESC. Use per-rule count
+  //    badges from `counts` (only render badges where count > 0).
+  // 2. Aggregate alignment table (SECONDARY): build rows array inside an IIFE
+  //    so we can early-return [] when `s` is null. Mark BOM row with isBaseline.
+  // 3. Narrative findings array: text + 'warning' | 'ok' type.
+  // 4. Render scroll container around findings table (max-h-96 + overflow-y-auto)
+  //    so TableHeader sticky actually sticks.
 }
 
 export const BomCorrelationCard = memo(CardInner);
@@ -160,14 +166,17 @@ Key conventions:
 - Type the props as `{ data: AnalysisData }` — do NOT pass derived values as separate props (keeps the prop interface stable).
 - Use `FormulaInfo` in the header to explain the rule (formula + description + example + side).
 - Use `null` for "no data" sentinel (not `0` or `undefined`) and render `—` in the cell.
+- For growth cells: positive=red, negative=green, zero/null=muted (`growthColorClass` helper).
+- For ratio cells: format with Indonesian decimal separator via `fmtRatio(v, '×')` (e.g. `2,5×`).
+- Stable React keys: composite slug (`${outletId}-${itemId}-${ruleCode}-${akunPenyesuaian ?? ''}`), never array index.
+- Wrap scrollable findings table in a `max-h-96 overflow-y-auto` container so `TableHeader` sticky actually sticks.
+- Add `<TableCaption className="sr-only">` per table for screen-reader accessibility.
 - Compute alignment booleans in TS, not SQL — keeps the SQL evaluator simple.
-- Findings array: push only when an anomaly is detected; fall back to a single "all aligned" ok message.
 
 ## 6. Rule Definition Conventions
 
-Rules live in two places:
-1. `src/config/rules.yaml` — **source of truth** (DSL: comparison + logical + arithmetic operators).
-2. `src/config/rules.ts` — TS mirror (used by the legacy JS evaluator on `/api/item-history` and `/api/outlet-items`; some fields still use the older `direction`-based conditions).
+Rules live in one place:
+1. `src/config/rules.yaml` — **sole source of truth** (DSL: comparison + logical + arithmetic operators). The previous `src/config/rules.ts` TS mirror was deleted as dead code in FIX-DOCS (was never imported at runtime).
 
 The SQL push-down evaluator (`src/lib/queries/rule-evaluation.ts`) is the active evaluator on `/api/analysis` and `/api/export-report`. It hardcodes a `CASE WHEN` column per rule and a `RULE_MAP` entry that maps the column name → rule code + severity + category + priority. **Both must be updated together when adding a rule.**
 
@@ -210,7 +219,7 @@ The 4 BOM Correlation rules (`WASTE_BOM_MISMATCH`, `SUSUT_BOM_MISMATCH`, `TRIAL_
           - bomGrowth: { gt: 0 }
           - <metric>Growth: { lt: 0 }
   ```
-- **BOM_DEVIATION_DISPROPORTIONATE** uses `deviationBomRatio > 1.5` to catch the 1.5×–2× band that `BOM_DEVIATION_MISMATCH` (rule 3, factor = `bomDeviationFactor` = 2) misses.
+- **BOM_DEVIATION_DISPROPORTIONATE** uses `deviationBomRatio > bomDisproportionateFactor` to catch the 1.5×–2× band that `BOM_DEVIATION_MISMATCH` (rule 3, factor = `bomDeviationFactor` = 2) misses. The `bomDisproportionateFactor` value is the runtime setting `BOM_DISPROPORTIONATE_FACTOR` (default `1.5`, range 1.0–5.0, exposed in the Settings dialog) — it is decoupled from `BOM_DEVIATION_FACTOR` so that lowering the latter no longer silently disables rule 8.
 - **Narrative template** must reference both growth values so the analyst can see both numbers without drilldown.
 
 ### 6.4 SQL vs JS Evaluator Patterns
@@ -220,8 +229,8 @@ The codebase has TWO rule evaluators — they serve different routes and must st
 | Evaluator | File | Routes | Rule count | Notes |
 |-----------|------|--------|------------|-------|
 | SQL push-down | `src/lib/queries/rule-evaluation.ts` (`evaluateRulesSql`) | `/api/analysis`, `/api/export-report` | 16 (all non-zScore) | Single SQL query; runs in ~2–3s for 35K records. **Active path.** |
-| JS post-process | `src/lib/queries/rule-evaluation.ts` (`evaluateHistoricalRulesJs`) | same | 5 (zScore-based) | Uses `historicalByOutletItem` Map; runs in JS after the SQL eval. |
-| Legacy JS | `src/engine/rules/evaluator.ts` | `/api/item-history`, `/api/outlet-items` | 17 (no BOM Correlation) | Older single-record evaluator; not updated with BOM Correlation rules. |
+| JS post-process | `src/lib/queries/rule-evaluation.ts` (`evaluateHistoricalRulesJs`) | same | 3 (zScore-based) | Uses `historicalByOutletItem` Map; runs in JS after the SQL eval. (BENCHMARK_ABOVE_AREA/NETWORK removed in FIX-RULE-CONFIG CONFIG-05.) |
+| Legacy JS | `src/engine/rules/evaluator.ts` | `/api/item-history`, `/api/outlet-items` | 15 (no BOM Correlation, no BENCHMARK) | Older single-record evaluator; not updated with BOM Correlation rules. |
 
 When adding a rule, prefer the **SQL push-down** path (Stage 1) unless the rule needs historical stats. Update `RULE_MAP` in `rule-evaluation.ts` and add the corresponding `CASE WHEN` column. Do NOT add the rule to `src/engine/rules/evaluator.ts` unless the `/api/item-history` route needs it — and if you do, document the divergence in a comment.
 
@@ -381,12 +390,12 @@ src/
 ├── lib/metrics/                      # Pure calculation functions
 ├── hooks/                            # React hooks (useAnalysis, useDashboard)
 ├── engine/                           # Business logic (rules, analysis)
-└── config/                           # YAML/TS config (rules, thresholds)
+└── config/                           # YAML config (rules, thresholds) — rules.ts deleted as dead code
 ```
 
 - **Route > 200 lines?** Extract to `services/` folder
 - **Query > 200 lines?** Split into sub-functions
 - **Component > 300 lines?** Split into sub-components
 - shadcn/ui files: **never modify** (regenerated by CLI)
-- **Rule definitions**: edit `src/config/rules.yaml` (source of truth) AND `src/lib/queries/rule-evaluation.ts` `RULE_MAP` + `CASE WHEN` column — keep both in sync.
+- **Rule definitions**: edit `src/config/rules.yaml` (sole source of truth) AND `src/lib/queries/rule-evaluation.ts` `RULE_MAP` + `CASE WHEN` column — keep both in sync.
 - **Growth fields**: add to the `CROSS JOIN LATERAL` growth CTE in `rule-evaluation.ts` with `ABS(curr) - ABS(prev)` numerator + div-by-zero guard. Return `NULL` when prev is missing.

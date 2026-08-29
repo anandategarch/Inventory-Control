@@ -181,16 +181,37 @@ export interface HistoricalAnalysisResult {
   }>;
 }
 
-// NEW: Area trend row for AreaTrendChart (Dev/BOM% per area × period)
-export interface AreaTrendRow {
-  area: string;
-  monthLabel: string;
-  weekLabel: string;
-  monthKey: string | null;
-  sales: number;
-  avgDevBom: number;
-  totalAbsNominal: number;
-  outletCount: number;
+// ============================================================
+//  BOM Correlation Findings — per-record rule fire details
+//  --------------------------------------------------------
+//  FIX-BOM-UI (CONFIG-02): mirrors BomCorrelationFinding in
+//  src/app/api/analysis/services/post-process.ts. Kept in sync
+//  with the API response shape so BomCorrelationCard can render
+//  per-record rule fires (not just aggregate growth alignment).
+// ============================================================
+export interface BomCorrelationFinding {
+  outletId: number;
+  outletName: string;
+  itemId: number;
+  itemName: string;
+  akunPenyesuaian: string | null;
+  ruleCode: string;
+  rulePriority: number;
+  severity: string;
+  bomGrowth: number | null;
+  /** Growth of the metric relevant to the rule (waste/susut/trial/qtyDeviasi). */
+  metricGrowth: number | null;
+  /** qtyDeviasiGrowth / bomGrowth (only meaningful when bomGrowth > 0). */
+  deviationBomRatio: number | null;
+}
+
+export interface BomCorrelationCounts {
+  WASTE_BOM_MISMATCH: number;
+  SUSUT_BOM_MISMATCH: number;
+  TRIAL_BOM_MISMATCH: number;
+  BOM_DEVIATION_DISPROPORTIONATE: number;
+  BOM_DEVIATION_MISMATCH: number;
+  BOM_DOWN_DEV_UP: number;
 }
 
 export interface AnalysisData {
@@ -281,8 +302,6 @@ export interface AnalysisData {
   costImpact?: CostImpact;
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];
-  // NEW: area trend for AreaTrendChart
-  areaTrend?: AreaTrendRow[];
   growthDrivers?: GrowthDriverMetric[];
   // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
   // /api/analysis (analysis/route.ts:989-990) — were missing from the type.
@@ -290,6 +309,10 @@ export interface AnalysisData {
   // backend returns null (insufficient historical weeks for regression).
   trendProjection?: TrendProjection | null;
   patterns?: PatternDetection[];
+  // FIX-BOM-UI (CONFIG-02): per-record BOM correlation findings (top 50 by
+  // priority) + per-rule counts. Optional for back-compat with mock/test data.
+  bomCorrelationFindings?: BomCorrelationFinding[];
+  bomCorrelationCounts?: BomCorrelationCounts;
   durationMs: number;
   cached?: boolean;
   message?: string;

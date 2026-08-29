@@ -32,7 +32,6 @@ export function loadRules(): Rule[] {
 
   // FIX: validate each rule has required fields — catch typos/silent failures at startup
   const VALID_SEVERITIES = new Set(['NORMAL', 'WARNING', 'ABNORMAL']);
-  const VALID_CATEGORIES = new Set(['TOLERANCE', 'RESIDUAL', 'DIRECTION', 'OVER_EXPLAINED', 'GROWTH', 'HISTORICAL', 'BENCHMARK', 'OPERATIONAL']);
   const seenCodes = new Set<string>();
 
   _rules = (parsed.rules || []).map((r, i) => {
@@ -442,6 +441,9 @@ export interface RuleContext extends Record<string, unknown> {
   historicalZscoreHigh?: number;
   salesDeviationFactor?: number;
   bomDeviationFactor?: number;
+  // FIX-RULE-CONFIG (EVAL-02): separate threshold for BOM_DEVIATION_DISPROPORTIONATE
+  // lower bound (decoupled from bomDeviationFactor upper-bound rule). Default 1.5.
+  bomDisproportionateFactor?: number;
   // Bug 8 fix: fraud red flag — Waste+Susut+Trial exceeds total deviation
   isOverExplained?: boolean;
   // FIX CALC-2: ABS values for signed percent fields (for correct magnitude comparison)

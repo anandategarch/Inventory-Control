@@ -68,7 +68,7 @@ drill-down and reporting loop.
 - **Pain points the app addresses**:
   - Cannot see "which outlet is worst" at a glance in Excel → Top Outlets + Priority Summary.
   - Hard to compare this week vs last week → Multi-Period Comparison + Growth Drivers.
-  - Anomalies are subtle (not just "big number") → 21-rule engine + multi-metric Z-Score.
+  - Anomalies are subtle (not just "big number") → 19-rule engine + multi-metric Z-Score.
 - **Success metric**: Time-to-insight per anomaly < 5 min.
 
 ### 2.2 Secondary — Operations Manager ("Bu Sari")
@@ -99,7 +99,7 @@ drill-down and reporting loop.
 Open dashboard (Tab 1)
   → Executive Summary KPI cards (Sales, BOM, Deviasi, Dev/BOM %)
   → Health Status bar (Normal / Warning / Abnormal counts)
-  → Anomalies panel (top 21-rule violations this period)
+  → Anomalies panel (top 19-rule violations this period)
   → Click anomaly row
   → DrillDownDrawer opens (right sheet, raw records capped at 100)
   → "View all source records" → SourceDataModal (full-screen, CSV export)
@@ -164,9 +164,12 @@ See red badge in Top Outlets or Priority Summary (P1 outlet)
       - Multi-period trend
       - Total Kemunculan (count of appearances)
   → (Optional) Switch back to Dashboard tab → scroll to "Analisis Historis"
-      → BomCorrelationCard shows whether Deviasi/Waste/Susut/Trial grew in
-         the same direction as BOM — if any metric shows ⚠ Tidak, cross-check
-         the outlet's behavior section above for the same metric
+      → BomCorrelationCard shows a per-record findings table (Outlet × Item × Rule ×
+         Growth × Ratio) with per-rule count badges. Each row is one (outlet, item,
+         adjustment) tuple flagged by one of the 6 BOM-category rules. Use the table
+         to spot the worst offenders at a glance; the aggregate alignment table
+         below it shows whether Deviasi/Waste/Susut/Trial grew in the same
+         direction as BOM.
   → Identify root cause (e.g. "MINYAK MIE residual 80% + Waste naik saat BOM turun
      → likely fraud or wrong SO")
   → Note in Word report
@@ -180,6 +183,8 @@ See red badge in Top Outlets or Priority Summary (P1 outlet)
 Open Pengaturan dialog (gear icon)
   → Tabs: Thresholds, Weights, Display
   → Adjust e.g. RESIDUAL_LOSS_HIGH_PCT (0.50 → 0.60) — "loosen critical threshold"
+  → Adjust BOM_DISPROPORTIONATE_FACTOR (1.5 → 1.2) — "tighten disproportionate rule:
+     catch Deviasi growing only 1.2× faster than BOM, not 1.5×"
   → Adjust WEIGHT_HISTORY (10 → 15) — "give historical zScore more priority weight"
   → Click "Simpan"
   → Settings persist to DB (Setting table, 43 rows)
@@ -209,7 +214,7 @@ Open Pengaturan dialog (gear icon)
 | Insights Panel | Dashboard | Auto-generated executive insights (rule-based, no LLM) |
 | Multi-Period Comparison | Dashboard | 8-week trend table |
 | Advanced Analysis | Dashboard | Variance analysis (top worsened / improved) + Historical Z-Score analysis (critical items vs historical avg, multi-metric selector: Dev/BOM / Waste / Susut / Trial) |
-| BOM Correlation | Dashboard | Deviasi / Waste / Susut / Trial vs BOM growth direction alignment table + narrative findings (new — `BomCorrelationCard`) |
+| BOM Correlation | Dashboard | Per-record findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate Deviasi/Waste/Susut/Trial vs BOM alignment table + narrative findings (`BomCorrelationCard`) |
 | Resto Profile | Resto Analysis | 6-section outlet profile (Performance / Behavior / Historical / Benchmark / Top Risk / Investigation) |
 | Bahan Analysis | Resto Analysis | 3 ranking tabs: Financial Impact / Operational / Unexplained |
 | Menu Analysis | Resto Analysis | Group by first 2 words of item name; outlier detection (avg + 2σ) |
@@ -219,7 +224,7 @@ Open Pengaturan dialog (gear icon)
 | Peer Trend | Peer Comparison | Multi-week trend comparison vs peers |
 | Item Deep Dive | Modal | Direction pie, top 5 outlets, multi-period trend, Total Kemunculan |
 
-> **Removed from dashboard (DOC-UPDATE):** "Weekly Trend" (dual-axis Dev/BOM % + Nominal Deviasi chart) and "Trend Dev/BOM per Area" (`AreaTrendChart`) were removed from the Dashboard tab to make room for BOM Correlation. The RestoAnalisa priority-score drilldown (click-through to detail view) is now a static card display.
+> **Removed (FIX-DOCS):** "Weekly Trend" (dual-axis Dev/BOM % + Nominal Deviasi chart) and "Trend Dev/BOM per Area" (`AreaTrendChart`) were removed from the Dashboard tab to make room for BOM Correlation — the `AreaTrendChart.tsx` file has since been deleted as dead code. `CardDrillDown.tsx` was also deleted; ExecutiveSummary KPI cards are now static display (no click-through drilldown). The RestoAnalisa priority-score drilldown is also a static card display.
 
 ### 4.2 Data Management
 
@@ -261,9 +266,9 @@ Open Pengaturan dialog (gear icon)
 
 ## 5. Business Rules
 
-### 5.1 The 21 anomaly detection rules
+### 5.1 The 19 anomaly detection rules
 
-Source of truth: `src/config/rules.yaml`. SQL evaluator: `src/lib/queries/rule-evaluation.ts` (16 rules evaluated in SQL push-down) + JS post-process (`evaluateHistoricalRulesJs`) for the 5 zScore-based rules. Each rule has a **severity** (`NORMAL` / `WARNING` / `ABNORMAL`) and a **priority** (higher = more important, used for tie-break in Priority Summary).
+Source of truth: `src/config/rules.yaml` (sole source of truth — the previous `src/config/rules.ts` TS mirror was deleted as dead code in FIX-DOCS). SQL evaluator: `src/lib/queries/rule-evaluation.ts` (16 rules evaluated in SQL push-down) + JS post-process (`evaluateHistoricalRulesJs`) for the 3 zScore-based rules. Each rule has a **severity** (`NORMAL` / `WARNING` / `ABNORMAL`) and a **priority** (higher = more important, used for tie-break in Priority Summary).
 
 | # | Code | Category | Severity | Priority | Trigger |
 |---|------|----------|----------|----------|---------|
@@ -271,10 +276,10 @@ Source of truth: `src/config/rules.yaml`. SQL evaluator: `src/lib/queries/rule-e
 | 2 | `SALES_DEV_DECREASE` | SALES | ABNORMAL | 85 | Sales down but deviation up |
 | 3 | `BOM_DEVIATION_MISMATCH` | BOM | ABNORMAL | 88 | QTY Deviation growth > 2× BOM growth |
 | 4 | `BOM_DOWN_DEV_UP` | BOM | ABNORMAL | 82 | BOM down but deviation up |
-| 5 | `WASTE_BOM_MISMATCH` | BOM | WARNING | 55 | Waste growth opposite sign to BOM growth (e.g. BOM ↑ but Waste ↓) — *new* |
-| 6 | `SUSUT_BOM_MISMATCH` | BOM | WARNING | 54 | Susut growth opposite sign to BOM growth — *new* |
-| 7 | `TRIAL_BOM_MISMATCH` | BOM | WARNING | 53 | Trial growth opposite sign to BOM growth — *new* |
-| 8 | `BOM_DEVIATION_DISPROPORTIONATE` | BOM | WARNING | 56 | Both BOM and Deviation growing but Deviation/BOM ratio > 1.5× (and ≤ 2×, else rule 3 fires) — *new* |
+| 5 | `WASTE_BOM_MISMATCH` | BOM | WARNING | 55 | Waste growth opposite sign to BOM growth (e.g. BOM ↑ but Waste ↓) |
+| 6 | `SUSUT_BOM_MISMATCH` | BOM | WARNING | 54 | Susut growth opposite sign to BOM growth |
+| 7 | `TRIAL_BOM_MISMATCH` | BOM | WARNING | 53 | Trial growth opposite sign to BOM growth |
+| 8 | `BOM_DEVIATION_DISPROPORTIONATE` | BOM | WARNING | 56 | Both BOM and Deviation growing but Deviation/BOM ratio > `BOM_DISPROPORTIONATE_FACTOR` (default 1.5×, configurable) and ≤ `BOM_DEVIATION_FACTOR` (default 2×, else rule 3 fires) |
 | 9 | `TOLERANCE_BREACH_HIGH` | TOLERANCE | ABNORMAL | 80 | `|Dev/BOM|` > 2× `|tolerancePct|` |
 | 10 | `TOLERANCE_BREACH` | TOLERANCE | WARNING | 70 | `|Dev/BOM|` > `|tolerancePct|` |
 | 11 | `TOLERANCE_NOT_SET_HIGH_DEV` | TOLERANCE | WARNING | 65 | High `|Dev/BOM|` but tolerance is NULL (analytics flag) |
@@ -282,17 +287,12 @@ Source of truth: `src/config/rules.yaml`. SQL evaluator: `src/lib/queries/rule-e
 | 13 | `RESIDUAL_LOSS_HIGH` | RESIDUAL | ABNORMAL | 75 | Residual ratio > `residualLossHighPct` (default 0.50) AND direction = LOSS |
 | 14 | `RESIDUAL_LOSS_WARN` | RESIDUAL | WARNING | 60 | Residual ratio > `residualLossWarnPct` (default 0.30) AND ≤ high AND LOSS |
 | 15 | `HIGH_LOSS_NOMINAL` | DIRECTION | ABNORMAL | 80 | `|nominalLossSurplus|` > `highLossNominalThreshold` (default Rp 10 jt) AND LOSS |
-| 16 | `BENCHMARK_ABOVE_AREA` | BENCHMARK | WARNING | 50 | `benchmarkFlag = HISTORICAL_WARNING` (zScore > warn) |
-| 17 | `BENCHMARK_ABOVE_NETWORK` | BENCHMARK | ABNORMAL | 72 | `benchmarkFlag = HISTORICAL_HIGH` (zScore > high) |
-| 18 | `DIRECTION_FLIP` | HISTORICAL | WARNING | 60 | Direction flipped LOSS ↔ SURPLUS vs previous period |
-| 19 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` (default 2.0) AND LOSS |
-| 20 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
-| 21 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
+| 16 | `DIRECTION_FLIP` | HISTORICAL | WARNING | 60 | Direction flipped LOSS ↔ SURPLUS vs previous period |
+| 17 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` (default 2.0) AND LOSS |
+| 18 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
+| 19 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
 
-> Rules 16–17 are misnamed for historical reasons: they fire on the **historical**
-> benchmark flag, not on area/network peer comparison. True area/network comparison
-> lives in `computeBenchmark()` (`benchmark.ts`) and surfaces as `ABOVE_AREA` /
-> `ABOVE_NETWORK` flags on the Resto Profile, not as rules.
+> **Removed (FIX-RULE-CONFIG CONFIG-05):** `BENCHMARK_ABOVE_AREA` (was P50, WARNING) + `BENCHMARK_ABOVE_NETWORK` (was P72, ABNORMAL) — duplicates of `HISTORICAL_WARNING` / `HISTORICAL_ABNORMAL` (same zScore condition, different name). True area/network comparison lives in `computeBenchmark()` and surfaces as `ABOVE_AREA` / `ABOVE_NETWORK` flags on the Resto Profile, not as rules.
 
 ### 5.1.1 BOM Correlation Analysis
 
@@ -311,11 +311,20 @@ other way, it's a sign of:
 **Where the user sees it.**
 1. **As rule flags** in the Anomalies panel and Priority Summary (severity = WARNING, lower priority than tolerance/residual rules).
 2. **As the `BomCorrelationCard`** on the Dashboard tab (under "Analisis Historis").
-   The card renders a 5-row table — QTY BOM (baseline), QTY Deviasi, QTY Waste,
-   QTY Susut, QTY Trial — showing Current, Growth, Previous, and a ✓ Ya / ⚠ Tidak
-   "Sejalan?" (aligned?) badge computed by comparing the metric's growth sign
-   against BOM's growth sign. Narrative findings below the table spell out each
-   mismatch in plain Indonesian.
+   The card has three sections:
+   - **Per-record findings table** (primary): one row per (outlet, item, adjustment)
+     flagged by one of the 6 BOM-category rules (rules 3–8). Columns: Outlet |
+     Item | Rule | BOM Growth | Metric Growth | Ratio. Per-rule count badges at
+     the top show how many records each rule fired on (only rules with count > 0
+     are shown). Sorted by rule priority DESC (most severe first). Reads from the
+     `bomCorrelationFindings` + `bomCorrelationCounts` fields on the
+     `/api/analysis` response.
+   - **Aggregate alignment table**: 5-row table — QTY BOM (baseline), QTY Deviasi,
+     QTY Waste, QTY Susut, QTY Trial — showing Current, Growth, Previous, and a
+     ✓ Ya / ⚠ Tidak "Sejalan?" (aligned?) badge computed by comparing the
+     metric's growth sign against BOM's growth sign.
+   - **Narrative findings** below both tables spell out each mismatch in plain
+     Indonesian.
 
 **Interpretation guide.**
 - "Waste turun X% saat BOM naik Y% — harusnya ikut naik" → check whether the
@@ -344,7 +353,9 @@ condition:
   all:
     - bomGrowth: { gt: 0 }
     - qtyDeviasiGrowth: { gt: 0 }
-    - deviationBomRatio: { gt: 1.5 }   # 1.5× — catches the 1.5×–2× band that
+    - deviationBomRatio: { gt: bomDisproportionateFactor }   # default 1.5×
+                                       # (configurable via BOM_DISPROPORTIONATE_FACTOR setting)
+                                       # — catches the 1.5×–2× band that
                                        # BOM_DEVIATION_MISMATCH (rule 3) misses
 ```
 
@@ -392,8 +403,10 @@ the selected metric's zScore. The BOM Correlation rules (5–7) do NOT use Z-Sco
 | Threshold | Default | Meaning |
 |-----------|---------|---------|
 | `HISTORICAL_MIN_WEEKS` | 4 | Min weeks of history before zScore is computed |
-| `HISTORICAL_ZSCORE_WARN` | **1.5** | Above this → `HISTORICAL_WARNING` flag + rule 21 |
-| `HISTORICAL_ZSCORE_HIGH` | **2.0** | Above this → `HISTORICAL_HIGH` flag + rules 19/20 |
+| `HISTORICAL_ZSCORE_WARN` | **1.5** | Above this → `HISTORICAL_WARNING` flag + rule 19 |
+| `HISTORICAL_ZSCORE_HIGH` | **2.0** | Above this → `HISTORICAL_HIGH` flag + rules 17/18 |
+| `BOM_DEVIATION_FACTOR` | **2.0** | Deviation growth > `bomDeviationFactor` × BOM growth → rule 3 fires (ABNORMAL) |
+| `BOM_DISPROPORTIONATE_FACTOR` | **1.5** | Deviation growth > `bomDisproportionateFactor` × BOM growth (and ≤ `BOM_DEVIATION_FACTOR`) → rule 8 fires (WARNING). Range 1.0–5.0. Added in FIX-SETTINGS — decoupled from `BOM_DEVIATION_FACTOR` so lowering `BOM_DEVIATION_FACTOR` no longer silently disables rule 8. |
 
 ### 5.3 Priority scoring (P1 / P2 / P3)
 
@@ -595,7 +608,7 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 |----------|---------|
 | `MASTER_CONTEXT.md` | Architecture, DB schema, API surface, rule DSL, audit history. **Read first** for any code change. |
 | `worklog.md` | Full chronological task history (every agent run, every fix). Search by Task ID. |
-| `src/config/rules.yaml` | The 21 anomaly rules (17 original + 4 BOM correlation) — edit here to add/tune rules without touching engine code. |
+| `src/config/rules.yaml` | The 19 anomaly rules (15 original + 4 BOM correlation) — edit here to add/tune rules without touching engine code. Sole source of truth (legacy `rules.ts` mirror deleted). |
 | `src/lib/settings.ts` | The 43 runtime thresholds — defaults + descriptions. |
 | `src/lib/metrics/definitions.ts` | Single source of truth for metric formulas (Dev/BOM, Z-Score, Health Score, Priority, Direction, Three-Layer). |
 | `src/config/thresholds.ts` | Static default thresholds (overridden at runtime by `Setting` table). |

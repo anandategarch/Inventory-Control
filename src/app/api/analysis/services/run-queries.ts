@@ -10,7 +10,7 @@
 //    3. Run Batch 1 (top items: nominal, devBom, waste, susut, trial)
 //    4. Run Batch 2 (lossSurplus + area + topOutlets + breakdown + Pareto)
 //    5. Run Batch 3 (lvs + trend + cost + consistency + DQ groupBy)
-//    6. Run Batch 4 (deviasi + drivers + area trend + health + variance + growth)
+//    6. Run Batch 4 (deviasi + drivers + health + variance + growth)
 //    7. Map raw SQL rows into response-ready shapes
 //
 //  PERF note (DEEP-AUDIT-SERIAL): batches are SERIAL (each awaited before
@@ -33,8 +33,6 @@ import {
   queryDeviationBreakdownDrivers,
   queryLossVsSurplus,
   queryAreaAnalysis,
-  queryTrendByArea,
-  type AreaTrendRow,
   queryCostImpact,
   queryItemConsistency,
   queryOutletHealthRanking,
@@ -80,7 +78,6 @@ export interface QueryResults {
   dqIssuesRaw: Array<{ severity: string; _count: { _all: number } }>;
   topDeviasiRank: Awaited<ReturnType<typeof queryTopItemsByDeviasiRank>>;
   deviationDriverRows: Awaited<ReturnType<typeof queryDeviationBreakdownDrivers>>;
-  areaTrendRows: AreaTrendRow[];
   healthRankingRows: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
   growthDrivers: Awaited<ReturnType<typeof queryGrowthDrivers>>;
@@ -151,7 +148,7 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   //   Batch 1 (5 queries): top items by nominal + devBom + 3 category (waste/susut/trial)
   //   Batch 2 (5 queries): lossSurplus category + area + 2 top outlets + deviation breakdown
   //   Batch 3 (5 queries): loss vs surplus + trend agg + cost impact + item consistency + DQ issues
-  //   Batch 4 (5 queries): deviasi rank + deviation drivers + area trend + health ranking + variance + growth
+  //   Batch 4 (5 queries): deviasi rank + deviation drivers + health ranking + variance + growth
   const topNItems = thresholds.TOP_N_ITEMS || 10;
   const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
 
@@ -192,12 +189,10 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     }),
   ]);
 
-  // Batch 4: deviasi rank + deviation drivers + area trend + health ranking + variance + growth
-  const [topDeviasiRank, deviationDriverRows, areaTrendRows, healthRankingRows, varianceAnalysis, growthDrivers] = await Promise.all([
+  // Batch 4: deviasi rank + deviation drivers + health ranking + variance + growth
+  const [topDeviasiRank, deviationDriverRows, healthRankingRows, varianceAnalysis, growthDrivers] = await Promise.all([
     queryTopItemsByDeviasiRank(week, month, filterOpts, 50),
     queryDeviationBreakdownDrivers(week, month, filterOpts),
-    // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
-    queryTrendByArea({ ...filterOpts, weekLabel: week }),
     // SQL-OPTIMIZE: pushed from JS (was: computeOutletHealthRanking loop over 35K records)
     healthRankingSqlPromise,
     // SQL-OPTIMIZE: pushed from JS (was: computeVarianceAnalysis loop over 35K records)
@@ -240,7 +235,6 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     dqIssuesRaw,
     topDeviasiRank,
     deviationDriverRows,
-    areaTrendRows: areaTrendRows as AreaTrendRow[],
     healthRankingRows,
     varianceAnalysis,
     growthDrivers,

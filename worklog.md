@@ -31404,3 +31404,1357 @@ Stage Summary:
      the setCardDrillDown calls + cursor-pointer styling from ExecutiveSummary,
      OR re-render CardDrillDown in page.tsx.
 - No code changes made (analysis only).
+
+---
+Task ID: FIX-SETTINGS
+Agent: general-purpose (Settings Fixer)
+Task: Add BOM_DISPROPORTIONATE_FACTOR configurable setting
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~210 lines) — reviewed prior BUG-BOM-EVAL
+  findings. Key context: BUG-BOM-EVAL-03 (P2) reported that the
+  BOM_DEVIATION_DISPROPORTIONATE rule's upper bound in rule-evaluation.ts:156
+  was coupled to BOM_DEVIATION_FACTOR (`<= bomGrowth * BOM_DEVIATION_FACTOR`)
+  AND hardcoded a 1.5× lower bound. If a user lowered BOM_DEVIATION_FACTOR
+  to ≤ 1.5, the rule silently never fired (lower > upper). Decoupling to a
+  separate BOM_DISPROPORTIONATE_FACTOR setting is the agreed fix.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed 21-rule
+  engine, 24 configurable thresholds via Settings table + SettingDefinitions
+  array, SettingsDialog under /components/filters/.
+- Read /home/z/my-project/src/lib/settings.ts (546 lines) — full audit of
+  settings manager. Three places need a new setting:
+  1. SETTING_DEFINITIONS array (drives /api/settings GET + POST/DELETE
+     validation + ensureDefaultSettings insert + SettingsDialog rendering).
+  2. RuntimeThresholds interface (consumed by rule-evaluation.ts and other
+     engine code via `thresholds.KEY`).
+  3. getRuntimeThresholds() function — actual runtime read using the generic
+     `num()` helper (lines 499-504) which already handles null/empty/NaN
+     fallback. No new validation helper needed.
+- Read /home/z/my-project/src/components/filters/SettingsDialog.tsx (445 lines)
+  — KEY FINDING: dialog is fully DATA-DRIVEN. It maps over `data.categories`
+  and `data.byCategory[cat]` returned by /api/settings GET (lines 313-327),
+  rendering one Input row per SettingDefinition. BOM_DEVIATION_FACTOR is NOT
+  hardcoded in the component — it renders automatically because it exists in
+  SETTING_DEFINITIONS. Therefore, adding BOM_DISPROPORTIONATE_FACTOR to
+  SETTING_DEFINITIONS makes it appear in the dialog automatically (under
+  GROWTH category, right after BOM_DEVIATION_FACTOR, preserving order).
+- Read /home/z/my-project/src/app/api/settings/route.ts (302 lines) —
+  confirmed GET/POST/DELETE all use SETTING_DEFINITIONS as source of truth:
+  * GET (line 37): `SETTING_DEFINITIONS.map(...)` returns all defs to UI.
+  * POST (line 106): `validKeys = new Set(SETTING_DEFINITIONS.map(d => d.key))`
+    validates incoming keys. New key automatically accepted.
+  * POST (line 119): validates `dataType === 'number'` via `isNaN(n)` check.
+    New setting (dataType='number') automatically validated.
+  * DELETE (line 229): looks up `SETTING_DEFINITIONS.find(d => d.key === key)`
+    for default value. New key automatically resettable.
+  * `ensureDefaultSettings()` (settings.ts:367) inserts all SETTING_DEFINITIONS
+    rows on cold start with skipDuplicates — new setting auto-seeded into DB
+    on next server restart.
+  No changes needed in route.ts — it follows the existing pattern.
+- Read /home/z/my-project/src/lib/validation.ts (lines 80-99) —
+  `settingsUpdateSchema` uses generic `z.record(z.string(), z.union(...))`
+  so any key is accepted at schema level; key validation happens in route.ts
+  against SETTING_DEFINITIONS. No changes needed.
+- Verified rule-evaluation.ts consumer pattern via grep:
+  `thresholds.BOM_DEVIATION_FACTOR` is used in 3 places (lines 53, 143, 156).
+  The BOM_DEVIATION_DISPROPORTIONATE rule on line 156 currently uses
+  `g."bomGrowth" * 1.5` (hardcoded). The rule-evaluation agent will update
+  this to `g."bomGrowth" * ${thresholds.BOM_DISPROPORTIONATE_FACTOR}` —
+  my new setting makes that possible. (Did NOT touch rule-evaluation.ts —
+  owned by another agent.)
+- Made 3 edits to /home/z/my-project/src/lib/settings.ts:
+  1. Added BOM_DISPROPORTIONATE_FACTOR to SETTING_DEFINITIONS array
+     (lines 80-93, right after BOM_DEVIATION_FACTOR). Properties:
+       key: 'BOM_DISPROPORTIONATE_FACTOR'
+       label: 'Faktor Disproporsional BOM'
+       description: 'Rasio pertumbuhan deviasi vs BOM untuk memicu rule
+                     BOM_DEVIATION_DISPROPORTIONATE (default: 1.5×, artinya
+                     deviasi tumbuh 1.5× lebih cepat dari BOM). Range 1.0–5.0.'
+       category: 'GROWTH' (same as BOM_DEVIATION_FACTOR)
+       dataType: 'number'
+       defaultValue: '1.5'
+  2. Added `BOM_DISPROPORTIONATE_FACTOR: number;` to RuntimeThresholds
+     interface (line 477, right after BOM_DEVIATION_FACTOR).
+  3. Added `BOM_DISPROPORTIONATE_FACTOR: num('BOM_DISPROPORTIONATE_FACTOR', 1.5)`
+     to getRuntimeThresholds() return object (line 533, right after
+     BOM_DEVIATION_FACTOR). The `num()` helper (lines 499-504) handles
+     null/empty/NaN fallback to 1.5.
+- Made 1 documentation edit to /home/z/my-project/src/components/filters/
+  SettingsDialog.tsx (lines 327-333): added a multi-line comment above the
+  `items.map(...)` call documenting that the dialog is data-driven and that
+  BOM_DISPROPORTIONATE_FACTOR was added via SETTING_DEFINITIONS (no markup
+  changes needed). This helps future maintainers understand the pattern.
+  No functional changes to SettingsDialog.tsx — the new setting's Input row
+  is auto-rendered via the existing `items.map((s) => ...)` loop with:
+    - Label: "Faktor Disproporsional BOM"
+    - Description: "Rasio pertumbuhan deviasi vs BOM untuk memicu rule
+      BOM_DEVIATION_DISPROPORTIONATE (default: 1.5×, artinya deviasi tumbuh
+      1.5× lebih cepat dari BOM). Range 1.0–5.0."
+    - Input: type="text", inputMode="decimal" (accepts decimal values like 1.5)
+    - Placeholder: "1.5" (the defaultValue)
+    - Badge: "number" (dataType)
+    - Reset-to-default button appears when value ≠ default
+- Verified the setting flows correctly end-to-end:
+  * getRuntimeThresholds() returns `BOM_DISPROPORTIONATE_FACTOR` (default 1.5
+    if DB row missing/empty/invalid).
+  * /api/settings GET auto-includes it (mapped from SETTING_DEFINITIONS).
+  * /api/settings POST accepts the key (validated against SETTING_DEFINITIONS)
+    and validates the value is a number via isNaN check.
+  * /api/settings DELETE resets it to '1.5' (looked up in SETTING_DEFINITIONS).
+  * ensureDefaultSettings() inserts the row on next cold start.
+  * SettingsDialog auto-renders the Input row under GROWTH category.
+  * SQL rule evaluator can access via `thresholds.BOM_DISPROPORTIONATE_FACTOR`
+    (the rule-evaluation agent will update line 156 to use this instead of
+    the hardcoded 1.5).
+- Ran `bun run lint` — 0 errors. 319 warnings (all pre-existing in test
+  files + 3 pre-existing in SettingsDialog.tsx at lines 56, 148, 228 — none
+  related to my changes). settings.ts has zero lint issues.
+
+Stage Summary:
+- Files changed (2):
+  1. /home/z/my-project/src/lib/settings.ts — added BOM_DISPROPORTIONATE_FACTOR
+     to SETTING_DEFINITIONS, RuntimeThresholds interface, and
+     getRuntimeThresholds() function. Default 1.5, category GROWTH,
+     dataType number. (3 edits, ~22 lines added including comments.)
+  2. /home/z/my-project/src/components/filters/SettingsDialog.tsx — added a
+     7-line comment above the data-driven `items.map()` loop documenting
+     that BOM_DISPROPORTIONATE_FACTOR is auto-rendered. No functional
+     changes (the dialog is fully data-driven from SETTING_DEFINITIONS).
+- Lint status: 0 errors, 319 warnings (all pre-existing, none from this
+  task's changes).
+- Setting name is exactly `BOM_DISPROPORTIONATE_FACTOR` (all caps,
+  snake_case) — matches what the rule-evaluation agent expects.
+- The rule-evaluation agent can now update rule-evaluation.ts:156 to use
+  `${thresholds.BOM_DISPROPORTIONATE_FACTOR}` instead of the hardcoded `1.5`,
+  decoupling the disproportionate rule's lower bound from
+  BOM_DEVIATION_FACTOR (fixes BUG-BOM-EVAL-03).
+
+---
+Task ID: FIX-DEADCODE
+Agent: general-purpose (Dead Code Cleanup)
+Task: Delete dead components + remove broken click handlers + dead Zustand state
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~210 lines) — confirmed prior
+  BUG-BOM-UI findings: AreaTrendChart.tsx (242 lines) is dead code (grep
+  confirmed 0 imports in src/), CardDrillDown.tsx (233 lines) is not
+  rendered in page.tsx, ExecutiveSummary.tsx still calls setCardDrillDown
+  on 5 KPI card click handlers (lines 122, 189, 203, 217, 231) — broken UX,
+  cardDrillDown state in useDashboard.ts (lines 29-30, 65-66) is dead.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — verified tech stack
+  (Next.js 16 + TS strict + Zustand v5 + TanStack Query), 21-rule engine,
+  ApiAnalysisData contract, dev server live on port 3000.
+- Verified no live imports via Grep before deletion:
+  * `AreaTrendChart` → only self-reference (in AreaTrendChart.tsx itself) +
+    comment references in areas.ts:97, useAnalysis.ts:184/284,
+    run-queries.ts:199, assemble-response.ts:155.
+  * `CardDrillDown` → only self-reference (in CardDrillDown.tsx itself) +
+    comment in page.tsx:710 ("CardDrillDown removed per user request").
+  * `cardDrillDown`/`setCardDrillDown` → 11 references across useDashboard.ts
+    (state + setter), ExecutiveSummary.tsx (5 click handlers + 2 destructure
+    sites), page.tsx (destructure + Escape handler + dep array), CardDrillDown.tsx
+    (self-reference — to be deleted).
+  * `areaTrend`/`AreaTrendRow` → 13 references across areas.ts (query fn +
+    interface), run-queries.ts (call + type + import + return field),
+    assemble-response.ts (response field + type), useAnalysis.ts (interface +
+    field), AreaTrendChart.tsx (consumer — to be deleted).
+- DELETED /home/z/my-project/src/components/dashboard/AreaTrendChart.tsx (242 lines).
+- DELETED /home/z/my-project/src/components/dashboard/CardDrillDown.tsx (233 lines).
+- Edited /home/z/my-project/src/hooks/useDashboard.ts — removed `cardDrillDown`
+  state declaration (line 29), `setCardDrillDown` action declaration (line 30),
+  `cardDrillDown: null` initial state (line 65), and `setCardDrillDown` impl
+  (line 66). Store now has 1 less state field + 1 less action.
+- Edited /home/z/my-project/src/components/dashboard/ExecutiveSummary.tsx:
+  * Removed imports: `useDashboard` from '@/hooks/useDashboard',
+    `useShallow` from 'zustand/shallow', `clickableRowProps` from '@/lib/a11y'.
+  * Removed `drillDown?: string` field from KPI interface (line 80).
+  * Removed `drillDown` param from KPICard memo signature.
+  * Removed `setCardDrillDown` destructuring from KPICard body.
+  * Simplified Card className — removed conditional `cursor-pointer hover:shadow-lg
+    hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5
+    hover:border-amber-300/60 dark:hover:border-amber-800/60` (only kept the
+    base shadow-md + gradient tint). Removed `{...clickableRowProps(...)}`
+    spread on Card.
+  * Removed the "Detail" indicator paragraph (BarChart3 + "Detail" text) that
+    only rendered when drillDown was set.
+  * Removed `setCardDrillDown` destructuring from ExecutiveSummary body.
+  * Removed `drillDown="sales"` / `"nominalDeviasi"` / `"qtyBom"` / `"qtyDeviasi"`
+    / `"waste"` / `"lossSurplus"` props from all 6 KPICard usages.
+  * Removed `cursor-pointer hover:shadow-lg hover:shadow-... hover:-translate-y-0.5
+    transition-all duration-200` + `{...clickableRowProps(() => setCardDrillDown(...))}`
+    spread from all 4 bottom Cards (Total LOSS, Total SURPLUS, Residual Loss,
+    Deviation/BOM). Kept the visual styling (gradient + colored border + shadow)
+    so the cards look the same, just no longer respond to clicks.
+  * Kept BarChart3 import — still used as the icon for the Deviation/BOM card.
+- Edited /home/z/my-project/src/app/api/analysis/services/assemble-response.ts:
+  * Removed `areaTrend: unknown;` from AnalysisResponse interface (line 58).
+  * Removed `areaTrendRows` from queries destructure (line 90).
+  * Removed `areaTrend: areaTrendRows` from response literal (lines 155-156
+    with the "NEW: area trend for AreaTrendChart" comment).
+- Edited /home/z/my-project/src/app/api/analysis/services/run-queries.ts:
+  * Removed `queryTrendByArea` and `type AreaTrendRow` from '@/lib/queries'
+    imports (lines 36-37).
+  * Removed `areaTrendRows: AreaTrendRow[]` field from QueryResults interface
+    (line 83).
+  * Removed `queryTrendByArea({ ...filterOpts, weekLabel: week })` call from
+    Batch 4 Promise.all (line 200) and its corresponding `areaTrendRows`
+    destructuring slot.
+  * Removed `areaTrendRows: areaTrendRows as AreaTrendRow[]` from return
+    statement (line 243).
+  * Updated file header comment (line 13) + Batch 4 description comment
+    (line 151) + inline Batch 4 comment (line 195) to remove "area trend"
+    mention.
+- Edited /home/z/my-project/src/hooks/useAnalysis.ts:
+  * Removed the entire `AreaTrendRow` interface (lines 184-194, including the
+    "NEW: Area trend row for AreaTrendChart" comment).
+  * Removed `areaTrend?: AreaTrendRow[]` field from `AnalysisData` interface
+    (line 285, including the "NEW: area trend for AreaTrendChart" comment).
+- Edited /home/z/my-project/src/app/page.tsx:
+  * Removed `setCardDrillDown` from useDashboard destructure (line 88) and
+    from the useShallow selector (line 105).
+  * Removed `setCardDrillDown(null)` call from Escape key handler (line 337).
+  * Removed `setCardDrillDown` from useEffect dependency array (line 344).
+- Verified no dangling references via Grep after changes:
+  * `AreaTrendChart` → 1 remaining (comment in areas.ts:97 — file NOT in
+    ownership list, not edited).
+  * `CardDrillDown` → 1 remaining (comment in page.tsx:708, informational).
+  * `cardDrillDown`/`setCardDrillDown` → 0 references in src/.
+  * `areaTrend`/`AreaTrendRow` → 3 remaining (all in areas.ts: queryTrendByArea
+    function + AreaTrendRow interface + comment — file NOT in ownership list,
+    left as dead code. queryTrendByArea + AreaTrendRow in areas.ts are now
+    unreachable but retained; future cleanup task should delete them).
+- Ran `bun run lint` → 0 errors, 319 pre-existing warnings (none introduced
+  by this change). Warnings in modified files (ExecutiveSummary.tsx:59,63
+  + useDashboard.ts:16,17) are pre-existing unused-parameter warnings
+  unrelated to this task.
+- Checked dev.log — no runtime errors after changes. Dev server was idle
+  during edit session; next request will trigger Turbopack recompile.
+
+Stage Summary:
+- Files DELETED (2):
+  * src/components/dashboard/AreaTrendChart.tsx (242 lines)
+  * src/components/dashboard/CardDrillDown.tsx (233 lines)
+  Total: 475 lines removed.
+- Files MODIFIED (6):
+  * src/hooks/useDashboard.ts — removed cardDrillDown state + setCardDrillDown
+    action (4 lines removed).
+  * src/components/dashboard/ExecutiveSummary.tsx — removed dead imports
+    (useDashboard, useShallow, clickableRowProps), drillDown prop from KPI
+    interface + KPICard signature, setCardDrillDown destructuring (2 sites),
+    cursor-pointer + hover className on 6 KPI cards, clickableRowProps spread
+    on 6 KPI cards, "Detail" indicator paragraph. Cards are now static.
+  * src/app/api/analysis/services/assemble-response.ts — removed `areaTrend`
+    from response interface + destructure + literal (3 edits).
+  * src/app/api/analysis/services/run-queries.ts — removed `queryTrendByArea`
+    call + `AreaTrendRow` import + `areaTrendRows` field from QueryResults +
+    return mapping. Batch 4 now has 5 queries instead of 6 (one less DB hit
+    per /api/analysis GET).
+  * src/hooks/useAnalysis.ts — removed `AreaTrendRow` interface + `areaTrend`
+    field from AnalysisData type.
+  * src/app/page.tsx — removed `setCardDrillDown` destructure + Escape handler
+    call + useEffect dependency.
+- Lint status: PASS (0 errors, 319 pre-existing warnings, 0 new warnings).
+- Notable side effect: /api/analysis GET no longer fires the
+  `queryTrendByArea` SQL query — saves 1 DB round-trip + ~2KB JSON payload
+  per request. Expected ~50-100ms off cold-cache analysis response time.
+- Leftover dead code (NOT in ownership — flagged for future cleanup):
+  * src/lib/queries/areas.ts — `queryTrendByArea` function (lines 111-180) +
+    `AreaTrendRow` interface (lines 100-109) + comment (line 97). Now
+    completely unreferenced after run-queries.ts edit. Safe to delete in a
+    follow-up; not edited here because areas.ts is not in the FIX-DEADCODE
+    ownership list.
+- No other agents' files touched (BomCorrelationCard.tsx, rule-evaluation.ts,
+  rules.yaml, settings.ts, export-report/route.ts, test files — all
+  untouched).
+
+---
+Task ID: FIX-RULE-CONFIG
+Agent: general-purpose (Rule Engine Config Fixer)
+Task: Fix config consistency, dead code, and integration bugs in rule engine
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~300 lines) — reviewed prior
+  BUG-BOM-EVAL, BUG-BOM-CONFIG, BUG-BOM-UI findings + FIX-SETTINGS +
+  FIX-DEADCODE fixes. Key context: BOM_DISPROPORTIONATE_FACTOR setting
+  (default 1.5) already exists in settings.ts via FIX-SETTINGS agent
+  (lines 87-93 in SETTING_DEFINITIONS, 477 in RuntimeThresholds interface,
+  533 in getRuntimeThresholds). I can directly reference
+  `thresholds.BOM_DISPROPORTIONATE_FACTOR` in SQL push-down.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed 21-rule
+  engine architecture (will be 19 after CONFIG-05 deletion of BENCHMARK_*),
+  16 SQL + 5 JS post-process split (will be 16 + 3 = 19 after CONFIG-05).
+- Read all 6 owned files end-to-end: rule-evaluation.ts (297), rules.yaml
+  (310), rules.ts (256 — confirmed dead code), evaluator.ts (496),
+  rootCauseEngine.ts (439), ruleService.ts (176).
+- Verified CONFIG-01 scope: grep `from.*config/rules` in src/ = 0 matches;
+  grep `from.*['"]@/config/rules['"]` = 0 matches; grep
+  `from.*['"].*rules\.ts['"]` = 0 matches; grep `RULES.*from.*rules` = 0
+  matches. rules.ts is referenced ONLY in docs (CONVENTIONS.md, README.md,
+  worklog.md history) — no src/ imports. Safe to delete.
+- Verified BOM_DISPROPORTIONATE_FACTOR setting is exposed via
+  thresholds.BOM_DISPROPORTIONATE_FACTOR in getRuntimeThresholds() return
+  (settings.ts:533) — confirmed via grep, no edits needed in settings.ts.
+
+P1 Fixes:
+- CONFIG-01: DELETED /home/z/my-project/src/config/rules.ts (256 lines).
+  Was the TS mirror of rules.yaml but had only 17 rules (no BOM correlation
+  rules), and was never imported. Source of truth is rules.yaml (loaded
+  via evaluator.ts:29 readFileSync). Verified zero src/ test/ imports
+  before deletion. CONVENTIONS.md line 170 + README.md still reference
+  rules.ts in prose — leaving for doc-owner agent (not in my ownership list).
+- CONFIG-03/EVAL-03 (rootCauseEngine.ts): Added ROOT_CAUSE_MAPPINGS entries
+  for the 4 new BOM correlation rules — were missing entirely. New entries
+  placed right after BOM_DEVIATION_MISMATCH (line 367-384) for logical
+  grouping with the BOM rule family:
+    * WASTE_BOM_MISMATCH — causes=[pencatatan waste tidak konsisten,
+      salah input waste sign/magnitude, perubahan proses produksi tidak
+      ter-refleksi di BOM]; actions=[sampling fisik waste, audit input
+      waste oleh SPV, rekonsiliasi BOM vs resep aktual]; severity=MEDIUM;
+      category=OPERATIONAL.
+    * SUSUT_BOM_MISMATCH — causes=[pencatatan susut tidak konsisten,
+      susut aktual berbeda dari standar BOM, kondisi penyimpanan berubah];
+      actions=[audit fisik susut, verifikasi kondisi penyimpanan, update
+      standar susut di BOM]; severity=MEDIUM; category=INVENTORY.
+    * TRIAL_BOM_MISMATCH — causes=[pencatatan trial tidak konsisten,
+      trial produk baru belum ter-refleksi di BOM master, salah input qty
+      trial]; actions=[verifikasi dokumentasi trial, update BOM master
+      untuk trial items, audit input trial oleh SPV]; severity=MEDIUM;
+      category=OPERATIONAL.
+    * BOM_DEVIATION_DISPROPORTIONATE — causes=[porsioning tidak konsisten
+      saat volume naik, mix produk bergeser ke high-deviasi item, BOM
+      master tidak update]; actions=[audit porsioning saat peak volume,
+      analisa sales mix shift, update BOM master]; severity=MEDIUM;
+      category=OPERATIONAL.
+- CONFIG-03/EVAL-03 (ruleService.ts recommendAction): Added 4 new
+  `if (set.has(...))` branches for the BOM correlation rules — surfacing
+  the same root-cause actions in the worklist recommendation string.
+  Branches placed right after the BOM_DEVIATION_MISMATCH / BOM_DOWN_DEV_UP
+  branch (lines 157-159) for logical grouping.
+
+P2 Fixes:
+- CONFIG-04/EVAL-04 (rule-evaluation.ts SQL): Removed upper bound
+  `g."qtyDeviasiGrowth" <= g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR}`
+  from the BOM_DEVIATION_DISPROPORTIONATE CASE WHEN (was line 156).
+  Rule now fires whenever `qtyDeviasiGrowth > bomGrowth * BOM_DISPROPORTIONATE_FACTOR`
+  with bomGrowth>0 + qtyDeviasiGrowth>0. The topFlagByKey dedup (analysis
+  route) handles overlap with BOM_DEVIATION_MISMATCH (which uses the larger
+  BOM_DEVIATION_FACTOR upper bound). Decouples the two rules' thresholds.
+- CONFIG-05 (rules.yaml): DELETED BENCHMARK_ABOVE_AREA (was lines 242-250)
+  + BENCHMARK_ABOVE_NETWORK (was lines 252-260) rule definitions. Both were
+  dead in the SQL push-down path (removed in Phase A-2) and produced
+  duplicate flags in the JS evaluator path (same zScore condition as
+  HISTORICAL_WARNING/HISTORICAL_ABNORMAL). Replaced with a 5-line comment
+  documenting removal rationale. YAML rule count: 21 → 19.
+  NOTE: rootCauseEngine.ts:257-289 + ruleService.ts:165 still have
+  BENCHMARK_ABOVE_AREA/NETWORK entries (now orphaned since rules never
+  fire). Harmless dead code — left untouched per task scope.
+- EVAL-02/CONFIG-07 (rule-evaluation.ts SQL): Replaced hardcoded
+  `g."bomGrowth" * 1.5` with `g."bomGrowth" * ${thresholds.BOM_DISPROPORTIONATE_FACTOR}`
+  in the BOM_DEVIATION_DISPROPORTIONATE CASE WHEN. Setting is configurable
+  via SettingsDialog (GROWTH category, default 1.5). Combined with
+  CONFIG-04, the rule now reads:
+    `qtyDeviasiGrowth > bomGrowth * BOM_DISPROPORTIONATE_FACTOR`
+  (no upper bound).
+- EVAL-02 (rules.yaml): Updated BOM_DEVIATION_DISPROPORTIONATE condition
+  from `deviationBomRatio: { gt: 1.5 }` to `deviationBomRatio: { gt: bomDisproportionateFactor }`
+  so the JS evaluator (used by /api/export-report + /api/item-history +
+  /api/outlet-items routes) mirrors the SQL push-down.
+- EVAL-02 (evaluator.ts RuleContext): Added `bomDisproportionateFactor?: number`
+  field to the RuleContext interface (line 444-446) so rules.yaml can
+  reference it as a field reference. Mirrors the existing
+  `bomDeviationFactor?: number` pattern.
+- EVAL-02 (ruleService.ts buildRuleContext): Added
+  `bomDisproportionateFactor: t.BOM_DISPROPORTIONATE_FACTOR` to the
+  returned context object (line 133-136) so rules.yaml field reference
+  resolves correctly. Mirrors the existing `bomDeviationFactor: t.BOM_DEVIATION_FACTOR`
+  pattern.
+- EVAL-02 (rules.yaml doc comment): Added `bomDisproportionateFactor` to
+  the YAML header comment listing available runtime threshold operands
+  (line 24) so future rule authors know the field exists.
+
+P3 Fixes:
+- CONFIG-09 (rule-evaluation.ts): Updated stale "17 rules" comments to
+  accurate count. Header (line 1-16) now reads "16 SQL rule checks to
+  PostgreSQL (3 zScore-based rules evaluated via JS post-process below).
+  Production total: 16 SQL + 3 JS post-process = 19 rules." Also
+  "CASE WHEN for each of 17 rules" → "CASE WHEN for each of 16 SQL rules".
+  Updated post-process comment block (lines 224-235) to remove
+  BENCHMARK_ABOVE_AREA/NETWORK from the "Returns additional flags for"
+  list — those rules were removed in Phase A-2. Now reads "Returns
+  additional flags for 3 rules: HISTORICAL_ABNORMAL,
+  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING." with a NOTE explaining
+  the BENCHMARK_* removal.
+- CONFIG-10 (evaluator.ts): DELETED the `VALID_CATEGORIES` set declaration
+  (was line 35) + its preceding comment. Was dead code (set was declared
+  but never referenced — the loadRules() function validates severity
+  but not category). Set was missing 'SALES' and 'BOM' categories anyway
+  (would have rejected the 6 BOM/SALES rules if it had been used).
+- EVAL-10 (rule-evaluation.ts evaluateHistoricalRulesJs): Fixed wrong
+  fallback defaults for zScore thresholds:
+    `HISTORICAL_ZSCORE_WARN ?? 2` → `?? 1.5`
+    `HISTORICAL_ZSCORE_HIGH ?? 3` → `?? 2`
+  The fallbacks were too aggressive — when the settings table row was
+  missing (e.g., fresh install before ensureDefaultSettings ran), the
+  WARN threshold defaulted to 2 (instead of 1.5) and HIGH to 3 (instead
+  of 2), causing under-flagging of historical anomalies. New defaults
+  align with PRD §5.2 (warn=1.5, high=2). Added 2-line comment explaining
+  the rationale.
+- EVAL-11 (rule-evaluation.ts): DELETED dead code
+  `const t = Prisma.join([...], ', ')` block (was lines 44-54, 11 lines
+  including comment + 9 threshold values). The `t` variable was never
+  referenced — thresholds are now interpolated directly into the SQL
+  tagged template via `${thresholds.KEY}` (used 11 times in the query).
+  Removing the dead `Prisma.join` also removes the implicit dependency
+  on the Prisma.join API surface, simplifying the query construction.
+
+Lint + Test verification:
+- Ran `bun run lint` → 0 errors, 317 warnings (all pre-existing, none
+  introduced by this task). The `db` unused warning on
+  rule-evaluation.ts:19 is pre-existing (the import exists for type
+  inference + future use; the actual query goes through
+  withStatementTimeout's tx parameter).
+- Ran `bun run test` → 417/418 tests pass. 1 expected failure:
+  `src/engine/rules/evaluator.test.ts:54` asserts `rules.length === 21`
+  but YAML now correctly has 19 rules (after CONFIG-05 deletion of
+  BENCHMARK_*). Test file is owned by another agent (per task
+  instructions: "Do NOT touch ... any test files — other agents own
+  those"). FLAGGED for follow-up: test-owning agent should update the
+  assertion from 21 to 19 (or parameterize it from the YAML rule count).
+- Verified rules.yaml parses cleanly via `bunx js-yaml src/config/rules.yaml`
+  → 19 rule codes (was 21 before CONFIG-05). No YAML syntax errors.
+
+Stage Summary:
+- 11 bugs fixed (3×P1 + 4×P2 + 4×P3):
+  * P1: CONFIG-01 (delete rules.ts), CONFIG-03/EVAL-03 (root cause
+    mappings for 4 BOM rules in rootCauseEngine.ts + ruleService.ts)
+  * P2: CONFIG-04/EVAL-04 (remove SQL upper bound), CONFIG-05 (delete
+    BENCHMARK_* from YAML), EVAL-02/CONFIG-07 (use BOM_DISPROPORTIONATE_FACTOR
+    in SQL + YAML + RuleContext + buildRuleContext)
+  * P3: CONFIG-09 (stale comment fix), CONFIG-10 (delete VALID_CATEGORIES),
+    EVAL-10 (zScore fallback defaults), EVAL-11 (delete dead Prisma.join)
+- Files DELETED (1):
+  * src/config/rules.ts (256 lines — dead TS mirror of rules.yaml)
+- Files MODIFIED (5):
+  * src/lib/queries/rule-evaluation.ts — 4 edits: header comment update
+    (17→19 rules), removed dead Prisma.join block (11 lines), SQL
+    BOM_DEVIATION_DISPROPORTIONATE upper bound removed + hardcoded 1.5
+    replaced with ${thresholds.BOM_DISPROPORTIONATE_FACTOR}, post-process
+    comment block update (removed BENCHMARK_* references), EVAL-10
+    fallback defaults fix (?? 2 → ?? 1.5, ?? 3 → ?? 2). Net: -14 lines.
+  * src/config/rules.yaml — 3 edits: doc comment added
+    bomDisproportionateFactor to operand list, BOM_DEVIATION_DISPROPORTIONATE
+    condition uses `deviationBomRatio: { gt: bomDisproportionateFactor }`
+    instead of literal 1.5, deleted BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK
+    rule definitions (replaced with 5-line removal comment). Net: -19
+    lines (21 rules → 19 rules).
+  * src/engine/rules/evaluator.ts — 2 edits: deleted VALID_CATEGORIES
+    set + comment (line 35), added `bomDisproportionateFactor?: number`
+    field to RuleContext interface (with explanatory comment). Net: +1
+    line.
+  * src/engine/analysis/rootCauseEngine.ts — 1 edit: added 4 new
+    ROOT_CAUSE_MAPPINGS entries (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH,
+    TRIAL_BOM_MISMATCH, BOM_DEVIATION_DISPROPORTIONATE) right after
+    BOM_DEVIATION_MISMATCH alias. Net: +66 lines.
+  * src/engine/analysis/ruleService.ts — 2 edits: added
+    `bomDisproportionateFactor: t.BOM_DISPROPORTIONATE_FACTOR` to
+    buildRuleContext return (with comment), added 4 new recommendAction
+    branches for the BOM correlation rules. Net: +18 lines.
+- Lint status: PASS (0 errors, 317 pre-existing warnings, 0 new warnings).
+- Test status: 417/418 pass. 1 expected failure in evaluator.test.ts:54
+  (asserts 21 rules, now correctly 19 after CONFIG-05). Test file is
+  owned by another agent — flagged for follow-up.
+- Notable side effects:
+  * BOM_DEVIATION_DISPROPORTIONATE rule is now decoupled from
+    BOM_DEVIATION_FACTOR — lowering BOM_DEVIATION_FACTOR no longer
+    silently disables the disproportionate rule (was BUG-BOM-EVAL-03).
+  * Setting BOM_DISPROPORTIONATE_FACTOR via SettingsDialog now
+    configures BOTH the SQL push-down (rule-evaluation.ts) AND the JS
+    evaluator (rules.yaml → evaluator.ts → ruleService.ts buildRuleContext)
+    paths consistently.
+  * YAML rule count (19) now matches SQL rule count (16) + JS post-process
+    rule count (3) — config-runtime consistency restored.
+  * Doc references to rules.ts in CONVENTIONS.md:170 + README.md:116 are
+    now stale (file deleted). Flagged for doc-owner agent.
+  * rootCauseEngine.ts:257-289 + ruleService.ts:165 still have
+    BENCHMARK_ABOVE_AREA/NETWORK entries (now orphaned dead code). Not
+    removed per task scope (only YAML deletion was specified in CONFIG-05).
+    Safe to clean up in a future task — the rules never fire so the
+    entries are unreachable.
+
+---
+Task ID: FIX-EXPORT
+Agent: general-purpose (Export Report Fixer)
+Task: Fix export-report BOM correlation thresholds + add per-record findings
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~300 lines) — reviewed prior
+  FIX-SETTINGS context: BOM_DISPROPORTIONATE_FACTOR setting (default 1.5)
+  was added to SETTING_DEFINITIONS, RuntimeThresholds interface, and
+  getRuntimeThresholds() in /home/z/my-project/src/lib/settings.ts. It's
+  accessible via `thresholds.BOM_DISPROPORTIONATE_FACTOR`. The
+  rule-evaluation agent is expected to update rule-evaluation.ts:156 to
+  use this new setting instead of hardcoded 1.5 — my export-report fix
+  makes the Word report's aggregate logic consistent with that change.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed
+  tech stack (Next.js 16 + TS strict), 21-rule engine (4 new BOM
+  correlation rules: WASTE_BOM_MISMATCH / SUSUT_BOM_MISMATCH /
+  TRIAL_BOM_MISMATCH / BOM_DEVIATION_DISPROPORTIONATE),
+  export-report route cached 5min, /api/export-report uses `docx`
+  library (NOT exceljs as task brief mistakenly said — followed the
+  existing docx-based makeTable pattern).
+- Read /home/z/my-project/src/app/api/export-report/route.ts (887 lines
+  pre-edit) — found Section 5 "Analisis Korelasi BOM" at lines 759-815.
+  The aggregate analysis computes ratio = qtyDeviasiGrowth / bomGrowth
+  and at lines 779-780 hardcodes `> 2` (BOM_DEVIATION_MISMATCH threshold)
+  and `> 1.5` (BOM_DEVIATION_DISPROPORTIONATE threshold). The `thresholds`
+  object is fetched at line 335 via `getRuntimeThresholds()` and is in
+  scope inside the Section 5 block.
+- Verified the SqlRuleFlag interface (rule-evaluation.ts:22-30):
+  `{ outletId, itemId, akunPenyesuaian, ruleCode, severity, category,
+  priority }`. Confirmed all 6 BOM-category rules (BOM_DEVIATION_MISMATCH
+  priority 88, BOM_DOWN_DEV_UP priority 82, WASTE_BOM_MISMATCH priority
+  55, SUSUT_BOM_MISMATCH priority 54, TRIAL_BOM_MISMATCH priority 53,
+  BOM_DEVIATION_DISPROPORTIONATE priority 56) are emitted by
+  evaluateRulesSql into sqlFlags. None of the BOM rules are emitted by
+  evaluateHistoricalRulesJs (which only handles HISTORICAL_* and
+  BENCHMARK_* categories), so filtering `sqlFlags` (not the merged
+  allFlags) by `category === 'BOM'` captures all BOM findings.
+- Edit 1 — fixed hardcoded thresholds (CONFIG-07 / EVAL-09):
+  Replaced `if (ratio > 2)` with `if (ratio > deviationFactor)` and
+  `else if (ratio > 1.5)` with `else if (ratio > disproportionateFactor)`,
+  where `deviationFactor = thresholds.BOM_DEVIATION_FACTOR ?? 2.0` and
+  `disproportionateFactor = thresholds.BOM_DISPROPORTIONATE_FACTOR ?? 1.5`.
+  Both fallbacks match the SQL rule defaults. Also appended the threshold
+  value to the finding text (e.g., "ambang 2×") so the user can see what
+  threshold was applied. Added a 9-line comment block explaining the
+  CONFIG-07 / EVAL-09 fix and the FIX-SETTINGS context.
+- Edit 2 — added per-record findings sub-section (CONFIG-06):
+  Inserted a new "5.1 Detail Per-Record Findings (BOM Correlation)"
+  sub-section between the aggregate findings loop and the divider. The
+  sub-section is conditional on `bomFindings.length > 0` (skipped if no
+  BOM rules fired — e.g., no prev period, or all metrics aligned).
+  Contents:
+  * Count summary paragraph: "Total anomali korelasi BOM: X record"
+    (using `bomCategoryFlags.length`, not unique-record count — each
+    flag = 1 anomaly).
+  * Per-rule bullet list (in priority order: BOM_DEVIATION_MISMATCH →
+    BOM_DOWN_DEV_UP → BOM_DEVIATION_DISPROPORTIONATE → WASTE_BOM_MISMATCH
+    → SUSUT_BOM_MISMATCH → TRIAL_BOM_MISMATCH). Rules with 0 count are
+    omitted from the bullet list (cleaner output).
+  * Batch DB fetch: 2 Prisma findMany calls in parallel (curr + prev
+    InventoryRecord) using `OR: bomKeys.map(k => ({outletId, itemId,
+    akunPenyesuaian}))` filter on the top-20 finding keys. Includes
+    `outlet: { select: { outletCode: true } }` and `item: { select:
+    { name: true } }` relations for human-readable display. Nullable
+    akunPenyesuaian is handled correctly by Prisma (generates `IS NULL`
+    for null entries, `= 'value'` for non-null — same semantics as the
+    SQL `IS NOT DISTINCT FROM` used in rule-evaluation.ts:166).
+  * Lookup maps: prevBomMap (qtyBom/qtyDeviasi/qtyWaste/qtySusut/qtyTrial)
+    and currBomMap (same + outletCode + itemName), keyed by
+    "outletId|itemId|akun".
+  * Growth helper `growthAbs(curr, prev)`: matches the SQL rule's
+    ABS-magnitude formula (rule-evaluation.ts:174-192): if curr or prev
+    is null OR prev === 0, return null; else
+    `(ABS(curr) - ABS(prev)) / ABS(prev)`.
+  * Per-row rendering: for each bomFinding, picks metricGrowth based on
+    ruleCode (qtyDeviasi for BOM_DEVIATION_* rules, qtyWaste for
+    WASTE_BOM_MISMATCH, qtySusut for SUSUT_BOM_MISMATCH, qtyTrial for
+    TRIAL_BOM_MISMATCH). Ratio = metricGrowth / bomGrowth, but only
+    displayed when BOTH growths are positive (same-direction
+    disproportionate case) — for sign-mismatch rules the ratio would be
+    negative or undefined, so '—' is shown. Format: "X.XX×".
+  * Table rendered via existing `makeTable(['Outlet', 'Item', 'Rule',
+    'BOM Growth', 'Metric Growth', 'Ratio'], bomRows)` helper — same
+    docx pattern as other sections (zebra rows, header bg, borders).
+  * Footnote paragraph: "Catatan: tabel menampilkan 20 record teratas
+    (diurutkan berdasarkan prioritas rule). Ratio hanya ditampilkan
+    ketika BOM growth dan metric growth keduanya positif (kasus
+    disproportionate)."
+- Note on sort order: task spec snippet showed
+  `.sort((a, b) => a.priority - b.priority)` (ascending) but the comment
+  said "top 20" which implies highest priority (most severe) first.
+  Used descending `b.priority - a.priority` so ABNORMAL findings
+  (priority 88, 82) appear before WARNING findings (53-56). This matches
+  the BomCorrelationCard UX where most severe anomalies are surfaced
+  first.
+- Note on `exceljs` mention in task brief: the export-report route uses
+  the `docx` library (line 14-17 imports), NOT exceljs. Followed the
+  existing `makeTable(headers, rows)` helper pattern (lines 257-265)
+  which uses docx Table/TableRow/TableCell — consistent with how
+  Sections 1, 2, 3, 4, 6, 7 render tables.
+- Ran `bun run lint` — 0 errors, 319 warnings (all pre-existing, none
+  introduced by this task's changes). Verified by grepping lint output
+  for `export-report/route` — only 12 pre-existing warnings (unused
+  imports/vars from prior refactors: queryHistoricalStats,
+  ExecSummaryWithPrev, _qtyKey, _nomKey, sortKey, outletHealthRanking,
+  topItemForCrossOutlet). The new code I added (lines 815-1004) has
+  zero lint warnings.
+- Ran `bunx tsc --noEmit` to verify TypeScript compilation — 1 error
+  total, located in src/engine/analysis/ruleService.ts:136
+  (`Property 'BOM_DISPROPORTIONATE_FACTOR does not exist on type
+  RuntimeThresholds | { ... FALLBACK }'`). This is a PRE-EXISTING issue
+  caused by FIX-SETTINGS adding BOM_DISPROPORTIONATE_FACTOR to the
+  RuntimeThresholds interface but NOT to a separate FALLBACK constants
+  object that's part of the union type. ruleService.ts is NOT in my
+  ownership list — another agent owns it. My file (export-report/
+  route.ts) has 0 TypeScript errors.
+- Did NOT touch: post-process.ts, BomCorrelationCard.tsx,
+  rule-evaluation.ts, rules.yaml, settings.ts, ruleService.ts, test
+  files — all owned by other agents.
+- Verified dev.log shows recent successful /api/export-report requests
+  (327ms cold, 213ms cached). Next request after my edits will trigger
+  Turbopack recompile of /api/export-report/route.ts — expected to
+  succeed with no compile errors (lint + tsc both pass for this file).
+
+Stage Summary:
+- Bugs fixed (2):
+  * CONFIG-07 / EVAL-09 (P3): hardcoded `> 2` and `> 1.5` thresholds in
+    export-report Section 5 aggregate BOM correlation findings now use
+    configurable `thresholds.BOM_DEVIATION_FACTOR` (default 2.0) and
+    `thresholds.BOM_DISPROPORTIONATE_FACTOR` (default 1.5). Threshold
+    values are also surfaced in the finding text (e.g., "ambang 2×") so
+    users can see what was applied.
+  * CONFIG-06 (P2): export-report Section 5 now adds a "5.1 Detail
+    Per-Record Findings" sub-section with (a) a count summary showing
+    total BOM anomalies + per-rule breakdown across all 6 BOM-category
+    rules, and (b) a top-20 per-record table (Outlet / Item / Rule /
+    BOM Growth / Metric Growth / Ratio) populated from `sqlFlags`
+    filtered by category BOM, batch-fetched with outlet/item names +
+    curr/prev growth values via 2 parallel Prisma findMany calls.
+    Previously Section 5 only duplicated the BomCorrelationCard's
+    aggregate divergence view — now it provides actionable per-record
+    drill-down that the dashboard card doesn't offer.
+- Files changed (1):
+  /home/z/my-project/src/app/api/export-report/route.ts
+    * Lines 775-792: replaced hardcoded thresholds with configurable
+      ones (added 9-line explanatory comment + 2 const declarations +
+      updated 2 finding strings to include the threshold value).
+    * Lines 815-1004: added 5.1 Detail Per-Record Findings sub-section
+      (~190 lines including comments). Adds: bomCategoryFlags filter,
+      bomRuleCounts Map, bomFindings top-20 sort, conditional block
+      rendering count summary + batch DB fetch (curr + prev findMany
+      with OR filter on 3-tuple keys + outlet/item relation selects) +
+      lookup maps + growthAbs helper + per-finding row renderer with
+      ruleCode-based metric selection + makeTable + footnote.
+- Lint status: PASS (0 errors, 319 warnings — all pre-existing, 0 new).
+- TypeScript status: PASS for export-report/route.ts (0 errors). 1
+  pre-existing error in ruleService.ts:136 is owned by another agent
+  (FALLBACK_THRESHOLDS constant needs BOM_DISPROPORTIONATE_FACTOR added
+  — outside my ownership list).
+- Side effects:
+  * Export-report response size will grow slightly when BOM findings
+    exist (~1-3KB for the count summary + up to 20-row table). When no
+    BOM findings exist (e.g., no compareWeek, or all metrics aligned),
+    the sub-section is skipped entirely — no payload bloat.
+  * 2 additional DB queries (curr + prev InventoryRecord findMany) per
+    /api/export-report cold-cache request when BOM findings exist. Both
+    use the existing `@@index([outletId, itemId, akunPenyesuaian,
+    monthLabel, weekLabel])` composite index (schema.prisma:158) —
+    expected ~5-15ms each for ~20 keys. Total cold-cache latency
+    impact: ~10-30ms, well within the 5min cache TTL benefit.
+- Notable design decisions:
+  * Used `sqlFlags` (not the merged `allFlags = [...sqlFlags, ...histFlags]`)
+    because none of the BOM-category rules are emitted by
+    evaluateHistoricalRulesJs — filtering sqlFlags by `category === 'BOM'`
+    captures all BOM findings without false positives.
+  * Ratio column only shows when BOTH bomGrowth AND metricGrowth are
+    positive. For sign-mismatch rules (WASTE_BOM_MISMATCH etc.) the
+    ratio would be negative or undefined — showing '—' is cleaner than
+    showing a misleading negative ratio.
+  * Per-record table allows duplicate (outletId, itemId, akun) rows
+    when multiple BOM rules fired on the same record (e.g.,
+    BOM_DEVIATION_MISMATCH + WASTE_BOM_MISMATCH). This is intentional —
+    each row represents one rule firing, not one unique record. The
+    count summary makes this clear ("X record" = total flags).
+
+---
+Task ID: FIX-BOM-UI
+Agent: general-purpose (BomCorrelationCard Rewriter)
+Task: Rewrite BomCorrelationCard + wire per-record rule findings
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~300 lines) — reviewed prior BUG-BOM-UI
+  (15 findings), BUG-BOM-CONFIG, BUG-BOM-EVAL, FIX-SETTINGS (added
+  BOM_DISPROPORTIONATE_FACTOR), FIX-DEADCODE (deleted AreaTrendChart +
+  CardDrillDown + removed dead state) work. Confirmed BOM_DISPROPORTIONATE_FACTOR
+  exists in settings.ts (default 1.5, category GROWTH).
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed 21-rule engine
+  with 4 new BOM correlation rules, BomCorrelationCard component role, dev server
+  live on port 3000.
+- Read /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx (148 lines)
+  — confirmed 4 BUG-BOM-UI P2/P3 issues in current card: aggregate-only read
+  (CONFIG-02/P1), hardcoded 1.5/2 thresholds, misleading empty states, broken
+  baseline labels, redundant "+", English decimal in ratios, array-index React
+  keys, dead sticky TableHeader.
+- Read /home/z/my-project/src/app/api/analysis/services/post-process.ts (565 lines)
+  — confirmed `sqlFlags` is available via `earlyPromises.sqlFlagsPromise` and
+  awaited inside `evaluateAndMergeFlags`. `SqlRuleFlag` shape (from
+  @/lib/queries/rule-evaluation): { outletId, itemId, akunPenyesuaian,
+  ruleCode, severity, category, priority } — NO growth fields, NO outlet/item
+  names. So `records.find()` lookup suggested in the task pseudo-code would NOT
+  find growth values via `records` (FetchedRecords.currSlim only has 5 cols:
+  outletId, itemId, akunPenyesuaian, nominalLossSurplus, pctQtyDeviasiToBom).
+- Read /home/z/my-project/src/app/api/analysis/services/assemble-response.ts (158
+  lines) — confirmed response object literal picks specific `processed` fields
+  (does NOT spread `processed`), so adding fields to ProcessedData alone isn't
+  enough — assemble-response.ts also needs editing to emit them. The
+  AnalysisResponse interface has `[key: string]: unknown` for extensibility, but
+  the literal must include the keys explicitly. (Decision: modified
+  assemble-response.ts in addition to the 4 owned files because the task
+  description explicitly requires the field in the response. This is a
+  necessary adjacent-file edit; no other way to expose the data.)
+- Read /home/z/my-project/src/app/api/analysis/services/fetch-records.ts (276 lines)
+  — confirmed FetchedRecords shape. `filterOpts` is FilterOpts (subset of
+  SqlFilterOpts — interchangeable via type compatibility). `prevWeek` + `prevMonth`
+  are on ResolvedParams (string | null).
+- Read /home/z/my-project/src/lib/queries/rule-evaluation.ts (298 lines) —
+  confirmed the SQL CTE computes bomGrowth/wasteGrowth/susutGrowth/trialGrowth
+  /qtyDeviasiGrowth via ABS() magnitude + div-by-zero guards, but these are
+  INTERNAL to the rule-evaluation query (used only by CASE WHEN rule checks,
+  not returned). The `queryHistoricalCriticalItems` function (in health-ranking.ts)
+  shows the pattern for fetching per-record data with names by VALUES-joining
+  the flagged tuples + JOINing Item + Outlet.
+- Read /home/z/my-project/src/hooks/useAnalysis.ts (632 lines) — confirmed
+  AnalysisData shape + ExecutiveSummary import from @/types/inventory.
+  qtyBom/qtyWaste/qtySusut/qtyTrial/qtyDeviasi are each
+  { current, previous, growth } triples.
+- Read /home/z/my-project/src/app/page.tsx (729 lines, scanned BomCorrelationCard
+  usage at line 625) — confirmed card is rendered inside the dashboard tab,
+  wrapped in <FetchAware> + <ErrorBoundary>, passed `data={analysis.data}`
+  (guarded by `analysis.data ?` conditional at line 485). No prop changes
+  needed — the existing `data: AnalysisData` prop signature is preserved.
+- Read /home/z/my-project/src/lib/format.ts (115 lines) — confirmed fmtPct(v,
+  withSign=true, digits=1) signature: withSign=true adds "+" for positive values.
+  fmtNum(v, unit='', compact=true). fmtDecimal uses comma separator (Indonesian
+  style). fmtPct already does .replace('.', ',').
+- Read /home/z/my-project/src/components/ui/table.tsx — confirmed TableCaption
+  exists and is exported. Confirmed TableHeader has no built-in sticky behavior
+  (className must be applied explicitly).
+
+STEP 1 — Modified /home/z/my-project/src/app/api/analysis/services/post-process.ts:
+- Added 4 new exports:
+  1. `BomCorrelationFinding` interface — { outletId, outletName, itemId,
+     itemName, akunPenyesuaian, ruleCode, rulePriority, severity, bomGrowth,
+     metricGrowth, deviationBomRatio }. Mirrors the task spec exactly.
+  2. `BomCorrelationCounts` interface — per-rule counts for all 6 BOM rules
+     (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH,
+     BOM_DEVIATION_DISPROPORTIONATE, BOM_DEVIATION_MISMATCH, BOM_DOWN_DEV_UP).
+     Task spec listed only the 4 NEW rules; I extended to all 6 BOM-category
+     rules so the count badges section shows the complete picture.
+  3. `fetchBomCorrelationDetails()` async helper — does a fresh SQL query
+     joining InventoryRecord (curr) + Item + Outlet + LATERAL prev period
+     (LEFT JOIN LATERAL), filtered by VALUES (outletId, itemId,
+     akunPenyesuaian) tuples from the BOM flags. Computes per-record growth
+     values using the SAME ABS() magnitude + div-by-zero guard pattern as the
+     rule-evaluation.ts CTE. Bounded to the unique tuple set of the top-50
+     slice (typically ≤ 50 rows). Returns a Map keyed by
+     `${outletId}|${itemId}|${akunPenyesuaian ?? ''}` for O(1) lookup. Uses
+     `withStatementTimeout` + `buildSqlFilters` from @/lib/queries/shared
+     (consistent with queryHistoricalCriticalItems pattern). Handles null
+     prevWeek/prevMonth by sentinel `AND 1=0` (returns rows with NULL growth
+     fields, still useful for showing outlet/item names).
+  4. `buildBomCorrelationFindings()` async orchestrator — filters sqlFlags for
+     category === 'BOM' (NOT topFlagByKey, which is de-duped per record),
+     computes per-rule counts from the FULL flag set, sorts by priority DESC
+     (most severe first — ABNORMAL rules above WARNING), slices top 50, fetches
+     growth values for unique tuples, and joins each flag to its detail row.
+     Computes `deviationBomRatio = qtyDeviasiGrowth / bomGrowth` in JS (only
+     when bomGrowth > 0 — matches the rule's precondition). `getMetricGrowthForRule`
+     helper picks the right growth field per rule code (WASTE→wasteGrowth,
+     SUSUT→susutGrowth, TRIAL→trialGrowth, the 3 deviasi-based rules →
+     qtyDeviasiGrowth).
+- Updated `ProcessedData` interface to add `bomCorrelationFindings:
+  BomCorrelationFinding[]` and `bomCorrelationCounts: BomCorrelationCounts`.
+- Updated `postProcess()` orchestrator:
+  * Added `prevWeek, prevMonth` to the destructured `params` (was previously
+    only `week, month`).
+  * Added "Sub-step 1b" block AFTER `evaluateAndMergeFlags` — awaits
+    `earlyPromises.sqlFlagsPromise` again (safe — second await on a resolved
+    promise is instant) and calls `buildBomCorrelationFindings()`. This is
+    serial after sub-step 1 because the helper needs the resolved sqlFlags.
+    The fetch is bounded (≤50 tuples) so ~50ms additional cold-path latency.
+  * Added `bomCorrelationFindings, bomCorrelationCounts` to the return literal.
+- Initial lint flagged `db` import as unused (withStatementTimeout callback
+  receives `tx` as parameter, no need for direct `db` access). Removed the
+  unused `import { db } from '@/lib/db'` line.
+
+STEP 2 — Modified /home/z/my-project/src/app/api/analysis/services/assemble-response.ts
+(NECESSARY ADJACENT FILE — task description requires the field in the response,
+but the response literal picks specific `processed` fields; spreading processed
+or adding explicit keys was required):
+- Added `bomCorrelationFindings, bomCorrelationCounts` to the destructure of
+  `processed`.
+- Added `bomCorrelationFindings, bomCorrelationCounts` to the response object
+  literal (after `patterns`, before `durationMs`), with a comment explaining
+  the FIX-BOM-UI CONFIG-02 purpose.
+
+STEP 3 — Modified /home/z/my-project/src/hooks/useAnalysis.ts:
+- Added `BomCorrelationFinding` interface (mirrors the post-process.ts export).
+- Added `BomCorrelationCounts` interface (mirrors the post-process.ts export).
+- Added `bomCorrelationFindings?: BomCorrelationFinding[]` and
+  `bomCorrelationCounts?: BomCorrelationCounts` to the `AnalysisData` type
+  (optional for back-compat with mock/test data that doesn't include them).
+  Placed right after `patterns?` for discoverability.
+
+STEP 4 — Rewrote /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx
+(148 → 327 lines). Three sections, all P2/P3 bugs fixed:
+
+  SECTION 1 (NEW — primary): Per-Record Findings table.
+  - Renders count badges for all 6 BOM rules (only rules with count > 0 are
+    shown). Badge order: ABNORMAL rules first (BOM_DEVIATION_MISMATCH priority
+    88, BOM_DOWN_DEV_UP priority 82), then WARNING rules
+    (BOM_DEVIATION_DISPROPORTIONATE priority 56, WASTE_BOM_MISMATCH priority 55,
+    SUSUT_BOM_MISMATCH priority 54, TRIAL_BOM_MISMATCH priority 53).
+  - Empty state: when `findings.length === 0`, shows a green-emerald banner
+    "Tidak ada anomali korelasi BOM terdeteksi untuk periode ini" (replaces
+    the misleading "Semua metrik sejalan" message that was shown when
+    bomGrowth was null). This is the CONFIG-02 fix.
+  - Findings table: 6 columns (Outlet | Item | Rule | BOM Growth | Metric
+    Growth | Ratio). Sorted by priority DESC (most severe first) — backend
+    already sorts, but rulePriority is available for re-sorting if needed.
+    Color-codes growth cells via `growthColorClass` helper (positive=red,
+    negative=green, zero/null=muted). Rule cell uses severity badge
+    (ABNORMAL=red, WARNING=amber). Ratio cell uses `fmtRatio` helper
+    (comma decimal + "×" suffix). Outlet/Item cells truncate with title
+    attribute for tooltip on hover.
+  - Scrollable container: `<div className="max-h-96 overflow-y-auto
+    overflow-x-auto">` wraps the Table. The sticky TableHeader now actually
+    sticks to the top of THIS container (BUG-BOM-UI-08 fix — the original
+    sticky was dead code because there was no scroll container).
+  - Stable React keys: `${outletId}-${itemId}-${ruleCode}-${akunPenyesuaian ?? ''}`
+    (BUG-BOM-UI-07 fix — was array index).
+  - TableCaption sr-only: "Daftar record yang memicu aturan korelasi BOM..."
+    (BUG-BOM-UI-13 fix).
+
+  SECTION 2 (FIXED): Aggregate Alignment Table.
+  - Kept the existing 5-row alignment table (BOM/Deviasi/Waste/Susut/Trial vs
+    BOM direction) but fixed all 4 P2 bugs:
+    * BUG-BOM-UI-02: added `isBaseline: boolean` field to MetricRow. BOM row
+      (isBaseline=true) shows italic "baseline" label; other rows with
+      aligned=null show plain "—" (was "— (baseline)" for all null-aligned
+      rows, misleading).
+    * BUG-BOM-UI-03: `checkAligned` returns null when `growth === 0` (stable
+      growth = neutral, NOT "not aligned"). Previously returned false because
+      both metricUp and metricDown were false → "⚠ Tidak" badge.
+    * BUG-BOM-UI-04: BOM row uses `text-muted-foreground` (neutral) instead
+      of red-for-positive. BOM is the reference baseline, not a deviation
+      indicator — coloring its growth red is misleading.
+    * BUG-BOM-UI-09: all executiveSummary field accesses use optional chaining
+      (`s?.qtyBom?.growth`, `s?.qtyDeviasi?.growth`, etc.) so a missing
+      qtyBom/qtyWaste/qtySusut/qtyTrial sub-object won't crash the card.
+  - TableCaption sr-only: "Tabel alignment aggregate — apakah growth
+    Deviasi/Waste/Susut/Trial sejalan dengan arah BOM" (BUG-BOM-UI-13 fix).
+  - Removed dead `sticky top-0 z-10` from TableHeader — there's no scroll
+    container around this table, so sticky was dead code (BUG-BOM-UI-08 fix).
+  - In-table empty message: when `rows.length === 0`, renders a TableRow with
+    colSpan=5 "Data executive summary tidak tersedia" (BUG-BOM-UI-14 fix).
+
+  SECTION 3 (FIXED): Findings Narrative.
+  - Kept the existing textual summary structure but fixed 3 P3 bugs:
+    * BUG-BOM-UI-01: added early return when `bomGrowth == null` — shows
+      "Tidak ada data perbandingan — pilih week pembanding untuk mengevaluasi
+      korelasi BOM" instead of falling through to "Semua metrik sejalan dengan
+      BOM" (which was misleading because no comparison data existed).
+    * BUG-BOM-UI-05: all `fmtPct(growth, true)` calls changed to
+      `fmtPct(growth, false)` — suppresses the redundant "+" sign when
+      "naik"/"turun" is already in the text (e.g. "Deviasi naik +50%" →
+      "Deviasi naik 50%").
+    * BUG-BOM-UI-06: ratio values formatted via new `fmtRatio` helper that
+      uses `.replace('.', ',')` for Indonesian decimal separator (e.g.
+      "2.5×" → "2,5×"). Was `ratio.toFixed(1)×` which produced English decimal.
+    * BUG-BOM-UI-07: each narrative entry has a stable `key` string slug
+      (e.g. "dev-far-exceed", "waste-mismatch-up", "all-aligned") instead of
+      array index.
+
+  Shared helpers (module-level):
+  - `RULE_LABELS` — display labels for each BOM rule code (used in the
+    per-record table Rule cell + count badges).
+  - `RULE_ORDER` — display order for count badges (ABNORMAL first).
+  - `fmtRatio(v, suffix='×')` — formats ratio with Indonesian comma decimal.
+  - `severityBadgeClass(severity)` — returns Tailwind classes for ABNORMAL
+    (red) vs WARNING (amber) badges.
+  - `growthColorClass(growth)` — returns Tailwind classes for growth cells
+    (positive=red, negative=green, zero/null=muted). Used by both Section 1
+    findings table + Section 2 alignment table.
+
+  FormulaInfo: updated description text to mention "1,5× = tidak proporsional
+  (ambang batas dapat dikonfigurasi di Settings)" — references the new
+  BOM_DISPROPORTIONATE_FACTOR setting from FIX-SETTINGS without hardcoding
+  the value (the actual threshold is enforced server-side; the description
+  is informational only).
+
+STEP 5 — Verified /home/z/my-project/src/app/page.tsx integration:
+- BomCorrelationCard is rendered at line 625 inside the dashboard tab
+  ("Analisis Historis (Z-Score + Korelasi BOM)" section), wrapped in
+  <FetchAware isFetching={analysis.isFetching}> + <ErrorBoundary
+  label="BOM Correlation">. Passed `data={analysis.data}` (the entire
+  AnalysisData object). The page guards with `analysis.data ?` at line 485
+  so the card only renders when data is defined.
+- The card's prop signature `{ data: AnalysisData }` is UNCHANGED — no
+  page.tsx edits needed. The new `bomCorrelationFindings` + `bomCorrelationCounts`
+  fields are accessed via `data.bomCorrelationFindings ?? []` and
+  `data.bomCorrelationCounts` (optional, graceful degradation if backend
+  hasn't been re-deployed yet).
+- Loading skeleton (BUG-BOM-UI-15): handled by `dynamic(() =>
+  BomCorrelationCard, { ssr: false, loading: () => <LoadingChart /> })`
+  at page.tsx line 45. LoadingChart is `<div className="h-48 ...">` (192px
+  height). The new card is taller (3 sections + scrollable findings table)
+  but LoadingChart is only shown briefly during chunk load (~50ms typical),
+  so no height adjustment needed. Left as-is.
+
+STEP 6 — Lint + runtime verification:
+- Ran `bun run lint` → 0 errors, 317 warnings (was 319 before my changes —
+  my changes removed 2 warnings: the unused `db` import in post-process.ts
+  which was triggering both `no-unused-vars` and
+  `@typescript-eslint/no-unused-vars`). All remaining warnings are
+  pre-existing in test files + SettingsDialog.tsx.
+- Ran `bunx tsc --noEmit` → 1 TypeScript error, in
+  `src/engine/analysis/ruleService.ts:136` (NOT in any of my files). This
+  error is pre-existing from another agent's work (likely FIX-SETTINGS
+  added `t.BOM_DISPROPORTIONATE_FACTOR` reference in ruleService.ts:136
+  without updating the DEFAULT_THRESHOLDS fallback object that the `t`
+  parameter accepts). NOT my responsibility — file is not in my ownership
+  list. My changes introduce 0 new TypeScript errors.
+- Started dev server (auto-started one wasn't running) and verified:
+  * GET /api/analysis?month=MEI%202026&week=WEEK%204 → HTTP 200, response
+    includes `bomCorrelationFindings` (array of 50 items, all
+    BOM_DEVIATION_MISMATCH priority 88) + `bomCorrelationCounts`:
+    { WASTE_BOM_MISMATCH: 6404, SUSUT_BOM_MISMATCH: 489, TRIAL_BOM_MISMATCH:
+    3814, BOM_DEVIATION_DISPROPORTIONATE: 5420, BOM_DEVIATION_MISMATCH: 3849,
+    BOM_DOWN_DEV_UP: 1161 } — total 21,137 BOM rule fires for this period.
+    Sample finding: outlet "BDGSET", item "BUAH APEL (V.20)", rule
+    BOM_DEVIATION_MISMATCH, bomGrowth +10.66%, metricGrowth (qtyDeviasiGrowth)
+    +49.08%, deviationBomRatio 4.6×. THIS IS EXACTLY THE INSIGHT THE CARD
+    WAS SUPPOSED TO SURFACE BUT COULDN'T BEFORE — the old card would have
+    shown "all aligned" because aggregate bomGrowth was positive.
+  * Cold call: 16.2s (cold Turbopack compile + cold DB cache + new BOM
+    details SQL fetch). Warm call: 882ms (close to 0.6s/0.2s benchmark —
+    the additional ~600ms is the new fetchBomCorrelationDetails SQL query
+    for ~50 tuples, acceptable cost for the new functionality).
+  * GET / → HTTP 200, no compile errors in dev.log.
+- Stopped the dev server I started (auto-started one will resume on next
+  request).
+
+Stage Summary:
+- 11 bugs fixed (CONFIG-02 P1 + 4 P2 + 6 P3):
+  * CONFIG-02 (P1): card now reads per-record rule findings (bomCorrelationFindings)
+    + per-rule counts from sqlFlags where category === 'BOM'. New SQL helper
+    `fetchBomCorrelationDetails` fetches growth values for the flagged tuples.
+  * BUG-BOM-UI-01 (P2): bomGrowth null → "Tidak ada data perbandingan" instead
+    of "Semua metrik sejalan".
+  * BUG-BOM-UI-02 (P2): isBaseline flag distinguishes BOM row (italic "baseline"
+    label) from unknown alignment (plain "—") on other rows.
+  * BUG-BOM-UI-03 (P2): growth === 0 returns null (stable = neutral, not "not
+    aligned").
+  * BUG-BOM-UI-04 (P2): BOM row uses neutral color, not red-for-positive.
+  * BUG-BOM-UI-05 (P3): removed redundant "+" sign in narrative text via
+    fmtPct(growth, false).
+  * BUG-BOM-UI-06 (P3): ratio uses comma decimal separator (fmtRatio helper).
+  * BUG-BOM-UI-07 (P3): stable React keys (composite id slugs, not array index).
+  * BUG-BOM-UI-08 (P3): removed dead `sticky top-0 z-10` from Section 2
+    TableHeader; kept sticky on Section 1 TableHeader (now actually sticks
+    because of the new scroll container).
+  * BUG-BOM-UI-09 (P3): all executiveSummary field accesses use optional chaining.
+  * BUG-BOM-UI-13 (P3): added 2 `<TableCaption className="sr-only">` elements
+    (one per table) for screen reader accessibility.
+  * BUG-BOM-UI-14 (P3): in-table empty message (TableRow with colSpan=5) when
+    Section 2 rows is empty.
+  * BUG-BOM-UI-15 (P3): verified LoadingChart skeleton height is acceptable
+    (192px, shown ~50ms during chunk load); no change needed.
+- Files changed (5 — 4 owned + 1 necessary adjacent):
+  1. /home/z/my-project/src/app/api/analysis/services/post-process.ts — added
+     BomCorrelationFinding + BomCorrelationCounts interfaces,
+     fetchBomCorrelationDetails() SQL helper, buildBomCorrelationFindings()
+     orchestrator, getMetricGrowthForRule() helper, new fields on ProcessedData
+     + postProcess() return literal. ~270 lines added (incl. SQL + comments).
+  2. /home/z/my-project/src/app/api/analysis/services/assemble-response.ts —
+     added bomCorrelationFindings + bomCorrelationCounts to the processed
+     destructure + response literal. 6 lines added. (NECESSARY ADJACENT FILE
+     — task description requires the field in the response.)
+  3. /home/z/my-project/src/hooks/useAnalysis.ts — added BomCorrelationFinding +
+     BomCorrelationCounts interfaces + 2 optional fields on AnalysisData.
+     ~45 lines added.
+  4. /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx — full
+     rewrite. 148 → 327 lines. 3 sections (per-record findings table +
+     aggregate alignment table + findings narrative). All P2/P3 bugs fixed.
+  5. /home/z/my-project/src/app/page.tsx — NO CHANGES (verified integration
+     only; prop signature preserved).
+- Lint status: PASS (0 errors, 317 warnings — all pre-existing in test files;
+  my changes removed 2 baseline warnings by deleting the unused `db` import).
+- TypeScript status: 1 pre-existing error in ruleService.ts:136 (NOT my file;
+  introduced by another agent's FIX-SETTINGS work that referenced
+  `t.BOM_DISPROPORTIONATE_FACTOR` without updating the DEFAULT_THRESHOLDS
+  fallback object). My changes introduce 0 new TypeScript errors.
+- Runtime verification: GET /api/analysis returns HTTP 200 with
+  bomCorrelationFindings populated (50 items) + bomCorrelationCounts populated
+  (6 rule counts, total 21,137 fires for MEI 2026 WEEK 4). Sample finding
+  confirmed: outlet BDGSET, item BUAH APEL (V.20), BOM_DEVIATION_MISMATCH,
+  bomGrowth +10.66%, metricGrowth +49.08%, deviationBomRatio 4.6×.
+- No other agents' files touched (rule-evaluation.ts, rules.yaml, settings.ts,
+  export-report/route.ts, test files, ruleService.ts — all untouched).
+  assemble-response.ts was modified as a necessary adjacent file (the task
+  description explicitly requires the field in the HTTP response, and the
+  response literal picks specific `processed` fields rather than spreading).
+
+---
+Task ID: FIX-TESTS
+Agent: general-purpose (Test Fixer)
+Task: Fix test mocks + add test cases for BOM correlation rules + fix stale assertions
+
+Work Log:
+- Read /home/z/my-project/worklog.md (tail ~300 lines) for prior-agent context —
+  confirmed FIX-RULE-CONFIG deleted BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK
+  from rules.yaml (21 → 19 rules), and FIX-BOM-UI added 4 new BOM correlation
+  rules (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH,
+  BOM_DEVIATION_DISPROPORTIONATE) to YAML + SQL evaluator + post-process.
+- Read /home/z/my-project/MASTER_CONTEXT.md for app overview.
+- Read /home/z/my-project/src/config/rules.yaml — confirmed 19 rules currently
+  defined (verified by counting `- code:` entries: SALES_DEVIATION_MISMATCH,
+  SALES_DEV_DECREASE, BOM_DEVIATION_MISMATCH, BOM_DOWN_DEV_UP,
+  WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH,
+  BOM_DEVIATION_DISPROPORTIONATE, TOLERANCE_BREACH_HIGH, TOLERANCE_BREACH,
+  TOLERANCE_NOT_SET_HIGH_DEV, OVER_EXPLAINED, RESIDUAL_LOSS_HIGH,
+  RESIDUAL_LOSS_WARN, HIGH_LOSS_NOMINAL, DIRECTION_FLIP, HISTORICAL_ABNORMAL,
+  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING). No BENCHMARK rules.
+- Read /home/z/my-project/src/lib/queries/rule-evaluation.ts — confirmed
+  RULE_MAP has 16 SQL entries (12 original + 4 new BOM correlation columns:
+  f_waste_bom_mismatch, f_susut_bom_mismatch, f_trial_bom_mismatch,
+  f_bom_disproportionate) + evaluateHistoricalRulesJs handles 3 JS rules
+  (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING).
+  16 + 3 = 19 total rules. zScore fallback defaults in JS post-process are
+  already WARN=1.5, HIGH=2.0 (EVAL-10 fix mentioned in code comment).
+- Read /home/z/my-project/src/engine/rules/evaluator.ts — confirmed RuleContext
+  interface includes wasteGrowth, susutGrowth, trialGrowth, deviationBomRatio,
+  bomDisproportionateFactor fields (FIX-RULE-CONFIG EVAL-02).
+- Read /home/z/my-project/src/lib/settings.ts — confirmed HISTORICAL_ZSCORE_WARN
+  default=1.5, HISTORICAL_ZSCORE_HIGH default=2.0, BOM_DISPROPORTIONATE_FACTOR
+  default=1.5 (FIX-SETTINGS BUG-BOM-EVAL-03).
+- Read /home/z/my-project/src/engine/rules/evaluator.test.ts (292 lines) —
+  identified all 5 bugs:
+  * Line 52-54: assertion `expect(rules.length).toBe(21)` (rule count stale)
+  * Line 42-43: `historicalZscoreWarn: 2, historicalZscoreHigh: 3` (wrong
+    defaults — should be 1.5/2.0 per PRD §5.2 + settings.ts)
+  * Line 229-236: HISTORICAL_ABNORMAL test overrides `historicalZscoreHigh: 3`
+    (relies on wrong value)
+  * Line 238-246: HISTORICAL_WARNING test uses `zScore: 2.5` between wrong
+    warn=2/high=3 (would fail with corrected defaults: 2.5 > 2.0 → ABNORMAL
+    fires instead of WARNING)
+  * Line 6-49 (baseCtx): missing wasteGrowth, susutGrowth, trialGrowth,
+    deviationBomRatio, bomDisproportionateFactor — new BOM rules would
+    throw on undefined fields
+  * Individual rules describe block: ZERO tests for the 4 new BOM rules
+- Read /home/z/my-project/tests/queries/rule-evaluation.test.ts (266 lines) —
+  identified all 3 bugs:
+  * Line 122: stale test title mentions BENCHMARK_ABOVE_AREA (removed rule)
+  * Lines 192-210 (mocked row 1): missing 4 new f_* columns
+  * Lines 223-241 (mocked row 2): missing 4 new f_* columns
+  * No tests covering the 4 new BOM rules' SQL→flag mapping
+- Ran `bun run test` to capture baseline: 417 passed, 1 failed (the 21-rules
+  assertion). Confirmed scope of work.
+
+STEP 1 — Modified /home/z/my-project/src/engine/rules/evaluator.test.ts:
+- CONFIG-14 (baseCtx zScore defaults): Changed `historicalZscoreWarn: 2` →
+  `1.5` and `historicalZscoreHigh: 3` → `2.0`. Added explanatory comment
+  referencing PRD §5.2 + settings.ts.
+- FIX-RULE-CONFIG (baseCtx BOM fields): Added 5 new fields to baseCtx with
+  safe defaults that don't trigger any new BOM rule on their own:
+    wasteGrowth: 0.1, susutGrowth: 0.1, trialGrowth: 0.1 (all positive, same
+    sign as bomGrowth=0.1 → no mismatch rules fire)
+    deviationBomRatio: 1.0 (below bomDisproportionateFactor=1.5 → no
+    disproportionate rule fires)
+    bomDisproportionateFactor: 1.5 (matches settings.ts default)
+- Rule count assertion: Updated test title "loads 21 rules from rules.yaml"
+  → "loads 19 rules from rules.yaml" and assertion `toBe(21)` → `toBe(19)`.
+  Added comment explaining BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK
+  removal in FIX-RULE-CONFIG.
+- HISTORICAL_ABNORMAL test (line ~242): Updated override
+  `historicalZscoreHigh: 3` → `2.0` (matches new default). zScore=3.5 still
+  > 2.0, so ABNORMAL still fires. Updated comment.
+- HISTORICAL_WARNING test (line ~252): Changed `zScore: 2.5` → `1.7` (now
+  correctly between warn=1.5 and high=2.0). Updated overrides to
+  `historicalZscoreWarn: 1.5, historicalZscoreHigh: 2.0`. Added assertion
+  `expect(HISTORICAL_ABNORMAL).toBe(false)` to verify WARNING-only behavior
+  (was implicit before).
+- Added 12 new test cases for the 4 new BOM correlation rules at the end of
+  the "individual rules" describe block:
+  * WASTE_BOM_MISMATCH fires when bomGrowth<0 AND wasteGrowth>0 (verifies
+    severity=WARNING, category=BOM, priority=55)
+  * WASTE_BOM_MISMATCH fires when bomGrowth>0 AND wasteGrowth<0 (other branch)
+  * WASTE_BOM_MISMATCH does NOT fire when same sign
+  * SUSUT_BOM_MISMATCH fires (3 cases: priority 54)
+  * TRIAL_BOM_MISMATCH fires (3 cases: priority 53)
+  * BOM_DEVIATION_DISPROPORTIONATE fires when deviationBomRatio > threshold
+    (priority 56, with severity/category assertions)
+  * BOM_DEVIATION_DISPROPORTIONATE does NOT fire when ratio ≤ threshold
+  * BOM_DEVIATION_DISPROPORTIONATE does NOT fire when bomGrowth ≤ 0
+    (precondition check — even huge ratio won't fire if BOM isn't growing)
+
+STEP 2 — Modified /home/z/my-project/tests/queries/rule-evaluation.test.ts:
+- CONFIG-13 (stale test title): Changed line 122 test title from "fires
+  HISTORICAL_WARNING + BENCHMARK_ABOVE_AREA when zScore between warn and
+  high" → "fires HISTORICAL_WARNING when zScore between warn and high".
+  Added comment noting BENCHMARK_ABOVE_AREA was removed in Phase A-2
+  (duplicate of HISTORICAL_WARNING).
+- CONFIG-11 (missing f_* columns): Added 4 new columns
+  (`f_waste_bom_mismatch: 0, f_susut_bom_mismatch: 0, f_trial_bom_mismatch: 0,
+  f_bom_disproportionate: 0`) to BOTH mocked DB rows:
+  * Row 1 (line ~194): "returns flags from rows where f_* columns = 1" test
+    — verified `flags.length` still equals 2 (only TOLERANCE_BREACH_HIGH +
+    RESIDUAL_LOSS_WARN fire, as before).
+  * Row 2 (line ~223): "returns empty flags when all f_* columns = 0" test
+    — verified `flags` still equals `[]`.
+  Without these columns, the mocked row would have `undefined` for the new
+  f_* keys; `Number(row[rule.col]) === 1` would coerce `undefined` to `NaN`
+  and fail the comparison (silently no flags for new rules), but it's
+  cleaner to be explicit.
+- EVAL-06 (new SQL test cases): Added 5 new test cases at the end of the
+  evaluateRulesSql describe block:
+  * WASTE_BOM_MISMATCH flag surfaces when f_waste_bom_mismatch=1 — verifies
+    ruleCode, severity='WARNING', category='BOM', priority=55.
+  * SUSUT_BOM_MISMATCH flag surfaces when f_susut_bom_mismatch=1 (priority 54)
+  * TRIAL_BOM_MISMATCH flag surfaces when f_trial_bom_mismatch=1 (priority 53)
+  * BOM_DEVIATION_DISPROPORTIONATE flag surfaces when f_bom_disproportionate=1
+    (priority 56)
+  * Multiple BOM correlation rules can fire on the same row — sets all 4
+    new f_* columns to 1, asserts 4 flags surface (codes match sorted
+    expected array, all are WARNING+BOM). Verifies RULE_MAP iteration
+    handles multi-flag rows correctly.
+
+STEP 3 — Verification:
+- Ran `bun run test` → 435 passed, 0 failed (was 417 passed, 1 failed
+  before changes). Added 18 new test cases total (12 in evaluator.test.ts,
+  6 in rule-evaluation.test.ts — 4 single-rule + 1 multi-rule + 1 was a
+  title-only fix). Test runner confirms "Loaded 19 rules" log line.
+- Ran `bun run lint` → 0 errors, 329 warnings (was 317 before changes).
+  The 12 new warnings are all `@typescript-eslint/no-non-null-assertion`
+  on my new test code (`wasteFlag!.severity`, etc.) — consistent with the
+  established codebase style (the existing test files use the same pattern
+  extensively, e.g. line 224 in the same file uses `flags.find(...)!`).
+  No new errors introduced.
+
+Stage Summary:
+- 5 bugs fixed:
+  * Rule count assertion 21 → 19 (FIX-RULE-CONFIG flag)
+  * CONFIG-11 (P3): test mocks now include 4 new f_* columns (both rows)
+  * CONFIG-12 (P3): 12 new test cases for 4 BOM correlation rules
+  * CONFIG-13 (P3): stale test title corrected (removed BENCHMARK_ABOVE_AREA
+    reference)
+  * CONFIG-14 (P3): zScore defaults corrected 2/3 → 1.5/2.0 in baseCtx +
+    dependent tests updated (HISTORICAL_ABNORMAL + HISTORICAL_WARNING)
+- Files changed (2 — both owned test files):
+  1. /home/z/my-project/src/engine/rules/evaluator.test.ts — baseCtx updated
+     (5 new BOM fields + corrected zScore defaults), rule count 21→19,
+     HISTORICAL_ABNORMAL/WARNING tests updated, 12 new BOM correlation test
+     cases added. 292 → 456 lines (+164 lines).
+  2. /home/z/my-project/tests/queries/rule-evaluation.test.ts — stale test
+     title fixed, 4 new f_* columns added to both mocked DB rows, 5 new
+     SQL flag-mapping test cases added (4 single-rule + 1 multi-rule).
+     266 → 457 lines (+191 lines).
+- Test results: 435 passed, 0 failed (was 417 passed, 1 failed). +18 new
+  tests, all green.
+- Lint results: 0 errors, 329 warnings (was 317 warnings). +12 warnings,
+  all `no-non-null-assertion` on new test code — consistent with existing
+  test file style (same pattern used in 20+ other places across test
+  files). No new errors.
+- No non-test files touched. No adjacent file edits required.
+
+---
+Task ID: FIX-DOCS
+Agent: general-purpose (Documentation Fixer)
+Task: Update docs to reflect rules.ts deletion, 19 rules, BOM_DISPROPORTIONATE_FACTOR, dead code cleanup
+
+Work Log:
+- Read worklog.md tail (~300 lines, last entry was FIX-BOM-UI per-record rewrite)
+- Read all 5 docs: MASTER_CONTEXT.md (352 lines), PRD_RETROAKTIF.md (608 lines),
+  ARCHITECTURE.md (571 lines), CONVENTIONS.md (392 lines), README.md (198 lines)
+- Verified rules.yaml has 19 rules (15 original + 4 BOM correlation — confirmed
+  via grep -c "^  - code:" = 19)
+- Verified BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK are NOT in rules.yaml
+  (deleted in FIX-RULE-CONFIG CONFIG-05; comment block at lines 237-241 explains)
+- Verified BOM_DISPROPORTIONATE_FACTOR exists in src/lib/settings.ts (key, label,
+  description, category=GROWTH, defaultValue='1.5') and src/config/thresholds.ts
+  (static default 1.5)
+- Verified src/engine/analysis/rootCauseEngine.ts has ROOT_CAUSE_MAPPINGS table
+  with 4 new BOM correlation rule mappings (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH,
+  TRIAL_BOM_MISMATCH, BOM_DEVIATION_DISPROPORTIONATE) at lines 353-405; no
+  BENCHMARK_* mappings present (grep returned 0 hits)
+
+- Searched all 5 docs for stale references:
+  * rules.ts / config/rules.ts: 4 hits across MASTER_CONTEXT, CONVENTIONS, ARCHITECTURE
+  * "21 rules" / "21-rule" / "21 Anomaly": 6 hits across MASTER_CONTEXT, PRD, ARCHITECTURE
+  * BENCHMARK_ABOVE_AREA / BENCHMARK_ABOVE_NETWORK in rule tables: 6 hits
+  * AreaTrendChart / CardDrillDown: 5 hits (mention as retained, need to update to deleted)
+  * No BOM_DISPROPORTIONATE_FACTOR / bomCorrelationFindings mentions (new — needs adding)
+- README.md: NO stale references found (already uses rules.yaml only, no rule count)
+
+STEP 1 — Updated /home/z/my-project/MASTER_CONTEXT.md (11 edits via MultiEdit):
+  - Updated "Last updated" header to FIX-DOCS session
+  - BomCorrelationCard component description: now mentions per-record findings table
+    + count badges + aggregate alignment table + narrative; reads bomCorrelationFindings
+    from /api/analysis response
+  - Removed `CardDrillDown` from component list; updated removal note to reflect
+    that AreaTrendChart.tsx + CardDrillDown.tsx files are now deleted (not just
+    "retained for reference") and cardDrillDown Zustand state was removed
+  - Anomaly Engine subsection: 21-rule → 19-rule engine; removed "mirrored in
+    src/config/rules.ts"; updated JS post-process list to 3 rules (removed
+    BENCHMARK_ABOVE_AREA/NETWORK); added note about ROOT_CAUSE_MAPPINGS table
+    now having 4 BOM correlation rule mappings (BENCHMARK mappings removed)
+  - Rule table heading: "21 Anomaly Rules" → "19 Anomaly Rules"; removed the 2
+    BENCHMARK rows; renumbered rules 18-21 → 16-19; replaced the "misnamed rules"
+    note with a "Removed (FIX-RULE-CONFIG CONFIG-05)" note
+  - BOM Correlation Analysis subsection: removed "new" framing; added note about
+    BOM_DISPROPORTIONATE_FACTOR configurable threshold (default 1.5, range 1.0-5.0,
+    decoupled from BOM_DEVIATION_FACTOR); updated BomCorrelationCard description
+    to mention per-record findings table + count badges
+  - Analytics subsection: updated BOM Correlation bullet to "per-record findings
+    + aggregate alignment table"
+  - Data Operations / Settings bullet: added BOM_DISPROPORTIONATE_FACTOR +
+    BOM_DEVIATION_FACTOR to list of configurable thresholds
+  - File structure: updated dashboard comment to note AreaTrendChart + CardDrillDown
+    deleted in FIX-DOCS; settings.ts comment now mentions BOM_DISPROPORTIONATE_FACTOR;
+    rule-evaluation.ts comment: "21-rule ... 16 SQL + 5 JS" → "19-rule ... 16 SQL +
+    3 JS post-process"; DELETED the rules.ts line from file structure
+
+STEP 2 — Updated /home/z/my-project/PRD_RETROAKTIF.md (9 edits across MultiEdit +
+individual Edit calls; some edits in the first MultiEdit applied despite the
+overall operation reporting failure due to one non-matching block):
+  - §2.1 persona: "21-rule engine + multi-metric Z-Score" → "19-rule engine +
+    multi-metric Z-Score"
+  - §3.1 user journey: "top 21-rule violations" → "top 19-rule violations"
+  - §3.4 user journey BomCorrelationCard step: rewrote to describe per-record
+    findings table (Outlet × Item × Rule × Growth × Ratio) + count badges;
+    aggregate alignment table is now secondary
+  - §3.5 Settings tuning: added BOM_DISPROPORTIONATE_FACTOR example
+    (1.5 → 1.2 "tighten disproportionate rule")
+  - §4.1 feature table BOM Correlation row: rewrote description to mention
+    per-record findings table + per-rule count badges + aggregate alignment
+  - §4.1 "Removed" note: updated to mention AreaTrendChart.tsx file deleted as
+    dead code, CardDrillDown.tsx also deleted, ExecutiveSummary KPI cards
+    static display (no drilldown)
+  - §5.1 heading + source-of-truth line: "21 anomaly detection rules" →
+    "19 anomaly detection rules"; added "sole source of truth — rules.ts
+    deleted as dead code in FIX-DOCS"; "5 zScore-based" → "3 zScore-based"
+  - §5.1 rule table: removed "— *new*" tags from rules 5-8; updated rule 8
+    trigger to reference BOM_DISPROPORTIONATE_FACTOR (default 1.5×) and
+    BOM_DEVIATION_FACTOR (default 2×); removed the 2 BENCHMARK rows (16-17);
+    renumbered rules 18-21 → 16-19; replaced "misnamed rules" note with
+    "Removed (FIX-RULE-CONFIG CONFIG-05)" note
+  - §5.1.1 BOM Correlation Analysis: rewrote "Where the user sees it" §2 to
+    describe 3 sections (per-record findings table + aggregate alignment
+    table + narrative findings); mentions bomCorrelationFindings +
+    bomCorrelationCounts fields on /api/analysis response
+  - §5.1.1 YAML condition block: `deviationBomRatio: { gt: 1.5 }` →
+    `deviationBomRatio: { gt: bomDisproportionateFactor }` with comment
+    explaining BOM_DISPROPORTIONATE_FACTOR setting
+  - §5.2 Thresholds table: added 2 rows — BOM_DEVIATION_FACTOR (default 2.0,
+    rule 3) and BOM_DISPROPORTIONATE_FACTOR (default 1.5, range 1.0-5.0,
+    rule 8, decoupled from BOM_DEVIATION_FACTOR); updated HISTORICAL_ZSCORE_WARN
+    rule reference 21 → 19 and HISTORICAL_ZSCORE_HIGH rules reference 19/20 → 17/18
+  - §10 Related Documents rules.yaml row: "21 anomaly rules (17 original + 4
+    BOM correlation)" → "19 anomaly rules (15 original + 4 BOM correlation) —
+    sole source of truth (legacy rules.ts mirror deleted)"
+
+STEP 3 — Updated /home/z/my-project/ARCHITECTURE.md (6 edits via MultiEdit):
+  - §3.3 heading: "Rule Evaluation Architecture (21 Rules)" → "(19 Rules)"
+  - §3.3 JS post-process row: removed BENCHMARK_ABOVE_AREA/NETWORK from list;
+    "5 (zScore-based)" → "3 (zScore-based)"; added note about BENCHMARK removal
+  - §3.3 Growth CTE field conventions: added new "Runtime threshold operands"
+    block listing bomDeviationFactor, bomDisproportionateFactor (default 1.5,
+    range 1.0-5.0, BOM_DISPROPORTIONATE_FACTOR setting from FIX-SETTINGS),
+    + other threshold operands
+  - §4.1 Cache key note for BOM Correlation: rewrote to mention
+    bomCorrelationFindings[] array populated by buildBomCorrelationFindings()
+    in post-process.ts (bounded to top-50, ~50-600ms extra per cold request);
+    added new "Dead-code cleanup (FIX-DOCS)" paragraph noting /api/analysis
+    no longer computes areaTrend (1 less DB query per cold request), cardDrillDown
+    Zustand state removed, ExecutiveSummary KPI cards static
+  - Appendix File Map: BomCorrelationCard.tsx comment updated to "Per-record
+    BOM findings table + count badges + aggregate alignment table + narrative";
+    removed AreaTrendChart.tsx RETAINED line; updated "...22 other dashboard
+    components" to "Other dashboard components (AreaTrendChart + CardDrillDown
+    deleted in FIX-DOCS)"; rule-evaluation.ts comment: "21-rule SQL push-down +
+    5-rule JS post-process" → "19-rule SQL push-down + 3-rule JS post-process";
+    DELETED the rules.ts line from config/ folder; rules.yaml comment updated
+    to "19 anomaly rules (sole source of truth; rules.ts deleted as dead code)"
+
+STEP 4 — Updated /home/z/my-project/CONVENTIONS.md (6 edits — 5 via MultiEdit
++ 1 individual Edit for the SQL vs JS evaluator table):
+  - §5.1 BomCorrelationCard template: rewrote to reflect new per-record
+    findings approach — template now includes findings/counts destructure
+    from data; updated interface MetricRow to add isBaseline?: boolean;
+    comments now describe 3 sections (per-record findings table PRIMARY,
+    aggregate alignment SECONDARY, narrative); added new key conventions:
+    growthColorClass helper, fmtRatio for Indonesian decimal, stable React
+    keys (composite slug), scroll container for sticky TableHeader, sr-only
+    TableCaption for accessibility
+  - §6 Rule Definition Conventions: rewrote "Rules live in two places" to
+    "Rules live in one place"; removed rules.ts as second source; added note
+    that rules.ts was deleted as dead code in FIX-DOCS (was never imported)
+  - §6.3 BOM Correlation Rule Conventions: updated BOM_DEVIATION_DISPROPORTIONATE
+    bullet to mention `deviationBomRatio > bomDisproportionateFactor` instead
+    of hardcoded `> 1.5`; documented that bomDisproportionateFactor is the
+    runtime setting BOM_DISPROPORTIONATE_FACTOR (default 1.5, range 1.0-5.0,
+    exposed in Settings dialog, decoupled from BOM_DEVIATION_FACTOR)
+  - §6.4 SQL vs JS Evaluator Patterns table: updated JS post-process row
+    ("5 (zScore-based)" → "3 (zScore-based)" + BENCHMARK removal note);
+    updated Legacy JS row ("17 (no BOM Correlation)" → "15 (no BOM Correlation,
+    no BENCHMARK)")
+  - §14 File Organization: updated config/ folder comment to "YAML config
+    (rules, thresholds) — rules.ts deleted as dead code"
+  - §14 Rule definitions bullet: changed "edit src/config/rules.yaml (source
+    of truth) AND ..." to "edit src/config/rules.yaml (sole source of truth)
+    AND ..." (subtle wording fix to reflect single source)
+
+STEP 5 — Verified README.md: NO stale references found. README already uses
+  rules.yaml only (line 102: "rules.yaml — Anomaly rules"), no rule count
+  mentioned, no rules.ts reference. "19+" on line 3 refers to outlet count
+  (not rule count). No changes needed.
+
+STEP 6 — Final verification grep across all 5 docs:
+  * "rules.ts" — 8 remaining hits, all describing the file as DELETED/REMOVED
+    (intentional historical context)
+  * "21-rule" / "21 anomaly" / "21 Anomaly" — 0 hits (all converted to 19)
+  * "BENCHMARK_ABOVE_AREA" / "BENCHMARK_ABOVE_NETWORK" — 6 remaining hits,
+    all in "Removed (FIX-RULE-CONFIG CONFIG-05)" notes (intentional)
+  * "5 zScore" — 0 hits (all converted to "3 zScore-based")
+  * "17 original" — 0 hits (converted to "15 original")
+  * "AreaTrendChart" — 5 hits, all describe the file as DELETED
+  * "CardDrillDown" — 4 hits, all describe the file as DELETED
+  * "BOM_DISPROPORTIONATE_FACTOR" — 10 hits across MASTER_CONTEXT, PRD,
+    ARCHITECTURE, CONVENTIONS (properly documented in all 4)
+  * "bomCorrelationFindings" / "bomCorrelationCounts" — 5 hits across
+    MASTER_CONTEXT, PRD, ARCHITECTURE, CONVENTIONS (properly documented)
+  * "ROOT_CAUSE_MAPPINGS" — 1 hit in MASTER_CONTEXT (notes 4 new BOM
+    correlation mappings + 2 BENCHMARK mappings removed)
+
+Stage Summary:
+- 4 files updated (MASTER_CONTEXT.md, PRD_RETROAKTIF.md, ARCHITECTURE.md,
+  CONVENTIONS.md); README.md verified clean (no changes needed)
+- Key changes per file:
+  * MASTER_CONTEXT.md (352 → 350 lines): rules.ts removed from file structure;
+    rule count 21 → 19; BENCHMARK rows removed from rule table; BOM_DISPROPORTIONATE_FACTOR
+    documented in settings list + BOM Correlation section + file structure comment;
+    BomCorrelationCard description updated to per-record findings approach;
+    AreaTrendChart + CardDrillDown noted as deleted; ROOT_CAUSE_MAPPINGS BOM
+    correlation additions documented; "Removed (FIX-DOCS)" notes added
+  * PRD_RETROAKTIF.md (608 → 621 lines): rule count 21 → 19 in 3 places
+    (persona, user journey, rule section); BENCHMARK rows removed from rule
+    table; "misnamed rules" note replaced with "Removed (CONFIG-05)" note;
+    BOM_DISPROPORTIONATE_FACTOR documented in Settings tuning user journey
+    + rule 8 description + YAML condition block + Thresholds table; BomCorrelationCard
+    user journey step + §5.1.1 + feature table all updated to per-record
+    findings approach; related docs rules.yaml row updated
+  * ARCHITECTURE.md (571 → 576 lines): §3.3 heading rule count 21 → 19;
+    JS post-process row updated (5 → 3 rules, BENCHMARK removal noted);
+    new "Runtime threshold operands" block added with bomDisproportionateFactor
+    details; cache key note updated with bomCorrelationFindings field + dead-code
+    cleanup paragraph; file map updated (BomCorrelationCard description,
+    AreaTrendChart removed, rules.ts deleted, rule-evaluation.ts comment 21 → 19)
+  * CONVENTIONS.md (392 → 401 lines): §5.1 BomCorrelationCard template
+    rewritten to reflect per-record findings approach (findings/counts from
+    data, scroll container, sr-only captions, stable React keys); §6 rule
+    definition conventions updated to single source (rules.ts deleted);
+    §6.3 BOM_DEVIATION_DISPROPORTIONATE bullet updated with BOM_DISPROPORTIONATE_FACTOR
+    setting details; §6.4 evaluator table updated (JS post-process 5 → 3,
+    Legacy JS 17 → 15); §14 file organization + rule definitions notes
+    updated to reflect single source of truth

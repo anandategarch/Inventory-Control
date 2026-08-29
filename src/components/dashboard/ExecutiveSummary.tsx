@@ -5,11 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, AlertCircle, Activity, Info, BarChart3 } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
-import { useDashboard } from '@/hooks/useDashboard';
-import { useShallow } from 'zustand/shallow';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
-import { clickableRowProps } from '@/lib/a11y';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
@@ -77,14 +74,10 @@ interface KPI {
   inverse?: boolean;
   hint?: string;
   tooltip?: string; // FIX #8: InfoTooltip content for this KPI
-  drillDown?: string; // card key for drill-down modal
   accent?: 'emerald' | 'amber' | 'zinc' | 'red' | 'blue'; // left border accent color
 }
 
-const KPICard = memo(function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, drillDown, accent }: KPI) {
-  const { setCardDrillDown } = useDashboard(useShallow((s) => ({
-    setCardDrillDown: s.setCardDrillDown,
-  })));
+const KPICard = memo(function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, accent }: KPI) {
   const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
@@ -118,8 +111,7 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
           : 'from-zinc-50/60 dark:from-zinc-900/15';
   return (
     <Card
-      className={`relative overflow-hidden transition-all duration-200 shadow-md shadow-black/5 dark:shadow-black/20 bg-gradient-to-br to-card ${drillDown ? 'cursor-pointer hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/30 hover:-translate-y-0.5 hover:border-amber-300/60 dark:hover:border-amber-800/60' : ''} ${tintCls}`}
-      {...(drillDown ? clickableRowProps(() => setCardDrillDown(drillDown)) : {})}
+      className={`relative overflow-hidden transition-all duration-200 shadow-md shadow-black/5 dark:shadow-black/20 bg-gradient-to-br to-card ${tintCls}`}
     >
       {/* Left border accent (4px colored bar) */}
       <div className={`absolute inset-y-0 left-0 w-1 ${accentCls}`} aria-hidden />
@@ -147,20 +139,12 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
           </p>
         )}
         {hint && <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
-        {drillDown && (
-          <p className="mt-1.5 text-xs text-muted-foreground/60 inline-flex items-center gap-0.5">
-            <BarChart3 className="h-3 w-3" /> Detail
-          </p>
-        )}
       </CardContent>
     </Card>
   );
 });
 
 export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data: AnalysisData }) {
-  const { setCardDrillDown } = useDashboard(useShallow((s) => ({
-    setCardDrillDown: s.setCardDrillDown,
-  })));
   const s = data.executiveSummary;
   return (
     <div className="space-y-4">
@@ -177,16 +161,16 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
         </Badge>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} drillDown="sales" accent="emerald" tooltip={KPI_TOOLTIPS.sales} />
-        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse drillDown="nominalDeviasi" accent="amber" tooltip={KPI_TOOLTIPS.nominalDeviasi} />
-        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} drillDown="qtyBom" accent="zinc" tooltip={KPI_TOOLTIPS.qtyBom} />
+        <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} accent="emerald" tooltip={KPI_TOOLTIPS.sales} />
+        <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse accent="amber" tooltip={KPI_TOOLTIPS.nominalDeviasi} />
+        <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} accent="zinc" tooltip={KPI_TOOLTIPS.qtyBom} />
         {/* Bug 5 fix: Three-layer deviation labels — Gross / Explained / Net */}
-        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" drillDown="qtyDeviasi" accent="amber" tooltip={KPI_TOOLTIPS.grossDeviation} />
-        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" drillDown="waste" accent="zinc" tooltip={KPI_TOOLTIPS.explained} />
-        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} drillDown="lossSurplus" accent="red" tooltip={KPI_TOOLTIPS.netLossSurplus} />
+        <KPICard label="Gross Deviation (QTY)" value={s.qtyDeviasi.current} unit="" growth={s.qtyDeviasi.growth} previous={s.qtyDeviasi.previous} inverse hint="Layer 1: Stok Fisik - Sistem" accent="amber" tooltip={KPI_TOOLTIPS.grossDeviation} />
+        <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" accent="zinc" tooltip={KPI_TOOLTIPS.explained} />
+        <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} accent="red" tooltip={KPI_TOOLTIPS.netLossSurplus} />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-red-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('loss'))}>
+        <Card className="overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
           <div className="absolute inset-y-0 left-0 w-1 bg-red-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -200,7 +184,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
             <p className="text-xs text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-emerald-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('surplus'))}>
+        <Card className="overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
           <div className="absolute inset-y-0 left-0 w-1 bg-emerald-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -214,7 +198,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
             <p className="text-xs text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('lossSurplus'))}>
+        <Card className="overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
           <div className="absolute inset-y-0 left-0 w-1 bg-amber-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
@@ -228,7 +212,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
             <p className="text-xs text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:shadow-lg dark:hover:shadow-black/30 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden relative bg-gradient-to-br from-zinc-50/40 to-transparent dark:from-zinc-900/20 border-zinc-200/50 dark:border-zinc-800/50 shadow-md shadow-black/5 dark:shadow-black/20" {...clickableRowProps(() => setCardDrillDown('qtyDeviasi'))}>
+        <Card className="overflow-hidden relative bg-gradient-to-br from-zinc-50/40 to-transparent dark:from-zinc-900/20 border-zinc-200/50 dark:border-zinc-800/50 shadow-md shadow-black/5 dark:shadow-black/20">
           <div className="absolute inset-y-0 left-0 w-1 bg-zinc-400/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
             <div className="flex items-center justify-between">
