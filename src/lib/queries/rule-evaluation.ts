@@ -77,7 +77,8 @@ export async function evaluateRulesSql(
     prev AS (
       SELECT ir."outletId", ir."itemId", ir."akunPenyesuaian",
         ir."qtyBom", ir."qtyDeviasi", ir."nominalDeviasi", ir."nominalSales",
-        ir."nominalLossSurplus", ir."qtyLossSurplus"
+        ir."nominalLossSurplus", ir."qtyLossSurplus",
+        ir."qtyWaste", ir."qtySusut", ir."qtyTrial"
       FROM "InventoryRecord" ir
       WHERE 1=1
         ${prevFilter}
@@ -140,12 +141,26 @@ export async function evaluateRulesSql(
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" > 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > g."salesGrowth" * ${thresholds.SALES_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_sales_mismatch",
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" < 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_sales_decrease",
       CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_bom_mismatch",
-      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" < 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_bom_down_dev_up"
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" < 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_bom_down_dev_up",
+      -- BOM Correlation rules
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."wasteGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."wasteGrowth" > 0) OR (g."bomGrowth" > 0 AND g."wasteGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_waste_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."susutGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."susutGrowth" > 0) OR (g."bomGrowth" > 0 AND g."susutGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_susut_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."trialGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."trialGrowth" > 0) OR (g."bomGrowth" > 0 AND g."trialGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_trial_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0
+        AND g."qtyDeviasiGrowth" > g."bomGrowth" * 1.5 AND g."qtyDeviasiGrowth" <= g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR}
+      THEN 1 ELSE 0 END as "f_bom_disproportionate"
     FROM curr c
     LEFT JOIN LATERAL (
       SELECT p."qtyBom" as "prevQtyBom", p."qtyDeviasi" as "prevQtyDeviasi",
              p."nominalDeviasi" as "prevNominalDeviasi", p."nominalSales" as "prevNominalSales",
-             p."nominalLossSurplus" as "prevNominalLossSurplus"
+             p."nominalLossSurplus" as "prevNominalLossSurplus",
+             p."qtyWaste" as "prevQtyWaste", p."qtySusut" as "prevQtySusut", p."qtyTrial" as "prevQtyTrial"
       FROM prev p
       WHERE p."outletId" = c."outletId" AND p."itemId" = c."itemId"
         AND p."akunPenyesuaian" IS NOT DISTINCT FROM c."akunPenyesuaian"
@@ -164,7 +179,17 @@ export async function evaluateRulesSql(
           ELSE NULL END as "qtyDeviasiGrowth",
         CASE WHEN p."prevNominalDeviasi" IS NOT NULL AND p."prevNominalDeviasi" != 0
           THEN (ABS(c."nominalDeviasi") - ABS(p."prevNominalDeviasi")) / ABS(p."prevNominalDeviasi")
-          ELSE NULL END as "nominalDeviasiGrowth"
+          ELSE NULL END as "nominalDeviasiGrowth",
+        -- BOM Correlation: growth of waste/susut/trial
+        CASE WHEN p."prevQtyWaste" IS NOT NULL AND p."prevQtyWaste" != 0
+          THEN (ABS(c."qtyWaste") - ABS(p."prevQtyWaste")) / ABS(p."prevQtyWaste")
+          ELSE NULL END as "wasteGrowth",
+        CASE WHEN p."prevQtySusut" IS NOT NULL AND p."prevQtySusut" != 0
+          THEN (ABS(c."qtySusut") - ABS(p."prevQtySusut")) / ABS(p."prevQtySusut")
+          ELSE NULL END as "susutGrowth",
+        CASE WHEN p."prevQtyTrial" IS NOT NULL AND p."prevQtyTrial" != 0
+          THEN (ABS(c."qtyTrial") - ABS(p."prevQtyTrial")) / ABS(p."prevQtyTrial")
+          ELSE NULL END as "trialGrowth"
     ) g
     ORDER BY c."outletId", c."itemId"
   `);
@@ -183,6 +208,10 @@ export async function evaluateRulesSql(
     { col: 'f_sales_decrease', code: 'SALES_DEV_DECREASE', severity: 'ABNORMAL', category: 'SALES', priority: 85 },
     { col: 'f_bom_mismatch', code: 'BOM_DEVIATION_MISMATCH', severity: 'ABNORMAL', category: 'BOM', priority: 88 },
     { col: 'f_bom_down_dev_up', code: 'BOM_DOWN_DEV_UP', severity: 'ABNORMAL', category: 'BOM', priority: 82 },
+    { col: 'f_waste_bom_mismatch', code: 'WASTE_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 55 },
+    { col: 'f_susut_bom_mismatch', code: 'SUSUT_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 54 },
+    { col: 'f_trial_bom_mismatch', code: 'TRIAL_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 53 },
+    { col: 'f_bom_disproportionate', code: 'BOM_DEVIATION_DISPROPORTIONATE', severity: 'WARNING', category: 'BOM', priority: 56 },
   ];
 
   const flags: SqlRuleFlag[] = [];

@@ -25,7 +25,6 @@ const AuditLogDialog = dynamic(() => import('@/components/filters/AuditLogDialog
 // CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
-import { CardDrillDown } from '@/components/dashboard/CardDrillDown';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 // Phase 4: Lazy-load heavy chart components (Recharts = 5.4MB)
@@ -41,10 +40,9 @@ const LoadingChart = () => (
 const GrowthComparison = dynamic(() => import('@/components/dashboard/Charts').then(m => m.GrowthComparison), { ssr: false, loading: () => <LoadingChart /> });
 const DeviationBreakdownChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.DeviationBreakdownChart), { ssr: false, loading: () => <LoadingChart /> });
 const LossVsSurplusChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.LossVsSurplusChart), { ssr: false, loading: () => <LoadingChart /> });
-const TrendChart = dynamic(() => import('@/components/dashboard/Charts').then(m => m.TrendChart), { ssr: false, loading: () => <LoadingChart /> });
 const MultiPeriodComparisonCard = dynamic(() => import('@/components/dashboard/AnalysisCards').then(m => m.MultiPeriodComparisonCard), { ssr: false, loading: () => <LoadingChart /> });
 const HistoricalZScoreCard = dynamic(() => import('@/components/dashboard/HistoricalZScoreCard').then(m => m.HistoricalZScoreCard), { ssr: false, loading: () => <LoadingChart /> });
-const AreaTrendChart = dynamic(() => import('@/components/dashboard/AreaTrendChart').then(m => m.AreaTrendChart), { ssr: false, loading: () => <LoadingChart /> });
+const BomCorrelationCard = dynamic(() => import('@/components/dashboard/BomCorrelationCard').then(m => m.BomCorrelationCard), { ssr: false, loading: () => <LoadingChart /> });
 const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparison').then(m => m.PeerComparison), { ssr: false, loading: () => <LoadingChart /> });
 const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => (
   <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
@@ -613,11 +611,11 @@ export default function DashboardPage() {
                 </FetchAware>
               </section>
 
-              {/* Section: Historical Z-Score + Area Trend */}
+              {/* Section: Historical Z-Score + BOM Correlation (replaces Area Trend) */}
               <section>
                 <SectionHeader
                   icon={<History className="h-4 w-4 text-muted-foreground" />}
-                  title="Analisis Historis (Z-Score + Trend per Area)"
+                  title="Analisis Historis (Z-Score + Korelasi BOM)"
                   isFetching={analysis.isFetching}
                 />
                 <FetchAware isFetching={analysis.isFetching}>
@@ -625,19 +623,18 @@ export default function DashboardPage() {
                     <ErrorBoundary label="Historical Z-Score">
                       <HistoricalZScoreCard data={analysis.data} />
                     </ErrorBoundary>
-                    <ErrorBoundary label="Area Trend">
-                      <AreaTrendChart data={analysis.data} />
+                    <ErrorBoundary label="BOM Correlation">
+                      <BomCorrelationCard data={analysis.data} />
                     </ErrorBoundary>
                   </div>
                 </FetchAware>
               </section>
 
-              {/* Section: Loss/Surplus + Trend */}
+              {/* Section: Loss/Surplus (TrendChart removed per user request) */}
               <FetchAware isFetching={analysis.isFetching}>
-                <section className="grid lg:grid-cols-2 gap-4">
-                  <ErrorBoundary label="Loss vs Surplus + Trend">
+                <section className="grid lg:grid-cols-1 gap-4">
+                  <ErrorBoundary label="Loss vs Surplus">
                     <LossVsSurplusChart data={analysis.data} />
-                    <TrendChart data={analysis.data} />
                   </ErrorBoundary>
                 </section>
               </FetchAware>
@@ -710,10 +707,9 @@ export default function DashboardPage() {
         </div>
       </footer>
 
-      {/* Drill-down drawer */}
+      {/* Drill-down drawer (CardDrillDown removed per user request — cards only) */}
       <DrillDownDrawer />
       <SourceDataModal />
-      <CardDrillDown data={analysis.data} />
       <ItemDeepDive data={analysis.data} />
       <ExportDialog
         open={exportDialogOpen}
