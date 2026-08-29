@@ -100,20 +100,30 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
 
 /**
  * Store a computed result in the DB cache.
- * Fire-and-forget — doesn't block the response.
+ * Fire-and-forget by default — doesn't block the response.
+ * Pass `awaitWrite: true` for critical caches (export-report) where the next
+ * request might arrive before the write completes.
  */
-export function setCached(cacheKey: string, payload: unknown): void {
+export async function setCached(cacheKey: string, payload: unknown, awaitWrite: boolean = false): Promise<void> {
   try {
     const json = JSON.stringify(payload);
     // upsert: insert or update if exists (cacheKey is unique)
-    db.aggregationCache.upsert({
+    const writePromise = db.aggregationCache.upsert({
       where: { cacheKey },
       create: { cacheKey, payload: json, computedAt: new Date() },
       update: { payload: json, computedAt: new Date() },
-    }).catch((e) => {
-      // Non-blocking: if cache write fails, just log
-      logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     });
+    if (awaitWrite) {
+      // For critical caches — block until write completes so next request hits cache
+      await writePromise.catch((e) => {
+        logger.error('[cache] setCached (awaited) error', { error: e instanceof Error ? e.message : String(e) });
+      });
+    } else {
+      // Fire-and-forget — non-blocking
+      writePromise.catch((e) => {
+        logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+      });
+    }
   } catch (e) {
     // Synchronous error (JSON.stringify failed) — non-blocking
     logger.error('[cache] setCached sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });

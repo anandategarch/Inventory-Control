@@ -47,6 +47,7 @@ import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -296,6 +297,29 @@ export async function GET(req: NextRequest) {
 
     if (!month || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
+    }
+
+    // PERF: DB-level cache check — export-report is the heaviest route (7-12s).
+    // Cache the generated .docx buffer for 5 min. Same filter params = same report.
+    const cacheKey = buildCacheKey({
+      route: 'export-report', month, week,
+      area: area && area !== 'all' ? area : null,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+      itemName: itemName || null, pic: pic || null,
+    });
+    const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cachedExport = await getCached<{ buffer: number[]; fileName: string } | null>(cacheKey, EXPORT_CACHE_TTL);
+    if (cachedExport && cachedExport.buffer && cachedExport.fileName) {
+      const buffer = Buffer.from(cachedExport.buffer);
+      return new NextResponse(new Uint8Array(buffer) as BodyInit, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'Content-Disposition': `attachment; filename="${cachedExport.fileName}"`,
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',
+        },
+      });
     }
 
     // Load thresholds
@@ -900,6 +924,10 @@ export async function GET(req: NextRequest) {
 
     const buffer = await Packer.toBuffer(doc);
     const fileName = `Laporan_Analisis_${(data.period.monthLabel || 'unknown').replace(/\s+/g, '_')}_${data.period.weekLabel || ''}.docx`;
+
+    // PERF: Cache the docx buffer for 5 min — next request with same params gets instant response
+    // awaitWrite=true because export buffer is large (91KB) — need to ensure write completes
+    await setCached(cacheKey, { buffer: Array.from(buffer), fileName }, true);
 
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,
