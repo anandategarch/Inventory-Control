@@ -17,7 +17,12 @@ export const maxDuration = 10;
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   page: z.coerce.number().int().min(1).optional(),
-  action: z.string().max(50).optional(),
+  // API-05: Enum-validate action — prevents silent empty results on typo
+  action: z.enum([
+    'ANALYSIS', 'INGEST', 'INGEST_UPLOAD', 'INGEST_WEEK', 'INGEST_ALL_WEEKS',
+    'IMPORT_DRIVE', 'DATA_DELETE', 'PIC_UPDATE', 'PIC_DELETE', 'PIC_IMPORT',
+    'SETTINGS_UPDATE', 'SETTINGS_RESET', 'MIGRATE_DIRECTION',
+  ]).optional(),
 });
 
 export async function GET(req: NextRequest) {

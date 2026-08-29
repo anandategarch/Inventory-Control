@@ -85,8 +85,9 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
           <DialogTitle className="flex items-center gap-2 text-sm">
             <History className="h-4 w-4 text-amber-600" />
             Audit Log
-            <DialogDescription className="sr-only">Riwayat aksi yang dilakukan di sistem</DialogDescription>
           </DialogTitle>
+          {/* UI-06 FIX: Move DialogDescription outside DialogTitle (h2 > p is invalid HTML) */}
+          <DialogDescription className="sr-only">Riwayat aksi yang dilakukan di sistem</DialogDescription>
         </DialogHeader>
 
         {/* Filter bar */}

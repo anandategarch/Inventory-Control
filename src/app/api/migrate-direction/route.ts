@@ -16,6 +16,7 @@ import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, migrateDirectionQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // may take time on large DBs
@@ -130,7 +131,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     logger.error("[migrate-direction] error", { error: e });
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }
@@ -186,7 +187,7 @@ export async function GET(req: NextRequest) {
   } catch (e: unknown) {
     logger.error("[migrate-direction] GET error", { error: e });
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }

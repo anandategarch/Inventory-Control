@@ -15,6 +15,7 @@ import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { z } from 'zod';
 import { validateBody } from '@/lib/validation';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 
@@ -149,6 +150,6 @@ export async function POST(req: NextRequest) {
       errorCount: errors.length,
     });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    return errorResponse(e, "pic-import");
   }
 }

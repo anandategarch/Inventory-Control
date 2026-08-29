@@ -17,6 +17,7 @@ import {
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -65,7 +66,7 @@ export async function GET() {
     });
   } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }
@@ -198,7 +199,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }
@@ -294,7 +295,7 @@ export async function DELETE(req: NextRequest) {
     });
   } catch (e: unknown) {
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }

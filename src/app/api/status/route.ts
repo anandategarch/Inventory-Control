@@ -11,6 +11,7 @@ import { validateQuery, statusQuerySchema } from '@/lib/validation';
 import { CACHE_METADATA } from '@/lib/cache-headers';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -155,6 +156,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(EMPTY_STATE);
     }
     logger.error("[/api/status] Error:", { error: errMsg });
-    return NextResponse.json({ success: false, error: errMsg, hint: 'Try visiting /api/setup to create database tables.' }, { status: 500 });
+    // SEC-03: Don't leak DB internals in production
+    const isDev = process.env.NODE_ENV === 'development';
+    return NextResponse.json({ success: false, error: isDev ? errMsg : 'Internal server error', hint: isDev ? 'Try visiting /api/setup to create database tables.' : undefined }, { status: 500 });
   }
 }
