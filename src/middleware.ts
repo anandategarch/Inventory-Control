@@ -62,20 +62,14 @@ export function middleware(req: NextRequest) {
   if (!isProtectedMethod) return NextResponse.next();
 
   const adminToken = process.env.ADMIN_TOKEN;
-  // FIX (BUG2-SEC-3): fail-closed in PRODUCTION, fail-open in development.
-  // The old code failed open regardless of NODE_ENV — a production deploy without
-  // ADMIN_TOKEN would leave all destructive endpoints (ingest, settings, data delete,
-  // migrate-direction) open to anyone. In development, fail-open is correct (no auth UI,
-  // single-user sandbox). In production, fail-closed is the safe default.
+  // SINGLE-USER MODE: When ADMIN_TOKEN is not set, fail-open (allow all mutations).
+  // This is a single-user app with no auth UI — requiring ADMIN_TOKEN would block
+  // the user from using the app entirely (no way to send Bearer token from browser).
+  //
+  // If ADMIN_TOKEN IS set, all mutations require it via Bearer header or ?admin_token=.
+  // Set ADMIN_TOKEN in .env if you expose the app publicly (multi-user or internet-facing).
   if (!adminToken) {
-    if (process.env.NODE_ENV === 'production') {
-      logger.error(`ADMIN_TOKEN not set in PRODUCTION — ${pathname} blocked (fail-closed)`);
-      return NextResponse.json(
-        { success: false, error: 'Server misconfigured: ADMIN_TOKEN not set. Set it in production to allow mutations.' },
-        { status: 500 }
-      );
-    }
-    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth (single-user dev mode)`);
+    logger.warn(`ADMIN_TOKEN not set — ${pathname} accessible without auth (single-user mode)`);
     return NextResponse.next();
   }
 
