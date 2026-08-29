@@ -30823,3 +30823,24 @@ Work Log: src/components/dashboard/HistoricalZScoreCard.tsx (287 lines) + cross-
   src/lib/format.ts (fmtNum/fmtIDR/fmtPctAbs — all null-safe).
 Stage Summary: 6 bugs found — 1×P1, 1×P2, 4×P3. No crashes; main issue is
   misleading header when metric selector switches to waste/susut/trial.
+
+---
+Task ID: DOC-MASTER
+Agent: general-purpose
+Task: Update MASTER_CONTEXT.md with current state
+Work Log: Rewrote MASTER_CONTEXT.md with accurate current data
+Stage Summary: 1 file updated, ~300 lines
+
+---
+Task ID: DOC-ARCH
+Agent: general-purpose
+Task: Create ARCHITECTURE.md
+Work Log: Created technical architecture document
+Stage Summary: 1 file created
+
+---
+Task ID: DOC-PRD
+Agent: general-purpose
+Task: Create PRD_RETROAKTIF.md
+Work Log: Created product requirements document
+Stage Summary: 1 file created
