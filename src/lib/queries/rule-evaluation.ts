@@ -233,7 +233,11 @@ export function evaluateHistoricalRulesJs(
     const stats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`);
     if (!stats || stats.devBom.stdDev <= 0 || stats.devBom.n < minWeeks) continue;
 
-    const zScore = (Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.devBom.mean) / stats.devBom.stdDev;
+    // ZS-05 FIX: Skip if pctQtyDeviasiToBom is null (don't coerce to 0)
+    if (curr.pctQtyDeviasiToBom == null) continue;
+
+    // ZS-01 FIX: Use Math.abs for non-negative magnitude per PRD §5.2
+    const zScore = Math.abs((Math.abs(curr.pctQtyDeviasiToBom) - stats.devBom.mean) / stats.devBom.stdDev);
     if (zScore == null || isNaN(zScore)) continue;
 
     const isLoss = (curr.nominalLossSurplus ?? 0) < 0;

@@ -30844,3 +30844,66 @@ Agent: general-purpose
 Task: Create PRD_RETROAKTIF.md
 Work Log: Created product requirements document
 Stage Summary: 1 file created
+
+---
+Task ID: AUDIT-PRIORITY
+Agent: general-purpose
+Task: Audit priority + health score calculations
+Work Log:
+  - Read MASTER_CONTEXT.md, PRD_RETROAKTIF.md (§5.3, §5.3.1, §5.7)
+  - src/lib/metrics/deviation.ts (computePriority, computeHealthScore, computeResidual)
+  - src/lib/metrics/definitions.ts (HEALTH_SCORE_WEIGHTS, PRIORITY_DEFINITIONS)
+  - src/lib/settings.ts (24 thresholds, defaults)
+  - src/lib/queries/health-ranking.ts (queryOutletHealthRanking)
+  - src/lib/queries/outlets/resto-recommendations.ts (priorityScore 14-signal impl)
+  - src/app/api/item-history/route.ts (priority + isOverExplained)
+  - src/app/api/outlet-items/route.ts (priority + isOverExplained)
+  - src/app/api/resto-bahan-matrix/route.ts (priority + isOverExplained)
+  - src/app/api/analysis/services/post-process.ts (buildOutletHealthRanking)
+  - src/components/filters/SettingsDialog.tsx (PRIORITY category description)
+Stage Summary: 2 discrepancies found (1 P1, 1 P2). Verified: P1/P2/P3 use OR logic ✓; default thresholds (50jt, 10jt, 0.70, 0.50, 0.05, 2.0) ✓; priority score 0-100/100=worst ✓; health score 0-100/100=healthy opposite direction ✓; thresholds read from Settings ✓; isOverExplained canonical in deviation.ts ✓.
+
+---
+Task ID: AUDIT-EXEC
+Agent: general-purpose
+Task: Audit exec summary + growth + pareto calculations
+Work Log:
+  - src/lib/queries/dashboard.ts (queryExecSummary, queryTrendAgg SQL)
+  - src/app/api/analysis/services/exec-summary.ts (buildExecSummaryFromSql)
+  - src/lib/queries/pareto.ts (queryParetoByItem/Outlet/Area/Kelompok/PIC, queryParetoNestedItemOutlet, queryParetoNested)
+  - src/lib/queries/shared.ts (computePareto8020, buildSqlFilters, withStatementTimeout)
+  - src/lib/metrics/growth.ts (calcGrowth, calcGrowthAbs, computeNominalDeviationGrowth)
+  - src/lib/metrics/sales.ts (computeSalesModePerOutlet — MODE reference)
+  - src/lib/queries/outlets/top-outlets.ts (queryTopOutletsBySales, queryTopOutlets)
+  - src/lib/ingestion.ts (STEP 3.5 — OutletPeriodSales population via ROW_NUMBER MODE)
+  - src/lib/queries/growth-drivers.ts (computePareto + |delta|/|prev|)
+  - src/app/api/analysis/services/trend-builder.ts (buildMultiPeriodComparison growthPct)
+  - src/app/api/analysis/services/post-process.ts (nominalDeviasiGrowthMagnitude)
+  - src/app/api/export-report/route.ts (parallel exec-summary logic)
+  - prisma/schema.prisma (OutletPeriodSales.salesMode)
+Stage Summary: 0 discrepancies found. All 8 spec checks PASS: (1) Sales = MODE per outlet via OutletPeriodSales.salesMode (ROW_NUMBER PARTITION BY outlet+period ORDER BY COUNT(*) DESC, nominalSales ASC, rn=1), then SUM across outlets in queryExecSummary/queryTrendAgg — PRD §5.4 ✓; (2) Growth = (curr - prev) / |prev| via calcGrowth, returns ratio (×100 at display) ✓; (3) Dev/BOM = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) — SQL uses SUM(absQtyDeviasi)/SUM(ABS(qtyBom)) in dashboard.ts:73-75,148-149 + exec-summary.ts:50 (redundant Math.abs on non-negative qtyBom is harmless) ✓; (4) lossToSales = SUM(ABS(nominalLossSurplus) WHERE <0)/SUM(MODE-per-outlet) — dashboard.ts:155 + exec-summary.ts:48 ✓; (5) Pareto sorts by |absNominal| DESC — shared.ts:115 (Math.abs(getValue(b)) - Math.abs(getValue(a))), pareto.ts getValue=totalAbsNominal=ABS(SUM(nominalDeviasi)) ✓; (6) Pareto cumulative share = running |value|/totalMagnitude × 100, breaks at cumPct ≥ 80 — shared.ts:120-128 ✓; (7) Division-by-zero guarded — calcGrowth `if (prev===0) return curr===0 ? 0 : null`, calcGrowthAbs uses `ap===0`, exec-summary uses `c.sales > 0` / `c.qtyBom !== 0` / `c.qtyDeviasiLoss > 0` ✓; (8) nominalDeviasiGrowth uses ABS magnitude via computeNominalDeviationGrowth → calcGrowthAbs → (|curr|-|prev|)/|prev|, used consistently in exec-summary.ts:39, trend-builder.ts:72, post-process.ts:201, export-report:71, ruleService.ts:37 ✓. Z-Score variance in historical.ts:33 uses sample variance (N-1, Bessel) per PRD §5.2 ✓.
+
+---
+Task ID: AUDIT-ZSCORE
+Agent: general-purpose
+Task: Audit Z-Score calculations vs PRD spec (PRD_RETROAKTIF.md §5.2)
+Work Log:
+  - Read MASTER_CONTEXT.md + PRD_RETROAKTIF.md §5.2 (Z-Score formula + rules)
+  - Inspected src/lib/metrics/historical.ts (computeZScore, calcZScoreFromStats, HISTORICAL_STATS_SQL doc)
+  - Inspected src/lib/queries/historical.ts (queryHistoricalStatsMultiMetric SQL CTE + computeStats variance)
+  - Inspected src/lib/queries/rule-evaluation.ts (evaluateHistoricalRulesJs + SQL rule eval)
+  - Inspected src/app/api/analysis/services/post-process.ts (buildHistoricalAnalysis + multi-metric zScores)
+  - Inspected src/app/api/analysis/services/fetch-records.ts (historicalPeriods filter + parallel fetch)
+  - Inspected src/app/api/export-report/route.ts:580-599 (duplicate zScore calc in export)
+  - Inspected src/engine/analysis/ruleService.ts:42-45 (buildRuleContext zScore)
+  - Inspected src/app/api/item-history/route.ts:215-237 (computeZScore usage)
+  - Inspected tests/lib/metrics/historical.test.ts (test cases verify behavior)
+  - Inspected src/config/rules.yaml (rules 15/16/17 conditions)
+Stage Summary: 5 discrepancies found (1 P2 cluster on multi-metric, 1 P2 on non-negative spec, 2 P3)
+
+---
+Task ID: AUDIT-DEV
+Agent: general-purpose
+Task: Audit deviation breakdown
+Work Log: src/engine/transform.ts, src/lib/metrics/deviation.ts, src/lib/queries/dashboard.ts, src/app/api/resto-bahan-matrix/route.ts, src/engine/validator.ts (cross-check)
+Stage Summary: 1 discrepancy found (1 P2 — matrix route OVER_EXPLAINED uses Math.abs(sum) instead of abs-each-then-sum)

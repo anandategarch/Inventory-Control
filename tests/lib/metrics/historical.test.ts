@@ -343,10 +343,10 @@ describe('calcZScoreFromStats', () => {
 
   // ---- Additional edge: negative stdDev behaves like 0 guard? ----
   // (Source only guards stdDev === 0; for completeness, also test value=0)
-  it('5. handles value=0 correctly (returns -mean/stdDev)', () => {
-    // value=0, mean=15, stdDev=8 → (0-15)/8 = -1.875
+  it('5. handles value=0 correctly (returns |mean/stdDev| — non-negative per ZS-01)', () => {
+    // value=0, mean=15, stdDev=8 → |(0-15)/8| = 1.875 (ZS-01: Math.abs for non-negative magnitude)
     const result = calcZScoreFromStats(0, 15, 8);
     expect(result).not.toBeNull();
-    expect(result).toBeCloseTo(-1.875, 6);
+    expect(result).toBeCloseTo(1.875, 6);
   });
 });

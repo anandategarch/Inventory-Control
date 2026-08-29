@@ -333,12 +333,16 @@ export async function buildHistoricalAnalysis(
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);
     if (!stats || stats.devBom.stdDev <= 0) return null;
-    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.devBom.mean, stats.devBom.stdDev);
+    // ZS-03 FIX: Don't coerce null to 0 — pass raw value to calcZScoreFromStats
+    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
 
-    // Phase B-1 MM-01 FIX: Compute multi-metric Z-Scores using historical stats
-    const wasteZScore = calcZScoreFromStats(Math.abs(row.qtyWaste ?? 0), stats.waste.mean, stats.waste.stdDev);
-    const susutZScore = calcZScoreFromStats(Math.abs(row.qtySusut ?? 0), stats.susut.mean, stats.susut.stdDev);
-    const trialZScore = calcZScoreFromStats(Math.abs(row.qtyTrial ?? 0), stats.trial.mean, stats.trial.stdDev);
+    // Phase B-1 MM-01 + ZS-02 FIX: Multi-metric Z-Scores with per-metric MIN_WEEKS + stdDev guards
+    const wasteZScore = (stats.waste.n >= 4 && stats.waste.stdDev > 0)
+      ? calcZScoreFromStats(row.qtyWaste, stats.waste.mean, stats.waste.stdDev) : 0;
+    const susutZScore = (stats.susut.n >= 4 && stats.susut.stdDev > 0)
+      ? calcZScoreFromStats(row.qtySusut, stats.susut.mean, stats.susut.stdDev) : 0;
+    const trialZScore = (stats.trial.n >= 4 && stats.trial.stdDev > 0)
+      ? calcZScoreFromStats(row.qtyTrial, stats.trial.mean, stats.trial.stdDev) : 0;
 
     return {
       itemName: row.itemName,

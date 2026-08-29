@@ -581,7 +581,8 @@ export async function GET(req: NextRequest) {
       const key = `${row.outletId}|${row.itemId}`;
       const stats = historicalByOutletItem.get(key);
       if (!stats || stats.devBom.stdDev <= 0) return null;
-      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.devBom.mean, stats.devBom.stdDev);
+      // ZS-03 FIX: Don't coerce null to 0 — pass raw value to calcZScoreFromStats
+      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
       return {
         itemName: row.itemName,
         outletCode: row.outletCode,
