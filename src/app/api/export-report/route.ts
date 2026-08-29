@@ -46,6 +46,7 @@ import type { ExecutiveSummary } from '@/types/inventory';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -912,6 +913,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[export-report] error:", { error: e });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "export-report");
   }
 }

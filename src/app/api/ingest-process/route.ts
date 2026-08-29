@@ -21,6 +21,7 @@ import { validateBody, ingestProcessBodySchema, ingestProcessDeleteBodySchema } 
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Max for Vercel — import can take 1-2 min for large weeks
@@ -342,7 +343,7 @@ export async function POST(req: NextRequest) {
       } catch (e: unknown) {
         logger.error("[ingest-process] reassemble failed", { error: e });
         return NextResponse.json(
-          { success: false, error: `Gagal reassemble file: ${e instanceof Error ? e.message : String(e)}` },
+          { success: false, error: process.env.NODE_ENV === "development" ? `Gagal reassemble file: ${e instanceof Error ? e.message : String(e)}` : "Gagal reassemble file" },
           { status: 500 }
         );
       }
@@ -356,7 +357,7 @@ export async function POST(req: NextRequest) {
         logger.error("[ingest-process] parse failed", { error: e });
         await fs.unlink(filePath).catch(() => {});
         return NextResponse.json(
-          { success: false, error: `Gagal parse Excel: ${e instanceof Error ? e.message : String(e)}` },
+          { success: false, error: process.env.NODE_ENV === "development" ? `Gagal parse Excel: ${e instanceof Error ? e.message : String(e)}` : "Gagal parse Excel" },
           { status: 500 }
         );
       }
@@ -782,7 +783,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     logger.error("[ingest-process] error", { error: e });
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }
@@ -814,6 +815,6 @@ export async function DELETE(req: NextRequest) {
     }
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "ingest-process");
   }
 }

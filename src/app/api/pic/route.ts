@@ -18,6 +18,7 @@ import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateQuery, validateBody, picQuerySchema, picPostBodySchema } from '@/lib/validation';
 import { CACHE_METADATA } from '@/lib/cache-headers';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ success: true, pics }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "pic");
   }
 }
 
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, pic: result });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "pic");
   }
 }
 
@@ -141,6 +142,6 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "pic");
   }
 }

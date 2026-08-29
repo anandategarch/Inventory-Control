@@ -21,6 +21,7 @@ import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendat
 import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
 import { ParetoDashboard } from '@/components/dashboard/ParetoDashboard';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
+const AuditLogDialog = dynamic(() => import('@/components/filters/AuditLogDialog').then(m => m.AuditLogDialog), { ssr: false, loading: () => null });
 // CostAccounting components removed — tab Cost Accounting dihapus
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -221,6 +222,7 @@ export default function DashboardPage() {
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [auditLogOpen, setAuditLogOpen] = useState(false);
 
   // PERF-OPT: useCallback keeps handleExport stable across renders so
   // ExportDialog doesn't re-render unnecessarily (it's memoized via React.memo
@@ -424,6 +426,20 @@ export default function DashboardPage() {
                 )}
               </Button>
             )}
+            {/* Audit Log button — zombie revival (AuditLog model had 11 writes, 0 reads) */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Audit Log"
+                  onClick={() => setAuditLogOpen(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+                >
+                  <History className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">Audit Log</TooltipContent>
+            </Tooltip>
             {/* UX-ENHANCE: Keyboard shortcuts help tooltip */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -707,6 +723,9 @@ export default function DashboardPage() {
       />
       {/* GLOBAL-ITEM-SEARCH: cross-outlet item analysis modal (Cmd+K) */}
       <GlobalItemSearchModal open={itemSearchOpen} onOpenChange={setItemSearchOpen} />
+
+      {/* Audit Log dialog — zombie revival (11 writes, 0 reads → now surfaced) */}
+      <AuditLogDialog open={auditLogOpen} onOpenChange={setAuditLogOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />

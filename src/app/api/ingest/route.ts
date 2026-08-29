@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processIngestion } from '@/lib/ingestion';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateBody, ingestPostBodySchema } from '@/lib/validation';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     const results = await processIngestion(body);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "ingest");
   }
 }
 
@@ -61,6 +62,6 @@ export async function GET(req: NextRequest) {
     const results = await processIngestion({}, fastMode);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt, fastMode });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "ingest");
   }
 }

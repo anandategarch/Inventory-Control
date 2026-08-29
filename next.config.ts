@@ -56,6 +56,11 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           { key: 'X-DNS-Prefetch-Control', value: 'on' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+          // DS-10: Content-Security-Policy — prevents XSS, inline script injection,
+          // and data exfiltration. Allows 'unsafe-inline' + 'unsafe-eval' for
+          // Next.js dev mode (React DevTools, HMR). Tighten for production by
+          // removing unsafe-eval once no eval() usage remains.
+          { key: 'Content-Security-Policy', value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" },
         ],
       },
     ];

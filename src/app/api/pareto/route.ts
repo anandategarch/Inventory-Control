@@ -12,6 +12,8 @@ import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, paretoQuerySchema } from '@/lib/validation';
 import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
+import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -73,6 +75,20 @@ export async function GET(req: NextRequest) {
       picOutletCodes,
     };
 
+    // DP-14: DB-level AggregationCache — prevents full recompute on warm calls.
+    // Cache key includes all filter params + parentDim/childDim.
+    const cacheKey = buildCacheKey({
+      route: 'pareto', month, week, area: filters.area, kelompok: filters.kelompok, pic,
+    });
+    const PARETO_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cached = await getCached<unknown>(cacheKey, PARETO_CACHE_TTL);
+    if (cached && typeof cached === 'object' && 'success' in cached) {
+      const cachedResult = cached as Record<string, unknown>;
+      cachedResult.cached = true;
+      cachedResult.durationMs = Date.now() - startedAt;
+      return NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS });
+    }
+
     // Run all 6 Pareto queries in parallel
     // DESIGN NOTE (BUG-BE-3): byKelompok + histKelompok intentionally OMIT the
     // kelompok filter from their filterOpts — the byKelompok card shows ALL
@@ -123,7 +139,7 @@ export async function GET(req: NextRequest) {
     const byKelompokMerged = mergeHistoricalIntoPareto(byKelompok, histKelompok);
     const byPICMerged = mergeHistoricalIntoPareto(byPIC, histPIC);
 
-    return NextResponse.json({
+    const result = {
       success: true,
       period: { month, week },
       filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
@@ -133,16 +149,18 @@ export async function GET(req: NextRequest) {
       byKelompok: byKelompokMerged,
       byPIC: byPICMerged,
       nested,
-      // FIX (RESTORE-BACKEND-2): include nestedGeneralized only when both
-      // parentDim + childDim were provided. Echo the dims so the client can
-      // verify which combination was computed.
       ...(nestedGeneralized
         ? { nestedGeneralized, parentDim: nestedGeneralized.parentDim, childDim: nestedGeneralized.childDim }
         : {}),
       durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_ANALYSIS });
+    };
+
+    // DP-14: Cache the result for 5 min
+    setCached(cacheKey, result);
+
+    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error('[pareto] error:', { error: e instanceof Error ? e.message : String(e) });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "pareto");
   }
 }

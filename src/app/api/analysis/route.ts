@@ -26,6 +26,7 @@ import { fetchRecords } from './services/fetch-records';
 import { runQueries } from './services/run-queries';
 import { postProcess } from './services/post-process';
 import { assembleResponse } from './services/assemble-response';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // FIX: 60→120 — heavy queries with outlet filter can take 40-60s
@@ -95,6 +96,6 @@ export async function GET(req: NextRequest) {
     // called (on success), so errors left the Promise pending indefinitely.
     rejectComputation?.(e);
     logger.error('Analysis error', { error: e instanceof Error ? e.message : String(e) });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "analysis");
   }
 }

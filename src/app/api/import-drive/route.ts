@@ -11,6 +11,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { resolveManualFileName } from '@/lib/filename';
 import { validateBody, importDriveBodySchema } from '@/lib/validation';
 import path from 'path';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -148,6 +149,6 @@ export async function POST(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "import-drive");
   }
 }

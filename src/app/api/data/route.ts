@@ -17,6 +17,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, dataDeleteQuerySchema, dataGetQuerySchema } from '@/lib/validation';
 import { CACHE_METADATA, CACHE_INTERACTIVE } from '@/lib/cache-headers';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -98,7 +99,7 @@ export async function GET(req: NextRequest) {
       months: Object.values(byMonth).sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "data");
   }
 }
 
@@ -268,6 +269,6 @@ export async function DELETE(req: NextRequest) {
       deleted: { sourceFiles: deletedFiles, records: deletedRecords, weeks: deletedWeeks },
     });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "data");
   }
 }

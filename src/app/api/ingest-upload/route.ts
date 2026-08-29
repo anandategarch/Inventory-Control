@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     logger.error("[ingest-upload] error:", { error: e });
     return NextResponse.json(
-      { success: false, error: (e instanceof Error ? e.message : String(e)) },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
       { status: 500 }
     );
   }

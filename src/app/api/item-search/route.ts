@@ -21,6 +21,7 @@ import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — cross-outlet + trend queries scan full table
@@ -131,6 +132,6 @@ export async function GET(req: NextRequest) {
     }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     logger.error('[item-search] error:', { error: e instanceof Error ? e.message : String(e) });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "item-search");
   }
 }

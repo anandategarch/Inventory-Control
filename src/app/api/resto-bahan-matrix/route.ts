@@ -22,6 +22,7 @@ import { calcGrowthAbs } from '@/lib/metrics';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -302,8 +303,9 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.error('[resto-bahan-matrix] error:', e);
-    return NextResponse.json({ success: false, error: message || String(e) }, { status: 500 });
+    // DS-13 + DC-28: Use structured logger + sanitize error response
+    logger.error('[resto-bahan-matrix] error', { error: e instanceof Error ? e.message : String(e) });
+    const isDev = process.env.NODE_ENV === 'development';
+    return NextResponse.json({ success: false, error: isDev ? (e instanceof Error ? e.message : String(e)) : 'Internal server error' }, { status: 500 });
   }
 }

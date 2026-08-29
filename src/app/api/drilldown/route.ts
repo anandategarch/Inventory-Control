@@ -15,6 +15,7 @@ import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -157,6 +158,6 @@ export async function GET(req: NextRequest) {
       })),
     }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "drilldown");
   }
 }

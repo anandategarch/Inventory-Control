@@ -8,6 +8,8 @@ import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — queryRestoRecommendations is heavy (3 parallel CTEs)
@@ -117,6 +119,17 @@ export async function GET(req: NextRequest) {
       picOutletCodes,
     };
 
+    // DP-14: DB-level AggregationCache — prevents full recompute on warm calls.
+    const cacheKey = buildCacheKey({
+      route: 'recommendations', month, week, compareWeek: prevWeek, compareMonth: prevMonth,
+      area: filters.area, kelompok: filters.kelompok, outletCode: filters.outletCode, pic,
+    });
+    const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cached = await getCached<unknown>(cacheKey, REC_CACHE_TTL);
+    if (cached && typeof cached === 'object' && 'success' in cached) {
+      return NextResponse.json(cached, { headers: CACHE_ANALYSIS });
+    }
+
     const recommendations = await queryRestoRecommendations(
       month,
       week,
@@ -128,9 +141,11 @@ export async function GET(req: NextRequest) {
       thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
     );
 
-    return NextResponse.json({ success: true, recommendations }, { headers: CACHE_ANALYSIS });
+    const result = { success: true, recommendations };
+    setCached(cacheKey, result);
+    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    errorResponse(e, "recommendations");
   }
 }
