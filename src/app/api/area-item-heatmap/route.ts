@@ -13,7 +13,6 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
-import { buildInventoryWhere } from '@/lib/build-where';
 import { queryAreaItemHeatmap, type HeatmapMetric } from '@/lib/queries/heatmap';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
@@ -99,11 +98,8 @@ export async function GET(req: NextRequest) {
       picOutletCodes,
     };
 
-    // Build where clause for validation (check if data exists)
-    const buildWhere = buildInventoryWhere(week, month, filterOpts);
-    // Note: we don't actually use buildWhere here — queryAreaItemHeatmap
-    // uses buildSqlFilters internally. But we call it to validate the filter
-    // combination doesn't throw.
+    // Note: queryAreaItemHeatmap uses buildSqlFilters internally,
+    // so we don't need to build a Prisma WhereInput here.
 
     const result = await queryAreaItemHeatmap(week, month, filterOpts, metric, itemLimit);
 
