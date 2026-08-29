@@ -655,28 +655,32 @@ export async function GET(req: NextRequest) {
     const prevLabel = data.period.comparisonMonth
       ? shortMonth(data.period.comparisonMonth)
       : '—';
-    // Historical periods: list of months/weeks the avg comes from
-    // All historical periods share the same weekLabel (filtered), so list the months
-    // BUG FIX (AUDIT-EXPORT-AI-5): cap to 3 months + "+N lainnya" to avoid overly long column headers
+    // Historical periods: show range "Jan-Jul 26" (earliest to latest)
     const histMonths = historicalPeriods.map(p => shortMonth(p.monthLabel)).filter(m => m !== '—');
     const histLabel = histMonths.length === 0
       ? 'Hist (—)'
-      : histMonths.length <= 3
-        ? `Hist (${histMonths.join(', ')})`
-        : `Hist (${histMonths.slice(0, 3).join(', ')} +${histMonths.length - 3})`;
+      : histMonths.length === 1
+        ? `Hist (${histMonths[0]})`
+        : `Hist (${histMonths[histMonths.length - 1]}-${histMonths[0]})`;
 
     // Title — simplified header per user request
     const restoName = outletCode && outletCode !== 'all' ? outletCode : 'Semua Resto';
     const compareText = data.period.comparisonMonth
       ? ` vs ${prevLabel}`
       : '';
+    // History range label (e.g., "Jan-Jul 26") for header
+    const histRange = histMonths.length >= 2
+      ? `${histMonths[histMonths.length - 1]}-${histMonths[0]}`
+      : histMonths.length === 1
+        ? histMonths[0]
+        : currLabel;
     children.push(
       new Paragraph({
         children: [new TextRun({ text: 'Ringkasan Laporan Deviasi', bold: true, size: 36, color: COLOR.PRIMARY })],
         alignment: AlignmentType.CENTER, spacing: { before: 400, after: 80 },
       }),
       new Paragraph({
-        children: [new TextRun({ text: `${restoName}  |  ${currLabel}${compareText}`, size: 22, color: COLOR.MUTED })],
+        children: [new TextRun({ text: `${restoName}  |  ${histRange}${compareText}`, size: 22, color: COLOR.MUTED })],
         alignment: AlignmentType.CENTER, spacing: { after: 200 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: COLOR.PRIMARY, space: 6 } },
       }),
@@ -705,7 +709,7 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('growth')) {
     const g = data.growthComparison || {};
-    children.push(heading('3. Perubahan (Growth)'));
+    children.push(heading('2. Perubahan (Growth)'));
     children.push(makeTable(['Metric', 'Value'], [
       ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
       ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
@@ -716,7 +720,7 @@ export async function GET(req: NextRequest) {
 
     }
     if (hasSection('topItems')) {
-    children.push(heading('4. ITEM PRIORITAS (TOP ITEMS)'));
+    children.push(heading('3. Item Prioritas (Top Items)'));
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
@@ -742,7 +746,7 @@ export async function GET(req: NextRequest) {
     if (hasSection('breakdown')) {
     const b = data.deviationBreakdown || {};
     const bdTotal = b.total || 0;
-    children.push(heading('5. RINCIAN KOMPOSISI SELISIH (Deviation Breakdown)'));
+    children.push(heading('4. Rincian Komposisi Selisih'));
     children.push(makeTable(['Component', 'QTY', '% of Total'], [
       ['QTY Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
       ['QTY Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
@@ -756,20 +760,10 @@ export async function GET(req: NextRequest) {
     // Section 7 (PERBANDINGAN ANTAR AREA) removed per user request
     if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
-    if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
-      children.push(heading('11. ANALISIS PERUBAHAN ITEM (Variance)'));
-    children.push(paragraph('Item yang memburuk (magnitude deviasi naik) dan membaik (magnitude deviasi turun) dibanding periode sebelumnya. Menampilkan Nominal Deviasi actual (bukan abs). Angka negatif = LOSS/rugi (merah).'));
-      if ((va.topWorsened || []).length > 0) {
-        children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
-        // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
-        // Use dynamic period labels (currLabel / prevLabel) instead of Current/Previous
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
-        children.push(paragraph(''));
-      }
-      if ((va.topImproved || []).length > 0) {
-        children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
-      }
+    if ((va.topWorsened || []).length > 0) {
+      children.push(heading('5. Perubahan Item (Selisih Terbesar)'));
+      children.push(makeTable(['Item', 'Resto', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
+        va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       children.push(divider());
     }
 
@@ -777,10 +771,15 @@ export async function GET(req: NextRequest) {
     // Section 13 (RANKING ITEM NASIONAL) removed per user request
     if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
-      children.push(heading('14. TREND ANTAR PERIODE'));
-    children.push(paragraph('Perbandingan periode yang sama di bulan-bulan sebelumnya.'));
-      children.push(makeTable(['Period', 'Penjualan', 'Nominal Deviasi', '% Deviasi To BOM'],
-        data.trend.map((t) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
+      children.push(heading('6. Trend Antar Periode'));
+      // Hapus Penjualan, tambah % Nominal Deviasi to Sales = |nominal| / sales * 100
+      children.push(makeTable(['Period', 'Nominal Deviasi', '% Deviasi To BOM', '% Nominal to Sales'],
+        data.trend.map((t) => [
+          t.weekLabel,
+          fmtIDR(t.nominal),
+          fmtPct(t.devBom, false),
+          t.sales && t.sales > 0 ? fmtPct(Math.abs(t.nominal) / t.sales, false) : '—',
+        ])));
       children.push(divider());
     }
 
