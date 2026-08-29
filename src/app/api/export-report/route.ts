@@ -639,46 +639,54 @@ export async function GET(req: NextRequest) {
     // ============================================================
     const children: Array<Paragraph | Table> = [];
 
-    // Build dynamic period labels for column headers (replace static Current/Prev/Hist)
-    // Current period: e.g., "WEEK 4 MEI 2026"
-    const currLabel = `${data.period.weekLabel} ${data.period.monthLabel}`;
-    // Previous period: e.g., "WEEK 4 APR 2026" (or "—" if no comparison)
-    const prevLabel = data.period.comparisonWeek
-      ? `${data.period.comparisonWeek} ${data.period.comparisonMonth || ''}`
+    // Build dynamic period labels — short format (no week, month abbreviated to 3 chars + 2-digit year)
+    // e.g., "MEI 2026" → "MEI 26", "WEEK 4 MEI 2026" → "MEI 26" (week removed per user request)
+    const shortMonth = (label: string): string => {
+      if (!label) return '—';
+      const parts = label.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        const month = parts[0].substring(0, 3).toUpperCase();
+        const year = parts[1].length === 4 ? parts[1].substring(2) : parts[1];
+        return `${month} ${year}`;
+      }
+      return label.substring(0, 10);
+    };
+    const currLabel = shortMonth(data.period.monthLabel);
+    const prevLabel = data.period.comparisonMonth
+      ? shortMonth(data.period.comparisonMonth)
       : '—';
     // Historical periods: list of months/weeks the avg comes from
     // All historical periods share the same weekLabel (filtered), so list the months
     // BUG FIX (AUDIT-EXPORT-AI-5): cap to 3 months + "+N lainnya" to avoid overly long column headers
-    const histMonths = historicalPeriods.map(p => p.monthLabel).filter(Boolean);
+    const histMonths = historicalPeriods.map(p => shortMonth(p.monthLabel)).filter(m => m !== '—');
     const histLabel = histMonths.length === 0
-      ? 'Hist Avg (—)'
+      ? 'Hist (—)'
       : histMonths.length <= 3
-        ? `Hist Avg (${histMonths.join(', ')})`
-        : `Hist Avg (${histMonths.slice(0, 3).join(', ')} +${histMonths.length - 3} lainnya)`;
+        ? `Hist (${histMonths.join(', ')})`
+        : `Hist (${histMonths.slice(0, 3).join(', ')} +${histMonths.length - 3})`;
 
-    // Title — branded header with color band
+    // Title — simplified header per user request
+    const restoName = outletCode && outletCode !== 'all' ? outletCode : 'Semua Resto';
+    const compareText = data.period.comparisonMonth
+      ? ` vs ${prevLabel}`
+      : '';
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: 'INVENTORY CONTROL INTELLIGENCE', bold: true, size: 36, color: COLOR.PRIMARY })],
+        children: [new TextRun({ text: 'Ringkasan Laporan Deviasi', bold: true, size: 36, color: COLOR.PRIMARY })],
         alignment: AlignmentType.CENTER, spacing: { before: 400, after: 80 },
       }),
       new Paragraph({
-        children: [new TextRun({ text: 'LAPORAN ANALISIS DEVIASI PEMAKAIAN BAHAN', bold: true, size: 22, color: COLOR.MUTED })],
+        children: [new TextRun({ text: `${restoName}  |  ${currLabel}${compareText}`, size: 22, color: COLOR.MUTED })],
         alignment: AlignmentType.CENTER, spacing: { after: 200 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: COLOR.PRIMARY, space: 6 } },
       }),
-      new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, bold: true, size: 26, color: COLOR.BODY_TEXT })], alignment: AlignmentType.CENTER, spacing: { before: 200, after: 80 } }),
-      new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Resto: ${outletCode}` : 'Network (Semua Resto)'}  |  ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 20, color: COLOR.MUTED })], alignment: AlignmentType.CENTER, spacing: { after: 60 } }),
-      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 18, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
       divider(),
     );
 
     if (hasSection('exec')) {
     const s = data.executiveSummary;
-    children.push(heading('1. RINGKASAN UTAMA (Executive Summary)'));
-    children.push(paragraph('Ringkasan KPI utama periode ini dibandingkan periode sebelumnya. Growth = persentase perubahan.'));
+    children.push(heading('1. Rangkuman'));
     children.push(makeTable(['Metrik', currLabel, 'Perubahan', prevLabel], [
-      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
       ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
       ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
       ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth != null ? fmtPct(s.qtyDeviasi.growth, true) : '—', fmtNum(s.qtyDeviasi.previous)],
@@ -686,7 +694,6 @@ export async function GET(req: NextRequest) {
       ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
-      // FIX: 6 metrics now show prev value + growth (previously '—')
       ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), s._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, s._prevMetrics.deviationToBom), true) : '—', s._prevMetrics?.deviationToBom != null ? fmtPct(s._prevMetrics.deviationToBom, false) : '—'],
       ['Loss To Sales', fmtPct(s.lossToSales, false), s._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, s._prevMetrics.lossToSales), true) : '—', s._prevMetrics?.lossToSales != null ? fmtPct(s._prevMetrics.lossToSales, false) : '—'],
       ['Total LOSS', fmtIDR(s.totalLoss), s._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, s._prevMetrics.totalLoss), true) : '—', s._prevMetrics?.totalLoss != null ? fmtIDR(s._prevMetrics.totalLoss) : '—'],
@@ -698,8 +705,7 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('growth')) {
     const g = data.growthComparison || {};
-    children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
-    children.push(paragraph('Perubahan antar periode untuk metrik kunci (Sales, BOM, QTY Deviasi, Nominal Deviasi).'));
+    children.push(heading('3. Perubahan (Growth)'));
     children.push(makeTable(['Metric', 'Value'], [
       ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
       ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
@@ -747,16 +753,7 @@ export async function GET(req: NextRequest) {
     children.push(divider());
 
     }
-    if (hasSection('area')) {
-    if (data.areaAnalysis && data.areaAnalysis.length > 0) {
-      children.push(heading('7. PERBANDINGAN ANTAR AREA'));
-    children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
-      children.push(makeTable(['Area', 'Resto', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
-        data.areaAnalysis.map((a) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
-      children.push(divider());
-    }
-
-    }
+    // Section 7 (PERBANDINGAN ANTAR AREA) removed per user request
     if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
     if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
@@ -777,36 +774,7 @@ export async function GET(req: NextRequest) {
     }
 
     }
-    if (hasSection('consistency')) {
-    // Section 13: Top Items by Deviasi Rank (national ranking — replaced Consistency)
-    const dr = data.topDeviasiRank || [];
-    if (dr.length > 0) {
-      children.push(heading('13. RANKING ITEM NASIONAL (Deviasi)'));
-      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = LOSS/rugi, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.'));
-      children.push(makeTable([
-        'Item', 'Rank Nasional', 'Rank BOM', 'Resto', 'PIC', 'Satuan',
-        'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',
-        'AVG Deviasi By BOM', 'Nominal Deviasi'
-      ],
-        dr.map((it) => [
-          it.itemName,
-          String(it.rankNominal),
-          String(it.rankBom),
-          it.outletCode,
-          it.pic || '—',
-          it.satuan || '—',
-          fmtNum(it.qtyDeviasi),
-          fmtNum(it.qtyWaste),
-          fmtNum(it.qtyLossSurplus),
-          it.pctLossSurplusToBom != null ? fmtPct(it.pctLossSurplusToBom, false) : '—',
-          fmtNum(it.qtyBom),
-          it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—',
-          fmtIDR(it.nominalDeviasi),
-        ])));
-      children.push(divider());
-    }
-
-    }
+    // Section 13 (RANKING ITEM NASIONAL) removed per user request
     if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
       children.push(heading('14. TREND ANTAR PERIODE'));
@@ -822,114 +790,25 @@ export async function GET(req: NextRequest) {
     // NEW SECTIONS — additional analyses
     // ============================================================
 
-    // 19. Historical Anomaly Analysis — items with z-score > threshold (already computed: historicalAnalysis)
-    if (hasSection('historical')) {
-      const ha = data.growthComparison?.historicalAnalysis;
-      if (ha && ha.criticalItems && ha.criticalItems.length > 0) {
-        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
-        children.push(paragraph('Item yang deviation-nya abnormal dibanding perilaku historical (z-score > 1.0). Z-score > 2.0 = sangat abnormal. Historical Avg = rata-rata Dev/BOM periode sama di bulan-bulan sebelumnya.'));
-        children.push(makeTable(['#', 'Item', 'Resto', 'Area', 'Current Dev/BOM', 'Historical Avg', 'Z-Score', 'Abs Nominal Deviasi'],
-          ha.criticalItems.slice(0, 15).map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtPct(it.currentDevBom, false), fmtPct(it.historicalAvg, false), it.zScore != null ? it.zScore.toFixed(2) : '—', fmtIDR(it.absNominal)])));
-        children.push(divider());
-      } else {
-        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
-        children.push(paragraph('✅ Tidak ada item dengan anomali historical signifikan pada periode ini (z-score semua ≤ 1.0).'));
-        children.push(divider());
-      }
-    }
+    // Sections 19 (HISTORICAL ANOMALY), 2 (RESTO PRIORITAS), 14 (ITEM CROSS-OUTLET) removed per user request
 
-    // ============================================================
-    // NEW SECTIONS — fitur terbaru
-    // ============================================================
-
-    // 2. Resto Prioritas Analisa — outlet health ranking by priority score
-    if (hasSection('restoPriority')) {
-      // PRE-EXISTING LATENT BUG: queryOutletHealthRanking returns OutletHealthRow
-      // which has raw SQL fields (outletCode, area, absNominal, etc.) but does NOT
-      // compute healthScore / abnormal / warning / normal / devBom. Those columns
-      // were previously rendered as `undefined`/`String(undefined)`/`—` at runtime
-      // because `(it: any)` hid the missing fields. We preserve that exact runtime
-      // behavior by widening the row type with optional phantom fields (better fix:
-      // wire up the post-processing — out of scope for this type-safety pass).
-      const hr: Array<typeof outletHealthRanking[number] & {
-        healthScore?: number;
-        abnormal?: number;
-        warning?: number;
-        normal?: number;
-        devBom?: number | null;
-      }> = outletHealthRanking || [];
-      if (hr.length > 0) {
-        children.push(heading('2. RESTO PRIORITAS ANALISA'));
-        children.push(paragraph('Top resto by priority score. Score = weighted combination of Dev/BOM, Residual, Loss/Sales, Abnormal rate. Level: TINGGI (≥55), SEDANG (≥30), RENDAH (<30).'));
-        children.push(makeTable(['#', 'Outlet', 'Area', 'Level', 'Health Score', 'Abnormal', 'Warning', 'Normal', 'Abs Nominal', 'Dev/BOM'],
-          hr.slice(0, 15).map((it, i) => [
-            String(i + 1),
-            `${it.outletCode} · ${it.outletName}`,
-            it.area,
-            it.healthScore != null && it.healthScore >= 55 ? 'TINGGI' : it.healthScore != null && it.healthScore >= 30 ? 'SEDANG' : 'RENDAH',
-            String(it.healthScore),
-            String(it.abnormal),
-            String(it.warning),
-            String(it.normal),
-            fmtIDR(it.absNominal),
-            fmtPct(it.devBom, false),
-          ])));
-        children.push(divider());
-      }
-    }
-
-    // 14. Item Cross-Outlet Analysis — top item across all outlets + z-score
-    if (hasSection('itemCrossOutlet')) {
-      const co = topItemForCrossOutlet || [];
-      if (co.length > 0) {
-        const itemName = topNominal[0]?.itemName || 'Item';
-        children.push(heading('14. ITEM CROSS-OUTLET ANALYSIS'));
-        children.push(paragraph(`Analisa "${itemName}" di ${co.length} outlet. Z-Score = (outlet Dev/BOM - peer mean) / stdDev. |Z|>2 = ABNORMAL (outlier), |Z|>1 = ELEVATED.`));
-
-        // Compute z-scores
-        const validRows = co.filter((r) => r.devBom != null);
-        const values = validRows.map((r) => (r.devBom as number));
-        const mean = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
-        const variance = values.length > 1 ? values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1) : 0;
-        const stdDev = Math.sqrt(variance);
-
-        children.push(makeTable(['#', 'Outlet', 'Area', 'Dev/BOM', 'Z-Score', 'Level', 'Nominal Deviasi', 'Direction'],
-          co.slice(0, 20).map((it, i) => {
-            const z = stdDev > 0 && it.devBom != null ? (it.devBom - mean) / stdDev : null;
-            const level = z != null ? (Math.abs(z) > 2 ? 'ABNORMAL' : Math.abs(z) > 1 ? 'ELEVATED' : 'NORMAL') : '—';
-            return [
-              String(i + 1),
-              `${it.outletCode} · ${it.outletName}`,
-              it.area,
-              it.devBom != null ? fmtPct(it.devBom, false) : '—',
-              z != null ? z.toFixed(2) : '—',
-              level,
-              fmtIDR(it.nominalDeviasi),
-              it.direction || '—',
-            ];
-          })));
-        children.push(divider());
-      }
-    }
-
-    // Footer — simple closing with date only (no technical metadata)
+    // Footer — simple closing (no date per user request)
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
     children.push(new Paragraph({
       children: [new TextRun({ text: '', size: 8 })],
       spacing: { before: 60, after: 60 },
       border: { top: { style: BorderStyle.SINGLE, size: 12, color: COLOR.PRIMARY, space: 2 } },
     }));
-    children.push(new Paragraph({ children: [new TextRun({ text: `Dibuat: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, size: 16, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER }));
 
     // Generate document — creator metadata neutral (no AI/platform mention)
     const doc = new Document({
       creator: 'Inventory Analyst',
-      title: `Laporan Analisis ${data.period.weekLabel} ${data.period.monthLabel}`,
+      title: `Ringkasan Laporan Deviasi ${currLabel}`,
       sections: [{ properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } }, children }],
     });
 
     const buffer = await Packer.toBuffer(doc);
-    const fileName = `Laporan_Analisis_${(data.period.monthLabel || 'unknown').replace(/\s+/g, '_')}_${data.period.weekLabel || ''}.docx`;
+    const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_')}.docx`;
 
     // PERF: Cache the docx buffer for 5 min — next request with same params gets instant response
     // awaitWrite=true because export buffer is large (91KB) — need to ensure write completes
