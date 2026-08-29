@@ -28,6 +28,7 @@ const VALID_METRICS: HeatmapMetric[] = [
 ];
 
 export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const ip = getClientIP(req);
     const rl = rateLimit(`heatmap:${ip}`, 30, 60_000);
@@ -56,8 +57,8 @@ export async function GET(req: NextRequest) {
       ? metricParam
       : 'absNominalDeviasi') as HeatmapMetric;
 
-    // Validate itemLimit (5-109 range)
-    const itemLimit = Math.max(5, Math.min(109, isNaN(itemLimitParam) ? 20 : itemLimitParam));
+    // Validate itemLimit (5-100 range — BUG-A-05: was 109 typo)
+    const itemLimit = Math.max(5, Math.min(100, isNaN(itemLimitParam) ? 20 : itemLimitParam));
 
     // Validate mode
     const mode: ItemSelectMode = modeParam === 'top' ? 'top' : 'pareto80';
@@ -109,11 +110,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      period: { month, week },
       ...result,
-      durationMs: 0, // will be filled by caller if needed
+      durationMs: Date.now() - startedAt,
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
+    // BUG-A-07: Don't leak internal error details to client
     logger.error('[area-item-heatmap] error:', { error: e instanceof Error ? e.message : String(e) });
-    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }

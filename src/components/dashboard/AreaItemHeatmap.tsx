@@ -549,6 +549,8 @@ function AreaItemHeatmapInner() {
             <div
               className="overflow-auto max-h-[520px] rounded border border-border/40"
               style={{ contain: 'layout style' }}
+              role="grid"
+              aria-label={`Heatmap ${areas.length} area × ${items.length} item`}
             >
               <div className="inline-block min-w-full">
                 <div

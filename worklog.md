@@ -33906,3 +33906,162 @@ Stage Summary:
 - lint: 0 errors, 345 pre-existing warnings (unchanged)
 - tsc: 0 errors
 - test: 22 files / 435 tests passing (unchanged)
+
+---
+Task ID: AUDIT-GIT
+Agent: general-purpose (Git History Auditor)
+Task: Audit git history for force push, rollback, diverged commits
+
+Work Log:
+- Read worklog.md tail (~120 lines) for context — prior tasks SPLIT-PAGE, AUDIT-HEATMAP-TRUNC, AUDIT-HEATMAP-FLICKER, GAP-COLLAB already documented.
+- `git reflog --all | head -100` — found 5 history-rewriting operations: 1 hard reset to 81a621c (HEAD@{38}, orphaned 33-bug-fix commit), 2 no-op resets (HEAD@{6,7,23}), 1 rebase (HEAD@{40-42}), 1 commit --amend (HEAD@{44}). Total reflog size = 344 entries.
+- `git reflog --all | grep -E "reset|amend|rebase|force"` — surfaced 2 ADDITIONAL rebases (HEAD@{146-150} and HEAD@{185-188}) both `pull --rebase https://<token>@github.com/...` — token embedded in remote URL is a CREDENTIAL LEAK (security P1). Also found 3+ `commit (amend)` operations (HEAD@{44,153,178}).
+- `git log --oneline --all --graph | head -50` — found 1 merge commit (`17660d5 Merge remote-tracking branch 'origin/main'`) confirming past divergence.
+- `git log --oneline origin/main -20` vs `git log --oneline HEAD -20` — IDENTICAL. HEAD == origin/main == `efc5cd9`.
+- `git rev-parse HEAD` == `git rev-parse origin/main` == `efc5cd9619262027e70b8a3c7489f4693aec1305`. Working tree CLEAN (`git status --porcelain` empty, `git diff --stat` empty). No divergence currently.
+- `git fsck --lost-found` — found 15 dangling commits + 2 dangling trees + 1 dangling blob.
+- `git fsck --unreachable` — found 8 unreachable commits + many unreachable trees/blobs.
+- `git fsck --full | tail -30` — NO corruption, NO missing objects, NO errors. Only dangling objects. .git integrity OK.
+- `git remote -v` — single remote `origin` → https://github.com/anandategarch/Inventory-Control.git (GitHub). `git branch -a` — only `main` locally + `remotes/origin/main`. `git tag` — empty. No diverged branches, no stale remotes.
+- `git log --format='%H %ai %s' -30` — all 30 most-recent commits are dated 2026-08-29 (07:40 → 18:36). Dangling commits span 2026-08-09 → 2026-08-28 — the messy history window.
+- Inspected each dangling commit individually (`git log -1 --format='%h | %ai | %s' <sha>` for 15 commits). Found 4 SIGNIFICANT orphaned commits:
+  • `400b538` (Aug 28): "fix(heatmap): 33 bug fixes from QA audit (3 P1, 9 P2, 5 P3)" — 200 insertions across route.ts, AreaItemHeatmap.tsx, heatmap.ts, validation.ts. Body explicitly says "wiped by force push".
+  • `c8686a5` (Aug 28): "fix: rebuild heatmap without buildInventoryWhere" — 462 LOC, body says "Recreated heatmap files lost during force push".
+  • `c3cd2fd` (Aug 22): "fix: 7 bugs from DB migration audit (MIG, FUNC, QA)" — 2115 LOC incl. 1224 lines of worklog.
+  • `d62295d` (Aug 19): "feat: Resto Recommendation Engine" — 513 LOC, 8-signal priority scoring. Restored later via rebase pick (HEAD@{186}).
+- `git merge-base --is-ancestor <sha> HEAD` for each — CONFIRMED all 10 significant dangling commits are TRULY ORPHANED (not reachable from main).
+- `git log 81a621c..400b538` — confirmed the hard reset at HEAD@{38} orphaned 4 commits: 33-bug-fix (400b538), heatmap rebuild (0242f30/c8686a5), heatmap feature (6be095d), and a UUID commit (3171bdc).
+- `git show f8af5b8` — recovery commit "restore ALL rolled-back changes from force push (30+ items, 2 subagents)" touched 62 files. Also found 3 sibling recovery commits: a9d5ff4, af4e4d1, ca7e58a.
+- **SMOKING GUN**: `git diff 400b538:src/app/api/area-item-heatmap/route.ts HEAD:src/app/api/area-item-heatmap/route.ts` shows HEAD has REGRESSED — current main is MISSING from 400b538: (1) `heatmapQuerySchema` Zod validation import, (2) `RATE_LIMITS.analysis` shared constant (HEAD uses hardcoded `30, 60_000`), (3) `startedAt`/`durationMs` timing, plus comment-only changes. Also confirmed via ripgrep: `heatmapQuerySchema` not in current validation.ts; `i.name ASC` tiebreaker not in current heatmap.ts; no `role="grid"`/`role="row"` accessibility roles in current AreaItemHeatmap.tsx; no `itemLimit` upper-bound-100 guard in current route.ts. → User complaint "old versions keep appearing" is REAL, not imagined.
+- `git stash list` — empty (no live stashes). However 5 dangling commits are leftover stash auto-commits with messages like "WIP on main:" / "index on main:" — leftover from `git stash` operations that were never `pop`ed or `drop`ed.
+- `git reflog | wc -l` = 344 entries — bloated but within default 90-day expiry.
+
+Stage Summary:
+- 12 anomalies found: 5×P1, 4×P2, 3×P3
+- HEAD vs origin/main: IN SYNC (both `efc5cd9`, working tree clean, no divergence)
+- LOST commits: 10 orphaned by force push / hard reset. 4 are SIGNIFICANT (33 heatmap bug fixes, heatmap rebuild, 7 DB migration fixes, Resto Recommendation Engine — last one restored via rebase, first 3 STILL MISSING from main).
+- ROOT CAUSE of "old versions keep appearing": the orphaned commit `400b538` had 33 QA-audit bug fixes (Zod validation, accessibility roles, shared rate-limit constant, durationMs) that were NEVER cherry-picked back into main after the hard reset to 81a621c. The user's "restore" commits (f8af5b8, a9d5ff4) covered other lost work but missed these specific heatmap fixes.
+- SECONDARY CAUSE: 15 dangling commits + 8 unreachable commits sitting in `.git/lost-found/` may surface in IDE Git history panels (VS Code/Cursor "GitLens: Show History" sometimes surfaces dangling commits as "Stashes" or "Reflog").
+- TERTIARY: Vercel build cache — the 2 "trigger fresh Vercel build (clear stale cache)" commit messages (c8352b0 + b929c78) suggest Vercel was holding onto stale builds.
+- SECURITY: GitHub PAT embedded in remote URL during pull --rebase operations (visible in reflog HEAD@{146-150} and HEAD@{185-188}).
+
+NEXT ACTIONS (recommended):
+1. P1 — Cherry-pick 400b538's 33 bug fixes back into main (or apply the diff selectively: `git cherry-pick 400b538` after rebase-test on a throwaway branch). Verify heatmap route has Zod validation + shared RATE_LIMITS + durationMs.
+2. P1 — Rotate the leaked GitHub PAT immediately (the one embedded in pull --rebase URLs). Re-issue and update any CI scripts / .env files that use the old token.
+3. P2 — Review c8686a5 (heatmap rebuild) and c3cd2fd (DB migration audit) — confirm whether their fixes are also missing from main; cherry-pick if so.
+4. P2 — Run `git reflog expire --expire=now --all && git gc --prune=now` AFTER verifying no needed commits are still dangling — this will purge the 15 dangling + 8 unreachable objects, removing "old versions" from IDE Git panels.
+5. P3 — Run `git gc --auto` weekly via cron to keep reflog bounded. Consider adding `.gitignore` rule for `.zscripts/dev.pid` (currently being committed accidentally).
+6. P3 — Add a `pre-push` hook that blocks `git push --force` and `git push --force-with-lease` to main. The pattern of repeated history rewriting is what caused this mess.
+
+
+---
+Task ID: AUDIT-DIFF
+Agent: general-purpose (Code Diff Auditor)
+Task: Verify local vs remote vs production code sync (user reports "old versions keep appearing")
+
+Work Log:
+- Read worklog.md tail (~110 lines, offset 33800) for context — found prior task AUDIT-GIT (line 33911) already diagnosed root cause: orphaned commit 400b538 with 33 heatmap QA fixes was lost in force-push and never cherry-picked back. This audit re-verifies the situation post-AUDIT-GIT (no new commits since).
+- `git fetch origin` → FAILED: "could not read Username for 'https://github.com'" — sandbox has no GitHub credentials. Cannot refresh remote ref from upstream.
+- `git status` → "On branch main. Your branch is up to date with 'origin/main'. nothing to commit, working tree clean." (local view of origin/main is from last successful push).
+- `git diff origin/main HEAD --stat` → EMPTY (no diff).
+- `git diff origin/main HEAD --name-only` → EMPTY.
+- `git rev-parse HEAD` == `git rev-parse origin/main` == `efc5cd9619262027e70b8a3c748f4693aec1305`. Local HEAD and locally-cached origin/main are byte-identical.
+- `git reflog show origin/main -10` → last 5 entries all "update by push" (dd5e5e3 → b6b0824 → efdc7fc → efc5cd9). Push DID succeed. Ref file `.git/refs/remotes/origin/main` modified at 2026-08-29 18:36:33 (7s after commit timestamp 18:36:26).
+- `git status --porcelain` → EMPTY. `git diff --stat` → EMPTY. `git stash list` → EMPTY. Working tree 100% clean, no stashes, no untracked files. (Uncommitted-changes hypothesis REJECTED — user's complaint is NOT from local edits not pushed.)
+- `git log --oneline -5 -- src/app/page.tsx` → latest touch efdc7fc (page.tsx split).
+- `git log --oneline -5 -- src/components/dashboard/AreaItemHeatmap.tsx` → latest efc5cd9 (drill-down + Pareto 80/20).
+- `git log --oneline -5 -- src/components/dashboard/BomCorrelationCard.tsx` → latest 0f39604.
+- `git log --oneline -5 -- src/lib/queries/heatmap.ts` → latest efc5cd9.
+- `git log --oneline -5 -- src/lib/queries/rule-evaluation.ts` → latest 0f39604.
+- `git log --oneline -5 -- src/app/api/area-item-heatmap/route.ts` → latest efc5cd9.
+- `git log --oneline -5 -- src/app/api/analysis/services/post-process.ts` → latest 0f39604.
+- All 7 key files exist in HEAD with recent commit history. None missing.
+- `git show HEAD:src/components/dashboard/AreaItemHeatmap.tsx | grep -c "pareto80\|Maks Item\|onCellClick\|CellDetailSheet"` → 11.
+- `git show origin/main:src/components/dashboard/AreaItemHeatmap.tsx | grep -c "pareto80\|Maks Item\|onCellClick\|CellDetailSheet"` → 11. IDENTICAL non-zero count → the latest efc5cd9 version IS pushed to origin/main.
+- `git show HEAD:src/app/api/area-item-heatmap/cell-detail/route.ts | head -5` → exists, with header comment "/api/area-item-heatmap/cell-detail GET: ?month=&week=&area=&item=...".
+- `git show origin/main:src/app/api/area-item-heatmap/cell-detail/route.ts | head -5` → IDENTICAL. Cell-detail route IS in remote.
+- Read vercel.json (15 lines) → buildCommand = "bunx prisma generate && bun run next build". Functions block lists 3 paths: src/app/api/ingest (exists ✓), src/app/api/import-drive (exists ✓), src/app/api/outlet-focus (DOES NOT EXIST ✗ — deleted in commit b2a95b3 "refactor: delete 3500+ lines dead code after 2-tab restructure"). vercel.json has STALE function reference.
+- Read package.json (73 lines) → build script = "prisma generate && next build --turbo". Vercel buildCommand runs `bun run next build` (no --turbo flag). Local build uses --turbo. Inconsistency: Vercel builds run without --turbo (slower but functionally identical for Next 16). Should not cause stale deployments.
+- Read next.config.ts (71 lines) → standard Next 16 config. `typescript.ignoreBuildErrors: false`, `reactStrictMode: true`, `compress: true`, `optimizePackageImports` for recharts/lucide/radix. Headers block sets `Cache-Control: public, max-age=31536000, immutable` on `/_next/static/*` (content-hashed assets — safe). No build-skip directives, no `outputFileTracingIncludes`/`excludes` that could filter files.
+- `ls -la .vercel` → DOES NOT EXIST. .gitignore has `.vercel` entry (line 41). No project link metadata locally — cannot verify which Vercel project is bound or which branch auto-deploys.
+- `find . -name "package.json" -not -path "*/node_modules/*" -not -path "*/.next/*"` → 5 matches: ./package.json (root), ./skills/storyboard-manager/package.json, ./skills/stock-analysis-skill/package.json, ./skills/skill-finder-cn/package.json, ./skills/podcast-generate/package.json. The 4 subdirectory package.json files are inside `./skills/` (sandbox-only agent skill definitions, NOT part of the deployed app — Vercel builds from root package.json only). No conflicting configs at app level.
+- `git remote -v` → single remote `origin` → https://github.com/anandategarch/Inventory-Control.git. No Vercel-specific remote. No Heroku/Render/etc.
+- `git merge-base --is-ancestor 400b538 HEAD` → exit 1 (NOT ancestor). Confirms orphaned commit 400b538 (33 heatmap QA fixes) is STILL missing from current main, exactly as AUDIT-GIT found.
+- `git show 400b538:src/components/dashboard/AreaItemHeatmap.tsx | grep -c 'role="grid"\|role="row"\|role="gridcell"'` → 5. (400b538 HAD accessibility roles.)
+- `git show HEAD:src/components/dashboard/AreaItemHeatmap.tsx | grep -c 'role="grid"\|role="row"\|role="gridcell"'` → 0. (HEAD is MISSING accessibility roles — regression confirmed.)
+- `git show 400b538:src/lib/validation.ts | grep -c "heatmapQuerySchema"` → 1. (400b538 HAD Zod schema.)
+- `git show HEAD:src/lib/validation.ts | grep -c "heatmapQuerySchema"` → 0. (HEAD is MISSING Zod validation for heatmap — regression confirmed.)
+- `grep -n "RATE_LIMITS\|rateLimit" src/app/api/area-item-heatmap/route.ts` → line 12 imports RATE_LIMITS, but line 33 uses HARDCODED `rateLimit(\`heatmap:${ip}\`, 30, 60_000)` instead of `RATE_LIMITS.analysis.maxRequests`. (400b538's BUG-A-11 fix to use shared constant was REGRESSED.)
+- `grep -n "durationMs\|startedAt" src/app/api/area-item-heatmap/route.ts` → only `durationMs: 0, // will be filled by caller if needed` placeholder at line 113. (400b538's BUG-A-04 fix to populate durationMs from startedAt was REGRESSED.)
+- `grep -n "ORDER BY" src/lib/queries/heatmap.ts` → 3 occurrences (lines 100, 179, 253) all sort by value DESC, NONE has `i.name ASC` tiebreaker. (400b538's BUG-Q-07 fix to add deterministic tiebreaker was REGRESSED.)
+- `grep -n "itemLimit" src/app/api/area-item-heatmap/route.ts` → line 60 uses `Math.min(109, ...)` — upper bound is 109, but 400b538's BUG-A-05 fix changed this to 100 (the 109 was a typo in original code).
+- `git fsck --lost-found | grep -c "dangling commit"` → 15. Same count as AUDIT-GIT found. No cleanup performed since prior audit.
+- `grep -n "outlet-focus" railway.toml nixpacks.toml Caddyfile 2>/dev/null` → no matches. The outlet-focus reference exists ONLY in vercel.json (not in other deploy configs).
+- Reviewed prior AUDIT-GIT (worklog:33911) recommendations: P1 cherry-pick 400b538, P1 rotate leaked PAT, P2 review c8686a5/c3cd2fd, P2 gc, P3 pre-push hook. Status: NONE of these have been actioned (no new commits between AUDIT-GIT and AUDIT-DIFF).
+
+Stage Summary:
+- Local HEAD vs origin/main: IN SYNC. Both at `efc5cd9`, working tree clean, stash empty, push confirmed successful via reflog. NO local-vs-remote divergence.
+- Key files at latest version: YES for efc5cd9 (the latest commit on main). All 7 audited files exist in HEAD with recent commit history; cell-detail route is in remote; AreaItemHeatmap has 11/11 markers for pareto80/Maks Item/onCellClick/CellDetailSheet.
+- Uncommitted changes: NONE. Working tree is byte-identical to HEAD.
+- ROOT CAUSE CONFIRMED (same as AUDIT-GIT): user's "old versions keep appearing" is REAL. Commit `400b538` (2026-08-28 14:12, "fix(heatmap): 33 bug fixes from QA audit") was orphaned by a hard reset (reflog HEAD@{38}) and NEVER cherry-picked back into main. Current `efc5cd9` is missing:
+  • `heatmapQuerySchema` Zod validation in validation.ts (HEAD: 0 matches, 400b538: 1 match)
+  • `RATE_LIMITS.analysis` shared constant usage in route.ts (HEAD uses hardcoded `30, 60_000`)
+  • `startedAt`/`durationMs` timing instrumentation (HEAD has only `durationMs: 0` placeholder)
+  • `i.name ASC` deterministic tiebreaker in heatmap.ts ORDER BY clauses (HEAD: 0 matches)
+  • `role="grid"`/`role="row"`/`role="gridcell"` accessibility roles in AreaItemHeatmap.tsx (HEAD: 0, 400b538: 5)
+  • `itemLimit` upper-bound-100 guard (HEAD still uses `Math.min(109, ...)` — the typo 400b538 explicitly fixed)
+  • 27 other smaller fixes (BUG-A-02/03/06/07/12, BUG-Q-01/02, BUG-U-01 through U-14 — see 400b538 commit body for full list)
+- SECONDARY: vercel.json has stale function reference `src/app/api/outlet-focus` (route was deleted in commit b2a95b3). Vercel silently ignores missing function paths but it indicates config drift.
+- TERTIARY: vercel.json buildCommand (`bunx prisma generate && bun run next build`) does NOT use `--turbo` flag that local `package.json build` script uses. Builds will be slower on Vercel but functionally identical.
+- DEPLOYMENT STATUS: Cannot verify without Vercel dashboard access. No `.vercel/` directory locally. No Vercel CLI tokens in env. The most likely production-side failure modes (in priority order): (1) user's browser cached old JS bundle from before efc5cd9 push — Next.js immutable cache on `/_next/static/*` means HTML page must be revalidated but old chunks cached for 1 year; (2) Vercel auto-deploy webhook didn't fire or build is queued/failed; (3) Vercel serving last-successful deployment due to current build failing (e.g., on the stale `outlet-focus` functions reference).
+- CANNOT RULE OUT: Vercel deployment may not even be wired to this GitHub repo's main branch (no .vercel/project.json to verify). If user is checking a different deployment target (Railway? Caddyfile reverse proxy?), the production URL they're hitting may be a different deploy entirely. railway.toml + nixpacks.toml + Caddyfile all exist as alternative deploy configs.
+
+NEXT ACTIONS (recommended, in priority order):
+1. P1 — Cherry-pick 400b538 into main: `git cherry-pick 400b538` (verify it applies cleanly; if conflicts because efc5cd9 added cell-detail/route.ts, resolve manually keeping both — the 33 fixes are to route.ts/heatmap.ts/AreaItemHeatmap.tsx/validation.ts, none overlap with cell-detail/route.ts which is a NEW file). Then `git push origin main`. This restores the 33 lost bug fixes the user is seeing as "old versions".
+2. P1 — Verify Vercel deployment is actually connected: ask user to confirm (a) which production URL they're hitting, (b) whether Vercel dashboard shows a build triggered by commit efc5cd9 at 2026-08-29 18:36. If no recent build in Vercel dashboard, the auto-deploy webhook is broken — re-connect repo in Vercel project settings.
+3. P1 — User should hard-refresh browser (Ctrl+Shift+R / Cmd+Shift+R) to bust the `/_next/static/*` immutable cache for the HTML page. Next.js content-hashed chunks will re-fetch only if HTML references new hashes.
+4. P2 — Remove stale `src/app/api/outlet-focus` entry from vercel.json `functions` block (route was deleted in b2a95b3). Also consider removing the entire `functions` block — Next.js 16 App Router auto-discovers routes and Vercel auto-configures maxDuration from `export const maxDuration` in each route.ts. The manual `functions` block is redundant and prone to drift.
+5. P2 — Align buildCommand: either change vercel.json to `"buildCommand": "bunx prisma generate && bun run build"` (uses package.json script with --turbo), OR change package.json `build` to drop --turbo to match Vercel. Pick one. (Note: --turbo is still experimental in Next 16 for production builds — Vercel may auto-strip it. Safer to drop --turbo from package.json to match what Vercel actually runs.)
+6. P2 — Run `git reflog expire --expire=now --all && git gc --prune=now` AFTER cherry-picking 400b538 (and confirming c8686a5/c3cd2fd are also recovered or explicitly abandoned). This purges the 15 dangling commits so they stop showing up in IDE Git history panels.
+7. P3 — Add a `pre-push` hook (`.git/hooks/pre-push`) that blocks `git push --force` and `git push --force-with-lease` on main. Pattern of repeated history rewriting is what orphaned 400b538 in the first place.
+8. P3 — Rotate the leaked GitHub PAT (visible in reflog HEAD@{146-150} and HEAD@{185-188} from `pull --rebase https://<token>@github.com/...`). Re-issue and update any CI scripts.
+
+---
+Task ID: AUDIT-CACHE
+Agent: general-purpose (Build Cache Auditor)
+Task: Find why stale code is being served despite source updates
+
+Work Log:
+- Read worklog.md tail (~270 lines) — context: prior tasks SPLIT-PAGE (refactored page.tsx → DashboardTab.tsx with dynamic() AreaItemHeatmap), AUDIT-HEATMAP-TRUNC, AUDIT-HEATMAP-FLICKER.
+- Inspected .next/ → only `.next/dev/` exists (167 MB total), no `.next/cache/webpack/`. Subdirs: build/, cache/, server/, static/.
+- Inspected .next/dev/cache/turbopack/v16.3.3-a9a1cb78/ → 7 SST files totaling 101 MB (Turbopack persistent module cache).
+- Verified ground truth: `grep -n "Top Items\|Maks Item\|pareto80\|onCellClick" src/components/dashboard/AreaItemHeatmap.tsx` → line 487 says `<Label>Maks Item:</Label>`, line 25 defines `ItemSelectMode = 'pareto80' | 'top'`, line 142 has `onCellClick` prop. SOURCE IS FRESH.
+- Searched ALL .next/dev chunks for `Top Items:` (with colon, heatmap label style) → ZERO matches in any on-disk chunk. Searched for `Maks Item:` → 1 match in `.next/dev/static/chunks/src_components_dashboard_AreaItemHeatmap_tsx_022dtko._.js` (the live chunk). Conclusion: NO stale heatmap chunk exists on disk; dev server has the fresh code.
+- Cross-checked OLD dashboard bundles `src_components_dashboard_1tgwpen._.js` (1.14 MB) and `src_components_dashboard_1bx7_u7._.js` (1.17 MB SSR) — these contain 5 occurrences of "Top Items" but ZERO occurrences of heatmap markers (`areaName`, `Pareto 80%`, `ItemSelectMode`, `onCellClick`). Conclusion: the "Top Items" strings in those chunks are LEGITIMATE references from ParetoDashboard (3 mentions), ExportDialog (1), DashboardTab comment (1) — NOT stale heatmap code.
+- Checked running processes: ONLY ONE dev server (PID 31513, `next dev -p 3000`, started 18:34:24). No `next start`, no other Next.js instances, no other project copies on disk. No service worker / next-pwa / serwist in package.json.
+- Checked listening ports: only :3000 (next-server), :81 (unrelated), :19005/19006/19001 (unrelated), :12600 (unrelated). No port conflict.
+- Checked for duplicate AreaItemHeatmap files: only ONE on disk (`./src/components/dashboard/AreaItemHeatmap.tsx`). Only ONE import path (`src/components/dashboard/tabs/DashboardTab.tsx:35` via `dynamic(() => import('@/components/dashboard/AreaItemHeatmap'), { ssr: false })`). No wrong-path or duplicate-file issue.
+- Inspected chunk URL response headers via `curl -sI http://localhost:3000/_next/static/chunks/src_components_dashboard_AreaItemHeatmap_tsx_022dtko._.js` → `Cache-Control: public, max-age=31536000, immutable` ← THE BUG.
+- Read next.config.ts lines 41-49 — found custom `headers()` rule: `{ source: '/_next/static/(.*)', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] }`. Comment at line 36-40 claims "/_next/static/* files are content-hashed (filename changes when content changes)" — THIS ASSUMPTION IS FALSE for Turbopack dev mode, where chunk filenames use a STABLE module-ID hash (e.g. `022dtko`) that does NOT change when source is edited. Same URL, different content over time + immutable header = browser serves stale cached version forever.
+- Confirmed dev.log warning (from prior session, /tmp/dev.log line 12): `Warning: Custom Cache-Control headers detected for the following routes: /_next/static/(.*). Setting a custom Cache-Control header can break Next.js development behavior.` — Next.js itself was warning about this exact issue.
+- Confirmed Turbopack SST cache `.next/dev/cache/turbopack/v16.3.3-a9a1cb78/00000004.sst` (23 MB) contains stale "Top Items" references — persistent cache retains compiled module outputs from previous dev sessions, compounding the staleness.
+- Inspected package.json scripts: `"dev": "next dev -p 3000 2>&1 | tee dev.log"` — dev.log written via tee. The running dev server (started 18:34:24) was started directly with `next dev`, not via `bun run dev` (because /tmp/dev.log mtime is 16:32, predates server start).
+- Applied FIX to next.config.ts: gated the `/_next/static/(.*)` immutable rule on `process.env.NODE_ENV === 'production'`. In dev, the rule is omitted entirely → Turbopack's default `Cache-Control: no-cache, must-revalidate` applies → browser always revalidates → source edits reach the browser within seconds. Production behavior unchanged (immutable 1-year cache for hashed assets).
+- Cleared `.next/` and `node_modules/.cache/` to evict the stale Turbopack SST cache that contained "Top Items" content.
+- Restarted dev server with the fixed config. Verified:
+  - Chunk URL `/_next/static/chunks/src_components_dashboard_AreaItemHeatmap_tsx_022dtko._.js` now returns `Cache-Control: no-cache, must-revalidate` (was `public, max-age=31536000, immutable`).
+  - Heatmap chunk on disk: `Maks Item` count = 1, `Top Items:` count = 0 (fresh code).
+  - Next.js "Custom Cache-Control detected" warning is GONE from dev log.
+  - `bunx tsc --noEmit` exit 0 (no type errors introduced).
+  - Production config still wires the immutable rule (NODE_ENV=production path unchanged).
+- NOTE: User's browser will STILL show "Top Items:" until they manually clear browser cache (the old chunk is cached for 1 year with `immutable` and won't be re-fetched even with hard reload if the URL hasn't changed). After clearing browser cache once, future source edits will appear within seconds.
+
+Stage Summary:
+- 1 cache issue found (P1) — root cause of "old versions keep appearing":
+  - CACHE-01 [P1]: next.config.ts `headers()` rule set `Cache-Control: public, max-age=31536000, immutable` on `/_next/static/*` for BOTH dev and prod. In Turbopack dev mode, chunk URLs use a stable module-ID hash (NOT a content hash), so the URL stays the same after a source edit while the file content changes. Combined with `immutable`, the browser caches the first version of each chunk URL for 1 year and never re-fetches → user sees stale code (e.g. "Top Items:" instead of "Maks Item:") despite source updates. Fix: gate the immutable rule on `NODE_ENV === 'production'` (omit in dev → Turbopack default `no-cache, must-revalidate` applies).
+- Root cause of old version appearing: BROWSER-side disk cache of the chunk URL (Turbopack dev chunks are served with `immutable` due to the next.config.ts headers() rule, but the URL doesn't change between source edits because Turbopack uses a stable module-ID hash in dev, not a content hash). The dev server itself was NOT serving stale code — `curl` of the chunk URL returned the fresh "Maks Item:" content. The staleness was 100% on the browser side.
+- 3 secondary cleanup actions taken:
+  - Cleared `.next/` (167 MB) including the 101 MB Turbopack SST cache that retained stale "Top Items" content.
+  - Cleared `node_modules/.cache/`.
+  - Silenced the Next.js dev-mode warning "Custom Cache-Control headers detected".
+- 1 manual user action still required: clear browser cache (or open DevTools → Network → "Disable cache" while DevTools is open) ONCE to evict the year-old `immutable` chunk entries. After that, future source edits will hot-reload normally.

@@ -34,19 +34,38 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['recharts', 'lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-popover'],
   },
   // PERF-FASE2-INFRA04: Immutable cache for Next.js static assets.
-  // /_next/static/* files are content-hashed (filename changes when content
-  // changes), so they're safe to cache forever (1 year). Browser never needs
-  // to re-fetch them → 60-80% fewer requests on repeat visits.
+  // /_next/static/* files are content-hashed in PRODUCTION (filename changes
+  // when content changes), so they're safe to cache forever (1 year). Browser
+  // never needs to re-fetch them → 60-80% fewer requests on repeat visits.
   // `immutable` tells browsers/CDNs to NEVER revalidate (no 304 checks).
+  //
+  // AUDIT-CACHE (P1 FIX): In Turbopack DEV mode, chunk filenames use a STABLE
+  // module-ID hash (e.g. `AreaItemHeatmap_tsx_022dtko._.js`), NOT a content
+  // hash. The URL stays the same after a source edit — only the file content
+  // changes. If we send `immutable` in dev, the browser caches the FIRST
+  // version of each chunk URL and never re-fetches, so source edits never
+  // reach the browser until the cache entry expires (1 year). This is exactly
+  // why "old versions keep appearing" despite source updates.
+  //
+  // The headers() function runs in both dev and prod, so we MUST gate this
+  // rule on NODE_ENV === 'production'. In dev, we OMIT the rule entirely so
+  // Turbopack's default `no-cache` headers apply AND Next.js's "Custom
+  // Cache-Control detected" warning is silenced. The catch-all /(.*) rule
+  // below does NOT set Cache-Control, so it doesn't interfere with Turbopack's
+  // defaults on /_next/static/* in dev.
   async headers() {
+    const isProd = process.env.NODE_ENV === 'production';
+    const staticAssetRules = isProd
+      ? [{
+          // PROD ONLY: Content-hashed static assets — cache forever (immutable)
+          source: '/_next/static/(.*)',
+          headers: [
+            { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+          ],
+        }]
+      : []; // DEV: omit rule → Turbopack's default no-cache applies
     return [
-      {
-        // Content-hashed static assets — cache forever (immutable)
-        source: '/_next/static/(.*)',
-        headers: [
-          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
-        ],
-      },
+      ...staticAssetRules,
       {
         source: '/(.*)',
         headers: [

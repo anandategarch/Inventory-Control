@@ -80,6 +80,10 @@ export async function queryAreaItemHeatmap(
 ): Promise<HeatmapResult> {
   const f = buildSqlFilters(filters);
   const metricExpr = METRIC_SQL[metric];
+  // BUG-Q-01: Defensive guard for invalid metric
+  if (!metricExpr) throw new Error(`Invalid heatmap metric: ${metric}`);
+  // BUG-Q-02: Clamp itemLimit at function entry (defense-in-depth for non-API callers)
+  const safeLimit = Math.max(1, Math.min(100, Math.trunc(itemLimit) || 20));
 
   // Step 1: Get ALL items with their total metric value (for Pareto selection)
   // For 'pctQtyDeviasiToBom' and 'recordCount', Pareto doesn't make semantic sense
@@ -97,7 +101,7 @@ export async function queryAreaItemHeatmap(
       AND ir."weekLabel" = ${week}
       ${f}
     GROUP BY i.name
-    ORDER BY "totalValue" DESC
+    ORDER BY "totalValue" DESC, i.name ASC
   `);
 
   if (allItemsRows.length === 0) {
@@ -176,7 +180,7 @@ export async function queryAreaItemHeatmap(
       AND i.name IN (${itemNames})
       ${f}
     GROUP BY ir.area, i.name
-    ORDER BY ir.area, value DESC
+    ORDER BY ir.area, value DESC, i.name ASC
   `);
 
   // Step 4: Extract distinct areas (preserve order from cells)

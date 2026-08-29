@@ -79,3 +79,4 @@ tool-results/
 *.tmp
 data/inventory/*.csv
 data/inventory/*.tmp
+.zscripts/dev.pid

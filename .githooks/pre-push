@@ -1,0 +1,16 @@
+#!/bin/sh
+# Block force push to main to prevent orphaning commits (AUDIT-GIT fix)
+while read local_ref local_sha remote_ref remote_sha; do
+  branch=$(echo "$remote_ref" | sed 's|refs/heads/||')
+  if [ "$branch" = "main" ] && [ "$local_sha" != "$(git rev-parse origin/main 2>/dev/null)" ]; then
+    # Check if this is a force push (non-fast-forward)
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      echo "❌ BLOCKED: Force push to main detected."
+      echo "   This can orphan commits and cause 'old versions' to appear."
+      echo "   Use: git push origin main (without --force)"
+      echo "   If you really need to force push, bypass with: git push --no-verify"
+      exit 1
+    fi
+  fi
+done
+exit 0
