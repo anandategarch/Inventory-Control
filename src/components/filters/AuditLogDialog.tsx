@@ -5,12 +5,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, History, RefreshCw } from 'lucide-react';
-import { fmtIDR } from '@/lib/format';
 
 interface AuditLogEntry {
   id: number;
@@ -82,8 +80,8 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col gap-3 p-5">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <History className="h-4 w-4 text-amber-600" />
             Audit Log
@@ -92,7 +90,7 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
         </DialogHeader>
 
         {/* Filter bar */}
-        <div className="flex items-center gap-2 pb-2 border-b">
+        <div className="flex items-center gap-2 pb-2 border-b shrink-0">
           <Select value={actionFilter} onValueChange={handleActionChange}>
             <SelectTrigger className="h-8 text-xs w-[180px]">
               <SelectValue placeholder="Semua Aksi" />
@@ -121,8 +119,8 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
           </Button>
         </div>
 
-        {/* Log entries */}
-        <ScrollArea className="flex-1 min-h-0">
+        {/* Log entries — plain scroll div (ScrollArea has height issues in flex dialogs) */}
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           {isLoading && (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
@@ -140,7 +138,7 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
               {entries.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex items-start gap-3 p-2.5 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+                  className="flex items-start gap-2 p-2.5 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
                 >
                   <Badge
                     variant="outline"
@@ -148,9 +146,9 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
                   >
                     {entry.action}
                   </Badge>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-foreground break-words">{entry.detail}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <p className="text-xs text-foreground break-words whitespace-pre-wrap">{entry.detail}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 shrink-0">
                       {formatTime(entry.createdAt)}
                       {entry.duration != null && ` · ${entry.duration}ms`}
                     </p>
@@ -159,12 +157,12 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
               ))}
             </div>
           )}
-        </ScrollArea>
+        </div>
 
         {/* Pagination */}
         {pagination && pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between pt-2 border-t text-xs text-muted-foreground">
-            <span>
+          <div className="flex items-center justify-between pt-2 border-t text-xs text-muted-foreground shrink-0">
+            <span className="truncate">
               Halaman {pagination.page} dari {pagination.totalPages} ({pagination.total} total)
             </span>
             <div className="flex gap-1">
