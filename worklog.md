@@ -30704,3 +30704,57 @@ Stage Summary:
 - 6 bugs found (2 P1, 2 P2, 2 P3)
 - P1: errorResponse-without-return (18 routes); OutletPeriodSales not populated by UI upload path
 - Full findings in main response.
+
+---
+Task ID: ZSCORE-TESTS
+Agent: general-purpose (Test Writer)
+Task: Add tests for computeZScore + calcZScoreFromStats
+
+Work Log:
+- Read worklog tail (FIND-BUG-API/FIND-BUG-UI precede this task).
+- Read src/lib/metrics/historical.ts (190 lines) — verified function signatures, ABS-magnitude
+  formula, sample variance (N-1), trend ratio thresholds (0.9/1.1), benchmarkFlag
+  (HISTORICAL_HIGH/HISTORICAL_WARNING), warningLevel (ABNORMAL/WARNING/NORMAL/NONE).
+- Read src/lib/settings.ts to confirm threshold defaults: HISTORICAL_MIN_WEEKS=4,
+  HISTORICAL_ZSCORE_WARN=1.5, HISTORICAL_ZSCORE_HIGH=2.0.
+- Hand-verified math for tricky cases (zScore≈11.62 for test #1, zScore≈1.936 for
+  HISTORICAL_WARNING test #13, zScore≈0.387 for NORMAL test #14c) using a node script
+  before writing assertions.
+- Created tests/lib/metrics/historical.test.ts (23 test cases).
+- Ran `bun run test tests/lib/metrics/historical.test.ts` → 23/23 passed (11ms).
+- Ran full `bun run test` → 415/418 passed. 3 failures in tests/queries/rule-evaluation.test.ts
+  are PRE-EXISTING and UNRELATED to this task — caused by a prior Phase A-2 modification
+  to src/lib/queries/rule-evaluation.ts that removed BENCHMARK_ABOVE_AREA / BENCHMARK_ABOVE_NETWORK
+  duplicate flags while the test file still expects them. Verified by stashing the prior
+  agent's modifications → rule-evaluation tests pass without them.
+
+Test cases covered (23 total):
+  computeZScore (18):
+    1. Normal case — 5 historical values, valid current → correct zScore
+    2. Insufficient data (n=3, min=4) → null + INSUFFICIENT_DATA
+    3. Exactly MIN_WEEKS (n=4) → zScore computed
+    4. stdDev=0 (all identical) → null zScore
+    5. currentValue=null → null zScore, trend=STABLE
+    6. All historical null → null zScore, n=0, INSUFFICIENT_DATA
+    7. Mixed nulls → filtered, sampleSize = non-null count
+    8. Negative values → ABS used (matches positive equivalent)
+    9. Trend DETERIORATING (current > 1.1× mean)
+   10. Trend IMPROVING (current < 0.9× mean)
+   11. Trend STABLE (within 0.9-1.1× mean)
+   12. benchmarkFlag HISTORICAL_HIGH (zScore > 2.0)
+   13. benchmarkFlag HISTORICAL_WARNING (1.5 < z ≤ 2.0)
+   14a-d. warningLevel ABNORMAL / WARNING / NORMAL / NONE
+   15. Edge: mean=0, current>0 → trend=DETERIORATING (zero-base onset)
+  calcZScoreFromStats (5):
+    1. Normal (value=45, mean=15, stdDev=8 → 3.75)
+    2. value=null → null
+    3. stdDev=0 → null
+    4. Negative value → ABS used
+    5. value=0 → returns -mean/stdDev
+
+Stage Summary:
+- 23 test cases, all passing
+- No source code modified (test-only change)
+- Source coverage: src/lib/metrics/historical.ts (computeZScore + calcZScoreFromStats)
+- Pre-existing failures in tests/queries/rule-evaluation.test.ts (3 tests) flagged for
+  follow-up — they're caused by Phase A-2 rule-evaluation refactor, NOT this task

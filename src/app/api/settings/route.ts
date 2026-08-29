@@ -17,7 +17,6 @@ import {
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation';
-import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout

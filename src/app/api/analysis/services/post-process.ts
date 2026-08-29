@@ -347,9 +347,9 @@ export async function buildHistoricalAnalysis(
     };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-  // FIX: return top 50 (was 10) — HistoricalZScoreCard displays a sortable table.
-  // 50 is manageable payload (~5KB) and gives users enough data to explore.
-  return { criticalItems: histCriticalItems.slice(0, 50) };
+  // FIX: return top 200 (was 50) — Phase B-4: increased limit for pagination.
+  // HistoricalZScoreCard shows 20 initially with "load more" button.
+  return { criticalItems: histCriticalItems.slice(0, 200) };
 }
 
 /**

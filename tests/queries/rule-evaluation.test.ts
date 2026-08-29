@@ -103,7 +103,7 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_NETWORK')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
   });
 
   it('fires HISTORICAL_ABNORMAL_SURPLUS when SURPLUS direction + zScore > high', () => {
@@ -116,7 +116,7 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_NETWORK')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
   });
 
   it('fires HISTORICAL_WARNING + BENCHMARK_ABOVE_AREA when zScore between warn and high', () => {
@@ -131,7 +131,7 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_WARN: 2, HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_WARNING')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_AREA')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_AREA removed (duplicate of HISTORICAL_WARNING)
     // Should NOT fire ABNORMAL (zScore not > high)
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(false);
   });

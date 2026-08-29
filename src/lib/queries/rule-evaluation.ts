@@ -254,15 +254,10 @@ export function evaluateHistoricalRulesJs(
       flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_WARNING', severity: 'WARNING', category: 'HISTORICAL', priority: 58 });
     }
 
-    // BENCHMARK_ABOVE_AREA (benchmarkFlag = HISTORICAL_WARNING)
-    if (zScore > zWarn && zScore <= zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'BENCHMARK_ABOVE_AREA', severity: 'WARNING', category: 'BENCHMARK', priority: 50 });
-    }
-
-    // BENCHMARK_ABOVE_NETWORK (benchmarkFlag = HISTORICAL_HIGH)
-    if (zScore > zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'BENCHMARK_ABOVE_NETWORK', severity: 'ABNORMAL', category: 'BENCHMARK', priority: 72 });
-    }
+    // Phase A-2 FIX: Removed BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK duplicates.
+    // These were firing on the SAME zScore condition as HISTORICAL_WARNING/HIGH,
+    // producing duplicate flags with different rule codes. They should compare
+    // against area/network avg (not historical), but that's a separate feature.
   }
 
   return flags;

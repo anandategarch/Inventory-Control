@@ -2,12 +2,14 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
-import { ArrowUpDown, ArrowUp, ArrowDown, History } from 'lucide-react';
-import { useState, useMemo, memo } from 'react';
+import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown } from 'lucide-react';
+import { useState, useMemo, memo, useCallback } from 'react';
 
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
 type SortDir = 'asc' | 'desc';
@@ -46,6 +48,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   );
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Phase B-4: Pagination — show 20 initially, load more in batches of 20
+  const [displayCount, setDisplayCount] = useState(20);
+  const PAGE_SIZE = 20;
 
   const sorted = useMemo(() => {
     const arr = [...items];
@@ -64,14 +69,24 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
     return arr;
   }, [items, sortKey, sortDir]);
 
-  const toggleSort = (key: SortKey) => {
+  const toggleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
       setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
     } else {
       setSortKey(key);
       setSortDir('desc');
     }
-  };
+  }, [sortKey, sortDir]);
+
+  // Phase B-4: Reset display count when sort changes
+  const handleSort = useCallback((key: SortKey) => {
+    toggleSort(key);
+    setDisplayCount(PAGE_SIZE);
+  }, [toggleSort]);
+
+  const loadMore = useCallback(() => {
+    setDisplayCount(prev => Math.min(prev + PAGE_SIZE, sorted.length));
+  }, [sorted.length]);
 
   const abnormalCount = items.filter(i => Math.abs(i.zScore) > 3).length;
   const warningCount = items.filter(i => Math.abs(i.zScore) > 2 && Math.abs(i.zScore) <= 3).length;
@@ -102,10 +117,18 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
       </CardHeader>
       <CardContent className="p-0">
         {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
+          <div className="flex flex-col items-center justify-center py-10 text-center px-6">
             <History className="h-8 w-8 text-muted-foreground/40 mb-2" />
             <p className="text-sm text-muted-foreground">Tidak ada anomali historical</p>
             <p className="text-xs text-muted-foreground/70 mt-1">Semua item dalam batas normal vs rata-rata historis</p>
+            {/* Phase A-1: Info banner explaining minimum data requirement */}
+            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
+              <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
+                <p className="font-medium">Tips: Z-Score butuh minimal 4 bulan data</p>
+                <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1). Upload data minimal 4 bulan untuk hasil optimal.</p>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="max-h-[500px] overflow-auto">
@@ -113,29 +136,29 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 w-8">#</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('itemName')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => handleSort('itemName')}>
                     Item <SortIcon col="itemName" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('area')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => handleSort('area')}>
                     Area <SortIcon col="area" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('currentDevBom')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('currentDevBom')}>
                     Current Dev/BOM <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('historicalAvg')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('historicalAvg')}>
                     Historical Avg <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('zScore')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('zScore')}>
                     Z-Score <SortIcon col="zScore" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center">Status</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => toggleSort('absNominal')}>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('absNominal')}>
                     |Nominal| <SortIcon col="absNominal" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((item, i) => {
+                {sorted.slice(0, displayCount).map((item, i) => {
                   const badge = zScoreBadge(item.zScore);
                   return (
                     <TableRow key={`${item.itemName}-${item.outletCode}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
@@ -148,16 +171,31 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
                       <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
-                        {/* FIX #33: visual magnitude bar — width = |z|/5 * 100 (capped 100%). */}
-                        <div className="flex items-center justify-end gap-1.5">
-                          <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden" aria-hidden>
-                            <div
-                              className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
-                              style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }}
-                            />
-                          </div>
-                          {item.zScore.toFixed(2)}
-                        </div>
+                        {/* Phase B-5: Tooltip with computation breakdown */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center justify-end gap-1.5 cursor-help">
+                              <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden" aria-hidden>
+                                <div
+                                  className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+                                  style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }}
+                                />
+                              </div>
+                              {item.zScore.toFixed(2)}
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="text-xs p-3 max-w-xs">
+                            <div className="space-y-1">
+                              <p className="font-semibold">Z-Score Breakdown</p>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${item.currentDevBom > item.historicalAvg ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentDevBom > item.historicalAvg ? '+' : ''}{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Ratio:</span><span className="font-medium tabular-nums">{(item.currentDevBom / item.historicalAvg).toFixed(2)}×</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(item.zScore)}`}>{item.zScore.toFixed(2)} ({badge.label})</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Nominal|:</span><span className="font-medium tabular-nums">{fmtIDR(item.absNominal)}</span></div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-center">
                         <Badge variant={badge.variant} className="text-[11px] h-4 px-1 font-medium">{badge.label}</Badge>
@@ -168,6 +206,20 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                 })}
               </TableBody>
             </Table>
+            {/* Phase B-4: Load more button */}
+            {displayCount < sorted.length && (
+              <div className="flex items-center justify-center py-3 border-t">
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={loadMore}>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                  Tampilkan lebih banyak ({sorted.length - displayCount} tersisa)
+                </Button>
+              </div>
+            )}
+            {displayCount > PAGE_SIZE && (
+              <div className="flex items-center justify-center py-1">
+                <span className="text-[10px] text-muted-foreground">Menampilkan {displayCount} dari {sorted.length} item</span>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
