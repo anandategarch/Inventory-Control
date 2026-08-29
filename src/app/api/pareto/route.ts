@@ -161,6 +161,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error('[pareto] error:', { error: e instanceof Error ? e.message : String(e) });
-    errorResponse(e, "pareto");
+    return errorResponse(e, "pareto");
   }
 }

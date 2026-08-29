@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
       months: Object.values(byMonth).sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
-    errorResponse(e, "data");
+    return errorResponse(e, "data");
   }
 }
 
@@ -269,6 +269,6 @@ export async function DELETE(req: NextRequest) {
       deleted: { sourceFiles: deletedFiles, records: deletedRecords, weeks: deletedWeeks },
     });
   } catch (e: unknown) {
-    errorResponse(e, "data");
+    return errorResponse(e, "data");
   }
 }

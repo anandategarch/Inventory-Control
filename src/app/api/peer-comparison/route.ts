@@ -59,6 +59,6 @@ export async function GET(req: NextRequest) {
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[peer-comparison] error:", { error: e });
-    errorResponse(e, "peer-comparison");
+    return errorResponse(e, "peer-comparison");
   }
 }

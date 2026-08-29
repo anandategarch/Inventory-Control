@@ -146,6 +146,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });
-    errorResponse(e, "recommendations");
+    return errorResponse(e, "recommendations");
   }
 }

@@ -751,5 +751,41 @@ export async function processRowsForImport(
     inserted += result2.count;
   }
 
+  // API-02 FIX: Pre-compute sales MODE per (outlet, period) — same as processIngestion STEP 3.5.
+  // Without this, UI uploads (FileUploadDialog → /api/ingest-process) leave OutletPeriodSales
+  // empty → "Top by Sales" widget blank, peer comparison broken, sales=0 everywhere.
+  await client.$executeRaw`
+    INSERT INTO "OutletPeriodSales"
+      ("outletId", "monthLabel", "weekLabel", "salesMode", "sourceFileId", "computedAt")
+    SELECT
+      ranked."outletId",
+      ranked."monthLabel",
+      ranked."weekLabel",
+      ranked."nominalSales"   AS "salesMode",
+      ${sourceFileId}        AS "sourceFileId",
+      NOW()
+    FROM (
+      SELECT
+        ir."outletId",
+        ir."monthLabel",
+        ir."weekLabel",
+        ir."nominalSales",
+        ROW_NUMBER() OVER (
+          PARTITION BY ir."outletId", ir."monthLabel", ir."weekLabel"
+          ORDER BY COUNT(*) DESC, ir."nominalSales" ASC
+        ) AS rn
+      FROM "InventoryRecord" ir
+      WHERE ir."sourceFileId" = ${sourceFileId}
+        AND ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
+      GROUP BY ir."outletId", ir."monthLabel", ir."weekLabel", ir."nominalSales"
+    ) ranked
+    WHERE ranked.rn = 1
+    ON CONFLICT ("outletId", "monthLabel", "weekLabel") DO UPDATE
+    SET
+      "salesMode"     = EXCLUDED."salesMode",
+      "sourceFileId"  = EXCLUDED."sourceFileId",
+      "computedAt"    = NOW()
+  `;
+
   return { inserted, skippedErrors, dqIssues: allIssues };
 }

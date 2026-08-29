@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ success: true, pics }, { headers: CACHE_METADATA });
   } catch (e: unknown) {
-    errorResponse(e, "pic");
+    return errorResponse(e, "pic");
   }
 }
 
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, pic: result });
   } catch (e: unknown) {
-    errorResponse(e, "pic");
+    return errorResponse(e, "pic");
   }
 }
 
@@ -142,6 +142,6 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
-    errorResponse(e, "pic");
+    return errorResponse(e, "pic");
   }
 }

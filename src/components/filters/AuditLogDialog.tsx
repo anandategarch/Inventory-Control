@@ -57,7 +57,7 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
   params.set('page', String(page));
   if (actionFilter !== 'all') params.set('action', actionFilter);
 
-  const { data, isLoading, isFetching, refetch } = useQuery<AuditLogResponse>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<AuditLogResponse>({
     queryKey: ['audit-log', params.toString()],
     queryFn: async () => {
       const res = await fetch(`/api/audit-log?${params.toString()}`);
@@ -127,7 +127,18 @@ function AuditLogDialogInner({ open, onOpenChange }: { open: boolean; onOpenChan
             </div>
           )}
 
-          {!isLoading && entries.length === 0 && (
+          {!isLoading && error && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+              <p className="text-xs text-red-600 flex-1">
+                Gagal memuat: {error instanceof Error ? error.message : 'Unknown error'}
+              </p>
+              <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => refetch()}>
+                Coba Lagi
+              </Button>
+            </div>
+          )}
+
+          {!isLoading && !error && entries.length === 0 && (
             <div className="text-center py-12 text-sm text-muted-foreground">
               Tidak ada log untuk filter ini.
             </div>

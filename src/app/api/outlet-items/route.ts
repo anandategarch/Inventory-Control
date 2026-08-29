@@ -607,6 +607,6 @@ export async function GET(req: NextRequest) {
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[outlet-items] error:", { error: e });
-    errorResponse(e, "outlet-items");
+    return errorResponse(e, "outlet-items");
   }
 }

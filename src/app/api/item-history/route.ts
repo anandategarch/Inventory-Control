@@ -315,6 +315,6 @@ export async function GET(req: NextRequest) {
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[item-history] error:", { error: e });
-    errorResponse(e, "item-history");
+    return errorResponse(e, "item-history");
   }
 }

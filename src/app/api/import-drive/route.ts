@@ -149,6 +149,6 @@ export async function POST(req: NextRequest) {
       durationMs: Date.now() - startedAt,
     });
   } catch (e: unknown) {
-    errorResponse(e, "import-drive");
+    return errorResponse(e, "import-drive");
   }
 }

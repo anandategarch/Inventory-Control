@@ -96,6 +96,6 @@ export async function GET(req: NextRequest) {
     // called (on success), so errors left the Promise pending indefinitely.
     rejectComputation?.(e);
     logger.error('Analysis error', { error: e instanceof Error ? e.message : String(e) });
-    errorResponse(e, "analysis");
+    return errorResponse(e, "analysis");
   }
 }

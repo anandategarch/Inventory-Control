@@ -158,6 +158,6 @@ export async function GET(req: NextRequest) {
       })),
     }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
-    errorResponse(e, "drilldown");
+    return errorResponse(e, "drilldown");
   }
 }

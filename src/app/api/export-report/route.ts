@@ -913,6 +913,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[export-report] error:", { error: e });
-    errorResponse(e, "export-report");
+    return errorResponse(e, "export-report");
   }
 }

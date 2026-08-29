@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const results = await processIngestion(body);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
   } catch (e: unknown) {
-    errorResponse(e, "ingest");
+    return errorResponse(e, "ingest");
   }
 }
 
@@ -62,6 +62,6 @@ export async function GET(req: NextRequest) {
     const results = await processIngestion({}, fastMode);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt, fastMode });
   } catch (e: unknown) {
-    errorResponse(e, "ingest");
+    return errorResponse(e, "ingest");
   }
 }

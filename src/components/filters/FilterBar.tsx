@@ -186,6 +186,9 @@ export function FilterBar() {
         queryClient.invalidateQueries({ queryKey: ["item-history"] });
         queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
         queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
+      } else {
+        // UI-04 FIX: Show error to user instead of silent failure
+        setIngestMsg(`Error: ${d.error || 'Unknown server error'}`);
       }
     } catch (e: unknown) {
       setIngestMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);

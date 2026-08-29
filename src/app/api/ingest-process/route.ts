@@ -815,6 +815,6 @@ export async function DELETE(req: NextRequest) {
     }
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
-    errorResponse(e, "ingest-process");
+    return errorResponse(e, "ingest-process");
   }
 }

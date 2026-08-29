@@ -38,6 +38,7 @@ const PROTECTED_PATHS = [
   '/api/data',
   '/api/pic',
   '/api/migrate-direction',
+  '/api/audit-log', // SEC-02: forensic trail must not be public
 ];
 
 const PROTECTED_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
@@ -118,5 +119,6 @@ export const config = {
     '/api/data/:path*',
     '/api/pic/:path*',
     '/api/migrate-direction/:path*',
+    '/api/audit-log/:path*',
   ],
 };

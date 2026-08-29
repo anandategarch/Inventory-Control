@@ -132,6 +132,6 @@ export async function GET(req: NextRequest) {
     }, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     logger.error('[item-search] error:', { error: e instanceof Error ? e.message : String(e) });
-    errorResponse(e, "item-search");
+    return errorResponse(e, "item-search");
   }
 }
