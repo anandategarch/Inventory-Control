@@ -53,6 +53,8 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   const PAGE_SIZE = 20;
   // Phase B-3: Severity filter
   const [severityFilter, setSeverityFilter] = useState<'all' | 'abnormal' | 'warning' | 'elevated'>('all');
+  // Phase B-1: Multi-metric selector
+  const [metricView, setMetricView] = useState<'devBom' | 'waste' | 'susut' | 'trial'>('devBom');
 
   const sorted = useMemo(() => {
     // Phase B-3: Filter by severity
@@ -127,6 +129,22 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
           </p>
           {/* Phase B-3: Severity filter */}
           <div className="flex items-center gap-1.5">
+            {/* Phase B-1: Multi-metric selector */}
+            <div className="flex items-center gap-0.5 mr-2 p-0.5 rounded-lg bg-muted/40">
+              {(['devBom', 'waste', 'susut', 'trial'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setMetricView(m)}
+                  className={`text-[10px] px-2 py-0.5 rounded-md transition-colors ${
+                    metricView === m
+                      ? 'bg-purple-600 text-white'
+                      : 'text-muted-foreground hover:bg-muted/60'
+                  }`}
+                >
+                  {m === 'devBom' ? 'Dev/BOM' : m === 'waste' ? 'Waste' : m === 'susut' ? 'Susut' : 'Trial'}
+                </button>
+              ))}
+            </div>
             {(['all', 'abnormal', 'warning', 'elevated'] as const).map(f => (
               <button
                 key={f}
@@ -198,7 +216,18 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                       <TableCell className="text-[11px] px-3 py-2 text-muted-foreground">{item.area}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
-                      <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
+                      {/* Phase B-1: Multi-metric current values */}
+                      {metricView === 'waste' && (
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{fmtIDR(item.currentWaste)}</TableCell>
+                      )}
+                      {metricView === 'susut' && (
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-orange-600 dark:text-orange-400">{fmtIDR(item.currentSusut)}</TableCell>
+                      )}
+                      {metricView === 'trial' && (
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{fmtIDR(item.currentTrial)}</TableCell>
+                      )}
+                      {metricView === 'devBom' && (
+                        <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
                         {/* Phase B-5: Tooltip with computation breakdown */}
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -225,6 +254,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                           </TooltipContent>
                         </Tooltip>
                       </TableCell>
+                      )}
                       <TableCell className="text-[11px] px-3 py-2 text-center">
                         <Badge variant={badge.variant} className="text-[11px] h-4 px-1 font-medium">{badge.label}</Badge>
                       </TableCell>

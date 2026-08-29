@@ -1,71 +1,126 @@
 // ============================================================
 //  Historical Stats — per outlet+item, ONE OBSERVATION PER WEEK
 //  --------------------------------------------------------
-//  FIX (audit issues #1, #2): Each week is 1 observation using
-//  aggregate Dev/BOM = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)).
-//  Then mean/stddev computed across weekly observations.
+//  Multi-metric: computes historical mean/stdDev/n for:
+//  - Dev/BOM ratio (SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)))
+//  - Waste (SUM(ABS(nominalWaste)))
+//  - Susut (SUM(ABS(nominalSusut)))
+//  - Trial (SUM(ABS(nominalTrial)))
 //
-//  Previously: AVG(ABS(pctQtyDeviasiToBom)) across ALL records →
-//  weeks with more rows got more weight, and n = row count not
-//  week count → HISTORICAL_MIN_WEEKS check was meaningless.
-//
-//  Returns ~N rows (outlet+item pairs) instead of 540K raw records
+//  Returns Map<"outletId|itemId", { devBom, waste, susut, trial }>
+//  Each metric has { mean, stdDev, n }.
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
+export interface MetricStats {
+  mean: number;
+  stdDev: number;
+  n: number;
+}
+
+export interface MultiMetricHistoricalStats {
+  devBom: MetricStats;
+  waste: MetricStats;
+  susut: MetricStats;
+  trial: MetricStats;
+}
+
+// Legacy type for backward compat (analysis route still uses single-metric)
+export type HistoricalStatsMap = Map<string, { mean: number; stdDev: number; n: number }>;
+
+function computeStats(n: number, mean: number, sumSq: number): MetricStats {
+  const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
+  return { mean: mean || 0, stdDev: Math.sqrt(variance), n };
+}
+
 export async function queryHistoricalStats(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
   filters: SqlFilterOpts
-): Promise<Map<string, { mean: number; stdDev: number; n: number }>> {
+): Promise<HistoricalStatsMap> {
+  const multi = await queryHistoricalStatsMultiMetric(historicalPeriods, filters);
+  // Convert to legacy single-metric format (devBom only) for backward compat
+  const map: HistoricalStatsMap = new Map();
+  for (const [key, val] of multi) {
+    map.set(key, val.devBom);
+  }
+  return map;
+}
+
+export async function queryHistoricalStatsMultiMetric(
+  historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
+  filters: SqlFilterOpts
+): Promise<Map<string, MultiMetricHistoricalStats>> {
   if (historicalPeriods.length === 0) return new Map();
 
   const f = buildSqlFilters(filters);
 
-  // P0-3 fix: use OR conditions instead of string concat for index usage
   const periodConditions = historicalPeriods.map((p) =>
     Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`
   );
   const periodFilter = Prisma.join(periodConditions, ' OR ');
 
-  // Two-level aggregation:
-  // 1. weekly_dev: per outlet+item+week → 1 observation = SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom))
-  // 2. final: per outlet+item → mean/stddev/n across weekly observations
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
-  // (heavy two-level aggregation across many periods — vulnerable to slow plans).
+  // Multi-metric weekly aggregation:
+  // 1. weekly_dev: per outlet+item+week → compute all 4 metrics
+  // 2. final: per outlet+item → mean/sumSq/n for each metric
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
-    outletId: number; itemId: number; mean: number; sumSq: number; n: number;
+    outletId: number; itemId: number;
+    // Dev/BOM
+    devBomMean: number; devBomSumSq: number; devBomN: number;
+    // Waste
+    wasteMean: number; wasteSumSq: number; wasteN: number;
+    // Susut
+    susutMean: number; susutSumSq: number; susutN: number;
+    // Trial
+    trialMean: number; trialSumSq: number; trialN: number;
   }[]>`
     WITH weekly_dev AS (
       SELECT ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel",
+        -- Dev/BOM ratio per week
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-          ELSE NULL END as "weeklyDevBom"
+          ELSE NULL END as "weeklyDevBom",
+        -- Waste nominal per week
+        SUM(ABS(ir."nominalWaste")) as "weeklyWaste",
+        -- Susut nominal per week
+        SUM(ABS(ir."nominalSusut")) as "weeklySusut",
+        -- Trial nominal per week
+        SUM(ABS(ir."nominalTrial")) as "weeklyTrial"
       FROM "InventoryRecord" ir
       WHERE (${periodFilter})
         ${f}
       GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel"
     )
-    SELECT "outletId", "itemId",
-      AVG("weeklyDevBom") as mean,
-      SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
-      CAST(COUNT(*) AS INTEGER) as n
+    SELECT
+      "outletId", "itemId",
+      -- Dev/BOM stats (exclude NULLs)
+      AVG("weeklyDevBom") as "devBomMean",
+      SUM("weeklyDevBom" * "weeklyDevBom") as "devBomSumSq",
+      CAST(COUNT("weeklyDevBom") AS INTEGER) as "devBomN",
+      -- Waste stats
+      AVG("weeklyWaste") as "wasteMean",
+      SUM("weeklyWaste" * "weeklyWaste") as "wasteSumSq",
+      CAST(COUNT("weeklyWaste") AS INTEGER) as "wasteN",
+      -- Susut stats
+      AVG("weeklySusut") as "susutMean",
+      SUM("weeklySusut" * "weeklySusut") as "susutSumSq",
+      CAST(COUNT("weeklySusut") AS INTEGER) as "susutN",
+      -- Trial stats
+      AVG("weeklyTrial") as "trialMean",
+      SUM("weeklyTrial" * "weeklyTrial") as "trialSumSq",
+      CAST(COUNT("weeklyTrial") AS INTEGER) as "trialN"
     FROM weekly_dev
-    WHERE "weeklyDevBom" IS NOT NULL
     GROUP BY "outletId", "itemId"
   `);
 
-  const map = new Map<string, { mean: number; stdDev: number; n: number }>();
+  const map = new Map<string, MultiMetricHistoricalStats>();
   for (const r of rows) {
-    // Sample variance (N-1, Bessel's correction) — same as STDDEV_SAMP
-    // Var = (Σx² - n·mean²) / (n-1)
-    // Coerce to Number — SQLite returns BigInt for COUNT/SUM, JSON can't serialize BigInt
-    const n = Number(r.n);
-    const mean = Number(r.mean) || 0;
-    const sumSq = Number(r.sumSq) || 0;
-    const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
-    const stdDev = Math.sqrt(variance);
-    map.set(`${r.outletId}|${r.itemId}`, { mean, stdDev, n });
+    map.set(`${r.outletId}|${r.itemId}`, {
+      devBom: computeStats(Number(r.devBomN), Number(r.devBomMean), Number(r.devBomSumSq)),
+      waste: computeStats(Number(r.wasteN), Number(r.wasteMean), Number(r.wasteSumSq)),
+      susut: computeStats(Number(r.susutN), Number(r.susutMean), Number(r.susutSumSq)),
+      trial: computeStats(Number(r.trialN), Number(r.trialMean), Number(r.trialSumSq)),
+    });
   }
   return map;
 }

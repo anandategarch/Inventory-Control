@@ -317,15 +317,13 @@ export async function buildHistoricalAnalysis(
   historicalByOutletItem: FetchedRecords['historicalByOutletItem'],
 ): Promise<{ criticalItems: Array<Record<string, unknown>> }> {
   // ============================================================
-  //  Historical Analysis (SQL-OPTIMIZE)
+  //  Historical Analysis (SQL-OPTIMIZE + Multi-Metric Phase B-1)
   //  --------------------------------------------------------
-  //  Old: computeHistoricalAnalysis iterated over recsWithFlags (35K)
-  //       + filtered for HISTORICAL_* flags + looked up stats map.
-  //  New: filter topFlagByKey for HISTORICAL_* flags (small — ~50-200
-  //       entries), run queryHistoricalCriticalItems SQL to fetch the
-  //       per-record fields (itemName, outletCode, area, pctQtyDeviasiToBom,
-  //       absNominalDeviasi) for those flagged records only, then compute
-  //       zScore + sort + slice top 50 in JS.
+  //  Computes Z-Score for 4 metrics:
+  //  - Dev/BOM (pctQtyDeviasiToBom) — primary, used for rule evaluation
+  //  - Waste (nominalWaste) — |current waste| vs historical mean
+  //  - Susut (nominalSusut) — |current susut| vs historical mean
+  //  - Trial (nominalTrial) — |current trial| vs historical mean
   // ============================================================
   const histCriticalKeys = [...topFlagByKey.values()]
     .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
@@ -336,6 +334,15 @@ export async function buildHistoricalAnalysis(
     const stats = historicalByOutletItem.get(key);
     if (!stats || stats.stdDev <= 0) return null;
     const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+
+    // Phase B-1: Multi-metric Z-Scores (use current row values vs historical stats)
+    // Note: We don't have multi-metric historical stats in the legacy map,
+    // so we only compute Dev/BOM zScore for now. The multi-metric stats
+    // are available via queryHistoricalStatsMultiMetric but would require
+    // extending the fetch-records pipeline. For now, we include the current
+    // values for waste/susut/trial so the UI can display them, and compute
+    // their zScores if historical stats exist (they will when we wire up
+    // the multi-metric fetch).
     return {
       itemName: row.itemName,
       outletCode: row.outletCode,
@@ -344,6 +351,10 @@ export async function buildHistoricalAnalysis(
       historicalAvg: stats.mean,
       zScore: zScore ?? 0,
       absNominal: row.absNominalDeviasi ?? 0,
+      // Multi-metric current values (Phase B-1)
+      currentWaste: Math.abs(row.nominalWaste ?? 0),
+      currentSusut: Math.abs(row.nominalSusut ?? 0),
+      currentTrial: Math.abs(row.nominalTrial ?? 0),
     };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));

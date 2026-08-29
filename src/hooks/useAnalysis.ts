@@ -171,7 +171,12 @@ export interface NetCostTrendPoint {
 }
 
 export interface HistoricalAnalysisResult {
-  criticalItems: Array<{ itemName: string; outletCode: string; area: string; currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number }>;
+  criticalItems: Array<{
+    itemName: string; outletCode: string; area: string;
+    currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number;
+    // Phase B-1: Multi-metric current values
+    currentWaste: number; currentSusut: number; currentTrial: number;
+  }>;
 }
 
 // NEW: Area trend row for AreaTrendChart (Dev/BOM% per area × period)
