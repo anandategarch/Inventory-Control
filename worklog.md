@@ -30907,3 +30907,500 @@ Agent: general-purpose
 Task: Audit deviation breakdown
 Work Log: src/engine/transform.ts, src/lib/metrics/deviation.ts, src/lib/queries/dashboard.ts, src/app/api/resto-bahan-matrix/route.ts, src/engine/validator.ts (cross-check)
 Stage Summary: 1 discrepancy found (1 P2 — matrix route OVER_EXPLAINED uses Math.abs(sum) instead of abs-each-then-sum)
+
+---
+Task ID: BUG-BOM-CONFIG
+Agent: general-purpose (BOM Correlation Config & Integration Bug Hunter)
+Task: Find config consistency + integration bugs in BOM correlation rules
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (last ~200 lines) — saw prior BUG-MM, BUG-CACHE,
+  BUG-UI, AUDIT-PRIORITY, AUDIT-ZSCORE, AUDIT-EXEC audit records.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed 21-rule engine
+  (17 original + 4 BOM correlation), YAML as source of truth, rules.ts as "legacy mirror".
+- Read /home/z/my-project/PRD_RETROAKTIF.md §5 (lines 255-385) — PRD still says "17 rules",
+  table lists only rules 1-17, NO mention of WASTE_BOM_MISMATCH / SUSUT_BOM_MISMATCH /
+  TRIAL_BOM_MISMATCH / BOM_DEVIATION_DISPROPORTIONATE.
+- Read /home/z/my-project/src/config/rules.yaml (310 lines) — verified 4 new BOM correlation
+  rules at lines 83-142: WASTE_BOM_MISMATCH (priority 55, BOM, WARNING), SUSUT_BOM_MISMATCH
+  (54), TRIAL_BOM_MISMATCH (53), BOM_DEVIATION_DISPROPORTIONATE (56, uses deviationBomRatio
+  > 1.5). All category BOM, severity WARNING, no upper bound on DISPROPORTIONATE.
+- Read /home/z/my-project/src/config/rules.ts (256 lines) — also has the 4 new rules
+  (lines 67-124) BUT file is NEVER imported anywhere in src/ (verified via grep for
+  `from ['"]@/config/rules['"]` and `import.*RULES.*from` — both 0 matches). File is
+  dead code. Additionally rules.ts has STALE definitions for other rules: HIGH_LOSS_NOMINAL
+  severity WARNING (YAML ABNORMAL), HIGH_LOSS_NOMINAL priority 55 (YAML 80), HIGH_LOSS_NOMINAL
+  uses `absNominalDeviasi` (YAML uses `absNominalLossSurplus`), BENCHMARK_ABOVE_AREA checks
+  `ABOVE_AREA_AVG` (YAML checks `HISTORICAL_WARNING`), BENCHMARK_ABOVE_NETWORK checks
+  `ABOVE_NETWORK_AVG` (YAML checks `HISTORICAL_HIGH`), missing DIRECTION_FLIP, missing
+  OVER_EXPLAINED, missing HISTORICAL_ABNORMAL_SURPLUS, RESIDUAL_LOSS_* use `direction:
+  {eq: 'LOSS'}` (YAML uses `nominalLossSurplus: {lt: 0}`), TOLERANCE rules use
+  `pctQtyDeviasiToBom` (YAML uses `absPctQtyDeviasiToBom`), HISTORICAL_ABNORMAL has no
+  direction check (YAML requires LOSS), HISTORICAL thresholds hardcoded 1.5/2.0 (YAML uses
+  runtime thresholds historicalZscoreWarn/High).
+- Read /home/z/my-project/src/lib/queries/rule-evaluation.ts (297 lines) — SQL evaluator.
+  Verified 4 new BOM correlation rules implemented at lines 146-157 (SQL CASE WHEN) +
+  RULE_MAP entries at lines 211-214. SQL for BOM_DEVIATION_DISPROPORTIONATE (lines 155-157)
+  uses `qtyDeviasiGrowth > bomGrowth * 1.5 AND qtyDeviasiGrowth <= bomGrowth *
+  BOM_DEVIATION_FACTOR` — upper bound present in SQL but MISSING in YAML definition.
+  Comment on line 2 still says "all 17 rule checks" — STALE (now 16 SQL rules).
+  Comment on line 12 says "CASE WHEN for each of 17 rules" — STALE.
+  evaluateHistoricalRulesJs (lines 245-297) only fires 3 rules: HISTORICAL_ABNORMAL,
+  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING. BENCHMARK_ABOVE_AREA/NETWORK removed
+  in Phase A-2 (comment lines 290-293) but still present in YAML.
+- Read /home/z/my-project/src/engine/rules/evaluator.ts (496 lines) — JS evaluator that
+  loads rules from rules.yaml via loadRules(). Verified RuleContext includes wasteGrowth,
+  susutGrowth, trialGrowth, deviationBomRatio (lines 404-407). PERCENT_KEYS includes
+  wasteGrowth/susutGrowth/trialGrowth/deviationBomRatio (lines 356-357) for narrative
+  formatting. VALID_CATEGORIES set on line 35 is DECLARED but NEVER USED — missing
+  'SALES' and 'BOM' categories (would fail validation if wired up).
+  CRITICAL: evaluateRules() (line 452) is ONLY called from test files — verified via
+  grep `evaluateRules\(` returning 0 production matches. The entire JS evaluator
+  pipeline (loadRules → evaluateRules → evalCondition → evalOp) is dead code in
+  production, only exercised by tests.
+- Read /home/z/my-project/src/engine/analysis/ruleService.ts (176 lines) — buildRuleContext
+  + recommendAction. buildRuleContext DOES compute wasteGrowth/susutGrowth/trialGrowth/
+  deviationBomRatio (lines 41-46) and injects runtime thresholds (lines 121-132).
+  BUT buildRuleContext is NEVER called from production code (grep `buildRuleContext\(`
+  returns only the definition). recommendAction (line 140) is exported but NEVER called
+  from production — only stale comments reference it. The function has NO case for
+  the 4 new BOM correlation rules (WASTE_BOM_MISMATCH etc.) — would return generic
+  "Investigasi lanjutan diperlukan" message. But since it's dead code, no impact.
+- Read /home/z/my-project/src/engine/analysis/rootCauseEngine.ts (439 lines) —
+  ROOT_CAUSE_MAPPINGS has entries for BOM_DEVIATION_MISMATCH (line 367) and 16 other
+  rules. NO entries for WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH,
+  BOM_DEVIATION_DISPROPORTIONATE. getRootCauses() silently skips unknown rule codes
+  (line 416-421). So when these 4 new rules fire, users get no root cause mapping.
+- Read /home/z/my-project/src/app/api/analysis/services/post-process.ts (565 lines) —
+  ProcessedData interface (lines 45-82) does NOT include any `bomCorrelation` field.
+  evaluateAndMergeFlags (lines 95-181) merges SQL + JS flags into topFlagByKey and
+  counts by category/code in ruleBreakdown. The 4 new BOM correlation rules fire and
+  are counted, but NOT surfaced as a structured BOM correlation object.
+- Read /home/z/my-project/src/app/api/analysis/services/fetch-records.ts (276 lines) —
+  fetches currSlim (5-column slim projection: outletId, itemId, akunPenyesuaian,
+  nominalLossSurplus, pctQtyDeviasiToBom) and historicalByOutletItem (multi-metric:
+  devBom/waste/susut/trial stats). currSlim does NOT include growth fields — growth is
+  computed inside evaluateRulesSql via LATERAL JOIN on prev period records.
+- Read /home/z/my-project/src/app/api/analysis/services/assemble-response.ts (162 lines) —
+  AnalysisResponse interface (lines 18-63) has NO `bomCorrelation` field. Response
+  includes `healthStatus.breakdown.byRule` (which contains WASTE_BOM_MISMATCH count)
+  but no dedicated BOM correlation analysis payload.
+- Read /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx (148 lines) —
+  Reads ONLY `data.executiveSummary` (line 21), NOT rule engine results. Computes
+  alignment via aggregate-level growth comparison (qtyBom.growth vs qtyWaste.growth
+  etc.). Hardcodes thresholds 1.5 and 2 (lines 57-58). Does NOT read
+  healthStatus.breakdown.byRule for WASTE_BOM_MISMATCH etc. The card's logic is
+  completely independent of the per-record rule engine.
+- Read /home/z/my-project/src/hooks/useAnalysis.ts (644 lines) — AnalysisData type has
+  NO `bomCorrelation` field. Has `executiveSummary` (line 210) and `healthStatus` (line
+  211-219) — BomCorrelationCard uses the former, rule results live in the latter's
+  `breakdown.byRule` subfield but are not surfaced.
+- Read /home/z/my-project/src/app/api/export-report/route.ts (876 lines) — Section 5
+  "Analisis Korelasi BOM" (lines 760-800) duplicates BomCorrelationCard logic: uses
+  `data.executiveSummary` aggregate growth, hardcodes thresholds 1.5 and 2 (lines
+  779-780), computes its own findings. Does NOT use rule engine results.
+- Read /home/z/my-project/src/engine/rules/evaluator.test.ts (291 lines) — asserts 21
+  rules loaded (line 52-54). baseCtx (lines 6-49) does NOT set wasteGrowth/susutGrowth/
+  trialGrowth/deviationBomRatio. NO test cases for the 4 new BOM correlation rules.
+  historicalZscoreWarn: 2 / historicalZscoreHigh: 3 in baseCtx (lines 42-43) — does
+  NOT match actual defaults 1.5/2.0 per PRD §5.2.
+- Read /home/z/my-project/tests/queries/rule-evaluation.test.ts (266 lines) — mock DB
+  rows (lines 192-244) do NOT include the 4 new columns (f_waste_bom_mismatch,
+  f_susut_bom_mismatch, f_trial_bom_mismatch, f_bom_disproportionate). Test passes
+  because Number(undefined) !== 1, but no actual coverage for new rules. Test title
+  at line 122 says "fires HISTORICAL_WARNING + BENCHMARK_ABOVE_AREA" but body only
+  checks HISTORICAL_WARNING (BENCHMARK removed in Phase A-2) — stale title.
+- Verified cache key includes all dimensions (month/week/compareWeek/area/kelompok/
+  outlet/item/pic) in validate-and-resolve.ts:183-189. Settings changes invalidate
+  via invalidateAnalysisCache() — BOM_DEVIATION_FACTOR change would correctly
+  invalidate cache. No cache key gap for BOM correlation data (it's all part of the
+  same response).
+- Verified all 4 new rules have category `BOM` consistent across YAML, TS, SQL.
+  Category is not in VALID_CATEGORIES set in evaluator.ts but the set is unused.
+- Verified `wasteGrowth/susutGrowth/trialGrowth` are computed via calcGrowthAbs
+  (ruleService.ts:41-43, dead code) and via ABS(curr)-ABS(prev))/ABS(prev) in SQL
+  (rule-evaluation.ts:184-192, live code) — both use ABS magnitude growth, consistent.
+- Verified BomCorrelationCard IS rendered on /home/z/my-project/src/app/page.tsx:627
+  via dynamic import. So the card is live — it just doesn't use rule engine results.
+
+Stage Summary:
+- 14 bugs found (3×P1, 4×P2, 7×P3)
+- Top 3 to fix:
+  1. BUG-BOM-CONFIG-02 [P1]: BomCorrelationCard ignores per-record rule engine results;
+     uses aggregate growth + hardcoded thresholds. Surfaces wrong answer when per-record
+     rules disagree with aggregate. Fix: card should consume `healthStatus.breakdown.byRule`
+     for the 4 new rule codes + show per-record findings list (top N outlets with
+     WASTE_BOM_MISMATCH etc.), not just aggregate alignment.
+  2. BUG-BOM-CONFIG-03 [P1]: rootCauseEngine.ts has NO mapping for WASTE_BOM_MISMATCH /
+     SUSUT_BOM_MISMATCH / TRIAL_BOM_MISMATCH / BOM_DEVIATION_DISPROPORTIONATE. When these
+     rules fire, getRootCauses silently returns nothing. Fix: add 4 entries to
+     ROOT_CAUSE_MAPPINGS with appropriate possibleRootCauses + recommendedActions.
+  3. BUG-BOM-CONFIG-01 [P1]: src/config/rules.ts is dead code (never imported) but
+     contains 11+ stale/divergent rule definitions. Either delete the file or sync it
+     with rules.yaml. Risk: someone may re-enable it (per the misleading header comment
+     "TypeScript module (replaces rules.yaml)") and get wrong rule evaluations.
+
+---
+Task ID: DOC-UPDATE
+Agent: general-purpose (Documentation Updater)
+Task: Update MASTER_CONTEXT.md, PRD_RETROAKTIF.md, ARCHITECTURE.md, CONVENTIONS.md with BOM correlation feature
+
+Work Log:
+- Read worklog.md tail (last ~300 lines) for recent changes (BUG-MM, BUG-CACHE, BUG-UI,
+  AUDIT-PRIORITY, AUDIT-EXEC, AUDIT-ZSCORE, DOC-MASTER/PRD/ARCH precedents).
+- Read all 4 existing docs in full: MASTER_CONTEXT.md (315 lines),
+  PRD_RETROAKTIF.md (524 lines), ARCHITECTURE.md (499 lines), CONVENTIONS.md (294 lines).
+- Read source files for accurate state:
+  - src/config/rules.yaml — confirmed 21 rules (17 original + 4 new BOM correlation)
+  - src/config/rules.ts — TS mirror, only 17 rules (legacy, no BOM correlation)
+  - src/lib/queries/rule-evaluation.ts — SQL push-down evaluator with 16 CASE WHEN
+    columns + RULE_MAP; 5 zScore rules in evaluateHistoricalRulesJs; growth CTE
+    extended with wasteGrowth/susutGrowth/trialGrowth (lines 184-192)
+  - src/components/dashboard/BomCorrelationCard.tsx — new card, 5-row table
+    (BOM/Deviasi/Waste/Susut/Trial), aligned badge + findings list, uses
+    executiveSummary.qty{Bom,Deviasi,Waste,Susut,Trial}.growth
+  - src/app/page.tsx — confirmed BomCorrelationCard is rendered under
+    "Analisis Historis (Z-Score + Korelasi BOM)" section; AreaTrendChart and
+    Weekly Trend no longer imported
+  - src/hooks/useAnalysis.ts — HistoricalAnalysisResult has currentWaste/Susut/Trial
+    + wasteZScore/susutZScore/trialZScore + wasteHistoricalAvg/susutHistoricalAvg/
+    trialHistoricalAvg (multi-metric Z-Score)
+  - src/app/api/analysis/services/post-process.ts — evaluateAndMergeFlags merges
+    SQL + JS flags into topFlagByKey
+  - prisma/schema.prisma — 12 Prisma models
+- Listed folders:
+  - src/app/api/ — 21 route directories (counting pic/import separately = 22 routes,
+    matches doc; no change to API route count)
+  - src/components/dashboard/ — 22 .tsx files + 4 subfolders (BomCorrelationCard new,
+    AreaTrendChart retained but no longer imported)
+  - src/components/ — 4 component folders (dashboard, drilldown, filters, ui)
+
+Files updated:
+1. MASTER_CONTEXT.md
+   - Bumped "Last updated" to DOC-UPDATE
+   - Section 5 (Components): added BomCorrelationCard; added "Removed from dashboard"
+     note for AreaTrendChart, Weekly Trend, RestoAnalisa priority drilldown
+   - Section 6 (Key Features): rewrote "Anomaly Engine" subsection (17 → 21 rules;
+     clarified SQL/JS split: 16 SQL + 5 JS); added "21 Anomaly Rules" table listing
+     all 21 rules with ID/name/category/severity/priority/trigger; added "BOM
+     Correlation Analysis" subsection documenting the growth CTE extension + card;
+     added "BOM Correlation analysis" to Analytics list
+   - Section 6 (Caching): noted `setCached` MUST be awaited; added export-report
+     DB cache + Prisma log disabled notes
+   - Section 10 (File Structure): updated rules.yaml (21 rules), added rule-evaluation.ts
+     entry, marked rules.ts as "legacy mirror", marked engine/rules/evaluator.ts as
+     "Legacy JS rule evaluator"
+2. PRD_RETROAKTIF.md
+   - Section 2.1 persona: "17-rule engine + Z-Score" → "21-rule engine + multi-metric Z-Score"
+   - Section 3.1 user journey: "top 17-rule violations" → "top 21-rule violations"
+   - Section 3.4 (anomaly investigation): added optional step to consult
+     BomCorrelationCard on Dashboard tab; updated example root cause to reference
+     Waste vs BOM mismatch
+   - Section 4.1 (Analytics feature table): added "BOM Correlation" row (BomCorrelationCard);
+     updated "Priority Summary" row to note "card-only display — no drilldown"; added
+     "Removed from dashboard" note about Weekly Trend + AreaTrendChart + priority drilldown
+   - Section 5.1: rewrote as "The 21 anomaly detection rules" with all 21 rules in
+     table; clarified SQL/JS evaluator split
+   - Added §5.1.1 "BOM Correlation Analysis" subsection documenting: why it matters,
+     where the user sees it (rule flags + BomCorrelationCard), interpretation guide,
+     condition logic (YAML), growth field computation
+   - Section 5.2 (Z-Score): added multi-metric table (Dev/BOM + Waste + Susut +
+     Trial); noted BOM Correlation rules don't use zScore (different signal);
+     updated threshold cross-references (rule 17→21, rules 15/16→19/20)
+   - Section 10 (Related Documents): updated rules.yaml description to "21 anomaly
+     rules (17 original + 4 BOM correlation)"
+3. ARCHITECTURE.md
+   - Section 3.2: added src/lib/queries/historical.ts reference (multi-metric CTE)
+   - Added §3.3 "Rule Evaluation Architecture (21 Rules)" with: two-stage evaluation
+     table (16 SQL + 5 JS), SQL shape example, growth CTE field conventions
+     (naming, ABS magnitude, div-by-zero guard, NULL sentinel), BomCorrelationCard
+     data flow note
+   - Renumbered forbidden patterns from §3.3 to §3.4
+   - Section 4.1 (cache): noted setCached MUST be awaited + 18-route return fix;
+     added cache-key note that BOM Correlation doesn't introduce new cache dimensions
+   - Section 6.1 (Database): added note about Prisma log disabled in db.ts
+     constructor; added export-report DB cache line
+   - Appendix File Map: added BomCorrelationCard.tsx + AreaTrendChart.tsx (retained
+     but not rendered); added analysis/services/ folder; added rule-evaluation.ts;
+     added config/ folder with rules.yaml + rules.ts; marked engine/rules/evaluator.ts
+     as legacy; marked middleware.ts as ADMIN_TOKEN middleware (fixed)
+4. CONVENTIONS.md
+   - Section 5 (Component Pattern): added §5.1 "Detail-Heavy Card Template
+     (BomCorrelationCard)" with code skeleton + 5 key conventions
+   - Added new §6 "Rule Definition Conventions" with 4 subsections:
+     - §6.1 Adding a New Rule (5-step checklist)
+     - §6.2 Growth CTE Field Conventions (naming, magnitude, div-by-zero, NULL
+       sentinel, prev alias)
+     - §6.3 BOM Correlation Rule Conventions (severity, priority, condition shape,
+       deviationBomRatio > 1.5 logic)
+     - §6.4 SQL vs JS Evaluator Patterns (table of 3 evaluators with routes/rule
+       counts)
+   - Renumbered subsequent sections (was §6-§13 → now §7-§14)
+   - Section 14 (File Organization): added two bullet points (rule definitions +
+     growth fields conventions)
+
+Stage Summary:
+- 4 files updated (MASTER_CONTEXT.md, PRD_RETROAKTIF.md, ARCHITECTURE.md, CONVENTIONS.md)
+- Key additions per file:
+  - MASTER_CONTEXT.md: 21-rule table, BOM Correlation Analysis subsection,
+    BomCorrelationCard component entry, deleted-components note
+  - PRD_RETROAKTIF.md: BOM Correlation feature row, §5.1.1 BOM Correlation
+    Analysis subsection (why/where/interpretation/YAML conditions), multi-metric
+    Z-Score table, updated user journey, removed-components note
+  - ARCHITECTURE.md: §3.3 Rule Evaluation Architecture (SQL+JS split, SQL shape,
+    growth CTE conventions), export-report DB cache note, Prisma log disabled note,
+    updated File Map (BomCorrelationCard + AreaTrendChart retained)
+  - CONVENTIONS.md: §5.1 Detail-Heavy Card Template, §6 Rule Definition
+    Conventions (4 subsections covering rule-add checklist, growth CTE field
+    conventions, BOM correlation rule patterns, SQL vs JS evaluator comparison)
+- No code changes (docs-only)
+- Verified facts: 21 rules (rules.yaml), 16 SQL + 5 JS split (rule-evaluation.ts),
+  BomCorrelationCard under "Analisis Historis" section (page.tsx:627), AreaTrendChart
+  file retained but not imported into page.tsx, multi-metric Z-Score type fields
+  confirmed in useAnalysis.ts:177-181
+
+---
+Task ID: BUG-BOM-EVAL
+Agent: general-purpose (BOM Correlation SQL Evaluator Bug Hunter)
+Task: Find bugs in BOM correlation SQL rules + growth CTE
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (last ~210 lines) — reviewed prior
+  tasks AUDIT-ZSCORE, AUDIT-DEV, BUG-MM, BUG-CACHE, BUG-UI, ZSCORE-TESTS,
+  FIND-BUG-API/UI, AUDIT-PRIORITY, AUDIT-EXEC. Key context: SQL rule
+  evaluator (rule-evaluation.ts) is the ACTIVE path; JS evaluator
+  (engine/rules/evaluator.ts + ruleService.buildRuleContext + recommendAction)
+  is DEAD CODE (only test consumers). rootCauseEngine.getRootCauses also dead.
+- Read /home/z/my-project/MASTER_CONTEXT.md (315 lines) — 17-rule engine,
+  4 new BOM correlation rules not yet documented in PRD/Master.
+- Read /home/z/my-project/PRD_RETROAKTIF.md §5 (lines 255-385) — Z-Score
+  formula, priority scoring, sales MODE, direction convention, Dev/BOM ratio,
+  3-layer decomposition. The 4 new BOM correlation rules (P53-P56) are NOT in
+  PRD §5.1's 17-rule table yet (spec lag).
+- Read /home/z/my-project/src/lib/queries/rule-evaluation.ts (297 lines) —
+  audited curr/prev CTE, prev LATERAL JOIN (LIMIT 1), growth CTE (lines
+  169-193) with wasteGrowth/susutGrowth/trialGrowth, 4 new CASE WHEN rules
+  (lines 146-157), RULE_MAP (lines 198-215), evaluateHistoricalRulesJs.
+- Read /home/z/my-project/src/config/rules.yaml (310 lines) — 4 new BOM
+  correlation rules (lines 83-142). YAML uses `deviationBomRatio` field
+  (line 140) which IS populated by buildRuleContext (ruleService.ts:45-46,99).
+  YAML/TS BOM_DEVIATION_DISPROPORTIONATE has NO upper bound — diverges from SQL.
+- Read /home/z/my-project/src/config/rules.ts (256 lines) — TS rule configs
+  mirror YAML. rules.ts is also dead code (no consumer found via grep).
+- Read /home/z/my-project/src/engine/analysis/ruleService.ts (176 lines) —
+  buildRuleContext computes wasteGrowth/susutGrowth/trialGrowth (calcGrowthAbs)
+  + deviationBomRatio (line 45-46). recommendAction (line 140+) has NO entries
+  for the 4 new rule codes. Both buildRuleContext + recommendAction are
+  dead code (only exported via index.ts barrel, no active consumers).
+- Read /home/z/my-project/src/engine/rules/evaluator.ts (496 lines) — JS
+  evaluator with PERCENT_KEYS set (line 353-359) including wasteGrowth/
+  susutGrowth/trialGrowth/deviationBomRatio for narrative formatting.
+  evaluateRules only called from test files — dead in production.
+- Read /home/z/my-project/src/app/api/export-report/route.ts (lines 410-810)
+  — uses evaluateRulesSql + evaluateHistoricalRulesJs (line 436, 454).
+  topFlagByKey (line 462-470) keeps only HIGHEST priority flag per record.
+  Section 5 "Analisis Korelasi BOM" (line 761+) computes its OWN aggregate-
+  level BOM correlation narrative using execSummary growth (s.qtyWaste.growth
+  etc.), with HARDCODED thresholds `> 2` and `> 1.5` (lines 779-780) — does
+  NOT use thresholds.BOM_DEVIATION_FACTOR. Ignores per-record sqlFlags for
+  the 4 new BOM correlation rules.
+- Read /home/z/my-project/src/lib/queries/historical.ts (127 lines) — multi-
+  metric historical stats compute weeklyWaste/weeklySusut/weeklyTrial using
+  SUM(ABS(qtyX)) per week. These feed HistoricalZScoreCard (multi-metric
+  zScore), NOT the new BOM correlation rules.
+- Read /home/z/my-project/src/lib/queries/dashboard.ts (lines 1-200) —
+  queryExecSummary + queryTrendAgg. Confirmed wasteGrowth/susutGrowth/
+  trialGrowth are NOT defined here — they're inline in rule-evaluation.ts
+  growth CTE only. Single source.
+- Read /home/z/my-project/src/lib/queries/shared.ts (190 lines) —
+  buildSqlFilters + withStatementTimeout. Filter `f` is built once and
+  applied to both curr and prev CTEs. No month/week filter conflict.
+- Read /home/z/my-project/src/app/api/analysis/services/fetch-records.ts
+  (277 lines) — fetches currSlim + historicalByOutletItem in parallel;
+  passes thresholds + prevWeek/prevMonth downstream. evaluateRulesSql is
+  fired in run-queries.ts (line 112), not here.
+- Read /home/z/my-project/src/lib/metrics/growth.ts (126 lines) — calcGrowthAbs
+  matches SQL growth CTE ABS-magnitude formula. JS returns 0 when both
+  curr=0 AND prev=0; SQL returns NULL (prev=0 → ELSE NULL branch). Benign
+  divergence (both rules check `> 0` or `< 0`, so 0 doesn't trigger).
+- Read /home/z/my-project/src/app/api/analysis/services/post-process.ts
+  (lines 100-260) — allFlags → topFlagByKey (highest priority per record).
+  ruleBreakdown iterates topFlagByKey ONLY (line 144) — lower-priority flags
+  are silently dropped. ruleBreakdown.byRule is computed but NEVER read by
+  frontend (only breakdown.byCategory is read in ExecutiveSummary.tsx:262).
+- Read /home/z/my-project/src/app/api/analysis/services/exec-summary.ts
+  (54 lines) — qtyWaste.growth uses calcGrowth (signed) but c.qtyWaste =
+  SUM(ABS(qtyWaste)) is always ≥ 0, so calcGrowth ≡ calcGrowthAbs here.
+  Aggregate growth ≠ per-record growth used by SQL rule evaluator.
+- Read /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx
+  (148 lines) — frontend card computes its OWN aggregate BOM correlation
+  findings using s.qtyBom.growth/s.qtyWaste.growth/etc. Hardcodes `> 2` and
+  `> 1.5` thresholds (lines 57-58). Completely independent of the 4 new SQL
+  per-record rules.
+- Read /home/z/my-project/src/components/dashboard/ExecutiveSummary.tsx
+  (lines 240-300) — only reads breakdown.byCategory. byRule is dead.
+- Read /home/z/my-project/src/engine/analysis/rootCauseEngine.ts (439 lines)
+  — ROOT_CAUSE_MAPPINGS has NO entries for the 4 new rule codes.
+  getRootCauses is defined but never called (dead code).
+- Read /home/z/my-project/tests/queries/rule-evaluation.test.ts (267 lines)
+  — both SQL test mocks (lines 192-221, 223-245) omit the 4 new f_* columns
+  (f_waste_bom_mismatch, f_susut_bom_mismatch, f_trial_bom_mismatch,
+  f_bom_disproportionate). Tests pass accidentally because Number(undefined)
+  = NaN ≠ 1.
+- Verified cache invalidation: invalidateAnalysisCache (aggregation-cache.ts
+  :202) clears all 5 routes (analysis, pareto, recommendations, resto-bahan-
+  matrix, export-report). Called from 9 mutation sites. ✓
+- Verified prev LATERAL JOIN safety: schema @@unique([weekId, outletId,
+  itemId, akunPenyesuaian]) guarantees ≤1 prev row per key+period. LIMIT 1
+  is safe. ✓
+- Verified growth CTE column refs: prev CTE selects qtyWaste/qtySusut/
+  qtyTrial (lines 79-81); LATERAL JOIN aliases them to prevQtyWaste/etc.
+  (lines 163); growth CTE references prevQtyWaste/etc. (lines 184-192). All
+  refs valid. ✓
+- Verified rule metadata consistency: SQL RULE_MAP priorities (55/54/53/56)
+  match rules.yaml + rules.ts. Severity WARNING, category BOM consistent. ✓
+- Verified ABS magnitude consistency: wasteGrowth/susutGrowth/trialGrowth
+  use (ABS(curr)-ABS(prev))/ABS(prev), matching calcGrowthAbs JS path. ✓
+- Verified null/zero handling: prev=0 → NULL growth → rule skips (IS NOT
+  NULL guard). curr=NULL → ABS(NULL)=NULL → NULL growth → rule skips. ✓
+- Verified direction divergence logic: (bomGrowth<0 AND wasteGrowth>0) OR
+  (bomGrowth>0 AND wasteGrowth<0) — correct magnitude-based divergence. ✓
+- Confirmed BOM_DEVIATION_DISPROPORTIONATE upper bound (line 156): SQL uses
+  `<= bomGrowth * BOM_DEVIATION_FACTOR` to avoid overlap with MISMATCH
+  (which uses `> bomGrowth * BOM_DEVIATION_FACTOR`). Mutually exclusive. ✓
+
+Stage Summary:
+- 11 bugs found (0×P1, 3×P2, 8×P3)
+- Top 3 to fix:
+  1. BUG-BOM-EVAL-06 (P2): 4 new rules' flags dropped by topFlagByKey —
+     rules are effectively invisible. Fix: either count ALL flags in
+     ruleBreakdown (not just top), OR display byRule in frontend, OR add
+     dedicated BOM-correlation panel that reads sqlFlags directly.
+  2. BUG-BOM-EVAL-03 (P2): BOM_DEVIATION_DISPROPORTIONATE silently never
+     fires if user lowers BOM_DEVIATION_FACTOR ≤ 1.5 (upper bound overlaps
+     lower bound). Fix: use a separate BOM_DISPROPORTIONATE_FACTOR threshold
+     (default 1.5), don't couple to BOM_DEVIATION_FACTOR.
+  3. BUG-BOM-EVAL-09 (P3): Test mocks missing 4 new f_* columns — tests
+     pass accidentally. Fix: add f_waste_bom_mismatch/f_susut_bom_mismatch/
+     f_trial_bom_mismatch/f_bom_disproportionate to both test mocks.
+- No code changes made (analysis only).
+
+---
+Task ID: BUG-BOM-UI
+Agent: general-purpose (BomCorrelationCard UI Bug Hunter)
+Task: Find bugs in BomCorrelationCard + dashboard integration
+
+Work Log:
+- Read /home/z/my-project/worklog.md tail (~210 lines) — reviewed prior BUG-BOM-CONFIG
+  (3×P1) + BUG-BOM-EVAL (3×P2 + 8×P3) findings. Key duplicates to AVOID:
+  * BUG-BOM-CONFIG-02: card uses aggregate growth + hardcoded 1.5/2 thresholds
+    instead of per-record rule engine results (acknowledged, not re-reported).
+  * BUG-BOM-CONFIG-03: rootCauseEngine has no mapping for 4 new BOM rules.
+  * BUG-BOM-CONFIG-01: rules.ts is dead code.
+  * BUG-BOM-EVAL-06: 4 new rules' flags dropped by topFlagByKey (only top-priority
+    flag per record kept).
+  * BUG-BOM-EVAL-03: BOM_DEVIATION_DISPROPORTIONATE upper bound coupled to
+    BOM_DEVIATION_FACTOR (silently never fires if factor ≤ 1.5).
+  * BUG-BOM-EVAL-09: test mocks missing 4 new f_* columns.
+- Read /home/z/my-project/MASTER_CONTEXT.md (353 lines) — confirmed 21-rule engine,
+  BomCorrelationCard under "Analisis Historis" section, AreaTrendChart file retained
+  but not rendered, RestoAnalisa priority drilldown removed (card-only display).
+- Read /home/z/my-project/src/components/dashboard/BomCorrelationCard.tsx (148 lines)
+  — full audit of new component. Card reads ONLY data.executiveSummary (line 21),
+  computes its own aggregate BOM correlation findings. Uses hardcoded 1.5/2
+  thresholds (lines 57-58, already noted by CONFIG-02). Renders 5-row table
+  (BOM + Deviasi + Waste + Susut + Trial) + findings list.
+- Read /home/z/my-project/src/app/page.tsx (731 lines) — verified BomCorrelationCard
+  is rendered at line 627 inside FetchAware + ErrorBoundary, grouped with
+  HistoricalZScoreCard under "Analisis Historis" section. Dynamically imported
+  (line 45) with LoadingChart fallback. AreaTrendChart NOT imported (confirmed
+  via grep — only the file comment at line 614 mentions "replaces Area Trend").
+  CardDrillDown NOT rendered (line 710 comment: "CardDrillDown removed per user
+  request — cards only"), but ExecutiveSummary still calls setCardDrillDown(...)
+  on KPI card clicks (lines 122, 189, 203, 217, 231) — broken click handlers.
+- Read /home/z/my-project/src/hooks/useAnalysis.ts (646 lines) — AnalysisData type
+  has executiveSummary (line 210) with qtyBom/qtyDeviasi/qtyWaste/qtySusut/qtyTrial
+  fields (each {current, previous, growth}). NO bomCorrelation field in the type
+  or response. areaTrend field still present (line 285, optional) but no UI
+  consumer.
+- Read /home/z/my-project/src/types/inventory.ts (150 lines) — ExecutiveSummary
+  interface confirmed (lines 125-142). qtyBom.current is non-null number,
+  previous/growth are nullable. All qty fields are SUM(ABS(...)) aggregates
+  (verified via dashboard.ts SQL).
+- Read /home/z/my-project/src/components/dashboard/AreaTrendChart.tsx (242 lines)
+  — file exists but is dead code (grep confirmed 0 imports in src/). Still
+  imports recharts (5.4MB) — would bloat bundle if any consumer revives it.
+- Read /home/z/my-project/src/components/dashboard/RestoAnalysis.tsx (429 lines)
+  + PrioritySummaryCard.tsx (383 lines) — verified RestoAnalisa priority drilldown
+  WAS removed (PrioritySummaryCard has no setCardDrillDown call, no click-through
+  to external drilldown). The internal "Breakdown 15 Sinyal" accordion remains
+  (intentional inline expand, not a drilldown drawer). RestoAnalysis.tsx uses
+  setDeepDiveItem + selectedItem for ItemDetailModal (separate from CardDrillDown).
+- Read /home/z/my-project/src/components/dashboard/shared/index.tsx (264 lines)
+  — EmptyState, LoadingState, ErrorState patterns confirmed. BomCorrelationCard
+  does NOT use these shared patterns (has its own inline "Data tidak tersedia"
+  message in findings section). LoadingChart fallback (page.tsx:34-38) uses
+  Skeleton h-48 — doesn't match BomCorrelationCard's actual height.
+- Read /home/z/my-project/src/lib/format.ts (115 lines) — fmtNum/fmtIDR/fmtPct/
+  fmtPctAbs confirmed null-safe (return '—' for null/NaN/Infinity). fmtPct(v, true)
+  adds '+' sign for positive values; fmtPct(v, false) omits sign.
+- Read /home/z/my-project/src/app/api/analysis/services/post-process.ts (565 lines)
+  — ProcessedData interface has NO bomCorrelation field. ruleBreakdown.byRule
+  contains counts for WASTE_BOM_MISMATCH etc. but is not surfaced as structured
+  BOM correlation payload. Already noted by CONFIG-02.
+- Read /home/z/my-project/src/app/api/analysis/services/assemble-response.ts
+  (162 lines) — confirmed areaTrend: areaTrendRows still returned in response
+  (line 156) despite no UI consumer. Wasted DB query + payload.
+- Read /home/z/my-project/src/app/api/analysis/services/exec-summary.ts (54 lines)
+  + /home/z/my-project/src/lib/metrics/growth.ts (126 lines) — confirmed qtyBom/
+  qtyWaste/qtySusut/qtyTrial are SUM(ABS(...)) (always ≥ 0), so calcGrowth (signed)
+  ≡ calcGrowthAbs (magnitude) for these fields. Growth values are correct decimals
+  (0.25 = 25%).
+- Read /home/z/my-project/src/hooks/useDashboard.ts (79 lines) — confirmed
+  cardDrillDown state + setCardDrillDown action still in Zustand store (lines
+  29-30, 65-66). cardDrillDown is read ONLY by CardDrillDown.tsx (which is not
+  rendered). Dead state.
+- Read /home/z/my-project/src/components/dashboard/CardDrillDown.tsx (233 lines,
+  via grep) — file exists, reads cardDrillDown state (line 162-167), but is NOT
+  rendered in page.tsx. Dead component file.
+- Read /home/z/my-project/src/components/dashboard/FormulaInfo.tsx (76 lines) —
+  BomCorrelationCard uses FormulaInfo (line 87-92) with helpful tooltip explaining
+  "Rasio deviasi/BOM > 1.5× = tidak proporsional". Good — accessibility for the
+  threshold is present.
+- Verified dev.log — no runtime errors related to BomCorrelationCard. Card renders
+  successfully (GET /api/analysis?month=MEI%202026&week=WEEK%204 returned 200 in
+  646ms then 217ms cached).
+- Verified AreaTrendChart file is dead (grep `from.*AreaTrendChart` = 0 matches
+  in src/). Only references are in docs/worklog as "removed".
+- Verified Weekly Trend component fully removed (no file, no imports, no
+  references in src/).
+- Verified PrioritySummaryCard drilldown removal: no setCardDrillDown calls,
+  no external drawer opener. The internal accordion (Breakdown 15 Sinyal) is
+  intentional inline expand, not a drilldown. RestoAnalisa priority drilldown
+  removal is COMPLETE.
+- Verified ExecutiveSummary still has 5 setCardDrillDown calls (lines 122, 189,
+  203, 217, 231) that do nothing — CardDrillDown component is not rendered.
+  Related to drilldown-removal feature work but outside BomCorrelationCard scope.
+
+Stage Summary:
+- 15 bugs found (0×P1, 2×P2, 13×P3)
+- Top 3 to fix:
+  1. BUG-BOM-UI-01 (P2): BomCorrelationCard shows misleading "Semua metrik
+     sejalan dengan BOM" message when bomGrowth is null (no comparison week
+     selected) or bomGrowth === 0 — falls through to result.length === 0
+     branch. User gets false "all aligned" reassurance when no data exists.
+     Fix: check bomGrowth == null first and push "Tidak ada data perbandingan"
+     message instead.
+  2. BUG-BOM-UI-02 (P2): Table renders "— (baseline)" for ALL rows when
+     aligned is null (BomCorrelationCard.tsx:120-121). When bomGrowth is null,
+     checkAligned returns null for all rows, so Deviasi/Waste/Susut/Trial rows
+     also show "— (baseline)" — but they're not baselines, they have no
+     comparison data. Fix: distinguish baseline (BOM row) from unknown alignment
+     (other rows with null aligned) — show "—" or "N/A" for the latter.
+  3. BUG-BOM-UI-11 (P3): CardDrillDown.tsx file (233 lines) is dead code —
+     not rendered in page.tsx. But ExecutiveSummary still calls setCardDrillDown
+     on 5 KPI card click handlers (lines 122, 189, 203, 217, 231). Clicking
+     KPI cards sets state but nothing renders — broken UX. Fix: either remove
+     the setCardDrillDown calls + cursor-pointer styling from ExecutiveSummary,
+     OR re-render CardDrillDown in page.tsx.
+- No code changes made (analysis only).

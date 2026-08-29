@@ -105,8 +105,67 @@ This pattern appears in:
 - `src/lib/query/historical-stats.ts`
 - `src/lib/query/z-score.ts`
 - `src/lib/query/weekly-deviation.ts`
+- `src/lib/queries/historical.ts` — `queryHistoricalStatsMultiMetric` (extended for multi-metric Z-Score: computes mean/stddev for Dev/BOM, Waste, Susut, and Trial in a single CTE pass)
 
-### 3.3 Forbidden Patterns
+### 3.3 Rule Evaluation Architecture (21 Rules)
+
+Rules are split across two evaluators for performance. See `src/lib/queries/rule-evaluation.ts`.
+
+**Two-stage evaluation:**
+
+| Stage | Where | Rules | Why |
+|-------|-------|-------|-----|
+| 1. SQL push-down | `evaluateRulesSql()` | 16 (all non-zScore rules) | Single query with `CASE WHEN` columns; runs in ~2–3s for 35K records |
+| 2. JS post-process | `evaluateHistoricalRulesJs()` | 5 (zScore-based: HISTORICAL_ABNORMAL, _SURPLUS, _WARNING, BENCHMARK_ABOVE_AREA/NETWORK) | Needs `historicalByOutletItem` Map (pre-fetched in parallel) — can't be inlined cleanly into the SQL query |
+
+**Stage 1 SQL shape** (simplified — see `rule-evaluation.ts:62–195` for full):
+
+```sql
+WITH curr AS ( ... current-period records ... ),
+     prev AS ( ... previous-period records via LATERAL JOIN ... ),
+     hist AS ( ... placeholder; actual zScore computed in JS ... )
+SELECT
+  c."outletId", c."itemId", c."akunPenyesuaian",
+  -- One CASE WHEN column per rule; 1 = fired, 0 = not
+  CASE WHEN c."tolerancePct" IS NOT NULL
+        AND ABS(c."pctQtyDeviasiToBom") > 2 * ABS(c."tolerancePct")
+       THEN 1 ELSE 0 END AS "f_tol_breach_high",
+  -- ... 15 more rule columns ...
+  -- BOM Correlation rules (4 new) — use wasteGrowth/susutGrowth/trialGrowth
+  CASE WHEN g."bomGrowth" IS NOT NULL AND g."wasteGrowth" IS NOT NULL AND
+    ((g."bomGrowth" < 0 AND g."wasteGrowth" > 0)
+  OR (g."bomGrowth" > 0 AND g."wasteGrowth" < 0))
+       THEN 1 ELSE 0 END AS "f_waste_bom_mismatch",
+  -- ... susut/trial/disproportionate ...
+FROM curr c
+LEFT JOIN LATERAL ( ... prev period ... ) p ON true
+CROSS JOIN LATERAL (
+  -- Growth CTE: computes salesGrowth, bomGrowth, qtyDeviasiGrowth,
+  -- nominalDeviasiGrowth, wasteGrowth, susutGrowth, trialGrowth
+  -- Each guarded with `prevX IS NOT NULL AND prevX != 0`
+  -- and uses ABS(...) magnitude on both sides
+  SELECT
+    CASE WHEN p."prevNominalSales" != 0
+      THEN (c."nominalSales" - p."prevNominalSales") / ABS(p."prevNominalSales")
+      ELSE NULL END AS "salesGrowth",
+    -- ... bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth ...
+    CASE WHEN p."prevQtyWaste" IS NOT NULL AND p."prevQtyWaste" != 0
+      THEN (ABS(c."qtyWaste") - ABS(p."prevQtyWaste")) / ABS(p."prevQtyWaste")
+      ELSE NULL END AS "wasteGrowth",
+    -- ... susutGrowth, trialGrowth (same shape) ...
+) g
+ORDER BY c."outletId", c."itemId"
+```
+
+**Stage 2 JS post-process** merges zScore rules into the same `topFlagByKey` map (keyed by `outletId|itemId|akunPenyesuaian`, keeps the highest-priority flag when multiple rules fire on the same record). See `src/app/api/analysis/services/post-process.ts:evaluateAndMergeFlags`.
+
+**Growth CTE field conventions** (used by BOM Correlation rules):
+- Naming: `<metric>Growth` (camelCase) — e.g. `wasteGrowth`, `susutGrowth`, `trialGrowth`, `bomGrowth`, `qtyDeviasiGrowth`, `nominalDeviasiGrowth`, `salesGrowth`.
+- Magnitude: always `ABS(curr) - ABS(prev)` in the numerator (sign of growth = direction of magnitude change).
+- Div-by-zero guard: `prevX IS NOT NULL AND prevX != 0` before division; otherwise `NULL`.
+- Returns `NULL` (not 0) when prev is missing — rule conditions explicitly check `IS NOT NULL`.
+
+### 3.4 Forbidden Patterns
 
 - ❌ `$queryRawUnsafe` — anywhere. ESLint rule blocks it.
 - ❌ String concatenation into SQL — even for identifiers (use `Prisma.raw` only for validated allowlist values).
@@ -129,17 +188,19 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | Write mode      | `awaitWrite=true` — readers wait for in-flight writers (prevents cache stampede)     |
 | Invalidation    | `invalidateAnalysisCache()` clears ALL 5 route prefixes on any mutation              |
 
-**5 cached routes** (all use `getCached` / `setCached`):
+**5 cached routes** (all use `getCached` / `await setCached` — note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
 
 1. `/api/analysis`
 2. `/api/pareto`
 3. `/api/recommendations`
 4. `/api/resto-bahan-matrix`
-5. `/api/export-report`
+5. `/api/export-report` (added in DOC-UPDATE — cached per `month|week|compareWeek|compareMonth|sections` hash; full report build is ~8s cold, ~0.2s warm)
 
 **`invalidateAnalysisCache()`** deletes rows where `key LIKE 'analysis␟%'` OR `'pareto␟%'` OR `'recommendations␟%'` OR `'resto-bahan-matrix␟%'` OR `'export-report␟%'`.
 
 **Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts`, `DriveImportDialog`.
+
+> **Cache key note for BOM Correlation:** the new BOM Correlation rules + card do NOT introduce a new cached route or filter dimension. They run inside `/api/analysis` and read the existing `executiveSummary.qty{Bom,Deviasi,Waste,Susut,Trial}.growth` fields. No changes to cache keys are required.
 
 ### 4.2 In-Memory Caches
 
@@ -213,10 +274,11 @@ function constantTimeCompare(a: string, b: string): boolean {
 
 ### 6.1 Database
 
-- **Prisma query logging**: OFF by default. Set `PRISMA_LOG_QUERIES=true` to enable (dev only — logs every query).
+- **Prisma query logging**: OFF by default. Set `PRISMA_LOG_QUERIES=true` to enable (dev only — logs every query; can flood logs and slow down hot routes in prod). Disabled in `src/lib/db.ts` constructor.
 - **Connection pool**: `limit=30`, `pool_timeout=60s`, `idle_timeout=20s`. Tuned for Supabase free tier (max 60 connections).
 - **`createMany`**: Used for bulk inserts (ingestion). Skips ORM lifecycle hooks — ~10x faster than per-row `create`.
 - **Indexes**: All filterable columns indexed (outlet_id, period_week, period_month, pic_id). See `prisma/schema.prisma`.
+- **Export-report DB cache**: the Word export route caches the full generated payload (5-min TTL) keyed by `month|week|compareWeek|compareMonth|sections` — repeat exports of the same period+sections hit the cache in ~0.2s instead of regenerating (~8s).
 
 ### 6.2 Code Splitting (Client)
 
@@ -457,10 +519,11 @@ src/
 ├── app/
 │   ├── api/
 │   │   ├── analysis/route.ts              # Main analytics endpoint (cached)
+│   │   │   └── services/                  # Pipeline stages (validate, fetch, run-queries, post-process, assemble)
 │   │   ├── pareto/route.ts                # Pareto 80/20 (cached)
 │   │   ├── recommendations/route.ts       # AI recommendations (cached)
 │   │   ├── resto-bahan-matrix/route.ts    # Restaurant × ingredient matrix (cached)
-│   │   ├── export-report/route.ts         # Excel export (cached)
+│   │   ├── export-report/route.ts         # Word export (cached)
 │   │   ├── ingest-upload/route.ts         # Chunked upload receiver
 │   │   ├── ingest-process/route.ts        # Reassemble + parse + persist
 │   │   ├── metadata/route.ts              # Outlets, PICs, periods list
@@ -469,26 +532,35 @@ src/
 ├── components/
 │   ├── ui/                                # shadcn/ui primitives
 │   └── dashboard/                         # Chart + KPI components (memoized)
+│       ├── BomCorrelationCard.tsx         # NEW: Dev/Waste/Susut/Trial vs BOM alignment table
+│       ├── HistoricalZScoreCard.tsx       # Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
+│       ├── AreaTrendChart.tsx             # RETAINED but no longer imported into page.tsx
+│       └── ...                            # 22 other dashboard components
 ├── hooks/
-│   ├── useAnalysis.ts                     # TanStack Query wrapper
+│   ├── useAnalysis.ts                     # TanStack Query wrapper (AnalysisData type)
 │   └── useFilters.ts                      # Zustand filter store
 ├── lib/
-│   ├── db.ts                              # PrismaClient singleton + withStatementTimeout
-│   ├── aggregation-cache.ts               # DB-level cache (get/set/invalidate)
+│   ├── db.ts                              # PrismaClient singleton + withStatementTimeout (log OFF)
+│   ├── aggregation-cache.ts               # DB-level cache (get/set/invalidate) — setCached MUST be awaited
 │   ├── rate-limit.ts                      # In-memory per-IP limiter
 │   ├── auth.ts                            # Constant-time token compare
-│   ├── api/error.ts                       # errorResponse() helper
+│   ├── api/error.ts                       # errorResponse() helper (MUST be `return`-ed)
 │   ├── engine/
 │   │   ├── transform.ts                   # Ingest transform pipeline
 │   │   ├── validator.ts                   # Data-quality checks
 │   │   └── analysis.ts                    # Deviation decomposition (1500 LOC)
-│   ├── query/
+│   ├── queries/
 │   │   ├── buildSqlFilters.ts             # Parameterized WHERE builder
-│   │   ├── historical-stats.ts            # Two-level CTE
+│   │   ├── historical-stats.ts            # Two-level CTE (multi-metric)
+│   │   ├── rule-evaluation.ts             # 21-rule SQL push-down + 5-rule JS post-process
 │   │   ├── z-score.ts                     # Z-score query
 │   │   └── month.ts                       # resolveMonthLabel()
 │   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs
-├── middleware.ts                          # Auth gate (Edge runtime)
+├── config/
+│   ├── rules.yaml                         # 21 anomaly rules (source of truth)
+│   └── rules.ts                           # TS rule mirror (legacy)
+├── engine/rules/evaluator.ts              # Legacy JS rule evaluator (used by item-history, outlet-items)
+├── middleware.ts                          # Auth gate (Edge runtime) — ADMIN_TOKEN middleware (fixed in DOC-UPDATE)
 └── next.config.ts                         # CSP, optimizePackageImports, headers
 
 prisma/

@@ -6,7 +6,7 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session DOC-MASTER
+> **Last updated:** Session DOC-UPDATE (BOM correlation feature)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -127,12 +127,14 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `AdvancedAnalysis` — Advanced analysis panel
 - `Charts` — 5 chart types (Deviation, Waste, Susut, Trial, Residual)
 - `HistoricalZScoreCard` — Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
-- `AreaTrendChart` — Area trend visualization
+- `BomCorrelationCard` — BOM correlation analysis (Dev/Waste/Susut/Trial vs BOM growth direction) — *added in DOC-UPDATE*
 - `ItemDeepDive` — Item-level deep dive
 - `CardDrillDown` — Card-based drill-down
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
 - `RestoAnalysis` — Restaurant analysis panel
+
+> **Removed from dashboard (DOC-UPDATE):** `AreaTrendChart` (file retained for reference, no longer rendered on dashboard) and the "Weekly Trend" component. The `RestoAnalisa` priority-score drilldown is now a static card display (no click-through).
 
 ### Filters (`src/components/filters/` — 10 components)
 - `FilterBar` — Main filter bar
@@ -160,13 +162,44 @@ Deviation is decomposed into 4 categories for root cause identification:
 ## 6. Key Features
 
 ### Anomaly Engine
-- **17-rule engine** (YAML-configured, SQL-pushed evaluator)
-- Rules defined in `src/config/rules.yaml`
-- TypeScript configs in `src/config/rules.ts`
-- Evaluator in `src/engine/rules/evaluator.ts`
+- **21-rule engine** (17 original + 4 BOM correlation, YAML-configured, SQL-pushed evaluator)
+- Rules defined in `src/config/rules.yaml` (source of truth) and mirrored in `src/config/rules.ts`
+- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` (16 rules) + JS post-process for zScore-based rules (5 rules: HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING, BENCHMARK_ABOVE_AREA, BENCHMARK_ABOVE_NETWORK)
 - Analysis modules: `patternEngine`, `rootCauseEngine`, `ruleService`
 
+### 21 Anomaly Rules
+
+| # | Code | Category | Severity | Priority | Trigger |
+|---|------|----------|----------|----------|---------|
+| 1 | `SALES_DEVIATION_MISMATCH` | SALES | ABNORMAL | 90 | Deviation growth > 2× sales growth (both positive) |
+| 2 | `SALES_DEV_DECREASE` | SALES | ABNORMAL | 85 | Sales down but deviation up |
+| 3 | `BOM_DEVIATION_MISMATCH` | BOM | ABNORMAL | 88 | QTY Deviation growth > 2× BOM growth |
+| 4 | `BOM_DOWN_DEV_UP` | BOM | ABNORMAL | 82 | BOM down but deviation up |
+| 5 | `WASTE_BOM_MISMATCH` | BOM | WARNING | 55 | Waste growth diverges from BOM growth (opposite sign) — *new* |
+| 6 | `SUSUT_BOM_MISMATCH` | BOM | WARNING | 54 | Susut growth diverges from BOM growth — *new* |
+| 7 | `TRIAL_BOM_MISMATCH` | BOM | WARNING | 53 | Trial growth diverges from BOM growth — *new* |
+| 8 | `BOM_DEVIATION_DISPROPORTIONATE` | BOM | WARNING | 56 | Deviation growth > 1.5× BOM growth (but ≤ 2×) — *new* |
+| 9 | `TOLERANCE_BREACH_HIGH` | TOLERANCE | ABNORMAL | 80 | `|Dev/BOM|` > 2× `|tolerancePct|` |
+| 10 | `TOLERANCE_BREACH` | TOLERANCE | WARNING | 70 | `|Dev/BOM|` > `|tolerancePct|` |
+| 11 | `TOLERANCE_NOT_SET_HIGH_DEV` | TOLERANCE | WARNING | 65 | High `|Dev/BOM|` but tolerance is NULL |
+| 12 | `OVER_EXPLAINED` | RESIDUAL | ABNORMAL | 76 | Waste + Susut + Trial > total deviation (fraud red flag) |
+| 13 | `RESIDUAL_LOSS_HIGH` | RESIDUAL | ABNORMAL | 75 | Residual ratio > `residualLossHighPct` AND direction = LOSS |
+| 14 | `RESIDUAL_LOSS_WARN` | RESIDUAL | WARNING | 60 | Residual ratio > `residualLossWarnPct` AND ≤ high AND LOSS |
+| 15 | `HIGH_LOSS_NOMINAL` | DIRECTION | ABNORMAL | 80 | `|nominalLossSurplus|` > `highLossNominalThreshold` AND LOSS |
+| 16 | `BENCHMARK_ABOVE_AREA` | BENCHMARK | WARNING | 50 | `benchmarkFlag = HISTORICAL_WARNING` |
+| 17 | `BENCHMARK_ABOVE_NETWORK` | BENCHMARK | ABNORMAL | 72 | `benchmarkFlag = HISTORICAL_HIGH` |
+| 18 | `DIRECTION_FLIP` | HISTORICAL | WARNING | 60 | Direction flipped LOSS ↔ SURPLUS vs previous period |
+| 19 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` AND LOSS |
+| 20 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
+| 21 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
+
+### BOM Correlation Analysis
+- 4 new rules detect when Waste/Susut/Trial growth diverges in sign from BOM growth, or when Deviation growth is disproportionate (1.5–2×) to BOM growth.
+- Growth fields `wasteGrowth` / `susutGrowth` / `trialGrowth` (alongside existing `bomGrowth` / `qtyDeviasiGrowth` / `salesGrowth` / `nominalDeviasiGrowth`) are computed in the rule-evaluation CTE using `ABS(...)` magnitude and div-by-zero guards.
+- Dashboard component: `BomCorrelationCard` (`src/components/dashboard/BomCorrelationCard.tsx`) renders a Deviasi/Waste/Susut/Trial vs BOM alignment table on the Dashboard tab (under "Analisis Historis").
+
 ### Analytics
+- **BOM Correlation analysis** (Deviasi/Waste/Susut/Trial vs BOM growth direction) — surfaced as dashboard card + 4 rules
 - **Historical Z-Score** analysis (multi-metric: Dev/BOM + Waste + Susut + Trial)
 - **Pareto 80/20** analysis (5 dimensions: Item, Outlet, Area, Kelompok, PIC)
 - **Peer comparison** (outlet vs ±10% sales peers)
@@ -180,8 +213,11 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ### Caching
 - **DB-level `AggregationCache`** (5-min TTL, `awaitWrite` pattern)
-  - API: `getCached()`, `setCached()`, `invalidateAll()`
+  - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`
+  - 5 cached routes: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`
+  - `invalidateAnalysisCache()` clears all 5 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction)
 - **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes)
+- **Performance:** Prisma query log disabled by default (`PRISMA_LOG_QUERIES=true` to enable); export-report route uses DB cache (5-min TTL) to skip recomputation on repeat exports.
 
 ---
 
@@ -246,9 +282,9 @@ src/
 ├── app/
 │   ├── page.tsx                    # Main dashboard (4 tabs: Dashboard/Resto/Peer/Pareto)
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
-│   └── api/                        # 22 API routes
+│   └── api/                        # 22 API routes (incl. pic/import)
 ├── components/
-│   ├── dashboard/                  # 25 components
+│   ├── dashboard/                  # 25 components (+ BomCorrelationCard; AreaTrendChart retained but not rendered)
 │   ├── filters/                    # 10 components (FilterBar + 5 dialogs + SearchableComboBox)
 │   ├── drilldown/                  # 2 components
 │   └── ui/                         # 29 shadcn components
@@ -265,11 +301,12 @@ src/
 │   ├── rate-limit.ts               # In-memory rate limiter
 │   └── settings.ts                 # 24 configurable thresholds
 ├── engine/
-│   ├── rules/evaluator.ts          # 17-rule engine (YAML-driven)
+│   ├── rules/evaluator.ts          # Legacy JS rule evaluator (used by item-history, outlet-items)
 │   └── analysis/                   # patternEngine, rootCauseEngine, ruleService
+├── lib/queries/rule-evaluation.ts  # 21-rule SQL push-down evaluator (16 SQL + 5 JS post-process)
 ├── config/
-│   ├── rules.yaml                  # 17 anomaly rules definition
-│   └── rules.ts                    # TypeScript rule configs
+│   ├── rules.yaml                  # 21 anomaly rules definition (source of truth)
+│   └── rules.ts                    # TypeScript rule configs (legacy mirror)
 └── middleware.ts                   # Auth (ADMIN_TOKEN, PROTECTED_PATHS)
 ```
 

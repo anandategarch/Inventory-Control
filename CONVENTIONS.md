@@ -129,7 +129,103 @@ export const ComponentName = memo(function ComponentName({ data }: Props) {
 const HeavyChart = dynamic(() => import('...'), { ssr: false, loading: () => <LoadingChart /> });
 ```
 
-## 6. Naming Conventions
+### 5.1 Detail-Heavy Card Template (BomCorrelationCard)
+
+For cards that render a small, dense comparison table + narrative findings (e.g. `BomCorrelationCard`), follow this template:
+
+```typescript
+'use client';
+import { memo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import type { AnalysisData } from '@/hooks/useAnalysis';
+import { fmtNum, fmtPct } from '@/lib/format';
+
+interface MetricRow { name: string; current: number | null; growth: number | null; previous: number | null; aligned: boolean | null }
+
+function CardInner({ data }: { data: AnalysisData }) {
+  const s = data.executiveSummary;
+  // 1. Pull growth values from exec summary (already server-computed)
+  // 2. Build rows array inside an IIFE so we can early-return [] when data is null
+  // 3. Build findings array (text + 'warning' | 'ok' type) inside another IIFE
+  // 4. Render Table + findings list
+}
+
+export const BomCorrelationCard = memo(CardInner);
+```
+
+Key conventions:
+- Type the props as `{ data: AnalysisData }` — do NOT pass derived values as separate props (keeps the prop interface stable).
+- Use `FormulaInfo` in the header to explain the rule (formula + description + example + side).
+- Use `null` for "no data" sentinel (not `0` or `undefined`) and render `—` in the cell.
+- Compute alignment booleans in TS, not SQL — keeps the SQL evaluator simple.
+- Findings array: push only when an anomaly is detected; fall back to a single "all aligned" ok message.
+
+## 6. Rule Definition Conventions
+
+Rules live in two places:
+1. `src/config/rules.yaml` — **source of truth** (DSL: comparison + logical + arithmetic operators).
+2. `src/config/rules.ts` — TS mirror (used by the legacy JS evaluator on `/api/item-history` and `/api/outlet-items`; some fields still use the older `direction`-based conditions).
+
+The SQL push-down evaluator (`src/lib/queries/rule-evaluation.ts`) is the active evaluator on `/api/analysis` and `/api/export-report`. It hardcodes a `CASE WHEN` column per rule and a `RULE_MAP` entry that maps the column name → rule code + severity + category + priority. **Both must be updated together when adding a rule.**
+
+### 6.1 Adding a New Rule (Checklist)
+
+1. **`src/config/rules.yaml`** — append a rule entry with `code`, `name`, `category`, `severity`, `priority`, `condition`, `narrative_template`.
+2. **`src/lib/queries/rule-evaluation.ts`** — add:
+   - A `CASE WHEN ... THEN 1 ELSE 0 END` column in the main `SELECT` (alias `f_<snake_case_code>`).
+   - A matching entry in the `RULE_MAP` array (col, code, severity, category, priority).
+3. If the rule needs a new growth field, add it to the **Growth CTE** (`CROSS JOIN LATERAL (...)`) — see §6.2.
+4. If the rule is zScore-based (needs historical stats), add it to `evaluateHistoricalRulesJs()` instead of the SQL.
+5. Run `bun run test tests/queries/rule-evaluation.test.ts` and update expectations if needed.
+
+### 6.2 Growth CTE Field Conventions
+
+The growth CTE in `rule-evaluation.ts` (lines 169–193) computes period-over-period growth ratios. When adding a new metric (e.g. `wasteGrowth`), follow these conventions:
+
+| Convention | Rule | Example |
+|------------|------|---------|
+| **Naming** | `<metric>Growth` (camelCase) | `wasteGrowth`, `susutGrowth`, `trialGrowth` |
+| **Magnitude** | Use `ABS(curr) - ABS(prev)` in the numerator (not raw `curr - prev`) — sign-flips in the raw value would give misleading growth % | `(ABS(c."qtyWaste") - ABS(p."prevQtyWaste")) / ABS(p."prevQtyWaste")` |
+| **Div-by-zero guard** | Wrap in `CASE WHEN p."prevX" IS NOT NULL AND p."prevX" != 0 THEN ... ELSE NULL END` — never divide by zero | see example above |
+| **NULL sentinel** | Return `NULL` (not `0`) when prev is missing — rule conditions explicitly check `IS NOT NULL` | `g."wasteGrowth" IS NOT NULL AND ...` |
+| **Prev column alias** | `prevQty<Metric>` / `prevNominal<Metric>` (camelCase) | `prevQtyWaste`, `prevNominalDeviasi` |
+
+### 6.3 BOM Correlation Rule Conventions
+
+The 4 BOM Correlation rules (`WASTE_BOM_MISMATCH`, `SUSUT_BOM_MISMATCH`, `TRIAL_BOM_MISMATCH`, `BOM_DEVIATION_DISPROPORTIONATE`) follow a shared pattern:
+
+- **Severity**: `WARNING` (not `ABNORMAL`) — these are *indicators* of operational drift, not proof of fraud.
+- **Priority**: 53–56 (low — lower than tolerance/residual/historical rules so they don't dominate the Priority Summary).
+- **Condition shape** for mismatch rules:
+  ```yaml
+  condition:
+    any:
+      - all:
+          - bomGrowth: { lt: 0 }
+          - <metric>Growth: { gt: 0 }
+      - all:
+          - bomGrowth: { gt: 0 }
+          - <metric>Growth: { lt: 0 }
+  ```
+- **BOM_DEVIATION_DISPROPORTIONATE** uses `deviationBomRatio > 1.5` to catch the 1.5×–2× band that `BOM_DEVIATION_MISMATCH` (rule 3, factor = `bomDeviationFactor` = 2) misses.
+- **Narrative template** must reference both growth values so the analyst can see both numbers without drilldown.
+
+### 6.4 SQL vs JS Evaluator Patterns
+
+The codebase has TWO rule evaluators — they serve different routes and must stay in sync on rule semantics:
+
+| Evaluator | File | Routes | Rule count | Notes |
+|-----------|------|--------|------------|-------|
+| SQL push-down | `src/lib/queries/rule-evaluation.ts` (`evaluateRulesSql`) | `/api/analysis`, `/api/export-report` | 16 (all non-zScore) | Single SQL query; runs in ~2–3s for 35K records. **Active path.** |
+| JS post-process | `src/lib/queries/rule-evaluation.ts` (`evaluateHistoricalRulesJs`) | same | 5 (zScore-based) | Uses `historicalByOutletItem` Map; runs in JS after the SQL eval. |
+| Legacy JS | `src/engine/rules/evaluator.ts` | `/api/item-history`, `/api/outlet-items` | 17 (no BOM Correlation) | Older single-record evaluator; not updated with BOM Correlation rules. |
+
+When adding a rule, prefer the **SQL push-down** path (Stage 1) unless the rule needs historical stats. Update `RULE_MAP` in `rule-evaluation.ts` and add the corresponding `CASE WHEN` column. Do NOT add the rule to `src/engine/rules/evaluator.ts` unless the `/api/item-history` route needs it — and if you do, document the divergence in a comment.
+
+## 7. Naming Conventions
 
 | Type | Convention | Example |
 |------|-----------|---------|
@@ -142,7 +238,7 @@ const HeavyChart = dynamic(() => import('...'), { ssr: false, loading: () => <Lo
 | Zod schemas | camelCase + `Schema` suffix | `analysisQuerySchema` |
 | Test files | `{module}.test.ts` | `historical.test.ts` |
 
-## 7. Validation Pattern
+## 8. Validation Pattern
 
 ```typescript
 // In src/lib/validation.ts
@@ -164,7 +260,7 @@ if (!validation.success) {
 ### Available Schemas
 `monthLabelSchema`, `weekLabelSchema`, `areaSchema`, `kelompokSchema`, `outletCodeSchema`, `picSchema`, `itemNameSchema`, `limitSchema`, `cursorSchema`
 
-## 8. Security Checklist (for new routes)
+## 9. Security Checklist (for new routes)
 
 - [ ] Zod validation on ALL params
 - [ ] Rate limiting (`rateLimit` + `getClientIP`)
@@ -175,7 +271,7 @@ if (!validation.success) {
 - [ ] No `console.error` — use `logger.error`
 - [ ] HTTP Cache-Control header (`CACHE_ANALYSIS` or `CACHE_METADATA`)
 
-## 9. Testing Pattern
+## 10. Testing Pattern
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -210,7 +306,7 @@ describe('functionName', () => {
 });
 ```
 
-## 10. Git Commit Pattern
+## 11. Git Commit Pattern
 
 ```
 type(scope): short description
@@ -230,7 +326,7 @@ Verified: 0 lint errors, N tests pass, tsc clean.
 | `docs` | Documentation only |
 | `refactor` | Code restructuring (no behavior change) |
 
-## 11. Number Formatting
+## 12. Number Formatting
 
 | Function | Use Case | Example |
 |----------|----------|---------|
@@ -243,7 +339,7 @@ Verified: 0 lint errors, N tests pass, tsc clean.
 - Indonesian decimal separator: `,` (not `.`)
 - Indonesian thousand separator: `.` (not `,`)
 
-## 12. State Management
+## 13. State Management
 
 ### Zustand (client state)
 ```typescript
@@ -272,7 +368,7 @@ const { data, isLoading, isFetching, error, refetch } = useQuery({
 });
 ```
 
-## 13. File Organization
+## 14. File Organization
 
 ```
 src/
@@ -292,3 +388,5 @@ src/
 - **Query > 200 lines?** Split into sub-functions
 - **Component > 300 lines?** Split into sub-components
 - shadcn/ui files: **never modify** (regenerated by CLI)
+- **Rule definitions**: edit `src/config/rules.yaml` (source of truth) AND `src/lib/queries/rule-evaluation.ts` `RULE_MAP` + `CASE WHEN` column — keep both in sync.
+- **Growth fields**: add to the `CROSS JOIN LATERAL` growth CTE in `rule-evaluation.ts` with `ABS(curr) - ABS(prev)` numerator + div-by-zero guard. Return `NULL` when prev is missing.
