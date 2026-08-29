@@ -43,6 +43,7 @@ const LossVsSurplusChart = dynamic(() => import('@/components/dashboard/Charts')
 const MultiPeriodComparisonCard = dynamic(() => import('@/components/dashboard/AnalysisCards').then(m => m.MultiPeriodComparisonCard), { ssr: false, loading: () => <LoadingChart /> });
 const HistoricalZScoreCard = dynamic(() => import('@/components/dashboard/HistoricalZScoreCard').then(m => m.HistoricalZScoreCard), { ssr: false, loading: () => <LoadingChart /> });
 const BomCorrelationCard = dynamic(() => import('@/components/dashboard/BomCorrelationCard').then(m => m.BomCorrelationCard), { ssr: false, loading: () => <LoadingChart /> });
+const AreaItemHeatmap = dynamic(() => import('@/components/dashboard/AreaItemHeatmap').then(m => m.AreaItemHeatmap), { ssr: false, loading: () => <LoadingChart /> });
 const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparison').then(m => m.PeerComparison), { ssr: false, loading: () => <LoadingChart /> });
 const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => (
   <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
@@ -636,6 +637,11 @@ export default function DashboardPage() {
                   </ErrorBoundary>
                 </section>
               </FetchAware>
+
+              {/* Section: Heatmap Area × Item (standalone fetch, not dependent on analysis data) */}
+              <ErrorBoundary label="Heatmap Area × Item">
+                <AreaItemHeatmap />
+              </ErrorBoundary>
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}

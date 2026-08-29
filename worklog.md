@@ -32758,3 +32758,1062 @@ Stage Summary:
     setting details; §6.4 evaluator table updated (JS post-process 5 → 3,
     Legacy JS 17 → 15); §14 file organization + rule definitions notes
     updated to reflect single source of truth
+Task ID: GAP-AI
+Agent: general-purpose (AI/Automation Gap Analyst)
+Task: Deep comparison of AI/automation features vs AI-powered analytics platforms (Power BI+Copilot, ThoughtSpot, Anomalo, Sisu, etc.)
+
+Work Log:
+- Read worklog tail (last 100 lines) — REVIEW-SEC + FIX-CODE-QUALITY context
+- Read package.json — confirmed NO AI/ML deps (no z-ai-web-dev-sdk, openai, anthropic, tensorflow, onnx, prophet, sklearn)
+- Read src/config/rules.yaml — 17 anomaly rules, YAML DSL, pure rule-based (no ML)
+- Read src/engine/narrative/narrative.ts — file is now ONLY rule-based buildRecommendations (74 lines). Comment confirms: "AI/LLM narrative features removed — Task REMOVE-AI. Kept buildRecommendations since it is rule-based, not AI."
+- Worklog line 4993 confirms: narrative.ts REWROTE 438→74 lines. Deleted: ZAI import, SYSTEM_PROMPT, generateNarrative, generateAIExecutiveSummary, generateAIPatternInsight, buildStructuredSummary, buildFallbackNarrative
+- Worklog line 5431 confirms: z-ai-web-dev-sdk removed from package.json in FINAL-SECURITY-13
+- README.md line 27 is STALE: still claims "AI Narrative | z-ai-web-dev-sdk (backend only)" — needs update
+- MASTER_CONTEXT.md line 587 confirms: "AI narrative (dulu pakai LLM, sudah di-disable untuk performance — bisa re-enable dengan caching)"
+- Read src/lib/metrics/forecast.ts — simple OLS linear regression (trend projection, NOT real forecasting; no seasonality, no ARIMA, no Prophet)
+- Read src/engine/analysis/patternEngine.ts — rule-based 4-archetype detection (SYSTEMIC_ITEM, ISOLATED_OUTLET, AREA_LEVEL, NETWORK_WIDE) with hard-coded thresholds (0.30, 0.50, 1.5×, 0.10)
+- Read src/engine/analysis/rootCauseEngine.ts — static mapping table (rule code → possible causes + actions). 17 rule codes mapped. Not AI, but well-structured lookup.
+- Read src/components/dashboard/InsightsPanel.tsx — rule-based if-this-then-that insight cards (6 insight types: health, growth-mismatch, residual, area-worst, cost-impact, systemic). No LLM.
+- Read vercel.json — NO cron configuration. Confirmed by worklog line 17297: "Cron jobs: ⚠ NONE — no /api/cron, no Vercel Cron config"
+- Grep z-ai-web-dev-sdk across src/ — ZERO matches (only README + worklog mentions)
+- Grep cron/webhook/scheduled across src/ — only path-traversal prevention mentions; NO scheduling infra
+- Verified: app is 100% rule-based + statistical (Z-Score, OLS regression). No ML, no LLM, no NLP, no CV, no automation beyond manual Drive import + Refresh button.
+
+Stage Summary:
+
+**CRITICAL CONTEXT CORRECTION**: Task description stated "app has z-ai-web-dev-sdk available (LLM, VLM, TTS, ASR skills)" and "we have basic LLM narrative." Both are FALSE in the deployed app:
+- LLM narrative was REMOVED (Task REMOVE-AI) — narrative.ts is now pure rule-based
+- z-ai-web-dev-sdk was REMOVED from package.json (FINAL-SECURITY-13)
+- The SDK is available to ME as the workspace agent (skills), but NOT installed in the deployed app
+- README.md is stale and needs update
+
+**AI/Automation Completeness Scores (out of 10)**:
+| Platform | Score | Notes |
+|---|---|---|
+| Our App | 1.5/10 | Rule-based only; no AI/ML; LLM removed; minimal automation |
+| Power BI + Copilot | 8.5/10 | NL query, NL generation, AI visuals, Smart Narrative, Q&A |
+| Tableau + Einstein | 8.0/10 | Einstein Discovery, predictions, NL insights, smart data prep |
+| ThoughtSpot | 7.5/10 | NL search, AI-driven analytics, AutoML insights |
+| Mode + Narrative Science | 7.0/10 | Auto-narratives, NLG at scale, embedded analytics |
+| Anomalo | 8.5/10 | Purpose-built for automated anomaly detection + data quality |
+| Outlier.ai | 7.5/10 | Automated business analysis, cross-metric pattern discovery |
+| Sisu Data | 7.0/10 | Factor analysis, why-metrics-change, ML-driven root cause |
+| C3.ai | 9.0/10 | Enterprise AI platform (out of scope — enterprise-only) |
+| DataRobot | 9.0/10 | AutoML end-to-end (out of scope — enterprise/paid) |
+| H2O.ai | 8.5/10 | Open-source ML platform (realistic if self-hosted) |
+
+**Top 10 Missing AI Features (priority order)**:
+1. **P1** — LLM Narrative (re-enable; was removed for performance, code patterns exist in worklog) — 2-3 days work, free with z-ai-web-dev-sdk re-install
+2. **P1** — Natural Language Query ("show me top 10 outlets with highest waste") — 1 week, free
+3. **P1** — Scheduled data refresh (Vercel Cron + auto-import from Drive) — 2-3 days, free
+4. **P1** — Alert automation (email/push when P1 anomaly detected) — 3-5 days, free (Resend/SMTP)
+5. **P2** — ML anomaly detection (Isolation Forest via onnxruntime-node or Python sidecar) — 1-2 weeks, free
+6. **P2** — Smart summary chatbot (data Q&A via z-ai-web-dev-sdk LLM) — 1 week, free
+7. **P2** — Time-series anomaly (Prophet/ARIMA via Python sidecar) — 1-2 weeks, free
+8. **P2** — OCR for invoices/receipts (z-ai-web-dev-sdk VLM skill) — 1 week, free
+9. **P3** — What-if scenario modeling (deterministic, no ML needed) — 1 week, free
+10. **P3** — WhatsApp/Slack/Teams webhook integration — 3-5 days, free
+
+**Quick AI Wins (free, achievable in 1-4 weeks with z-ai-web-dev-sdk)**:
+1. **Re-enable LLM Executive Narrative** — code existed before (worklog line 4993 lists deleted functions). Re-add `bun add z-ai-web-dev-sdk`, restore `generateNarrative`, `generateAIExecutiveSummary`, `generateAIPatternInsight`. Add caching layer (AggregationCache table already exists). Estimated: 2-3 days.
+2. **Natural Language Query endpoint** (`/api/ask?q=...`) — use LLM to translate Indonesian/English question → SQL filter params → existing analysis API. No new DB schema. Estimated: 1 week.
+3. **Smart Alert Digest** — daily cron summarizes P1 anomalies into 1 paragraph Indonesian narrative, sends via email/WhatsApp. Estimated: 3-5 days.
+4. **Root Cause Hypothesis Augmentation** — current rootCauseEngine is static mapping. Add LLM layer that takes rule context + actual numbers + outlet history → generates 2-3 specific hypotheses (vs generic lookup). Estimated: 1 week.
+5. **Voice query** (ASR skill) — outlet manager speaks " outlet mana yang paling banyak waste minggu ini?" → text → NL query → response. Estimated: 1 week.
+6. **Invoice OCR** (VLM skill) — outlet uploads photo of supplier invoice → extract item/qty/price → auto-reconcile vs PO. Estimated: 2 weeks.
+7. **Waste photo categorization** (VLM skill) — staff photo of waste bin → auto-classify category (food/packaging/spoilage) → log to Waste column. Estimated: 2 weeks.
+
+**Realistic vs Aspirational**:
+
+✅ **Realistic (free, single-dev, 1-3 months)**:
+- All 7 Quick Wins above (LLM narrative, NL query, smart alerts, root cause aug, voice, OCR, waste VLM)
+- Vercel Cron scheduled refresh (free tier: 1 job/day)
+- Resend.com for email alerts (free 100/day)
+- WhatsApp Business API via free webhook (cloud-api.whatsapp.com)
+- Isolation Forest via onnxruntime-node (npm package, free, runs in Node)
+- All using z-ai-web-dev-sdk (LLM/VLM/TTS/ASR skills — workspace provides free quota)
+
+❌ **Aspirational (enterprise-only, paid, out of scope)**:
+- DataRobot / C3.ai enterprise ML platforms ($100K+/year)
+- Real-time streaming anomaly detection (Kafka + Flink — infrastructure cost)
+- Full MLOps pipeline (model registry, A/B testing, drift detection — needs ML platform)
+- Prophet/ARIMA via Python sidecar (deployable but adds ops complexity — borderline)
+- Multi-language support beyond ID+EN (translates to higher LLM cost)
+- Predictive maintenance with IoT sensors (needs hardware)
+
+**Recommendation**: Re-enable LLM narrative FIRST (lowest effort, highest perceived value — code patterns exist, just need to undo REMOVE-AI with caching). Then add NL query + smart alerts. This moves app from 1.5/10 to ~4.5/10 in AI completeness within 1 month, at zero cost (using workspace z-ai-web-dev-sdk quota).
+
+
+---
+Task ID: GAP-FNB
+Agent: general-purpose (F&B Gap Analyst)
+Task: Deep comparison of F&B-specific features vs leading restaurant/F&B platforms
+      (MarketMan, Toast Inventory, MarginEdge, xtraCHEF, Restaurant365, Zip HACCP,
+       Jolt, Syrve, Lavu POS, Katanashi)
+
+Work Log:
+- Read worklog tail (last 100 lines) — REVIEW-SEC + FIX-CODE-QUALITY context
+- Read prisma/schema.prisma (287 lines) — 9 models, all centered on InventoryRecord
+- Read src/types/inventory.ts — confirmed data shape: BOM/COM/Deviasi/Waste/Susut/
+  Trial/Loss-Surplus, no supplier/invoice/recipe-count/HACCP/labor models
+- Read MASTER_CONTEXT.md (609 lines) — full feature inventory, 21 API routes,
+  17 anomaly rules, 43 thresholds
+- Read src/config/rules.yaml (248 lines) — 17 rule definitions, all centered on
+  deviation/sales/BOM/tolerance/residual/z-score (NO rules for invoice/PO/temp/
+  allergen/expiry/labor/prep)
+- Read src/components/dashboard/resto-analysis/menu-analysis.tsx — confirms "Menu
+  Analysis" = outlier detection by 2-word item-name prefix, NOT menu engineering
+  matrix (no stars/plowhorses/puzzles/dogs, no profitability, no popularity)
+- Read src/lib/metrics/forecast.ts (286 lines) — OLS linear regression on
+  |nominalDeviasi| trend, R² confidence — single-period deviation forecast only,
+  NOT sales forecasting / demand forecasting / prep planning
+- Read src/components/dashboard/ExportDialog.tsx + /api/export-report/route.ts —
+  Word export (.docx) with 11 sections, NO PDF, NO Excel native export, NO
+  scheduled email reports
+- Grep supplier|invoice|resep|recipe|haccp|suhu|temperature|allergen|kadalu|labor|
+  karyawan|daypart in src/ → ZERO matches in domain code (only "forecast" module)
+- Confirmed app has NO supplier model, NO invoice model, NO PO model, NO recipe
+  costing, NO stock count workflow, NO HACCP/temperature logs, NO allergen
+  tracking, NO expiration tracking, NO POS integration, NO labor tracking, NO
+  mobile app, NO multi-user workflows, NO comps/voids, NO real-time data
+
+Stage Summary:
+
+## A. Invoice & Purchasing Automation
+| Feature | Our App | MarketMan | Toast | MarginEdge | xtraCHEF | R365 | Priority |
+|---------|---------|-----------|-------|------------|----------|------|----------|
+| OCR invoice scanning | ❌ | ✅ | ⚠ (via xtraCHEF) | ✅ | ✅ | ✅ | P1 |
+| Auto-extract line items | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P1 |
+| Invoice approval workflow | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | P2 |
+| Price variance (invoice vs PO vs last) | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P1 |
+| Supplier price comparison | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | P1 |
+| Invoice storage + retrieval | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Auto-coding to GL accounts | ❌ | ⚠ | ❌ | ✅ | ✅ | ✅ | P3 |
+| Three-way match (PO/receipt/invoice) | ❌ | ✅ | ❌ | ✅ | ⚠ | ✅ | P2 |
+
+## B. Recipe & Menu Engineering
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Syrve | Lavu | Priority |
+|---------|---------|-----------|-------|------------|------|-------|------|----------|
+| Recipe costing (per dish) | ❌ (we have BOM qty only, no $ per dish) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Menu engineering matrix (stars/plowhorses/puzzles/dogs) | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Theoretical vs actual food cost | ❌ (have BOM vs COM, but not $ theor vs $ actual) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Menu item profitability (price − cost) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Menu item popularity (sales count) | ❌ (we have item occurence, not sales count) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Recipe versioning | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | ⚠ | P3 |
+| Ingredient substitution | ❌ | ✅ | ❌ | ⚠ | ⚠ | ✅ | ❌ | P3 |
+| Recipe scaling (yield ×N) | ❌ | ✅ | ⚠ | ⚠ | ⚠ | ✅ | ⚠ | P3 |
+| Menu outlier detection (avg+2σ) | ✅ (MenuAnalysis.tsx) | ❌ | ❌ | ❌ | ❌ | ⚠ | ❌ | — (our edge) |
+
+## C. Stock Counts & Reconciliation
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Jolt | Priority |
+|---------|---------|-----------|-------|------------|------|------|----------|
+| Mobile stock count app | ❌ (Excel upload weekly) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Count sheet generation | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Blind count option | ❌ | ✅ | ⚠ | ✅ | ✅ | ❌ | P3 |
+| Variance investigation (theoretical vs actual) | ⚠ (we have Deviasi but not count-vs-system) | ✅ | ✅ | ✅ | ✅ | ❌ | P1 |
+| Count frequency scheduling | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Multi-user count | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Count approval workflow | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P3 |
+| Historical variance trends | ⚠ (we have trend of deviation, not count variance) | ✅ | ✅ | ✅ | ✅ | ❌ | P2 |
+
+## D. Supplier Management (F&B specific)
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Lavu | Priority |
+|---------|---------|-----------|-------|------------|------|------|----------|
+| Supplier price catalog | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Price change alerts | ❌ | ✅ | ⚠ | ✅ | ✅ | ❌ | P1 |
+| Supplier comparison shopping | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | P1 |
+| Preferred supplier designation | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P3 |
+| Supplier performance scorecard | ❌ | ⚠ | ❌ | ⚠ | ✅ | ❌ | P2 |
+| Lead time tracking | ❌ | ✅ | ⚠ | ✅ | ✅ | ⚠ | P3 |
+| Minimum order tracking | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P3 |
+| Contract pricing | ❌ | ✅ | ⚠ | ✅ | ✅ | ⚠ | P2 |
+
+## E. Waste & Loss Management (F&B specific)
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Jolt | Priority |
+|---------|---------|-----------|-------|------------|------|------|----------|
+| Waste logging with reason codes | ⚠ (we have waste QTY+nominal from Excel, no reason code) | ✅ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Photo capture of waste | ❌ | ✅ | ✅ | ⚠ | ⚠ | ✅ | P2 |
+| Waste approval workflow | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P3 |
+| Waste trends by category (spoilage/over-prep/error/return) | ❌ (we have aggregate waste, no category) | ✅ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Waste reduction goal tracking | ❌ | ⚠ | ❌ | ✅ | ✅ | ❌ | P2 |
+| Comp/void tracking | ❌ | ❌ | ✅ | ⚠ | ✅ | ✅ | P1 |
+| Employee meal tracking | ❌ | ❌ | ⚠ | ✅ | ✅ | ⚠ | P3 |
+| Waste cost reporting | ✅ (nominalWaste, %Waste-to-BOM, Pareto) | ✅ | ✅ | ✅ | ✅ | ❌ | — (our edge) |
+| Decomposition (Waste/Susut/Trial/Residual) | ✅ (unique — 4-way split) | ❌ | ❌ | ❌ | ❌ | ❌ | — (our edge) |
+
+## F. Food Safety & Compliance
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Zip HACCP | Jolt | Priority |
+|---------|---------|-----------|-------|------------|------|-----------|------|----------|
+| HACCP logs | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | ✅ | P1 |
+| Temperature logs (cooler/freezer/holding) | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | ✅ | P1 |
+| Cooking temperature logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | P1 |
+| Cooling logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | P2 |
+| Receiving temperature logs | ❌ | ⚠ | ❌ | ⚠ | ⚠ | ✅ | ✅ | P1 |
+| Cleaning checklists | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | P2 |
+| Sanitizer concentration logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | P3 |
+| Pest control logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ⚠ | P3 |
+| Recall tracking | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | ⚠ | P2 |
+| Allergen tracking | ❌ | ⚠ | ✅ | ⚠ | ✅ | ❌ | ⚠ | P1 |
+| Expiration tracking | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ⚠ | P1 |
+
+## G. Sales & POS Integration
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Lavu | Katanashi | Priority |
+|---------|---------|-----------|-------|------------|------|------|-----------|----------|
+| POS integration | ❌ (manual Excel upload, weekly) | ⚠ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Real-time sales data | ❌ | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P1 |
+| Menu item sales mix | ❌ (only outlet-level sales MODE) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Hourly sales patterns | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Daypart analysis | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Promotional sales tracking | ❌ | ⚠ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Discount/comps tracking | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Void/refund tracking | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ⚠ | P1 |
+| Customer count tracking | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Average check tracking | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Outlet-level sales (MODE per period) | ✅ (OutletPeriodSales table) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — (parity) |
+
+## H. Labor & Operations (F&B specific)
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Syrve | Jolt | Priority |
+|---------|---------|-----------|-------|------------|------|-------|------|----------|
+| Labor cost tracking | ❌ | ❌ | ⚠ | ✅ | ✅ | ✅ | ❌ | P1 |
+| Sales per labor hour | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | P1 |
+| Labor scheduling integration | ❌ | ❌ | ⚠ | ⚠ | ✅ | ✅ | ✅ | P2 |
+| Prep sheet generation | ❌ | ⚠ | ⚠ | ✅ | ✅ | ✅ | ❌ | P2 |
+| Production planning | ❌ | ❌ | ❌ | ⚠ | ⚠ | ✅ | ❌ | P3 |
+| Forecasting prep quantities | ❌ (we forecast deviation, not demand) | ❌ | ❌ | ⚠ | ✅ | ✅ | ❌ | P2 |
+| Cleaning schedules | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | P3 |
+| Opening/closing checklists | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | P3 |
+
+## I. Reporting & Analytics (F&B specific)
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Katanashi | Priority |
+|---------|---------|-----------|-------|------------|------|-----------|----------|
+| Prime cost report (COGS + Labor) | ❌ | ⚠ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Food cost variance report | ✅ (Deviasi + DeviationBreakdown) | ✅ | ✅ | ✅ | ✅ | ⚠ | — (parity) |
+| Theoretical vs actual food cost | ❌ (have qty theor vs actual, not $) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Menu engineering report | ❌ | ✅ | ⚠ | ✅ | ✅ | ✅ | P1 |
+| Waste summary report | ✅ (4-way decomposition + Pareto) | ✅ | ✅ | ✅ | ✅ | ⚠ | — (our edge) |
+| Weekly sales recap | ⚠ (we have weekly trend, not recap format) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Monthly P&L preview | ❌ | ❌ | ⚠ | ✅ | ✅ | ⚠ | P2 |
+| Vendor performance report | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ | P2 |
+| Inventory turnover report | ❌ (we don't track inventory level, only deviation) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Days of inventory on hand | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Word (.docx) export with 11 sections | ✅ | ❌ | ✅ | ✅ | ✅ | ⚠ | — (parity) |
+| PDF export | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Excel native export | ⚠ (CSV only from drilldown) | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Scheduled email reports | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+
+## J. Mobile & Field Operations
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Zip HACCP | Jolt | Priority |
+|---------|---------|-----------|-------|------------|------|-----------|------|----------|
+| Mobile receiving | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | P1 |
+| Mobile inventory counts | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | P1 |
+| Mobile waste entry | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | P1 |
+| Mobile temp logs | ❌ | ❌ | ❌ | ❌ | ⚠ | ✅ | ✅ | P1 |
+| Photo capture | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Offline mode | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Push notifications | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Multi-outlet switching | ⚠ (filter dropdown, but single-tenant web) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+
+## K. F&B Analytics Specific to Our App (WHAT WE HAVE — competitive edge)
+| Feature | Our App | MarketMan | Toast | MarginEdge | R365 | Katanashi |
+|---------|---------|-----------|-------|------------|------|-----------|
+| Deviation decomposition (Waste/Susut/Trial/Residual) | ✅ unique | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Residual ratio fraud detection (OVER_EXPLAINED rule) | ✅ unique | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 17-rule anomaly engine (SQL-pushed, configurable YAML) | ✅ unique | ⚠ basic | ❌ | ⚠ | ⚠ | ⚠ |
+| Historical Z-Score (same-week baseline, n-sample + stdDev) | ✅ unique | ❌ | ❌ | ❌ | ⚠ | ⚠ |
+| Peer comparison (outlet vs ±10% sales peers, scatter) | ✅ unique | ❌ | ❌ | ❌ | ⚠ | ⚠ |
+| Outlet health ranking (Financial+Operational+Unexplained) | ✅ unique | ❌ | ❌ | ❌ | ⚠ | ⚠ |
+| Pareto 80/20 drill-down on growth + breakdown | ✅ unique | ❌ | ❌ | ❌ | ❌ | ⚠ |
+| Menu outlier detection (avg + 2σ within menu group) | ✅ unique | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Trend projection (OLS regression + R² confidence) | ✅ unique | ❌ | ❌ | ❌ | ⚠ | ⚠ |
+| Multi-period (8-week) trend table | ✅ | ⚠ | ✅ | ✅ | ✅ | ✅ |
+| Deviation direction flip detection (LOSS↔SURPLUS) | ✅ unique | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 43 runtime-configurable thresholds (DB-backed) | ✅ unique | ⚠ | ⚠ | ⚠ | ⚠ | ⚠ |
+
+---
+
+## F&B Feature Completeness Scores
+
+| Platform | Scope | Our App Score | Notes |
+|----------|-------|---------------|-------|
+| MarketMan | Inventory + supplier + invoice + recipe | 3.5/10 | Strong analytics, zero purchasing/supplier/invoice |
+| Toast Inventory | POS + inventory + recipe + waste | 3.0/10 | No POS integration, no recipe costing, no waste reason |
+| MarginEdge | Invoice OCR + recipe + counts + back office | 3.0/10 | No invoice OCR, no count workflow, no recipe $ |
+| xtraCHEF | Invoice processing only (narrow) | 0.5/10 | Zero invoice features — different category |
+| Restaurant365 | Full accounting + inventory + scheduling | 2.5/10 | Most comprehensive competitor — biggest gap |
+| Zip HACCP | HACCP / temperature / compliance only | 0.5/10 | Zero HACCP / temperature / compliance |
+| Jolt | Operations + compliance + checklists | 1.0/10 | Zero ops / compliance / checklist / mobile |
+| Syrve | POS + inventory + recipe + production | 2.5/10 | No POS, no recipe, no production planning |
+| Lavu POS | POS + inventory + supplier | 2.5/10 | No POS, no supplier |
+| Katanashi | Restaurant BI / analytics | 6.5/10 | Closest peer — we actually exceed on deviation analytics, lack on sales/daypart BI |
+
+**Overall weighted completeness vs F&B management platforms: 2.8 / 10**
+**Vs F&B analytics platforms (Katanashi-class): 6.5 / 10**
+
+---
+
+## Top 10 Missing F&B Features (Priority Order)
+
+1. **[P1] Recipe Costing + Menu Engineering Matrix** — we track BOM quantity but
+   not per-dish cost (price − COGS), menu item profitability, or popularity.
+   Stars/Plowhorses/Puzzles/Dogs matrix is industry standard for chain menu
+   decisions. (R365, MarginEdge, Syrve all have this.)
+
+2. **[P1] POS Integration + Real-time Sales** — we ingest weekly Excel only.
+   No menu-item sales mix, no hourly/daypart data, no comps/voids/discounts.
+   For 333-outlet chain, weekly cadence hides intra-week issues.
+
+3. **[P1] Mobile Stock Count App** — weekly Excel upload means stock opname is
+   manual, error-prone, no count sheet, no blind count, no approval workflow.
+   MarketMan/Toast/R365 all have native mobile count apps.
+
+4. **[P1] Supplier Price Catalog + Comparison** — with 109 items × multiple
+   suppliers per area, price variance between suppliers is invisible. MarketMan
+   and MarginEdge make this their core value.
+
+5. **[P1] Invoice OCR + Line-item Capture** — every invoice is currently
+   key-entered somewhere upstream before reaching us. xtraCHEF/MarketMan/
+   MarginEdge auto-extract line items + flag price variance.
+
+6. **[P1] HACCP + Temperature Logs** — for an Indonesian F&B chain, BPOM/
+   MUI auditing requires temperature logs (cooler/freezer/holding/cooking/
+   cooling/receiving). Zero capability today. Zip HACCP/Jolt fill this.
+
+7. **[P1] Theoretical vs Actual Food Cost ($)** — we have qty theor vs actual
+   (BOM vs COM), but not dollarized theor vs actual. This is the #1 KPI every
+   restaurant back-office reports weekly.
+
+8. **[P1] Allergen Tracking + Expiration Tracking** — for F&B chain serving
+   333 outlets, allergen mislabeling is a liability. No expiry tracking means
+   no FIFO enforcement, no waste-prevention on near-expiry stock.
+
+9. **[P1] Waste Reason Codes + Comp/Void Tracking** — we have aggregate waste
+   $ but no reason code (spoilage / over-prep / kitchen error / customer
+   return). No comp/void tracking means promo leakage is invisible.
+
+10. **[P2] Mobile App (Receiving + Counts + Waste + Temp)** — operations
+    staff at 333 outlets need phone-based data entry. Web-only + Excel upload
+    is a 2015 workflow. Even a PWA wrapper would be a major uplift.
+
+Honorable mentions (P2): Labor cost tracking + Sales per labor hour + Prime
+cost report (COGS+Labor) — currently blind to labor side of the equation.
+Daypart/hourly sales analysis — invisible demand patterns. Inventory turnover
++ Days of inventory on hand — we don't track on-hand levels, only deviations.
+
+---
+
+## What We Do BETTER Than Competitors (Unique Strengths)
+
+1. **Deviation decomposition (Waste/Susut/Trial/Residual)** — UNIQUE. No
+   competitor splits deviation into 4 causal categories. The Residual >
+   50% rule for fraud detection is novel and the OVER_EXPLAINED rule
+   (Waste+Susut+Trial > total deviasi) is a fraud red flag no platform offers.
+
+2. **17-rule configurable anomaly engine** — YAML-defined rules, SQL-pushed
+   evaluator. Most competitors have rigid alerts. Ours is tunable via 43
+   runtime thresholds (DB-backed, no redeploy).
+
+3. **Historical Z-Score baseline** — same-week across months (W4 Juli vs W4
+   Juni, not W4 vs W2) with Bessel-corrected sample stddev. This is
+   statistically rigorous — competitors typically do flat YoY compare.
+
+4. **Peer comparison scatter (outlet vs ±10% sales peers)** — visual
+   identification of outliers within peer group. MarginEdge has basic
+   variance reports but no peer-scatter.
+
+5. **Outlet health ranking (3 dimensions: Financial + Operational + Unexplained)**
+   — most platforms rank by single metric (food cost % or variance $).
+   Our 3-dimensional ranking surfaces outlets that look fine on $ but are
+   operationally broken.
+
+6. **Pareto 80/20 drill-down** — clickable badges in Growth Comparison and
+   Deviation Breakdown charts. Most platforms show top-N only.
+
+7. **Trend projection with R² confidence** — OLS regression on
+   |nominalDeviasi| with HIGH/MEDIUM/LOW confidence banding. R365 has
+   basic forecasting; ours is more transparent (sample size + R² exposed).
+
+8. **Menu outlier detection (avg + 2σ within menu group)** — flags items
+   with disproportionate Dev/BOM vs sibling ingredients in same menu. No
+   competitor has this — they have menu engineering (different lens).
+
+9. **Direction flip detection (LOSS ↔ SURPLUS)** — flags outlets/items that
+   flipped sign between periods. Critical for catching operator behavior
+   changes. No competitor surfaces this.
+
+10. **Indonesian F&B domain fit** — Bahasa Indonesia UI, Indonesian Rupiah
+    formatting, 14-area Indonesian geography (BANTEN/JAKARTA/JAWA TIMUR 1/
+    SULAWESI 2/PAPUA & MALUKU), Indonesian supplier/PIC terminology. Most
+    competitors are US-centric and require localization.
+
+---
+
+## Gap Analysis — Positioning Clarity
+
+### Are we "inventory analytics" or "inventory management"?
+
+**We are unambiguously an INVENTORY ANALYTICS platform**, not an inventory
+management platform. Specifically:
+
+- **We don't track inventory levels** — only deviations between BOM and COM.
+  We don't know "how much minyak goreng is in BDGSET cooler right now."
+  MarketMan/Toast/R365 do.
+- **We don't execute transactions** — no PO creation, no receiving, no
+  transfers, no count entry. We ingest pre-aggregated Excel output from
+  some upstream back-office system (likely Moka POS, Majoo, or an
+  Excel-based SO workflow).
+- **We don't manage master data** — items come from the Excel; we don't
+  maintain supplier catalog, recipe versions, or product hierarchies.
+- **We are a READ + INVESTIGATE layer** — our value is anomaly detection,
+  peer benchmarking, and root-cause investigation, NOT day-to-day stock
+  operations.
+
+### Best positioning statement:
+
+> "Inventory Control Intelligence is the **deviation analytics layer** for
+> Indonesian F&B chains. It sits on top of your existing POS / back-office
+> / Excel stock opname workflow, ingests weekly deviation data, and
+> surfaces fraud, waste patterns, and outlet performance gaps that
+> operational systems (MarketMan, Toast, R365) don't catch. We are
+> complementary to — not a replacement for — inventory management
+> platforms."
+
+### Recommended product direction (3 options):
+
+**Option A — "Go deep, stay analytics" (Recommended)**
+Stay in the analytics lane. Add the missing analytics that competitors
+lack but operators need: theoretical vs actual food cost ($), prime cost
+report (COGS + Labor), menu engineering matrix, inventory turnover +
+days-on-hand. Position as "MarginEdge + R365 analytics on steroids for
+Indonesian market." Lowest capex, highest differentiation.
+
+**Option B — "Expand to inventory management"**
+Add supplier catalog, invoice OCR, mobile count app, PO management.
+This is a $2-5M / 12-18 month build to reach MarketMan parity. High
+risk of becoming a poor man's MarketMan. NOT recommended unless
+business commits to building a full restaurant back-office.
+
+**Option C — "Integrate, don't build"**
+Add POS integration (Moka, Majoo, Pawoon, Olsera — Indonesian POS
+players) + invoice OCR API (Rossum / Mindee / AWS Textract) + supplier
+catalog import. Stay analytics-core, integrate operational data sources.
+Middle ground — moderate capex, leverages existing platforms.
+
+**My recommendation: Option A first (90 days), then Option C (next 12
+months). Skip Option B entirely.**
+
+### Key strategic insight:
+
+The biggest risk to the product is NOT feature gap — it's **cadence gap**.
+Weekly Excel upload means by the time an anomaly is flagged, the loss has
+already happened. R365/Toast flag anomalies within minutes (POS sync).
+For a 333-outlet chain, weekly cadence = Rp 50-200jt/month in latent loss
+that real-time systems would catch.
+
+Closing the cadence gap (POS integration + daily ingest) is higher ROI
+than closing any single feature gap. This should be the #1 product
+priority even before adding recipe costing or menu engineering.
+
+
+---
+Task ID: GAP-OPS
+Agent: general-purpose (Inventory & Ops Gap Analyst)
+Task: Deep comparison of inventory/operations features vs ERP/IMS platforms
+
+Work Log:
+- Read worklog tail (last 100 lines) — DEEP-AUDIT + REVIEW-SEC + FIX-CODE-QUALITY context
+- Read prisma/schema.prisma (287 lines) — confirmed 7 models: SourceFile, Week, Outlet, Item, InventoryRecord, OutletPeriodSales, DQIssue, AuditLog, AggregationCache, Setting, OutletPIC, FileChunk. ZERO supplier/PO/warehouse/lot/serial/expiry/recipe entities.
+- Read src/types/inventory.ts (192 lines) — confirmed: types are deviation-centric (Direction, Severity, GrowthMetrics, HistoricalStats, BenchmarkResult, AnomalyFlagResult, PriorityScore, InvestigationItem). No inventory/supplier/PO types.
+- Read src/config/rules.yaml — confirmed 17 anomaly rules in 7 categories (SALES, BOM, TOLERANCE, RESIDUAL, DIRECTION, BENCHMARK, HISTORICAL). No reorder/PO/compliance rules.
+- Read src/config/thresholds.ts + settings.ts — confirmed 5 Settings categories: TOLERANCE, GROWTH, PRIORITY, BENCHMARK, GENERAL (all threshold/weight tuning; NO supplier/reorder/inventory params).
+- Read src/lib/metrics/forecast.ts (286 lines) — confirmed: OLS linear regression projects NEXT-PERIOD |nominalDeviasi| magnitude (deviation forecasting), NOT demand forecasting. No seasonality, no lead time, no safety stock, no ML.
+- Read src/lib/queries/dashboard.ts, historical.ts, health-ranking.ts, peer-comparison.ts — confirmed analytics layer (trend aggregation, z-score, peer set ±10% sales, outlet health ranking).
+- Read src/app/api/resto-bahan-matrix/route.ts — confirmed: outlet×item priority cross-tab. NOT BOM/recipe matrix — qtyBom is a per-record weekly Excel value, not a recipe entity.
+- Read src/components/dashboard/resto-analysis/menu-analysis.tsx — confirmed: "menu" = heuristic grouping by first 2 words of itemName. NOT actual recipe/menu management.
+- Read src/engine/analysis/rootCauseEngine.ts (grep) — confirmed: "supplier", "FIFO", "purchase order" appear ONLY in narrative recommendation text strings, NOT as features.
+- Grep src/ for: supplier|vendor|purchase|reorder|stock_level|warehouse|bin|lot|serial|expiry|haccp|temperature|traceab|recall|barcode|qr_scan|cycle_count|stock_transfer|fifo|lifo|fefo|eoq|safety_stock|lead_time|forecast|allergen|nutritional|yield|recipe_version|waste_reason|spoilage|void|comp|drop_ship|cogs|gl_integration|multi_currency|tax_calc → 176 file matches (all false positives — comments/code keywords, no actual feature implementations).
+- Grep src/ for: recipeId|menuId|wasteReason|spoilageReason|voidReason|compReason|adjustmentReason|transferReason|recountReason|itemImage|damagePhoto|COGS|costOfGoods|profitMargin|valuationMethod|currencyCode|taxRate → ZERO matches (no structured reason codes, no financial fields).
+- Verified 19 API routes: ingest, ingest-upload, ingest-process, import-drive, analysis, drilldown, data, item-history, item-search, outlet-items, peer-comparison (+trend,+items), pareto, recommendations, resto-bahan-matrix, status, settings, pic, pic/import, export-report, migrate-direction, setup. ZERO supplier/PO/reorder/transfer/waste-log endpoints.
+- Read scripts/create-investigation-table.ts — confirmed: Investigation table is OPEN|INVESTIGATING|RESOLVED workflow state only (no reason codes, no supplier linkage, no root cause field).
+- README discrepancy noted: README says "19+ outlet F&B"; task context says 333. Schema comment confirms 19 outlets. Reported as informational.
+
+Stage Summary:
+- Operations Completeness scores (1-10 scale, analytics tool benchmark):
+  · vs SAP IM:        1.5/10 (SAP = full ERP with WM module, EDI, MRP, batch/lot, HACCP)
+  · vs Oracle NetSuite: 1.5/10 (NetSuite = cloud ERP with full WMS, demand planning, multi-subsidiary)
+  · vs Odoo Inventory:  2.0/10 (Odoo = SMB ERP — has stock moves, double-entry, routes, RFQ → PO → receipt, reordering rules)
+  · vs Zoho Inventory:  2.0/10 (Zoho = cloud SMB — has warehouses, bins, lots, serials, dropship, PO/SO workflows)
+  · vs Fishbowl:        2.0/10 (Fishbowl = SMB — has parts tracking, PO/SO, manufacturing, QB integration)
+  · vs TradeGecko/QBC:  2.5/10 (TradeGecko = SMB commerce — multi-warehouse, PO, B2B portal, QB/Xero sync)
+  · vs inFlow:          2.5/10 (inFlow = small biz — has multi-location, reorder points, barcodes, PO)
+
+- Top 10 Missing Operations Features (priority order):
+  P1-1. Real-time stock level monitoring (critical: app is weekly-batch only — no live SO/alerts)
+  P1-2. Expiry date / batch tracking (F&B critical — no InventoryRecord.expiryDate, no lot field)
+  P1-3. Reorder points + auto-PO generation (no Supplier or PurchaseOrder entity)
+  P1-4. Supplier database + supplier performance scorecards (no Supplier table — only narrative hints)
+  P1-5. Multi-warehouse / bin-location tracking (only flat Outlet.area, no Warehouse/Bin entities)
+  P1-6. Demand forecasting on SALES (current forecast is on |deviation| magnitude — not demand/usage)
+  P1-7. Physical inventory count / cycle counting workflow (no count session, no recount, no variance posting)
+  P1-8. Recipe versioning + costing + allergen/yield (qtyBom is weekly Excel value, NOT a versioned recipe entity)
+  P1-9. HACCP / temperature / food-safety logs (zero compliance tracking — F&B regulatory risk)
+  P1-10. Barcode/QR mobile receiving + waste entry + stock transfer (no mobile PWA, no scanner, no offline mode)
+
+- F&B-specific gaps (most critical for restaurant chain with 333 outlets — even more so than SMB):
+  1. Expiry date / FEFO — F&B chain MUST have; app has zero
+  2. Allergen tracking — regulatory liability; app has zero
+  3. Recipe versioning + costing — chain needs R&D rollouts per cycle; app has none
+  4. Yield calculation (raw → finished) — cost control fundamental; absent
+  5. HACCP compliance logs — audit/legal requirement in most jurisdictions; absent
+  6. Waste reason categorization (spoilage vs prep waste vs plate waste) — root cause analysis blocked; absent
+  7. Inter-outlet transfers (333 outlets = constant rebalancing) — absent
+  8. Recall management + forward/backward traceability — food safety mandatory; absent (only audit log)
+  9. Outlet-specific pricing + recipe variants — chain menu localization; absent
+  10. Com/void tracking (POS integration) — shrinkage audit; absent
+
+- Verdict: App is a **deviation analytics tool**, NOT an inventory management system (by design — per README).
+  The 10 missing categories above are largely intentional scope boundaries, not bugs.
+  Highest-value extensions IF app expands beyond analytics:
+  · Add Supplier + PurchaseOrder + StockLevel tables (Phase 5)
+  · Add expiryDate/lotNumber columns to InventoryRecord (low lift, high F&B value)
+  · Add wasteReasonCode enum + Investigation.reasonCode enum (low lift, high analytics value)
+  · Add demand forecasting on SUM(qtyCom) not |nominalDeviasi| (medium lift, high procurement value)
+  · Add mobile PWA + barcode scanner for receiving/counts (high lift, transforms operations)
+
+- Full report below in main response.
+
+---
+Task ID: GAP-ANALYTICS
+Agent: general-purpose (Analytics Gap Analyst)
+Task: Deep comparison of analytics features vs BI platforms (Power BI, Tableau,
+      Looker, Metabase, Superset, Google Data Studio)
+
+Work Log:
+- Read worklog tail (last 100 lines) — context: production-grade internal tool,
+  prototype-grade maintainability; 17-rule engine + Pareto + peer comparison
+  + Z-Score + growth drivers already exist
+- Read package.json — confirmed only charting lib is recharts@2.15.4 (no D3,
+  no ECharts, no Plotly, no Leaflet/Mapbox, no chart.js, no antv, no nivo,
+  no visx, no deck.gl)
+- Export libs present: docx@9.7.1 (Word), exceljs@4.4.0 (IMPORT only — verified
+  in src/lib/excel.ts:138 + src/lib/excel-to-csv.ts:50, both read paths),
+  csv-stringify@6.8.3 (used for CSV in SourceDataModal:60-71)
+- NO html2canvas, NO jspdf, NO pdfkit, NO file-saver — confirms no image/PDF
+  export capability
+- Grep `from 'recharts'` in src/components → 8 chart files: Charts.tsx,
+  AreaTrendChart.tsx, ItemTrendChart.tsx, AnalysisCards.tsx, ItemDeepDive.tsx,
+  peer-comparison/scatter-chart.tsx, peer-comparison/trend-chart.tsx,
+  priority-summary/signal-chart.tsx
+- Grep recharts components actually imported → BarChart, Bar, LineChart, Line,
+  ComposedChart, PieChart, Pie, ScatterChart, Scatter, Cell, XAxis, YAxis,
+  CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, LabelList
+- NOT imported from recharts (despite availability): AreaChart, RadarChart,
+  RadialBarChart, Treemap, Sankey, FunnelChart, Brush (time-series brush axis),
+  PolarAngleAxis, PolarGrid, ReferenceArea, ReferenceDot
+- Grep `stackId` → 2 uses (signal-chart.tsx:150,151 + signal-chart.tsx:286,287)
+  → STACKED bar confirmed
+- Grep `layout="vertical"` → 2 uses (Charts.tsx:111, signal-chart.tsx:224)
+  → HORIZONTAL bar confirmed
+- Grep `innerRadius` → 1 use (signal-chart.tsx:204 — Pie with innerRadius=50,
+  outerRadius=85) → DONUT confirmed (only in Item Concentration signal)
+- ItemDeepDive.tsx:154-173 — PieChart with outerRadius only → regular pie,
+  NOT donut
+- Grep `ReferenceLine` → 9 uses in signal-chart.tsx (threshold lines: 0, 50%,
+  Tol, 2× Tol, 100%, Rp10Jt) → reference/threshold lines confirmed
+- Grep `forecast|regression` → src/lib/metrics/forecast.ts (270 lines):
+  OLS linear regression only (y = a + b*x). NO ARIMA, NO exponential
+  smoothing, NO confidence intervals, NO seasonality decomposition.
+- Grep `correlation|Pearson|Spearman` → CorrelationInsightCard.tsx uses
+  HEURISTIC ratios (1.5× peer avg = outlier), NOT actual correlation
+  coefficient calculation
+- Grep `ARIMA|exponential smoothing|kmeans|cluster|cohort|funnel analysis|path analysis`
+  → ZERO matches → confirms these advanced analytics are missing
+- Read main page.tsx (lines 420-640) — confirmed 4 tabs: Dashboard / Resto /
+  Peer / Pareto (task description says 5; code shows 4)
+- Read FilterBar.tsx (lines 1-350) — confirmed: global filter (month/week/
+  area/kelompok/outlet/item/pic), cascading outlet dropdown filters by
+  area+kelompok+pic (lines 163-173), SearchableComboBox for search-based
+  filter. NO relative date filter, NO saved filter views.
+- Grep `URLSearchParams|useSearchParams|router\.replace|history\.push` in
+  useDashboard.ts → ZERO matches → filters NOT URL-synced → NO shareable
+  links
+- Grep `annotation|what-if|scenario|parameter slider` → only QuickSettings
+  (per-chart threshold Slider, persists to DB via /api/settings — not
+  ephemeral what-if) and HTML/CSS strings. No chart annotations.
+- Grep `panZoom|zoom|onWheel|onDoubleClick` → ZERO chart-related matches
+  (only CSS dialog/popover animations)
+- Grep `iframe|embed|share.*link|scheduledReport|emailSubscription|cron|webhook`
+  → ZERO matches → no dashboard embedding, no scheduling, no email, no webhook
+- Grep `calculated field|DAX|customMeasures|dateTable|row-level security|RLS|
+  aggregation table|custom SQL|data blending|pivot|unpivot` → ZERO matches
+- Read QuickSettings.tsx (full) — Slider exists for threshold adjustment
+  (HEALTH_WEIGHT_*, area benchmark factor, etc.) → closest thing to what-if
+  but saves to DB permanently (not ephemeral scenario slider)
+- Read CardDrillDown.tsx + DrillDownDrawer.tsx — drill-down via click-row
+  pattern confirmed. NO cross-chart filter/highlight (clicking a bar in one
+  chart does NOT filter other charts).
+- Read AreaTrendChart.tsx (lines 1-80) — local `selectedAreas` Set state
+  for in-chart area toggle (NOT cross-chart filter, just within-chart
+  series toggle). NO Brush axis for time zoom.
+- Read AnalysisCards.tsx (lines 1-80) — ComposedChart (Bar + Line) confirmed
+  for MultiPeriodComparison. Custom tooltip content renderer confirmed.
+- API route inventory (16 public endpoints): /api/analysis, /api/pareto,
+  /api/peer-comparison (+/trend, /items), /api/drilldown, /api/item-history,
+  /api/item-search, /api/recommendations, /api/resto-bahan-matrix,
+  /api/outlet-items, /api/status, /api/setup, /api/export-report,
+  /api/ingest, /api/ingest-process, /api/ingest-upload, /api/import-drive,
+  /api/pic, /api/pic/import, /api/settings, /api/data, /api/migrate-direction
+  → API access to data: YES (with rate limit + Zod validation)
+
+Stage Summary:
+
+=== A. Chart & Visualization Types ===
+| Feature                 | Our App | Power BI | Tableau | Looker | Metabase | Superset | Data Studio | Priority |
+|-------------------------|---------|----------|---------|--------|----------|----------|-------------|----------|
+| Bar (vertical)          | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Bar (horizontal)        | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Bar (stacked)           | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Bar (grouped)           | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | P3       |
+| Line (single)           | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Line (multi-series)     | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Area chart              | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | P3       |
+| Pie chart               | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Donut chart             | ✅ (1)  | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Scatter plot            | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | -        |
+| Bubble chart            | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ❌          | P3       |
+| Heatmap                 | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | P1       |
+| Treemap                 | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ✅          | P2       |
+| Sankey diagram          | ❌      | ✅       | ✅      | ❌     | ❌       | ✅       | ❌          | P4       |
+| Funnel chart            | ❌      | ✅       | ✅      | ❌     | ❌       | ✅       | ✅          | P4       |
+| Gauge chart             | ❌      | ✅       | ✅      | ❌     | ✅       | ✅       | ❌          | P3       |
+| Bullet chart            | ❌      | ✅       | ✅      | ❌     | ❌       | ❌       | ✅          | P4       |
+| Box plot                | ❌      | ✅       | ✅      | ❌     | ✅       | ✅       | ❌          | P2       |
+| Histogram               | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | ❌          | P3       |
+| Waterfall chart         | ❌      | ✅       | ✅      | ❌     | ❌       | ✅       | ❌          | P3       |
+| Radar/Spider            | ❌      | ✅       | ✅      | ✅     | ❌       | ✅       | ❌          | P4       |
+| Geographic map          | ❌      | ✅       | ✅      | ✅     | ❌       | ✅       | ✅          | P3       |
+| Calendar heatmap        | ❌      | ✅       | ✅      | ❌     | ❌       | ✅       | ❌          | P3       |
+| Gantt chart             | ❌      | ✅       | ✅      | ❌     | ❌       | ❌       | ❌          | P4       |
+| Network graph           | ❌      | ✅(R)    | ✅(ext) | ❌     | ❌       | ❌       | ❌          | P4       |
+| Sunburst                | ❌      | ✅       | ✅      | ❌     | ❌       | ✅       | ❌          | P4       |
+| Composed (Bar+Line)     | ✅      | ✅       | ✅      | ✅     | ❌       | ✅       | ✅          | -        |
+
+Count: Our App = 8/26 viz types (31%). Power BI ≈ 26/26. Tableau ≈ 26/26.
+Looker ≈ 14/26. Metabase ≈ 13/26. Superset ≈ 19/26. Data Studio ≈ 13/26.
+
+=== B. Interactive Analytics Features ===
+| Feature                          | Our App     | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|-------------|----------|---------|--------|----------|----------|----------|
+| Drill-down                       | ✅ (drawer) | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Drill-through (cross-filter)     | ❌          | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+| Cross-highlight (click→filter)   | ❌          | ✅       | ✅      | ✅     | ❌       | ✅       | P1       |
+| Brushing (range select)          | ❌          | ✅       | ✅      | ❌     | ❌       | ✅       | P2       |
+| Tooltip customization            | ✅          | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Annotations on charts            | ❌          | ✅       | ✅      | ❌     | ❌       | ❌       | P3       |
+| Reference lines (target/avg/thr) | ✅ (9 uses) | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Trend lines (regression)         | ❌ (chart)  | ✅       | ✅      | ✅     | ❌       | ✅       | P2       |
+| Forecast lines                   | ◐ (OLS lib) | ✅       | ✅      | ✅     | ❌       | ✅       | P2       |
+| Confidence intervals             | ❌          | ✅       | ✅      | ✅     | ❌       | ✅       | P3       |
+| What-if / parameter sliders      | ◐ (persist) | ✅       | ✅      | ✅     | ❌       | ❌       | P2       |
+| Time-series zoom (brush axis)    | ❌          | ✅       | ✅      | ❌     | ❌       | ✅       | P2       |
+| Pan/zoom on charts               | ❌          | ✅       | ✅      | ❌     | ❌       | ✅       | P3       |
+| Export chart as image (PNG/SVG)  | ❌          | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+
+Legend: ✅=full  ◐=partial  ❌=missing
+Note: OLS forecast exists in src/lib/metrics/forecast.ts but rendered only as
+projected dashed line in signal-chart.tsx (no per-chart toggle, no CI band).
+QuickSettings Slider persists threshold to DB (not ephemeral what-if).
+
+=== C. Data Modeling & Transformation ===
+| Feature                          | Our App | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|---------|----------|---------|--------|----------|----------|----------|
+| Calculated fields (DAX-like)     | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Custom measures                  | ❌      | ✅       | ✅      | ✅(LookML) | ✅  | ✅       | P2       |
+| Date table / time intelligence   | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Row-level security               | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Aggregation tables               | ❌      | ✅       | ✅      | ✅     | ❌       | ✅       | P3       |
+| Custom SQL queries in UI         | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Data blending (join sources)     | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Pivot/unpivot in UI              | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Data type casting                | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P4       |
+| Null handling options            | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P4       |
+
+Note: We have a single-source Prisma model (InventoryRecord + Outlet + Item +
+PIC + PeriodComparison). Domain-specific calc is in src/lib/metrics/*.ts
+(deviation, benchmark, forecast, growth, historical, sales) — server-side
+only, no UI to define new measures.
+
+=== D. Filtering & Slicing ===
+| Feature                          | Our App | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|---------|----------|---------|--------|----------|----------|----------|
+| Global filter                    | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Per-chart filter                 | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Relative date filter (last N)    | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Top N filter                     | ❌ (fixed) | ✅    | ✅      | ✅     | ✅       | ✅       | P2       |
+| Conditional filter               | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Hierarchy drill filter           | ◐ (cascade) | ✅  | ✅      | ✅     | ✅       | ✅       | -        |
+| Search-based filter              | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Saved filter views               | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Filter dependencies (cascading)  | ✅      | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+
+Note: TopN is hardcoded server-side (thresholds.TOP_N_ITEMS=10,
+thresholds.TOP_N_OUTLETS=10 in src/config/thresholds.ts). User cannot
+override interactively.
+
+=== E. Dashboard & Layout ===
+| Feature                          | Our App | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|---------|----------|---------|--------|----------|----------|----------|
+| Drag-drop widget positioning     | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Resize widgets                   | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Custom dashboard builder         | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Multiple dashboard tabs          | ✅ (4)  | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Dashboard templates              | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P4       |
+| Mobile-specific layout           | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Print-friendly layout            | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Dashboard embedding (iframe)     | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P3       |
+| Dashboard sharing via link       | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+| Dashboard scheduling (email PDF) | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+
+Note: Task description said "5 tabs" but code shows 4 (Dashboard / Resto /
+Peer / Pareto). Layout uses fixed Tailwind grid (lg:grid-cols-2/3) with
+hardcoded card heights (h-[170px], h-[280px], h-72).
+
+=== F. Export & Distribution ===
+| Feature                          | Our App | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|---------|----------|---------|--------|----------|----------|----------|
+| PDF export                       | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+| Excel export                     | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+| CSV export                       | ✅ (drill) | ✅    | ✅      | ✅     | ✅       | ✅       | -        |
+| Image export (PNG/SVG)           | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P1       |
+| PowerPoint export                | ❌      | ✅       | ✅      | ✅     | ❌       | ❌       | P3       |
+| Email subscription               | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Scheduled reports                | ❌      | ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Webhook notification             | ❌      | ✅       | ✅      | ✅     | ❌       | ✅       | P4       |
+| API access to data               | ✅ (16) | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+
+Note: CSV export is client-side only in SourceDataModal.tsx (drilldown drawer).
+Full report export is Word-only via /api/export-report (docx lib).
+exceljs IS installed but used only for IMPORT (parse .xlsx), not export.
+
+=== G. Advanced Analytics ===
+| Feature                          | Our App       | Power BI | Tableau | Looker | Metabase | Superset | Priority |
+|----------------------------------|---------------|----------|---------|--------|----------|----------|----------|
+| Statistical functions (corr/reg) | ❌ (heuristic)| ✅       | ✅      | ✅     | ✅       | ✅       | P2       |
+| Anomaly detection                | ✅ (17 rules) | ✅       | ✅      | ✅     | ❌       | ❌       | -        |
+| Forecasting (ARIMA/ETS)          | ❌ (OLS only) | ✅       | ✅      | ✅     | ❌       | ✅       | P2       |
+| Clustering (K-means)             | ❌            | ✅       | ✅      | ❌     | ❌       | ❌       | P4       |
+| Outlier detection (Z-Score)      | ✅            | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Seasonality decomposition        | ❌            | ✅       | ✅      | ✅     | ❌       | ✅       | P3       |
+| Trend analysis                   | ✅            | ✅       | ✅      | ✅     | ✅       | ✅       | -        |
+| Cohort analysis                  | ❌            | ✅       | ✅      | ❌     | ❌       | ❌       | P4       |
+| Funnel analysis                  | ❌            | ✅       | ✅      | ❌     | ❌       | ❌       | P4       |
+| Path analysis                    | ❌            | ✅       | ✅      | ❌     | ❌       | ❌       | P4       |
+
+Note: Our 17-rule engine is DOMAIN-SPECIFIC anomaly detection (more tailored
+than generic BI platforms). OLS forecast in src/lib/metrics/forecast.ts is
+linear regression only — no ARIMA, no exponential smoothing, no CI band.
+
+=== Analytics Feature Completeness ===
+- vs Power BI:    2.5 / 10  (we have ~5 viz types vs 26; no calc fields,
+                                no RLS, no embeds, no scheduled refresh,
+                                no AI visuals, no what-if params, no PDF/XLSX)
+- vs Tableau:     2.5 / 10  (we have ~5 viz types vs 26; no parameters/sets,
+                                no dashboard actions, no story points,
+                                no forecast CI, no calculated fields)
+- vs Looker:      3.5 / 10  (Looker's native viz is also limited; LookML
+                                modeling is more powerful than our Prisma
+                                but Looker lacks our 17-rule domain engine.
+                                Looker has embeds + scheduling we lack.)
+- vs Metabase:    3.5 / 10  (Metabase has 13 viz types + SQL editor + alerts
+                                + embeds; we have fewer viz + no SQL editor
+                                + no embeds, but stronger domain analytics)
+- vs Superset:    3.0 / 10  (Superset has 19 viz types + SQL Lab + RLS +
+                                cache layer + dashboard publishing; we have
+                                fewer viz + no SQL Lab, but stronger domain)
+- vs Data Studio: 3.5 / 10  (Looker Studio has 13 viz types + calc fields +
+                                blend sources + embeds + email schedule +
+                                share-via-link; we lack all of these)
+
+Caveat: This is a PURPOSE-BUILT F&B deviation analytics tool, not a generic
+BI platform. Our 17-rule engine + Pareto + peer comparison + Z-Score +
+outlet health ranking already out-of-the-box would require significant
+custom SQL / LookML / DAX to replicate on any of these platforms. So our
+"low completeness score" reflects generic BI features missing, NOT domain
+analytics missing (which is our strength).
+
+=== Top 10 Missing Analytics Features (priority order) ===
+1.  [P1] Cross-filter / cross-highlight between charts — clicking an area
+    in AreaComparison should filter Top Items, Health Ranking, etc.
+    (Power BI/Tableau/Metabase all have this). Currently each chart is
+    independent.
+2.  [P1] Heatmap — Area × Item grid showing deviation intensity. Critical
+    for F&B matrix view (14 areas × 109 items = 1,526 cells). Recharts
+    lacks it natively → need d3-interpolate or visx or ECharts.
+3.  [P1] Export chart as PNG/SVG — no html2canvas/jspdf installed. Add
+    ~10KB lib + button on each chart card. Enables slide/email use.
+4.  [P1] PDF export of dashboard — currently Word-only. Most-requested
+    BI output format. Use puppeteer or react-pdf.
+5.  [P1] Shareable dashboard links — filter state not URL-synced
+    (useDashboard.ts has no useSearchParams). Small refactor = unlock
+    link sharing.
+6.  [P1] Excel export of full analysis response — exceljs already in
+    deps (used for import only). Extend /api/export-report to support
+    format=xlsx. Users constantly request this.
+7.  [P2] Per-chart Top N filter — currently fixed to thresholds.TOP_N_ITEMS=10.
+    Add dropdown on TopItems cards (override via URL param).
+8.  [P2] Time-series brush/zoom — recharts `Brush` component is built-in
+    but unused. Add to ItemTrendChart + AreaTrendChart (1-line each).
+9.  [P2] Treemap for "Item Concentration" signal — recharts has Treemap
+    built-in but not imported. Better top-down view than pie.
+10. [P2] Forecast with confidence interval band on LineCharts — we have
+    OLS in lib/metrics/forecast.ts but only rendered as dashed projection
+    line in signal-chart.tsx. Add CI band (±1.96σ) + toggle.
+
+=== Quick Wins (easy to add, high impact) ===
+1. [1-line] Add `<Brush dataKey="period" />` to ItemTrendChart.tsx +
+   AreaTrendChart.tsx → instant time-series zoom (recharts built-in).
+2. [1-line] Switch ItemDeepDive.tsx PieChart to Donut: add `innerRadius={30}`
+   to the Pie component (line 154). Modern look + center label for total.
+3. [~30 lines] Add "Export CSV" button on each card footer (mirror
+   SourceDataModal.tsx:60-71 pattern). Data already in scope.
+4. [~50 lines] URL-sync filter state: refactor useDashboard.ts to use
+   useSearchParams from next/navigation. Unlocks shareable links.
+5. [~100 lines] Add Treemap component for "Item Concentration" signal in
+   signal-chart.tsx (replace PieChart). Recharts Treemap built-in.
+6. [~100 lines] Add Heatmap component (Area × Item grid) — use recharts
+   ScatterChart as grid, or install visx@heatmap (~30KB). High F&B value.
+7. [~150 lines] Extend /api/export-report to support `format=csv|xlsx` —
+   exceljs already in deps, csv-stringify already in deps.
+8. [~200 lines] Add cross-filter context: zustand slice `chartFilters`
+   (clickedArea, clickedKelompok) that charts read + apply. Small but
+   enabling refactor.
+
+=== Files Inspected ===
+- package.json (charting libs audit)
+- src/app/page.tsx (4 tabs, fixed grid layout)
+- src/hooks/useDashboard.ts (no URL sync)
+- src/components/filters/FilterBar.tsx (cascading filter, no relative date)
+- src/components/dashboard/Charts.tsx (BarChart + ComposedChart)
+- src/components/dashboard/AnalysisCards.tsx (MultiPeriod ComposedChart)
+- src/components/dashboard/AreaTrendChart.tsx (LineChart, in-chart series toggle)
+- src/components/dashboard/ItemTrendChart.tsx (LineChart multi-series)
+- src/components/dashboard/ItemDeepDive.tsx (PieChart, no innerRadius)
+- src/components/dashboard/peer-comparison/scatter-chart.tsx (ScatterChart)
+- src/components/dashboard/peer-comparison/trend-chart.tsx (LineChart)
+- src/components/dashboard/peer-comparison/correlation-insight-card.tsx
+  (heuristic ratio, NOT real correlation coefficient)
+- src/components/dashboard/priority-summary/signal-chart.tsx (BarChart,
+  LineChart, ScatterChart, PieChart donut, stacked, ReferenceLine × 9)
+- src/components/dashboard/HistoricalZScoreCard.tsx (Z-Score table+bar)
+- src/components/dashboard/QuickSettings.tsx (Slider, persists to DB)
+- src/components/dashboard/CardDrillDown.tsx (drill modal)
+- src/components/dashboard/ExportDialog.tsx (Word export only)
+- src/components/drilldown/DrillDownDrawer.tsx (drill drawer)
+- src/components/drilldown/SourceDataModal.tsx (CSV export client-side)
+- src/lib/metrics/forecast.ts (OLS linear regression only — no ARIMA/ETS/CI)
+- src/lib/excel.ts (exceljs used for IMPORT only)
+- src/lib/excel-to-csv.ts (exceljs → CSV convert for ingestion)
+
+---
+Task ID: GAP-COLLAB
+Agent: general-purpose (Collaboration Gap Analyst)
+Task: Deep comparison of collaboration/user management features vs modern collab/BI platforms
+
+Work Log:
+- Read worklog tail (last 100 lines) — context: REVIEW-SEC (8/10 single-user, fix SEC-01 for multi-user) + FIX-CODE-QUALITY (lint rules re-enabled, 395 tests, 27.2% coverage)
+- Read prisma/schema.prisma (full) — confirmed: ZERO user-related models (no User, Account, Session, VerificationToken, Comment, Notification, Share, Team)
+- Read src/middleware.ts (full) — confirmed: single shared ADMIN_TOKEN env var; fail-open in dev, fail-closed in prod; 10 protected paths; constant-time token compare
+- Grep next-auth/next/auth → 0 source matches; only MASTER_CONTEXT.md + worklog.md mention it. NextAuth NOT in package.json dependencies — confirmed "available" is mythical
+- Grep AuditLog writes → 11 callsites (analysis, ingest-process, ingestion.ts, pic, pic/import, data, migrate-direction, settings×2). Grep auditLog.findMany → 0 matches. Confirmed: 100% write-only zombie
+- Grep DQIssue → captured at ingest (ingestion.ts, validator.ts); only 1 read site (/api/data?fileId=X returns list); DataManagementDialog shows count badge only. Partial zombie (count exposed, list not browsable in UI)
+- Read scripts/create-investigation-table.ts — DDL exists (SQLite/Turso only, status: OPEN|INVESTIGATING|RESOLVED, priority, assignedTo fields). Never created in Postgres prod, no API route, no UI. Fully dead zombie
+- Grep investigationWorklist → assemble-response.ts strips it: "// FIX: removed investigationWorklist (56KB dead field — never consumed by frontend)". Type InvestigationItem + computation still in rankingService.ts. Dead compute zombie
+- LS examples/websocket → server.ts + frontend.tsx exist (socket.io reference template), NOT integrated into Next.js app
+- Grep comment/mention/notification/share/subscription/webhook/cron → all matches are code comments or path-traversal attack notes. ZERO user-facing collab features
+- Grep role/permission/RBAC → only ARIA accessibility roles (a11y.ts), NOT user RBAC
+- Read src/lib/pic-resolver.ts — OutletPIC.pic is free-form string (not FK to User). Used as filter by 5 API routes. Primitive "who owns outlet" concept
+- Grep useSearchParams/useRouter → 0 matches. URLSearchParams used only for export-report URL construction. No URL state sync → no share-via-URL
+- Confirmed Setting.updatedBy is string field accepting body.updatedBy from API; no auth context populates it (always null or 'reset')
+
+Stage Summary:
+
+## A. User Management
+
+| Feature | Our App | Notion | Linear | Jira | Mode | Looker | Priority |
+|---------|---------|--------|--------|------|------|--------|----------|
+| Multi-user accounts | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| User roles (admin/manager/analyst/viewer) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| RBAC | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Per-outlet permission | 🟡 (PIC string filter) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Per-feature permission | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| SSO (Google/MS/SAML) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| MFA / 2FA | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| User provisioning/deprovisioning | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| User activity tracking | 🟡 (AuditLog raw) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Session management | 🟡 (single shared token) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Password reset flow | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Email verification | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## B. Collaboration Features
+
+| Feature | Our App | Notion | Linear | Jira | Mode | Looker | Priority |
+|---------|---------|--------|--------|------|------|--------|----------|
+| Comments on data | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| @mentions in comments | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Threaded discussions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Shared annotations on charts | ❌ | ✅ | 🟡 | ❌ | ✅ | ✅ | P3 |
+| Real-time co-editing | ❌ | ✅ | 🟡 | ❌ | 🟡 | ❌ | P4 |
+| Activity feed | ❌ (AuditLog exists) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Shared saved views | ❌ (no URL state) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Shared dashboards | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Dashboard subscriptions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Email digests | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Slack/Teams integration | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Webhook notifications | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## C. Workflow & Task Management
+
+| Feature | Our App | Notion | Linear | Jira | Asana | Mode | Priority |
+|---------|---------|--------|--------|------|-------|------|----------|
+| Case/ticket from anomaly | 🟡 (Investigation table in script) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Task assignment | 🟡 (assignedTo field in zombie) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Task status tracking | 🟡 (status field in zombie) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Due dates | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Priority levels | 🟡 (priority field in zombie) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| SLA tracking | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | P3 |
+| Escalation rules | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | P4 |
+| Approval workflows | ❌ | 🟡 | 🟡 | ✅ | ✅ | ✅ | P3 |
+| Custom workflow stages | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Bulk actions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## D. Audit & Compliance
+
+| Feature | Our App | Notion | Linear | Jira | Mode | Looker | Priority |
+|---------|---------|--------|--------|------|------|--------|----------|
+| Audit log | 🟡 (model + 11 writes, NO UI) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Who viewed what data | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | P2 |
+| Who exported what report | ❌ (no userId) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Who changed settings | 🟡 (updatedBy string, no UI) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Data access logging | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Change history (settings diff) | 🟡 (AuditLog captures, no diff UI) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Compliance reports (SOC2/GDPR) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P4 |
+| Data retention policies | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Right to be forgotten | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Data export (portability) | 🟡 (Word export only) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+
+## E. Communication
+
+| Feature | Our App | Notion | Linear | Jira | Asana | Slack | Priority |
+|---------|---------|--------|--------|------|-------|-------|----------|
+| In-app notifications | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Email notifications | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Push notifications (mobile) | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | P4 |
+| Scheduled digest emails | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Alert subscriptions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Notification preferences | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Do not disturb hours | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P4 |
+| Channel routing | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## F. Sharing & Distribution
+
+| Feature | Our App | Notion | Linear | Jira | Mode | Looker | Priority |
+|---------|---------|--------|--------|------|------|--------|----------|
+| Share dashboard via link | ❌ (no URL state sync) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Share view with filters applied | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Password-protected shares | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Expiring share links | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Embed in iframe | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Public read-only dashboard | ❌ | ✅ | ✅ | 🟡 | ✅ | ✅ | P3 |
+| Scheduled report email | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Report versioning | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Report comparison (period vs period) | 🟡 (compare period exists) | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+
+## G. Team & Organization
+
+| Feature | Our App | Notion | Linear | Jira | Asana | Airtable | Priority |
+|---------|---------|--------|--------|------|-------|----------|----------|
+| Team/department grouping | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Org chart hierarchy | ❌ | 🟡 | ✅ | ✅ | ✅ | ❌ | P4 |
+| Outlet assignment to managers | 🟡 (OutletPIC string) | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Cross-team visibility | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Team-level dashboards | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Team performance metrics | 🟡 (rankings exist, no team dim) | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Onboarding flows | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| In-app training material | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## H. Data Governance
+
+| Feature | Our App | Notion | Linear | Jira | Airtable | Mode | Looker | Priority |
+|---------|---------|--------|--------|------|----------|------|--------|----------|
+| Data classification | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Column-level security | ❌ | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | P3 |
+| Row-level security | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | P2 |
+| Data masking (PII) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Data lineage | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | P4 |
+| Data quality monitoring | 🟡 (DQIssue captured, no UI) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P1 |
+| Data stewardship | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+| Approval for data changes | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | P3 |
+
+## Collaboration Completeness Scores (weighted: ✅=1.0, 🟡=0.4, ❌=0)
+
+| Platform | Score | Notes |
+|----------|-------|-------|
+| Our App | **0.8/10** | Single-user; only OutletPIC + AuditLog writes + Word export |
+| Notion | 8.5/10 | Strong comments, sharing, real-time co-editing |
+| Linear | 8.8/10 | Strong workflow + activity feed |
+| Jira | 9.0/10 | Strongest workflow + audit + permissions |
+| Asana | 8.5/10 | Strong task management + team |
+| Airtable | 8.2/10 | Strong row-level security + governance |
+| Mode Analytics | 9.0/10 | BI-native: comments on charts, scheduled reports, subscriptions |
+| Looker | 9.0/10 | BI-native: column-level security, data lineage, governance |
+| Slack | 8.0/10 | Communication-only; weak on workflow/governance |
+
+## Top 10 Missing Collaboration Features (priority order for multi-user)
+
+1. **User authentication & identity** — install `next-auth@4` + Prisma adapter; add User/Account/Session/VerificationToken models. NextAuth is currently "mythical" (listed in MASTER_CONTEXT but NOT in package.json). P1, blocks everything else.
+2. **Role-based access control** — 4 roles (admin, manager, analyst, viewer). Extend middleware.ts to check `session.user.role` on protected paths. P1.
+3. **Per-outlet permissions** — promote `OutletPIC.pic` string → `OutletPIC.userId` FK. User X (outlet manager JKT) only sees JKT outlets. P1, leverages existing data.
+4. **Audit Log UI** — surface existing 11-callsite AuditLog data: `/admin/audit` page with filters (date, action, user, detail). P1, pure UI on existing data.
+5. **Shared saved views / shareable URLs** — sync filter state to URLSearchParams (currently no `useSearchParams`/`useRouter` usage); persist named views in DB. P1.
+6. **Investigation workflow UI** — resurrect existing Turso Investigation table (or migrate to Postgres + Prisma); case creation from anomaly click; status board. P1, schema already designed.
+7. **Comments on anomalies/outlets/items** — Comment model (`{userId, targetType, targetId, body, createdAt, parentCommentId}`); drawer UI on drilldown. P1.
+8. **Activity feed / notification center** — in-app bell pulling from AuditLog + new notification events. P2.
+9. **Email digest / scheduled reports** — cron job (Vercel Cron) + email provider (Resend/SendGrid); daily/weekly summary of new anomalies. P2.
+10. **DQ Issue browser UI** — dedicated page listing existing DQIssue rows with filters (severity, code, outlet, file). P2, pure UI on existing data.
+
+## Minimum Viable Multi-User (single-user → 5-user team)
+
+For a small F&B ops team (1 ops manager + 2 analysts + 2 outlet managers):
+
+1. **Install NextAuth.js v4** + Prisma adapter (`@auth/prisma-adapter`). Add 4 models to schema.prisma: User, Account, Session, VerificationToken. Use CredentialsProvider (email+password) or Google OAuth provider. ~1 day.
+2. **Add `userId` field to AuditLog** (FK to User, nullable for backwards compat). Update 11 callsites to pass `session.user.id`. ~0.5 day.
+3. **Two roles minimum**: `admin` (full access) + `viewer` (read-only). Extend middleware.ts PROTECTED_PATHS logic to check `session.user.role`. ~0.5 day.
+4. **Per-outlet filtering**: add `userId` FK to OutletPIC. Replace `resolvePICOutletCodes(pic: string)` with `resolveUserOutletCodes(userId)`. Outlet managers see only their outlets. ~1 day.
+5. **Audit Log viewer page** at `/admin/audit` (table with filters: date range, action, user, free-text on detail). ~1 day.
+6. **Session-aware UI**: header with user name + logout button; hide admin actions (settings/ingest/delete) for `viewer` role. ~0.5 day.
+7. **Share-via-URL**: extend `useDashboard` hook to sync filter state to URLSearchParams. ~0.5 day.
+
+**Total estimate: 3-5 days.** No breaking schema migrations (all additions). Existing single-user flows still work (ADMIN_TOKEN remains as fallback / service-account path). Backwards-compatible rollout.
+
+## Existing Zombie Features (data captured but no UI)
+
+| Zombie | State | Effort to revive |
+|--------|-------|------------------|
+| **AuditLog** | 11 write callsites, 0 read callsites. 100% write-only. | LOW — add `/admin/audit` page + `auditLog.findMany` API route. Data already rich (action, detail, duration, timestamp). |
+| **DQIssue** | Written at ingest (lib/ingestion.ts, validator.ts). 1 read site returns list via `/api/data?fileId=X`. Count badge shown in DataManagementDialog; no full-issue browser UI. | LOW — dedicated `/dq-issues` page with filters. |
+| **Investigation table (Turso)** | DDL script `scripts/create-investigation-table.ts` exists, SQLite-only, separate from Prisma. Never created in prod Postgres. No API route, no UI. | MEDIUM — port to Prisma model + 3 API routes (list/update/assign) + Kanban UI. |
+| **InvestigationWorklist (in-memory)** | Computed by `rankingService.ts` (~56KB per analysis call). Stripped from API response: `// FIX: removed investigationWorklist (56KB dead field — never consumed by frontend)`. Costs CPU per analysis. | LOW — either delete the computation (cleanup) OR wire it to the Investigation table (feature). |
+| **WebSocket example** | `examples/websocket/{server.ts, frontend.tsx}` — socket.io reference template, never imported by app. | HIGH — would need deployment story (separate ws server, Caddy routing) + auth integration. |
+| **NextAuth.js v4** | Listed in `MASTER_CONTEXT.md` as "available, belum dipakai" but NOT in package.json. Mythical. | N/A — install + adapter + 4 Prisma models (see Minimum Viable above). |
+| **`Setting.updatedBy` field** | Schema field exists. API accepts `body.updatedBy: string`. No auth context populates it (always null or 'reset'). | LOW — once NextAuth lands, change API to use `session.user.email` automatically. |
+| **`OutletPIC.pic` (string)** | Free-form string label (e.g., "Budi"). Used as filter by 5 API routes. Primitive "who owns this outlet" concept. | LOW — promote to `userId` FK once User table exists. |
+
+## Key Caveats
+
+- **Single-user is a defensible design choice** for an internal F&B analytics tool with one analyst. The app is production-grade for that scope (per REVIEW-SEC: 8/10 security, production-ready for single-user internal tool). Multi-user is a NEW capability, not a bug fix.
+- **NextAuth being uninstalled is the root blocker.** Without identity, no other collaboration feature can be built (every comment, notification, audit row, permission needs a userId).
+- **Three P1 zombie revivals cost ~3 days combined** and unlock 50% of the perceived "collaboration gap": AuditLog UI + DQ Issue UI + Investigation workflow. These already have data — they just need UI on top.
+- **The 56KB InvestigationWorklist is actively wasting CPU** on every /api/analysis call. Either delete the computation (cleanup, ~30 min) or wire it to the persisted Investigation table (feature, ~1 day).
+- **OutletPIC is the cheapest path to per-outlet permissions.** Already a filter; just needs to be promoted from string to userId FK when User table exists. ~1 day once NextAuth is in.
+- **No URL state sync today** means even copy-pasting the dashboard URL to a colleague doesn't share the current view. This is a P1 quick win that doesn't even need auth.
+- **`examples/websocket/` is reference code, not production infrastructure.** Real-time co-editing (Notion-style) is P4 — defer until multi-user + comments land first.
