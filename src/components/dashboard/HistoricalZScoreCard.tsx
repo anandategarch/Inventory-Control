@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
 
@@ -218,13 +218,13 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
                       {/* Phase B-1: Multi-metric current values */}
                       {metricView === 'waste' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{fmtIDR(item.currentWaste)}</TableCell>
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{fmtNum(item.currentWaste)}</TableCell>
                       )}
                       {metricView === 'susut' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-orange-600 dark:text-orange-400">{fmtIDR(item.currentSusut)}</TableCell>
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-orange-600 dark:text-orange-400">{fmtNum(item.currentSusut)}</TableCell>
                       )}
                       {metricView === 'trial' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{fmtIDR(item.currentTrial)}</TableCell>
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{fmtNum(item.currentTrial)}</TableCell>
                       )}
                       {metricView === 'devBom' && (
                         <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>

@@ -351,10 +351,10 @@ export async function buildHistoricalAnalysis(
       historicalAvg: stats.mean,
       zScore: zScore ?? 0,
       absNominal: row.absNominalDeviasi ?? 0,
-      // Multi-metric current values (Phase B-1)
-      currentWaste: Math.abs(row.nominalWaste ?? 0),
-      currentSusut: Math.abs(row.nominalSusut ?? 0),
-      currentTrial: Math.abs(row.nominalTrial ?? 0),
+      // Multi-metric current values (Phase B-1) — QTY not nominal
+      currentWaste: Math.abs(row.qtyWaste ?? 0),
+      currentSusut: Math.abs(row.qtySusut ?? 0),
+      currentTrial: Math.abs(row.qtyTrial ?? 0),
     };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));

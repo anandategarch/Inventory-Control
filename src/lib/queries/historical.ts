@@ -80,12 +80,12 @@ export async function queryHistoricalStatsMultiMetric(
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE NULL END as "weeklyDevBom",
-        -- Waste nominal per week
-        SUM(ABS(ir."nominalWaste")) as "weeklyWaste",
-        -- Susut nominal per week
-        SUM(ABS(ir."nominalSusut")) as "weeklySusut",
-        -- Trial nominal per week
-        SUM(ABS(ir."nominalTrial")) as "weeklyTrial"
+        -- Waste qty per week
+        SUM(ABS(ir."qtyWaste")) as "weeklyWaste",
+        -- Susut qty per week
+        SUM(ABS(ir."qtySusut")) as "weeklySusut",
+        -- Trial qty per week
+        SUM(ABS(ir."qtyTrial")) as "weeklyTrial"
       FROM "InventoryRecord" ir
       WHERE (${periodFilter})
         ${f}

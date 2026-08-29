@@ -283,10 +283,10 @@ export interface HistoricalCriticalRow {
   area: string;
   pctQtyDeviasiToBom: number | null;
   absNominalDeviasi: number | null;
-  // Multi-metric fields (Phase B-1)
-  nominalWaste: number | null;
-  nominalSusut: number | null;
-  nominalTrial: number | null;
+  // Multi-metric fields (Phase B-1) — use QTY not nominal
+  qtyWaste: number | null;
+  qtySusut: number | null;
+  qtyTrial: number | null;
 }
 
 export async function queryHistoricalCriticalItems(
@@ -319,9 +319,9 @@ export async function queryHistoricalCriticalItems(
       c.area,
       c."pctQtyDeviasiToBom",
       c."absNominalDeviasi",
-      c."nominalWaste",
-      c."nominalSusut",
-      c."nominalTrial"
+      c."qtyWaste",
+      c."qtySusut",
+      c."qtyTrial"
     FROM "InventoryRecord" c
     JOIN "Item" i ON c."itemId" = i.id
     JOIN "Outlet" o ON c."outletId" = o.id
@@ -343,8 +343,8 @@ export async function queryHistoricalCriticalItems(
     area: r.area,
     pctQtyDeviasiToBom: r.pctQtyDeviasiToBom == null ? null : Number(r.pctQtyDeviasiToBom),
     absNominalDeviasi: r.absNominalDeviasi == null ? null : Number(r.absNominalDeviasi),
-    nominalWaste: r.nominalWaste == null ? null : Number(r.nominalWaste),
-    nominalSusut: r.nominalSusut == null ? null : Number(r.nominalSusut),
-    nominalTrial: r.nominalTrial == null ? null : Number(r.nominalTrial),
+    qtyWaste: r.qtyWaste == null ? null : Number(r.qtyWaste),
+    qtySusut: r.qtySusut == null ? null : Number(r.qtySusut),
+    qtyTrial: r.qtyTrial == null ? null : Number(r.qtyTrial),
   }));
 }
