@@ -28,6 +28,9 @@ export function SourceDataModal() {
     itemName: drilldown.itemName,
     weekLabel: currentWeek,
     monthLabel,
+    // UI-03 FIX: Only fetch when modal is actually open — avoids redundant 500-row
+    // fetch every time the drawer opens (the drawer has its own 50-row query).
+    enabled: sourceModalOpen,
   });
 
   const records = drill.data?.records || [];

@@ -47,6 +47,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
 
+    // PERF-01 FIX: Check DB cache BEFORE expensive setup awaits (month resolver,
+    // prevWeek auto-compute, sourceFile, thresholds, PIC resolution).
+    // On cache HIT (~warm calls), we skip all 5 awaits → ~200-400ms saved.
+    // Cache key uses raw URL params (prevWeek/prevMonth may be null → auto-computed
+    // deterministically, so null is a valid cache key component).
+    const earlyCacheKey = buildCacheKey({
+      route: 'recommendations', month, week, compareWeek: prevWeek, compareMonth: prevMonth,
+      area: area && area !== 'all' ? area : null,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+      pic,
+    });
+    const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const earlyCached = await getCached<unknown>(earlyCacheKey, REC_CACHE_TTL);
+    if (earlyCached && typeof earlyCached === 'object' && 'success' in earlyCached) {
+      return NextResponse.json(earlyCached, { headers: CACHE_ANALYSIS });
+    }
+
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
     if (prevMonth) prevMonth = resolveMonthLabel(prevMonth, resolver) || prevMonth;
@@ -119,17 +137,7 @@ export async function GET(req: NextRequest) {
       picOutletCodes,
     };
 
-    // DP-14: DB-level AggregationCache — prevents full recompute on warm calls.
-    const cacheKey = buildCacheKey({
-      route: 'recommendations', month, week, compareWeek: prevWeek, compareMonth: prevMonth,
-      area: filters.area, kelompok: filters.kelompok, outletCode: filters.outletCode, pic,
-    });
-    const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
-    const cached = await getCached<unknown>(cacheKey, REC_CACHE_TTL);
-    if (cached && typeof cached === 'object' && 'success' in cached) {
-      return NextResponse.json(cached, { headers: CACHE_ANALYSIS });
-    }
-
+    // DP-14: Cache check already done above (PERF-01) — using earlyCacheKey.
     const recommendations = await queryRestoRecommendations(
       month,
       week,
@@ -142,7 +150,7 @@ export async function GET(req: NextRequest) {
     );
 
     const result = { success: true, recommendations };
-    setCached(cacheKey, result);
+    setCached(earlyCacheKey, result);
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });

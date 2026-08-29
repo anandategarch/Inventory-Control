@@ -146,23 +146,21 @@ export async function resolveComparePeriod(
 
   const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
 
+  // API-03 FIX: If the current period doesn't exist in DB (typo, or new month
+  // not yet ingested), don't search forward — that could pick a FUTURE period
+  // as "previous", producing misleading growth metrics (e.g., "Sales grew 500%
+  // vs last month" when "last month" is actually next month).
+  if (currentIdx === -1) {
+    return { prevWeek: compareWeek, prevMonth: null };
+  }
+
   let prevMonth: string | null = null;
   // Search BACKWARDS from current for the same weekLabel in a different month
-  const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
+  const startIdx = currentIdx - 1;
   for (let i = startIdx; i >= 0; i--) {
     if (allPeriods[i].weekLabel === compareWeek && allPeriods[i].monthLabel !== month) {
       prevMonth = allPeriods[i].monthLabel;
       break;
-    }
-  }
-  // Fallback: search FORWARD (after current) for the same weekLabel
-  if (!prevMonth) {
-    const fwdStart = currentIdx >= 0 ? currentIdx + 1 : 0;
-    for (let i = fwdStart; i < allPeriods.length; i++) {
-      if (allPeriods[i].weekLabel === compareWeek && allPeriods[i].monthLabel !== month) {
-        prevMonth = allPeriods[i].monthLabel;
-        break;
-      }
     }
   }
   // FIX (AUDIT8-ROLLBACK-1, Item 20): do NOT fall back to the current month.
@@ -172,5 +170,7 @@ export async function resolveComparePeriod(
   // exists" and runs the comparison query, producing misleading "0% change"
   // results (period compared to itself). Return null instead so callers
   // short-circuit cleanly (e.g. `prevWeek && prevMonth ? X : Y`).
+  // API-03 FIX: Also do NOT search forward — a future period as "previous"
+  // is semantically wrong (growth vs future = nonsense).
   return { prevWeek: compareWeek, prevMonth };
 }

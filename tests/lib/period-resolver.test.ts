@@ -102,16 +102,19 @@ describe('resolveComparePeriod — Case 3: compareWeek set, compareMonth null', 
     expect(r).toEqual({ prevWeek: 'WEEK 2', prevMonth: 'Juli 2026' });
   });
 
-  it('falls back to FORWARD search when not found backwards', async () => {
-    // Current = Juni WEEK 2; compareWeek = WEEK 1 — no WEEK 1 before Juni, but exists in Juli/Agustus
+  it('does NOT search forward — returns null prevMonth when not found backwards (API-03 fix)', async () => {
+    // API-03 FIX: Forward search was removed — a future period as "previous"
+    // is semantically wrong (growth vs future = nonsense).
+    // Current = Juni WEEK 2; compareWeek = WEEK 1 — no WEEK 1 before Juni.
+    // Old behavior: searched forward → found Juli WEEK 1 (FUTURE = wrong).
+    // New behavior: returns null prevMonth (no comparison data).
     setupPeriods([
       { month: 'Juni 2026', week: 'WEEK 2', monthKey: '2026-06' },
       { month: 'Juli 2026', week: 'WEEK 1', monthKey: '2026-07' },
       { month: 'Agustus 2026', week: 'WEEK 1', monthKey: '2026-08' },
     ]);
     const r = await resolveComparePeriod('WEEK 2', 'Juni 2026', 'WEEK 1', null);
-    // Searches forward → first finds Juli WEEK 1
-    expect(r.prevMonth).toBe('Juli 2026');
+    expect(r.prevMonth).toBe(null);
     expect(r.prevWeek).toBe('WEEK 1');
   });
 

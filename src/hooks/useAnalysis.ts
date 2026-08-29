@@ -601,7 +601,7 @@ export interface DrilldownData {
   records: DrilldownRecord[];
 }
 
-export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number }) {
+export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number; enabled?: boolean }) {
   const p = new URLSearchParams();
   if (params.outletCode) p.set('outletCode', params.outletCode);
   if (params.itemName) p.set('itemName', params.itemName);
@@ -626,8 +626,13 @@ export function useDrilldown(params: { outletCode?: string | null; itemName?: st
       }
       return res.json() as Promise<DrilldownData>;
     },
-    enabled: Boolean(params.outletCode || params.itemName),
+    // UI-03 FIX: allow callers to pass `enabled` override (e.g., SourceDataModal
+    // passes `enabled: sourceModalOpen` to avoid redundant 500-row fetch when modal is closed).
+    enabled: params.enabled !== undefined ? params.enabled : Boolean(params.outletCode || params.itemName),
     // FIX M6 (AUDIT-4): add staleTime so reopening the drawer for the same item doesn't refetch.
     staleTime: 30_000,
+    // UI-02 FIX: keepPreviousData prevents drawer from going blank when switching
+    // items while drawer is open (shows old data until new data arrives).
+    placeholderData: keepPreviousData,
   });
 }

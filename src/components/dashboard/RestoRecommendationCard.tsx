@@ -226,7 +226,30 @@ export function RestoRecommendationCard() {
 
   const recommendations: RestoRecommendation[] = data.recommendations || [];
 
-  if (recommendations.length === 0) return null;
+  if (recommendations.length === 0) {
+    // UI-05 FIX: Show empty-state card instead of vanishing silently
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Target className="h-4 w-4 text-amber-600" />
+            Resto Prioritas Analisa
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900">
+            <Target className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div>
+              <p className="text-xs font-medium text-emerald-900 dark:text-emerald-200">Tidak ada resto prioritas</p>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                Semua outlet dalam batas normal untuk filter ini. Coba ganti periode atau filter untuk melihat insight lain.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const levelColor = (level: string) => {
     if (level === 'TINGGI') return 'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-950/40 border-red-300 dark:border-red-800';
