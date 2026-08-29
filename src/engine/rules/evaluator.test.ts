@@ -49,9 +49,9 @@ function baseCtx(overrides: Partial<RuleContext> = {}): RuleContext {
 }
 
 describe('Rule Engine — loadRules', () => {
-  it('loads 17 rules from rules.yaml', () => {
+  it('loads 21 rules from rules.yaml', () => {
     const rules = loadRules();
-    expect(rules.length).toBe(17);
+    expect(rules.length).toBe(21);
   });
 
   it('all rules have required fields', () => {

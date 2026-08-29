@@ -37,6 +37,14 @@ export function buildRuleContext(
   const nominalDeviasiGrowth = computeNominalDeviationGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
   const salesGrowth = calcGrowth(curr.nominalSales, prev?.nominalSales ?? null);
 
+  // BOM Correlation: growth of waste/susut/trial vs BOM
+  const wasteGrowth = calcGrowthAbs(curr.qtyWaste, prev?.qtyWaste ?? null);
+  const susutGrowth = calcGrowthAbs(curr.qtySusut, prev?.qtySusut ?? null);
+  const trialGrowth = calcGrowthAbs(curr.qtyTrial, prev?.qtyTrial ?? null);
+  // Proportionality: how many times deviasi grew vs BOM (1.0 = proportional, >1.5 = disproportionate)
+  const deviationBomRatio = (bomGrowth != null && bomGrowth > 0 && qtyDeviasiGrowth != null)
+    ? qtyDeviasiGrowth / bomGrowth : null;
+
   // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
   // LOGIC-03 fix: enforce HISTORICAL_MIN_WEEKS — skip zScore if sample size too small
   // Phase 5: use calcZScoreFromStats from Metric Engine (single source of truth)
@@ -87,6 +95,8 @@ export function buildRuleContext(
 
   return {
     salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth,
+    // BOM Correlation fields
+    wasteGrowth, susutGrowth, trialGrowth, deviationBomRatio,
     deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
     deviationToBomRatio: safeRatio(curr.absQtyDeviasi, curr.qtyBom != null ? Math.abs(curr.qtyBom) : null),
     benchmarkFlag, zScore,

@@ -79,6 +79,68 @@ rules:
     narrative_template: >
       QTY BOM turun {{bomGrowth}} namun QTY Deviasi naik {{qtyDeviasiGrowth}}.
 
+  # ===== BOM CORRELATION (Waste/Susut/Trial vs BOM) =====
+  - code: WASTE_BOM_MISMATCH
+    name: "Waste tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 55
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - wasteGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - wasteGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Waste {{wasteGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Waste harusnya ikut arah BOM.
+
+  - code: SUSUT_BOM_MISMATCH
+    name: "Susut tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 54
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - susutGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - susutGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Susut {{susutGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Susut harusnya ikut arah BOM.
+
+  - code: TRIAL_BOM_MISMATCH
+    name: "Trial tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 53
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - trialGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - trialGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Trial {{trialGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Trial harusnya ikut arah BOM.
+
+  - code: BOM_DEVIATION_DISPROPORTIONATE
+    name: "Deviasi naik tidak proporsional dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 56
+    condition:
+      all:
+        - bomGrowth: { gt: 0 }
+        - qtyDeviasiGrowth: { gt: 0 }
+        - deviationBomRatio: { gt: 1.5 }
+    narrative_template: >
+      QTY Deviasi naik {{qtyDeviasiGrowth}} tidak proporsional dengan QTY BOM {{bomGrowth}} (rasio {{deviationBomRatio}}×).
+
   # ===== TOLERANSI =====
   # FIX CALC-2: Use absPctQtyDeviasiToBom + absTolerancePct for magnitude comparison.
   # Excel stores pctQtyDeviasiToBom and tolerancePct as SIGNED values (negative for LOSS).

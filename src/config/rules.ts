@@ -64,6 +64,64 @@ export const RULES: Rule[] = [
     },
     narrativeTemplate: 'QTY BOM turun {{bomGrowth}} namun QTY deviation naik {{qtyDeviasiGrowth}}.',
   },
+  // ===== BOM CORRELATION (Waste/Susut/Trial vs BOM) =====
+  {
+    code: 'WASTE_BOM_MISMATCH',
+    name: 'Waste tidak sejalan dengan BOM',
+    category: 'BOM',
+    severity: 'WARNING',
+    priority: 55,
+    condition: {
+      any: [
+        { all: [{ bomGrowth: { lt: 0 } }, { wasteGrowth: { gt: 0 } }] },
+        { all: [{ bomGrowth: { gt: 0 } }, { wasteGrowth: { lt: 0 } }] },
+      ],
+    },
+    narrativeTemplate: 'QTY Waste {{wasteGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}.',
+  },
+  {
+    code: 'SUSUT_BOM_MISMATCH',
+    name: 'Susut tidak sejalan dengan BOM',
+    category: 'BOM',
+    severity: 'WARNING',
+    priority: 54,
+    condition: {
+      any: [
+        { all: [{ bomGrowth: { lt: 0 } }, { susutGrowth: { gt: 0 } }] },
+        { all: [{ bomGrowth: { gt: 0 } }, { susutGrowth: { lt: 0 } }] },
+      ],
+    },
+    narrativeTemplate: 'QTY Susut {{susutGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}.',
+  },
+  {
+    code: 'TRIAL_BOM_MISMATCH',
+    name: 'Trial tidak sejalan dengan BOM',
+    category: 'BOM',
+    severity: 'WARNING',
+    priority: 53,
+    condition: {
+      any: [
+        { all: [{ bomGrowth: { lt: 0 } }, { trialGrowth: { gt: 0 } }] },
+        { all: [{ bomGrowth: { gt: 0 } }, { trialGrowth: { lt: 0 } }] },
+      ],
+    },
+    narrativeTemplate: 'QTY Trial {{trialGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}.',
+  },
+  {
+    code: 'BOM_DEVIATION_DISPROPORTIONATE',
+    name: 'Deviasi naik tidak proporsional dengan BOM',
+    category: 'BOM',
+    severity: 'WARNING',
+    priority: 56,
+    condition: {
+      all: [
+        { bomGrowth: { gt: 0 } },
+        { qtyDeviasiGrowth: { gt: 0 } },
+        { deviationBomRatio: { gt: 1.5 } },
+      ],
+    },
+    narrativeTemplate: 'QTY Deviasi naik {{qtyDeviasiGrowth}} tidak proporsional dengan BOM {{bomGrowth}} (rasio {{deviationBomRatio}}×).',
+  },
   // ===== TOLERANCE =====
   {
     code: 'TOLERANCE_BREACH_HIGH',

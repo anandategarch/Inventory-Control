@@ -757,11 +757,57 @@ export async function GET(req: NextRequest) {
     children.push(divider());
 
     }
-    // Section 7 (PERBANDINGAN ANTAR AREA) removed per user request
+    // Section 5: BOM Correlation Analysis
+    if (hasSection('bomCorrelation')) {
+    const s = data.executiveSummary;
+    children.push(heading('5. Analisis Korelasi BOM'));
+    const bomUp = (s.qtyBom.growth ?? 0) > 0;
+    const bomDown = (s.qtyBom.growth ?? 0) < 0;
+    const devUp = (s.qtyDeviasi.growth ?? 0) > 0;
+    const devDown = (s.qtyDeviasi.growth ?? 0) < 0;
+    const wasteUp = (s.qtyWaste.growth ?? 0) > 0;
+    const wasteDown = (s.qtyWaste.growth ?? 0) < 0;
+    const susutUp = (s.qtySusut.growth ?? 0) > 0;
+    const susutDown = (s.qtySusut.growth ?? 0) < 0;
+    const trialUp = (s.qtyTrial.growth ?? 0) > 0;
+    const trialDown = (s.qtyTrial.growth ?? 0) < 0;
+
+    // Build correlation findings
+    const findings: string[] = [];
+    if (bomUp && devUp) {
+      const ratio = (s.qtyBom.growth ?? 0) > 0 ? (s.qtyDeviasi.growth ?? 0) / (s.qtyBom.growth ?? 1) : 0;
+      if (ratio > 2) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% jauh melebihi BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×)`);
+      else if (ratio > 1.5) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% tidak proporsional dengan BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×)`);
+      else findings.push(`✓ Deviasi naik proporsional dengan BOM (rasio ${ratio.toFixed(1)}×)`);
+    }
+    if (bomDown && devUp) findings.push(`⚠ BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% tapi deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% — tidak sejalan`);
+    if (bomUp && wasteDown) findings.push(`⚠ Waste turun ${(s.qtyWaste.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && wasteUp) findings.push(`⚠ Waste naik ${(s.qtyWaste.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (bomUp && susutDown) findings.push(`⚠ Susut turun ${(s.qtySusut.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && susutUp) findings.push(`⚠ Susut naik ${(s.qtySusut.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (bomUp && trialDown) findings.push(`⚠ Trial turun ${(s.qtyTrial.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && trialUp) findings.push(`⚠ Trial naik ${(s.qtyTrial.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (findings.length === 0) findings.push('✓ Semua metrik sejalan dengan BOM');
+
+    children.push(makeTable(['Metrik', `${currLabel}`, 'Growth', `${prevLabel}`, 'Sejalan?'], [
+      ['QTY BOM', fmtNum(s.qtyBom.current), fmtPct(s.qtyBom.growth, true), fmtNum(s.qtyBom.previous), '— (baseline)'],
+      ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), fmtPct(s.qtyDeviasi.growth, true), fmtNum(s.qtyDeviasi.previous),
+        (bomUp && devUp) || (bomDown && devDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Waste', fmtNum(s.qtyWaste.current), fmtPct(s.qtyWaste.growth, true), fmtNum(s.qtyWaste.previous),
+        (bomUp && wasteUp) || (bomDown && wasteDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Susut', fmtNum(s.qtySusut.current), fmtPct(s.qtySusut.growth, true), fmtNum(s.qtySusut.previous),
+        (bomUp && susutUp) || (bomDown && susutDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Trial', fmtNum(s.qtyTrial.current), fmtPct(s.qtyTrial.growth, true), fmtNum(s.qtyTrial.previous),
+        (bomUp && trialUp) || (bomDown && trialDown) ? '✓ Ya' : '⚠ Tidak'],
+    ]));
+    for (const f of findings) children.push(paragraph(f));
+    children.push(divider());
+
+    }
     if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
     if ((va.topWorsened || []).length > 0) {
-      children.push(heading('5. Perubahan Item (Selisih Terbesar)'));
+      children.push(heading('6. Perubahan Item (Selisih Terbesar)'));
       children.push(makeTable(['Item', 'Resto', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
         va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       children.push(divider());
@@ -771,7 +817,7 @@ export async function GET(req: NextRequest) {
     // Section 13 (RANKING ITEM NASIONAL) removed per user request
     if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
-      children.push(heading('6. Trend Antar Periode'));
+      children.push(heading('7. Trend Antar Periode'));
       // Hapus Penjualan, tambah % Nominal Deviasi to Sales = |nominal| / sales * 100
       children.push(makeTable(['Period', 'Nominal Deviasi', '% Deviasi To BOM', '% Nominal to Sales'],
         data.trend.map((t) => [

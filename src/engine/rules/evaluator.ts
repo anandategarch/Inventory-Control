@@ -353,6 +353,7 @@ function evalCondition(cond: unknown, ctx: Record<string, unknown>): boolean {
 const PERCENT_KEYS = new Set([
   'pctQtyDeviasiToBom', 'residualRatio', 'tolerancePct',
   'salesGrowth', 'bomGrowth', 'qtyDeviasiGrowth', 'nominalDeviasiGrowth',
+  'wasteGrowth', 'susutGrowth', 'trialGrowth', 'deviationBomRatio',
   'deviationToSalesRatio', 'deviationToBomRatio',
   'pctWasteSusut', 'pctQtyWasteToBom', 'pctQtySusutToBom', 'pctQtyTrialToBom', 'pctQtyLossToBom',
 ]);
@@ -399,6 +400,11 @@ export interface RuleContext extends Record<string, unknown> {
   bomGrowth?: number | null;
   qtyDeviasiGrowth?: number | null;
   nominalDeviasiGrowth?: number | null;
+  // BOM Correlation: growth of waste/susut/trial vs BOM
+  wasteGrowth?: number | null;
+  susutGrowth?: number | null;
+  trialGrowth?: number | null;
+  deviationBomRatio?: number | null; // qtyDeviasiGrowth / bomGrowth (proportionality check)
   deviationToSalesRatio?: number | null;
   deviationToBomRatio?: number | null;
   benchmarkFlag?: string | null;
