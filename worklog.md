@@ -30758,3 +30758,68 @@ Stage Summary:
 - Source coverage: src/lib/metrics/historical.ts (computeZScore + calcZScoreFromStats)
 - Pre-existing failures in tests/queries/rule-evaluation.test.ts (3 tests) flagged for
   follow-up — they're caused by Phase A-2 rule-evaluation refactor, NOT this task
+
+---
+Task ID: BUG-MM
+Agent: general-purpose (Multi-Metric Bug Hunter)
+Task: Find bugs in multi-metric Z-Score feature
+Work Log:
+- Read /home/z/my-project/worklog.md tail (FIND-BUG-API/FIND-BUG-UI + test scaffolding).
+- Read src/lib/queries/historical.ts (127 lines) — queryHistoricalStatsMultiMetric + legacy queryHistoricalStats wrapper + computeStats sample-variance formula.
+- Read src/lib/queries/health-ranking.ts (351 lines) — queryHistoricalCriticalItems returns qtyWaste/qtySusut/qtyTrial (raw, signed).
+- Read src/app/api/analysis/services/post-process.ts (559 lines) — buildHistoricalAnalysis returns currentWaste/Susut/Trial (Math.abs'd) but explicitly comments that multi-metric zScores are NOT computed (line 338-345).
+- Read src/hooks/useAnalysis.ts (644 lines) — HistoricalAnalysisResult type extended with currentWaste/Susut/Trial (line 178).
+- Read src/app/api/analysis/services/fetch-records.ts (277 lines) — line 252 still calls legacy queryHistoricalStats (single-metric); historicalByOutletItem type is `Map<string,{mean,stdDev,n}>` (devBom only).
+- Read src/app/api/export-report/route.ts lines 410-609 — also uses legacy queryHistoricalStats; histCriticalItems (lines 578-592) does NOT include currentWaste/Susut/Trial; slices top-50 (line 594) vs analysis's top-200.
+- Read src/app/api/item-history/route.ts (321 lines) — uses computeZScore (per-item timeline), single-metric Dev/BOM only. Not affected by multi-metric feature.
+- Read src/components/dashboard/HistoricalZScoreCard.tsx (lines 180-279) — Tooltip divides currentDevBom/historicalAvg (line 250) without guarding historicalAvg=0.
+- Read src/app/api/analysis/services/validate-and-resolve.ts (lines 130-229) — cache key includes all filters; multi-metric doesn't add new dimensions so cache key is fine.
+Stage Summary: 9 bugs — 1×P1, 3×P2, 5×P3
+
+---
+Task ID: BUG-CACHE
+Agent: general-purpose (Cache Bug Hunter)
+Task: Find bugs in cache implementation
+Work Log:
+- Read worklog tail (last task: TEST-HISTORICAL — computeZScore tests).
+- Read src/lib/aggregation-cache.ts (206 lines) — buildCacheKey, getCached, setCached,
+  getInflight/setInflight, invalidateCache, invalidateAnalysisCache.
+- Read src/app/api/analysis/route.ts (103 lines) + analysis/services/validate-and-resolve.ts
+  (lines 160-251) — confirmed awaitWrite=true, in-flight dedup, month resolved BEFORE key.
+- Read src/app/api/pareto/route.ts (163 lines) — cache key at line 80-82 OMITS parentDim/childDim
+  despite comment at line 79 claiming they're included.
+- Read src/app/api/recommendations/route.ts (159 lines) — PERF-01 early cache key at line 55-61
+  uses RAW month (not resolved); month resolved at line 69 (AFTER key built).
+- Read src/app/api/resto-bahan-matrix/route.ts (321 lines) — cache key at line 66-69 OMITS
+  priority (line 51) + limit (line 52) → cache poisoning across priority/limit variants.
+- Read src/app/api/export-report/route.ts (lines 270-349, 900-947) — cache key at line 304-310
+  OMITS compareWeek/compareMonth (read at 292-293); uses RAW month (no resolveMonthLabel).
+- Grep invalidateAnalysisCache call sites: 9 mutation routes (ingest-process, data, settings,
+  pic, pic/import, migrate-direction, ingestion.ts, DriveImportDialog) — ALL only clear
+  `analysis␟` prefix; pareto/recommendations/resto-bahan-matrix/export-report never invalidated.
+- Read prisma/schema.prisma:230-241 — AggregationCache.payload is `String` (PostgreSQL text,
+  no size limit). 91KB binary → ~280-360KB JSON, well within limits.
+- Verified buffer round-trip: Array.from(Buffer) → number[] (0-255) → JSON → Buffer.from(number[])
+  is lossless. NO bug.
+- Verified awaitWrite=true on all 5 routes. NO bug.
+- Verified TTL=5min consistent across all routes. NO bug.
+
+Stage Summary:
+- 8 bugs total: 3×P1, 3×P2, 2×P3
+- P1: CACHE-01 (incomplete invalidation), CACHE-02 (resto-bahan-matrix key missing priority+limit),
+  CACHE-03 (export-report key missing compareWeek+compareMonth)
+- P2: CACHE-04 (pareto key missing parentDim/childDim), CACHE-05 (recommendations raw month),
+  CACHE-06 (export-report raw month)
+- P3: CACHE-07 (no in-flight dedup on 4 routes), CACHE-08 (recommendations missing cached=true flag)
+- Top 3 to fix: CACHE-02, CACHE-03, CACHE-01
+- No code changes made (analysis only)
+
+---
+Task ID: BUG-UI
+Agent: general-purpose (HistoricalZScoreCard UI Bug Hunter)
+Task: Find bugs in HistoricalZScoreCard UI
+Work Log: src/components/dashboard/HistoricalZScoreCard.tsx (287 lines) + cross-checked
+  src/hooks/useAnalysis.ts (HistoricalAnalysisResult type, lines 173-180) and
+  src/lib/format.ts (fmtNum/fmtIDR/fmtPctAbs — all null-safe).
+Stage Summary: 6 bugs found — 1×P1, 1×P2, 4×P3. No crashes; main issue is
+  misleading header when metric selector switches to waste/susut/trial.

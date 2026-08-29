@@ -221,7 +221,7 @@ export function evaluateHistoricalRulesJs(
     nominalLossSurplus: number | null;
     pctQtyDeviasiToBom: number | null;
   }>,
-  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>,
+  historicalByOutletItem: Map<string, { devBom: { mean: number; stdDev: number; n: number } }>,
   thresholds: RuntimeThresholds,
 ): SqlRuleFlag[] {
   const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
@@ -231,9 +231,9 @@ export function evaluateHistoricalRulesJs(
 
   for (const curr of currentRecs) {
     const stats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`);
-    if (!stats || stats.stdDev <= 0 || stats.n < minWeeks) continue;
+    if (!stats || stats.devBom.stdDev <= 0 || stats.devBom.n < minWeeks) continue;
 
-    const zScore = (Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.mean) / stats.stdDev;
+    const zScore = (Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.devBom.mean) / stats.devBom.stdDev;
     if (zScore == null || isNaN(zScore)) continue;
 
     const isLoss = (curr.nominalLossSurplus ?? 0) < 0;

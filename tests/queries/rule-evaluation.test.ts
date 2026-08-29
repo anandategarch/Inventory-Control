@@ -70,7 +70,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('skips records when stats.stdDev <= 0', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -82,7 +82,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('skips records when stats.n < minWeeks', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 3 }], // n=3 < 4
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 3 } }], // n=3 < 4
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -95,7 +95,7 @@ describe('evaluateHistoricalRulesJs', () => {
   it('fires HISTORICAL_ABNORMAL when LOSS direction + zScore > high', () => {
     // mean=0.2, stdDev=0.05, current=0.5 (|.|) → z = (0.5 - 0.2) / 0.05 = 6 > 3
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -108,7 +108,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('fires HISTORICAL_ABNORMAL_SURPLUS when SURPLUS direction + zScore > high', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: 1000, pctQtyDeviasiToBom: 0.5 }],
@@ -123,7 +123,7 @@ describe('evaluateHistoricalRulesJs', () => {
     // mean=0.2, stdDev=0.05, current=0.35 → z = (0.35 - 0.2) / 0.05 = 3 → at boundary (high)
     // Use current=0.32 → z = 2.4 → between warn(2) and high(3)
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.32 }],
@@ -139,7 +139,7 @@ describe('evaluateHistoricalRulesJs', () => {
   it('fires no historical rules when zScore <= warn', () => {
     // mean=0.2, stdDev=0.05, current=0.25 → z = 1 → below warn(2)
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.25 }],
@@ -153,7 +153,7 @@ describe('evaluateHistoricalRulesJs', () => {
     // Even with same outletId + itemId, different akunPenyesuaian → same map entry
     // (the map is keyed only on outletId|itemId — akun is for downstream filtering)
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: 'AKUN_X', nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -166,7 +166,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('handles null pctQtyDeviasiToBom (uses 0 fallback)', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: null }],

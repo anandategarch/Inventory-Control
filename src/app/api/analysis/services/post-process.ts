@@ -332,29 +332,32 @@ export async function buildHistoricalAnalysis(
   const histCriticalItems = histCriticalRows.map(row => {
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);
-    if (!stats || stats.stdDev <= 0) return null;
-    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+    if (!stats || stats.devBom.stdDev <= 0) return null;
+    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.devBom.mean, stats.devBom.stdDev);
 
-    // Phase B-1: Multi-metric Z-Scores (use current row values vs historical stats)
-    // Note: We don't have multi-metric historical stats in the legacy map,
-    // so we only compute Dev/BOM zScore for now. The multi-metric stats
-    // are available via queryHistoricalStatsMultiMetric but would require
-    // extending the fetch-records pipeline. For now, we include the current
-    // values for waste/susut/trial so the UI can display them, and compute
-    // their zScores if historical stats exist (they will when we wire up
-    // the multi-metric fetch).
+    // Phase B-1 MM-01 FIX: Compute multi-metric Z-Scores using historical stats
+    const wasteZScore = calcZScoreFromStats(Math.abs(row.qtyWaste ?? 0), stats.waste.mean, stats.waste.stdDev);
+    const susutZScore = calcZScoreFromStats(Math.abs(row.qtySusut ?? 0), stats.susut.mean, stats.susut.stdDev);
+    const trialZScore = calcZScoreFromStats(Math.abs(row.qtyTrial ?? 0), stats.trial.mean, stats.trial.stdDev);
+
     return {
       itemName: row.itemName,
       outletCode: row.outletCode,
       area: row.area,
       currentDevBom: row.pctQtyDeviasiToBom ?? 0,
-      historicalAvg: stats.mean,
+      historicalAvg: stats.devBom.mean,
       zScore: zScore ?? 0,
       absNominal: row.absNominalDeviasi ?? 0,
-      // Multi-metric current values (Phase B-1) — QTY not nominal
+      // Multi-metric current values + zScores (Phase B-1)
       currentWaste: Math.abs(row.qtyWaste ?? 0),
       currentSusut: Math.abs(row.qtySusut ?? 0),
       currentTrial: Math.abs(row.qtyTrial ?? 0),
+      wasteZScore: wasteZScore ?? 0,
+      susutZScore: susutZScore ?? 0,
+      trialZScore: trialZScore ?? 0,
+      wasteHistoricalAvg: stats.waste.mean,
+      susutHistoricalAvg: stats.susut.mean,
+      trialHistoricalAvg: stats.trial.mean,
     };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));

@@ -200,6 +200,10 @@ export async function invalidateCache(prefix?: string): Promise<void> {
  * migrate-direction).
  */
 export async function invalidateAnalysisCache(): Promise<void> {
-  // \x1f = ASCII Unit Separator — must match buildCacheKey's SEP constant.
-  return invalidateCache(`analysis\x1f`);
+  // CACHE-01 FIX: Invalidate ALL cached routes — not just analysis.
+  // Mutations (ingest, settings, pic, data delete, migrate-direction) affect
+  // ALL cached data, not just /api/analysis. Without this, pareto/recommendations/
+  // resto-bahan-matrix/export-report serve stale data for 5 min after mutation.
+  const routes = ['analysis', 'pareto', 'recommendations', 'resto-bahan-matrix', 'export-report'];
+  await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

@@ -174,8 +174,10 @@ export interface HistoricalAnalysisResult {
   criticalItems: Array<{
     itemName: string; outletCode: string; area: string;
     currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number;
-    // Phase B-1: Multi-metric current values
+    // Phase B-1: Multi-metric current values + zScores + historical avgs
     currentWaste: number; currentSusut: number; currentTrial: number;
+    wasteZScore: number; susutZScore: number; trialZScore: number;
+    wasteHistoricalAvg: number; susutHistoricalAvg: number; trialHistoricalAvg: number;
   }>;
 }
 

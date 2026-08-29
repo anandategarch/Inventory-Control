@@ -41,11 +41,11 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   // Z-Scores of 680.99 are meaningless and pollute the table.
   // Also filter out items with zScore = 0 (no historical baseline).
   const allItems = data.growthComparison?.historicalAnalysis?.criticalItems || [];
-  const items = allItems.filter(i =>
-    Math.abs(i.currentDevBom) <= 5 &&  // ≤ 500% Dev/BOM
-    Math.abs(i.zScore) > 0 &&          // has valid Z-Score
-    i.historicalAvg > 0                 // has historical baseline
-  );
+  const items = useMemo(() => allItems.filter(i =>
+    Math.abs(i.currentDevBom) <= 5 &&
+    Math.abs(i.zScore) > 0 &&
+    i.historicalAvg > 0
+  ), [allItems]);
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Phase B-4: Pagination
@@ -134,7 +134,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
               {(['devBom', 'waste', 'susut', 'trial'] as const).map(m => (
                 <button
                   key={m}
-                  onClick={() => setMetricView(m)}
+                  onClick={() => { setMetricView(m); setDisplayCount(PAGE_SIZE); }}
                   className={`text-[10px] px-2 py-0.5 rounded-md transition-colors ${
                     metricView === m
                       ? 'bg-purple-600 text-white'
@@ -246,8 +246,8 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                               <p className="font-semibold">Z-Score Breakdown</p>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${item.currentDevBom > item.historicalAvg ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentDevBom > item.historicalAvg ? '+' : ''}{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Ratio:</span><span className="font-medium tabular-nums">{(item.currentDevBom / item.historicalAvg).toFixed(2)}×</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentDevBom > item.historicalAvg ? '+' : ''}{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Ratio:</span><span className="font-medium tabular-nums">{item.historicalAvg > 0 ? (Math.abs(item.currentDevBom) / item.historicalAvg).toFixed(2) : '—'}×</span></div>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(item.zScore)}`}>{item.zScore.toFixed(2)} ({badge.label})</span></div>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Nominal|:</span><span className="font-medium tabular-nums">{fmtIDR(item.absNominal)}</span></div>
                             </div>

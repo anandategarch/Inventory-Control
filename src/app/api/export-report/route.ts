@@ -35,6 +35,7 @@ import {
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
 import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
+import { queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -303,6 +304,7 @@ export async function GET(req: NextRequest) {
     // Cache the generated .docx buffer for 5 min. Same filter params = same report.
     const cacheKey = buildCacheKey({
       route: 'export-report', month, week,
+      compareWeek: userCompareWeek, compareMonth: userCompareMonth,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
@@ -429,8 +431,8 @@ export async function GET(req: NextRequest) {
         },
       }),
       historicalPeriods.length > 0
-        ? queryHistoricalStats(historicalPeriods, filterOpts)
-        : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
+        ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
+        : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
       evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
       queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
     ]);
@@ -578,20 +580,23 @@ export async function GET(req: NextRequest) {
     const histCriticalItems = histCriticalRows.map(row => {
       const key = `${row.outletId}|${row.itemId}`;
       const stats = historicalByOutletItem.get(key);
-      if (!stats || stats.stdDev <= 0) return null;
-      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+      if (!stats || stats.devBom.stdDev <= 0) return null;
+      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.devBom.mean, stats.devBom.stdDev);
       return {
         itemName: row.itemName,
         outletCode: row.outletCode,
         area: row.area,
         currentDevBom: row.pctQtyDeviasiToBom ?? 0,
-        historicalAvg: stats.mean,
+        historicalAvg: stats.devBom.mean,
         zScore: zScore ?? 0,
         absNominal: row.absNominalDeviasi ?? 0,
+        currentWaste: Math.abs(row.qtyWaste ?? 0),
+        currentSusut: Math.abs(row.qtySusut ?? 0),
+        currentTrial: Math.abs(row.qtyTrial ?? 0),
       };
     }).filter((x): x is NonNullable<typeof x> => x !== null);
     histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 50) };
+    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 200) };
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
     // FIX: fetch additional data for new export sections (restoPriority + itemCrossOutlet)
