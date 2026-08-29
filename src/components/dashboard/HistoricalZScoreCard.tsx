@@ -48,12 +48,22 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   );
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  // Phase B-4: Pagination — show 20 initially, load more in batches of 20
+  // Phase B-4: Pagination
   const [displayCount, setDisplayCount] = useState(20);
   const PAGE_SIZE = 20;
+  // Phase B-3: Severity filter
+  const [severityFilter, setSeverityFilter] = useState<'all' | 'abnormal' | 'warning' | 'elevated'>('all');
 
   const sorted = useMemo(() => {
-    const arr = [...items];
+    // Phase B-3: Filter by severity
+    const filtered = severityFilter === 'all' ? items : items.filter(i => {
+      const abs = Math.abs(i.zScore);
+      if (severityFilter === 'abnormal') return abs > 3;
+      if (severityFilter === 'warning') return abs > 2 && abs <= 3;
+      if (severityFilter === 'elevated') return abs > 1 && abs <= 2;
+      return true;
+    });
+    const arr = [...filtered];
     arr.sort((a, b) => {
       let cmp = 0;
       switch (sortKey) {
@@ -67,7 +77,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return arr;
-  }, [items, sortKey, sortDir]);
+  }, [items, sortKey, sortDir, severityFilter]);
 
   const toggleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
@@ -106,14 +116,32 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
             side="bottom"
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">
-          <span className="font-medium tabular-nums">{items.length}</span> item dengan Z-Score tertinggi
-          {allItems.length !== items.length && <span className="text-muted-foreground/60"> ({allItems.length - items.length} difilter: BOM≈0)</span>}
-          {' · '}
-          <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{abnormalCount} abnormal</span> ·{' '}
-          <span className="text-amber-600 dark:text-amber-400 font-medium tabular-nums">{warningCount} warning</span>
-          {' · klik header untuk sort'}
-        </p>
+        <div className="flex items-center justify-between gap-2 ml-9 flex-wrap">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium tabular-nums">{sorted.length}</span> item
+            {severityFilter !== 'all' && <span className="text-muted-foreground/60"> (filtered dari {items.length})</span>}
+            {allItems.length !== items.length && <span className="text-muted-foreground/60"> · {allItems.length - items.length} difilter: BOM≈0</span>}
+            {' · '}
+            <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{abnormalCount} abnormal</span> ·{' '}
+            <span className="text-amber-600 dark:text-amber-400 font-medium tabular-nums">{warningCount} warning</span>
+          </p>
+          {/* Phase B-3: Severity filter */}
+          <div className="flex items-center gap-1.5">
+            {(['all', 'abnormal', 'warning', 'elevated'] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => { setSeverityFilter(f); setDisplayCount(PAGE_SIZE); }}
+                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                  severityFilter === f
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-background text-muted-foreground border-border hover:bg-muted/40'
+                }`}
+              >
+                {f === 'all' ? 'Semua' : f === 'abnormal' ? '>3σ' : f === 'warning' ? '2-3σ' : '1-2σ'}
+              </button>
+            ))}
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {items.length === 0 ? (

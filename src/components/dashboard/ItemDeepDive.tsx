@@ -16,6 +16,7 @@ import type { AnalysisData, DrilldownRecord, TopItemByNominal } from '@/hooks/us
 import { X, Package, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine,
 } from 'recharts';
 
 // Recharts Tooltip payload entry. `payload` is optional here to match Recharts'
@@ -59,10 +60,16 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
   const drilldownLimit = deepDiveItem?.outletCode ? 50 : 500;
 
   // Multi-period trend for this item (filter trend data)
+  // Phase B-2: Include devBom for historical trend chart
   const trendData = (data?.trend || []).map((t) => ({
     weekLabel: t.weekLabel,
     nominal: Math.abs(t.nominal || 0),
+    devBom: Math.abs(t.devBom || 0) * 100, // Convert to percentage for chart
   }));
+  // Compute historical avg Dev/BOM for reference line
+  const histAvgDevBom = trendData.length > 0
+    ? trendData.reduce((sum, t) => sum + t.devBom, 0) / trendData.length
+    : 0;
 
   // Use drilldown hook to fetch detailed records — for ItemDeepDive, this fetches
   // ALL outlets with this item (when outletCode is null) for accurate counts.
@@ -259,13 +266,33 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                 <div>
                   <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
                     <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
-                    Trend Multi-Periode (Semua Resto)
+                    Trend Dev/BOM Multi-Periode
                   </p>
+                  {/* Phase B-2: LineChart showing Dev/BOM over time with historical avg reference */}
+                  <div className="h-32 mb-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendData} margin={{ top: 5, right: 5, bottom: 5, left: -20 }}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted/30" />
+                        <XAxis dataKey="weekLabel" tick={{ fontSize: 9 }} interval={0} angle={-45} textAnchor="end" height={30} />
+                        <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
+                        <Tooltip
+                          contentStyle={{ fontSize: '11px', padding: '4px 8px' }}
+                          formatter={(value: number) => [`${value.toFixed(1)}%`, 'Dev/BOM']}
+                          labelFormatter={(label) => `Periode: ${label}`}
+                        />
+                        <ReferenceLine y={histAvgDevBom} stroke="var(--chart-surplus, #10b981)" strokeDasharray="5 5" label={{ value: `Avg: ${histAvgDevBom.toFixed(1)}%`, fontSize: 9, fill: 'var(--chart-surplus, #10b981)' }} />
+                        <Line type="monotone" dataKey="devBom" stroke="var(--chart-loss, #ef4444)" strokeWidth={2} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
                   <div className="space-y-1">
                     {trendData.map((t, i) => (
                       <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-3 py-1.5">
                         <span className="text-muted-foreground">{t.weekLabel}</span>
-                        <span className="font-semibold">{fmtIDR(t.nominal)}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-muted-foreground tabular-nums">{t.devBom.toFixed(1)}%</span>
+                          <span className="font-semibold">{fmtIDR(t.nominal)}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
