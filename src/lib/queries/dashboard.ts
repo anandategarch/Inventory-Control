@@ -62,7 +62,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
       `
     : Prisma.sql`
         SELECT DISTINCT "outletId", "monthLabel", "weekLabel"
-        FROM "OutletPeriodSales"
+        FROM "OutletPeriodSales" ops
         WHERE 1=1
           ${weekFilterOps}
       `;
