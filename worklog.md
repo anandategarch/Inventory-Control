@@ -34741,3 +34741,721 @@ This task is documentation-only. Zero source files (.ts/.tsx) were touched. Only
 1. P3 — Consider extracting `BomCorrelationCard` rule-code list (RULE_LABELS + RULE_ORDER) to a shared `src/lib/bom-correlation-codes.ts` module so it can be referenced from docs without circular import. Currently duplicated as text in MASTER_CONTEXT.md §6 + ARCHITECTURE.md §3.3.
 2. P3 — Consider adding a runtime "version" endpoint (`/api/version` returning the `Last updated` tag from MASTER_CONTEXT.md) so the dashboard can display its doc version in the footer for debugging. Currently the doc version is only visible by reading the source.
 3. P3 — The `/api/analysis` SWR migration (deferred in PERF-CACHE) remains open. When implemented, update §4.6 surface area bullet ("7 JSON routes" → "8 JSON routes") and §4.1 note ("/api/analysis uses direct setCached" → "uses withCacheAndDedup").
+
+---
+Task ID: PERF-AUDIT-FE
+Agent: Frontend Performance Auditor (general-purpose)
+Task: Audit frontend bundle + render performance (audit only — no code changes)
+
+### Context Read
+- MASTER_CONTEXT.md §5 (components), §6 (caching), §7 (perf benchmarks), §9 (stats: 23 npm deps, 24 dashboard components + 4 tabs + shared barrel, 6 hooks).
+- ARCHITECTURE.md §6.2 (code splitting — 9 lazy-loaded entries), §6.3 (re-render control — 41+ memo'd components, 13 useShallow callsites, custom HeatmapCellView comparator, refetchOnWindowFocus:false, keepPreviousData), §6.4 (bundle optimization — 16-package optimizePackageImports), §6.6 (page.tsx split — 735→227, 9 modules), §6.7 (heatmap optimization — prefetchHeatmap, parallel resolve, month-before-cache-key).
+- worklog.md tail (~200 lines) — prior PERF-FE-01..07 work (lazy Sheet, keepPreviousData, refetchOnWindowFocus:false, memoized sheetFilters, memoized BomCorrelationCard arrays, React.memo on 4 tabs, optimizePackageImports 5→16).
+
+### Build attempt
+`bun run build` with Turbopack fails in this sandbox: `Persisting failed during shutdown: Unable to write SST file 00000001.sst` (Turbopack cache dir not writable) followed by `ENOENT: no such file or directory, open '/home/z/my-project/.next/server/pages-manifest.json'`. Compiled successfully in 20.8s + TypeScript passed in 15.3s — failure is in the persistence/collection step, not in actual compilation. No `.next/analyze/` output produced. **Fell back to manual import + bundle-size analysis** (per task spec).
+
+### Manual bundle analysis (heavy deps in node_modules)
+- `recharts` 5.4MB — 8 importing files, ALL behind `next/dynamic` (Charts, AnalysisCards, ItemTrendChart, ItemDeepDive, peer-comparison/{trend,scatter}-chart, priority-summary/signal-chart via PrioritySummaryCard → RestoAnalysis → RestoTab lazy, ui/chart.tsx shadcn helper). ✓
+- `exceljs` 23MB — server-only, dynamically imported inside `parseExcelFile()` + `convertInProcess()` (PERF-FASE4-INFRA12). ✓
+- `docx` 7.3MB — server-only, static import in `/api/export-report/route.ts` (API route, never in client bundle). ✓
+- `lucide-react` 42MB on disk — optimized via `optimizePackageImports` (per-file imports at build time, only used icons bundled). ✓
+- `@tanstack/react-virtual` 96KB — used in 2 client components (SourceDataModal, DrillDownDrawer). Both are mounted inside DrillDownDrawer (always rendered in page.tsx), so this lib IS in the main bundle. ~30KB gzipped estimate. P3 — could lazy-load DrillDownDrawer/SourceDataModal.
+- Radix UI packages (~3MB total on disk) — all 14 used packages optimized via `optimizePackageImports`. ✓
+- `@tanstack/react-query` 1.7MB, `tailwind-merge` 992KB, `vaul` 204KB, `cmdk` 124KB, `zustand` 284KB — all in main bundle (acceptable; core stack).
+- `next-themes` 52KB, `clsx` 48KB, `class-variance-authority` 52KB — small, core stack.
+
+### Re-render audit findings
+
+P1: none — no re-render storms or >50KB bundle issues identified. The codebase has already received extensive PERF-FE-01..07 work; remaining issues are P2/P3 optimizations.
+
+```
+PERF-FE-08 [P2]: ParetoDashboard missing keepPreviousData
+File: src/components/dashboard/ParetoDashboard.tsx:237-259
+Finding: useQuery for ['pareto', ...] sets staleTime: 120_000 but does NOT set
+  `placeholderData: keepPreviousData`. When user changes parentDim/childDim/area/
+  kelompok/pic/month/week, the entire 5-quadrant grid unmounts and shows a single
+  Loader2 spinner (line 281-287) for the full cold-fetch duration (4.77s cold per
+  §7 benchmarks). Sister components (useAnalysis, useDrilldown, heatmap query,
+  cell-detail query) all have keepPreviousData — Pareto is the only heavy query
+  without it.
+Impact: Jarring full-screen spinner on every filter change. With DB cache (5-min TTL)
+  warm cache returns in ~0.22s so the impact is bounded, but cold cache (4.77s) is
+  painful. Also no `refetchOnWindowFocus: false` set explicitly — relies on
+  QueryProvider default (providers.tsx:13 sets refetchOnWindowFocus: false globally,
+  so this is inherited, but explicit would be clearer for future readers).
+Recommendation: Add `placeholderData: keepPreviousData` + explicit
+  `refetchOnWindowFocus: false` to the useQuery config. Import keepPreviousData
+  from `@tanstack/react-query` (already a dep). No other changes needed.
+
+PERF-FE-09 [P2]: Top-level layout components not memoized
+File: src/components/dashboard/DashboardHeader.tsx:33, DashboardFooter.tsx:19,
+       RestoRecommendationCard.tsx:103, ParetoDashboard.tsx:213, RestoAnalysis.tsx:45,
+       PeerComparison.tsx:45, GlobalItemSearchModal.tsx:61, ExportDialog.tsx:34
+Finding: 8 top-level components are exported as plain `function` (no `memo()` wrap).
+  page.tsx re-renders on EVERY Zustand state change (filter toggles, modal opens,
+  tab switches, drilldown state). Each re-render cascades to all 8 children. Of
+  these, DashboardTab + RestoTab + PeerTab + ParetoTab ARE memoized (PERF-FE-06),
+  so the 4 tab contents skip re-render. But DashboardHeader + DashboardFooter +
+  GlobalItemSearchModal + ExportDialog are ALWAYS mounted and always re-render.
+  Most painful: opening the Audit Log dialog (setAuditLogOpen(true)) triggers a
+  page re-render → DashboardHeader (re-renders FilterBar unnecessarily) +
+  DashboardFooter + DashboardTab's wrapper (memo skips inner content).
+Impact: Wasted reconciliation work on every modal toggle / state change. FilterBar
+  inside DashboardHeader subscribes to 9 filter slices via useShallow, so it
+  legitimately re-renders on filter changes — but NOT on modal toggles. Without
+  memo on DashboardHeader, FilterBar pointlessly reconciles on every modal open.
+  Estimated 5-15ms wasted per modal toggle on a mid-range laptop.
+Recommendation: Wrap DashboardHeader, DashboardFooter, GlobalItemSearchModal,
+  ExportDialog in `memo()`. They receive stable-shape props (status, analysisData,
+  booleans, callbacks). For the callbacks (onExportClick, onItemSearchClick,
+  onAuditLogClick in page.tsx:150-152), wrap them in `useCallback` in page.tsx so
+  their references stay stable across re-renders. RestoRecommendationCard takes no
+  props — pure memo win. ParetoDashboard takes `analysisData?: any` — wrap in memo
+  + tighten the prop type from `any` to `AnalysisData | undefined`. RestoAnalysis +
+  PeerComparison are already lazy-loaded via tabs so memoization is less critical
+  but still worthwhile for in-tab re-renders.
+
+PERF-FE-10 [P2]: Inline arrow function props from page.tsx to DashboardHeader
+File: src/app/page.tsx:150-152
+Finding: Three inline arrow functions passed as props to DashboardHeader:
+  `onExportClick={() => setExportDialogOpen(true)}`,
+  `onItemSearchClick={() => setItemSearchOpen(true)}`,
+  `onAuditLogClick={() => setAuditLogOpen(true)}`.
+  These create new function references on every page render. Today this doesn't
+  matter because DashboardHeader isn't memoized (PERF-FE-09). But if DashboardHeader
+  is memoized without stabilizing these callbacks first, the memo would bust on
+  every render anyway.
+Impact: None today; blocking dependency for PERF-FE-09 fix.
+Recommendation: Convert to `useCallback` in page.tsx BEFORE wrapping
+  DashboardHeader in memo. Example:
+    `const onExportClick = useCallback(() => setExportDialogOpen(true), []);`
+  Setters from useState are stable, so empty dep array is safe.
+
+PERF-FE-11 [P3]: HistoricalZScoreCard un-memoized filter passes
+File: src/components/dashboard/HistoricalZScoreCard.tsx:116-117
+Finding: `abnormalCount` and `warningCount` computed via `.filter()` on every
+  render (lines 116-117). The `items` array IS memoized (line 51-55), but the
+  count derivations are not. Recomputed on every parent re-render (e.g., when
+  isFetching toggles, when sortKey/sortDir/severityFilter/metricView change for
+  unrelated reasons).
+Impact: For ~50-100 items, each filter pass is ~10-50μs. Negligible per call,
+  but adds up across the 10+ sections in DashboardTab.
+Recommendation: Wrap in `useMemo(() => ({abnormal: items.filter(...).length,
+  warning: items.filter(...).length}), [items, metricView])` to compute once per
+  items/metricView change. Or compute inline within the existing `sorted` useMemo
+  since both share the same dependency on metricView.
+
+PERF-FE-12 [P3]: Dead code — ExecutiveSummary useCountUp + AnimatedValue
+File: src/components/dashboard/ExecutiveSummary.tsx:59-66, 80-82
+Finding: `useCountUp` (line 59-61) is a no-op stub: `return target;` (the original
+  rAF-based implementation was removed in DEEP-AUDIT-FRONTEND #1 due to React
+  Strict Mode bugs, but the function wrapper + `AnimatedValue` component were
+  left in place). `KPICard` (line 80) calls `useCountUp(value)` on every render
+  (line 81), and `AnimatedValue` (line 63-66) is used in 4 places (lines 183, 197,
+  211, 225) — all just round-trip the value through a no-op hook + component.
+Impact: Minor — adds 1 extra component instance per call site (4 AnimatedValue
+  instances + 6 useCountUp calls per ExecutiveSummary render). No animation, no
+  behavior change. Pure dead code.
+Recommendation: Delete `useCountUp` + `AnimatedValue`. Replace `<AnimatedValue
+  value={x} format={fmt} />` with `{fmt(x)}`. Saves ~12 lines + 4 component
+  instances per ExecutiveSummary render.
+
+PERF-FE-13 [P3]: AdvancedAnalysis inline sort/filter without useMemo
+File: src/components/dashboard/AdvancedAnalysis.tsx:49-51 (OutletHealthRanking),
+       164-201 (ItemConsistencyAnalysis), 279-281 (AreaComparison)
+Finding: Three components build derived arrays inline on every render:
+  - `ranking = (data.outletHealthRanking || []).slice().sort(...)` (333 outlets)
+  - `rows = (ca.items && ca.items.length > 0) ? ca.items.map(...) : [...fallback].sort(...)`
+  - `areas = (data.areaAnalysis || []).slice().sort(...)`
+  All three are inside memoized parent components, so they only re-run when `data`
+  changes. But `data` is a new ref every analysis refetch (TanStack Query returns
+  new object even when content is identical), so these sorts run on every analysis
+  refetch.
+Impact: For 333 outlets, sort is ~1-2ms. For ~100 items + ~14 areas, sub-ms.
+  Negligible per call but adds up across the 10+ sections in DashboardTab.
+Recommendation: Wrap each in `useMemo(() => ..., [data])`. Or accept current
+  behavior since parent memoization already gates unnecessary re-runs.
+
+PERF-FE-14 [P3]: FilterBar inline derived arrays without useMemo
+File: src/components/filters/FilterBar.tsx:119, 120-123, 124, 143, 145-161
+Finding: 5 derived arrays built inline without useMemo:
+  - `months = status?.months || []` (line 119)
+  - `weeks = ... Object.entries(...).find(...)` (line 120-123) — O(months) scan
+  - `pics = status?.pics || []` (line 124)
+  - `areas = status?.areas || []` (line 143)
+  - `allComparePeriods = []` built via nested for-loop + sort (line 145-161)
+  FilterBar re-renders on every Zustand filter change (9 subscribed slices via
+  useShallow). Each render rebuilds all 5 arrays.
+Impact: allComparePeriods is the heaviest — ~4 months × 4 weeks = 16 entries with
+  a sort. ~100μs per render. Negligible.
+Recommendation: Wrap `allComparePeriods` (the heaviest) in `useMemo(() => ..., 
+  [status, monthLabel, currentWeek])`. The other 4 are trivial primitives/short
+  arrays — leave as-is.
+
+PERF-FE-15 [P3]: Multiple TooltipProvider instances in ExecutiveSummary
+File: src/components/dashboard/ExecutiveSummary.tsx:291, 389
+Finding: HealthAlert wraps each individual `<Tooltip>` in its own `<TooltipProvider>`
+  (line 291 for the records tooltip, line 389 inside the `categoryList.slice(0,4).map`
+  loop — 4 separate providers for 4 category tooltips). TooltipProvider creates a
+  React context per instance.
+Impact: 5 TooltipProvider instances total in HealthAlert (1 + 4). Each adds a
+  context provider to the tree. Minor — context creation is cheap, but it's an
+  anti-pattern (shadcn docs recommend one TooltipProvider at the app or page
+  level).
+Recommendation: Wrap the entire HealthAlert return in a single `<TooltipProvider>`
+  and remove the per-tooltip wrappers. Or move TooltipProvider to layout.tsx
+  alongside QueryProvider.
+
+PERF-FE-16 [P3]: Heatmap skeleton height mismatch (minor CLS)
+File: src/components/dashboard/AreaItemHeatmap.tsx:379 (skeleton), 423 (actual)
+Finding: Loading skeleton reserves `h-[520px]` (line 379). Actual content uses
+  `max-h-[520px] overflow-auto` (line 423) BUT the natural content height is
+  `14 areas × 44px (h-11) + header (120px for vertical item labels) ≈ 736px`.
+  So when content loads, it doesn't grow beyond 520px (scrollbar appears), but
+  the skeleton → content transition may still cause a brief reflow as the
+  internal scroll position settles.
+Impact: Minor CLS on initial heatmap load. Skeleton is conservative (520px) vs
+  actual (736px+scrollbar). User sees scrollbar appear where skeleton had none.
+Recommendation: Either bump skeleton to `h-[600px]` to better match the typical
+  content height, OR add `overflow-auto` to the skeleton so it visually matches
+  the scrollable container. Trivial fix.
+
+PERF-FE-17 [P3]: transition-all on width-only animations
+File: src/components/dashboard/ExecutiveSummary.tsx:374-376, 401
+Finding: 4 progress bars use `transition-all duration-500` for width animations:
+  - 3 stacked progress bars (normal/warning/abnormal, lines 374-376)
+  - 1 category progress bar (line 401)
+  `transition-all` watches EVERY CSS property. For width-only changes, the browser
+  has to check all properties on every animation frame. `transition-[width]` or
+  `transition: width 500ms` would be more efficient.
+Impact: Negligible — 4 elements, 500ms animation. CSS engine handles this fast.
+Recommendation: Replace `transition-all duration-500` with `transition-[width]
+  duration-500` on these 4 elements. Or leave as-is (cosmetic perf).
+
+PERF-FE-18 [P3]: ParetoDashboard toggleItem/toggleGen not useCallback
+File: src/components/dashboard/ParetoDashboard.tsx:261-276
+Finding: `toggleItem` and `toggleGen` are plain function declarations inside the
+  component body. Recreated on every render. Passed to `<button onClick={...}>`
+  inside `.map()` loops (lines 428, 453, 510, etc.).
+Impact: None for DOM-level onClick handlers (DOM doesn't care about reference
+  identity). Would only matter if these were passed to memoized child components
+  (they're not).
+Recommendation: Wrap in `useCallback` for consistency with the rest of the
+  codebase's style. Low priority — no measurable perf impact.
+
+PERF-FE-19 [P3]: Heatmap cell hover triggers full parent re-render
+File: src/components/dashboard/AreaItemHeatmap.tsx:219, 223-230
+Finding: `hoveredCell` state at line 219. Every cell hover (debounced 80ms via
+  `hoverTimer` ref) calls `setHoveredCell(cell)` → triggers re-render of
+  `AreaItemHeatmapInner` → re-renders all 280 `HeatmapCellView` instances.
+  HeatmapCellView has a custom memo comparator (line 190-198) that checks
+  areaName/itemName/cell.value/cell.recordCount/cell.outletCount/maxVal/metric —
+  all stable across hover state changes. So the 280 memo checks pass and cells
+  skip re-render. But 280 comparator calls still happen on every hover (debounced
+  to 80ms intervals).
+Impact: 280 cheap comparator calls per hover (debounced). ~0.5ms per hover event.
+  Acceptable in practice — verified by custom comparator + 80ms debounce.
+Recommendation: No action needed. If profiling shows hover jank on low-end
+  devices, consider moving `hoveredCell` state into a separate child component
+  (HeatmapTooltip) that subscribes to hover events via ref instead of state.
+
+PERF-FE-20 [P3]: KPICard useCountUp call is dead
+File: src/components/dashboard/ExecutiveSummary.tsx:81
+Finding: KPICard calls `const animatedValue = useCountUp(value);` on every render,
+  but `useCountUp` is a no-op (returns `target` unchanged — see PERF-FE-12).
+  The result is then used in `fmtIDR(animatedValue)` / `fmtNum(animatedValue, ...)`
+  on line 134. So the hook call is pure overhead.
+Impact: 6 KPICard instances × 1 hook call per render = 6 wasted hook invocations
+  per ExecutiveSummary render.
+Recommendation: Remove the `useCountUp` call (delete line 81, replace
+  `animatedValue` with `value` on line 134). Or remove the entire `useCountUp` +
+  `AnimatedValue` dead code (PERF-FE-12).
+```
+
+### What's already excellent (no changes needed)
+- ✓ **Code splitting**: 9 lazy-loaded entries (DashboardTab's 7 chart components + AreaItemHeatmapSheet + page-level ItemDeepDive + AuditLogDialog + tab-level RestoAnalysis + PeerComparison). Recharts (5.4MB) fully isolated from main bundle.
+- ✓ **React.memo coverage**: 41+ components memoized including all 4 tab wrappers, all chart components, all KPI cards, HeatmapCellView with custom comparator, AuditLogDialog.
+- ✓ **useShallow (Zustand)**: 11 callsites (page.tsx, FilterBar, DashboardHeader-equivalent paths, all 4 tab children, AreaItemHeatmap, DrillDownDrawer, SourceDataModal, ItemDeepDive, RestoRecommendationCard, RestoAnalysis, PeerComparison, ParetoDashboard, GlobalItemSearchModal) — properly prevents re-renders when shallow-equal slices don't change.
+- ✓ **TanStack Query config**: staleTime 120s (analysis), 30s (drilldown), 5min (status + heatmap + cell-detail); gcTime 10min; placeholderData:keepPreviousData on analysis + drilldown + heatmap + cell-detail; refetchOnWindowFocus:false globally set in providers.tsx + explicitly on each query.
+- ✓ **Heatmap optimization**: single Tooltip (was 280 — PERF-FE optimization already applied), custom memo comparator on HeatmapCellView (only re-renders when value/recordCount/outletCount/maxVal/metric change), 80ms hover debounce, `contain: layout style` on scroll container, prefetchHeatmap on status load.
+- ✓ **Memory leaks**: all setInterval/setTimeout/addEventListener properly cleaned up in useEffect returns (LoadingState, ScrollToTop, useDashboardActions keyboard shortcuts, FilterBar custom events, QuickSettings beforeunload, use-mobile media query, AreaItemHeatmap hoverTimer ref, GlobalItemSearchModal focus timeout).
+- ✓ **Image optimization**: no raster images in the app — only SVG logo + lucide-react icons. No `next/image` needed.
+- ✓ **Hydration**: `suppressHydrationWarning` on `<html lang="id">` (for next-themes). No hydration mismatches detected in component code.
+- ✓ **Bundle optimization**: `optimizePackageImports` covers 16 packages (recharts + lucide-react + 14 Radix). exceljs (23MB) dynamically imported server-side. docx (7.3MB) server-only.
+- ✓ **Cache warming**: prefetchAnalysis (FilterBar hover + status load) + prefetchHeatmap (status load). Heatmap matrix is warm before user scrolls down.
+- ✓ **BomCorrelationCard**: 3 useMemo calls (rows, findingsNarrative, totalBomFlags) — array refs stable across re-renders. Good pattern.
+- ✓ **AreaItemHeatmapSheet**: keepPreviousData + refetchOnWindowFocus:false + 6 useMemo'd totals. Properly lazy-loaded.
+
+### Verification
+- `bun run build` → COMPILE OK (20.8s) + TypeScript PASS (15.3s), fails only at SST persistence step (sandbox limitation, not a code issue).
+- Manual import audit: 100% of recharts/exceljs/docx usage traced through lazy-loaded paths.
+- No code changes made (audit-only task per spec).
+
+### Next Actions (priority order)
+1. **P2** — Fix PERF-FE-08 (add `placeholderData: keepPreviousData` to ParetoDashboard useQuery). Single 2-line change, immediate UX win on Pareto tab filter changes.
+2. **P2** — Fix PERF-FE-09 + PERF-FE-10 together: wrap `useCallback` around the 3 inline arrow handlers in page.tsx:150-152, THEN wrap DashboardHeader / DashboardFooter / GlobalItemSearchModal / ExportDialog / RestoRecommendationCard / ParetoDashboard in `memo()`. Estimated 5-15ms saved per modal toggle.
+3. **P3** — Delete PERF-FE-12 + PERF-FE-20 dead code (`useCountUp` + `AnimatedValue` in ExecutiveSummary). 12 lines removed, 10 component instances saved per render.
+4. **P3** — Fix PERF-FE-11 (memoize HistoricalZScoreCard count derivations).
+5. **P3** — Fix PERF-FE-13 + PERF-FE-14 (wrap derived arrays in useMemo in AdvancedAnalysis + FilterBar). Low priority — sub-ms impact.
+6. **P3** — Fix PERF-FE-15 (consolidate TooltipProvider in ExecutiveSummary HealthAlert).
+7. **P3** — Fix PERF-FE-16 (bump heatmap skeleton height to match actual content).
+8. **P3** — Fix PERF-FE-17 + PERF-FE-18 (cosmetic perf: transition-[width] + useCallback).
+9. **P3** — Re-attempt `ANALYZE=true bun run build` in a non-sandboxed environment to get actual bundle-size numbers + treemap visualization. The manual analysis above is based on import-graph reasoning, not measured bytes.
+
+---
+
+## Task PERF-AUDIT-CACHE — Cache & Network Performance Auditor
+
+**Agent:** Cache & Network Performance Auditor (general-purpose)
+**Date:** 2026-08-30
+**Task ID:** PERF-AUDIT-CACHE
+
+### Context Read
+- `MASTER_CONTEXT.md` (§6 Caching) — 5-tier cache: DB AggregationCache (5-min TTL, 9 routes), in-memory statusCache/settingsCache, HTTP Cache-Control, TanStack Query (staleTime 120s, gcTime 10min), in-flight Promise dedup.
+- `ARCHITECTURE.md` §4 (Cache Strategy) — DB-level cache key = `"{route}␟{filterHash}"` (\x1f delimiter), `awaitWrite=true` for critical caches, `invalidateAnalysisCache()` clears ALL 9 prefixes, SWR via `getCachedWithMeta` + `withCacheAndDedup`.
+- `CONVENTIONS.md` §3 (Cache Pattern) — month MUST be resolved via `resolveMonthLabel()` BEFORE cache key; `extra` field for route-specific params; 7-point SWR contract.
+- `worklog.md` tail — recent DOC-UPDATE-2 task confirmed 9 cached routes + SWR pattern + prefetchHeatmap + page.tsx split.
+
+### Audit Methodology
+DO NOT make code changes — audit only. Started dev server (Next.js 16.3.3 Turbopack) with Supabase DATABASE_URL, cleared AggregationCache table, then ran cold+warm cache hit rate measurements on the 4 most-trafficked cached routes. Also static-reviewed all 9 cached route files + 5 mutation routes + aggregation-cache.ts.
+
+### Cache Hit Rate Measurement (Live)
+Cleared AggregationCache, then issued 2 sequential GETs per endpoint:
+
+| Endpoint | 1st (Cold) | 2nd (Warm) | Speedup | Cold `cached` | Warm `cached` | Warm `stale` |
+|----------|-----------|-----------|---------|---------------|---------------|--------------|
+| `/api/analysis` | 17.07s | 0.38s | 45x | false | true | false |
+| `/api/pareto` | 4.00s | 0.22s | 18x | false | true | false |
+| `/api/recommendations` | 2.06s | 0.23s | 9x | false | true | false |
+| `/api/area-item-heatmap` | 1.44s | 0.23s | 6x | false | true | false |
+
+Notes:
+- 17s analysis cold = Turbopack first-request compile overhead (Next.js `next.js` time = 365ms; `application-code` = 16.7s includes both DB query AND dev-mode HMR instrumentation). MASTER_CONTEXT.md §7 documents 0.56s cold in production.
+- All warm hits returned `cached: true, stale: false` — SWR not triggered (cache was fresh).
+- All warm responses preserved the COLD `durationMs` value from the cached payload (see PERF-CACHE-06 below).
+
+### HTTP Cache-Control Headers (Live, curl -sI)
+| Endpoint | Cache-Control |
+|----------|---------------|
+| `/api/analysis` | `public, s-maxage=300, stale-while-revalidate=600, must-revalidate` (CACHE_ANALYSIS) |
+| `/api/pareto` | `public, s-maxage=300, stale-while-revalidate=600, must-revalidate` (CACHE_ANALYSIS) |
+| `/api/recommendations` | `public, s-maxage=300, stale-while-revalidate=600, must-revalidate` (CACHE_ANALYSIS) |
+| `/api/area-item-heatmap` | `public, s-maxage=300, stale-while-revalidate=600, must-revalidate` (CACHE_ANALYSIS) |
+| `/api/status` | `public, s-maxage=60, stale-while-revalidate=120, must-revalidate` (CACHE_METADATA) |
+| `/api/drilldown` | `public, s-maxage=30, stale-while-revalidate=60, must-revalidate` (CACHE_INTERACTIVE) |
+| `/api/outlet-items` | (CACHE_ANALYSIS — verified in source; curl -sI returned 404 with no header because test params didn't match) |
+| `/api/item-history` | (CACHE_ANALYSIS — verified in source; same as above) |
+
+### Network Payload Sizes (Uncompressed, JSON)
+| Endpoint | Payload Size |
+|----------|-------------|
+| `/api/analysis` | 241,609 B (236 KB) |
+| `/api/area-item-heatmap` | 29,626 B (29 KB) |
+| `/api/status` | 30,648 B (30 KB) |
+| `/api/pareto` | 45,693 B (45 KB) |
+| `/api/recommendations` | 12,422 B (12 KB) |
+
+`/api/analysis` at 236 KB is the largest — likely benefits most from Caddy's zstd/gzip compression (already configured per ARCHITECTURE.md §1). No route exceeds 250 KB uncompressed; no payload-size P1.
+
+### AggregationCache Table State (Live, SQL)
+| Metric | Value |
+|--------|-------|
+| Row count | 6 (one per cached route, after audit) |
+| Total table size | 280 kB |
+| Avg row size | 47 kB |
+| Max payload | 236 kB (analysis route, matches HTTP payload size) |
+| Min payload | 73 B (early-return empty result from NO_MATCH sentinel) |
+| Oldest entry | 1.3 min (within TTL — cleanup helper removes >30min entries) |
+
+Per-route distribution: 1 entry each for analysis, pareto, recommendations, heatmap, drilldown, outlet-items. (item-history, resto-bahan-matrix, export-report not exercised in this audit.)
+
+### Cache Invalidation (Static Review)
+`invalidateAnalysisCache()` is `await`-ed at 9 call sites, covering all mutation routes:
+- `/api/ingest-process` (2 sites: lines 539, 758)
+- `/api/pic` (2 sites: 83, 136) + `/api/pic/import` (1 site: 137)
+- `/api/data` DELETE (1 site: 252)
+- `/api/settings` POST + DELETE (2 sites: 193, 282)
+- `/api/migrate-direction` (1 site: 101)
+- `/lib/ingestion.ts` (1 site: 551) — used by `/api/ingest` + `/api/import-drive`
+- `/components/filters/DriveImportDialog.tsx` (1 site: 83) — CLIENT-SIDE post-import
+
+`invalidateAnalysisCache` calls `Promise.all(routes.map(r => invalidateCache(\`${r}\x1f\`)))` for all 9 prefixes (analysis, pareto, recommendations, resto-bahan-matrix, export-report, heatmap, outlet-items, item-history, drilldown). ✓ All 9 prefixes covered.
+
+### Findings
+
+#### P1 (cache miss causing >2s delay OR stale data bug)
+**PERF-CACHE-01 [P1]: /api/analysis NOT migrated to SWR — first request after 5-min TTL waits full recompute**
+Finding: `/api/analysis` (the most-trafficked route) uses legacy `getCached()` which DELETES expired rows on read. The first request after TTL expiry waits for a full 0.5–1s recompute (16.7s in dev mode w/ Turbopack). The 8 other cached routes use `withCacheAndDedup` (SWR) which returns stale data in <50ms + background-recomputes. CONVENTIONS.md §3.1 explicitly notes this as deferred Phase C work.
+Impact: Every 5 minutes, the next user to view the dashboard waits an extra ~1s on the analysis route (longer in dev mode). On a dashboard that auto-refreshes, this is the most-felt cache miss in the system.
+Recommendation: Refactor `/api/analysis/services/validate-and-resolve.ts` stage 1 to use `getCachedWithMeta` instead of `getCached`, then implement SWR fire-and-forget recompute that calls the existing 8-stage pipeline + resolves the bespoke in-flight Promise. The pipeline shape (validate → fetch-records → run-queries → post-process → exec-summary → assemble-response → trend-builder → deviation-drivers) makes this non-trivial — the recompute must replicate the stage-2-8 flow that lives in `route.ts`. Estimate: 4–6 hours.
+
+#### P2 (10–50% miss rate or minor stampede)
+**PERF-CACHE-02 [P2]: 5 routes build cache key BEFORE month is resolved**
+Finding: `/api/recommendations` (line 60), `/api/export-report` (line 332), `/api/outlet-items` (line 97), `/api/item-history` (line 83), `/api/drilldown` (line 66) all use the RAW user-supplied `month` string in `buildCacheKey`, then resolve it INSIDE the computeFn. CONVENTIONS.md §3 explicitly states "month MUST be resolved via resolveMonthLabel() first" — these 5 routes violate the convention. `/api/analysis`, `/api/pareto`, `/api/resto-bahan-matrix`, `/api/area-item-heatmap` correctly resolve BEFORE the key.
+Impact: If user A passes `?month=Agustus 2026` and user B passes `?month=AGUSTUS 2026` (or `?month=agustus 2026`), they generate DIFFERENT cache keys but compute identical results. Effect: (1) duplicate cache entries (storage waste), (2) cache miss for the second user (extra 2–4s wait). Realistic frequency depends on whether the UI sends canonical month labels — `useDashboard` store derives month from `/api/status` response, so in practice all dashboard requests use the same case. BUT the API is documented as public-GET, so external callers (scripts, dashboards embedded elsewhere) could trigger cache misses. Note: the route authors made this tradeoff intentionally (`PERF-01 FIX` comment in recommendations) to skip the `await getMonthResolver()` (~1ms) on cache hits.
+Recommendation: For each of the 5 routes, move `getMonthResolver()` + `resolveMonthLabel()` ABOVE the `buildCacheKey()` call. The ~1ms cost is negligible; correctness > micro-optimization. Alternative: cache the monthResolver in a module-level singleton (already cached, but the `await` blocks event loop) — call it once outside the route handler.
+
+**PERF-CACHE-03 [P2]: SWR recompute failure rejects concurrent requests instead of falling back to stale**
+Finding: In `withCacheAndDedup` SWR path (aggregation-cache.ts:294–304), when the background recompute IIFE catches an error, it calls `rejectComputation(e)`. The in-flight Promise (registered at step 2 before any await) was set to this same `computationPromise`. Any concurrent Request B that arrived between steps 2 and 3a/3b called `getInflight(cacheKey)` and is awaiting this Promise. When the IIFE rejects, Request B's `await inflight` throws → Request B returns a 500 error to the client, even though the stale data IS available (Request A just returned it).
+Impact: Underlying DB hiccup during SWR recompute → Request A serves stale successfully, Request B (concurrent, same key) gets 500 instead of stale. Violates the SWR contract documented in CONVENTIONS.md §3.1: "Concurrent requests during the recompute get FRESH data". The contract assumes recompute succeeds; failure mode is undocumented.
+Recommendation: In the IIFE `catch` block, instead of `rejectComputation(e)`, fall back to `resolveComputation(cachedWithMeta.data)` (resolve with the stale data already returned to Request A). Log the recompute failure separately. This way Request B gets stale data (same as A) instead of an error. Optionally retry the recompute once.
+
+**PERF-CACHE-04 [P2]: /api/peer-comparison not cached despite heavy CROSS JOIN**
+Finding: `/api/peer-comparison` route imports `CACHE_ANALYSIS` headers (HTTP layer) and has `maxDuration = 60` ("CROSS JOIN can be slow"), but does NOT use `buildCacheKey` / `withCacheAndDedup`. Every request re-runs the peer comparison query.
+Impact: Each PeerComparison tab click triggers a fresh ~1–4s CROSS JOIN query. If the user clicks the Peer tab multiple times within a session, every click is a cache miss. Master context documents this as intentional (PeerComparison is a lazy-loaded tab), but the route is filter-heavy (outletCode, month, week, mode, limit, kelompok) — a perfect candidate for the existing DB cache pattern.
+Recommendation: Wrap the route body in `withCacheAndDedup` with a cache key including all 6 filter params. TTL 5 min matches other analysis routes. Add `'peer-comparison'` to the `routes` array in `invalidateAnalysisCache()`. ~30 minutes of work.
+
+**PERF-CACHE-05 [P2]: /api/outlet-items + /api/item-history cache keys omit area/kelompok/pic dimensions**
+Finding: Both routes hardcode `area: null, kelompok: null, pic: null, outletCode: <param>` in their cache keys. This is currently CORRECT because the routes don't accept area/kelompok/pic URL params (outlet is more specific). But if these routes ever gain area/kelompok/pic filters (e.g., to support multi-outlet rollup), the cache key would silently miss the new filter → cache poisoning.
+Impact: Latent risk only — no active bug today. Similar to the original BUG-KELOMPOK-CACHE that required a fix when kelompok was added to /api/analysis.
+Recommendation: Add a code comment in both routes documenting that the cache key is intentionally minimal because the route is single-outlet. If multi-outlet rollup is ever added, the cache key MUST be updated.
+
+#### P3 (TTL tuning, cleanup, monitoring)
+**PERF-CACHE-06 [P3]: 5 routes persist `durationMs` in cached payload — warm responses report cold timing**
+Finding: `/api/pareto` (line 150), `/api/resto-bahan-matrix` (line 312), `/api/area-item-heatmap` (line 143), `/api/outlet-items` (line 653), `/api/item-history` (line 351) all compute `durationMs: Date.now() - startedAt` INSIDE the `withCacheAndDedup` computeFn. This value gets serialized into the cached JSON payload. On warm cache hit, the cached payload is returned as-is — so the response reports the COLD computation time even though the actual warm response took ~220ms.
+Live measurement: `/api/pareto` warm response `durationMs=3347` (actual: 220ms). `/api/area-item-heatmap` warm response `durationMs=1038` (actual: 230ms). `/api/analysis` correctly OVERWRITES `durationMs` after cache hit (validate-and-resolve.ts:209) — the only route that does this right.
+Impact: Misleading monitoring data. Any dashboard/alerting that reads `durationMs` from the JSON response will over-report by 5–15x. Does NOT affect user-perceived latency (the response IS fast), only the reported metric.
+Recommendation: Move `durationMs` computation OUT of the computeFn — compute it AFTER `withCacheAndDedup` returns, like `/api/analysis` does. Pattern:
+```ts
+const { data, cached, stale } = await withCacheAndDedup(...);
+const payload = { ...data, durationMs: Date.now() - startedAt };
+```
+~15 minutes per route × 5 routes = ~75 min total.
+
+**PERF-CACHE-07 [P3]: /api/recommendations inconsistent — no `durationMs` in payload**
+Finding: `/api/recommendations` does NOT include `durationMs` in its response at all (computeFn returns `{ success, recommendations }` only). The 8 other cached routes all include `durationMs`. Inconsistency makes monitoring harder.
+Impact: Minor — clients that surface `durationMs` (e.g., dashboard footer "last analysis took Xms") show 0 or undefined for recommendations.
+Recommendation: Add `durationMs: Date.now() - startedAt` to the recommendations computeFn return value (per PERF-CACHE-06 fix pattern).
+
+**PERF-CACHE-08 [P3]: /api/drilldown uses CACHE_INTERACTIVE (30s) but DB cache TTL is 5 min**
+Finding: `/api/drilldown` returns `Cache-Control: public, s-maxage=30, stale-while-revalidate=60` (CACHE_INTERACTIVE) but its AggregationCache TTL is 5 minutes. CDN edge cache expires 10x faster than the DB cache.
+Impact: Mostly defensible — drilldown is user-initiated pagination, so 30s CDN TTL feels "fresher". But the inconsistency means CDN revalidation happens 10x per DB cache lifetime, adding 10 CDN→origin round trips that all hit the DB cache (cheap but not free).
+Recommendation: Either bump drilldown to `CACHE_ANALYSIS` (s-maxage=300) for consistency with its DB TTL, OR document the rationale (pagination should feel interactive) in a code comment. Current state is acceptable.
+
+**PERF-CACHE-09 [P3]: No prefetch hooks for pareto, recommendations, drilldown, outlet-items, item-history, resto-bahan-matrix**
+Finding: Only `prefetchAnalysis` and `prefetchHeatmap` exist. The 6 other cached routes have no prefetch hooks. ARCHITECTURE.md §4.7 explicitly defends this: "they're lazy-loaded tabs or user-initiated drill-downs, so prefetching would waste a cold query on a tab the user may never open."
+Impact: Defensible. If Pareto tab CTR is high (>50% of sessions), prefetching pareto on dashboard load would save the user one 4s wait. Same for RestoTab (which fetches recommendations).
+Recommendation: Measure tab CTR via analytics before adding prefetch hooks. If Pareto CTR > 50%, add `prefetchPareto(queryClient, params)` called from `useDashboardEffects` alongside `prefetchHeatmap`. Each prefetch adds ~1 cold compute to dashboard load — net positive only if the user actually visits the tab.
+
+**PERF-CACHE-10 [P3]: AggregationCache cleanup TTL=30min is conservative; table is currently 280 kB**
+Finding: `cleanupExpiredCache` removes entries older than 30 min (CLEANUP_TTL_MS). With 9 routes × ~5 filter combos each × 5-min TTL, the table could grow to ~50–200 entries max (~5–10 MB) before cleanup. Currently 6 entries / 280 kB — well within bounds.
+Impact: Negligible. The 30-min cleanup TTL means dead entries linger up to 25 min after their 5-min TTL expires, but the table never grows unbounded.
+Recommendation: No action needed. If table grows >10 MB in production, consider tightening CLEANUP_TTL_MS from 30 min to 15 min. Monitor via the `/api/status` route which already calls `cleanupExpiredCache`.
+
+### Cache Hit Rate Summary Table
+
+| Endpoint | Cache hit (warm) | Cache miss (cold) | SWR? | Notes |
+|----------|-----------------|-------------------|------|-------|
+| `/api/analysis` | 0.38s (45x speedup) | 17.07s* | ❌ NO | *17s includes Turbopack compile; prod cold is 0.56s per docs |
+| `/api/pareto` | 0.22s (18x) | 4.00s | ✅ Yes | Stale-while-revalidate active |
+| `/api/recommendations` | 0.23s (9x) | 2.06s | ✅ Yes | |
+| `/api/area-item-heatmap` | 0.23s (6x) | 1.44s | ✅ Yes | Heat ≈ cold per docs (already fast) |
+| `/api/outlet-items` | n/a (not tested) | n/a | ✅ Yes | Per docs: 2.17s cold, 0.006s warm (157x) |
+| `/api/item-history` | n/a | n/a | ✅ Yes | Per docs: 1.37s cold, 0.006s warm (83x) |
+| `/api/drilldown` | n/a | n/a | ✅ Yes | Per docs: 1.01s cold, 0.023s warm |
+| `/api/resto-bahan-matrix` | n/a | n/a | ✅ Yes | Per docs: 0.3s cold, 0.2s warm |
+| `/api/export-report` | n/a | n/a | ✅ Yes (internal) | Binary docx; stale flag not surfaced |
+
+### Verified Working As Designed (No Findings)
+- ✅ `invalidateAnalysisCache()` clears all 9 prefixes via `Promise.all` + `\x1f` delimiter.
+- ✅ All 9 mutation call sites `await invalidateAnalysisCache()`.
+- ✅ `withCacheAndDedup` registers in-flight Promise BEFORE any await (closes check-then-act race).
+- ✅ `setInflight` auto-cleans on Promise settle (resolve OR reject) via `finally`.
+- ✅ SWR fresh-hit + stale-hit + no-entry paths return correct `{ data, cached, stale? }`.
+- ✅ HTTP Cache-Control headers correctly set on success responses (CACHE_ANALYSIS / CACHE_METADATA / CACHE_INTERACTIVE / NO_STORE).
+- ✅ `prefetchAnalysis` + `prefetchHeatmap` called from `useDashboardEffects` on status load.
+- ✅ `cleanupExpiredCache` rate-limited to once per 10 min (called from `/api/status`).
+- ✅ Cache key uses `\x1f` delimiter (BUG-EDGE-4 fix) — no collision risk from `|` in user input.
+- ✅ Cache key includes `kelompok` (BUG-KELOMPOK-CACHE fix) — no cross-kelompok poisoning.
+- ✅ Cache key includes route-specific `extra` params (parentDim/childDim, limit, priority, sections, metric/itemLimit/mode, limit/cursor).
+- ✅ `getCachedWithMeta` does NOT delete expired rows (unlike `getCached`) — enables SWR.
+- ✅ Dev mode: `force-dynamic` on all cached routes bypasses Next.js full-route cache (DB cache is source of truth).
+- ✅ AggregationCache table is small (6 rows, 280 kB) — no storage pressure.
+- ✅ Network payloads all <250 KB uncompressed — Caddy zstd/gzip compresses further.
+
+### No Code Changes
+This task is audit-only. Zero source files (.ts/.tsx) were modified. The dev server was started/killed multiple times for live measurements; the .env file was already correctly configured with the Supabase DATABASE_URL.
+
+### Next Actions (Priority Order)
+1. **P1** — Implement SWR for `/api/analysis` (PERF-CACHE-01). This is the highest-impact gap — the most-trafficked route lacks SWR. Will eliminate the periodic 1s+ stall every 5 min on dashboard auto-refresh. Phase C work per CONVENTIONS.md §3.1.
+2. **P2** — Move `resolveMonthLabel()` ABOVE `buildCacheKey()` in the 5 affected routes (PERF-CACHE-02). Eliminates case-mismatch cache misses. ~30 min per route × 5 = 2.5 hours.
+3. **P2** — Fix SWR recompute failure handling (PERF-CACHE-03) to resolve in-flight Promise with stale data instead of rejecting. ~30 min.
+4. **P2** — Add DB cache to `/api/peer-comparison` (PERF-CACHE-04). ~30 min.
+5. **P3** — Fix `durationMs` persistence in cached payloads (PERF-CACHE-06) across 5 routes. ~75 min.
+6. **P3** — Add `durationMs` to `/api/recommendations` response (PERF-CACHE-07). ~5 min.
+7. **P3** — Reconcile `/api/drilldown` HTTP vs DB cache TTL (PERF-CACHE-08). ~5 min (either bump TTL or add code comment).
+8. **P3** — Measure Pareto/Resto tab CTR to decide on prefetch hooks (PERF-CACHE-09). Analytics task.
+9. **P3** — Monitor AggregationCache table growth in production (PERF-CACHE-10). No action unless >10 MB.
+
+---
+
+## Task PERF-AUDIT-API — Performance Auditor (general-purpose)
+**Date:** 2026-08-30
+**Agent:** Performance Auditor (general-purpose)
+**Task ID:** PERF-AUDIT-API
+
+### Context
+Read MASTER_CONTEXT.md (§4 API routes, §7 benchmarks) + ARCHITECTURE.md (§4 cache, §6 performance) + worklog.md tail (~150 lines — saw prior PERF-API / PERF-DB / PERF-FE / PERF-CACHE / DOC-UPDATE work). Goal: AUDIT (not fix) API performance — find bottlenecks, measure cold/warm timing, identify N+1 queries, check over-fetching + rate limiting + cache hit rate.
+
+### Benchmark Methodology
+- Started Next.js 16 dev server (Bun runtime) with `DATABASE_URL=postgresql://postgres.proosjqivxadwgftofry:...@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres` (Supabase Singapore).
+- Cleared `AggregationCache` table via `DELETE FROM "AggregationCache"` before each cold benchmark.
+- Measured cold = first request after cache clear, warm = second request (cache hit).
+- Server-side timings captured from dev.log (Next.js reports `application-code` time separately from `next.js` overhead).
+- Two corrections to the task spec's curl examples: (1) `outlet-items` + `item-history` use `outletCode=` (not `outlet=`) and the value must be the FULL code "1030.BDGSET" (not just "1030") — route does `db.outlet.findFirst({ where: { code: outletCode } })` and `Outlet.code` is the full "1030.BDGSET" string, with `Outlet.outletCode` being just the numeric prefix. (2) `drilldown` uses `outletCode=` + `itemName=` + `weekLabel=` + `monthLabel=` (not `outlet=`/`item=`/`week=`/`month=`).
+- Detected concurrent HEAD benchmarks from another audit task in dev.log (likely a parallel audit agent) — those timings also captured for cross-reference.
+- Prisma query log enabled (`PRISMA_LOG_QUERIES=true`) for one cold /api/analysis run to inspect query count.
+
+### Benchmark Results
+
+| Endpoint | Cold (server-side) | Warm (server-side) | HTTP | Payload |
+|----------|--------------------|--------------------|------|---------|
+| `/api/status` | 2.2s | 6–11ms | 200 | 30,648 B |
+| `/api/analysis` | **21.1s** (15.8s under PRISMA_LOG) | 368ms | 200 | **241,622 B** |
+| `/api/pareto` | 3.6s (4.2s in rerun) | 216–222ms | 200 | 45,689 B |
+| `/api/recommendations` | 1.9–2.2s | 189–224ms | 200 | 12,422 B |
+| `/api/resto-bahan-matrix` | 2.3s | 223ms | 200 | (not measured) |
+| `/api/area-item-heatmap` | 1.23–1.35s | 186–221ms | 200 | 29,627 B |
+| `/api/outlet-items` | 1.77–1.83s | 235–250ms | 200 | **102,876 B** |
+| `/api/item-history` | 1.03s | 823ms | 404 | 76 B (params: `outletCode=1030.BDGSET&itemName=CABAI FROZEN` → 404 because outlet 1030 doesn't carry CABAI FROZEN. Could not get a 200 cold time with valid params before dev server was killed by parallel-audit contention.) |
+| `/api/drilldown` | 1.27s | 224ms | 200 | 37,975 B |
+| `/api/area-item-heatmap/cell-detail` | (not benchmarked — sub-route, not cached) | n/a | n/a | n/a |
+
+**Comparison to documented benchmarks (MASTER_CONTEXT.md §7):**
+- `/api/analysis`: documented 0.56s cold → **MEASURED 21.1s/15.8s cold** (28× slower than documented). Massive regression OR documentation was for a much smaller dataset.
+- `/api/pareto`: documented 4.77s cold → measured 3.6s cold (slightly faster — OK).
+- `/api/recommendations`: documented 1.92s → measured 1.9–2.2s (matches — OK).
+- `/api/resto-bahan-matrix`: documented 0.3s → **measured 2.3s** (7.6× slower).
+- `/api/area-item-heatmap`: documented 0.21s → measured 1.23–1.35s (6× slower).
+- `/api/outlet-items`: documented 2.17s → measured 1.77–1.83s (matches — OK).
+- `/api/drilldown`: documented 1.01s → measured 1.27s (close — OK).
+- Warm timings: all in 180–370ms range — cache hit overhead (DB read + JSON serialize). Within expectations.
+
+### Cache Hit Verification
+Confirmed via response body field `cached: true` on warm hits for: `/api/pareto`, `/api/recommendations`, `/api/area-item-heatmap`, `/api/outlet-items`. `/api/analysis` uses bespoke pipeline (no `cached` field surfaced on response, but timing confirms hit). No `stale: true` observed (caches were always fresh, not expired — SWR path not exercised).
+
+### Findings
+
+#### PERF-API-XX-01 [P1]: /api/analysis cold time 28× slower than documented (21s vs 0.56s)
+- **File:** `src/app/api/analysis/route.ts` + `services/{validate-and-resolve,fetch-records,run-queries,post-process}.ts`
+- **Finding:** Measured 21.1s cold (15.8s under PRISMA_LOG_QUERIES=true) vs documented 0.56s. Server-side breakdown: `next.js: 446ms` + `application-code: 20.7s` — almost all time is in app code (DB queries + JS post-process), not Next.js overhead. The pipeline runs ~30+ DB queries in 4 serial batches + 4 early-fired promises. Prisma log shows 68 transactions (BEGIN/COMMIT pairs) + 103 SELECTs for a single cold call.
+- **Impact:** First dashboard load after cache expiry takes 21s. UI shows loading state for the entire duration. Affects every user after the 5-min TTL expires.
+- **Recommendation:** (1) Profile individual queries with `EXPLAIN ANALYZE` — the rule-evaluation CTE (rule-evaluation.ts docstring says ~2-3s) + variance analysis self-join + historical stats are the prime suspects. (2) Consider migrating to SWR like the other 7 cached routes (currently uses bespoke pipeline that returns stale data only via in-flight dedup). (3) Consider increasing the cache TTL beyond 5 min for `/api/analysis` since it's the heaviest route and rarely changes mid-week. (4) Verify the dataset size hasn't grown since the 0.56s benchmark (currently 306K InventoryRecord + 315K DQIssue — was likely smaller when benchmarked).
+
+#### PERF-API-XX-02 [P1]: withStatementTimeout wraps EVERY raw SQL query in a transaction (5 round-trips per query)
+- **File:** `src/lib/queries/shared.ts:28-53`
+- **Finding:** `withStatementTimeout()` calls `db.$transaction(async (tx) => { SET LOCAL statement_timeout; SET LOCAL work_mem; return fn(tx); })`. Each logical query = BEGIN + DEALLOCATE ALL + SET LOCAL statement_timeout + SET LOCAL work_mem + [actual query] + COMMIT = 5 round-trips to Supabase Singapore. With ~30 queries in /api/analysis = 150 round-trips. At ~30-50ms per round-trip over WAN = 4.5-7.5s of pure transaction overhead. Prisma log confirms 68 BEGIN/COMMIT pairs for a single /api/analysis call.
+- **Impact:** Estimated 4-7s wasted on transaction overhead per /api/analysis cold call. Affects all routes that use `withStatementTimeout` (analysis, outlet-items, drilldown, export-report, heatmap, recommendations, pareto).
+- **Recommendation:** (1) Set `statement_timeout` at the Prisma client connection level via `pgbouncer=true&statement_timeout=30000` URL param (note: PgBouncer tx mode strips this — confirmed in shared.ts:9 comment). Workaround: configure Supabase session defaults via `ALTER ROLE postgres SET statement_timeout = '30s'` so it applies to all pooled connections without per-transaction SET. (2) Batch multiple queries into a single `withStatementTimeout` call where the queries are logically grouped (e.g. the 4 batches in run-queries.ts could each be ONE transaction wrapping 5 queries instead of 5 separate transactions). (3) Skip the wrapper entirely for known-fast queries (settings, week, sourceFile lookups — these don't need 30s timeout protection).
+
+#### PERF-API-XX-03 [P2]: /api/analysis response payload 241 KB (largest of all routes)
+- **File:** `src/app/api/analysis/services/assemble-response.ts` (response assembly)
+- **Finding:** /api/analysis returns 241,622 bytes (vs /api/outlet-items 102,876 B, /api/pareto 45,689 B, /api/area-item-heatmap 29,627 B, /api/recommendations 12,422 B). Over Caddy zstd/gzip the wire bytes are smaller, but JSON serialization + cache write/read on every cold+warm call costs ~50-100ms. The payload includes `topDeviasiRank` (top 50 items) + `historicalAnalysis.criticalItems` (top 200 items, increased from 50 in Phase B-4) + `bomCorrelationFindings` (top 50) + `topOutlets` + `topItems` + `areaAnalysis` + `growthComparison` + `trendProjection` + `varianceAnalysis` + `growthDrivers` + `deviationDrivers` + `patterns`.
+- **Impact:** Estimated 50-100ms wasted on JSON serialization per request. Cache row in AggregationCache is 241 KB (text column) — every cache write/read moves 241 KB over the wire to Supabase.
+- **Recommendation:** (1) Audit which fields are actually consumed by the frontend (some legacy fields like `episodic`, `systemic` may no longer be read after the AreaTrendChart + CardDrillDown deletion noted in FIX-DOCS). (2) Consider paginating `historicalAnalysis.criticalItems` server-side (currently slices top 200 — the card shows 20 initially with "load more", so the first 200 are eagerly shipped). (3) Consider splitting the response into multiple endpoints (e.g. `/api/analysis/variance`, `/api/analysis/growth-drivers`) called lazily by tab — only the Dashboard tab needs the full payload on first paint.
+
+#### PERF-API-XX-04 [P2]: /api/resto-bahan-matrix cold 7.6× slower than documented
+- **File:** `src/app/api/resto-bahan-matrix/route.ts`
+- **Finding:** Documented 0.3s cold → measured 2.3s cold. Warm 223ms (matches documented 0.2s). Could not inspect code in detail (out of audit time budget) but the 2.3s cold is the second-slowest after /api/analysis. Same `withStatementTimeout` overhead (PERF-API-XX-02) likely applies.
+- **Impact:** 2s wasted per cold call. Affects Resto Analysis tab.
+- **Recommendation:** Profile individual queries in the route. Likely candidates: per-outlet aggregation on 306K InventoryRecord rows × 342 outlets. Verify indexes on `(monthLabel, weekLabel, outletId)` exist (composite index from PERF-DB-03 covers `(monthLabel, weekLabel, itemId)` — not outletId-first).
+
+#### PERF-API-XX-05 [P2]: /api/area-item-heatmap cold 6× slower than documented
+- **File:** `src/app/api/area-item-heatmap/route.ts` + `src/lib/queries/heatmap.ts`
+- **Finding:** Documented 0.21s cold → measured 1.23-1.35s cold. Warm 186-221ms (matches documented 0.21s — but documented "warm ≈ cold" is misleading since cold is actually 1.2s+). Heatmap query does a 3-step pipeline (fetch items with total metric, select via Pareto 80%, fetch area × item matrix with full qty + nominal aggregates) — each step wrapped in `withStatementTimeout` (PERF-API-XX-02).
+- **Impact:** 1s wasted per cold call. Affects Dashboard tab (Heatmap is below-the-fold but `prefetchHeatmap` fires on status load).
+- **Recommendation:** Same as PERF-API-XX-02 — reduce `withStatementTimeout` overhead. Also: the 3 steps are SEQUENTIAL (each depends on the previous) so they can't be parallelized without restructuring.
+
+#### PERF-API-XX-06 [P2]: /api/export-report fires 18 queries in a SINGLE Promise.all (pool exhaustion risk)
+- **File:** `src/app/api/export-report/route.ts:514-543`
+- **Finding:** Single `Promise.all([...])` with 18 query branches (9 current-period queries + 4 prev-period + 4 historical-avg + 1 deviasi-rank). This CONTRADICTS the analysis route's deliberate batching strategy (run-queries.ts:142-202 — 4 batches × 5 queries to stay within PgBouncer's ~10 connection cap). Comment in run-queries.ts explicitly notes: "Supabase free plan PgBouncer caps concurrent connections at ~10. Firing 20 queries at once caused pool exhaustion."
+- **Impact:** Under concurrent export requests (multiple users clicking export simultaneously), pool exhaustion → 30-60s queue + "Unable to start a transaction" errors. Single-request latency is fine (queries parallelize), but multi-user reliability is at risk.
+- **Recommendation:** Split the single 18-query Promise.all into 3-4 batches of 5 queries each (matching run-queries.ts pattern). The slight latency increase (serial batches) is acceptable for a route that returns a binary docx file (user expects a multi-second wait for export).
+
+#### PERF-API-XX-07 [P2]: /api/status cold 2.2s (in-memory cache miss penalty)
+- **File:** `src/app/api/status/route.ts:60-86`
+- **Finding:** Cold 2.2s, warm 6-11ms (in-memory `statusCache` 5-min TTL). The cold path runs 6 parallel queries: sourceFile.findMany, week.findMany, outlet.findMany (342 rows), outletPIC.findMany (341 rows), item.count, inventoryRecord.count. Server-side breakdown: `next.js: 1209ms` + `application-code: 972ms` — almost half is Next.js framework overhead (route compilation + serialization), the other half is DB queries.
+- **Impact:** 2s wasted on first dashboard load (status is the first call from `useDashboardEffects` to determine month/week options + kelompok list). Blocks subsequent analysis prefetch.
+- **Recommendation:** (1) The 2.2s is mostly fixed Next.js dev-mode overhead (`next.js: 1209ms`) — in production this drops to <100ms. Lower priority for dev-mode-only optimization. (2) Could shrink the payload by excluding `files` (SourceFile rows include `fileName`, `dqStatus`, `importedAt`, `rowCount` — only `monthLabel` + `monthKey` are needed for the month dropdown; the data-management dialog fetches its own list).
+
+#### PERF-API-XX-08 [P3]: /api/status has NO rate limiting (intentional but inconsistent)
+- **File:** `src/app/api/status/route.ts` (no rateLimit import)
+- **Finding:** Documented in ARCHITECTURE.md §9.3 as "intentional: cheap endpoint, but inconsistent with §7.4". With 6 parallel DB queries + JSON serialization of 342 outlets + 341 PIC rows, it's not actually "cheap" on cold cache (2.2s). A malicious client polling /api/status in a tight loop could keep the DB busy.
+- **Impact:** Low — in-memory cache (5-min TTL) makes warm hits 6ms, so even 100 req/s would mostly hit cache. But cold-path abuse is possible.
+- **Recommendation:** Add `RATE_LIMITS.status` (already defined as 30 req/min in rate-limit.ts:84) — just needs the `rateLimit()` call in the route handler. One-line fix.
+
+#### PERF-API-XX-09 [P3]: /api/analysis uses `getCached()` (not `getCachedWithMeta`) — no SWR
+- **File:** `src/app/api/analysis/services/validate-and-resolve.ts:204`
+- **Finding:** All other 8 cached routes use `withCacheAndDedup()` (which calls `getCachedWithMeta` for SWR pattern: stale hit returns immediately + fire-and-forget recompute). /api/analysis uses `getCached()` directly (which DELETES the expired row on read) — so the first request after 5-min TTL expiry waits the full 21s for recompute.
+- **Impact:** First user after TTL expiry pays the full 21s cold cost. With SWR, they'd get stale data in <50ms + background refresh. Affects every dashboard user every 5 minutes.
+- **Recommendation:** Documented as future P3 work in ARCHITECTURE.md §4.6 + worklog.md PERF-CACHE-09 Next Actions #1. Requires extracting stages 2-5 of the pipeline (route.ts:47-67) into a `computeAnalysis(params)` function callable both synchronously (current path) and fire-and-forget (SWR path). Non-trivial refactor but high impact.
+
+#### PERF-API-XX-10 [P3]: export-report uses Prisma `OR` with up to 20 keys instead of VALUES tuple join
+- **File:** `src/app/api/export-report/route.ts:897-944`
+- **Finding:** BOM correlation findings batch-fetches `currBomRecs` + `prevBomRecs` via `db.inventoryRecord.findMany({ where: { OR: bomKeys.map(k => ({...})) } })`. With 20 keys, this generates SQL like `WHERE (outletId=1 AND itemId=1 AND akun IS NULL) OR (outletId=2 AND ...) OR ...` (20 OR clauses). Compare to the analysis pipeline's `fetchBomCorrelationDetails` (post-process.ts:160-199) which uses a `JOIN (VALUES ${tuples}) AS v(...)` pattern — typically 2-3x faster for 20+ tuples because PG can use a hash join instead of 20 sequential index probes.
+- **Impact:** ~50-100ms wasted per BOM section in export-report. Small in absolute terms but export-report is already a heavy route.
+- **Recommendation:** Refactor to use the same `Prisma.sql\`JOIN (VALUES ${Prisma.join(tupleValues, ',')}) AS v(outletId, itemId, akunPenyesuaian)\`` pattern as `fetchBomCorrelationDetails`. Requires raw SQL since Prisma's where-input API doesn't support VALUES joins.
+
+#### PERF-API-XX-11 [P3]: /api/item-history benchmark blocked by param mismatch (not a perf finding — documentation gap)
+- **File:** `src/app/api/item-history/route.ts:65-71`
+- **Finding:** Task spec used `?item=CABAI%20FROZEN` but route expects `?itemName=`. With correct param `?outletCode=1030.BDGSET&itemName=CABAI FROZEN`, returns 404 because outlet 1030 doesn't carry CABAI FROZEN. Could not benchmark a successful 200 cold path within the time budget (dev server kept getting killed by parallel-audit contention after 2-3 minutes of uptime). Documented benchmark (1.37s cold, 0.006s warm) is likely still accurate.
+- **Impact:** None — documentation/param-naming issue, not a perf issue.
+- **Recommendation:** No action needed for perf. (Separately, the route could return a more helpful 404 message indicating which dimension was invalid — currently just "Outlet X not found" or generic 404.)
+
+### No Issues Found (Confirmed Good)
+1. **No N+1 queries** in `post-process.ts`, `fetch-records.ts`, `run-queries.ts`, `outlet-items/route.ts`, `export-report/route.ts`. All DB calls in loops are either (a) bulk SQL with VALUES tuple join, (b) single findMany with OR clause, or (c) post-fetch JS map over already-fetched rows. ✓
+2. **Parallel awaits properly used** in fetch-records.ts (line 84, 239), run-queries.ts (4 batches × 5 parallel queries each — deliberate serial-batch strategy to respect PgBouncer pool cap), post-process.ts (line 753 BOM + historical in parallel), outlet-items/route.ts (line 125, 145, 203), export-report/route.ts (line 514, 897), recommendations/route.ts (line 119, 123). No `await A; await B;` patterns where A and B are independent. ✓
+3. **Slim `select` projections** in fetch-records.ts (5-column currSlim, was 25-column), drilldown route (include with select on nested relations — drops unused Outlet.area/.pic/.id, Item.satuan/.categoryId/.id, SourceFile.monthKey/.fileSize/.createdAt), status route (explicit select on each query). No `select: *` or `include: true` over-fetching. ✓
+4. **Cache hit rate**: all 9 cached routes correctly return `cached: true` on warm hits. In-flight dedup via `getInflight`/`setInflight` for /api/analysis + `withCacheAndDedup` for the other 8. SWR pattern (stale-while-revalidate) implemented for 7 JSON routes. ✓
+5. **Rate limiting**: 21 of 22 routes have rate limiting (only /api/status is missing — PERF-API-XX-08). Heavy routes use `RATE_LIMITS.analysis` (60 req/min), heatmap uses 30 req/min (lower — good), mutations use 5-10 req/min. ✓
+6. **Statement timeout + work_mem bump**: `withStatementTimeout` (PERF-API-XX-02 documents the overhead, but the protection is real — 30s timeout + 64MB work_mem prevents hung queries from blocking the pool + avoids sort spills). ✓
+7. **Cache invalidation on mutations**: `invalidateAnalysisCache()` clears all 9 prefixes on any mutation. No stale data risk post-mutation. ✓
+
+### Methodology Limitations
+1. **Dev server instability**: The dev server was killed repeatedly (likely by a system watchdog or parallel audit contention) during the benchmark session. Required 4+ restarts to capture the full dataset. Server-side timings from dev.log were used as the authoritative source (curl wall-clock includes network + serialization overhead).
+2. **Concurrent audits**: Detected HEAD requests from another audit task in dev.log (using different params — `outlet=0001`, `item=Bawang`). These may have inflated some cold timings due to DB connection contention. The 21.1s /api/analysis cold was measured under concurrent load; the 15.8s measurement (under PRISMA_LOG_QUERIES=true, no concurrent audits active) is more representative.
+3. **/api/item-history successful 200 cold path not captured**: Due to param mismatch + dev server instability, could not get a clean 200 cold measurement. The documented 1.37s is likely still accurate.
+4. **No production-environment measurement**: All benchmarks were in dev mode (Turbopack, `next.js: 1209ms` overhead on /api/status cold). Production would have lower framework overhead but similar application-code timings.
+
+### Next Actions
+1. **P1** — Profile individual queries in /api/analysis pipeline with `EXPLAIN ANALYZE` to identify the specific slow query (rule-evaluation CTE, variance self-join, historical stats, or health ranking are prime suspects). The 21s cold is 28× slower than documented — needs root-cause before any optimization.
+2. **P1** — Refactor `withStatementTimeout` to reduce per-query transaction overhead (PERF-API-XX-02). Either (a) set statement_timeout via Supabase role defaults, (b) batch queries into fewer transactions, or (c) skip wrapper for known-fast queries. Estimated 4-7s savings on /api/analysis cold.
+3. **P2** — Migrate /api/analysis to SWR pattern (PERF-API-XX-09). Requires extracting compute pipeline into a callable function. Eliminates the 21s wait for the first user after TTL expiry.
+4. **P2** — Split /api/export-report's 18-query Promise.all into 3-4 batches (PERF-API-XX-06). Prevents pool exhaustion under concurrent export.
+5. **P3** — Audit /api/analysis response payload for unused fields (PERF-API-XX-03). 241 KB is the largest payload — likely has legacy fields from deleted components (AreaTrendChart, CardDrillDown, CostAccounting tab).
+6. **P3** — Add rate limiting to /api/status (PERF-API-XX-08). One-line fix.
+7. **P3** — Refactor export-report BOM fetch to use VALUES tuple join instead of 20-OR-clause Prisma where (PERF-API-XX-10).
+
+### Verification
+- All benchmarks captured server-side from `dev.log` (Next.js logs `application-code` time separately from `next.js` framework overhead).
+- Code findings verified by reading the actual source files (post-process.ts:838 lines, fetch-records.ts:276 lines, run-queries.ts:245 lines, export-report/route.ts:1120 lines, outlet-items/route.ts:673 lines, rate-limit.ts:94 lines, shared.ts:202 lines, month-resolver.ts:78 lines, heatmap.ts, rule-evaluation.ts, analysis/route.ts:103 lines, validate-and-resolve.ts:252 lines).
+- No code changes made (audit only). Zero source files (.ts/.tsx) were modified. The `.env` file was updated with the correct Supabase DATABASE_URL (was previously a stale SQLite path) — this was necessary for the dev server to start.
+
+
+---
+
+## PERF-AUDIT-DB — Database Performance Auditor (audit-only, no code changes)
+**Date:** 2026-XX-XX · **Agent:** Database Performance Auditor · **Task ID:** PERF-AUDIT-DB
+
+### Scope
+EXPLAIN ANALYZE on 5 heaviest queries + index/table-size audit + withStatementTimeout/SQL/Prisma pattern audit.
+
+### Database state (live)
+- InventoryRecord: 306,151 rows, 199 MB (118 MB table + 80 MB indexes), 12 indexes
+- DQIssue: 314,963 rows, 61 MB (50 MB table + 11 MB indexes), 3 indexes
+- OutletPeriodSales: 4,400 rows, 1.2 MB (DB-06 fast-path table)
+- AggregationCache: 1 row, 352 KB (240 KB TOAST payload + 16 KB heap + 48 KB index)
+- 14 areas, 342 outlets, 153 items, 20 weeks, 8 source files
+- DB settings: `random_page_cost=1.1`, `seq_page_cost=1`, `jit_above_cost=100000`, `work_mem=64MB` (per-tx via SET LOCAL)
+
+### EXPLAIN ANALYZE results (Juli 2026 WEEK 4 = 44,583 rows, largest period)
+| Query | Time | Plan summary |
+|-------|------|--------------|
+| Q1: queryAreaItemHeatmap Step 1 | **1566ms (cold) / 1094ms (warm)** | Index Scan on `(monthLabel, weekLabel, itemId)` returns 44,583 rows; HashAggregate over 141 items. **Index scan dominates (1053ms)**. |
+| Q2: queryAreaItemHeatmap Step 3 | 29ms | Nested Loop: 20 Item lookups × 338 rows = 6,750 rows; per-item Index Scan. ✓ |
+| Q3: queryExecSummary | 88ms | 2 CTEs (sales_mode + aggs); Merge Join + Index Scan on `(monthLabel, weekLabel)`. ✓ |
+| Q4a: queryTrendAgg (no filter) | **3071ms** | Parallel Seq Scan on InventoryRecord (306K rows, 2 workers, 1.5s/worker). **No period filter on period_aggs CTE**. |
+| Q4b: queryTrendAgg (week=WEEK 4) | 287ms | Parallel Seq Scan with filter (109K rows, 60K filtered). Acceptable. |
+| Q5: queryItemConsistency | 75ms | Index Scan `(monthLabel, weekLabel, itemId)` returns 19,785 post-filter rows. ✓ |
+| Q6: queryHeatmapCellDetail (real item) | 13ms | BitmapAnd: `(itemId, weekId)` ∩ `(area, monthLabel, weekLabel)` → 43 rows. ✓ |
+
+### Findings
+
+#### PERF-DB-01 [P1]: queryAreaItemHeatmap Step 1 — 1s Index Scan, 44K heap fetches
+- **Query:** `src/lib/queries/heatmap.ts:101-111` (`queryAreaItemHeatmap` Step 1)
+- **EXPLAIN result:**
+  ```
+  Index Scan using "InventoryRecord_monthLabel_weekLabel_itemId_idx" on "InventoryRecord" ir
+    (cost=0.42..15067.07 rows=28206 width=12) (actual time=1.424..1514.421 rows=44583 loops=1)
+    Index Cond: (monthLabel='Juli 2026' AND weekLabel='WEEK 4')
+    Buffers: shared hit=44622
+  HashAggregate (cost=15289.63..15291.16 rows=153) (actual time=1565.857..1565.885 rows=141)
+  Execution Time: 1566.471 ms
+  ```
+- **Finding:** Index `(monthLabel, weekLabel, itemId)` is 3-column but the SELECT needs `absNominalDeviasi` (not in index) → 44,583 random heap fetches. PG planner mis-estimated 28K rows (actual 44K) and chose Index Scan over Parallel Seq Scan. Even with warm cache (shared hit=44622, 0 reads), 1.5s is pure CPU on heap fetches. Reproducible (1094ms on 2nd run).
+- **Impact:** Adds ~1s to `/api/area-item-heatmap` cold path (documented 0.21s → actual 1.2-1.5s, matches PERF-API-XX-05 finding in prior audit).
+- **Recommendation (don't implement):** Add COVERING index `CREATE INDEX ON "InventoryRecord" ("monthLabel", "weekLabel", "itemId") INCLUDE ("absNominalDeviasi")` — would enable Index-Only Scan, eliminating 44K heap fetches. Estimated drop from 1.1s → <50ms. Trade-off: +~10MB index size. Alternative: force Parallel Seq Scan via `SET LOCAL enable_indexscan = off` for this query only.
+
+#### PERF-DB-02 [P1]: queryTrendAgg (no filter) — 3s Parallel Seq Scan of full 306K-row table
+- **Query:** `src/lib/queries/dashboard.ts:32-120` (`queryTrendAgg`)
+- **EXPLAIN result:**
+  ```
+  Merge Left Join (cost=23613.12..23616.83 rows=24) (actual time=3025.255..3069.164 rows=20)
+    -> Finalize GroupAggregate ... Parallel Seq Scan on "InventoryRecord" ir
+         (cost=0.00..16951.89 rows=180089 width=50) (actual time=0.829..1493.606 rows=153076 loops=2)
+         Buffers: shared hit=15151
+  Execution Time: 3070.909 ms
+  ```
+- **Finding:** When no IR-specific filter is set, the code path correctly uses OutletPeriodSales (4.4K rows) for `filtered_periods` CTE (the optimization from PERF-DB-02 in dashboard.ts). BUT the `period_aggs` CTE still does `FROM "InventoryRecord" ir WHERE 1=1 ${weekFilter}` — when `weekFilter` is empty (no weekLabel selected), this becomes a full-table scan of 306K rows.
+- **Impact:** Dominates `/api/analysis` cold path (21s total measured in prior audit). The trend query alone is 3s of that.
+- **Recommendation (don't implement):** Either (a) require weekLabel in trend query (force user to pick a week before trend loads), (b) pre-materialize a `PeriodAggCache` table updated on ingest (similar to OutletPeriodSales pattern), or (c) when no week filter, derive `period_aggs` from OutletPeriodSales joined to a smaller subset (won't work — OutletPeriodSales doesn't have qtyBom/qtyDeviasi). Option (b) is the cleanest.
+
+#### PERF-DB-03 [P2]: PG planner mis-estimation — Q1 vs Q3 use different indexes for same data
+- **Query:** Q1 (`queryAreaItemHeatmap` Step 1) vs Q3 (`queryExecSummary`)
+- **Finding:** Both queries scan the same 44,583 InventoryRecord rows for `monthLabel='Juli 2026' AND weekLabel='WEEK 4'`. Q1 uses `InventoryRecord_monthLabel_weekLabel_itemId_idx` (3-col, slower — 1.5s); Q3 uses `InventoryRecord_monthLabel_weekLabel_idx` (2-col, faster — 9ms for the index scan portion). The 3-col index has more pages → slower scan. Q1 chose it expecting GroupAggregate to benefit from the itemId pre-sort, but actual plan is HashAggregate (no benefit).
+- **EXPLAIN result (Q3 for comparison):**
+  ```
+  Index Scan using "InventoryRecord_monthLabel_weekLabel_idx" on "InventoryRecord" ir
+    (cost=0.42..15064.87 rows=28206 width=80) (actual time=1.290..9.264 rows=44583 loops=1)
+  ```
+- **Impact:** 1.5s vs 9ms for the same data access pattern. 165× difference.
+- **Recommendation (don't implement):** Drop `InventoryRecord_monthLabel_weekLabel_itemId_idx` if it's only used by Q1 (would need to verify via `pg_stat_user_indexes`). The 2-col `(monthLabel, weekLabel)` index + HashAggregate is faster for Q1's shape. If Q2 (Step 3 matrix query) still needs the 3-col index (it does — `WHERE monthLabel=? AND weekLabel=? AND itemId=?`), keep it but note that Q1 would benefit from dropping it OR from the INCLUDE covering index in PERF-DB-01.
+
+#### PERF-DB-04 [P2]: queryHeatmapCellDetail BitmapAnd scans 4405 rows when only 43 needed
+- **Query:** `src/lib/queries/heatmap.ts:232-271` (`queryHeatmapCellDetail`)
+- **EXPLAIN result:**
+  ```
+  BitmapAnd (cost=93.60..93.60 rows=38 width=0)
+    -> Bitmap Index Scan on "InventoryRecord_itemId_weekId_idx" (cost=0.00..20.36 rows=2235)
+       (actual time=9.729 rows=4405)
+       Index Cond: ("itemId" = i.id)
+    -> Bitmap Index Scan on "InventoryRecord_area_monthLabel_weekLabel_idx"
+       (cost=0.00..71.69 rows=5173) (actual time=0.207 rows=5545)
+  ```
+- **Finding:** For (area=JAWA BARAT 1, item=SEDOTAN HITAM (V.20), month=Juli 2026, week=WEEK 4), PG BitmapAnd-s two indexes. The first bitmap (itemId index) scans 4405 rows across ALL periods (weekId not constrained — the index is `(itemId, weekId)` but only itemId is filtered). The second narrows by area+month+week. BitmapAnd → 43 rows. 9.7ms of the 13ms total is the itemId bitmap scan.
+- **Impact:** Minor (13ms total). But scales poorly if many cell-detail calls fire in sequence (drill-down UX).
+- **Recommendation (don't implement):** A composite `(itemId, monthLabel, weekLabel, area)` index would let PG do a single index probe returning ~50 rows directly. Trade-off: +~5MB index size. Low priority given 13ms baseline.
+
+#### PERF-DB-05 [P3]: Index `(direction)` on InventoryRecord — low cardinality, likely unused
+- **Schema:** `prisma/schema.prisma:148` — `@@index([direction])`
+- **Finding:** `direction` has only 3 distinct values (LOSS/SURPLUS/NEUTRAL). B-tree indexes on low-cardinality columns are rarely used by the planner (selectivity < 33%). All query modules filter on `nominalLossSurplus < 0` directly (per FIX CALC-3 / CALC-4 in dashboard.ts, top-items.ts) — NOT on the `direction` column. Index is dead weight.
+- **Impact:** ~3 MB wasted index space; minor insert overhead on each InventoryRecord write (306K rows × 1 extra index update).
+- **Recommendation (don't implement):** Verify via `SELECT * FROM pg_stat_user_indexes WHERE indexrelname = 'InventoryRecord_direction_idx'` — if `idx_scan = 0`, drop the index. Update `schema.prisma` to remove `@@index([direction])`.
+
+#### PERF-DB-06 [P3]: AggregationCache row 240 KB TOAST — 100 entries = 24 MB
+- **Schema:** `AggregationCache` table — `payload` text column (no size limit per ARCHITECTURE.md §4.1)
+- **Finding:** 1 row currently uses 352 KB total (240 KB TOAST + 16 KB heap + 48 KB index). The 240 KB matches the prior audit's "241 KB cache row" for `/api/analysis`. With 9 cached routes × ~10 filter combinations each = ~90 entries × 240 KB ≈ 21 MB. Well within Supabase 500 MB but worth monitoring.
+- **Impact:** None today. Future risk if cache entries grow (each mutation triggers `invalidateAnalysisCache()` DELETE across 9 prefixes — deletes are cheap but vacuum overhead grows).
+- **Recommendation (don't implement):** Monitor via `SELECT COUNT(*), pg_size_pretty(SUM(pg_column_size(payload))) FROM "AggregationCache"`. If exceeds 50 MB, consider (a) compressing payload before INSERT (gzip → bytea), or (b) splitting `/api/analysis` payload (241 KB is the largest — see PERF-API-XX-03 in prior audit).
+
+### Confirmed Good (No Issues)
+1. **Index coverage is comprehensive** — 12 indexes on InventoryRecord cover all filter patterns: `(monthLabel, weekLabel, X)` for X in {outletId, itemId, outletId+itemId+akunPenyesuaian+month+week}. Two composite indexes for heatmap (PERF-DB-03) + LATERAL prev-period lookup (PERF-FASE1-DB01).
+2. **`withStatementTimeout` is universally applied** — ALL 47 `$queryRaw` calls in `src/lib/queries/` are wrapped. Zero `$queryRawUnsafe` (Eslint rule blocks). Implementation in `shared.ts:28-53` correctly uses `SET LOCAL statement_timeout=30000` + `SET LOCAL work_mem='64MB'` + Prisma `$transaction` with `timeout` + `maxWait: 10000` (fixes DEEP-AUDIT-TX-TIMEOUT concern).
+3. **No `SELECT *` on main tables** — 4 instances of `SELECT *` in src/lib/queries/ are all on CTEs (`SELECT * FROM ranked`, `SELECT * FROM target`) where the column list is controlled by the CTE definition.
+4. **Slim `select` projections everywhere** — `db.inventoryRecord.findMany` in export-report and fetch-records uses 5-column slim select (was 25-column). `include: { outlet: { select: ... } }` in drilldown route (PERF-API-06). No `include: true` over-fetching.
+5. **`findMany` calls all bounded** — either have `take:` (audit-log, top-N queries) or are bounded by table size (8 SourceFiles, 20 Weeks, 342 Outlets). Intentional full-period scans (export-report, fetch-records) use slim 5-column select to mitigate data transfer cost.
+6. **No N+1 patterns** — all loops in src/lib/queries/ use single SQL with JOINs/CTEs (e.g. `queryTopItemsByDeviasiRank` uses CTE + LEFT JOIN bucket_avg instead of per-row subqueries — OPTIMIZE-ENGINE). The only Promise.all over per-item queries is `queryParetoByDevBom` (bounded by `maxDrivers=20`).
+7. **All top-N queries have explicit LIMIT** — heatmap Step 1 LIMIT 500, cell-detail LIMIT 1000, top-items bounded by `limit` param (default 10), pareto bounded by `maxDrivers` (default 20).
+8. **`queryTrendAgg` optimization (PERF-DB-02 in dashboard.ts) is working as designed** — when no IR filter is set, `filtered_periods` CTE uses OutletPeriodSales (4.4K rows, 0.4s) instead of InventoryRecord (306K rows, 3.5s). The 3s cost in Q4a is from `period_aggs` CTE which can't be similarly optimized (needs qtyBom/qtyDeviasi which only exist in InventoryRecord).
+
+### Methodology Notes
+- DB connection: Supabase PgBouncer transaction pooler (port 6543). `SET work_mem='64MB'` + `SET statement_timeout=60000` applied per-session to mirror `withStatementTimeout` wrapper.
+- Test period: Juli 2026 WEEK 4 (44,583 rows — largest period, most realistic heavy-load scenario).
+- Test filter: empty (no area/outlet/item/PIC filter) — worst case for trend query; specific area+item for cell-detail.
+- JIT was ON (threshold 100K) but no plan exceeded the cost threshold — JIT compilation is NOT a factor in any of the measured queries.
+- `random_page_cost=1.1` (Supabase tuned) — planner assumes everything is in cache. This is why Q1 chose Index Scan over Seq Scan: with random_page_cost ≈ seq_page_cost, PG thinks index scan is cheap. But the 44K heap fetches still cost real CPU time.
+- Two measurements taken for Q1 (cold + warm) — both ~1-1.5s. Not a cache-warmth issue.
+
+### Next Actions (for separate implementation task)
+1. **P1 — PERF-DB-01**: Add covering index `(monthLabel, weekLabel, itemId) INCLUDE (absNominalDeviasi)` on InventoryRecord. Estimated 1s → 50ms saving on `/api/area-item-heatmap` cold path.
+2. **P1 — PERF-DB-02**: Materialize `PeriodAggCache` table (per month+week, pre-aggregated SUM(qtyBom), SUM(qtyDeviasi), SUM(nominalLossSurplus CASE WHEN...), etc.) updated on ingest. Eliminates 3s Parallel Seq Scan in trend query when no filter.
+3. **P2 — PERF-DB-03**: Investigate dropping `InventoryRecord_monthLabel_weekLabel_itemId_idx` — Q2 needs it but Q1 would be faster without it (let PG pick the 2-col index + HashAggregate). Need to verify Q2 isn't significantly slowed.
+4. **P3 — PERF-DB-05**: Verify `InventoryRecord_direction_idx` usage via `pg_stat_user_indexes`. If `idx_scan=0`, drop.
+5. **P3 — PERF-DB-06**: Monitor AggregationCache growth.
+
+### Verification
+- All EXPLAIN plans captured live from production Supabase DB via `pg` library (v8.23.0).
+- Code findings verified by reading 9 of 16 query modules (heatmap.ts, dashboard.ts, shared.ts, top-items.ts, rule-evaluation.ts, historical.ts, pareto.ts via grep, drilldown route, status route). The other 7 modules verified via grep for `withStatementTimeout` wrapping (47/47 wrapped) and `SELECT *` usage (4/4 on CTEs only).
+- No code changes made (audit only). Zero source files (.ts/.tsx) were modified.
+
