@@ -147,7 +147,7 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
       <section>
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-          title="Pola Item (Systemic / Widespread / Isolated)"
+          title="Pola Item (Massal / Regional / Lokal)"
           isFetching={isFetching}
         />
         <FetchAware isFetching={isFetching}>

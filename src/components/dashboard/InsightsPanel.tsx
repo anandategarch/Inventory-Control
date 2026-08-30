@@ -165,7 +165,7 @@ function buildInsights(data: AnalysisData): Insight[] {
     });
   }
 
-  // ----- 6. Systemic item -----
+  // ----- 6. Massal item (was "Systemic") -----
   const consistency = data.itemConsistencyAnalysis;
   if (consistency && consistency.systemic.length > 0) {
     const top = consistency.systemic[0];
@@ -173,7 +173,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'systemic',
       icon: <Package className="h-4 w-4" />,
       severity: 'critical',
-      title: `Item Sistemik: ${top.itemName}`,
+      title: `Item Massal: ${top.itemName}`,
       body: `${top.itemName} muncul dengan deviation signifikan di ${top.occurrences} outlet. Pola recurring — kemungkinan masalah struktural (SOC/recipe/receiving).`,
       action: 'Drill-down item',
       actionTarget: { type: 'item', value: top.itemName },

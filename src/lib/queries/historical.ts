@@ -3,9 +3,9 @@
 //  --------------------------------------------------------
 //  Multi-metric: computes historical mean/stdDev/n for:
 //  - Dev/BOM ratio (SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)))
-//  - Waste (SUM(ABS(nominalWaste)))
-//  - Susut (SUM(ABS(nominalSusut)))
-//  - Trial (SUM(ABS(nominalTrial)))
+//  - Waste (SUM(ABS(qtyWaste))) — uses QTY, not nominal
+//  - Susut (SUM(ABS(qtySusut))) — uses QTY, not nominal
+//  - Trial (SUM(ABS(qtyTrial))) — uses QTY, not nominal
 //
 //  Returns Map<"outletId|itemId", { devBom, waste, susut, trial }>
 //  Each metric has { mean, stdDev, n }.

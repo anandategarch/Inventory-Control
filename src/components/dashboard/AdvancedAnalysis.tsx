@@ -134,8 +134,18 @@ export const OutletHealthRanking = memo(function OutletHealthRanking({ data }: {
 
 // ============================================================
 //  1.3 ItemConsistencyAnalysis
-//  Analisis pola item (SYSTEMIC / WIDESPREAD / ISOLATED)
+//  Analisis pola item (MASSAL / REGIONAL / LOKAL)
+//  Display mapping: SYSTEMIC→Massal, WIDESPREAD→Regional, ISOLATED→Lokal
 // ============================================================
+function consistencyLabel(type: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED'): string {
+  switch (type) {
+    case 'SYSTEMIC': return 'Massal';
+    case 'WIDESPREAD': return 'Regional';
+    case 'ISOLATED': return 'Lokal';
+    default: return 'Lokal';
+  }
+}
+
 function consistencyBadge(type: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED'): string {
   switch (type) {
     case 'SYSTEMIC': return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-950/60 dark:border-red-800 dark:text-red-400';
@@ -210,13 +220,13 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
           Analisis Pola Item
           <FormulaInfo
             formula="Outlets = COUNT(DISTINCT outlet) per item dengan deviasi"
-            description={'UNTUK APA: Mengidentifikasi item yang menyimpang di multiple outlet (pola sistemik).\nCARA BACA: SYSTEMIC (≥10 outlet) = masalah produk/QTY BOM. WIDESPREAD (5-9) = pola regional. ISOLATED (2-4) = anomali lokal.\nCONTOH: UDANG KEJU FROZEN deviasi di 15 outlet = SYSTEMIC → cek QTY BOM atau harga beli.\nACTION: SYSTEMIC → revisi master data QTY BOM. WIDESPREAD → evaluasi pelatihan area. ISOLATED → investigasi outlet spesifik.'}
-            example="UDANG KEJU FROZEN deviasi di 15 outlet = SYSTEMIC"
+            description={'UNTUK APA: Mengidentifikasi item yang menyimpang di multiple outlet (pola penyimpangan).\nCARA BACA: Massal (≥10 outlet) = masalah produk/QTY BOM. Regional (5-9 outlet) = pola area tertentu. Lokal (2-4 outlet) = anomali outlet spesifik.\nCONTOH: UDANG KEJU FROZEN deviasi di 15 outlet = Massal → cek QTY BOM atau harga beli.\nACTION: Massal → revisi master data QTY BOM. Regional → evaluasi pelatihan area. Lokal → investigasi outlet spesifik.'}
+            example="UDANG KEJU FROZEN deviasi di 15 outlet = Massal"
             side="bottom"
           />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          <span className="font-medium text-red-600 dark:text-red-400 tabular-nums">{systemicCount} systemic</span> · <span className="font-medium text-amber-600 dark:text-amber-400 tabular-nums">{widespreadCount} widespread</span> · <span className="font-medium tabular-nums">{isolatedCount} isolated</span>
+          <span className="font-medium text-red-600 dark:text-red-400 tabular-nums">{systemicCount} massal</span> · <span className="font-medium text-amber-600 dark:text-amber-400 tabular-nums">{widespreadCount} regional</span> · <span className="font-medium tabular-nums">{isolatedCount} lokal</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -244,7 +254,7 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
                 >
                   <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
                   <TableCell className="px-3 py-2">
-                    <Badge variant="outline" className={`text-[11px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{row.type}</Badge>
+                    <Badge variant="outline" className={`text-[11px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{consistencyLabel(row.type)}</Badge>
                   </TableCell>
                   <TableCell className="text-[11px] px-3 py-2 text-right font-semibold tabular-nums">{row.outletCount}</TableCell>
                   <TableCell className="text-[11px] px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{row.lossOutlets}</TableCell>
