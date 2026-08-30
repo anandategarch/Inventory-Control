@@ -17,7 +17,6 @@
 //    • tabs/PeerTab         — peer comparison (lazy)
 //    • tabs/ParetoTab       — 80/20 Pareto analysis
 //    • tabs/ItemTrendTab    — per-item QTY timeline + Z-Score (NEW — TREND-FRONTEND)
-//    • tabs/DiagnosisTab    — Bayesian causal inference engine (NEW — CAUSAL-FRONTEND)
 //    • useDashboardEffects  — 5 useEffects (auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
 //    • shared/index.tsx     — FetchAware, LoadingChart, EmptyState, etc.
@@ -38,7 +37,6 @@ import { RestoTab } from '@/components/dashboard/tabs/RestoTab';
 import { PeerTab } from '@/components/dashboard/tabs/PeerTab';
 import { ParetoTab } from '@/components/dashboard/tabs/ParetoTab';
 import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';
-import { DiagnosisTab } from '@/components/dashboard/tabs/DiagnosisTab';
 import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
@@ -49,7 +47,7 @@ import {
   EmptyState, LoadingState, ErrorState, ScrollToTop,
 } from '@/components/dashboard/shared';
 import {
-  Activity, BarChart3, Loader2, Store, Stethoscope, TrendingDown, TrendingUp,
+  Activity, BarChart3, Loader2, Store, TrendingDown, TrendingUp,
 } from 'lucide-react';
 
 // ItemDeepDive — lazy-loaded (heavy). Custom spinner fallback.
@@ -185,9 +183,6 @@ export default function DashboardPage() {
               <TabsTrigger value="trend" className={tabTriggerClass}>
                 <TrendingUp className="h-3.5 w-3.5" /> Trend Item
               </TabsTrigger>
-              <TabsTrigger value="diagnosis" className={tabTriggerClass}>
-                <Stethoscope className="h-3.5 w-3.5" /> Diagnosis
-              </TabsTrigger>
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
@@ -214,13 +209,6 @@ export default function DashboardPage() {
             <TabsContent value="trend" className="space-y-4 mt-2 animate-fade-in-up">
               <ErrorBoundary label="Trend Item">
                 <ItemTrendTab />
-              </ErrorBoundary>
-            </TabsContent>
-
-            {/* ====== DIAGNOSIS TAB (Bayesian Causal Inference) ====== */}
-            <TabsContent value="diagnosis" className="space-y-4 mt-2 animate-fade-in-up">
-              <ErrorBoundary label="Diagnosis">
-                <DiagnosisTab />
               </ErrorBoundary>
             </TabsContent>
           </Tabs>

@@ -410,13 +410,10 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // on any mutation alongside the existing 6 routes.
   // TREND-BACKEND: added `item-trend` (per-item QTY fluctuation timeline —
   // reads from InventoryRecord across ALL periods, so mutations affect it).
-  // CAUSAL-BACKEND: added `diagnosis` (Bayesian causal inference — reads
-  // per-outlet decomposition + BOM status + rule fires + historical stats;
-  // all derived from InventoryRecord, so mutations affect it).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
-    'item-trend', 'diagnosis',
+    'item-trend',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }
