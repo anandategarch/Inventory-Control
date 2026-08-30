@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -95,8 +95,13 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
   //    not "not aligned"). Previously a 0% growth on Deviasi vs 0% BOM
   //    would have shown "⚠ Tidak" because both metricUp and metricDown
   //    were false → returned false.
+  //  PERF-FE: wrapped in useMemo — these rows depend only on `s` (executive
+  //    summary) and `bomGrowth`. Without memo, the IIFE recomputed on every
+  //    parent re-render (e.g., when `isFetching` toggles or sibling state
+  //    changes) and produced a new array reference, busting React.memo on
+  //    any future consumer.
   // ============================================================
-  const rows: MetricRow[] = (() => {
+  const rows: MetricRow[] = useMemo(() => {
     if (!s) return [];
     const checkAligned = (growth: number | null): boolean | null => {
       if (growth == null || bomGrowth == null) return null;
@@ -114,7 +119,7 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
       { name: 'QTY Susut', current: s.qtySusut?.current ?? null, growth: s.qtySusut?.growth ?? null, previous: s.qtySusut?.previous ?? null, aligned: checkAligned(s.qtySusut?.growth ?? null), isBaseline: false },
       { name: 'QTY Trial', current: s.qtyTrial?.current ?? null, growth: s.qtyTrial?.growth ?? null, previous: s.qtyTrial?.previous ?? null, aligned: checkAligned(s.qtyTrial?.growth ?? null), isBaseline: false },
     ];
-  })();
+  }, [s, bomGrowth, bomUp, bomDown]);
 
   // ============================================================
   //  Section 3 — Findings Narrative (textual summary)
@@ -124,8 +129,10 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
   //    when "naik"/"turun" is already in the text (the + adds no info).
   //  FIX BUG-BOM-UI-06: ratios formatted via fmtRatio (comma decimal).
   //  FIX BUG-BOM-UI-07: stable React keys (string slugs, not array index).
+  //  PERF-FE: wrapped in useMemo — narrative depends only on `s` +
+  //    bomGrowth/bomUp/bomDown. Avoids recompute on every parent re-render.
   // ============================================================
-  const findingsNarrative: Array<{ text: string; type: 'warning' | 'ok'; key: string }> = (() => {
+  const findingsNarrative: Array<{ text: string; type: 'warning' | 'ok'; key: string }> = useMemo(() => {
     if (!s) return [{ text: 'Data tidak tersedia', type: 'warning', key: 'no-data' }];
     if (bomGrowth == null) {
       return [{
@@ -166,12 +173,15 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
 
     if (result.length === 0) result.push({ text: 'Semua metrik sejalan dengan BOM', type: 'ok', key: 'all-aligned' });
     return result;
-  })();
+  }, [s, bomGrowth, bomUp, bomDown]);
 
   const hasFindings = findings.length > 0;
-  const totalBomFlags = counts
-    ? Object.values(counts).reduce((a, b) => a + b, 0)
-    : 0;
+  // PERF-FE: memoize totalBomFlags — depends only on `counts` (object on
+  // `data`). Avoids recompute + produces a stable primitive.
+  const totalBomFlags = useMemo(
+    () => (counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0),
+    [counts],
+  );
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">

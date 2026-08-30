@@ -16,6 +16,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -49,114 +50,150 @@ export async function GET(req: NextRequest) {
     const cursorParam = url.searchParams.get('cursor');
     const cursor = cursorParam ? parseInt(cursorParam, 10) : null;
 
-    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
-    // monthLabel may be a single value or comma-separated list (multi-period compare).
-    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
-    // Without this, `where.monthLabel = months[0]` returns 0 records on case mismatch.
-    const monthResolver = await getMonthResolver();
-    // Resolve each comma-separated label to its actual DB case.
-    const resolvedMonths = monthLabel
-      ? monthLabel.split(',').map((m) => m.trim()).filter(Boolean).map((m) => resolveMonthLabel(m, monthResolver) || m)
-      : [];
-
-    const where: Prisma.InventoryRecordWhereInput = {};
-    if (outletCode) where.outlet = { code: outletCode };
-    // FIX H4 (AUDIT-4): itemName was case-sensitive — `itemName=bumbu pasta kuah` returned 0
-    // while `BUMBU PASTA KUAH (V.20)` existed. Use mode:'insensitive' (PostgreSQL-native).
-    if (itemName) where.item = { name: { equals: itemName, mode: 'insensitive' } };
-    // Support comma-separated values for multi-period drilldown
-    if (weekLabel) {
-      const weeks = weekLabel.split(',').map((w) => w.trim()).filter(Boolean);
-      if (weeks.length === 1) where.weekLabel = weeks[0];
-      else if (weeks.length > 1) where.weekLabel = { in: weeks };
-    }
-    if (resolvedMonths.length === 1) where.monthLabel = resolvedMonths[0];
-    else if (resolvedMonths.length > 1) where.monthLabel = { in: resolvedMonths };
-
-    const records = await db.inventoryRecord.findMany({
-      where,
-      include: { outlet: true, item: true, week: true, sourceFile: true },
-      orderBy: [
-        { absNominalDeviasi: 'desc' },
-        { id: 'desc' }, // FIX Medium #2: stable tie-break for cursor pagination
-      ],
-      // FIX Medium #2: cursor-based pagination.
-      // When cursor is provided, skip 1 record (the cursor record itself) and
-      // take `limit` records after it. This gives stable pagination even when
-      // new records are inserted between requests.
-      ...(cursor != null && Number.isFinite(cursor)
-        ? { cursor: { id: cursor }, skip: 1, take: limit }
-        : { take: limit }),
+    // PERF-API-03 (Task PERF-API): DB-level AggregationCache for /api/drilldown.
+    // Before: every request re-fetched raw InventoryRecord rows + 4 relations
+    // (outlet/item/week/sourceFile). Benchmark: cold 0.42s → warm 0.21s.
+    // After: cache the paginated response (5-min TTL) keyed by all filter +
+    // pagination params (outletCode + itemName + weekLabel + monthLabel +
+    // limit + cursor). Same page re-requested within 5 min hits cache in ~30ms.
+    // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
+    const DRILLDOWN_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cacheKey = buildCacheKey({
+      route: 'drilldown',
+      month: monthLabel, week: weekLabel,
+      outletCode, itemName,
+      extra: { limit, cursor: cursor != null ? String(cursor) : null },
     });
 
-    // Determine nextCursor for the next page (last record's ID, if we got a full page)
-    const nextCursor = records.length === limit && records.length > 0
-      ? records[records.length - 1].id
-      : null;
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(
+      cacheKey,
+      DRILLDOWN_CACHE_TTL,
+      async () => {
+        // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
+        // monthLabel may be a single value or comma-separated list (multi-period compare).
+        // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
+        // Without this, `where.monthLabel = months[0]` returns 0 records on case mismatch.
+        const monthResolver = await getMonthResolver();
+        // Resolve each comma-separated label to its actual DB case.
+        const resolvedMonths = monthLabel
+          ? monthLabel.split(',').map((m) => m.trim()).filter(Boolean).map((m) => resolveMonthLabel(m, monthResolver) || m)
+          : [];
 
-    return NextResponse.json({
-      success: true,
-      count: records.length,
-      // FIX Medium #2: pagination metadata. Frontend can use nextCursor to fetch
-      // the next page via `?cursor=${nextCursor}`. hasMore=false means last page.
-      nextCursor,
-      hasMore: nextCursor != null,
-      records: records.map((r) => ({
-        id: r.id,
-        // FIX H5 (AUDIT-4): null guards on nested relations — soft-deleted Outlet/Item
-        // or null sourceFile would crash the drawer/modal. Fallback to '—' / 0.
-        outlet: { code: r.outlet?.code ?? '—', name: r.outlet?.name ?? '—', area: r.area ?? '—' },
-        item: { name: r.item?.name ?? '—', satuan: r.satuan ?? null },
-        period: { monthLabel: r.monthLabel ?? '—', weekLabel: r.weekLabel ?? '—' },
-        source: { fileName: r.sourceFile?.fileName ?? '—' },
-        qty: {
-          bom: r.qtyBom,
-          com: r.qtyCom,
-          deviasi: r.qtyDeviasi,
-          waste: r.qtyWaste,
-          susut: r.qtySusut,
-          trial: r.qtyTrial,
-          lossSurplus: r.qtyLossSurplus,
-          wasteSusut: r.pctWasteSusut,
-        },
-        nominal: {
-          deviasi: r.nominalDeviasi,
-          waste: r.nominalWaste,
-          susut: r.nominalSusut,
-          trial: r.nominalTrial,
-          lossSurplus: r.nominalLossSurplus,
-          sales: r.nominalSales,
-        },
-        derived: {
-          // FIX CALC-1 + VERIFY3-4: compute direction from nominalLossSurplus sign with qtyDeviasi fallback
-          // (not stored r.direction which may be inverted for un-migrated data)
-          direction: (() => {
-            if (r.nominalLossSurplus != null) {
-              if (r.nominalLossSurplus < 0) return 'LOSS';
-              if (r.nominalLossSurplus > 0) return 'SURPLUS';
-              return 'NEUTRAL';
-            }
-            if (r.qtyDeviasi != null) {
-              if (r.qtyDeviasi < 0) return 'LOSS';
-              if (r.qtyDeviasi > 0) return 'SURPLUS';
-              return 'NEUTRAL';
-            }
-            return r.direction; // last resort fallback
-          })(),
-          residualQty: r.residualQty,
-          residualRatio: r.residualRatio,
-          absQtyDeviasi: r.absQtyDeviasi,
-          absNominalDeviasi: r.absNominalDeviasi,
-          pctQtyDeviasiToBom: r.pctQtyDeviasiToBom,
-          pctWasteSusut: r.pctWasteSusut,
-          tolerancePct: r.tolerancePct,
-          toleranceRaw: r.toleranceRaw,
-          avgPrice: r.avgPrice,
-        },
-        bulan: r.bulan,
-        bulan2: r.bulan2,
-      })),
-    }, { headers: CACHE_INTERACTIVE });
+        const where: Prisma.InventoryRecordWhereInput = {};
+        if (outletCode) where.outlet = { code: outletCode };
+        // FIX H4 (AUDIT-4): itemName was case-sensitive — `itemName=bumbu pasta kuah` returned 0
+        // while "BUMBU PASTA KUAH (V.20)" existed. Use mode:'insensitive' (PostgreSQL-native).
+        if (itemName) where.item = { name: { equals: itemName, mode: 'insensitive' } };
+        // Support comma-separated values for multi-period drilldown
+        if (weekLabel) {
+          const weeks = weekLabel.split(',').map((w) => w.trim()).filter(Boolean);
+          if (weeks.length === 1) where.weekLabel = weeks[0];
+          else if (weeks.length > 1) where.weekLabel = { in: weeks };
+        }
+        if (resolvedMonths.length === 1) where.monthLabel = resolvedMonths[0];
+        else if (resolvedMonths.length > 1) where.monthLabel = { in: resolvedMonths };
+
+        const records = await db.inventoryRecord.findMany({
+          where,
+          // PERF-API-06 (Task PERF-API): use `select` on nested relations instead of
+          // `include: ... true` — drops unused relation columns (Outlet.area/.pic/.id,
+          // Item.satuan/.categoryId/.id, SourceFile.monthKey/.fileSize/.createdAt).
+          // Also drops the `week` relation entirely (was joined but never read).
+          include: {
+            outlet: { select: { code: true, name: true } },
+            item: { select: { name: true } },
+            sourceFile: { select: { fileName: true } },
+          },
+          orderBy: [
+            { absNominalDeviasi: 'desc' },
+            { id: 'desc' }, // FIX Medium #2: stable tie-break for cursor pagination
+          ],
+          // FIX Medium #2: cursor-based pagination.
+          // When cursor is provided, skip 1 record (the cursor record itself) and
+          // take `limit` records after it. This gives stable pagination even when
+          // new records are inserted between requests.
+          ...(cursor != null && Number.isFinite(cursor)
+            ? { cursor: { id: cursor }, skip: 1, take: limit }
+            : { take: limit }),
+        });
+
+        // Determine nextCursor for the next page (last record's ID, if we got a full page)
+        const nextCursor = records.length === limit && records.length > 0
+          ? records[records.length - 1].id
+          : null;
+
+        // PERF-API-03: return a plain object so withCacheAndDedup can store it.
+        return {
+          success: true,
+          count: records.length,
+          // FIX Medium #2: pagination metadata. Frontend can use nextCursor to fetch
+          // the next page via `?cursor=${nextCursor}`. hasMore=false means last page.
+          nextCursor,
+          hasMore: nextCursor != null,
+          records: records.map((r) => ({
+            id: r.id,
+            // FIX H5 (AUDIT-4): null guards on nested relations — soft-deleted Outlet/Item
+            // or null sourceFile would crash the drawer/modal. Fallback to '—' / 0.
+            outlet: { code: r.outlet?.code ?? '—', name: r.outlet?.name ?? '—', area: r.area ?? '—' },
+            item: { name: r.item?.name ?? '—', satuan: r.satuan ?? null },
+            period: { monthLabel: r.monthLabel ?? '—', weekLabel: r.weekLabel ?? '—' },
+            source: { fileName: r.sourceFile?.fileName ?? '—' },
+            qty: {
+              bom: r.qtyBom,
+              com: r.qtyCom,
+              deviasi: r.qtyDeviasi,
+              waste: r.qtyWaste,
+              susut: r.qtySusut,
+              trial: r.qtyTrial,
+              lossSurplus: r.qtyLossSurplus,
+              wasteSusut: r.pctWasteSusut,
+            },
+            nominal: {
+              deviasi: r.nominalDeviasi,
+              waste: r.nominalWaste,
+              susut: r.nominalSusut,
+              trial: r.nominalTrial,
+              lossSurplus: r.nominalLossSurplus,
+              sales: r.nominalSales,
+            },
+            derived: {
+              // FIX CALC-1 + VERIFY3-4: compute direction from nominalLossSurplus sign with qtyDeviasi fallback
+              // (not stored r.direction which may be inverted for un-migrated data)
+              direction: (() => {
+                if (r.nominalLossSurplus != null) {
+                  if (r.nominalLossSurplus < 0) return 'LOSS';
+                  if (r.nominalLossSurplus > 0) return 'SURPLUS';
+                  return 'NEUTRAL';
+                }
+                if (r.qtyDeviasi != null) {
+                  if (r.qtyDeviasi < 0) return 'LOSS';
+                  if (r.qtyDeviasi > 0) return 'SURPLUS';
+                  return 'NEUTRAL';
+                }
+                return r.direction; // last resort fallback
+              })(),
+              residualQty: r.residualQty,
+              residualRatio: r.residualRatio,
+              absQtyDeviasi: r.absQtyDeviasi,
+              absNominalDeviasi: r.absNominalDeviasi,
+              pctQtyDeviasiToBom: r.pctQtyDeviasiToBom,
+              pctWasteSusut: r.pctWasteSusut,
+              tolerancePct: r.tolerancePct,
+              toleranceRaw: r.toleranceRaw,
+              avgPrice: r.avgPrice,
+            },
+            bulan: r.bulan,
+            bulan2: r.bulan2,
+          })),
+        } as Record<string, unknown>;
+      }, // end withCacheAndDedup computeFn
+    );
+
+    // PERF-API-03: rebuild NextResponse from cached/fresh payload + add cached flag.
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     return errorResponse(e, "drilldown");
   }

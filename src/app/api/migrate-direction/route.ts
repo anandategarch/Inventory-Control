@@ -96,7 +96,9 @@ export async function POST(req: NextRequest) {
     // FIX API2-5: Clear caches after migration so stale direction data doesn't persist
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
+    // client's next read after the mutation returns sees fresh data.
+    await invalidateAnalysisCache();
     clearMonthResolverCache();
 
     // FIX (AUDIT-SECURITY-PERF D5): add audit log — this mutates up to 100% of

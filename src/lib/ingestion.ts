@@ -544,7 +544,11 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       statusCache.clear();
       // FIX Medium #1: invalidate DB-level AggregationCache for analysis route.
       // New data means all cached analysis results are stale.
-      invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+      // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees
+      // the client's next read after the mutation returns sees fresh data.
+      // The invalidateAnalysisCache helper has its own try/catch, so awaiting
+      // is safe (won't reject on DB error — just logs).
+      await invalidateAnalysisCache();
       // sees fresh data immediately after ingestion.
       // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
       // monthLabel added by this ingestion. Without this, getMonthResolver() would

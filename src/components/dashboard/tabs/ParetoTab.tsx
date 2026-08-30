@@ -7,8 +7,11 @@
 //  ParetoDashboard is statically imported (it's not recharts-heavy
 //  on its own). Wrapped in FetchAware per FIX #32 so the dashboard
 //  refetch indicator stays visible.
+//  PERF-FE: wrapped in React.memo — skips re-render when parent
+//  re-renders for unrelated Zustand state (modal/drawer toggles).
 // ============================================================
 
+import { memo } from 'react';
 import { ParetoDashboard } from '@/components/dashboard/ParetoDashboard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { FetchAware } from '@/components/dashboard/shared';
@@ -19,7 +22,7 @@ export interface ParetoTabProps {
   isFetching: boolean;
 }
 
-export function ParetoTab({ data, isFetching }: ParetoTabProps) {
+export const ParetoTab = memo(function ParetoTab({ data, isFetching }: ParetoTabProps) {
   return (
     <>
       {/* FIX #32: FetchAware wraps ParetoDashboard — the component
@@ -33,4 +36,4 @@ export function ParetoTab({ data, isFetching }: ParetoTabProps) {
       </FetchAware>
     </>
   );
-}
+});

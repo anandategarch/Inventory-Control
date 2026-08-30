@@ -4,7 +4,6 @@
 //  POST : bulk update settings { values: { key: value, ... } }
 //  DELETE : reset to defaults (?key=specific or all)
 // ============================================================
-import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import {
@@ -189,7 +188,9 @@ export async function POST(req: NextRequest) {
 
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
+    // client's next read after the mutation returns sees fresh data.
+    await invalidateAnalysisCache();
 
     return NextResponse.json({
       success: true,
@@ -276,11 +277,13 @@ export async function DELETE(req: NextRequest) {
     // The POST handler calls invalidateAnalysisCache() (line 191) but DELETE didn't.
     // Threshold changes affect rule evaluation (TOLERANCE_BREACH, HISTORICAL, etc.)
     // so stale analysis cache would show old rule flags for up to 5 min.
-    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
+    // client's next read after the mutation returns sees fresh data.
+    await invalidateAnalysisCache();
 
     // FIX (BUG2-STATE-5): audit log is fire-and-forget (low priority) — don't await.
-    // The cache invalidation above is correctness-critical but also fire-and-forget
-    // (non-blocking). Response should return immediately after DB write succeeds.
+    // The cache invalidation above IS awaited (PERF-CACHE-05) — correctness-critical
+    // so the client doesn't see stale thresholds on next read.
     db.auditLog.create({
       data: {
         action: 'SETTINGS_RESET',

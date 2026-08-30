@@ -9,7 +9,7 @@ import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
-import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — queryRestoRecommendations is heavy (3 parallel CTEs)
@@ -52,106 +52,113 @@ export async function GET(req: NextRequest) {
     // On cache HIT (~warm calls), we skip all 5 awaits → ~200-400ms saved.
     // Cache key uses raw URL params (prevWeek/prevMonth may be null → auto-computed
     // deterministically, so null is a valid cache key component).
+    //
+    // PERF-CACHE-02: cache key now includes `limit` (was missing → two requests
+    //   with different `?limit=N` values shared one cache entry → wrong response).
+    // PERF-CACHE-06: withCacheAndDedup adds in-flight Promise dedup for concurrent
+    //   identical requests (was missing — only /api/analysis had it).
     const earlyCacheKey = buildCacheKey({
       route: 'recommendations', month, week, compareWeek: prevWeek, compareMonth: prevMonth,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       pic,
+      extra: { limit },
     });
     const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
-    const earlyCached = await getCached<unknown>(earlyCacheKey, REC_CACHE_TTL);
-    if (earlyCached && typeof earlyCached === 'object' && 'success' in earlyCached) {
-      return NextResponse.json(earlyCached, { headers: CACHE_ANALYSIS });
-    }
 
-    const resolver = await getMonthResolver();
-    month = resolveMonthLabel(month, resolver) || month;
-    if (prevMonth) prevMonth = resolveMonthLabel(prevMonth, resolver) || prevMonth;
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<{ success: boolean; recommendations: unknown[]; cached?: boolean }>(earlyCacheKey, REC_CACHE_TTL, async () => {
+      const resolver = await getMonthResolver();
+      let resolvedMonth = resolveMonthLabel(month!, resolver) || month!;
+      let resolvedPrevMonth = prevMonth;
+      if (resolvedPrevMonth) resolvedPrevMonth = resolveMonthLabel(resolvedPrevMonth, resolver) || resolvedPrevMonth;
 
-    // FIX FLOW-2: Auto-compute prevWeek/prevMonth when not provided (matches /api/analysis pattern)
-    // Without this, 3 of 15 priority signals (Deviasi Growth, Direction Flip, Trend Memburuk —
-    // total weight 26%) are ALWAYS zero unless user manually selects a compare period.
-    if (!prevWeek || !prevMonth) {
-      try {
-        const periods = await db.week.findMany({
-          select: { weekLabel: true, monthKey: true, sourceFile: { select: { monthLabel: true } } },
-          distinct: ['monthKey', 'weekLabel'],
-        });
-        const allPeriods = periods
-          .map((w) => ({
-            monthLabel: w.sourceFile.monthLabel,
-            weekLabel: w.weekLabel,
-            monthKey: w.monthKey,
-            sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-          }))
-          .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+      // FIX FLOW-2: Auto-compute prevWeek/prevMonth when not provided (matches /api/analysis pattern)
+      // Without this, 3 of 15 priority signals (Deviasi Growth, Direction Flip, Trend Memburuk —
+      // total weight 26%) are ALWAYS zero unless user manually selects a compare period.
+      let resolvedPrevWeek = prevWeek;
+      if (!resolvedPrevWeek || !resolvedPrevMonth) {
+        try {
+          const periods = await db.week.findMany({
+            select: { weekLabel: true, monthKey: true, sourceFile: { select: { monthLabel: true } } },
+            distinct: ['monthKey', 'weekLabel'],
+          });
+          const allPeriods = periods
+            .map((w) => ({
+              monthLabel: w.sourceFile.monthLabel,
+              weekLabel: w.weekLabel,
+              monthKey: w.monthKey,
+              sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+            }))
+            .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-        const currentIdx = allPeriods.findIndex(
-          (p) => p.monthLabel === month && p.weekLabel === week,
-        );
-        if (currentIdx > 0) {
-          // Auto-compare: same weekLabel in previous month (if exists), else previous period
-          const sameWeekInPrevMonth = allPeriods
-            .slice(0, currentIdx)
-            .reverse()
-            .find((p) => p.weekLabel === week);
-          const prevPeriod = sameWeekInPrevMonth || allPeriods[currentIdx - 1];
-          if (!prevWeek) prevWeek = prevPeriod.weekLabel;
-          if (!prevMonth) prevMonth = prevPeriod.monthLabel;
+          const currentIdx = allPeriods.findIndex(
+            (p) => p.monthLabel === resolvedMonth && p.weekLabel === week,
+          );
+          if (currentIdx > 0) {
+            // Auto-compare: same weekLabel in previous month (if exists), else previous period
+            const sameWeekInPrevMonth = allPeriods
+              .slice(0, currentIdx)
+              .reverse()
+              .find((p) => p.weekLabel === week);
+            const prevPeriod = sameWeekInPrevMonth || allPeriods[currentIdx - 1];
+            if (!resolvedPrevWeek) resolvedPrevWeek = prevPeriod.weekLabel;
+            if (!resolvedPrevMonth) resolvedPrevMonth = prevPeriod.monthLabel;
+          }
+        } catch {
+          // Week table may not exist — skip auto-compute
         }
-      } catch {
-        // Week table may not exist — skip auto-compute
       }
-    }
 
-    // FIX (AUDIT7-CALC-8): resolve currentMonthKey via SourceFile so the
-    // historical-baseline CTE in queryRestoRecommendations can filter out
-    // FUTURE months (matches the pattern used by /api/pareto per BUG2-PARETO-1).
-    // Without this, `histAvgNominalDeviasi` + `histPeriodCount` for Signal 2
-    // (Deviasi Growth Historical, 10% weight) + Signal 7 (Trend Memburuk, 8%
-    // weight) include future-month data → inflates baseline + corrupts priority.
-    const currentSourceFile = await db.sourceFile.findFirst({
-      where: { monthLabel: month },
-      select: { monthKey: true },
+      // PERF-API-05 (Task PERF-API): parallelize 3 independent awaits that were
+      // previously sequential — db.sourceFile.findFirst, getRuntimeThresholds,
+      // resolvePICOutletCodes. All depend on resolvedMonth (computed above) but
+      // NOT on each other. Saves ~50-100ms on cold cache path (3 sequential
+      // ~30ms awaits → 1 parallel batch).
+      const [currentSourceFile, thresholds, picOutletCodes] = await Promise.all([
+        db.sourceFile.findFirst({
+          where: { monthLabel: resolvedMonth },
+          select: { monthKey: true },
+        }),
+        getRuntimeThresholds(),
+        resolvePICOutletCodes(pic),
+      ]);
+      const currentMonthKey = currentSourceFile?.monthKey ?? null;
+
+      // FIX (BUG-HUNT-RECENT): early-return if PIC has no outlets — cached as
+      // empty result so subsequent identical requests skip PIC resolution.
+      if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+        return { success: true, recommendations: [] };
+      }
+
+      const filters = {
+        area: area && area !== 'all' ? area : null,
+        kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+        outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+        picOutletCodes,
+      };
+
+      const recommendations = await queryRestoRecommendations(
+        resolvedMonth,
+        week!,
+        resolvedPrevWeek,
+        resolvedPrevMonth,
+        filters,
+        limit,
+        currentMonthKey,
+        thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      );
+
+      return { success: true, recommendations };
     });
-    const currentMonthKey = currentSourceFile?.monthKey ?? null;
 
-    // FIX (AUDIT7-CALC-11): fetch runtime thresholds so Signal 11 uses the
-    // configured HIGH_LOSS_NOMINAL_THRESHOLD (default 50jt, configurable via
-    // Settings UI) instead of the old hardcoded 10jt. Settings changes now
-    // propagate to the priority score (5% weight on Signal 11).
-    const thresholds = await getRuntimeThresholds();
-
-    // Resolve PIC → outletCodes (shared logic)
-    const picOutletCodes = await resolvePICOutletCodes(pic);
-    // FIX (BUG-HUNT-RECENT): early-return if PIC has no outlets (sibling routes have this)
-    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, recommendations: [] });
-    }
-
-    const filters = {
-      area: area && area !== 'all' ? area : null,
-      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
-      outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
-      picOutletCodes,
-    };
-
-    // DP-14: Cache check already done above (PERF-01) — using earlyCacheKey.
-    const recommendations = await queryRestoRecommendations(
-      month,
-      week,
-      prevWeek,
-      prevMonth,
-      filters,
-      limit,
-      currentMonthKey,
-      thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-    );
-
-    const result = { success: true, recommendations };
-    await setCached(earlyCacheKey, result, true);
-    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
+    // PERF-CACHE-06: add `cached: true` flag when served from cache (CONVENTIONS §2).
+    // PERF-CACHE-09 (SWR): also surface `stale: true` when the cache entry was
+    // expired (client gets stale data immediately + background recompute runs).
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });
     return errorResponse(e, "recommendations");

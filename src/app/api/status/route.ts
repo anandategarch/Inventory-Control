@@ -11,6 +11,10 @@ import { validateQuery, statusQuerySchema } from '@/lib/validation';
 import { CACHE_METADATA } from '@/lib/cache-headers';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
+// PERF-CACHE-07: opportunistic cleanup of expired AggregationCache rows.
+// Status is called frequently (every dashboard load) — calling cleanup here
+// (rate-limited internally to once per 10 min) prevents unbounded table growth.
+import { cleanupExpiredCache } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -38,6 +42,13 @@ const EMPTY_STATE = {
 
 export async function GET(req: NextRequest) {
   try {
+    // PERF-CACHE-07: opportunistic cleanup of expired AggregationCache rows.
+    // The helper is internally rate-limited (once per 10 min) + non-throwing,
+    // so this is a safe fire-and-forget on every status request. The first
+    // status call after server start (or after 10 min idle) triggers cleanup;
+    // subsequent calls within 10 min are no-ops.
+    void cleanupExpiredCache();
+
     const url = new URL(req.url);
 
     // Sprint 1: Zod input validation (no params expected)

@@ -23,7 +23,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { logger } from '@/lib/logger';
-import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -63,256 +63,263 @@ export async function GET(req: NextRequest) {
     month = resolveMonthLabel(month, monthResolver) || month;
 
     // PERF-02: DB-level AggregationCache — check before expensive queries.
+    // PERF-CACHE-03: cache key now includes `priority` + `limit` (was missing →
+    //   two requests with different priority filter or limit values shared one
+    //   cache entry → wrong response served).
+    // PERF-CACHE-06: withCacheAndDedup adds in-flight Promise dedup for
+    //   concurrent identical requests (was missing — only /api/analysis had it).
     const cacheKey = buildCacheKey({
       route: 'resto-bahan-matrix', month, week, area: area && area !== 'all' ? area : null,
       kelompok: null, outletCode: null, pic: null,
+      extra: { priority: priorityFilter ?? null, limit },
     });
     const MATRIX_CACHE_TTL = 5 * 60 * 1000;
-    const earlyCached = await getCached<unknown>(cacheKey, MATRIX_CACHE_TTL);
-    if (earlyCached && typeof earlyCached === 'object' && 'success' in earlyCached) {
-      return NextResponse.json(earlyCached, { headers: CACHE_ANALYSIS });
-    }
 
-    // ============================================================
-    //  Load runtime thresholds (Settings-driven)
-    // ============================================================
-    const thresholds = await getRuntimeThresholds();
-    const priorityThresholds: PriorityInput['thresholds'] = {
-      HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-      P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
-      STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
-      RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
-      RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
-      HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
-    };
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(cacheKey, MATRIX_CACHE_TTL, async () => {
+      // ============================================================
+      //  Load runtime thresholds (Settings-driven)
+      // ============================================================
+      const thresholds = await getRuntimeThresholds();
+      const priorityThresholds: PriorityInput['thresholds'] = {
+        HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+        P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
+        STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
+        RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
+        RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
+        HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
+      };
 
-    // Build area filter using parameterized query (not string interpolation)
-    const areaCondition = area && area !== 'all'
-      ? Prisma.sql`AND ir.area = ${area}`
-      : Prisma.empty;
+      // Build area filter using parameterized query (not string interpolation)
+      const areaCondition = area && area !== 'all'
+        ? Prisma.sql`AND ir.area = ${area}`
+        : Prisma.empty;
 
-    // ============================================================
-    //  Get all outlet+item combos with deviation for this period.
-    //  FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
-    //    SUM/MAX aggregates so multi-akun items don't produce duplicate rows
-    //    when multiple source files contribute records for the same week.
-    //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT so the prev lookup
-    //    can be keyed by (outletCode, itemName, akunPenyesuaian).
-    // ============================================================
-    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-    // PERF-02: Parallelize rows + itemAreaBench + weeksRaw + fileMonthKeys (4 independent queries)
-    const [rows, itemAreaBench, weeksRaw, fileMonthKeys] = await Promise.all([
-    withStatementTimeout((tx) => tx.$queryRaw<Array<{
-      outletCode: string; outletName: string; area: string;
-      itemName: string; satuan: string | null; akunPenyesuaian: string | null;
-      qtyBom: number | null; qtyDeviasi: number | null;
-      pctQtyDeviasiToBom: number | null;
-      nominalLossSurplus: number | null; absNominalLossSurplus: number | null;
-      direction: string | null;
-      qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
-      residualRatio: number | null;
-      tolerancePct: number | null;
-    }>>`
-      SELECT
-        o.code as "outletCode", o.name as "outletName", ir.area,
-        i.name as "itemName", i.satuan, ir."akunPenyesuaian",
-        SUM(ir."qtyBom") as "qtyBom", SUM(ir."qtyDeviasi") as "qtyDeviasi",
-        MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
-        SUM(ir."nominalLossSurplus") as "nominalLossSurplus",
-        SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus",
-        MAX(ir.direction) as "direction",
-        SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial",
-        MAX(ir."residualRatio") as "residualRatio",
-        MAX(ir."tolerancePct") as "tolerancePct"
-      FROM "InventoryRecord" ir
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE ir."monthLabel" = ${month}
-        AND ir."weekLabel" = ${week}
-        AND ir."absNominalLossSurplus" IS NOT NULL
-        AND ir."absNominalLossSurplus" > 0
-        ${areaCondition}
-      GROUP BY ir."outletId", o.code, o.name, ir.area, ir."itemId", i.name, i.satuan, ir."akunPenyesuaian"
-      ORDER BY SUM(ir."absNominalLossSurplus") DESC
-      LIMIT ${limit * 3}
-    `),
-
-    // ============================================================
-    //  Get area avg devBom per item for benchmark
-    // ============================================================
-    withStatementTimeout((tx) => tx.$queryRaw<Array<{
-      itemName: string; avgDevBom: number; outletCount: number;
-    }>>`
-      SELECT i.name as "itemName",
-        COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
-        CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      WHERE ir."monthLabel" = ${month}
-        AND ir."weekLabel" = ${week}
-      GROUP BY i.name
-    `),
-
-    // Get previous period for historical trend
-    db.week.findMany({
-      select: { weekLabel: true, monthKey: true },
-      distinct: ['monthKey', 'weekLabel'],
-    }),
-    db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
-    ]);
-    const benchMap = new Map(itemAreaBench.map(b => [b.itemName, { avgDevBom: Number(b.avgDevBom), outletCount: Number(b.outletCount) }]));
-
-    const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
-    const allPeriods = weeksRaw.map(w => ({
-      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
-      weekLabel: w.weekLabel,
-      sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-    })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-
-    const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-    // FIX (BUG 4): Same-weekLabel in previous month (cumulative weeks).
-    // Was: chronological previous (W4→W2 same month = false positive trend).
-    let prevPeriod: { monthLabel: string; weekLabel: string } | null = null;
-    if (currentIdx >= 0) {
-      for (let i = currentIdx - 1; i >= 0; i--) {
-        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
-          prevPeriod = allPeriods[i];
-          break;
-        }
-      }
-      if (!prevPeriod && currentIdx > 0) prevPeriod = allPeriods[currentIdx - 1];
-    }
-
-    // ============================================================
-    //  Get previous period devBom per outlet+item.
-    //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT and GROUP BY,
-    //    and include akunPenyesuaian in the prevDevBomMap key. Multi-akun
-    //    items no longer get the LAST row's prev value — they get the
-    //    matching-akun value (or null).
-    // ============================================================
-    let prevDevBomMap = new Map<string, number | null>();
-    if (prevPeriod) {
+      // ============================================================
+      //  Get all outlet+item combos with deviation for this period.
+      //  FIX (BUG-1-6): Added GROUP BY (outletId, itemId, akunPenyesuaian) with
+      //    SUM/MAX aggregates so multi-akun items don't produce duplicate rows
+      //    when multiple source files contribute records for the same week.
+      //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT so the prev lookup
+      //    can be keyed by (outletCode, itemName, akunPenyesuaian).
+      // ============================================================
       // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-      const prevRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; itemName: string; akunPenyesuaian: string | null; pctDevBom: number | null }>>`
-        SELECT o.code as "outletCode", i.name as "itemName", ir."akunPenyesuaian",
-          MAX(ir."pctQtyDeviasiToBom") as "pctDevBom"
+      // PERF-02: Parallelize rows + itemAreaBench + weeksRaw + fileMonthKeys (4 independent queries)
+      const [rows, itemAreaBench, weeksRaw, fileMonthKeys] = await Promise.all([
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{
+        outletCode: string; outletName: string; area: string;
+        itemName: string; satuan: string | null; akunPenyesuaian: string | null;
+        qtyBom: number | null; qtyDeviasi: number | null;
+        pctQtyDeviasiToBom: number | null;
+        nominalLossSurplus: number | null; absNominalLossSurplus: number | null;
+        direction: string | null;
+        qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
+        residualRatio: number | null;
+        tolerancePct: number | null;
+      }>>`
+        SELECT
+          o.code as "outletCode", o.name as "outletName", ir.area,
+          i.name as "itemName", i.satuan, ir."akunPenyesuaian",
+          SUM(ir."qtyBom") as "qtyBom", SUM(ir."qtyDeviasi") as "qtyDeviasi",
+          MAX(ir."pctQtyDeviasiToBom") as "pctQtyDeviasiToBom",
+          SUM(ir."nominalLossSurplus") as "nominalLossSurplus",
+          SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus",
+          MAX(ir.direction) as "direction",
+          SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial",
+          MAX(ir."residualRatio") as "residualRatio",
+          MAX(ir."tolerancePct") as "tolerancePct"
         FROM "InventoryRecord" ir
         JOIN "Outlet" o ON ir."outletId" = o.id
         JOIN "Item" i ON ir."itemId" = i.id
-        WHERE ir."monthLabel" = ${prevPeriod.monthLabel}
-          AND ir."weekLabel" = ${prevPeriod.weekLabel}
-        GROUP BY o.code, i.name, ir."akunPenyesuaian"
-      `);
-      prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
-    }
+        WHERE ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+          AND ir."absNominalLossSurplus" IS NOT NULL
+          AND ir."absNominalLossSurplus" > 0
+          ${areaCondition}
+        GROUP BY ir."outletId", o.code, o.name, ir.area, ir."itemId", i.name, i.satuan, ir."akunPenyesuaian"
+        ORDER BY SUM(ir."absNominalLossSurplus") DESC
+        LIMIT ${limit * 3}
+      `),
 
-    // ============================================================
-    //  Build matrix rows with priority + historical + benchmark
-    //  Phase 3: Priority via Metric Engine (Settings-driven thresholds,
-    //  no hardcoded 1_000_000 / 0.10 / 0.50)
-    // ============================================================
-    const matrix = rows.map(r => {
-      const devBom = toNum(r.pctQtyDeviasiToBom);
-      const absNominal = toNum(r.absNominalLossSurplus) ?? 0;
-      const residualRatio = toNum(r.residualRatio);
-      const bench = benchMap.get(r.itemName);
-      const areaAvgDevBom = bench?.avgDevBom ?? 0;
-      const areaOutletCount = bench?.outletCount ?? 0;
-      const areaMultiplier = areaAvgDevBom > 0 && devBom != null ? Math.abs(devBom) / areaAvgDevBom : null;
+      // ============================================================
+      //  Get area avg devBom per item for benchmark
+      // ============================================================
+      withStatementTimeout((tx) => tx.$queryRaw<Array<{
+        itemName: string; avgDevBom: number; outletCount: number;
+      }>>`
+        SELECT i.name as "itemName",
+          COALESCE(AVG(CASE WHEN ir."qtyBom" != 0 AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ABS(ir."pctQtyDeviasiToBom") END), 0) as "avgDevBom",
+          CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
+        FROM "InventoryRecord" ir
+        JOIN "Item" i ON ir."itemId" = i.id
+        WHERE ir."monthLabel" = ${month}
+          AND ir."weekLabel" = ${week}
+        GROUP BY i.name
+      `),
 
-      // Historical trend — Phase 3: calcGrowthAbs from Metric Engine
-      // (Magnitude growth for Dev/BOM — direction is always positive when comparing |.|)
-      // FIX (BUG-1-5): Lookup key now includes akunPenyesuaian so multi-akun
-      //   items get the matching-akun prev value instead of the last row's.
-      const prevDevBom = prevDevBomMap.get(`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`) ?? null;
-      const devBomGrowth = calcGrowthAbs(devBom, prevDevBom);
-      const historicalTrend = devBomGrowth != null
-        ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'
-        : '?';
+      // Get previous period for historical trend
+      db.week.findMany({
+        select: { weekLabel: true, monthKey: true },
+        distinct: ['monthKey', 'weekLabel'],
+      }),
+      db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
+      ]);
+      const benchMap = new Map(itemAreaBench.map(b => [b.itemName, { avgDevBom: Number(b.avgDevBom), outletCount: Number(b.outletCount) }]));
 
-      // Over-explained check
-      const isOverExplained = (() => {
-        // DEV-01/PR-02 FIX: Use abs-each (not abs-of-sum) — matches transform.ts + deviation.ts
-        const explained = Math.abs(toNum(r.qtyWaste) ?? 0) + Math.abs(toNum(r.qtySusut) ?? 0) + Math.abs(toNum(r.qtyTrial) ?? 0);
-        const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
-        return absDev > 0 && explained > absDev;
-      })();
+      const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
+      const allPeriods = weeksRaw.map(w => ({
+        monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+        weekLabel: w.weekLabel,
+        sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+      })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-      // Metric Engine: priority (Settings-driven)
-      const priority = computePriority({
-        absNominalLossSurplus: absNominal,
-        devBom,
-        residualRatio,
-        zScore: null, // zScore not computed at matrix level (item-history route handles per-item zScore)
-        isOverExplained,
-        thresholds: priorityThresholds,
+      const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
+      // FIX (BUG 4): Same-weekLabel in previous month (cumulative weeks).
+      // Was: chronological previous (W4→W2 same month = false positive trend).
+      let prevPeriod: { monthLabel: string; weekLabel: string } | null = null;
+      if (currentIdx >= 0) {
+        for (let i = currentIdx - 1; i >= 0; i--) {
+          if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
+            prevPeriod = allPeriods[i];
+            break;
+          }
+        }
+        if (!prevPeriod && currentIdx > 0) prevPeriod = allPeriods[currentIdx - 1];
+      }
+
+      // ============================================================
+      //  Get previous period devBom per outlet+item.
+      //  FIX (BUG-1-5): Added ir."akunPenyesuaian" to SELECT and GROUP BY,
+      //    and include akunPenyesuaian in the prevDevBomMap key. Multi-akun
+      //    items no longer get the LAST row's prev value — they get the
+      //    matching-akun value (or null).
+      // ============================================================
+      let prevDevBomMap = new Map<string, number | null>();
+      if (prevPeriod) {
+        // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+        const prevRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; itemName: string; akunPenyesuaian: string | null; pctDevBom: number | null }>>`
+          SELECT o.code as "outletCode", i.name as "itemName", ir."akunPenyesuaian",
+            MAX(ir."pctQtyDeviasiToBom") as "pctDevBom"
+          FROM "InventoryRecord" ir
+          JOIN "Outlet" o ON ir."outletId" = o.id
+          JOIN "Item" i ON ir."itemId" = i.id
+          WHERE ir."monthLabel" = ${prevPeriod.monthLabel}
+            AND ir."weekLabel" = ${prevPeriod.weekLabel}
+          GROUP BY o.code, i.name, ir."akunPenyesuaian"
+        `);
+        prevDevBomMap = new Map(prevRows.map(r => [`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`, r.pctDevBom != null ? Number(r.pctDevBom) : null]));
+      }
+
+      // ============================================================
+      //  Build matrix rows with priority + historical + benchmark
+      //  Phase 3: Priority via Metric Engine (Settings-driven thresholds,
+      //  no hardcoded 1_000_000 / 0.10 / 0.50)
+      // ============================================================
+      const matrix = rows.map(r => {
+        const devBom = toNum(r.pctQtyDeviasiToBom);
+        const absNominal = toNum(r.absNominalLossSurplus) ?? 0;
+        const residualRatio = toNum(r.residualRatio);
+        const bench = benchMap.get(r.itemName);
+        const areaAvgDevBom = bench?.avgDevBom ?? 0;
+        const areaOutletCount = bench?.outletCount ?? 0;
+        const areaMultiplier = areaAvgDevBom > 0 && devBom != null ? Math.abs(devBom) / areaAvgDevBom : null;
+
+        // Historical trend — Phase 3: calcGrowthAbs from Metric Engine
+        // (Magnitude growth for Dev/BOM — direction is always positive when comparing |.|)
+        // FIX (BUG-1-5): Lookup key now includes akunPenyesuaian so multi-akun
+        //   items get the matching-akun prev value instead of the last row's.
+        const prevDevBom = prevDevBomMap.get(`${r.outletCode}|${r.itemName}|${r.akunPenyesuaian ?? ''}`) ?? null;
+        const devBomGrowth = calcGrowthAbs(devBom, prevDevBom);
+        const historicalTrend = devBomGrowth != null
+          ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'
+          : '?';
+
+        // Over-explained check
+        const isOverExplained = (() => {
+          // DEV-01/PR-02 FIX: Use abs-each (not abs-of-sum) — matches transform.ts + deviation.ts
+          const explained = Math.abs(toNum(r.qtyWaste) ?? 0) + Math.abs(toNum(r.qtySusut) ?? 0) + Math.abs(toNum(r.qtyTrial) ?? 0);
+          const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
+          return absDev > 0 && explained > absDev;
+        })();
+
+        // Metric Engine: priority (Settings-driven)
+        const priority = computePriority({
+          absNominalLossSurplus: absNominal,
+          devBom,
+          residualRatio,
+          zScore: null, // zScore not computed at matrix level (item-history route handles per-item zScore)
+          isOverExplained,
+          thresholds: priorityThresholds,
+        });
+
+        return {
+          outletCode: r.outletCode,
+          outletName: r.outletName,
+          area: r.area,
+          itemName: r.itemName,
+          satuan: r.satuan,
+          qtyBom: Math.abs(toNum(r.qtyBom) ?? 0),
+          qtyDeviasi: toNum(r.qtyDeviasi),
+          devBom: devBom,
+          nominalLossSurplus: toNum(r.nominalLossSurplus),
+          absNominalLossSurplus: absNominal,
+          direction: r.direction || 'NEUTRAL',
+          qtyWaste: Math.abs(toNum(r.qtyWaste) ?? 0),
+          qtySusut: Math.abs(toNum(r.qtySusut) ?? 0),
+          qtyTrial: Math.abs(toNum(r.qtyTrial) ?? 0),
+          residualRatio: residualRatio,
+          tolerancePct: toNum(r.tolerancePct),
+          isOverExplained: isOverExplained,
+          // Benchmark
+          areaAvgDevBom: areaAvgDevBom,
+          areaMultiplier: areaMultiplier,
+          areaOutletCount: areaOutletCount,
+          // Historical
+          prevDevBom: prevDevBom,
+          devBomGrowth: devBomGrowth,
+          historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
+          // Priority
+          priority,
+        };
       });
 
+      // Filter by priority if requested
+      const filtered = priorityFilter
+        ? matrix.filter(m => m.priority === priorityFilter)
+        : matrix;
+
+      // Sort: P1 first, then by absNominal DESC
+      const priorityOrder = { P1: 0, P2: 1, P3: 2 };
+      filtered.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || b.absNominalLossSurplus - a.absNominalLossSurplus);
+
+      // Limit
+      const result = filtered.slice(0, limit);
+
+      // Summary stats
+      const stats = {
+        total: matrix.length,
+        P1: matrix.filter(m => m.priority === 'P1').length,
+        P2: matrix.filter(m => m.priority === 'P2').length,
+        P3: matrix.filter(m => m.priority === 'P3').length,
+        outlets: new Set(matrix.map(m => m.outletCode)).size,
+        items: new Set(matrix.map(m => m.itemName)).size,
+      };
+
       return {
-        outletCode: r.outletCode,
-        outletName: r.outletName,
-        area: r.area,
-        itemName: r.itemName,
-        satuan: r.satuan,
-        qtyBom: Math.abs(toNum(r.qtyBom) ?? 0),
-        qtyDeviasi: toNum(r.qtyDeviasi),
-        devBom: devBom,
-        nominalLossSurplus: toNum(r.nominalLossSurplus),
-        absNominalLossSurplus: absNominal,
-        direction: r.direction || 'NEUTRAL',
-        qtyWaste: Math.abs(toNum(r.qtyWaste) ?? 0),
-        qtySusut: Math.abs(toNum(r.qtySusut) ?? 0),
-        qtyTrial: Math.abs(toNum(r.qtyTrial) ?? 0),
-        residualRatio: residualRatio,
-        tolerancePct: toNum(r.tolerancePct),
-        isOverExplained: isOverExplained,
-        // Benchmark
-        areaAvgDevBom: areaAvgDevBom,
-        areaMultiplier: areaMultiplier,
-        areaOutletCount: areaOutletCount,
-        // Historical
-        prevDevBom: prevDevBom,
-        devBomGrowth: devBomGrowth,
-        historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
-        // Priority
-        priority,
+        success: true,
+        period: { month, week, prevWeek: prevPeriod?.weekLabel || null, prevMonth: prevPeriod?.monthLabel || null },
+        matrix: result,
+        stats,
+        durationMs: Date.now() - startedAt,
       };
     });
 
-    // Filter by priority if requested
-    const filtered = priorityFilter
-      ? matrix.filter(m => m.priority === priorityFilter)
-      : matrix;
-
-    // Sort: P1 first, then by absNominal DESC
-    const priorityOrder = { P1: 0, P2: 1, P3: 2 };
-    filtered.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || b.absNominalLossSurplus - a.absNominalLossSurplus);
-
-    // Limit
-    const result = filtered.slice(0, limit);
-
-    // Summary stats
-    const stats = {
-      total: matrix.length,
-      P1: matrix.filter(m => m.priority === 'P1').length,
-      P2: matrix.filter(m => m.priority === 'P2').length,
-      P3: matrix.filter(m => m.priority === 'P3').length,
-      outlets: new Set(matrix.map(m => m.outletCode)).size,
-      items: new Set(matrix.map(m => m.itemName)).size,
-    };
-
-    const responseResult = {
-      success: true,
-      period: { month, week, prevWeek: prevPeriod?.weekLabel || null, prevMonth: prevPeriod?.monthLabel || null },
-      matrix: result,
-      stats,
-      durationMs: Date.now() - startedAt,
-    };
-
-    // PERF-02: Cache the result for 5 min
-    await setCached(cacheKey, responseResult, true);
-
-    return NextResponse.json(responseResult, { headers: CACHE_ANALYSIS });
+    // PERF-CACHE-06: add `cached: true` flag when served from cache (CONVENTIONS §2).
+    // PERF-CACHE-09 (SWR): also surface `stale: true` when the cache entry was
+    // expired (client gets stale data immediately + background recompute runs).
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     // DS-13 + DC-28: Use structured logger + sanitize error response
     logger.error('[resto-bahan-matrix] error', { error: e instanceof Error ? e.message : String(e) });

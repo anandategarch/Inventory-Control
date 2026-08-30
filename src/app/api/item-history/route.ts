@@ -28,9 +28,21 @@ import { toNum } from '@/lib/format';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// PERF-API-02 (Task PERF-API): EarlyHttpResponse pattern (same as export-report +
+// outlet-items) — lets the cache-wrapped computeFn signal "abort compute + return
+// this response" for early-return paths (404 outlet not found, 404 no records,
+// 404 current period not found). Cache is NOT populated for 404s.
+class EarlyHttpResponse extends Error {
+  constructor(public response: NextResponse) {
+    super('EarlyHttpResponse');
+    this.name = 'EarlyHttpResponse';
+  }
+}
 
 
 export async function GET(req: NextRequest) {
@@ -60,26 +72,46 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'outletCode and itemName required' }, { status: 400 });
     }
 
+    // PERF-API-02 (Task PERF-API): DB-level AggregationCache for /api/item-history.
+    // Before: every request re-ran 3 heavy SQL queries (allRecs + areaBench +
+    // networkBench) + month/threshold/outlet lookups. Benchmark:
+    // cold 0.65s → warm 0.50s (almost no improvement — no DB cache).
+    // After: cache the full response payload (5-min TTL) keyed by outletCode +
+    // itemName + month + week. Cache hit returns in ~50ms.
+    // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
+    const ITEM_HISTORY_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cacheKey = buildCacheKey({
+      route: 'item-history',
+      month: currentMonth, week: currentWeek,
+      outletCode, itemName,
+    });
+
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(
+      cacheKey,
+      ITEM_HISTORY_CACHE_TTL,
+      async () => {
+
     // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
     // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
     // Without this, the `isCurrent: r.monthLabel === currentMonth` comparison at
     // line ~126 fails on case mismatch → 404 "No record for X at Y in Mei 2026 WEEK 1"
     // even though the item exists in DB with a different monthLabel case.
-    const monthResolver = await getMonthResolver();
+    // PERF-API-02: parallelize monthResolver + thresholds + outlet lookup — all
+    // 3 are independent (outlet query uses outletCode, doesn't need month).
+    // Saves ~50-100ms on cold cache (3 sequential awaits → 1 parallel batch).
+    const [monthResolver, thresholds, outlet] = await Promise.all([
+      getMonthResolver(),
+      getRuntimeThresholds(),
+      db.outlet.findFirst({
+        where: { code: outletCode },
+        select: { id: true, code: true, name: true, area: true },
+      }),
+    ]);
     if (currentMonth) currentMonth = resolveMonthLabel(currentMonth, monthResolver) || currentMonth;
 
-    // ============================================================
-    //  Load runtime thresholds (Settings-driven)
-    // ============================================================
-    const thresholds = await getRuntimeThresholds();
-
-    // Resolve outlet
-    const outlet = await db.outlet.findFirst({
-      where: { code: outletCode },
-      select: { id: true, code: true, name: true, area: true },
-    });
     if (!outlet) {
-      return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
+      // PERF-API-02: throw EarlyHttpResponse — outer catch returns the 404.
+      throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 }));
     }
 
     // Get ALL periods for this outlet+item (across all months/weeks)
@@ -124,7 +156,8 @@ export async function GET(req: NextRequest) {
     `);
 
     if (allRecs.length === 0) {
-      return NextResponse.json({ success: false, error: `No records found for ${itemName} at ${outletCode}` }, { status: 404 });
+      // PERF-API-02: throw EarlyHttpResponse (cache NOT populated for 404s).
+      throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `No records found for ${itemName} at ${outletCode}` }, { status: 404 }));
     }
 
     // Build timeline with sortKey
@@ -162,11 +195,12 @@ export async function GET(req: NextRequest) {
     const currentPeriod = timeline.find(t => t.isCurrent);
     if (!currentPeriod) {
       const available = timeline.map(t => `${t.weekLabel} ${t.monthLabel}`).join(', ');
-      return NextResponse.json({
+      // PERF-API-02: throw EarlyHttpResponse (cache NOT populated for 404s).
+      throw new EarlyHttpResponse(NextResponse.json({
         success: false,
         error: `No record for ${itemName} at ${outletCode} in ${currentMonth || '?'} ${currentWeek || '?'}. Available periods: ${available}`,
         availablePeriods: timeline.map(t => ({ monthLabel: t.monthLabel, weekLabel: t.weekLabel })),
-      }, { status: 404 });
+      }, { status: 404 }));
     }
     const currentDevBom = currentPeriod.devBom;
 
@@ -279,7 +313,10 @@ export async function GET(req: NextRequest) {
       ? Math.abs(currentDevBom) / networkAvgDevBom
       : null;
 
-    return NextResponse.json({
+    // PERF-API-02: return a plain object (NOT NextResponse) so withCacheAndDedup
+    // can JSON-serialize + store it. The outer code wraps it with NextResponse.json
+    // + adds the `cached: true` flag on cache hits (CONVENTIONS §2).
+    return {
       success: true,
       outlet: { code: outlet.code, name: outlet.name, area: outlet.area },
       itemName,
@@ -312,8 +349,22 @@ export async function GET(req: NextRequest) {
       current: currentPeriod,
       priority,
       durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_ANALYSIS });
+    } as Record<string, unknown>;
+    }, // end withCacheAndDedup computeFn
+    );
+
+    // PERF-API-02: rebuild NextResponse from cached/fresh payload + add cached flag.
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
+    // PERF-API-02: handle EarlyHttpResponse thrown from inside withCacheAndDedup's
+    // computeFn (404 Outlet/records/period not found short-circuit). Return the
+    // embedded response directly — don't run it through errorResponse.
+    if (e instanceof EarlyHttpResponse) {
+      return e.response;
+    }
     logger.error("[item-history] error:", { error: e });
     return errorResponse(e, "item-history");
   }

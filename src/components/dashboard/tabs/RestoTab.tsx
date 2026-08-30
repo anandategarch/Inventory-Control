@@ -7,8 +7,12 @@
 //  RestoAnalysis is lazy-loaded (it pulls in PrioritySummaryCard
 //  → SignalChart → recharts ~5.4MB) so the LoadingChart fallback
 //  reserves layout space while the chunk streams in.
+//  PERF-FE: wrapped in React.memo — page.tsx re-renders on any
+//  Zustand state change; without memo, RestoTab (and its lazy
+//  RestoAnalysis chunk) would re-render unnecessarily.
 // ============================================================
 
+import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { FetchAware, LoadingChart } from '@/components/dashboard/shared';
@@ -24,7 +28,7 @@ export interface RestoTabProps {
   isFetching: boolean;
 }
 
-export function RestoTab({ data, isFetching }: RestoTabProps) {
+export const RestoTab = memo(function RestoTab({ data, isFetching }: RestoTabProps) {
   return (
     <>
       {/* FIX #32: wrap RestoAnalysis in FetchAware so the refetch
@@ -36,4 +40,4 @@ export function RestoTab({ data, isFetching }: RestoTabProps) {
       </FetchAware>
     </>
   );
-}
+});

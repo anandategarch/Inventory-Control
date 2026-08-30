@@ -13,7 +13,7 @@ import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, paretoQuerySchema } from '@/lib/validation';
 import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
 import { errorResponse } from '@/lib/error-response';
-import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -76,86 +76,88 @@ export async function GET(req: NextRequest) {
     };
 
     // DP-14: DB-level AggregationCache — prevents full recompute on warm calls.
-    // Cache key includes all filter params + parentDim/childDim.
+    // PERF-CACHE-01: cache key now includes parentDim + childDim (was missing →
+    // different nested-generalized requests shared one cache entry → wrong response).
+    // PERF-CACHE-06: withCacheAndDedup adds in-flight Promise dedup so concurrent
+    // identical requests share one compute (was missing — only /api/analysis had it).
     const cacheKey = buildCacheKey({
       route: 'pareto', month, week, area: filters.area, kelompok: filters.kelompok, pic,
+      extra: { parentDim: parentDim ?? null, childDim: childDim ?? null },
     });
     const PARETO_CACHE_TTL = 5 * 60 * 1000; // 5 min
-    const cached = await getCached<unknown>(cacheKey, PARETO_CACHE_TTL);
-    if (cached && typeof cached === 'object' && 'success' in cached) {
-      const cachedResult = cached as Record<string, unknown>;
-      cachedResult.cached = true;
-      cachedResult.durationMs = Date.now() - startedAt;
-      return NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS });
-    }
 
-    // Run all 6 Pareto queries in parallel
-    // DESIGN NOTE (BUG-BE-3): byKelompok + histKelompok intentionally OMIT the
-    // kelompok filter from their filterOpts — the byKelompok card shows ALL
-    // kelompok for comparison context (so the user can see how the selected
-    // kelompok ranks against others). All OTHER dimensions (byItem, byOutlet,
-    // byArea, byPIC, nested) correctly include kelompok in their filters.
-    // Do NOT "fix" by adding kelompok to byKelompok/histKelompok — it would
-    // break the comparison feature.
-    //
-    // FIX (RESTORE-BACKEND-2): when parentDim + childDim both provided,
-    // run the generalized `queryParetoNested` in parallel with the other 6
-    // queries and include its result as `nestedGeneralized` in the response.
-    // PERF-03: Fold currentSourceFile into first Promise.all (8th entry — independent of the other 7)
-    const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized, currentSourceFile] = await Promise.all([
-      queryParetoByItem(week, month, filters),
-      queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
-      queryParetoByPIC(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
-      queryParetoNestedItemOutlet(week, month, filters, 10),
-      useGeneralizedNested
-        ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10)
-        : Promise.resolve(null),
-      // PERF-03: was sequential await after the first Promise.all — now parallel
-      db.sourceFile.findFirst({ where: { monthLabel: month }, select: { monthKey: true } }),
-    ]);
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup(cacheKey, PARETO_CACHE_TTL, async () => {
+      // Run all 6 Pareto queries in parallel
+      // DESIGN NOTE (BUG-BE-3): byKelompok + histKelompok intentionally OMIT the
+      // kelompok filter from their filterOpts — the byKelompok card shows ALL
+      // kelompok for comparison context (so the user can see how the selected
+      // kelompok ranks against others). All OTHER dimensions (byItem, byOutlet,
+      // byArea, byPIC, nested) correctly include kelompok in their filters.
+      // Do NOT "fix" by adding kelompok to byKelompok/histKelompok — it would
+      // break the comparison feature.
+      //
+      // FIX (RESTORE-BACKEND-2): when parentDim + childDim both provided,
+      // run the generalized `queryParetoNested` in parallel with the other 6
+      // queries and include its result as `nestedGeneralized` in the response.
+      // PERF-03: Fold currentSourceFile into first Promise.all (8th entry — independent of the other 7)
+      const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized, currentSourceFile] = await Promise.all([
+        queryParetoByItem(week, month, filters),
+        queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
+        queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
+        queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
+        queryParetoByPIC(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
+        queryParetoNestedItemOutlet(week, month, filters, 10),
+        useGeneralizedNested
+          ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10)
+          : Promise.resolve(null),
+        // PERF-03: was sequential await after the first Promise.all — now parallel
+        db.sourceFile.findFirst({ where: { monthLabel: month }, select: { monthKey: true } }),
+      ]);
 
-    // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
-    const currentMonthKey = currentSourceFile?.monthKey ?? undefined;
+      // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
+      const currentMonthKey = currentSourceFile?.monthKey ?? undefined;
 
-    // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
-    // + merge histAvg + zScore into Pareto results
-    // FIX (BUG2-PARETO-1): pass currentMonthKey to exclude future months
-    const [histItem, histOutlet, histArea, histKelompok, histPIC] = await Promise.all([
-      queryParetoHistorical(week, month, 'item', filters, currentMonthKey),
-      queryParetoHistorical(week, month, 'outlet', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
-      queryParetoHistorical(week, month, 'area', { kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
-      queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }, currentMonthKey), // intentional: no kelompok filter
-      queryParetoHistorical(week, month, 'pic', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
-    ]);
+      // Fetch historical stats for each dimension (same weekLabel, different monthLabel)
+      // + merge histAvg + zScore into Pareto results
+      // FIX (BUG2-PARETO-1): pass currentMonthKey to exclude future months
+      const [histItem, histOutlet, histArea, histKelompok, histPIC] = await Promise.all([
+        queryParetoHistorical(week, month, 'item', filters, currentMonthKey),
+        queryParetoHistorical(week, month, 'outlet', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
+        queryParetoHistorical(week, month, 'area', { kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
+        queryParetoHistorical(week, month, 'kelompok', { area: filters.area, picOutletCodes }, currentMonthKey), // intentional: no kelompok filter
+        queryParetoHistorical(week, month, 'pic', { area: filters.area, kelompok: filters.kelompok, picOutletCodes }, currentMonthKey),
+      ]);
 
-    const byItemMerged = mergeHistoricalIntoPareto(byItem, histItem);
-    const byOutletMerged = mergeHistoricalIntoPareto(byOutlet, histOutlet);
-    const byAreaMerged = mergeHistoricalIntoPareto(byArea, histArea);
-    const byKelompokMerged = mergeHistoricalIntoPareto(byKelompok, histKelompok);
-    const byPICMerged = mergeHistoricalIntoPareto(byPIC, histPIC);
+      const byItemMerged = mergeHistoricalIntoPareto(byItem, histItem);
+      const byOutletMerged = mergeHistoricalIntoPareto(byOutlet, histOutlet);
+      const byAreaMerged = mergeHistoricalIntoPareto(byArea, histArea);
+      const byKelompokMerged = mergeHistoricalIntoPareto(byKelompok, histKelompok);
+      const byPICMerged = mergeHistoricalIntoPareto(byPIC, histPIC);
 
-    const result = {
-      success: true,
-      period: { month, week },
-      filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
-      byItem: byItemMerged,
-      byOutlet: byOutletMerged,
-      byArea: byAreaMerged,
-      byKelompok: byKelompokMerged,
-      byPIC: byPICMerged,
-      nested,
-      ...(nestedGeneralized
-        ? { nestedGeneralized, parentDim: nestedGeneralized.parentDim, childDim: nestedGeneralized.childDim }
-        : {}),
-      durationMs: Date.now() - startedAt,
-    };
+      return {
+        success: true,
+        period: { month, week },
+        filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
+        byItem: byItemMerged,
+        byOutlet: byOutletMerged,
+        byArea: byAreaMerged,
+        byKelompok: byKelompokMerged,
+        byPIC: byPICMerged,
+        nested,
+        ...(nestedGeneralized
+          ? { nestedGeneralized, parentDim: nestedGeneralized.parentDim, childDim: nestedGeneralized.childDim }
+          : {}),
+        durationMs: Date.now() - startedAt,
+      };
+    });
 
-    // DP-14: Cache the result for 5 min
-    await setCached(cacheKey, result, true);
-
-    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
+    // PERF-CACHE-06: add `cached: true` flag when served from cache (CONVENTIONS §2).
+    // PERF-CACHE-09 (SWR): also surface `stale: true` when the cache entry was
+    // expired (client gets stale data immediately + background recompute runs).
+    const responsePayload = cached
+      ? { ...(cachedOrFresh as Record<string, unknown>), cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error('[pareto] error:', { error: e instanceof Error ? e.message : String(e) });
     return errorResponse(e, "pareto");

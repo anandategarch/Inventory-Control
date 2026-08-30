@@ -48,10 +48,23 @@ import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { errorResponse } from '@/lib/error-response';
-import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
+// error paths (404 No records found). Throwing this error propagates through
+// withCacheAndDedup's rejectComputation (so concurrent in-flight awaiters also
+// see the error) and is caught by the outer try/catch which returns the response.
+// Without this, the computeFn's return type would be a union (NextResponse |
+// { buffer, fileName }) and the cache wrapper couldn't store the result.
+class EarlyHttpResponse extends Error {
+  constructor(public response: NextResponse) {
+    super('EarlyHttpResponse');
+    this.name = 'EarlyHttpResponse';
+  }
+}
 
 // ============================================================
 //  Helpers (same as analysis route)
@@ -276,9 +289,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
-    // BUG FIX (BUG-NORECORDS-4/5): use `let` for month so we can reassign after
-    // case-insensitive resolution (DB may have different case than URL param).
-    let month = url.searchParams.get('month');
+    // BUG FIX (BUG-NORECORDS-4/5): use `const` for month so TypeScript narrows
+    // the type to `string` (not `string | null`) inside the withCacheAndDedup
+    // closure below. Previously `let month` was used so the resolveMonthLabel
+    // reassignment could update it — but TS doesn't carry narrowing across
+    // closures for `let` variables, so the closure saw `string | null` and
+    // flagged every downstream `month` use. Now we keep `monthParam` const and
+    // introduce a separate `month` const inside the closure for the resolved
+    // value.
+    const monthParam = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const area = url.searchParams.get('area');
     const outletCode = url.searchParams.get('outlet');
@@ -296,34 +315,41 @@ export async function GET(req: NextRequest) {
     const sections = sectionsParam ? sectionsParam.split(',').filter(Boolean) : null;
     const hasSection = (key: string) => !sections || sections.includes(key);
 
-    if (!month || !week) {
+    if (!monthParam || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
 
     // PERF: DB-level cache check — export-report is the heaviest route (7-12s).
     // Cache the generated .docx buffer for 5 min. Same filter params = same report.
+    //
+    // PERF-CACHE-04: cache key now includes `sections` (was missing → two requests
+    //   with different `?sections=` values shared one cache entry → wrong sections
+    //   in exported report). Sections are sorted for determinism.
+    // PERF-CACHE-06: withCacheAndDedup adds in-flight Promise dedup for concurrent
+    //   identical requests (was missing — only /api/analysis had it). Critical for
+    //   export-report because the compute is ~8s cold; without dedup, two concurrent
+    //   identical exports would each compute + write the cache separately.
     const cacheKey = buildCacheKey({
-      route: 'export-report', month, week,
+      route: 'export-report', month: monthParam, week,
       compareWeek: userCompareWeek, compareMonth: userCompareMonth,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       itemName: itemName || null, pic: pic || null,
+      extra: { sections: sections ? [...sections].sort().join(',') : null },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
-    const cachedExport = await getCached<{ buffer: number[]; fileName: string } | null>(cacheKey, EXPORT_CACHE_TTL);
-    if (cachedExport && cachedExport.buffer && cachedExport.fileName) {
-      const buffer = Buffer.from(cachedExport.buffer);
-      return new NextResponse(new Uint8Array(buffer) as BodyInit, {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'Content-Disposition': `attachment; filename="${cachedExport.fileName}"`,
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',
-        },
-      });
-    }
 
+    // PERF-CACHE-06: wrap the heavy compute (thresholds → SQL fetches → docx
+    // assembly → Packer.toBuffer) in withCacheAndDedup. On cache hit, returns
+    // the stored { buffer, fileName } without re-running any of the ~8s pipeline.
+    const { data: exportData } = await withCacheAndDedup<{ buffer: number[]; fileName: string }>(
+      cacheKey,
+      EXPORT_CACHE_TTL,
+      async () => {
+    // PERF-CACHE-06: monthParam + week are `const` (narrowed to `string` by the
+    // outer guard) — TS carries the narrowing into this closure. The resolved
+    // `month` (after monthResolver) is declared as a separate const below.
     // Load thresholds
     const thresholds = await getRuntimeThresholds();
 
@@ -389,8 +415,10 @@ export async function GET(req: NextRequest) {
     // or "Agustus 2026" (dashboard import). Resolve user-sent month to actual DB case
     // to avoid "No records found".
     const monthResolver = await getMonthResolver();
-    // Resolve current + compare month labels to actual DB case
-    month = resolveMonthLabel(month, monthResolver) || month;
+    // Resolve current + compare month labels to actual DB case.
+    // PERF-CACHE-06: declare as `const month` (shadowing monthInput) so the rest
+    // of the computeFn uses the resolved case. monthInput is the raw URL param.
+    const month = resolveMonthLabel(monthParam, monthResolver) || monthParam;
     const resolvedCompareMonth = userCompareMonth ? resolveMonthLabel(userCompareMonth, monthResolver) : null;
     const allPeriods = weeksRaw.map(w => ({
       monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
@@ -446,7 +474,11 @@ export async function GET(req: NextRequest) {
         itemName ? `item="${itemName}"` : null,
         pic ? `pic="${pic}"` : null,
       ].filter(Boolean).join(', ');
-      return NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 });
+      // PERF-CACHE-06: throw EarlyHttpResponse so the outer try/catch returns
+      // the 404 response. Throwing (vs returning) propagates through
+      // withCacheAndDedup's rejectComputation so concurrent in-flight awaiters
+      // also see the 404. The cache is NOT populated (we don't cache 404s).
+      throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 }));
     }
 
     // PERF-FASE3-BE04: Historical zScore rules in JS (reads slim 5-col projection).
@@ -1055,21 +1087,33 @@ export async function GET(req: NextRequest) {
     const buffer = await Packer.toBuffer(doc);
     const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_')}.docx`;
 
-    // PERF: Cache the docx buffer for 5 min — next request with same params gets instant response
-    // awaitWrite=true because export buffer is large (91KB) — need to ensure write completes
-    await setCached(cacheKey, { buffer: Array.from(buffer), fileName }, true);
+    // PERF-CACHE-06: withCacheAndDedup handles setCached(awaitWrite=true) +
+    // in-flight Promise resolution. Return the { buffer, fileName } payload —
+    // the helper stores it as JSON (Array.from(buffer) keeps the binary data
+    // JSON-serializable; consumers Buffer.from() it back to bytes).
+    return { buffer: Array.from(buffer), fileName };
+    });
 
+    // Reconstruct the binary Buffer from the cached/fresh payload + send as
+    // Word download. Same response shape for both cache hit and fresh compute.
+    const buffer = Buffer.from(exportData.buffer);
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Content-Disposition': `attachment; filename="${exportData.fileName}"`,
         // PERF-FASE1-BE01: CDN cache for 5 min, stale grace 10 min. Same report
         // for same period+filters won't change until underlying data changes.
         'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',
       },
     });
   } catch (e: unknown) {
+    // PERF-CACHE-06: handle EarlyHttpResponse thrown from inside withCacheAndDedup's
+    // computeFn (404 No records found short-circuit). Return the embedded response
+    // directly — don't run it through errorResponse (which would 500 the 404).
+    if (e instanceof EarlyHttpResponse) {
+      return e.response;
+    }
     logger.error("[export-report] error:", { error: e });
     return errorResponse(e, "export-report");
   }

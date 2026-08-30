@@ -156,6 +156,16 @@ model InventoryRecord {
   // full-scan hash join over ~13.5K rows × 35K = 472M row examines.
   // Expected: -4 to -6 seconds on /api/analysis cold cache.
   @@index([outletId, itemId, akunPenyesuaian, monthLabel, weekLabel])
+  // PERF-DB: Composite index for heatmap cells query (heatmap.ts Step 3)
+  // which filters by monthLabel + weekLabel + JOIN on itemId via Item.name
+  // IN (...) list of ~20–100 items. Without this index, PG uses
+  // (monthLabel, weekLabel) and scans all ~13.5K rows for the period,
+  // then hash-joins with Item. With this index, PG can do an index lookup
+  // per itemId in the IN list — significantly faster when the IN list is
+  // small. Also accelerates historical.ts GROUP BY (outletId, itemId,
+  // monthLabel, weekLabel) — the index provides a partial pre-sort that
+  // reduces the sort cost for the outer GROUP BY pass.
+  @@index([monthLabel, weekLabel, itemId])
   // OPTIMIZE-ENGINE: speed up cascade delete when a SourceFile is removed
   // (PostgreSQL FK columns do NOT get an automatic index — without this,
   // deleting a SourceFile triggers a full-table scan on InventoryRecord).

@@ -6,15 +6,23 @@
 //  Metrics: absNominalDeviasi (default), nominalWaste, nominalSusut,
 //           pctQtyDeviasiToBom, recordCount
 //  itemLimit: 5-109 (default 20, recommended 15-25 for readability)
+//
+//  PERF-CACHE-08: DB-level AggregationCache (5-min TTL) + in-flight dedup via
+//  withCacheAndDedup. Heatmap runs a heavy SQL aggregation (Area × Item ×
+//  metric) — caching skips the recompute on warm calls. Cache key includes
+//  metric + itemLimit + mode (route-specific) in addition to the standard
+//  filter set. Added to invalidateAnalysisCache() route list so mutations
+//  (ingest, settings, pic, data delete, migrate-direction) clear it.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { rateLimit, getClientIP } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { queryAreaItemHeatmap, type HeatmapMetric, type ItemSelectMode } from '@/lib/queries/heatmap';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -26,6 +34,8 @@ const VALID_METRICS: HeatmapMetric[] = [
   'pctQtyDeviasiToBom',
   'recordCount',
 ];
+
+const HEATMAP_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches other analysis routes
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -63,57 +73,82 @@ export async function GET(req: NextRequest) {
     // Validate mode
     const mode: ItemSelectMode = modeParam === 'top' ? 'top' : 'pareto80';
 
-    // Resolve month label
-    const resolver = await getMonthResolver();
-    const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
-    const week = rawWeek;
-
-    // Resolve kelompok → outlet codes
-    const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
-    if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({
-        success: true,
-        areas: [],
-        items: [],
-        cells: [],
-        metric,
-        maxValue: 0,
-      }, { headers: CACHE_ANALYSIS });
-    }
-
-    // Resolve PIC → outlet codes
-    const picOutletCodes = await resolvePICOutletCodes(pic);
-    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({
-        success: true,
-        areas: [],
-        items: [],
-        cells: [],
-        metric,
-        maxValue: 0,
-      }, { headers: CACHE_ANALYSIS });
-    }
-
-    // Build filter opts (same pattern as other query modules)
-    const filterOpts = {
+    // PERF-CACHE-08: cache key includes ALL params that affect the response:
+    // metric, itemLimit, mode (route-specific) + standard filter set. Without
+    // these, two requests with different metric/itemLimit/mode would share
+    // one cache entry → wrong heatmap rendered.
+    const cacheKey = buildCacheKey({
+      route: 'heatmap',
+      month: rawMonth, week: rawWeek,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       itemName: itemName || null,
-      picOutletCodes,
-    };
+      pic,
+      // PERF-CACHE: route-specific params appended as sorted key=value pairs.
+      extra: { metric, itemLimit, mode },
+    });
 
-    // Note: queryAreaItemHeatmap uses buildSqlFilters internally,
-    // so we don't need to build a Prisma WhereInput here.
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(cacheKey, HEATMAP_CACHE_TTL, async () => {
+      // Resolve month label
+      const resolver = await getMonthResolver();
+      const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
+      const week = rawWeek;
 
-    const result = await queryAreaItemHeatmap(week, month, filterOpts, metric, itemLimit, mode);
+      // Resolve kelompok → outlet codes
+      const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
+      if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
+        return {
+          success: true,
+          areas: [],
+          items: [],
+          cells: [],
+          metric,
+          maxValue: 0,
+        };
+      }
 
-    return NextResponse.json({
-      success: true,
-      period: { month, week },
-      ...result,
-      durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_ANALYSIS });
+      // Resolve PIC → outlet codes
+      const picOutletCodes = await resolvePICOutletCodes(pic);
+      if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+        return {
+          success: true,
+          areas: [],
+          items: [],
+          cells: [],
+          metric,
+          maxValue: 0,
+        };
+      }
+
+      // Build filter opts (same pattern as other query modules)
+      const filterOpts = {
+        area: area && area !== 'all' ? area : null,
+        kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+        outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+        itemName: itemName || null,
+        picOutletCodes,
+      };
+
+      // Note: queryAreaItemHeatmap uses buildSqlFilters internally,
+      // so we don't need to build a Prisma WhereInput here.
+      const result = await queryAreaItemHeatmap(week, month, filterOpts, metric, itemLimit, mode);
+
+      return {
+        success: true,
+        period: { month, week },
+        ...result,
+        durationMs: Date.now() - startedAt,
+      };
+    });
+
+    // PERF-CACHE-08: add `cached: true` flag when served from cache (CONVENTIONS §2).
+    // PERF-CACHE-09 (SWR): also surface `stale: true` when the cache entry was
+    // expired (client gets stale data immediately + background recompute runs).
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     // BUG-A-07: Don't leak internal error details to client
     logger.error('[area-item-heatmap] error:', { error: e instanceof Error ? e.message : String(e) });

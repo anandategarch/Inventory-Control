@@ -315,6 +315,14 @@ export interface AnalysisData {
   bomCorrelationCounts?: BomCorrelationCounts;
   durationMs: number;
   cached?: boolean;
+  // PERF-CACHE-09 (SWR): present when the response was served from an expired
+  // DB cache entry (stale-while-revalidate). The client MAY use this to show a
+  // "data might be stale" indicator or trigger a sooner refetch. Currently set
+  // by withCacheAndDedup on the 7 routes that use it (pareto, recommendations,
+  // resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap).
+  // /api/analysis has its own pipeline (not using withCacheAndDedup yet) so it
+  // does not set this flag — added here for type-safety + future use.
+  stale?: boolean;
   message?: string;
 }
 
@@ -482,6 +490,12 @@ export function useAnalysis(params: AnalysisParams) {
     // PERF-OPT: gcTime 5min (default) → 10min. Keeps the data in memory
     // longer so navigating back to a previously-viewed period is instant.
     gcTime: ANALYSIS_GC_TIME,
+    // PERF-FE: analysis is heavy (6-8s cold) — don't auto-refetch when the
+    // user switches browser tabs and comes back. The 2-min staleTime keeps
+    // data fresh for filter toggles; an explicit "refresh" button covers
+    // the manual-refresh case. Without this, every tab-switch + 2-min-stale
+    // window triggers a 6-8s reload that blocks the UI.
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -572,6 +586,11 @@ export function useStatus() {
       return res.json() as Promise<StatusData>;
     },
     staleTime: 5 * 60 * 1000, // Phase 1d: 5 min (was 30s) — data rarely changes
+    // PERF-FE: status is a setup/index query — switching browser tabs should NOT
+    // trigger a refetch. The 5-min staleTime is sufficient. Manual refresh button
+    // is available in the header for the rare case where the user uploaded a
+    // file in another tab and wants to see it here.
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -629,6 +648,9 @@ export interface DrilldownData {
   nextCursor: number | null;
   hasMore: boolean;
   records: DrilldownRecord[];
+  // PERF-CACHE-09 (SWR): cached + stale flags from withCacheAndDedup.
+  cached?: boolean;
+  stale?: boolean;
 }
 
 export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number; enabled?: boolean }) {
@@ -664,5 +686,9 @@ export function useDrilldown(params: { outletCode?: string | null; itemName?: st
     // UI-02 FIX: keepPreviousData prevents drawer from going blank when switching
     // items while drawer is open (shows old data until new data arrives).
     placeholderData: keepPreviousData,
+    // PERF-FE: drilldown is a user-initiated lookup — no need to refetch when
+    // the user switches tabs. The 30s staleTime covers the case where the user
+    // closes + reopens the drawer quickly.
+    refetchOnWindowFocus: false,
   });
 }

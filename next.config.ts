@@ -30,8 +30,31 @@ const nextConfig: NextConfig = {
   // date-fns exports 200+ date functions from root.
   // `optimizePackageImports` rewrites these to per-file imports at build time.
   // Expected: ~120-200KB saved from initial bundle.
+  // PERF-FE: extended to cover ALL Radix primitives used by the shadcn/ui
+  // component set (29 ui components). Each Radix package barrel-exports
+  // 5-10 primitives — without this, importing e.g. <Tooltip> from
+  // @radix-ui/react-tooltip pulls the package's full graph even though
+  // only 4 primitives are used. Adding these is a low-risk, build-time-only
+  // optimization that shaves a few KB per Radix package.
   experimental: {
-    optimizePackageImports: ['recharts', 'lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-popover'],
+    optimizePackageImports: [
+      'recharts',
+      'lucide-react',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-select',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-tooltip',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-scroll-area',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-switch',
+      '@radix-ui/react-slider',
+      '@radix-ui/react-label',
+      '@radix-ui/react-alert-dialog',
+      '@radix-ui/react-collapsible',
+      '@radix-ui/react-progress',
+      '@radix-ui/react-toast',
+    ],
   },
   // PERF-FASE2-INFRA04: Immutable cache for Next.js static assets.
   // /_next/static/* files are content-hashed in PRODUCTION (filename changes

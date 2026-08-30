@@ -39,9 +39,22 @@ import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-ite
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// PERF-API-01 (Task PERF-API): EarlyHttpResponse pattern (same as export-report)
+// — lets the cache-wrapped computeFn signal "abort compute + return this response"
+// for early-return paths (404 outlet not found). Throwing propagates through
+// withCacheAndDedup's rejectComputation so concurrent in-flight awaiters also
+// see the 404 (cache is NOT populated for 404s).
+class EarlyHttpResponse extends Error {
+  constructor(public response: NextResponse) {
+    super('EarlyHttpResponse');
+    this.name = 'EarlyHttpResponse';
+  }
+}
 
 // toNum imported from @/lib/format (deduplicated)
 
@@ -73,12 +86,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'outletCode, month, week required' }, { status: 400 });
     }
 
+    // PERF-API-01 (Task PERF-API): DB-level AggregationCache for /api/outlet-items.
+    // Before: every request re-ran 6 heavy SQL queries (currentRecs + prevRecs +
+    // areaBench + networkBench + outletPIC + topDeviasiRank). Benchmark:
+    // cold 1.06s → warm 0.94s (almost no improvement — no DB cache).
+    // After: cache the full response payload (5-min TTL) keyed by outletCode +
+    // month + week + compareWeek + compareMonth. Cache hit returns in ~50ms.
+    // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
+    const OUTLET_ITEMS_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cacheKey = buildCacheKey({
+      route: 'outlet-items',
+      month, week,
+      outletCode,
+      compareWeek,
+      compareMonth: compareMonthRaw,
+    });
+
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(
+      cacheKey,
+      OUTLET_ITEMS_CACHE_TTL,
+      async () => {
+
     // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
     // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
     // Without this, raw SQL `WHERE ir."monthLabel" = ${month}` returns 0 rows on
     // case mismatch → empty Resto Profile + empty item breakdown.
+    // PERF-API-01: `month!` — TypeScript can't carry the non-null narrowing
+    // from the outer `if (!month) return` guard into this closure (same pattern
+    // as recommendations route line 71-72). Safe — outer guard already rejected null.
     const monthResolver = await getMonthResolver();
-    month = resolveMonthLabel(month, monthResolver) || month;
+    month = resolveMonthLabel(month!, monthResolver) || month;
     const compareMonth = compareMonthRaw ? (resolveMonthLabel(compareMonthRaw, monthResolver) || compareMonthRaw) : null;
 
     // ============================================================
@@ -93,7 +130,9 @@ export async function GET(req: NextRequest) {
       }),
     ]);
     if (!outlet) {
-      return NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 });
+      // PERF-API-01: throw EarlyHttpResponse so the outer catch returns the
+      // 404 response (matches the export-report pattern). Cache is NOT populated.
+      throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 }));
     }
 
     // Determine previous period
@@ -155,7 +194,8 @@ export async function GET(req: NextRequest) {
     // (was hardcoded 30). thresholds is fetched above (line ~85) so this is a
     // synchronous read — no extra DB round-trip.
     const topDeviasiRankN = thresholds.TOP_N_DEVIASI_RANK || 30;
-    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month, outletCode, topDeviasiRankN);
+    // PERF-API-01: `month!` — outer guard rejected null; TS can't carry narrowing into closure.
+    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month!, outletCode, topDeviasiRankN);
 
     // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
     // so a hung query in one Promise.all branch is killed at 30s rather than
@@ -593,7 +633,10 @@ export async function GET(req: NextRequest) {
     // Await the top deviasi rank (fired in parallel with the main Promise.all above).
     const topDeviasiRank = await topDeviasiRankPromise;
 
-    return NextResponse.json({
+    // PERF-API-01: return a plain object (NOT NextResponse) so withCacheAndDedup
+    // can JSON-serialize + store it. The outer code wraps it with NextResponse.json
+    // + adds the `cached: true` flag on cache hits (CONVENTIONS §2).
+    return {
       success: true,
       outlet: {
         code: outlet.code,
@@ -608,8 +651,22 @@ export async function GET(req: NextRequest) {
       topDeviasiRank,
       itemCount: currentRecs.length,
       durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_ANALYSIS });
+    } as Record<string, unknown>;
+    }, // end withCacheAndDedup computeFn
+    );
+
+    // PERF-API-01: rebuild NextResponse from cached/fresh payload + add cached flag.
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
+    // PERF-API-01: handle EarlyHttpResponse thrown from inside withCacheAndDedup's
+    // computeFn (404 Outlet not found short-circuit). Return the embedded response
+    // directly — don't run it through errorResponse (which would 500 the 404).
+    if (e instanceof EarlyHttpResponse) {
+      return e.response;
+    }
     logger.error("[outlet-items] error:", { error: e });
     return errorResponse(e, "outlet-items");
   }

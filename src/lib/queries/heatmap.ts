@@ -93,6 +93,9 @@ export async function queryAreaItemHeatmap(
       ? 'top'
       : mode;
 
+  // PERF-DB: LIMIT 500 is a defense-in-depth cap. Production Item catalog
+  // has ~153 rows, so this is a no-op today — but prevents an unbounded
+  // GROUP BY result if the catalog ever grows large (e.g. multi-tenant).
   const allItemsRows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; totalValue: number }[]>`
     SELECT i.name as "itemName", ${metricExpr} as "totalValue"
     FROM "InventoryRecord" ir
@@ -102,6 +105,7 @@ export async function queryAreaItemHeatmap(
       ${f}
     GROUP BY i.name
     ORDER BY "totalValue" DESC, i.name ASC
+    LIMIT 500
   `);
 
   if (allItemsRows.length === 0) {
@@ -230,6 +234,9 @@ export async function queryHeatmapCellDetail(
   itemName: string,
 ): Promise<HeatmapCellDetailRow[]> {
   const f = buildSqlFilters(filters);
+  // PERF-DB: LIMIT 1000 is a defense-in-depth cap. Bounded in production by
+  // (outlets × akunPenyesuaian) for one area+item — typically <500 rows.
+  // Prevents unbounded payload if the area/item filter ever becomes broader.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<HeatmapCellDetailRow[]>`
     SELECT
       o.code as "outletCode",
@@ -255,6 +262,7 @@ export async function queryHeatmapCellDetail(
       ${f}
     GROUP BY o.code, o.name, ir.area, ir."akunPenyesuaian"
     ORDER BY "nominalDeviasi" DESC
+    LIMIT 1000
   `);
   return rows;
 }

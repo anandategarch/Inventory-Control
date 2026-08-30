@@ -7,8 +7,15 @@
 //  Renders 10+ analytical sections wrapped in ErrorBoundary +
 //  FetchAware. Heavy chart components are lazy-loaded via
 //  next/dynamic to keep Recharts (5.4MB) out of the main bundle.
+//  PERF-FE: wrapped in React.memo — the parent (page.tsx) re-renders
+//  on any Zustand state change (e.g., opening a modal). Without
+//  memo, DashboardTab re-renders on every one of those even though
+//  its only props (`data` + `isFetching`) haven't changed. Since
+//  DashboardTab contains 10+ sections, skipping unnecessary
+//  re-renders is a meaningful win.
 // ============================================================
 
+import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { BarChart3, Calendar, History, MapPin } from 'lucide-react';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
@@ -39,7 +46,7 @@ export interface DashboardTabProps {
   isFetching: boolean;
 }
 
-export function DashboardTab({ data, isFetching }: DashboardTabProps) {
+export const DashboardTab = memo(function DashboardTab({ data, isFetching }: DashboardTabProps) {
   return (
     <>
       {/* Section: Executive Summary */}
@@ -184,4 +191,4 @@ export function DashboardTab({ data, isFetching }: DashboardTabProps) {
       </ErrorBoundary>
     </>
   );
-}
+});

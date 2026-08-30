@@ -8,7 +8,6 @@
 //
 //  After delete: clear statusCache + invalidateCache + audit log entry
 // ============================================================
-import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
@@ -248,7 +247,9 @@ export async function DELETE(req: NextRequest) {
     // Clear caches so subsequent reads see fresh state
     statusCache.clear();
     // FIX Medium #1: invalidate DB-level AggregationCache too.
-    invalidateAnalysisCache().catch((e) => logger.error("[cache] invalidate failed", { error: e instanceof Error ? e.message : String(e) }));
+    // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
+    // client's next read after the mutation returns sees fresh data.
+    await invalidateAnalysisCache();
     // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the
     // updated SourceFile set. Without this, getMonthResolver() would keep
     // returning a resolver that includes the now-deleted monthLabel, and
