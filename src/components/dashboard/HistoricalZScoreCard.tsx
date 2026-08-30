@@ -14,19 +14,23 @@ import { useState, useMemo, memo, useCallback } from 'react';
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
 type SortDir = 'asc' | 'desc';
 
+// SIGNED Z-Score coloring: positive = worse (red), negative = better (green)
 function zScoreColor(z: number): string {
-  const abs = Math.abs(z);
-  if (abs > 3) return 'text-red-600 dark:text-red-400 font-bold';
-  if (abs > 2) return 'text-amber-600 dark:text-amber-400 font-semibold';
-  if (abs > 1) return 'text-yellow-600 dark:text-yellow-400';
+  if (z > 3) return 'text-red-600 dark:text-red-400 font-bold';
+  if (z > 2) return 'text-amber-600 dark:text-amber-400 font-semibold';
+  if (z > 1) return 'text-yellow-600 dark:text-yellow-400';
+  if (z < -2) return 'text-emerald-600 dark:text-emerald-400 font-medium';
+  if (z < -1) return 'text-emerald-500 dark:text-emerald-500';
   return 'text-muted-foreground';
 }
 
+// Badge only for POSITIVE zScore (worse than historical). Negative = NORMAL (better).
 function zScoreBadge(z: number): { label: string; variant: 'destructive' | 'default' | 'secondary' | 'outline' } {
-  const abs = Math.abs(z);
-  if (abs > 3) return { label: 'ABNORMAL', variant: 'destructive' };
-  if (abs > 2) return { label: 'WARNING', variant: 'default' };
-  if (abs > 1) return { label: 'ELEVATED', variant: 'secondary' };
+  if (z > 3) return { label: 'ABNORMAL', variant: 'destructive' };
+  if (z > 2) return { label: 'WARNING', variant: 'default' };
+  if (z > 1) return { label: 'ELEVATED', variant: 'secondary' };
+  // z <= 1 (including negative) = not anomalous
+  if (z < -2) return { label: 'BAIK', variant: 'outline' };
   return { label: 'NORMAL', variant: 'outline' };
 }
 
@@ -41,9 +45,12 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   // Z-Scores of 680.99 are meaningless and pollute the table.
   // Also filter out items with zScore = 0 (no historical baseline).
   const allItems = data.growthComparison?.historicalAnalysis?.criticalItems || [];
+  // FIX: Only show items where current magnitude is ABOVE historical mean (zScore > 0).
+  // Items with zScore <= 0 (current below historical = better) are NOT anomalous.
+  // Also filter data anomalies (BOM ≈ 0 → extreme pctQtyDeviasiToBom).
   const items = useMemo(() => allItems.filter(i =>
     Math.abs(i.currentDevBom) <= 5 &&
-    Math.abs(i.zScore) > 0 &&
+    i.zScore > 0 &&
     i.historicalAvg > 0
   ), [allItems]);
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
@@ -58,12 +65,13 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   const [metricView, setMetricView] = useState<'devBom' | 'qtyDeviasi'>('devBom');
 
   const sorted = useMemo(() => {
-    // Phase B-3: Filter by severity
+    // Phase B-3: Filter by severity — only POSITIVE zScore is anomalous
+    // Negative zScore = current below historical = better (not anomalous)
     const filtered = severityFilter === 'all' ? items : items.filter(i => {
-      const abs = Math.abs(metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore);
-      if (severityFilter === 'abnormal') return abs > 3;
-      if (severityFilter === 'warning') return abs > 2 && abs <= 3;
-      if (severityFilter === 'elevated') return abs > 1 && abs <= 2;
+      const z = metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore;
+      if (severityFilter === 'abnormal') return z > 3;
+      if (severityFilter === 'warning') return z > 2 && z <= 3;
+      if (severityFilter === 'elevated') return z > 1 && z <= 2;
       return true;
     });
     const arr = [...filtered];
@@ -72,7 +80,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
       const zA = metricView === 'qtyDeviasi' ? a.qtyDeviasiZScore : a.zScore;
       const zB = metricView === 'qtyDeviasi' ? b.qtyDeviasiZScore : b.zScore;
       switch (sortKey) {
-        case 'zScore': cmp = Math.abs(zA) - Math.abs(zB); break;
+        case 'zScore': cmp = zA - zB; break; // signed: high positive first when desc
         case 'absNominal': cmp = a.absNominal - b.absNominal; break;
         case 'currentDevBom': cmp = Math.abs(a.currentDevBom) - Math.abs(b.currentDevBom); break;
         case 'historicalAvg': cmp = a.historicalAvg - b.historicalAvg; break;
@@ -104,8 +112,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   }, [sorted.length]);
 
   const activeZScore = (i: typeof items[number]) => metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore;
-  const abnormalCount = items.filter(i => Math.abs(activeZScore(i)) > 3).length;
-  const warningCount = items.filter(i => Math.abs(activeZScore(i)) > 2 && Math.abs(activeZScore(i)) <= 3).length;
+  // Only POSITIVE zScore counts as abnormal/warning (negative = better than historical)
+  const abnormalCount = items.filter(i => activeZScore(i) > 3).length;
+  const warningCount = items.filter(i => activeZScore(i) > 2 && activeZScore(i) <= 3).length;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -232,18 +241,18 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                       <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">
                         {metricView === 'qtyDeviasi' ? item.qtyDeviasiHistoricalAvg.toLocaleString('id-ID') : fmtPctAbs(item.historicalAvg)}
                       </TableCell>
-                      {/* Z-Score with tooltip */}
+                      {/* Z-Score with tooltip — SIGNED: positive=red, negative=green */}
                       <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(activeZ)}`}>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center justify-end gap-1.5 cursor-help">
                               <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden" aria-hidden>
                                 <div
-                                  className={`h-full ${Math.abs(activeZ) > 3 ? 'bg-red-500' : Math.abs(activeZ) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+                                  className={`h-full ${activeZ > 3 ? 'bg-red-500' : activeZ > 2 ? 'bg-amber-500' : activeZ > 1 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
                                   style={{ width: `${Math.min(Math.abs(activeZ) / 5 * 100, 100)}%` }}
                                 />
                               </div>
-                              {activeZ.toFixed(2)}
+                              {activeZ > 0 ? `+${activeZ.toFixed(2)}` : activeZ.toFixed(2)}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="left" className="text-xs p-3 max-w-xs">

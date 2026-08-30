@@ -1,10 +1,17 @@
 // ============================================================
 //  HISTORICAL METRICS — Single Implementation
 //  --------------------------------------------------------
-//  Z-Score: (ABS(current) - mean(ABS(historical))) / STDDEV_SAMP(ABS(historical))
+//  Z-Score (SIGNED): (ABS(current) - mean(ABS(historical))) / STDDEV_SAMP(ABS(historical))
+//
+//  - Positive Z-Score = current magnitude ABOVE historical mean (worse than usual) → RED
+//  - Negative Z-Score = current magnitude BELOW historical mean (better than usual) → GREEN
+//  - Zero = current equals historical mean
+//
+//  Value + baseline use ABS (magnitude) per PRD §5.2, but the RESULT is signed
+//  so users can see direction (better vs worse than historical).
 //
 //  Aturan (sesuai definitions.ts):
-//   1. Gunakan ABS (magnitude), bukan signed value
+//   1. Gunakan ABS (magnitude) untuk current value + historical baseline
 //   2. Sample variance (N-1, Bessel's correction)
 //   3. Exclude current period dari historical stats
 //   4. Require n >= HISTORICAL_MIN_WEEKS (default 4)
@@ -86,10 +93,11 @@ export function computeZScore(input: HistoricalInput): HistoricalResult {
     ? Math.sqrt(absValues.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1))
     : 0;
 
-  // Compute zScore — ZS-01 FIX: use Math.abs for non-negative magnitude per PRD §5.2
+  // Compute zScore — SIGNED: positive = above mean (worse), negative = below mean (better)
+  // Value + baseline use ABS magnitude per PRD §5.2, but result is signed for direction.
   let zScore: number | null = null;
   if (currentValue != null && stdDev > 0) {
-    zScore = Math.abs((Math.abs(currentValue) - mean) / stdDev);
+    zScore = (Math.abs(currentValue) - mean) / stdDev;
   }
 
   // Determine trend (current magnitude vs historical mean)
@@ -144,9 +152,17 @@ export function computeDeterioration(
  * benchmarkFlag, warningLevel).
  *
  * Formula: (|value| - mean) / stdDev
- * Returns null if value is null or stdDev is 0.
+ * - |value| = ABS of current (magnitude)
+ * - mean = mean of ABS weekly historical values (always non-negative)
+ * - stdDev = sample std dev of ABS weekly historical values
  *
- * Master context #19: Z-Score uses ABS magnitude (not signed value).
+ * Returns SIGNED Z-Score (can be negative):
+ * - Positive = current magnitude ABOVE historical mean (worse than usual)
+ * - Negative = current magnitude BELOW historical mean (better than usual)
+ * - Zero = current equals historical mean
+ *
+ * Master context #19: Z-Score uses ABS magnitude for value + baseline,
+ * but the RESULT is signed so users can see direction (better vs worse).
  */
 export function calcZScoreFromStats(
   value: number | null,
@@ -154,8 +170,8 @@ export function calcZScoreFromStats(
   stdDev: number,
 ): number | null {
   if (value == null || stdDev === 0) return null;
-  // ZS-01 FIX: non-negative magnitude per PRD §5.2
-  return Math.abs((Math.abs(value) - mean) / stdDev);
+  // SIGNED Z-Score: positive = above mean (worse), negative = below mean (better)
+  return (Math.abs(value) - mean) / stdDev;
 }
 
 /**

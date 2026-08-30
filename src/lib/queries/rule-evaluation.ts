@@ -258,14 +258,15 @@ export function evaluateHistoricalRulesJs(
     // ZS-05 FIX: Skip if pctQtyDeviasiToBom is null (don't coerce to 0)
     if (curr.pctQtyDeviasiToBom == null) continue;
 
-    // ZS-01 FIX: Use Math.abs for non-negative magnitude per PRD §5.2
-    const zScore = Math.abs((Math.abs(curr.pctQtyDeviasiToBom) - stats.devBom.mean) / stats.devBom.stdDev);
+    // SIGNED Z-Score: positive = above historical mean (worse), negative = below (better)
+    // Only POSITIVE zScore triggers rules (current worse than historical is anomalous)
+    const zScore = (Math.abs(curr.pctQtyDeviasiToBom) - stats.devBom.mean) / stats.devBom.stdDev;
     if (zScore == null || isNaN(zScore)) continue;
 
     const isLoss = (curr.nominalLossSurplus ?? 0) < 0;
     const isSurplus = (curr.nominalLossSurplus ?? 0) > 0;
 
-    // HISTORICAL_ABNORMAL (LOSS direction + zScore > high)
+    // HISTORICAL_ABNORMAL (LOSS direction + zScore > high — current worse than historical)
     if (isLoss && zScore > zHigh) {
       flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_ABNORMAL', severity: 'ABNORMAL', category: 'HISTORICAL', priority: 78 });
     }
@@ -275,7 +276,7 @@ export function evaluateHistoricalRulesJs(
       flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_ABNORMAL_SURPLUS', severity: 'ABNORMAL', category: 'HISTORICAL', priority: 77 });
     }
 
-    // HISTORICAL_WARNING (zScore > warn, <= high)
+    // HISTORICAL_WARNING (zScore > warn, <= high — only positive, current worse than historical)
     if (zScore > zWarn && zScore <= zHigh) {
       flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_WARNING', severity: 'WARNING', category: 'HISTORICAL', priority: 58 });
     }
