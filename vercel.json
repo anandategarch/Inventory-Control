@@ -7,9 +7,6 @@
     },
     "src/app/api/import-drive": {
       "maxDuration": 300
-    },
-    "src/app/api/outlet-focus": {
-      "maxDuration": 60
     }
   }
 }

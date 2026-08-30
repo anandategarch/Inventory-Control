@@ -110,7 +110,7 @@ export default function DashboardPage() {
   const [auditLogOpen, setAuditLogOpen] = useState(false);
   const [itemSearchOpen, setItemSearchOpen] = useState(false);
 
-  const { handleExport, handleRefresh, isExporting } = useDashboardActions({
+  const { handleExport, isExporting } = useDashboardActions({
     analysisData: analysis.data,
     monthLabel,
     currentWeek,

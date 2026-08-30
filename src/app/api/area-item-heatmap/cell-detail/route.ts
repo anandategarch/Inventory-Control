@@ -18,6 +18,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const ip = getClientIP(req);
     const rl = rateLimit(`heatmap-cell:${ip}`, 60, 60_000);
@@ -65,11 +66,12 @@ export async function GET(req: NextRequest) {
 
     const rows = await queryHeatmapCellDetail(week, month, filterOpts, areaName, itemName);
 
-    return NextResponse.json({ success: true, rows }, { headers: CACHE_ANALYSIS });
+    return NextResponse.json({ success: true, rows, durationMs: Date.now() - startedAt }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
+    // FEAT-01 fix: don't leak internal error details to client
     logger.error('[area-item-heatmap/cell-detail] error:', { error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : String(e) },
+      { success: false, error: 'Internal server error' },
       { status: 500 },
     );
   }

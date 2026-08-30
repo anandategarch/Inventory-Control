@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { fmtIDR, fmtNum, fmtPctAbs, fmtHeatmapCompact } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
-import { Grid3x3 as HeatMapIcon, X } from 'lucide-react';
+import { Grid3x3 as HeatMapIcon } from 'lucide-react';
 
 // ============================================================
 //  Types
