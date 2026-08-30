@@ -136,7 +136,7 @@ export function useDashboardActions({
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
   // Cmd/Ctrl+K → open global item search (cross-outlet analysis)
-  // 1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)
+  // 1 / 2 / 3 / 4 / 5 / 6 → switch tabs (Dashboard / Resto Analysis / Peer Comparison / Pareto / Trend / Diagnosis)
   // Escape → close any open dialog/drawer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -163,14 +163,14 @@ export function useDashboardActions({
         setItemSearchOpen(true);
         return;
       }
-      // 1 / 2 / 3 / 4 → switch tabs (only when not typing in an input)
+      // 1 / 2 / 3 / 4 / 5 / 6 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
       const isDropdownOpen = Boolean(
         document.querySelector('[role="combobox"][aria-expanded="true"], [data-state="open"][role="listbox"], [data-state="open"][role="combobox"]')
       );
-      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
-        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend' };
+      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6')) {
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend', '6': 'diagnosis' };
         setActiveTab(tabMap[e.key]);
         return;
       }

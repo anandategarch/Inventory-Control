@@ -280,6 +280,20 @@ export const itemTrendQuerySchema = z.object({
   pic: picSchema,
 }).strict();
 
+// /api/diagnosis GET query params (CAUSAL-BACKEND — Bayesian inference engine
+// that diagnoses WHY deviations happen at each outlet). Same filter shape as
+// /api/analysis (month + week required, optional area/kelompok/outlet/pic).
+// `prevWeek` + `prevMonth` are auto-resolved server-side when not provided
+// (same pattern as /api/recommendations + /api/analysis).
+export const diagnosisQuerySchema = z.object({
+  month: z.string().min(3).max(50),
+  week: weekLabelSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  outlet: outletCodeSchema,
+  pic: picSchema,
+}).strict();
+
 // ============================================================
 //  Helper: validate query params, return 400 on failure
 // ============================================================

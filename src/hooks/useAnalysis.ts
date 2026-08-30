@@ -837,3 +837,99 @@ export function useItemTrend(params: ItemTrendParams) {
     refetchOnWindowFocus: false,
   });
 }
+
+// ============================================================
+//  Diagnosis (CAUSAL-BACKEND → CAUSAL-FRONTEND)
+//  --------------------------------------------------------
+//  Bayesian causal inference engine — identifies the most likely
+//  root cause of stock deviation per outlet. Powers the new
+//  "Diagnosis" tab (6th tab, keyboard shortcut '6').
+//
+//  Source: src/app/api/diagnosis/route.ts
+//    GET /api/diagnosis?month=&week=&area=&kelompok=&outlet=&pic=
+//
+//  Cache: 5-min server-side DB cache + SWR; client staleTime matches.
+//
+//  Response shape mirrors the contract published in
+//  MASTER_CONTEXT.md §6 (Diagnosis Engine).
+// ============================================================
+
+export interface CausalEvidence {
+  id: string;
+  label: string;
+  present: boolean;
+  weight: number;
+}
+
+export interface CausalCause {
+  causeId: string;
+  causeLabel: string;
+  confidence: number;
+  evidence: CausalEvidence[];
+  autoAction: string;
+  impactEstimate: number;
+}
+
+export interface CausalResult {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  causes: CausalCause[];
+  topCause: string;
+  topConfidence: number;
+}
+
+export interface DiagnosisData {
+  success: boolean;
+  period: { month: string; week: string };
+  outlets: CausalResult[];
+  causeDistribution: Record<string, { count: number; avgConfidence: number }>;
+  durationMs: number;
+  cached?: boolean;
+  /** SWR flag — true when served from expired cache (background recompute runs). */
+  stale?: boolean;
+}
+
+export interface DiagnosisParams {
+  month: string | null;
+  week: string | null;
+  area?: string | null;
+  kelompok?: string | null;
+  outletCode?: string | null;
+  pic?: string | null;
+}
+
+export function useDiagnosis(params: DiagnosisParams) {
+  const p = new URLSearchParams();
+  if (params.month) p.set('month', params.month);
+  if (params.week) p.set('week', params.week);
+  if (params.area && params.area !== 'all') p.set('area', params.area);
+  if (params.kelompok && params.kelompok !== 'all') p.set('kelompok', params.kelompok);
+  if (params.outletCode && params.outletCode !== 'all') p.set('outlet', params.outletCode);
+  if (params.pic) p.set('pic', params.pic);
+
+  return useQuery({
+    queryKey: ['diagnosis', params.month, params.week, params.area, params.kelompok, params.outletCode, params.pic],
+    queryFn: async () => {
+      const res = await fetch(`/api/diagnosis?${p.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
+      }
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string };
+        throw new Error(e.message || e.error || `HTTP ${res.status}`);
+      }
+      return res.json() as Promise<DiagnosisData>;
+    },
+    // Only fire when month + week are selected — diagnosis is period-scoped.
+    enabled: Boolean(params.month && params.week),
+    // 5-min staleTime matches the server DB cache TTL.
+    staleTime: 5 * 60 * 1000,
+    // 10-min gcTime — keep the data in memory across tab switches.
+    gcTime: 10 * 60 * 1000,
+    // keepPreviousData so the table doesn't go blank when filters change.
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+}

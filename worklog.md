@@ -36358,3 +36358,398 @@ no SQL injection, no cache poisoning.
 - 10 HTTP test scenarios passed (7 item-trend + 3 high-volume items).
 - 20/20 Z-Scores manually verified correct (Python recompute).
 - Cross-check vs `calcZScoreFromStats` + `item-history` route: consistent.
+
+---
+
+## CAUSAL-FRONTEND — Diagnosis Tab Frontend (Bayesian Causal Inference)
+**Date:** 2026-08-30 · **Agent:** Frontend Developer · **Task ID:** CAUSAL-FRONTEND
+
+### Scope
+Build the frontend for the new `/api/diagnosis` endpoint (built in parallel
+by the CAUSAL-BACKEND agent). Adds a 6th dashboard tab "Diagnosis" with:
+- Cause distribution chart (horizontal CSS bars)
+- Cause heatmap-style detail table (sortable, expandable)
+
+### Files Modified / Created
+1. **NEW** `src/components/dashboard/tabs/DiagnosisTab.tsx` (591 lines)
+   - Full tab component with React.memo + useShallow
+   - Header: Stethoscope icon + FormulaInfo tooltip explaining Bayesian
+     approach + cache/stale/fetch badges + summary stats
+   - Section 1: Cause Distribution (horizontal CSS bars, color-coded by
+     avg confidence — green >80%, amber 60-80%, orange 40-60%, muted <40%)
+   - Section 2: Sortable + expandable table (Outlet | Area | Top Cause |
+     Conf% | Impact | Priority | [Expand])
+   - Expanded row → OutletDetail: all causes (sorted by confidence desc),
+     each with confidence bar, evidence list (check/x icons + weight),
+     auto-action plan box (highlighted blue), impact estimate (fmtIDR)
+   - 6 sort columns: outlet, area, topCause, confidence, impact, priority
+   - Default sort: impact desc (most impactful outlets first)
+   - Memoized DiagnosisRow + OutletDetail sub-components
+2. **MODIFIED** `src/hooks/useAnalysis.ts` (+~95 lines)
+   - Added 5 new exported interfaces: CausalEvidence, CausalCause,
+     CausalResult, DiagnosisData, DiagnosisParams
+   - Added `useDiagnosis(params)` hook (TanStack Query)
+     - queryKey: ['diagnosis', month, week, area, kelompok, outletCode, pic]
+     - staleTime: 5 min (matches server DB cache TTL)
+     - gcTime: 10 min (cross-tab memory)
+     - placeholderData: keepPreviousData (no flash on filter change)
+     - refetchOnWindowFocus: false (manual refresh only)
+     - enabled: !!month && !!week
+     - Same fetch+error-guard pattern as useItemTrend (content-type check,
+       HTML-on-crash detection, AbortController-style error messages)
+3. **MODIFIED** `src/app/page.tsx` (+~10 lines)
+   - Imported `DiagnosisTab` + `Stethoscope` icon
+   - Added 6th TabsTrigger value="diagnosis" (with Stethoscope icon)
+   - Added TabsContent value="diagnosis" wrapped in ErrorBoundary
+     (label="Diagnosis")
+   - Updated module-map comment header
+4. **MODIFIED** `src/hooks/useDashboardActions.ts` (~3 lines)
+   - Extended keyboard shortcut: e.key check now includes '6'
+   - Added '6': 'diagnosis' to the tabMap record
+   - Updated inline comment listing 6 tabs instead of 3
+
+### Design Decisions
+- **No Recharts** — the cause distribution uses pure CSS bars (per task
+  spec). Keeps the bundle small (Recharts is 5.4MB). The bar chart is a
+  simple flex layout with width:% based on count/maxCount.
+- **Priority badge** uses topConfidence + top cause's impactEstimate (not
+  summed across all causes). URGENT requires confidence > 80% AND impact
+  > Rp 50Jt.
+- **Impact column** shows the top cause's impactEstimate (not summed).
+  This matches the user's mental model: "what's the impact of the most
+  likely cause for this outlet?"
+- **OutletDetail panel** sorts causes by confidence desc — most likely
+  cause appears first. Top cause gets a special amber border + "TOP"
+  badge. Each cause is a self-contained sub-card with its own evidence
+  list, auto-action, and impact estimate.
+- **Evidence list** shows checkmark (emerald) for present=true and
+  strikethrough X (muted) for present=false. Each evidence displays its
+  weight (w=0.40) in monospace tabular-nums for easy scan.
+- **Auto-action plan** rendered in a highlighted blue box (per task spec
+  "displayed in highlighted box") — visually distinct from the cause
+  card body so the user can quickly scan action items.
+
+### Sort Logic (DiagnosisRow)
+| Sort Key    | Comparator                                         |
+|-------------|----------------------------------------------------|
+| outlet      | outletName.localeCompare (string asc/desc)         |
+| area        | area.localeCompare (string asc/desc)               |
+| topCause    | top cause label localeCompare                      |
+| confidence  | topConfidence (number diff)                        |
+| impact      | top cause's impactEstimate (number diff)           |
+| priority    | priorityRank (URGENT=0 → LOW=3, lower = more urgent) |
+
+### Confidence + Priority Helpers (per task spec)
+- `confidenceColor(conf)`: green >80%, amber 60-80%, orange 40-60%, muted <40%
+- `confidenceBarColor(conf)`: solid bg-emerald-500 / bg-amber-500 /
+  bg-orange-500 / bg-muted-foreground/50 (for inline progress bars)
+- `priorityRank(conf, impact)`: 0=URGENT, 1=HIGH, 2=MEDIUM, 3=LOW
+- `getPriority(conf, impact)`: returns {label, color} for badge rendering
+
+### Verification
+- `bunx tsc --noEmit` → 0 errors ✓
+- `bun run lint` → 0 errors, 386 warnings (none in any of the 4 files
+  I touched — all warnings are pre-existing in test files or unrelated
+  src files touched by the parallel CAUSAL-BACKEND agent) ✓
+- Manual review of page.tsx tab structure — Diagnosis is the 6th tab,
+  visible after Trend Item, with correct ErrorBoundary + animate-fade-in-up ✓
+- Keyboard shortcut '6' verified: tabMap updated, e.key check extended,
+  no regressions to existing '1'-'5' shortcuts ✓
+- DiagnosisTab imports match the new exports from useAnalysis.ts
+  (CausalResult type + useDiagnosis hook) ✓
+- OutletDetail uses useMemo for sorted causes (stable ref) ✓
+- DiagnosisRow + OutletDetail both wrapped in React.memo ✓
+- All Zustand selectors use useShallow (per task spec) ✓
+
+### Next Actions for the CAUSAL-BACKEND Agent
+1. Ensure `/api/diagnosis` returns the exact response shape documented
+   in the task spec (success, period, outlets[], causeDistribution,
+   durationMs, cached?, stale?). The frontend type `DiagnosisData`
+   in useAnalysis.ts is the source of truth — match it.
+2. Cause IDs expected: MISSING_BOM, SHRINKAGE, FRAUD, PORTIONING,
+   SUPPLIER, SALES_MIX, SEASONAL (7 cause types per the distribution
+   example in the task spec).
+3. Evidence `weight` field should be a number 0-1 (displayed as w=0.40
+   in the evidence list).
+4. `autoAction` should be a human-readable Indonesian string (displayed
+   as-is in the highlighted blue box).
+5. `impactEstimate` should be a number in IDR (formatted with fmtIDR
+   on the client — supports compact mode like "Rp 112,80Jt").
+
+### Notes for Future Maintenance
+- The DiagnosisTab follows the ItemTrendTab pattern exactly (Card +
+  CardHeader + CardContent with internal sections, no FetchAware
+  wrapper since the tab manages its own loading/error/empty states).
+- The expandable row uses a Set<string> state for expanded outlet codes
+  (avoids re-renders on unrelated outlets when toggling one).
+- Sorting is pure-JS (no external lib) — `sortedOutlets` useMemo
+  recomputes only when outlets/sortKey/sortDir change.
+- The CSS bars for cause distribution use a `transition-all duration-300`
+  so re-sorting causes the bars to animate smoothly.
+
+---
+
+## CAUSAL-BACKEND — Bayesian Causal Inference Engine (Diagnosis Tab)
+**Task ID:** CAUSAL-BACKEND
+**Agent:** Backend Developer
+**Date:** 2026-08-30
+**Status:** ✅ Complete
+
+### Summary
+Built a Bayesian Causal Inference Engine that diagnoses WHY deviations
+happen at each outlet. Computes posterior probability for 7 cause types
+(MISSING_BOM, SHRINKAGE, FRAUD, PORTIONING, SUPPLIER, SALES_MIX, SEASONAL)
+given evidence from rule fires + decomposition + BOM status + growth +
+historical zScores. Powers a new "Diagnosis" tab on the dashboard.
+
+### Files Created (4)
+1. **`src/lib/metrics/causal-engine.ts`** (575 lines) — Bayesian inference
+   engine (pure functions, no DB access):
+   - `CAUSE_DEFINITIONS` constant — 7 causes + priors + evidence weights.
+   - `OutletEvidence` interface — input shape (assembled by query layer).
+   - `CausalResult` interface — output shape (consumed by API response).
+   - `computeCausalDiagnosis(outlets)` — main entry; for each outlet × cause
+     evaluates evidence array, computes `posterior = prior × Π(1 + weight)`
+     for present evidence, normalises to `confidence = posterior / Σ(all)`,
+     returns top 3 causes by confidence.
+   - `computeCauseDistribution(results)` — aggregate stats across outlets
+     (count + avgConfidence per top cause).
+   - `detectMultiOutletPattern(outlet, allOutlets)` — cross-outlet signal
+     for SEASONAL (≥3 other outlets in same area with similar pattern).
+   - `estimateImpact(causeId, outlet)` — Rp impact estimate per cause
+     (cause-specific fraction of |netLossSurplus|).
+   - Evidence evaluators per cause (7 functions) — each returns array of
+     `{id, label, present, weight}` for the cause's defined evidence.
+
+2. **`src/lib/queries/diagnosis.ts`** (515 lines) — evidence collection:
+   - `queryDiagnosisEvidence(week, month, prevWeek, prevMonth, filters, thresholds)`
+     → `OutletEvidence[]` (one per outlet, top 500 by absNominalDeviasi).
+   - **Query 1**: per-outlet decomposition (curr + prev period LATERAL JOIN)
+     — SUM(ABS(qtyBom/Deviasi/Waste/Susut/Trial)) + residualPct + totalLoss/
+     Surplus + netLossSurplus + itemCount + sales + prev period aggregates.
+   - **Query 2**: BOM=0 items per outlet — `ARRAY_AGG(DISTINCT i.name)` +
+     `SUM(ABS(nominalDeviasi))` for items with qtyBom IS NULL OR = 0.
+   - **Query 3**: historical per-period aggregates — for each outlet × prior
+     period (same weekLabel, different monthLabel): SUM(ABS(qtySusut)) +
+     SUM(ABS(qtyDeviasi)). Used for:
+     - `susutZScore`: per-outlet aggregate susut zScore vs historical mean
+       (fallback: worst-item zScore via `queryHistoricalStatsMultiMetric`
+       when < HISTORICAL_MIN_WEEKS of per-outlet history).
+     - `historicalZScores`: array of per-period deviasi zScores (leave-one-
+       out baseline — matches item-trend pattern).
+   - **Query 4**: rule fires per outlet — calls `evaluateRulesSql` (same SQL
+     push-down path as /api/analysis) + aggregates per outlet × ruleCode.
+   - All 4 queries run in parallel via `Promise.all` (saves ~2-3s vs
+     sequential). Each wrapped in `withStatementTimeout` (30s + 64MB work_mem).
+   - Uses `Prisma.sql` tagged templates (zero `$queryRawUnsafe`).
+
+3. **`src/app/api/diagnosis/route.ts`** (190 lines) — API route handler:
+   - `force-dynamic` + `maxDuration = 60` (heavy route — 4 SQL queries +
+     evaluateRulesSql, ~3-5s cold).
+   - Rate limiting (30 req/min per IP — `diagnosis:${ip}` namespace).
+   - Zod validation (`diagnosisQuerySchema` — strict mode rejects unknown
+     params).
+   - DB cache via `withCacheAndDedup` (5-min TTL, SWR — matches all 10
+     other cached routes).
+   - Cache key includes month+week+area+kelompok+outlet+pic (NOT prevWeek/
+     prevMonth — they're auto-resolved deterministically from week+month).
+   - Resolves month BEFORE cache key (case-insensitive cache sharing).
+   - Parallel resolves PIC + thresholds + auto-previous period inside
+     computeFn (3 awaits → 1 batch, saves ~50-100ms on cold path).
+   - Generic error message on failure (`'Internal server error'` — no
+     DB schema/SQL leakage).
+   - Response shape: `{ success, period, outlets, causeDistribution,
+     durationMs, cached?, stale? }` per CONVENTIONS §2.
+
+### Files Modified (2)
+4. **`src/lib/validation.ts`** — added `diagnosisQuerySchema`:
+   ```typescript
+   export const diagnosisQuerySchema = z.object({
+     month: z.string().min(3).max(50),
+     week: weekLabelSchema,
+     area: areaSchema,
+     kelompok: kelompokSchema,
+     outlet: outletCodeSchema,
+     pic: picSchema,
+   }).strict();
+   ```
+
+5. **`src/lib/aggregation-cache.ts`** — added `'diagnosis'` to the routes
+   array in `invalidateAnalysisCache()` (now 11 cached routes — was 10).
+   Mutations (ingest, settings, pic, data delete, migrate-direction) now
+   clear the diagnosis cache alongside the other 10 cached routes.
+
+### Bayesian Model
+For each cause C_i (per outlet):
+1. Start with prior P(C_i) — from CAUSE_DEFINITIONS (SEASONAL=0.20,
+   MISSING_BOM/SHRINKAGE/PORTIONING/SALES_MIX=0.15, FRAUD/SUPPLIER=0.10).
+2. For each evidence item defined for the cause:
+   - If PRESENT: multiply posterior by `(1 + weight)` (weights in [0.10,
+     0.40] → boosts in [1.10×, 1.40×]).
+   - If ABSENT: multiply by 1.0 (no penalty — Bayesian, not frequentist).
+3. `posterior_i = prior_i × Π(1 + weight) for present evidence`.
+4. Normalise: `confidence_i = posterior_i / Σ(all 7 posteriors)`.
+5. Sort by confidence DESC, take top 3.
+
+This is a simplified Bayes (no P(E|¬C) term) — chosen because domain
+evidence is highly correlated (e.g. SUSUT_BOM_MISMATCH rule fire
+correlates with susutZScore > 1), and full Naive Bayes would double-
+count. The (1 + weight) boost approximates the likelihood ratio
+P(E|C) / P(E|¬C) without requiring per-evidence priors.
+
+### Evidence Detection (per cause, per outlet)
+- **MISSING_BOM**: bomZeroItems.length>0, residualPct>0.80, rule fire
+  TOLERANCE_NOT_SET_HIGH_DEV, bomZeroNominal>10jt.
+- **SHRINKAGE**: rule fire SUSUT_BOM_MISMATCH, qtySusut/qtyDeviasi>0.20,
+  susutZScore>0.5 (proxy for growth), susutZScore>1.
+- **FRAUD**: rule fire OVER_EXPLAINED, residualPct>0.70, rule fire
+  DIRECTION_FLIP (or directionFlips>0), rule fire HIGH_LOSS_NOMINAL.
+- **PORTIONING**: rule fire BOM_DOWN_DEV_UP, Dev/BOM high (proxied via
+  BOM_DEVIATION_DISPROPORTIONATE / TOLERANCE_BREACH fires), itemCount>5,
+  qtyDeviasiGrowth > 1.5 × bomGrowth (or BOM_DEVIATION_DISPROPORTIONATE).
+- **SUPPLIER**: itemCount>5 + netLossSurplus<0 (multi-item loss), rule
+  fire BOM_DEVIATION_MISMATCH, rule fire HIGH_LOSS_NOMINAL,
+  totalLoss>50jt.
+- **SALES_MIX**: rule fire SALES_DEV_DECREASE, sales<prevSales +
+  qtyDeviasiGrowth>0, |itemCount-prevItemCount|/prevItemCount>10%,
+  |bomGrowth|>0.20.
+- **SEASONAL**: historicalZScores.some(z>1.5), 2+ historical zScores>0,
+  multiOutletPattern (≥3 other outlets in same area with similar pattern).
+
+### Impact Estimate (per cause)
+Heuristic — each cause claims a fraction of |netLossSurplus|:
+- MISSING_BOM: bomZeroNominal (loss from BOM=0 items, bounded by |net|)
+- SHRINKAGE: (qtySusut/qtyDeviasi) × |net|
+- FRAUD: residualPct × |net| (unexplained portion)
+- PORTIONING: 0.40 × |net|
+- SUPPLIER: 0.40 × totalLoss
+- SALES_MIX: 0.30 × |net|
+- SEASONAL: 0.20 × |net|
+
+### Performance (measured)
+| Test | Cold | Warm (cache) |
+|------|------|-------------|
+| Juli 2026 WEEK 4 (340 outlets) | 5.06s | 0.50s |
+| Juni 2026 WEEK 4 (335 outlets) | 5.78s | n/a |
+| Area=BANTEN (34 outlets) | 2.11s | n/a |
+| Outlet=1187.SBRTUP (1 outlet) | 1.59s | n/a |
+| Non-existent PIC (0 outlets) | 0.64s | n/a |
+
+Cold path ~5s (4 parallel SQL queries + evaluateRulesSql LATERAL join on
+~35K records). Warm path ~0.5s (DB cache hit, payload ~1MB JSON).
+
+### Test Results (9 scenarios)
+| # | Test | Result |
+|---|------|--------|
+| 1 | Cold call (Juli WEEK 4) | 200 — 340 outlets, top cause SEASONAL (count=287), durationMs=5055, cached=true on 2nd call |
+| 2 | Cache hit (same params) | 200 — cached=true, 0.50s response |
+| 3 | Different period (Juni WEEK 4) | 200 — 335 outlets, similar distribution |
+| 4 | Missing month param | 400 — Zod validation error (correct) |
+| 5 | Strict mode (?foo=bar) | 400 — `Unrecognized key: "foo"` (correct) |
+| 6 | Area filter (?area=BANTEN) | 200 — 34 outlets, all in BANTEN (filter applied) |
+| 7 | Outlet filter (?outlet=1187.SBRTUP) | 200 — 1 outlet (filter applied) |
+| 8 | Non-existent PIC | 200 — 0 outlets + empty causeDistribution (sentinel handled) |
+| 9 | Case-insensitive month (agustus vs Agustus) | 200 — resolves to "Agustus 2026" (shared cache key) |
+| 10 | Non-existent month (Desember 9999) | 200 — 0 outlets (graceful, no 404) |
+
+### Verification
+- `bunx tsc --noEmit` → 0 errors.
+- `bun run lint` → 0 errors, 0 warnings in new files (1 pre-existing
+  warning in shared.ts was unrelated). Pre-existing warnings in other
+  files (pareto.ts, rule-evaluation.ts, shared.ts, tests/) unchanged.
+- 10 HTTP test scenarios passed (5 success + 4 validation + 1 edge).
+- Cache invalidation: `'diagnosis'` registered in `invalidateAnalysisCache`
+  (line 419 of aggregation-cache.ts).
+- Zod schema is `.strict()` (rejects unknown params — verified by Test 5).
+- Generic error message on failure (verified by initial SQL bug → returned
+  `'Internal server error'`, not the raw `42P01` PG error code).
+- `startedAt` before try block; `durationMs` in response.
+- Response shape: `success`, `period`, `outlets`, `causeDistribution`,
+  `durationMs`, `cached?`, `stale?` — matches spec + CONVENTIONS §2.
+- All raw SQL via `Prisma.sql` tagged templates (zero `$queryRawUnsafe`).
+- All queries wrapped in `withStatementTimeout` (30s + 64MB work_mem).
+
+### Bug Fixed During Implementation
+- **CAUSAL-BE-01** (P2): Initial query used `p."monthLabel"` in the prev
+  CTE, but the FROM alias was `ir` (not `p`). Caused PostgreSQL `42P01`
+  error: "missing FROM-clause entry for table p". Fixed by changing to
+  `ir."monthLabel"` (matching the prev CTE's FROM alias). The `p` alias
+  in evaluateRulesSql + post-process refers to the LATERAL JOIN subquery,
+  not the prev CTE — copied the wrong pattern.
+
+### Next Actions (for frontend agent)
+1. Add a new "Diagnosis" tab (6th tab) to `page.tsx` — needs:
+   - `<TabsTrigger>` + `<TabsContent>` entry.
+   - Keyboard shortcut `6` in `useDashboardActions.ts`.
+2. Create `DiagnosisTab.tsx` in `src/components/dashboard/tabs/` — wraps
+   a new `DiagnosisDashboard` component in `FetchAware` + `ErrorBoundary`.
+3. Create `DiagnosisDashboard.tsx` in `src/components/dashboard/` —
+   renders:
+   - Top: cause distribution summary (7 cards with count + avgConfidence).
+   - Main: sortable table of outlets (outletCode, outletName, area,
+     topCause, topConfidence, impactEstimate).
+   - Drill-down Sheet: per-outlet top 3 causes with evidence array +
+     autoAction (lazy-loaded via `next/dynamic`).
+4. Add `useDiagnosis` hook to `src/hooks/useAnalysis.ts` — TanStack Query
+   with `staleTime: 2 * 60 * 1000`, `refetchOnWindowFocus: false`.
+5. Add `prefetchDiagnosis` to `useDashboardEffects.ts` (cache warming).
+6. Add `diagnosis` route to `MASTER_CONTEXT.md` §4 API Routes table +
+   update cached routes count (10 → 11).
+
+---
+
+## CAUSAL-BACKEND (retry verification)
+**Task ID:** CAUSAL-BACKEND
+**Status:** ✓ Complete (retry — no changes needed, verified existing implementation)
+
+### Context
+A retry of the CAUSAL-BACKEND task was triggered. Inspection showed all
+required files already existed from a prior successful attempt:
+
+- `src/lib/metrics/causal-engine.ts` (587 lines) — Bayesian inference
+  engine with 7 cause types, evidence evaluators, multi-outlet pattern
+  detection, impact estimator, and `computeCausalDiagnosis` +
+  `computeCauseDistribution` exports.
+- `src/lib/queries/diagnosis.ts` (517 lines) — `queryDiagnosisEvidence`
+  orchestrates 4 parallel SQL queries (per-outlet decomposition, BOM=0
+  items, historical period aggregates, `evaluateRulesSql`) + the per-
+  outlet+item susut stats fallback. Builds `OutletEvidence[]` consumed
+  by the causal engine.
+- `src/app/api/diagnosis/route.ts` (218 lines) — `/api/diagnosis` GET
+  endpoint following CONVENTIONS.md §1 (force-dynamic, maxDuration=60,
+  rate limit, Zod strict validation, `withCacheAndDedup` 5-min TTL +
+  SWR, `startedAt`/`durationMs`, generic error message).
+- `src/lib/validation.ts` — `diagnosisQuerySchema` (strict, requires
+  `month`, optional `week`/`area`/`kelompok`/`outlet`/`pic`).
+- `src/lib/aggregation-cache.ts` — `'diagnosis'` registered in the
+  `invalidateAnalysisCache()` routes array (line 419).
+
+### Verification Performed
+1. `bunx tsc --noEmit` → 0 errors.
+2. `bun run lint` → 0 errors (385 pre-existing warnings in unrelated
+   test files; none in causal-engine.ts / diagnosis.ts / route.ts).
+3. Smoke tests against running dev server (Juli 2026 WEEK 4):
+   | # | Test | Result |
+   |---|------|--------|
+   | 1 | Cold call (340 outlets) | 200 — topCause distribution: SEASONAL=287, PORTIONING=50, MISSING_BOM=3 |
+   | 2 | Cache hit (warm) | 200 — `cached: true`, 441ms (19× faster than cold 8556ms) |
+   | 3 | Missing month param | 400 — Zod validation error |
+   | 4 | Strict mode (?foo=bar) | 400 — `Unrecognized key: "foo"` |
+   | 5 | Area filter (?area=BANTEN) | 200 — 34 outlets, all in BANTEN |
+   | 6 | Outlet filter (?outlet=1187.SBRTUP) | 200 — 1 outlet, topCause=PORTIONING (conf=0.1885), 3 causes returned with full evidence array + autoAction + impactEstimate |
+
+### Drill-down Sample (outlet 1187.SBRTUP)
+- **PORTIONING** (conf=0.1885, impact=Rp 2,539,026)
+  - [Y] BOM_DOWN_DEV_UP fires (w=0.30)
+  - [Y] Dev/BOM > 30% (w=0.25)
+  - [Y] > 5 item affected (w=0.25)
+  - [Y] Deviasi growth > 1.5× BOM growth (w=0.20)
+  - → "Sampling porsioning di peak hours untuk: KRUPUK MIE (V.30), MINYAK MIE SHALLOT OIL..."
+- **SEASONAL** (conf=0.1877, impact=Rp 1,269,513)
+- **MISSING_BOM** (conf=0.1548, impact=Rp 6,347,564)
+
+### Conclusion
+All 3 required files + 2 integration points (validation.ts schema +
+aggregation-cache.ts invalidation list) are present, type-safe, lint-
+clean, and runtime-verified. No code changes were necessary for this
+retry — the prior implementation is complete and correct.
