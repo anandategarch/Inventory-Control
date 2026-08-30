@@ -255,6 +255,7 @@ export async function withCacheAndDedup<T>(
   cacheKey: string,
   ttlMs: number,
   computeFn: () => Promise<T>,
+  awaitWrite: boolean = true,
 ): Promise<{ data: T; cached: boolean; stale?: boolean }> {
   // 1. In-flight dedup — concurrent request for same key awaits this Promise.
   //    MUST be checked BEFORE any await to close the check-then-act race.
@@ -306,9 +307,10 @@ export async function withCacheAndDedup<T>(
     // 4. No cache entry (fresh or stale) — compute synchronously.
     const data = await computeFn();
 
-    // 5. Cache write (awaitWrite=true — block ~50-150ms so the next request
-    //    hits the cache rather than re-computing).
-    await setCached(cacheKey, data, true);
+    // 5. Cache write — awaitWrite=true blocks ~50-150ms so the next request
+    //    hits the cache. awaitWrite=false fires-and-forgets (faster response,
+    //    but next request may re-compute if write hasn't completed).
+    await setCached(cacheKey, data, awaitWrite);
 
     // 6. Resolve in-flight + return.
     resolveComputation(data);

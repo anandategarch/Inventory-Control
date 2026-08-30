@@ -101,7 +101,6 @@ export async function GET(req: NextRequest) {
         resolveKelompokOutletCodes(kelompok),
         resolvePICOutletCodes(pic),
       ]);
-
       if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
         return {
           success: true,

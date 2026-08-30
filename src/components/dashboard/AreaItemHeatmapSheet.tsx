@@ -26,7 +26,6 @@ import {
 } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import { Grid3x3 as HeatMapIcon } from 'lucide-react';
 
@@ -162,8 +161,8 @@ export default function AreaItemHeatmapSheet({
               </div>
             </div>
 
-            {/* Detail table */}
-            <ScrollArea className="flex-1">
+            {/* Detail table — scrollable */}
+            <div className="flex-1 overflow-auto min-h-0">
               <div className="p-2">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-background z-10">
@@ -232,7 +231,7 @@ export default function AreaItemHeatmapSheet({
                   </tfoot>
                 </table>
               </div>
-            </ScrollArea>
+            </div>
           </>
         )}
       </SheetContent>
