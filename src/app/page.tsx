@@ -643,6 +643,11 @@ export default function DashboardPage() {
                   </ErrorBoundary>
                 </section>
               </FetchAware>
+
+              {/* Section: Heatmap Area × Item (standalone fetch, not dependent on analysis data) */}
+              <ErrorBoundary label="Heatmap Area × Item">
+                <AreaItemHeatmap />
+              </ErrorBoundary>
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
