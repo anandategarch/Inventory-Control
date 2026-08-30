@@ -14,6 +14,8 @@ import { validateQuery, drilldownQuerySchema } from '@/lib/validation';
 import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
+import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
@@ -42,6 +44,9 @@ export async function GET(req: NextRequest) {
     const itemName = url.searchParams.get('itemName');
     const weekLabel = url.searchParams.get('weekLabel');
     const monthLabel = url.searchParams.get('monthLabel');
+    const areaFilter = url.searchParams.get('area');
+    const kelompokFilter = url.searchParams.get('kelompok');
+    const picFilter = url.searchParams.get('pic');
     const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
     const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50, 500);
     // FIX Medium #2: cursor-based pagination.
@@ -55,13 +60,14 @@ export async function GET(req: NextRequest) {
     // (outlet/item/week/sourceFile). Benchmark: cold 0.42s → warm 0.21s.
     // After: cache the paginated response (5-min TTL) keyed by all filter +
     // pagination params (outletCode + itemName + weekLabel + monthLabel +
-    // limit + cursor). Same page re-requested within 5 min hits cache in ~30ms.
+    // limit + cursor + area + kelompok + pic). Same page re-requested within 5 min hits cache in ~30ms.
     // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
     const DRILLDOWN_CACHE_TTL = 5 * 60 * 1000; // 5 min
     const cacheKey = buildCacheKey({
       route: 'drilldown',
       month: monthLabel, week: weekLabel,
       outletCode, itemName,
+      area: areaFilter, kelompok: kelompokFilter, pic: picFilter,
       extra: { limit, cursor: cursor != null ? String(cursor) : null },
     });
 
@@ -92,6 +98,56 @@ export async function GET(req: NextRequest) {
         }
         if (resolvedMonths.length === 1) where.monthLabel = resolvedMonths[0];
         else if (resolvedMonths.length > 1) where.monthLabel = { in: resolvedMonths };
+
+        // Apply dashboard filters (area, kelompok, pic) so drill-down respects active filter
+        if (areaFilter) where.area = areaFilter;
+
+        // Resolve kelompok → outlet codes (parallel with PIC resolve)
+        const [kelompokOutletCodes, picOutletCodes] = await Promise.all([
+          kelompokFilter ? resolveKelompokOutletCodes(kelompokFilter) : Promise.resolve(null),
+          picFilter ? resolvePICOutletCodes(picFilter) : Promise.resolve(null),
+        ]);
+
+        // Build outlet code filter from kelompok + PIC
+        // resolveKelompokOutletCodes + resolvePICOutletCodes return outlet CODES (strings)
+        // We filter via the outlet relation: outlet: { code: { in: [...] } }
+        const outletCodeSets: string[][] = [];
+        if (kelompokOutletCodes && kelompokOutletCodes.length > 0) {
+          if (kelompokOutletCodes[0] === '__NO_MATCH__') {
+            return { success: true, records: [], nextCursor: null, total: 0 };
+          }
+          outletCodeSets.push(kelompokOutletCodes);
+        }
+        if (picOutletCodes && picOutletCodes.length > 0) {
+          if (picOutletCodes[0] === '__NO_MATCH__') {
+            return { success: true, records: [], nextCursor: null, total: 0 };
+          }
+          outletCodeSets.push(picOutletCodes);
+        }
+        if (outletCodeSets.length === 1) {
+          // Single filter (kelompok OR pic) — use outlet.code IN
+          if (outletCode) {
+            // Intersect with explicit outletCode if also set
+            if (!outletCodeSets[0].includes(outletCode)) {
+              return { success: true, records: [], nextCursor: null, total: 0 };
+            }
+            // outletCode already in where.outlet — keep it
+          } else {
+            where.outlet = { code: { in: outletCodeSets[0] } };
+          }
+        } else if (outletCodeSets.length > 1) {
+          // Both kelompok AND pic — intersect outlet codes
+          const intersection = outletCodeSets[0].filter(c => outletCodeSets[1].includes(c));
+          if (intersection.length === 0) {
+            return { success: true, records: [], nextCursor: null, total: 0 };
+          }
+          if (outletCode && !intersection.includes(outletCode)) {
+            return { success: true, records: [], nextCursor: null, total: 0 };
+          }
+          if (!outletCode) {
+            where.outlet = { code: { in: intersection } };
+          }
+        }
 
         const records = await db.inventoryRecord.findMany({
           where,

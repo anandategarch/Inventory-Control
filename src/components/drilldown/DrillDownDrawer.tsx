@@ -14,12 +14,16 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function DrillDownDrawer() {
-  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal } = useDashboard(useShallow((s) => ({
+  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal, area, kelompok, outletCode: filterOutlet, pic } = useDashboard(useShallow((s) => ({
     drilldown: s.drilldown,
     setDrilldown: s.setDrilldown,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     setSourceModal: s.setSourceModal,
+    area: s.area,
+    kelompok: s.kelompok,
+    outletCode: s.outletCode,
+    pic: s.pic,
   })));
   const open = Boolean(drilldown.outletCode || drilldown.itemName);
 
@@ -28,13 +32,16 @@ export function DrillDownDrawer() {
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // First page fetch
+  // First page fetch — pass dashboard filters so drill-down respects active filter
   const drill = useDrilldown({
     outletCode: drilldown.outletCode,
     itemName: drilldown.itemName,
     weekLabel: currentWeek,
     monthLabel,
     limit: 50,
+    area: area && area !== 'all' ? area : undefined,
+    kelompok: kelompok && kelompok !== 'all' ? kelompok : undefined,
+    pic: pic && pic !== 'all' ? pic : undefined,
   });
 
   // FIX M1: When first page loads, populate allRecords + nextCursor.
@@ -65,6 +72,10 @@ export function DrillDownDrawer() {
       if (monthLabel) params.set('monthLabel', monthLabel);
       params.set('limit', '50');
       params.set('cursor', String(nextCursor));
+      // Pass dashboard filters so pagination respects active filter
+      if (area && area !== 'all') params.set('area', area);
+      if (kelompok && kelompok !== 'all') params.set('kelompok', kelompok);
+      if (pic && pic !== 'all') params.set('pic', pic);
 
       const res = await fetch(`/api/drilldown?${params.toString()}`);
       const data = await res.json();
@@ -77,7 +88,7 @@ export function DrillDownDrawer() {
     } finally {
       setLoadingMore(false);
     }
-  }, [nextCursor, loadingMore, drilldown, currentWeek, monthLabel]);
+  }, [nextCursor, loadingMore, drilldown, currentWeek, monthLabel, area, kelompok, pic]);
 
   function handleClose(open: boolean) {
     if (!open) setDrilldown({ outletCode: null, itemName: null });

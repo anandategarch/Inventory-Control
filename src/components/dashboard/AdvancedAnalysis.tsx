@@ -157,7 +157,6 @@ function consistencyBadge(type: 'SYSTEMIC' | 'WIDESPREAD' | 'ISOLATED'): string 
 
 export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
 
   // Use unified items list from backend (outlet-count-based classification)
   // Fallback to mapping from systemic/episodic for backward compat
@@ -206,8 +205,8 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
   const isolatedCount = rows.filter((r) => r.type === 'ISOLATED').length;
 
   const onClick = (row: typeof rows[number]) => {
+    // Only open DrillDownDrawer (was opening BOTH DrillDownDrawer + ItemDeepDive = 2 pop-ups)
     setDrilldown({ outletCode: null, itemName: row.itemName });
-    setDeepDiveItem({ itemName: row.itemName, outletCode: null });
   };
 
   return (

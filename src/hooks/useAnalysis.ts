@@ -685,7 +685,7 @@ export interface DrilldownData {
   stale?: boolean;
 }
 
-export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number; enabled?: boolean }) {
+export function useDrilldown(params: { outletCode?: string | null; itemName?: string | null; weekLabel?: string | null; monthLabel?: string | null; limit?: number; enabled?: boolean; area?: string; kelompok?: string; pic?: string }) {
   const p = new URLSearchParams();
   if (params.outletCode) p.set('outletCode', params.outletCode);
   if (params.itemName) p.set('itemName', params.itemName);
@@ -694,9 +694,13 @@ export function useDrilldown(params: { outletCode?: string | null; itemName?: st
   // FIX H6 (AUDIT-4): allow callers to request more records (default 50, max 500).
   // ItemDeepDive needs up to 500 to count ALL outlets with an item, not just top-10.
   if (params.limit) p.set('limit', String(params.limit));
+  // Pass dashboard filters so drill-down respects active filter
+  if (params.area) p.set('area', params.area);
+  if (params.kelompok) p.set('kelompok', params.kelompok);
+  if (params.pic) p.set('pic', params.pic);
 
   return useQuery({
-    queryKey: ['drilldown', params.outletCode, params.itemName, params.weekLabel, params.monthLabel, params.limit],
+    queryKey: ['drilldown', params.outletCode, params.itemName, params.weekLabel, params.monthLabel, params.limit, params.area, params.kelompok, params.pic],
     queryFn: async () => {
       const res = await fetch(`/api/drilldown?${p.toString()}`);
       // Guard: server crashes return HTML, not JSON
