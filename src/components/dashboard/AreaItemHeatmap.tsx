@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback, useRef } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useShallow } from 'zustand/shallow';
 import dynamic from 'next/dynamic';
@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Badge } from '@/components/ui/badge';
 import { fmtIDR, fmtNum, fmtPctAbs, fmtHeatmapCompact } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -136,7 +136,10 @@ function computeAvgPerOutlet(value: number, outletCount: number): number {
 }
 
 // ============================================================
-//  Memoized Cell — click opens drill-down Sheet
+//  Memoized Cell — click opens drill-down Sheet, hover notifies parent
+//  PERF-FE: NO Radix Tooltip per cell (was 280 instances = 840 components +
+//  1120 event listeners). Instead, parent manages ONE Tooltip + we pass
+//  hover data up via onHover callback. 56× fewer component instances.
 // ============================================================
 interface CellProps {
   areaName: string;
@@ -145,67 +148,44 @@ interface CellProps {
   maxVal: number;
   metric: HeatmapMetric;
   onCellClick: (area: string, item: string) => void;
+  onCellHover: (cell: { area: string; item: string } | null) => void;
 }
 
 const HeatmapCellView = memo(function HeatmapCellView({
-  areaName, itemName, cell, maxVal, metric, onCellClick,
+  areaName, itemName, cell, maxVal, metric, onCellClick, onCellHover,
 }: CellProps) {
   const value = cell?.value ?? 0;
   const bg = getHeatColor(value, maxVal);
   const textCls = getTextColor(value, maxVal);
-  const recordCount = cell?.recordCount ?? 0;
-  const outletCount = cell?.outletCount ?? 0;
-  const showAvg = AVG_ELIGIBLE_METRICS.has(metric) && value > 0 && outletCount > 0;
-  const avgValue = showAvg ? computeAvgPerOutlet(value, outletCount) : 0;
+  const showAvg = AVG_ELIGIBLE_METRICS.has(metric) && value > 0 && (cell?.outletCount ?? 0) > 0;
+  const avgValue = showAvg ? computeAvgPerOutlet(value, cell!.outletCount) : 0;
   const avgTextCls = avgValue > 0 && getTextColor(avgValue, maxVal) === 'text-white' ? 'text-white/70' : 'text-foreground/60';
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="h-11 w-full rounded-sm flex flex-col items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform gap-0"
-          style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
-          onClick={() => onCellClick(areaName, itemName)}
-          aria-label={`Detail ${areaName} ${itemName}`}
-        >
-          {value > 0 && (
-            <>
-              <span className={`text-[10px] font-semibold leading-tight ${textCls}`}>
-                {formatCellValue(metric, value)}
-              </span>
-              {showAvg && (
-                <span className={`text-[8px] leading-tight ${avgTextCls}`}>
-                  Ø {fmtHeatmapCompact(avgValue)}
-                </span>
-              )}
-            </>
+    <button
+      type="button"
+      className="h-11 w-full rounded-sm flex flex-col items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform gap-0"
+      style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
+      onClick={() => onCellClick(areaName, itemName)}
+      onMouseEnter={() => onCellHover({ area: areaName, item: itemName })}
+      onMouseLeave={() => onCellHover(null)}
+      onFocus={() => onCellHover({ area: areaName, item: itemName })}
+      onBlur={() => onCellHover(null)}
+      aria-label={`Detail ${areaName} ${itemName}`}
+    >
+      {value > 0 && (
+        <>
+          <span className={`text-[10px] font-semibold leading-tight ${textCls}`}>
+            {formatCellValue(metric, value)}
+          </span>
+          {showAvg && (
+            <span className={`text-[8px] leading-tight ${avgTextCls}`}>
+              Ø {fmtHeatmapCompact(avgValue)}
+            </span>
           )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-[320px] text-xs">
-        <div className="font-medium leading-snug">{areaName} → {itemName}</div>
-        <div className="text-primary-foreground/80 mt-0.5">
-          {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(value)}</span>
-        </div>
-        {showAvg && (
-          <div className="text-primary-foreground/80">
-            Rata-rata per resto: <span className="font-medium text-primary-foreground">{fmtIDR(avgValue)}</span>
-          </div>
-        )}
-        <div className="text-primary-foreground/80">
-          Jumlah resto: <span className="font-medium text-primary-foreground">{outletCount}</span>
-        </div>
-        <div className="text-primary-foreground/80">
-          Jumlah record: <span className="font-medium text-primary-foreground">{recordCount}</span>
-        </div>
-        {cell && value > 0 && (
-          <div className="text-primary-foreground/80 border-t border-primary-foreground/20 mt-1 pt-1">
-            Klik untuk detail per resto →
-          </div>
-        )}
-      </TooltipContent>
-    </Tooltip>
+        </>
+      )}
+    </button>
   );
 }, (prev, next) =>
   prev.areaName === next.areaName &&
@@ -236,6 +216,18 @@ function AreaItemHeatmapInner() {
   const [itemLimit, setItemLimit] = useState(20);
   const [mode, setMode] = useState<ItemSelectMode>('pareto80');
   const [selectedCell, setSelectedCell] = useState<{ area: string; item: string } | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<{ area: string; item: string } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // PERF-FE: debounced hover to avoid rapid tooltip flicker when sweeping mouse
+  const handleCellHover = useCallback((cell: { area: string; item: string } | null) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    if (cell) {
+      hoverTimer.current = setTimeout(() => setHoveredCell(cell), 80);
+    } else {
+      setHoveredCell(null);
+    }
+  }, []);
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
@@ -424,7 +416,9 @@ function AreaItemHeatmapInner() {
               </div>
             )}
 
-            {/* Heatmap grid */}
+            {/* Heatmap grid — wrapped in SINGLE Tooltip (PERF-FE: was 280 per-cell Tooltips) */}
+            <TooltipPrimitive.Provider delayDuration={100}>
+            <TooltipPrimitive.Root open={hoveredCell !== null}>
             <div
               className="overflow-auto max-h-[520px] rounded border border-border/40"
               style={{ contain: 'layout style' }}
@@ -480,6 +474,7 @@ function AreaItemHeatmapInner() {
                           maxVal={maxVal}
                           metric={metric}
                           onCellClick={handleCellClick}
+                          onCellHover={handleCellHover}
                         />
                       );
                     })}
@@ -487,6 +482,42 @@ function AreaItemHeatmapInner() {
                 ))}
               </div>
             </div>
+            <TooltipPrimitive.Portal>
+              {hoveredCell && (() => {
+                const hc = cellMap.get(`${hoveredCell.area}|${hoveredCell.item}`);
+                const hv = hc?.value ?? 0;
+                const hOutletCount = hc?.outletCount ?? 0;
+                const hRecordCount = hc?.recordCount ?? 0;
+                const hShowAvg = AVG_ELIGIBLE_METRICS.has(metric) && hv > 0 && hOutletCount > 0;
+                const hAvg = hShowAvg ? computeAvgPerOutlet(hv, hOutletCount) : 0;
+                return (
+                  <TooltipPrimitive.Content side="top" className="max-w-[320px] text-xs z-50 bg-primary text-primary-foreground shadow-lg rounded-lg px-3 py-2" sideOffset={4}>
+                    <div className="font-medium leading-snug">{hoveredCell.area} → {hoveredCell.item}</div>
+                    <div className="text-primary-foreground/80 mt-0.5">
+                      {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(hv)}</span>
+                    </div>
+                    {hShowAvg && (
+                      <div className="text-primary-foreground/80">
+                        Rata-rata per resto: <span className="font-medium text-primary-foreground">{fmtIDR(hAvg)}</span>
+                      </div>
+                    )}
+                    <div className="text-primary-foreground/80">
+                      Jumlah resto: <span className="font-medium text-primary-foreground">{hOutletCount}</span>
+                    </div>
+                    <div className="text-primary-foreground/80">
+                      Jumlah record: <span className="font-medium text-primary-foreground">{hRecordCount}</span>
+                    </div>
+                    {hc && hv > 0 && (
+                      <div className="text-primary-foreground/80 border-t border-primary-foreground/20 mt-1 pt-1">
+                        Klik untuk detail per resto →
+                      </div>
+                    )}
+                  </TooltipPrimitive.Content>
+                );
+              })()}
+            </TooltipPrimitive.Portal>
+            </TooltipPrimitive.Root>
+            </TooltipPrimitive.Provider>
 
             {/* Color legend */}
             <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground flex-wrap">
