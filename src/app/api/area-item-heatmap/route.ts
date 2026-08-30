@@ -73,13 +73,19 @@ export async function GET(req: NextRequest) {
     // Validate mode
     const mode: ItemSelectMode = modeParam === 'top' ? 'top' : 'pareto80';
 
+    // PERF-HEATMAP: resolve month BEFORE cache key so "Agustus 2026" and "agustus 2026"
+    // share one cache entry. Previously rawMonth was used in the key → case mismatch = cache miss.
+    const resolver = await getMonthResolver();
+    const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
+    const week = rawWeek;
+
     // PERF-CACHE-08: cache key includes ALL params that affect the response:
     // metric, itemLimit, mode (route-specific) + standard filter set. Without
     // these, two requests with different metric/itemLimit/mode would share
     // one cache entry → wrong heatmap rendered.
     const cacheKey = buildCacheKey({
       route: 'heatmap',
-      month: rawMonth, week: rawWeek,
+      month, week,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
@@ -90,13 +96,12 @@ export async function GET(req: NextRequest) {
     });
 
     const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(cacheKey, HEATMAP_CACHE_TTL, async () => {
-      // Resolve month label
-      const resolver = await getMonthResolver();
-      const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
-      const week = rawWeek;
+      // PERF-HEATMAP: parallel resolve kelompok + PIC (was sequential, saves 50-100ms on cold path)
+      const [kelompokOutletCodes, picOutletCodes] = await Promise.all([
+        resolveKelompokOutletCodes(kelompok),
+        resolvePICOutletCodes(pic),
+      ]);
 
-      // Resolve kelompok → outlet codes
-      const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
       if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
         return {
           success: true,
@@ -108,8 +113,6 @@ export async function GET(req: NextRequest) {
         };
       }
 
-      // Resolve PIC → outlet codes
-      const picOutletCodes = await resolvePICOutletCodes(pic);
       if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
         return {
           success: true,

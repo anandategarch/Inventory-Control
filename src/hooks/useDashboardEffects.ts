@@ -25,7 +25,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import { prefetchAnalysis, type AnalysisParams, type StatusData } from '@/hooks/useAnalysis';
+import { prefetchAnalysis, prefetchHeatmap, type AnalysisParams, type StatusData } from '@/hooks/useAnalysis';
 
 export interface UseDashboardEffectsParams {
   status: StatusData | undefined;
@@ -100,6 +100,8 @@ export function useDashboardEffects({
       pic: null,
     };
     prefetchAnalysis(queryClient, params);
+    // PERF-HEATMAP: also prefetch heatmap (independent API, not part of analysis)
+    prefetchHeatmap(queryClient, { month: params.month, week: params.week });
   }, [status, queryClient, monthLabel, currentWeek]);
 
   // Auto-set default periode pembanding = SAME weekLabel in previous month (cumulative weeks)

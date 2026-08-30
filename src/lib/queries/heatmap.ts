@@ -36,6 +36,8 @@ export interface HeatmapCell {
   itemName: string;
   value: number;
   recordCount: number;
+  // Outlet count in this area (for avg-per-outlet calculation)
+  outletCount: number;
   // Raw quantity aggregates (always ABS magnitude) for drill-down display
   qtyBom: number;
   qtyDeviasi: number;
@@ -170,6 +172,7 @@ export async function queryAreaItemHeatmap(
       i.name as "itemName",
       ${metricExpr} as value,
       CAST(COUNT(*) AS INTEGER) as "recordCount",
+      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
       COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
       COALESCE(SUM(ABS(ir."qtyDeviasi")), 0) as "qtyDeviasi",
       COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "qtyWaste",

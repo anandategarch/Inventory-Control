@@ -36,6 +36,7 @@ interface HeatmapCell {
   itemName: string;
   value: number;
   recordCount: number;
+  outletCount: number;
   qtyBom: number;
   qtyDeviasi: number;
   qtyWaste: number;
@@ -124,6 +125,16 @@ function formatCellValue(metric: HeatmapMetric, value: number): string {
   return fmtHeatmapCompact(value);
 }
 
+// Metrics where avg-per-outlet is meaningful (sum-based magnitudes, not averages/counts)
+const AVG_ELIGIBLE_METRICS: ReadonlySet<HeatmapMetric> = new Set([
+  'absNominalDeviasi', 'nominalWaste', 'nominalSusut',
+]);
+
+function computeAvgPerOutlet(value: number, outletCount: number): number {
+  if (outletCount <= 0) return 0;
+  return value / outletCount;
+}
+
 // ============================================================
 //  Memoized Cell — click opens drill-down Sheet
 // ============================================================
@@ -143,21 +154,32 @@ const HeatmapCellView = memo(function HeatmapCellView({
   const bg = getHeatColor(value, maxVal);
   const textCls = getTextColor(value, maxVal);
   const recordCount = cell?.recordCount ?? 0;
+  const outletCount = cell?.outletCount ?? 0;
+  const showAvg = AVG_ELIGIBLE_METRICS.has(metric) && value > 0 && outletCount > 0;
+  const avgValue = showAvg ? computeAvgPerOutlet(value, outletCount) : 0;
+  const avgTextCls = avgValue > 0 && getTextColor(avgValue, maxVal) === 'text-white' ? 'text-white/70' : 'text-foreground/60';
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="h-9 w-full rounded-sm flex items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform"
+          className="h-11 w-full rounded-sm flex flex-col items-center justify-center cursor-pointer relative z-0 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-amber-500 transition-transform gap-0"
           style={{ backgroundColor: bg === 'transparent' ? 'rgba(0,0,0,0.02)' : bg }}
           onClick={() => onCellClick(areaName, itemName)}
           aria-label={`Detail ${areaName} ${itemName}`}
         >
           {value > 0 && (
-            <span className={`text-[10px] font-medium ${textCls}`}>
-              {formatCellValue(metric, value)}
-            </span>
+            <>
+              <span className={`text-[10px] font-semibold leading-tight ${textCls}`}>
+                {formatCellValue(metric, value)}
+              </span>
+              {showAvg && (
+                <span className={`text-[8px] leading-tight ${avgTextCls}`}>
+                  Ø {fmtHeatmapCompact(avgValue)}
+                </span>
+              )}
+            </>
           )}
         </button>
       </TooltipTrigger>
@@ -165,6 +187,14 @@ const HeatmapCellView = memo(function HeatmapCellView({
         <div className="font-medium leading-snug">{areaName} → {itemName}</div>
         <div className="text-primary-foreground/80 mt-0.5">
           {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(value)}</span>
+        </div>
+        {showAvg && (
+          <div className="text-primary-foreground/80">
+            Rata-rata per resto: <span className="font-medium text-primary-foreground">{fmtIDR(avgValue)}</span>
+          </div>
+        )}
+        <div className="text-primary-foreground/80">
+          Jumlah resto: <span className="font-medium text-primary-foreground">{outletCount}</span>
         </div>
         <div className="text-primary-foreground/80">
           Jumlah record: <span className="font-medium text-primary-foreground">{recordCount}</span>
@@ -182,6 +212,7 @@ const HeatmapCellView = memo(function HeatmapCellView({
   prev.itemName === next.itemName &&
   prev.cell?.value === next.cell?.value &&
   prev.cell?.recordCount === next.cell?.recordCount &&
+  prev.cell?.outletCount === next.cell?.outletCount &&
   prev.maxVal === next.maxVal &&
   prev.metric === next.metric
 );
@@ -389,7 +420,7 @@ function AreaItemHeatmapInner() {
                     <span>Kontribusi: <span className="font-medium text-foreground">{paretoInfo.cumulativePct}%</span></span>
                   </>
                 )}
-                <span className="ml-auto text-amber-700 dark:text-amber-400">💡 Klik sel untuk detail per resto</span>
+                <span className="ml-auto text-amber-700 dark:text-amber-400">💡 Total di atas · Ø rata-rata/resto · Klik sel untuk detail</span>
               </div>
             )}
 

@@ -100,6 +100,13 @@ export default function AreaItemHeatmapSheet({
   const totalNominal = useMemo(() => rows.reduce((s, r) => s + r.nominalDeviasi, 0), [rows]);
   const totalQtyDeviasi = useMemo(() => rows.reduce((s, r) => s + r.qtyDeviasi, 0), [rows]);
   const totalQtyBom = useMemo(() => rows.reduce((s, r) => s + r.qtyBom, 0), [rows]);
+  const totalQtyWaste = useMemo(() => rows.reduce((s, r) => s + r.qtyWaste, 0), [rows]);
+  const totalQtySusut = useMemo(() => rows.reduce((s, r) => s + r.qtySusut, 0), [rows]);
+  const totalQtyTrial = useMemo(() => rows.reduce((s, r) => s + r.qtyTrial, 0), [rows]);
+  const outletCount = rows.length;
+  const avgNominal = outletCount > 0 ? totalNominal / outletCount : 0;
+  const avgQtyDeviasi = outletCount > 0 ? totalQtyDeviasi / outletCount : 0;
+  const avgQtyBom = outletCount > 0 ? totalQtyBom / outletCount : 0;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -136,7 +143,7 @@ export default function AreaItemHeatmapSheet({
         {!isLoading && !isError && rows.length > 0 && (
           <>
             {/* Aggregate summary */}
-            <div className="px-4 py-3 border-b bg-muted/20 grid grid-cols-3 gap-2 text-center">
+            <div className="px-4 py-3 border-b bg-muted/20 grid grid-cols-4 gap-2 text-center">
               <div>
                 <div className="text-[10px] text-muted-foreground">Total Resto</div>
                 <div className="text-sm font-semibold">{rows.length}</div>
@@ -148,6 +155,10 @@ export default function AreaItemHeatmapSheet({
               <div>
                 <div className="text-[10px] text-muted-foreground">Total Nominal</div>
                 <div className="text-sm font-semibold tabular-nums">{fmtIDR(totalNominal)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground">Ø per Resto</div>
+                <div className="text-sm font-semibold tabular-nums text-amber-600">{fmtIDR(avgNominal)}</div>
               </div>
             </div>
 
@@ -203,8 +214,20 @@ export default function AreaItemHeatmapSheet({
                       <td className="py-2 px-1.5 text-right tabular-nums">
                         {totalQtyBom > 0 ? `${((totalQtyDeviasi / totalQtyBom) * 100).toFixed(1).replace('.', ',')}%` : '—'}
                       </td>
-                      <td colSpan={3} className="py-2 px-1.5 text-right text-muted-foreground text-[10px]">Qty Waste/Susut/Trial total</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums text-muted-foreground">{totalQtyWaste > 0 ? fmtNum(totalQtyWaste) : '—'}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums text-muted-foreground">{totalQtySusut > 0 ? fmtNum(totalQtySusut) : '—'}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums text-muted-foreground">{totalQtyTrial > 0 ? fmtNum(totalQtyTrial) : '—'}</td>
                       <td className="py-2 px-1.5 text-right tabular-nums">{fmtIDR(totalNominal)}</td>
+                    </tr>
+                    <tr className="bg-amber-50/50 dark:bg-amber-950/20 font-medium text-amber-700 dark:text-amber-400">
+                      <td className="py-2 px-1.5">Ø PER RESTO</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(avgQtyBom)}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(avgQtyDeviasi)}</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">
+                        {avgQtyBom > 0 ? `${((avgQtyDeviasi / avgQtyBom) * 100).toFixed(1).replace('.', ',')}%` : '—'}
+                      </td>
+                      <td colSpan={3} className="py-2 px-1.5 text-right text-[10px] text-muted-foreground">Rata-rata per resto</td>
+                      <td className="py-2 px-1.5 text-right tabular-nums">{fmtIDR(avgNominal)}</td>
                     </tr>
                   </tfoot>
                 </table>
