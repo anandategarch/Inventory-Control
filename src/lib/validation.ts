@@ -265,6 +265,21 @@ export const heatmapQuerySchema = z.object({
   pic: picSchema,
 }).strict();
 
+// /api/item-trend GET query params (TREND-BACKEND — per-item QTY fluctuation
+// timeline across ALL periods). `month` + `week` are optional and used only
+// for the cache key (the query itself returns ALL periods for the item).
+// `metric` selects which QTY to Z-Score on (default: qtyDeviasi).
+export const itemTrendQuerySchema = z.object({
+  month: z.string().min(3).max(50).optional(),
+  week: weekLabelSchema,
+  itemName: z.string().min(1).max(200),
+  metric: z.enum(['qtyDeviasi', 'qtyWaste', 'qtySusut', 'qtyTrial']).optional(),
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  outlet: outletCodeSchema,
+  pic: picSchema,
+}).strict();
+
 // ============================================================
 //  Helper: validate query params, return 400 on failure
 // ============================================================

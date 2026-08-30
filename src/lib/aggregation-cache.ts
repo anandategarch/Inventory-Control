@@ -408,9 +408,12 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // and `drilldown` to the invalidation list — these routes now use
   // AggregationCache (5-min TTL via withCacheAndDedup) and must be cleared
   // on any mutation alongside the existing 6 routes.
+  // TREND-BACKEND: added `item-trend` (per-item QTY fluctuation timeline —
+  // reads from InventoryRecord across ALL periods, so mutations affect it).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
+    'item-trend',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

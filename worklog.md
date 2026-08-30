@@ -35459,3 +35459,432 @@ EXPLAIN ANALYZE on 5 heaviest queries + index/table-size audit + withStatementTi
 - Code findings verified by reading 9 of 16 query modules (heatmap.ts, dashboard.ts, shared.ts, top-items.ts, rule-evaluation.ts, historical.ts, pareto.ts via grep, drilldown route, status route). The other 7 modules verified via grep for `withStatementTimeout` wrapping (47/47 wrapped) and `SELECT *` usage (4/4 on CTEs only).
 - No code changes made (audit only). Zero source files (.ts/.tsx) were modified.
 
+
+---
+
+## TREND-BACKEND — Item Trend Backend (query + API)
+**Date:** 2026-08-30 · **Agent:** Backend Developer · **Task ID:** TREND-BACKEND
+
+### Scope
+Build the backend (query module + API route + Zod schema + cache invalidation
+registration) for the NEW "Trend Item" tab — shows fluktuasi (fluctuation) per
+item across ALL periods with QTY values (not nominal), Z-Score, and historical
+baseline. Frontend (tab UI) owned by a separate agent.
+
+### Files Created
+1. **`src/lib/queries/item-trend.ts`** (NEW — 234 lines)
+   - `queryItemTrendTimeline(itemName, filters, metric)` — returns ALL periods
+     (monthLabel × weekLabel) for a given item with:
+     - ABS magnitude aggregates: `qtyBom`, `qtyDeviasi`, `qtyWaste`, `qtySusut`,
+       `qtyTrial`, `nominalDeviasi`
+     - SIGNED `qtyDeviasiSigned` (SUM(qtyDeviasi) — for direction display)
+     - `outletCount` (COUNT DISTINCT outletId), `recordCount` (COUNT *)
+     - `monthKey` (from SourceFile, for chronological sort)
+     - `zScore` (SIGNED, per PRD §5.2 + `calcZScoreFromStats` convention:
+       positive = above mean = worse, negative = below = better)
+     - `historicalMean`, `historicalStdDev`, `sampleSize` (baseline computed
+       from same-week OTHER periods — cumulative weeks pattern)
+   - Strategy:
+     - Single SQL query with `JOIN Item` (exact match `i.name = ${itemName}`)
+       + `LEFT JOIN SourceFile` (for monthKey sort) + `buildSqlFilters` for
+       area/kelompok/outletCode/picOutletCodes.
+     - `itemName` is NOT passed through `SqlFilterOpts` (which uses LIKE —
+       would over-match "CABAI" → "CABAI FROZEN" + "CABAI MERAH"). Exact
+       match is applied directly in the WHERE clause.
+     - Z-Score computed in JS (per-period exclusion requires looping; DB
+       window-function approach would be harder to read).
+     - Same-week baseline: groups periods by `weekLabel` (cumulative weeks —
+       W4 Juli vs [W4 Mei, W4 Juni], NOT vs [W1, W2, W4 Mei, W1, W2, W4 Juni]).
+     - Excludes current period from baseline (no leakage).
+     - Requires `n >= 4` (HISTORICAL_MIN_WEEKS) AND `stdDev > 0` for Z-Score;
+       else `null`.
+     - Wrapped in `withStatementTimeout` (heavy aggregation across ALL
+       InventoryRecord rows for this item — same pattern as `heatmap.ts`).
+     - Uses `Prisma.sql` tagged templates (zero `$queryRawUnsafe`).
+
+2. **`src/app/api/item-trend/route.ts`** (NEW — 184 lines)
+   - `GET /api/item-trend?itemName=&metric=&month=&week=&area=&kelompok=&outlet=&pic=`
+   - Pattern (per CONVENTIONS.md §1 + §3.1):
+     - `export const dynamic = 'force-dynamic'`
+     - `export const maxDuration = 30` (light route — single SQL query)
+     - Rate limiting (30 req/min per IP — interactive UI control)
+     - Zod validation (`itemTrendQuerySchema` — strict mode rejects unknown params)
+     - DB cache via `withCacheAndDedup` (5-min TTL) + SWR
+       (stale-while-revalidate — first request after TTL expiry gets stale data
+       in <50ms + fire-and-forget background recompute)
+     - Cache key includes `month` + `week` + `itemName` + `metric` + filters
+       (all response-affecting params; `metric` is in `extra` to avoid
+       cache poisoning between e.g. `qtyDeviasi` and `qtyWaste`).
+     - Resolve month BEFORE cache key (so "Agustus 2026" + "agustus 2026"
+       share one entry — same pattern as `/api/area-item-heatmap`).
+     - Parallel resolve kelompok + PIC inside computeFn (saves 50-100ms on
+       cold path).
+     - `startedAt` timing + `durationMs` in response.
+     - Generic error message on failure (no DB schema/SQL leakage).
+   - Response shape:
+     ```json
+     {
+       "success": true,
+       "period": { "month": "...", "week": "..." },
+       "itemName": "...",
+       "metric": "qtyDeviasi",
+       "periods": [...ItemTrendPeriod...],
+       "durationMs": 123,
+       "cached": true,
+       "stale": true
+     }
+     ```
+
+### Files Modified
+3. **`src/lib/validation.ts`** (added 14 lines, line 268-281)
+   - Added `itemTrendQuerySchema` — Zod schema for `/api/item-trend`:
+     - `month`: `z.string().min(3).max(50).optional()` (used for cache key only)
+     - `week`: `weekLabelSchema` (existing reusable schema)
+     - `itemName`: `z.string().min(1).max(200)` (required)
+     - `metric`: `z.enum(['qtyDeviasi', 'qtyWaste', 'qtySusut', 'qtyTrial']).optional()`
+     - `area`, `kelompok`, `outlet`, `pic`: existing reusable schemas
+     - `.strict()` mode rejects unknown query params
+
+4. **`src/lib/aggregation-cache.ts`** (added 1 line + 3 comment lines, line 411-417)
+   - Added `'item-trend'` to the `routes` array in `invalidateAnalysisCache()`.
+   - Now 10 cached routes are invalidated on any mutation (was 9):
+     `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`,
+     `export-report`, `heatmap`, `outlet-items`, `item-history`, `drilldown`,
+     **`item-trend`** (NEW).
+   - Mutations (ingest, settings, pic, data delete, migrate-direction,
+     import-drive) now also clear `item-trend` cache entries — prevents stale
+     trend data after a new file import.
+
+### Quality Gates
+- ✅ `bunx tsc --noEmit` → 0 errors
+- ✅ `bun run lint` → 0 errors (385 warnings — all pre-existing, 0 in new/modified files)
+- ✅ Zero `$queryRawUnsafe` (Prisma.sql tagged templates throughout)
+- ✅ `withStatementTimeout` applied to the heavy query
+- ✅ All API route pattern requirements met (rate limit + Zod + cache + timing)
+
+### API Test Results (curl)
+Dev server started with `bun run dev` on port 3000. Tested via curl:
+
+```
+=== Test 1 (Spec curl): CABAI FROZEN ===
+$ curl -s "http://localhost:3000/api/item-trend?itemName=CABAI%20FROZEN&metric=qtyDeviasi" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'periods: {len(d.get(\"periods\",[]))}, first: {d.get(\"periods\",[{}])[0] if d.get(\"periods\") else \"none\"}')"
+
+periods: 3, first: {'monthLabel': 'Juni 2026', 'weekLabel': 'WEEK 4', 'monthKey': '2026-06',
+  'qtyBom': 0, 'qtyDeviasi': 358370.7865, 'qtyDeviasiSigned': -358370.7865,
+  'qtyWaste': 0, 'qtySusut': 0, 'qtyTrial': 0, 'nominalDeviasi': 33098763.17,
+  'outletCount': 1, 'recordCount': 1, 'zScore': None,
+  'historicalMean': 3776314.606754, 'historicalStdDev': 4751840.197764354,
+  'sampleSize': 2}
+```
+
+Z-Score is `null` because `sampleSize=2 < HISTORICAL_MIN_WEEKS=4`. This is
+correct behavior — Z-Score requires ≥4 OTHER same-week periods (cumulative
+weeks pattern). CABAI FROZEN only has 3 same-week periods total in DB
+(WEEK 4 of Juni/Juli/Agustus 2026), so baseline n=2 after excluding current.
+
+**Other test results:**
+
+| Test | Result |
+|------|--------|
+| Test 2: Different metric (`qtyWaste`) | 200 — same 3 periods, `metric` echoed back |
+| Test 3: Missing `itemName` | 400 — `Invalid query params: itemName: Invalid input: expected string, received undefined` |
+| Test 4: Bad metric (`invalid`) | 400 — `Invalid option: expected one of "qtyDeviasi"\|"qtyWaste"\|"qtySusut"\|"qtyTrial"` |
+| Test 5: Strict mode — unknown param (`unknownParam`) | 400 — `Unrecognized key: "unknownParam"` |
+| Test 6: Cache hit (second call same params) | 200 — `cached: true`, `durationMs: 835` (from original compute) |
+| Test 7: Non-existent item | 200 — `success: true`, `periods: []` (no 404 — empty result is valid) |
+| Test 8: With area filter (`JAWA BARAT 1`) | 200 — 1 period (filtered to 17 outlets in that area) |
+| Test 9: With `month` + `week` (cache key) | 200 — `period: {month: "Agustus 2026", week: "WEEK 4"}` echoed back |
+
+**Performance** (server-side `application-code` time from dev.log):
+- Cold (Test 1, includes Next.js compile + DB query + cache write): 810ms
+- Cold (Test 2, different metric, different cache key): 799ms
+- Warm (Test 6, cache hit): 208ms
+- 400 validation errors: 4-12ms (Zod fast-fail)
+
+### Implementation Notes
+- **Cumulative weeks pattern**: Z-Score for W4 Juli is computed against
+  [W4 Mei, W4 Juni] (same weekLabel, excluding current), NOT against
+  [W1, W2, W4 Mei, W1, W2, W4 Juni] (all periods). This matches the existing
+  `historical.ts` + `item-history` route pattern (PRD §5.2 + audit BUG 5 fix).
+- **SIGNED zScore**: per `calcZScoreFromStats` in `src/lib/metrics/historical.ts`:
+  - Positive = current magnitude ABOVE historical mean (worse than usual) → RED
+  - Negative = current magnitude BELOW historical mean (better than usual) → GREEN
+  - Zero = current equals historical mean
+  - Value + baseline use ABS magnitude per PRD §5.2; the RESULT is signed for
+    direction.
+- **Exact itemName match**: The dashboard's item picker selects from a precise
+  list (via `/api/item-search`), so `itemName` is matched exactly (`i.name = ${itemName}`)
+  in the WHERE clause. This is DIFFERENT from `buildSqlFilters` which uses LIKE
+  (substring match) — that would over-match "CABAI" → both "CABAI FROZEN" AND
+  "CABAI MERAH". So `itemName` is explicitly nulled in the `SqlFilterOpts` passed
+  to `buildSqlFilters`.
+- **Cache key includes `metric`**: Without it, requests with different `metric`
+  values would share one cache entry → wrong Z-Score/baseline served (cache
+  poisoning). The `extra: { metric }` parameter appends `metric=qtyDeviasi`
+  (etc.) to the cache key as a sorted key=value pair.
+- **Cache key includes `month` + `week`**: These are optional (the query
+  returns ALL periods regardless), but they're part of the cache key so the
+  frontend can fetch trend data scoped to a "current period" context. Two
+  requests with different `month`/`week` get separate cache entries even
+  though the response data is the same — this is intentional (the `period`
+  field in the response echoes back the requested month/week).
+- **Empty result for non-existent item**: Returns `success: true, periods: []`
+  instead of 404. This matches the heatmap route's pattern (empty cells array
+  when no data) and is more user-friendly than a 404 (the frontend can show
+  "No data for this item" gracefully).
+- **DB connection instability**: Dev server had to be restarted multiple
+  times during testing (watchdog or PgBouncer idle timeout killed the
+  `next-server` child process after ~30s of inactivity). This is a
+  pre-existing dev-environment issue (noted in PERF-AUDIT-API worklog
+  "Dev server instability" — Methodology Limitations §1), not a regression
+  from this change.
+
+### Next Actions (for frontend agent)
+1. Add "Trend Item" tab to the dashboard tab list (currently 4 tabs: Dashboard,
+   Resto, Peer, Pareto). See `src/components/dashboard/tabs/` for the existing
+   tab pattern (`DashboardTab.tsx`, `RestoTab.tsx`, etc.).
+2. Add an item picker (use existing `/api/item-search` for autocomplete — same
+   pattern as FilterBar's item picker).
+3. Add a metric selector (4 options: Deviasi / Waste / Susut / Trial — same as
+   `HistoricalZScoreCard`'s metric selector).
+4. Render a timeline chart (Recharts LineChart — lazy-loaded per chart) showing
+   the selected metric's QTY per period, with Z-Score as a secondary axis or
+   color-coded dots (red = zScore > 2, yellow = 1.5 < zScore ≤ 2, green = zScore
+   < 0).
+5. Add a baseline reference line (dashed) showing `historicalMean` per period.
+6. Wrap the tab in `FetchAware` + `ErrorBoundary` (same pattern as `RestoTab`).
+7. Wire up TanStack Query hook (`useItemTrend`) — follow the existing
+   `useAnalysis` hook pattern in `src/hooks/useAnalysis.ts`.
+8. Add `prefetchItemTrend` (optional — fire on item picker hover, same pattern
+   as `prefetchAnalysis` + `prefetchHeatmap`).
+
+### Verification
+- `bunx tsc --noEmit` → 0 errors (clean).
+- `bun run lint` → 0 errors, 385 pre-existing warnings (0 in new/modified files:
+  `queries/item-trend.ts`, `api/item-trend/route.ts`, `validation.ts`,
+  `aggregation-cache.ts`).
+- API tested end-to-end with 9 curl scenarios (cold cache, warm cache,
+  different metric, validation errors, strict mode, non-existent item, area
+  filter, month/week cache key).
+- DB query verified against live Supabase PostgreSQL (port 6543, transaction
+  pooler). Returns 3 periods for CABAI FROZEN (WEEK 4 of Juni/Juli/Agustus 2026)
+  with correct ABS magnitude aggregates + null Z-Score (insufficient baseline).
+
+---
+Task ID: TREND-FRONTEND
+Agent: Frontend Developer (Z.ai Code)
+Task: Build frontend for new "Trend Item" tab — item search + metric
+selector + line chart (Z-Score + historical baseline) + sortable data
+table. Consumes the `/api/item-trend` backend (built in TREND-BACKEND)
+and the existing `/api/item-search?mode=autocomplete` for the search bar.
+
+Work Log:
+- Read MASTER_CONTEXT.md (§5 components, §6 features), worklog tail
+  (TREND-BACKEND entry — confirmed API response shape), page.tsx (4-tab
+  structure), DashboardTab/RestoTab/PeerTab/ParetoTab patterns,
+  HistoricalZScoreCard (Z-Score coloring), ItemTrendChart (reference),
+  useAnalysis.ts (TanStack Query pattern).
+- Built 3 new pieces + 1 modification (page.tsx):
+
+### Files Created
+1. **`src/components/dashboard/tabs/ItemTrendTab.tsx`** (NEW — ~520 lines)
+   - Main component for the new "Trend Item" tab.
+   - Layout:
+     - Header: title + FormulaInfo + cache/stale/fetch badges.
+     - Search row: debounced autocomplete input (uses
+       `/api/item-search?mode=autocomplete` — same pattern as
+       GlobalItemSearchModal). Dropdown shows itemName + outlet count +
+       total impact. Click-to-select sets `selectedItem` state (local —
+       not in Zustand, only this tab cares).
+     - Metric selector: 4 toggle buttons (QTY Deviasi / Waste / Susut /
+       Trial — matches HistoricalZScoreCard style). Default = Deviasi.
+     - Summary line: period count + abnormal/warning/elevated counts +
+       count of periods without baseline (sampleSize < 4).
+     - Empty state if no item selected ("Pilih item untuk melihat
+       trend" + tip about Z-Score minimum data requirement).
+     - Loading + error + empty-data states.
+     - Chart (lazy-loaded — see #2 below).
+     - Sortable data table (Period | QTY BOM | QTY Deviasi signed |
+       Z-Score | Status | Outlets | Records). Default sort = period
+       chronological asc; clicking header toggles sort dir. Z-Score
+       column has interactive tooltip with breakdown (current / mean /
+       std dev / sample size / |Nominal|).
+   - Z-Score coloring reused from HistoricalZScoreCard (`zScoreColor` +
+     `zScoreStatus`) — same visual language across dashboard.
+   - Status badge: ABNORMAL (z>3), WARNING (z>2), ELEVATED (z>1),
+     BAIK (z<-2), NORMAL (else), "—" (z=null).
+   - Wrapped in `React.memo` (page.tsx re-renders on any Zustand
+     state change — memo skips unrelated re-renders).
+   - Local UI state (selectedItem, metric, query, sortKey, sortDir)
+     — not in Zustand (only this tab cares).
+   - Pulls dashboard filters (monthLabel, currentWeek, area, kelompok,
+     outletCode, pic) via `useShallow` so trend respects the global
+     filter context.
+
+2. **`src/components/dashboard/tabs/ItemTrendLineChart.tsx`** (NEW — ~340 lines)
+   - Recharts `LineChart` lazy-loaded by `ItemTrendTab` via `next/dynamic`
+     (ssr: false) — keeps Recharts (5.4MB) out of the main bundle.
+     Loading fallback = spinner.
+   - Chart layout:
+     - X-axis: period short label ("Jun W4", "Jul W4", …).
+     - Y1 (left): QTY value (signed for Deviasi, ABS for Waste/Susut/
+       Trial). Compact tick formatter (K/M suffixes).
+     - Y2 (right): Z-Score (-4 .. +4). ReferenceLines at z=±2 (amber/
+       emerald) and z=±3 (red) for visual severity guides.
+     - Lines:
+       - Historical mean baseline (dashed muted, small dots).
+       - QTY value (solid amber, active dot on hover).
+       - Z-Score (transparent line + custom dots colored by signed
+         z: red (z>3), amber (2<z≤3), yellow (1<z≤2), muted gray
+         (0<z≤1), emerald-400 (-2<z≤-1), emerald-500 (z≤-2), muted
+         (z=null)).
+     - Custom tooltip: full label, current metric value (amber),
+       signed deviasi (red/green), QTY BOM, historical mean, Z-Score
+       (with status color), |Nominal|, outlets/records, sample size.
+     - All derived data wrapped in `useMemo` (per AUDIT-ANIMATION
+       pattern — avoid frame drops during render).
+     - `isAnimationActive={false}` on all Lines (per audit pattern —
+       Recharts animations cause frame drops on data updates).
+
+### Files Modified
+3. **`src/hooks/useAnalysis.ts`** (added ~110 lines, line 731-839)
+   - Added `ItemTrendPeriod` interface (mirrors API response — exact
+     match including the SIGNED `qtyDeviasiSigned` field and NULLable
+     `zScore`).
+   - Added `ItemTrendData` interface (success, period, itemName,
+     metric, periods[], durationMs, cached?, stale?).
+   - Added `ItemTrendMetric` type union: `'qtyDeviasi' | 'qtyWaste' |
+     'qtySusut' | 'qtyTrial'`.
+   - Added `ItemTrendParams` interface (itemName required; metric,
+     area, kelompok, outletCode, pic, month, week optional).
+   - Added `useItemTrend(params)` hook:
+     - queryKey: `['item-trend', itemName, metric, area, kelompok,
+       outletCode, pic, month, week]` — metric is in the key so
+       switching metric triggers a new fetch (and gets a separate
+       cache entry on the server).
+     - queryFn: fetches `/api/item-trend?...` with proper
+       URLSearchParams building. Guards content-type for HTML
+       (server-crash fallback) and parses JSON error response.
+     - `enabled: Boolean(params.itemName)` — only fires when an item
+       is selected (avoids burning a request on tab mount).
+     - `staleTime: 5 min` — matches server DB cache TTL.
+     - `gcTime: 10 min` — keep data across tab switches.
+     - `placeholderData: keepPreviousData` — chart/table don't go
+       blank while switching items.
+     - `refetchOnWindowFocus: false` — interactive UI control.
+
+4. **`src/app/page.tsx`** (5 small edits, +9 lines net)
+   - Added `import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';`.
+   - Added `ErrorBoundary` import (existing import — was missing because
+     page.tsx didn't previously wrap any TabsContent in ErrorBoundary
+     directly; the tab components do that internally. The new Trend Item
+     tab is wrapped externally per task spec).
+   - Added `TrendingUp` to lucide-react imports (for the tab icon).
+   - Added 5th `<TabsTrigger value="trend">` with TrendingUp icon +
+     "Trend Item" label (same `tabTriggerClass` as other tabs).
+   - Added 5th `<TabsContent value="trend">` with `ErrorBoundary` +
+     `<ItemTrendTab />` (direct import, not lazy — it's a tab content
+     and the lazy Recharts chunk is inside ItemTrendTab).
+   - Updated module-map comment at top of file to list ItemTrendTab.
+
+### Implementation Notes
+- **GlobalItemSearchModal preserved**: The Cmd+K modal stays as-is for
+  cross-outlet analysis. The new Trend Item tab has its own inline
+  search bar (always visible when the tab is active) that's separate
+  from the modal. They serve different purposes:
+    - Modal: cross-outlet snapshot for ONE item (current period only).
+    - Tab: longitudinal trend for ONE item across ALL periods (with
+      Z-Score + historical baseline).
+- **No Zustand changes**: selectedItem lives in ItemTrendTab's local
+  state — only that tab cares about it. Adding it to the global store
+  would force every component on the dashboard to re-render when an
+  item is picked. (The existing `itemName` in Zustand is for the
+  global filter bar — different concern.)
+- **Metric is part of both client queryKey AND server cache key**:
+  prevents cache poisoning between e.g. qtyDeviasi vs qtyWaste for
+  the same item (server side — `extra: { metric }` in buildCacheKey,
+  per TREND-BACKEND).
+- **Z-Score null handling**: When `sampleSize < 4` (HISTORICAL_MIN_WEEKS)
+  or `stdDev === 0`, the API returns `zScore: null`. Frontend handles
+  this gracefully:
+    - Chart dot is muted gray (no color coding).
+    - Table cell shows "—" (em dash).
+    - Status badge shows "—".
+    - Sort treats null as -Infinity so real anomalies always surface
+      to the top when sortDir=desc.
+    - Summary line includes a "N tanpa baseline (n<4)" counter.
+- **Period chronological sort**: uses `monthKey|weekNumber` (zero-
+  padded) as the sort key so "2026-06|04" < "2026-07|04" < "2026-08|04".
+  Same pattern as ItemTrendChart.tsx (the existing trend chart in the
+  Cmd+K modal).
+- **Custom Recharts LineDot typing**: Recharts' `LineDot` type requires
+  returning a `ReactElement<SVGElement>` (not `null`). When `cx`/`cy`/
+  `payload` are missing (rare edge case during animation), the dot
+  renderers return an empty `<g />` instead of null. This was the only
+  TypeScript error caught during the type-check pass — fixed before
+  the dev-server test.
+
+### Quality Gates
+- ✅ `bunx tsc --noEmit` → 0 errors (clean).
+- ✅ `bun run lint` → 0 errors, 385 pre-existing warnings (down from
+  390 — fixed 5 warnings in the new files: removed unused `History`
+  import + unused `getTooltipStyle` import + wrapped `periods` in
+  useMemo to satisfy react-hooks/exhaustive-deps). Zero new warnings
+  introduced.
+- ✅ Page compiles successfully: `GET / 200 in 10.2s` (cold compile),
+  75KB HTML returned, no errors in server log.
+- ✅ API integration verified end-to-end:
+  - `/api/item-trend?itemName=CABAI%20FROZEN&metric=qtyDeviasi` →
+    HTTP 200, 3 periods (Juni/Juli/Agustus W4 2026), response shape
+    matches `ItemTrendPeriod` interface exactly.
+    - First period: `qtyDeviasiSigned=-358370.79, zScore=null,
+      historicalMean=3776314.61, sampleSize=2` (n<4 → null Z-Score
+      as expected).
+    - Last period: `qtyDeviasiSigned=-7136373.03, zScore=null,
+      outletCount=24, recordCount=24`.
+  - `/api/item-search?mode=autocomplete&q=CABAI&month=AGUSTUS%202026&week=WEEK%204`
+    → HTTP 200, returns `CABAI FROZEN` with 24 outlets (autocomplete
+    dropdown will populate correctly).
+
+### Dev Server Note
+- The Next.js dev server exhibited the same instability noted in the
+  TREND-BACKEND worklog (server dies after ~30s of inactivity — likely
+  a watchdog or PgBouncer idle timeout on the dev box). This is a
+  pre-existing environment issue, NOT a regression from these changes.
+  All testing was done by starting the server + immediately firing
+  curl requests within the ~30s window before the next-server child
+  process was killed. Production (`next build` + `next start`) is not
+  affected.
+
+### Next Actions (optional follow-ups)
+1. **prefetchItemTrend** (optional): Add a `prefetchItemTrend` helper
+   in `useAnalysis.ts` (same pattern as `prefetchAnalysis` /
+   `prefetchHeatmap`) that fires when the user hovers an autocomplete
+   result. This would warm the TanStack cache so the click is instant.
+2. **Add Trend Item tab to keyboard shortcuts**: The
+   `useDashboardActions` hook maps `1/2/3/4` to tab switches. Could
+   add `5` → Trend Item tab.
+3. **Drill-down from chart dots**: Clicking a chart dot could open a
+   drill-down drawer showing the per-outlet records for that period
+   (similar to AreaItemHeatmapSheet pattern). Currently the dots are
+   display-only.
+4. **Multi-item comparison**: Allow selecting 2-3 items and overlaying
+   their trend lines on the same chart (similar to the existing
+   ItemTrendChart that shows top-5 outlets as multi-line).
+
+### Verification
+- `bunx tsc --noEmit` → 0 errors.
+- `bun run lint` → 0 errors, 385 pre-existing warnings (0 in
+  new/modified files).
+- Page render: `GET / 200 in 10.2s` (cold compile, no errors).
+- API integration: 2 endpoints tested end-to-end (item-trend +
+  item-search autocomplete), both return HTTP 200 with expected
+  response shapes.
+- All 5 quality gates from the task spec met:
+  1. ✅ `bun run lint` → 0 errors
+  2. ✅ `bunx tsc --noEmit` → 0 errors
+  3. ✅ Tab added to page.tsx (5th tab, value="trend", TrendingUp icon)
+  4. ✅ Hook added to useAnalysis.ts (useItemTrend + 4 exported types)
+  5. ✅ Component created in src/components/dashboard/tabs/ItemTrendTab.tsx
+     (+ lazy-loaded chart in ItemTrendLineChart.tsx)

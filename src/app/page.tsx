@@ -16,6 +16,7 @@
 //    • tabs/RestoTab        — per-outlet deep dive (lazy RestoAnalysis)
 //    • tabs/PeerTab         — peer comparison (lazy)
 //    • tabs/ParetoTab       — 80/20 Pareto analysis
+//    • tabs/ItemTrendTab    — per-item QTY timeline + Z-Score (NEW — TREND-FRONTEND)
 //    • useDashboardEffects  — 5 useEffects (auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
 //    • shared/index.tsx     — FetchAware, LoadingChart, EmptyState, etc.
@@ -35,16 +36,18 @@ import { DashboardTab } from '@/components/dashboard/tabs/DashboardTab';
 import { RestoTab } from '@/components/dashboard/tabs/RestoTab';
 import { PeerTab } from '@/components/dashboard/tabs/PeerTab';
 import { ParetoTab } from '@/components/dashboard/tabs/ParetoTab';
+import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';
 import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ErrorBoundary } from '@/components/ui/error-boundary';
 import {
   EmptyState, LoadingState, ErrorState, ScrollToTop,
 } from '@/components/dashboard/shared';
 import {
-  Activity, BarChart3, Loader2, Store, TrendingDown,
+  Activity, BarChart3, Loader2, Store, TrendingDown, TrendingUp,
 } from 'lucide-react';
 
 // ItemDeepDive — lazy-loaded (heavy). Custom spinner fallback.
@@ -177,6 +180,9 @@ export default function DashboardPage() {
               <TabsTrigger value="pareto" className={tabTriggerClass}>
                 <TrendingDown className="h-3.5 w-3.5" /> Pareto
               </TabsTrigger>
+              <TabsTrigger value="trend" className={tabTriggerClass}>
+                <TrendingUp className="h-3.5 w-3.5" /> Trend Item
+              </TabsTrigger>
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
@@ -197,6 +203,13 @@ export default function DashboardPage() {
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
             <TabsContent value="pareto" className="space-y-4 mt-2 animate-fade-in-up">
               <ParetoTab data={analysis.data} isFetching={analysis.isFetching} />
+            </TabsContent>
+
+            {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
+            <TabsContent value="trend" className="space-y-4 mt-2 animate-fade-in-up">
+              <ErrorBoundary label="Trend Item">
+                <ItemTrendTab />
+              </ErrorBoundary>
             </TabsContent>
           </Tabs>
         ) : null}
