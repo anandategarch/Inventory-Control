@@ -68,7 +68,7 @@ drill-down and reporting loop.
 - **Pain points the app addresses**:
   - Cannot see "which outlet is worst" at a glance in Excel → Top Outlets + Priority Summary.
   - Hard to compare this week vs last week → Multi-Period Comparison + Growth Drivers.
-  - Anomalies are subtle (not just "big number") → 19-rule engine + multi-metric Z-Score.
+  - Anomalies are subtle (not just "big number") → 19-rule engine + signed Z-Score (Dev/BOM + QTY Deviasi).
 - **Success metric**: Time-to-insight per anomaly < 5 min.
 
 ### 2.2 Secondary — Operations Manager ("Bu Sari")
@@ -220,7 +220,7 @@ Open Pengaturan dialog (gear icon)
 | Priority Summary | Dashboard | P1 / P2 / P3 outlets + recommendations (card-only display — no drilldown) |
 | Insights Panel | Dashboard | Auto-generated executive insights (rule-based, no LLM) |
 | Multi-Period Comparison | Dashboard | 8-week trend table |
-| Advanced Analysis | Dashboard | Variance analysis (top worsened / improved) + Historical Z-Score analysis (critical items vs historical avg, multi-metric selector: Dev/BOM / Waste / Susut / Trial) |
+| Advanced Analysis | Dashboard | Variance analysis (top worsened / improved) + Historical Z-Score analysis (SIGNED: positive=worse/red, negative=better/green; 2-metric selector: Dev/BOM + QTY Deviasi) |
 | BOM Correlation | Dashboard | Per-record findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate Deviasi/Waste/Susut/Trial vs BOM alignment table + narrative findings (`BomCorrelationCard`) |
 | Heatmap Area × Item | Dashboard | Color-coded Area × Item grid (`AreaItemHeatmap`) with 5 metric selectors (Deviasi / Waste / Susut / Dev/BOM % / Record Count). Default mode **Pareto 80%** — auto-selects items contributing to 80% of total magnitude (banner shows "Menampilkan X dari Y item · Kontribusi: Z%"). Each cell displays **Total magnitude (bold) + Ø avg per resto (muted)** for nominal metrics (Deviasi/Waste/Susut). Cell tooltip shows Total + Avg + Outlet Count + Record Count. Click any cell → `AreaItemHeatmapSheet` (right-side Sheet, lazy-loaded via `next/dynamic`) with per-outlet drill-down: qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial, nominalLossSurplus, Dev/BOM%. Sheet footer: TOTAL row + Ø PER RESTO row. API: `/api/area-item-heatmap` + `/api/area-item-heatmap/cell-detail`. |
 | Resto Profile | Resto Analysis | 6-section outlet profile (Performance / Behavior / Historical / Benchmark / Top Risk / Investigation) |
@@ -374,27 +374,35 @@ rule-evaluation SQL CTE using `ABS(qty)` magnitude and div-by-zero guards — se
 ### 5.2 Z-Score formula
 
 ```
-Z-Score = (|current Dev/BOM| − mean(weekly |Dev/BOM|))
-          / STDDEV_SAMP(weekly |Dev/BOM|)
+Z-Score (SIGNED) = (|current value| − mean(weekly |historical values|))
+                   / STDDEV_SAMP(weekly |historical values|)
 ```
 
-The platform computes Z-Score for **four metrics**, not just Dev/BOM:
+- Value + baseline use **ABS (magnitude)** per the formula above.
+- The **result is SIGNED**: positive = current above mean (worse), negative = below (better).
+- Only positive zScore triggers anomaly rules.
 
-| Metric | Field on criticalItems[] |
-|--------|---------------------------|
-| Dev/BOM (default) | `zScore` (Dev/BOM) |
-| Waste | `wasteZScore` (current `|QTY Waste|` vs weekly `|QTY Waste|` baseline) |
-| Susut | `susutZScore` |
-| Trial | `trialZScore` |
+The platform computes Z-Score for **two metrics** (Dev/BOM + QTY Deviasi) in the
+HistoricalZScoreCard, with Z-Score fields also computed for Waste/Susut/Trial in the
+backend (used by rule evaluation, not surfaced in UI selector):
+
+| Metric | Field on criticalItems[] | UI Selector |
+|--------|---------------------------|-------------|
+| Dev/BOM (default) | `zScore` (Dev/BOM ratio) | ✅ Yes |
+| QTY Deviasi | `qtyDeviasiZScore` (current `\|QTY Deviasi\|` vs weekly baseline) | ✅ Yes |
+| Waste | `wasteZScore` | ❌ No (removed from selector) |
+| Susut | `susutZScore` | ❌ No (removed from selector) |
+| Trial | `trialZScore` | ❌ No (removed from selector) |
 
 Each metric has its own historical baseline (mean + stddev) computed from the
 same `queryHistoricalStatsMultiMetric` SQL CTE. The `HistoricalZScoreCard`
-Dashboard component lets the analyst switch between the 4 metrics with a
-selector; the same per-outlet-per-item criticalItems ranking is re-sorted by
-the selected metric's zScore. The BOM Correlation rules (5–7) do NOT use Z-Score
+Dashboard component lets the analyst switch between **2 metrics** (Dev/BOM + QTY Deviasi)
+with a selector; the same per-outlet-per-item criticalItems ranking is re-sorted by
+the selected metric's zScore. Waste/Susut/Trial zScores are computed in the backend
+but not surfaced in the UI selector. The BOM Correlation rules (5–7) do NOT use Z-Score
 — they compare growth signs, which is a different signal.
 
-**Rules of computation** (apply to all 4 metrics identically):
+**Rules of computation** (apply to all metrics identically):
 
 - Each week = **1 observation**. Observation = aggregate value for that
   outlet+item pair (e.g. for Dev/BOM: `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))`).
@@ -403,16 +411,22 @@ the selected metric's zScore. The BOM Correlation rules (5–7) do NOT use Z-Sco
   observed weeks as a sample of the outlet's behaviour.
 - **Exclude current period** from the historical baseline (no leakage).
 - Require `n ≥ HISTORICAL_MIN_WEEKS` (default **4**) — `n` = week count, not row count.
-- Z-Score is always non-negative (magnitude). Direction is tracked separately via
-  `nominalLossSurplus` sign.
+- Z-Score is **SIGNED** (not non-negative). Value + baseline use ABS (magnitude), but the
+  **result** is signed so users can see direction:
+  - **Positive** = current magnitude ABOVE historical mean (worse than usual) → RED
+  - **Negative** = current magnitude BELOW historical mean (better than usual) → GREEN
+  - **Zero** = current equals historical mean
+  - Only POSITIVE zScore triggers anomaly rules (HISTORICAL_ABNORMAL / HISTORICAL_WARNING).
+  - Items with zScore ≤ 0 (better than historical) are NOT shown as anomalous.
+  - Direction (LOSS/SURPLUS) is tracked separately via `nominalLossSurplus` sign.
 
 **Thresholds** (runtime-editable via Settings):
 
 | Threshold | Default | Meaning |
 |-----------|---------|---------|
 | `HISTORICAL_MIN_WEEKS` | 4 | Min weeks of history before zScore is computed |
-| `HISTORICAL_ZSCORE_WARN` | **1.5** | Above this → `HISTORICAL_WARNING` flag + rule 19 |
-| `HISTORICAL_ZSCORE_HIGH` | **2.0** | Above this → `HISTORICAL_HIGH` flag + rules 17/18 |
+| `HISTORICAL_ZSCORE_WARN` | **1.5** | zScore > 1.5 (positive only) → `HISTORICAL_WARNING` flag + rule 19 |
+| `HISTORICAL_ZSCORE_HIGH` | **2.0** | zScore > 2.0 (positive only) → `HISTORICAL_HIGH` flag + rules 17/18 |
 | `BOM_DEVIATION_FACTOR` | **2.0** | Deviation growth > `bomDeviationFactor` × BOM growth → rule 3 fires (ABNORMAL) |
 | `BOM_DISPROPORTIONATE_FACTOR` | **1.5** | Deviation growth > `bomDisproportionateFactor` × BOM growth (and ≤ `BOM_DEVIATION_FACTOR`) → rule 8 fires (WARNING). Range 1.0–5.0. Added in FIX-SETTINGS — decoupled from `BOM_DEVIATION_FACTOR` so lowering `BOM_DEVIATION_FACTOR` no longer silently disables rule 8. |
 
