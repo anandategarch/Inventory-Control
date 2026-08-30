@@ -606,7 +606,7 @@ export async function GET(req: NextRequest) {
     // Promise.all block above (queryVarianceAnalysis). Historical analysis
     // now uses queryHistoricalCriticalItems SQL instead of 35K-record JS loop.
     const histCriticalKeys = [...topFlagByKey.values()]
-      .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
+      .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
       .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
     const histCriticalRows = await queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
     const histCriticalItems = histCriticalRows.map(row => {

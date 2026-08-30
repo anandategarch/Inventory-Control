@@ -599,7 +599,7 @@ function ItemTrendTabImpl() {
                                 <p className="font-semibold">Z-Score Breakdown</p>
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">Current |{METRICS.find(m => m.value === metric)?.shortLabel ?? 'Deviasi'}|:</span>
-                                  <span className="font-medium tabular-nums">{fmtNum(Math.abs(p.qtyDeviasiSigned))}</span>
+                                  <span className="font-medium tabular-nums">{fmtNum(Math.abs(metric === 'qtyDeviasi' ? p.qtyDeviasiSigned : metric === 'qtyWaste' ? p.qtyWaste : metric === 'qtySusut' ? p.qtySusut : p.qtyTrial))}</span>
                                 </div>
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">Historical Mean:</span>

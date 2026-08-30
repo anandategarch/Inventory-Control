@@ -419,6 +419,7 @@ function AreaItemHeatmapInner() {
             {/* Heatmap grid — wrapped in SINGLE Tooltip (PERF-FE: was 280 per-cell Tooltips) */}
             <TooltipPrimitive.Provider delayDuration={100}>
             <TooltipPrimitive.Root open={hoveredCell !== null}>
+            <TooltipPrimitive.Trigger asChild>
             <div
               className="overflow-auto max-h-[520px] rounded border border-border/40"
               style={{ contain: 'layout style' }}
@@ -482,6 +483,7 @@ function AreaItemHeatmapInner() {
                 ))}
               </div>
             </div>
+            </TooltipPrimitive.Trigger>
             <TooltipPrimitive.Portal>
               {hoveredCell && (() => {
                 const hc = cellMap.get(`${hoveredCell.area}|${hoveredCell.item}`);

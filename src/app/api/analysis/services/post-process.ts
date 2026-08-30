@@ -577,7 +577,7 @@ export async function buildHistoricalAnalysis(
   //  - Trial (nominalTrial) — |current trial| vs historical mean
   // ============================================================
   const histCriticalKeys = [...topFlagByKey.values()]
-    .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
+    .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
     .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
   const histCriticalRows = await queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
   const histCriticalItems = histCriticalRows.map(row => {

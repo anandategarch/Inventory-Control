@@ -225,6 +225,7 @@ export interface HeatmapCellDetailRow {
   qtyTrial: number;
   nominalDeviasi: number;
   nominalLossSurplus: number;
+  nominalLossSurplusSigned: number;
   pctQtyDeviasiToBom: number;
   recordCount: number;
 }
@@ -253,6 +254,7 @@ export async function queryHeatmapCellDetail(
       COALESCE(SUM(ABS(ir."qtyTrial")), 0) as "qtyTrial",
       COALESCE(SUM(ABS(ir."nominalDeviasi")), 0) as "nominalDeviasi",
       COALESCE(SUM(ABS(ir."nominalLossSurplus")), 0) as "nominalLossSurplus",
+      COALESCE(SUM(ir."nominalLossSurplus"), 0) as "nominalLossSurplusSigned",
       COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")), 0) as "pctQtyDeviasiToBom",
       CAST(COUNT(*) AS INTEGER) as "recordCount"
     FROM "InventoryRecord" ir

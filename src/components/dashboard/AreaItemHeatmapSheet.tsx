@@ -41,6 +41,7 @@ export interface CellDetailRow {
   qtyTrial: number;
   nominalDeviasi: number;
   nominalLossSurplus: number;
+  nominalLossSurplusSigned: number;
   pctQtyDeviasiToBom: number;
   recordCount: number;
 }
@@ -96,7 +97,7 @@ export default function AreaItemHeatmapSheet({
   });
 
   const rows = data?.rows ?? [];
-  const totalNominal = useMemo(() => rows.reduce((s, r) => s + r.nominalDeviasi, 0), [rows]);
+  const totalNominal = useMemo(() => rows.reduce((s, r) => s + r.nominalLossSurplusSigned, 0), [rows]);
   const totalQtyDeviasi = useMemo(() => rows.reduce((s, r) => s + r.qtyDeviasi, 0), [rows]);
   const totalQtyBom = useMemo(() => rows.reduce((s, r) => s + r.qtyBom, 0), [rows]);
   const totalQtyWaste = useMemo(() => rows.reduce((s, r) => s + r.qtyWaste, 0), [rows]);
@@ -180,7 +181,7 @@ export default function AreaItemHeatmapSheet({
                   <tbody>
                     {rows.map((r, idx) => {
                       const devBomPct = r.qtyBom > 0 ? r.qtyDeviasi / r.qtyBom : 0;
-                      const isLoss = r.nominalLossSurplus < 0;
+                      const isLoss = r.nominalLossSurplusSigned < 0;
                       return (
                         <tr key={`${r.outletCode}-${r.akunPenyesuaian}-${idx}`} className="border-b hover:bg-muted/30">
                           <td className="py-1.5 px-1.5">
@@ -199,7 +200,7 @@ export default function AreaItemHeatmapSheet({
                           <td className="py-1.5 px-1.5 text-right tabular-nums text-muted-foreground">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</td>
                           <td className="py-1.5 px-1.5 text-right tabular-nums text-muted-foreground">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</td>
                           <td className={`py-1.5 px-1.5 text-right tabular-nums font-medium ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>
-                            {fmtIDR(r.nominalLossSurplus)}
+                            {fmtIDR(r.nominalLossSurplusSigned)}
                           </td>
                         </tr>
                       );
