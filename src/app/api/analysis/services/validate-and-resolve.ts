@@ -216,7 +216,11 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
       cachedResult.stale = true;
       // Fire-and-forget: delete stale entry so next request recomputes fresh
       // (can't run full pipeline in background due to multi-stage architecture)
-      void db.aggregationCache.delete({ where: { cacheKey } }).catch(() => {});
+      void db.aggregationCache.delete({ where: { cacheKey } }).catch((e: unknown) => {
+        import('@/lib/logger').then(({ logger }) => {
+          logger.error('[analysis] SWR stale cache delete failed', { error: e instanceof Error ? e.message : String(e), cacheKey });
+        });
+      });
     }
     return { kind: 'response', response: NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS }) };
   }

@@ -375,9 +375,14 @@ function ItemTrendTabImpl() {
             )}
 
             {/* Autocomplete dropdown */}
-            {showDropdown && !selectedItem && deferredQuery.length >= 2 && (
+            {showDropdown && deferredQuery.length >= 2 && (
               <div className="absolute z-30 left-0 right-0 mt-1 max-h-72 overflow-auto rounded-md border bg-background shadow-lg">
-                {acLoading ? (
+                {(!monthLabel || !currentWeek) ? (
+                  <div className="flex flex-col items-center justify-center py-6 text-xs text-muted-foreground">
+                    <Package className="h-6 w-6 mb-1 opacity-30" />
+                    Pilih bulan dan minggu di header terlebih dahulu
+                  </div>
+                ) : acLoading ? (
                   <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> Mencari...
                   </div>

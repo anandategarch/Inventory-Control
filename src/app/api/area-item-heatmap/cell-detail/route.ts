@@ -12,6 +12,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { queryHeatmapCellDetail } from '@/lib/queries/heatmap';
+import { validateQuery, heatmapQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,13 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+
+    // FIX API-06: Zod validation (was missing — no input validation at all)
+    const validation = validateQuery(heatmapQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
+    }
+
     const rawMonth = url.searchParams.get('month') || '';
     const rawWeek = url.searchParams.get('week') || '';
     const areaName = url.searchParams.get('area') || '';

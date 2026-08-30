@@ -61,8 +61,12 @@ export function DrillDownDrawer() {
   }, [open]);
 
   // FIX M1: Load More — fetch next page using cursor, append to allRecords.
+  // FIX FE-06: Guard against filter-change race condition — capture filter signature
+  // at fetch start, verify before appending results.
   const handleLoadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
+    // Capture current filter signature to detect mid-fetch filter changes
+    const filterSig = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
     setLoadingMore(true);
     try {
       const params = new URLSearchParams();
@@ -80,6 +84,9 @@ export function DrillDownDrawer() {
       const res = await fetch(`/api/drilldown?${params.toString()}`);
       const data = await res.json();
       if (data.success) {
+        // FE-06: Verify filter hasn't changed during fetch — if it has, discard results
+        const currentSig = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
+        if (filterSig !== currentSig) return; // Filter changed mid-fetch — discard
         setAllRecords(prev => [...prev, ...data.records]);
         setNextCursor(data.nextCursor);
       }

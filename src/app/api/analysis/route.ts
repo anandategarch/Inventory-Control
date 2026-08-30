@@ -50,11 +50,14 @@ export async function GET(req: NextRequest) {
     // Promise before returning 404 — otherwise the Promise stays pending and
     // concurrent requests for the same cache key hang forever.
     if (records.currSlim.length === 0) {
-      rejectComputation?.(new Error(`No records found for ${params.month} / ${params.week} with given filters.`));
-      return NextResponse.json({
+      const notFoundResponse = {
         success: false,
         message: `No records found for ${params.month} / ${params.week} with given filters.`,
-      }, { status: 404 });
+      };
+      // FIX API-04: Resolve in-flight with the 404 payload (not reject) so concurrent
+      // requests awaiting the same key get a clean response, not a 500 error.
+      resolveComputation?.(notFoundResponse);
+      return NextResponse.json(notFoundResponse, { status: 404 });
     }
 
     // Stage 3 — run 4 parallel SQL aggregate batches + early-fired promises.

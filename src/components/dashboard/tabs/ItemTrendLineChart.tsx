@@ -218,6 +218,15 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
     );
   }
 
+  // FIX FE-10: 1-period data can't draw a trend line — show message instead of degenerate chart
+  if (data.length === 1) {
+    return (
+      <div className="text-center text-muted-foreground text-sm py-12">
+        Hanya 1 periode data tersedia — butuh minimal 2 periode untuk menampilkan tren
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1">
       <p className="text-xs text-muted-foreground">

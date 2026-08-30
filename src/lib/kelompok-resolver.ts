@@ -61,7 +61,10 @@ export async function resolveKelompokOutletCodes(
       SELECT code FROM "Outlet"
       WHERE LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${kelompok})
     `;
-    return rows.map((r) => r.code);
+    const codes = rows.map((r) => r.code);
+    // FIX API-05: return __NO_MATCH__ sentinel when no outlets found (consistent with PIC resolver)
+    // so routes can early-return empty instead of querying all outlets.
+    return codes.length > 0 ? codes : ['__NO_MATCH__'];
   } catch (e) {
     logger.error('[kelompok-resolver] resolveKelompokOutletCodes failed', {
       error: e instanceof Error ? e.message : String(e),

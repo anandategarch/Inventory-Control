@@ -45,14 +45,14 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   // Z-Scores of 680.99 are meaningless and pollute the table.
   // Also filter out items with zScore = 0 (no historical baseline).
   const allItems = data.growthComparison?.historicalAnalysis?.criticalItems || [];
-  // FIX: Only show items where current magnitude is ABOVE historical mean (zScore > 0).
-  // Items with zScore <= 0 (current below historical = better) are NOT anomalous.
-  // Also filter data anomalies (BOM ≈ 0 → extreme pctQtyDeviasiToBom).
-  const items = useMemo(() => allItems.filter(i =>
-    Math.abs(i.currentDevBom) <= 5 &&
-    i.zScore > 0 &&
-    i.historicalAvg > 0
-  ), [allItems]);
+  const [metricView, setMetricView] = useState<'devBom' | 'qtyDeviasi'>('devBom');
+  // FIX FE-05: filter uses active metric's zScore (was always i.zScore = Dev/BOM)
+  const items = useMemo(() => allItems.filter(i => {
+    const activeZ = metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore;
+    return Math.abs(i.currentDevBom) <= 5 &&
+      activeZ > 0 &&
+      i.historicalAvg > 0;
+  }), [allItems, metricView]);
   const [sortKey, setSortKey] = useState<SortKey>('zScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Phase B-4: Pagination
@@ -61,8 +61,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   // Phase B-3: Severity filter
   const [severityFilter, setSeverityFilter] = useState<'all' | 'abnormal' | 'warning' | 'elevated'>('all');
   // Phase B-1: Multi-metric selector — Dev/BOM (ratio) + QTY Deviasi (absolute)
-  // Waste/Susut/Trial removed per user request — Deviasi is the primary metric
-  const [metricView, setMetricView] = useState<'devBom' | 'qtyDeviasi'>('devBom');
+  // metricView state declared above (before items filter — FE-05 fix)
 
   const sorted = useMemo(() => {
     // Phase B-3: Filter by severity — only POSITIVE zScore is anomalous

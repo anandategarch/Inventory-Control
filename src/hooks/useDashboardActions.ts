@@ -120,8 +120,8 @@ export function useDashboardActions({
     }
   }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, toast, status, setExportDialogOpen]);
 
-  // UX-ENHANCE: Refresh handler — invalidates analysis + status queries and
-  // fires a toast. Wired to Cmd/Ctrl+R keyboard shortcut.
+  // UX-ENHANCE: Refresh handler — invalidates ALL query caches.
+  // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, resto-bahan-matrix, pareto)
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['status'] });
@@ -129,6 +129,11 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['item-history'] });
     queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
     queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+    queryClient.invalidateQueries({ queryKey: ['area-item-heatmap'] });
+    queryClient.invalidateQueries({ queryKey: ['item-trend'] });
+    queryClient.invalidateQueries({ queryKey: ['drilldown'] });
+    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
+    queryClient.invalidateQueries({ queryKey: ['pareto'] });
     toast({ title: '🔄 Data diperbarui' });
   }, [queryClient, toast]);
 

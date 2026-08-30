@@ -78,10 +78,10 @@ describe('resolveKelompokOutletCodes', () => {
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('returns empty array when DB query returns no rows', async () => {
+  it('returns __NO_MATCH__ sentinel when DB query returns no rows', async () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     const result = await resolveKelompokOutletCodes('XYZ');
-    expect(result).toEqual([]);
+    expect(result).toEqual(['__NO_MATCH__']);
   });
 
   it('returns empty array on DB error (graceful fallback)', async () => {
