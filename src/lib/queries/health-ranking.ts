@@ -283,6 +283,7 @@ export interface HistoricalCriticalRow {
   area: string;
   pctQtyDeviasiToBom: number | null;
   absNominalDeviasi: number | null;
+  qtyDeviasi: number | null; // signed value for display (Z-Score uses ABS)
   // Multi-metric fields (Phase B-1) — use QTY not nominal
   qtyWaste: number | null;
   qtySusut: number | null;
@@ -319,6 +320,7 @@ export async function queryHistoricalCriticalItems(
       c.area,
       c."pctQtyDeviasiToBom",
       c."absNominalDeviasi",
+      c."qtyDeviasi",
       c."qtyWaste",
       c."qtySusut",
       c."qtyTrial"
@@ -343,6 +345,7 @@ export async function queryHistoricalCriticalItems(
     area: r.area,
     pctQtyDeviasiToBom: r.pctQtyDeviasiToBom == null ? null : Number(r.pctQtyDeviasiToBom),
     absNominalDeviasi: r.absNominalDeviasi == null ? null : Number(r.absNominalDeviasi),
+    qtyDeviasi: r.qtyDeviasi == null ? null : Number(r.qtyDeviasi),
     qtyWaste: r.qtyWaste == null ? null : Number(r.qtyWaste),
     qtySusut: r.qtySusut == null ? null : Number(r.qtySusut),
     qtyTrial: r.qtyTrial == null ? null : Number(r.qtyTrial),

@@ -3,11 +3,15 @@
 //  --------------------------------------------------------
 //  Multi-metric: computes historical mean/stdDev/n for:
 //  - Dev/BOM ratio (SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)))
+//  - QTY Deviasi (SUM(ABS(qtyDeviasi))) — absolute magnitude for Z-Score
 //  - Waste (SUM(ABS(qtyWaste))) — uses QTY, not nominal
 //  - Susut (SUM(ABS(qtySusut))) — uses QTY, not nominal
 //  - Trial (SUM(ABS(qtyTrial))) — uses QTY, not nominal
 //
-//  Returns Map<"outletId|itemId", { devBom, waste, susut, trial }>
+//  NOTE: All metrics use ABS (magnitude) for Z-Score computation per PRD §5.2.
+//  Display layer may show signed values (e.g. currentQtyDeviasi) for direction.
+//
+//  Returns Map<"outletId|itemId", { devBom, qtyDeviasi, waste, susut, trial }>
 //  Each metric has { mean, stdDev, n }.
 // ============================================================
 import { Prisma } from '@prisma/client';
@@ -21,6 +25,7 @@ export interface MetricStats {
 
 export interface MultiMetricHistoricalStats {
   devBom: MetricStats;
+  qtyDeviasi: MetricStats;
   waste: MetricStats;
   susut: MetricStats;
   trial: MetricStats;
@@ -67,6 +72,8 @@ export async function queryHistoricalStatsMultiMetric(
     outletId: number; itemId: number;
     // Dev/BOM
     devBomMean: number; devBomSumSq: number; devBomN: number;
+    // QTY Deviasi (absolute magnitude)
+    qtyDeviasiMean: number; qtyDeviasiSumSq: number; qtyDeviasiN: number;
     // Waste
     wasteMean: number; wasteSumSq: number; wasteN: number;
     // Susut
@@ -80,6 +87,8 @@ export async function queryHistoricalStatsMultiMetric(
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE NULL END as "weeklyDevBom",
+        -- QTY Deviasi absolute per week (for Z-Score magnitude)
+        SUM(ABS(ir."qtyDeviasi")) as "weeklyQtyDeviasi",
         -- Waste qty per week
         SUM(ABS(ir."qtyWaste")) as "weeklyWaste",
         -- Susut qty per week
@@ -97,6 +106,10 @@ export async function queryHistoricalStatsMultiMetric(
       AVG("weeklyDevBom") as "devBomMean",
       SUM("weeklyDevBom" * "weeklyDevBom") as "devBomSumSq",
       CAST(COUNT("weeklyDevBom") AS INTEGER) as "devBomN",
+      -- QTY Deviasi stats
+      AVG("weeklyQtyDeviasi") as "qtyDeviasiMean",
+      SUM("weeklyQtyDeviasi" * "weeklyQtyDeviasi") as "qtyDeviasiSumSq",
+      CAST(COUNT("weeklyQtyDeviasi") AS INTEGER) as "qtyDeviasiN",
       -- Waste stats
       AVG("weeklyWaste") as "wasteMean",
       SUM("weeklyWaste" * "weeklyWaste") as "wasteSumSq",
@@ -117,6 +130,7 @@ export async function queryHistoricalStatsMultiMetric(
   for (const r of rows) {
     map.set(`${r.outletId}|${r.itemId}`, {
       devBom: computeStats(Number(r.devBomN), Number(r.devBomMean), Number(r.devBomSumSq)),
+      qtyDeviasi: computeStats(Number(r.qtyDeviasiN), Number(r.qtyDeviasiMean), Number(r.qtyDeviasiSumSq)),
       waste: computeStats(Number(r.wasteN), Number(r.wasteMean), Number(r.wasteSumSq)),
       susut: computeStats(Number(r.susutN), Number(r.susutMean), Number(r.susutSumSq)),
       trial: computeStats(Number(r.trialN), Number(r.trialMean), Number(r.trialSumSq)),

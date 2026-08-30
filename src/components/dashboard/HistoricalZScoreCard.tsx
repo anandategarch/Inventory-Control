@@ -53,13 +53,14 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
   const PAGE_SIZE = 20;
   // Phase B-3: Severity filter
   const [severityFilter, setSeverityFilter] = useState<'all' | 'abnormal' | 'warning' | 'elevated'>('all');
-  // Phase B-1: Multi-metric selector
-  const [metricView, setMetricView] = useState<'devBom' | 'waste' | 'susut' | 'trial'>('devBom');
+  // Phase B-1: Multi-metric selector — Dev/BOM (ratio) + QTY Deviasi (absolute)
+  // Waste/Susut/Trial removed per user request — Deviasi is the primary metric
+  const [metricView, setMetricView] = useState<'devBom' | 'qtyDeviasi'>('devBom');
 
   const sorted = useMemo(() => {
     // Phase B-3: Filter by severity
     const filtered = severityFilter === 'all' ? items : items.filter(i => {
-      const abs = Math.abs(i.zScore);
+      const abs = Math.abs(metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore);
       if (severityFilter === 'abnormal') return abs > 3;
       if (severityFilter === 'warning') return abs > 2 && abs <= 3;
       if (severityFilter === 'elevated') return abs > 1 && abs <= 2;
@@ -68,8 +69,10 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
     const arr = [...filtered];
     arr.sort((a, b) => {
       let cmp = 0;
+      const zA = metricView === 'qtyDeviasi' ? a.qtyDeviasiZScore : a.zScore;
+      const zB = metricView === 'qtyDeviasi' ? b.qtyDeviasiZScore : b.zScore;
       switch (sortKey) {
-        case 'zScore': cmp = Math.abs(a.zScore) - Math.abs(b.zScore); break;
+        case 'zScore': cmp = Math.abs(zA) - Math.abs(zB); break;
         case 'absNominal': cmp = a.absNominal - b.absNominal; break;
         case 'currentDevBom': cmp = Math.abs(a.currentDevBom) - Math.abs(b.currentDevBom); break;
         case 'historicalAvg': cmp = a.historicalAvg - b.historicalAvg; break;
@@ -79,7 +82,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return arr;
-  }, [items, sortKey, sortDir, severityFilter]);
+  }, [items, sortKey, sortDir, severityFilter, metricView]);
 
   const toggleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
@@ -100,8 +103,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
     setDisplayCount(prev => Math.min(prev + PAGE_SIZE, sorted.length));
   }, [sorted.length]);
 
-  const abnormalCount = items.filter(i => Math.abs(i.zScore) > 3).length;
-  const warningCount = items.filter(i => Math.abs(i.zScore) > 2 && Math.abs(i.zScore) <= 3).length;
+  const activeZScore = (i: typeof items[number]) => metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore;
+  const abnormalCount = items.filter(i => Math.abs(activeZScore(i)) > 3).length;
+  const warningCount = items.filter(i => Math.abs(activeZScore(i)) > 2 && Math.abs(activeZScore(i)) <= 3).length;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -129,9 +133,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
           </p>
           {/* Phase B-3: Severity filter */}
           <div className="flex items-center gap-1.5">
-            {/* Phase B-1: Multi-metric selector */}
+            {/* Phase B-1: Multi-metric selector — Dev/BOM (ratio) + QTY Deviasi (absolute) */}
             <div className="flex items-center gap-0.5 mr-2 p-0.5 rounded-lg bg-muted/40">
-              {(['devBom', 'waste', 'susut', 'trial'] as const).map(m => (
+              {(['devBom', 'qtyDeviasi'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => { setMetricView(m); setDisplayCount(PAGE_SIZE); }}
@@ -141,7 +145,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                       : 'text-muted-foreground hover:bg-muted/60'
                   }`}
                 >
-                  {m === 'devBom' ? 'Dev/BOM' : m === 'waste' ? 'Waste' : m === 'susut' ? 'Susut' : 'Trial'}
+                  {m === 'devBom' ? 'Dev/BOM' : 'QTY Deviasi'}
                 </button>
               ))}
             </div>
@@ -189,7 +193,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                     Area <SortIcon col="area" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('currentDevBom')}>
-                    Current Dev/BOM <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
+                    {metricView === 'qtyDeviasi' ? 'QTY Deviasi' : 'Dev/BOM'} <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('historicalAvg')}>
                     Historical Avg <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
@@ -205,7 +209,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
               </TableHeader>
               <TableBody>
                 {sorted.slice(0, displayCount).map((item, i) => {
-                  const badge = zScoreBadge(item.zScore);
+                  const activeZ = activeZScore(item);
+                  const badge = zScoreBadge(activeZ);
+                  const isLoss = item.currentQtyDeviasi < 0;
                   return (
                     <TableRow key={`${item.itemName}-${item.outletCode}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
                       <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
@@ -214,47 +220,54 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                         <div className="text-[11px] text-muted-foreground">{item.outletCode}</div>
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-muted-foreground">{item.area}</TableCell>
-                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
-                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">{fmtPctAbs(item.historicalAvg)}</TableCell>
-                      {/* Phase B-1: Multi-metric current values */}
-                      {metricView === 'waste' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{fmtNum(item.currentWaste)}</TableCell>
+                      {/* Current value: Dev/BOM (rasio) atau QTY Deviasi (nilai asli signed) */}
+                      {metricView === 'qtyDeviasi' ? (
+                        <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums font-medium ${isLoss ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {item.currentQtyDeviasi.toLocaleString('id-ID')}
+                        </TableCell>
+                      ) : (
+                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums">{fmtPctAbs(item.currentDevBom)}</TableCell>
                       )}
-                      {metricView === 'susut' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-orange-600 dark:text-orange-400">{fmtNum(item.currentSusut)}</TableCell>
-                      )}
-                      {metricView === 'trial' && (
-                        <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{fmtNum(item.currentTrial)}</TableCell>
-                      )}
-                      {metricView === 'devBom' && (
-                        <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(item.zScore)}`}>
-                        {/* Phase B-5: Tooltip with computation breakdown */}
+                      {/* Historical Avg */}
+                      <TableCell className="text-[11px] px-3 py-2 text-right tabular-nums text-muted-foreground">
+                        {metricView === 'qtyDeviasi' ? item.qtyDeviasiHistoricalAvg.toLocaleString('id-ID') : fmtPctAbs(item.historicalAvg)}
+                      </TableCell>
+                      {/* Z-Score with tooltip */}
+                      <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${zScoreColor(activeZ)}`}>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="flex items-center justify-end gap-1.5 cursor-help">
                               <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden" aria-hidden>
                                 <div
-                                  className={`h-full ${Math.abs(item.zScore) > 3 ? 'bg-red-500' : Math.abs(item.zScore) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
-                                  style={{ width: `${Math.min(Math.abs(item.zScore) / 5 * 100, 100)}%` }}
+                                  className={`h-full ${Math.abs(activeZ) > 3 ? 'bg-red-500' : Math.abs(activeZ) > 2 ? 'bg-amber-500' : 'bg-yellow-500'}`}
+                                  style={{ width: `${Math.min(Math.abs(activeZ) / 5 * 100, 100)}%` }}
                                 />
                               </div>
-                              {item.zScore.toFixed(2)}
+                              {activeZ.toFixed(2)}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="left" className="text-xs p-3 max-w-xs">
                             <div className="space-y-1">
-                              <p className="font-semibold">Z-Score Breakdown</p>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentDevBom > item.historicalAvg ? '+' : ''}{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Ratio:</span><span className="font-medium tabular-nums">{item.historicalAvg > 0 ? (Math.abs(item.currentDevBom) / item.historicalAvg).toFixed(2) : '—'}×</span></div>
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(item.zScore)}`}>{item.zScore.toFixed(2)} ({badge.label})</span></div>
+                              <p className="font-semibold">Z-Score Breakdown {metricView === 'qtyDeviasi' ? '(QTY Deviasi)' : '(Dev/BOM)'}</p>
+                              {metricView === 'qtyDeviasi' ? (
+                                <>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current QTY Deviasi:</span><span className={`font-medium tabular-nums ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentQtyDeviasi.toLocaleString('id-ID')}</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg (|weekly|):</span><span className="font-medium tabular-nums">{item.qtyDeviasiHistoricalAvg.toLocaleString('id-ID')}</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Current| vs Avg:</span><span className="font-medium tabular-nums">{(Math.abs(item.currentQtyDeviasi) / (item.qtyDeviasiHistoricalAvg || 1)).toFixed(2)}×</span></div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
+                                </>
+                              )}
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(activeZ)}`}>{activeZ.toFixed(2)} ({badge.label})</span></div>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Nominal|:</span><span className="font-medium tabular-nums">{fmtIDR(item.absNominal)}</span></div>
                             </div>
                           </TooltipContent>
                         </Tooltip>
                       </TableCell>
-                      )}
                       <TableCell className="text-[11px] px-3 py-2 text-center">
                         <Badge variant={badge.variant} className="text-[11px] h-4 px-1 font-medium">{badge.label}</Badge>
                       </TableCell>

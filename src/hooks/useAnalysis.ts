@@ -174,6 +174,8 @@ export interface HistoricalAnalysisResult {
   criticalItems: Array<{
     itemName: string; outletCode: string; area: string;
     currentDevBom: number; historicalAvg: number; zScore: number; absNominal: number;
+    // QTY Deviasi: current value SIGNED (nilai asli), Z-Score uses ABS magnitude per PRD §5.2
+    currentQtyDeviasi: number; qtyDeviasiZScore: number; qtyDeviasiHistoricalAvg: number;
     // Phase B-1: Multi-metric current values + zScores + historical avgs
     currentWaste: number; currentSusut: number; currentTrial: number;
     wasteZScore: number; susutZScore: number; trialZScore: number;

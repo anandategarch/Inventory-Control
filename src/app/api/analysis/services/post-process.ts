@@ -588,6 +588,9 @@ export async function buildHistoricalAnalysis(
     const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
 
     // Phase B-1 MM-01 + ZS-02 FIX: Multi-metric Z-Scores with per-metric MIN_WEEKS + stdDev guards
+    // QTY Deviasi: Z-Score uses ABS(current) vs mean(ABS(weekly)) per PRD §5.2
+    const qtyDeviasiZScore = (stats.qtyDeviasi.n >= 4 && stats.qtyDeviasi.stdDev > 0)
+      ? calcZScoreFromStats(row.qtyDeviasi, stats.qtyDeviasi.mean, stats.qtyDeviasi.stdDev) : 0;
     const wasteZScore = (stats.waste.n >= 4 && stats.waste.stdDev > 0)
       ? calcZScoreFromStats(row.qtyWaste, stats.waste.mean, stats.waste.stdDev) : 0;
     const susutZScore = (stats.susut.n >= 4 && stats.susut.stdDev > 0)
@@ -603,6 +606,11 @@ export async function buildHistoricalAnalysis(
       historicalAvg: stats.devBom.mean,
       zScore: zScore ?? 0,
       absNominal: row.absNominalDeviasi ?? 0,
+      // QTY Deviasi: current value SIGNED (nilai asli, bisa negatif/positif untuk direction)
+      // Z-Score uses ABS magnitude (per PRD §5.2) — computed above
+      currentQtyDeviasi: row.qtyDeviasi ?? 0, // signed value for display
+      qtyDeviasiZScore: qtyDeviasiZScore ?? 0,
+      qtyDeviasiHistoricalAvg: stats.qtyDeviasi.mean, // mean of ABS weekly values
       // Multi-metric current values + zScores (Phase B-1)
       currentWaste: Math.abs(row.qtyWaste ?? 0),
       currentSusut: Math.abs(row.qtySusut ?? 0),
