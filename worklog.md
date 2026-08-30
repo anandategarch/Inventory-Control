@@ -36358,3 +36358,1334 @@ no SQL injection, no cache poisoning.
 - 10 HTTP test scenarios passed (7 item-trend + 3 high-volume items).
 - 20/20 Z-Scores manually verified correct (Python recompute).
 - Cross-check vs `calcZScoreFromStats` + `item-history` route: consistent.
+
+---
+Task ID: DEEP-BUG-FE
+Agent: Deep Bug Hunter (Frontend)
+Task: Deep audit frontend bugs across 8 components / hooks
+
+Work Log:
+- Read MASTER_CONTEXT.md §5 components + worklog tail (last 200 lines).
+- Audited 8 component/hook files for deep bugs: logic errors, state
+  management issues, render bugs, accessibility failures, memory leaks.
+- Found 4 P1 bugs, 6 P2 bugs, 8 P3 polish issues. No crashes/blank-screen
+  P0 bugs found.
+
+### Findings Summary
+
+```
+DEEP-FE-01 [P1]: ItemTrendTab tooltip shows WRONG metric value for non-Deviasi metrics
+File: src/components/dashboard/tabs/ItemTrendTab.tsx:602
+Problem: In the table row tooltip (Z-Score Breakdown), the label says
+  `Current |{shortLabel}|:` (e.g. "Current |Waste|:" when metric=qtyWaste),
+  but the value shown is HARDCODED to `Math.abs(p.qtyDeviasiSigned)`.
+  So when the user selects QTY Waste/Susut/Trial, the tooltip label
+  changes but the value is always |Deviasi|.
+Impact: Misleading data — user hovers a Waste row expecting |Waste|
+  value, sees |Deviasi| value instead. The chart tooltip (ItemTrendLineChart)
+  correctly uses row.qty (the active metric's value), so the inconsistency
+  is even more confusing.
+Fix: Replace `Math.abs(p.qtyDeviasiSigned)` with the active metric's field.
+  Add a helper: `const metricField = METRICS.find(m => m.value === metric)?.field ?? 'qtyDeviasiSigned';`
+  then `fmtNum(Math.abs(Number(p[metricField]) || 0))`.
+```
+
+```
+DEEP-FE-02 [P1]: Heatmap Sheet body + TOTAL/Ø rows show DIFFERENT nominal fields
+File: src/components/dashboard/AreaItemHeatmapSheet.tsx:99, 156, 160, 202, 219, 229
+Problem: 
+  - Body column "Nominal" shows `r.nominalLossSurplus` (line 202).
+  - TOTAL row "Nominal" shows `totalNominal` = sum of `r.nominalDeviasi` (line 99, 219).
+  - Ø PER RESTO row shows `avgNominal` = avg of `nominalDeviasi` (line 106, 229).
+  - Aggregate summary "Total Nominal" + "Ø per Resto" also use `nominalDeviasi`.
+  `nominalDeviasi` and `nominalLossSurplus` are DIFFERENT SQL aggregates
+  (both ABS sums but of different columns). The TOTAL ≠ sum of body column.
+Impact: User sees body values like [1000, 500, 200] but TOTAL = 2500 (which
+  is the sum of a different column). The arithmetic looks wrong.
+Fix: Pick ONE field and use it everywhere. Recommended: use `nominalDeviasi`
+  consistently (it's the absolute magnitude, which is what the heatmap card
+  already displays). Change line 202 from `r.nominalLossSurplus` to
+  `r.nominalDeviasi`. OR add `totalLossSurplus = rows.reduce((s, r) => s + r.nominalLossSurplus, 0)`
+  and use it in the TOTAL/Ø rows.
+```
+
+```
+DEEP-FE-03 [P1]: Heatmap Sheet `isLoss` always FALSE — all rows colored green (SURPLUS)
+File: src/components/dashboard/AreaItemHeatmapSheet.tsx:183, 201
+Problem: `const isLoss = r.nominalLossSurplus < 0;` — but the API's SQL
+  (heatmap.ts:255) uses `COALESCE(SUM(ABS(ir."nominalLossSurplus")), 0)`,
+  so `nominalLossSurplus >= 0` ALWAYS. Therefore `isLoss` is always false
+  and every row displays with `text-emerald-600` (SURPLUS), even LOSS rows.
+Impact: All outlets appear as SURPLUS regardless of actual direction.
+  User can't visually identify LOSS rows.
+Fix: Backend should expose a signed direction field (e.g. `direction: 'LOSS' | 'SURPLUS'`)
+  OR a signed `signedNominalLossSurplus` field. Frontend then colors based on
+  that field. Without a backend change, frontend can't determine direction
+  from the current ABS-only payload. Alternative: remove the red/green
+  coloring (just show ABS magnitude in muted color) until backend exposes
+  direction.
+```
+
+```
+DEEP-FE-04 [P1]: AreaItemHeatmap Tooltip may render at wrong position (no Trigger anchor)
+File: src/components/dashboard/AreaItemHeatmap.tsx:420-521
+Problem: Uses controlled `<TooltipPrimitive.Root open={hoveredCell !== null}>`
+  WITHOUT a `<TooltipPrimitive.Trigger>` child. Radix Tooltip's Popper.Content
+  anchors itself to the Trigger element registered via context. Without a
+  Trigger, the Popper has no anchor and likely falls back to the document
+  body / viewport top-left.
+Impact: Tooltip content IS rendered (visible to user) but positioned at the
+  top of the viewport instead of next to the hovered cell. User hovers a cell
+  at the bottom of the grid → tooltip appears at the top of the screen.
+  Confusing UX; user might think tooltip is broken.
+Fix: Either (a) wrap the heatmap grid in `<TooltipPrimitive.Trigger asChild>`
+  (but Trigger expects a single child + registers pointer handlers — would
+  fight with the per-cell onMouseEnter); (b) use Radix Popper directly with
+  a virtual anchor element computed from the hovered cell's bounding rect;
+  (c) revert to per-cell Tooltips (simpler, but the 280-Tooltip perf issue
+  returns); (d) use a native HTML title attribute or a custom absolutely-
+  positioned div following the mouse. Option (b) is best — see Radix Popper
+  Anchor with `virtualElement` pattern.
+```
+
+```
+DEEP-FE-05 [P2]: HistoricalZScoreCard items filter ignores metricView
+File: src/components/dashboard/HistoricalZScoreCard.tsx:51-55
+Problem: `items = useMemo(() => allItems.filter(i => i.zScore > 0 && ...))`
+  filters on Dev/BOM Z-Score ONLY. When user switches to `qtyDeviasi` mode,
+  items with positive `qtyDeviasiZScore` but non-positive Dev/BOM `zScore`
+  are HIDDEN. Conversely, items with positive Dev/BOM `zScore` but zero
+  `qtyDeviasiZScore` (no QTY baseline, n<4) are SHOWN — they display "0.00"
+  instead of "—" (no baseline distinction).
+Impact: QTY Deviasi anomalies are missed if Dev/BOM Z-Score is not also
+  positive. The metric selector only changes display, not the underlying
+  filter — misleading.
+Fix: Filter based on active metric:
+  ```js
+  const items = useMemo(() => allItems.filter(i => {
+    const z = metricView === 'qtyDeviasi' ? i.qtyDeviasiZScore : i.zScore;
+    return Math.abs(i.currentDevBom) <= 5 && z > 0 && i.historicalAvg > 0;
+  }), [allItems, metricView]);
+  ```
+  Also distinguish null/zero Z-Score (show "—" instead of "0.00"). Backend
+  currently defaults to 0 when no baseline; needs a sentinel value (null)
+  OR frontend checks sampleSize == 0.
+```
+
+```
+DEEP-FE-06 [P2]: DrillDownDrawer Load More race condition (filter change mid-fetch)
+File: src/components/drilldown/DrillDownDrawer.tsx:64-91
+Problem: `handleLoadMore` uses `nextCursor` and filter values from closure.
+  If user changes the dashboard filter WHILE a Load More fetch is in-flight:
+    1. Filter change → `useDrilldown` refetches first page (filter B).
+    2. useEffect (line 48) sets allRecords = [50 B records].
+    3. The pending Load More (filter A) returns with 50 A records.
+    4. `setAllRecords(prev => [...prev, ...data.records])` appends A records
+       to B records — corrupts the list.
+Impact: User sees mixed records from old filter + new filter. Subsequent
+  Load More uses the corrupted cursor (B's nextCursor, but list contains A
+  records → skipping correct offsets).
+Fix: Track the active filter signature in a ref. When Load More response
+  arrives, compare the response's filter signature to the current ref. If
+  different, discard. Alternatively, use TanStack Query's `useInfiniteQuery`
+  which handles this automatically via queryKey invalidation.
+```
+
+```
+DEEP-FE-07 [P2]: ItemTrendTab autocomplete dropdown shows misleading "no results" when month/week missing
+File: src/components/dashboard/tabs/ItemTrendTab.tsx:378, 384-388
+Problem: Dropdown renders when `deferredQuery.length >= 2`. But the underlying
+  query is `enabled: Boolean(deferredQuery.length >= 2 && monthLabel && currentWeek && !selectedItem)`.
+  If monthLabel or currentWeek is missing, the query is disabled → acResults
+  is empty → dropdown shows "Tidak ada item ditemukan untuk 'CABAI'" even
+  though the real reason is "month/week not selected".
+Impact: User types "CABAI", sees "no results", thinks the item doesn't exist.
+  Actual issue: month/week filter is missing.
+Fix: Check the enabled condition before rendering the dropdown:
+  ```jsx
+  {showDropdown && !selectedItem && deferredQuery.length >= 2 && (
+    !(monthLabel && currentWeek) ? (
+      <div>...Pilih bulan dan minggu dulu...</div>
+    ) : (
+      <>{acLoading ? ... : acResults.length === 0 ? ... : ...}</>
+    )
+  )}
+  ```
+```
+
+```
+DEEP-FE-08 [P2]: handleRefresh (Cmd+R) doesn't invalidate heatmap, item-trend, drilldown, item-search caches
+File: src/hooks/useDashboardActions.ts:125-133
+Problem: `handleRefresh` invalidates only 6 query keys: analysis, status,
+  outlet-items, item-history, peer-comparison, recommendations. Missing:
+    - ['area-item-heatmap'] (heatmap matrix)
+    - ['heatmap-cell-detail'] (drill-down sheet)
+    - ['item-trend'] (Trend Item tab)
+    - ['drilldown'] (DrillDownDrawer)
+    - ['item-search'] (autocomplete + cross-outlet)
+Impact: User presses Cmd+R expecting a full refresh, but 5 cached routes
+  serve stale data for up to 5 minutes. Inconsistent refresh behavior.
+Fix: Add the missing queryKey invalidations to `handleRefresh`:
+  ```js
+  queryClient.invalidateQueries({ queryKey: ['area-item-heatmap'] });
+  queryClient.invalidateQueries({ queryKey: ['heatmap-cell-detail'] });
+  queryClient.invalidateQueries({ queryKey: ['item-trend'] });
+  queryClient.invalidateQueries({ queryKey: ['drilldown'] });
+  queryClient.invalidateQueries({ queryKey: ['item-search'] });
+  ```
+```
+
+```
+DEEP-FE-09 [P2]: ItemTrendTab input shows selectedItem as placeholder, blocks dropdown re-open
+File: src/components/dashboard/tabs/ItemTrendTab.tsx:356, 378
+Problem: After selecting an item, `query=''` but `placeholder={selectedItem}`.
+  The input looks empty but shows the item name as placeholder. Clicking the
+  input again triggers `onFocus → setShowDropdown(true)`, but the dropdown
+  condition is `showDropdown && !selectedItem && deferredQuery.length >= 2`
+  → since selectedItem is set, dropdown never shows. User must click X first.
+Impact: Confusing UX — user clicks input expecting to search again, nothing
+  happens. The selected item is shown as placeholder, suggesting it's the
+  value, but typing replaces it.
+Fix: Either (a) make the input value = selectedItem when selected (display
+  the name as the actual value, not placeholder) + clear on focus; OR (b)
+  remove the placeholder trick and show selectedItem as a separate badge
+  (which is already done at line 441-444). Option (b) is cleaner — change
+  placeholder to a static "Cari item..." regardless of selection.
+```
+
+```
+DEEP-FE-10 [P2]: ItemTrendLineChart — single-period data renders a degenerate chart (1 dot, no line)
+File: src/components/dashboard/tabs/ItemTrendLineChart.tsx:213-219
+Problem: Empty state only checks `data.length === 0`. When `data.length === 1`
+  (item has only 1 period), Recharts renders a chart with a single dot — no
+  "trend" is visible. The historical mean line is also a single dot.
+Impact: User sees a confusing chart with one dot, no trend line. No
+  explanatory message.
+Fix: Add a 1-period case:
+  ```js
+  if (data.length === 1) {
+    return (
+      <div className="text-center text-muted-foreground text-sm py-12">
+        Hanya 1 periode data — butuh minimal 2 periode untuk menampilkan tren.
+      </div>
+    );
+  }
+  ```
+```
+
+```
+DEEP-FE-11 [P3]: AreaItemHeatmap hover timer not cleared on unmount
+File: src/components/dashboard/AreaItemHeatmap.tsx:220, 226
+Problem: `hoverTimer = useRef(...)` set via `setTimeout` in `handleCellHover`.
+  No useEffect cleanup clears the timer when the component unmounts. If user
+  navigates away mid-hover (80ms timer pending), `setHoveredCell` fires on
+  an unmounted component → React 18 no-op, but React 17 logs a warning.
+Impact: Minor — React 18+ silently ignores; older React warns. No data
+  corruption.
+Fix: Add cleanup effect:
+  ```js
+  useEffect(() => () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+  }, []);
+  ```
+```
+
+```
+DEEP-FE-12 [P3]: AreaItemHeatmapSheet conditional mount cuts close animation
+File: src/components/dashboard/AreaItemHeatmap.tsx:565-575
+Problem: `{selectedCell && <AreaItemHeatmapSheet open={!!selectedCell} ... />}`
+  unmounts the Sheet immediately when `selectedCell` becomes null. Radix
+  Sheet's exit animation can't play because the component is gone.
+Impact: Sheet disappears instantly instead of sliding out. Cosmetic only.
+Fix: Always render the Sheet, control visibility via `open` prop:
+  ```jsx
+  <AreaItemHeatmapSheet
+    open={!!selectedCell}
+    onOpenChange={handleSheetOpenChange}
+    areaName={selectedCell?.area ?? ''}
+    itemName={selectedCell?.item ?? ''}
+    ...
+  />
+  ```
+  Inside the Sheet, guard `enabled` on `open && areaName && itemName` (already
+  done at line 87).
+```
+
+```
+DEEP-FE-13 [P3]: ItemTrendTab + HistoricalZScoreCard row keys include index `i`
+File: src/components/dashboard/tabs/ItemTrendTab.tsx:563, src/components/dashboard/HistoricalZScoreCard.tsx:225
+Problem: `key={`${item.itemName}-${item.outletCode}-${i}`}` includes the
+  array index. When sort/filter changes the row order, React reconciles by
+  key — but the key includes position, so it sees "different" rows at each
+  position and unmounts/remounts. Loses row-level state (hover, focus).
+Impact: Minor — no user-visible state to lose in these tables, but React
+  reconciliation is suboptimal. Tooltips may flicker on sort.
+Fix: Remove the `-${i}` suffix if (itemName, outletCode) is unique per row.
+  If duplicates are possible, use a stable hash of the row's content.
+```
+
+```
+DEEP-FE-14 [P3]: ItemTrendTab autocomplete missing keyboard navigation (arrow keys, Enter, Escape)
+File: src/components/dashboard/tabs/ItemTrendTab.tsx:378-416
+Problem: Dropdown results are `<button>` elements but there's no arrow-key
+  navigation, no Enter-to-select-first, no Escape-to-close-dropdown. User
+  must use mouse.
+Impact: Accessibility gap — keyboard users can Tab through results but
+  can't navigate efficiently. Radix Combobox (used in SearchableComboBox)
+  provides these for free.
+Fix: Either (a) migrate to Radix Combobox pattern (more work); (b) add
+  arrow-key handler on the input that tracks `activeIndex` state and
+  highlights the result; Enter selects the active result; Escape closes
+  the dropdown.
+```
+
+```
+DEEP-FE-15 [P3]: ItemTrendLineChart renderZDot/renderMeanDot not memoized
+File: src/components/dashboard/tabs/ItemTrendLineChart.tsx:178-211
+Problem: `renderZDot` and `renderMeanDot` are defined inside the component
+  body — new function reference every render. Passed as `dot={renderZDot}`
+  to Recharts <Line>, causing Recharts to re-render the dots unnecessarily.
+Impact: Minor perf — Recharts re-renders dots on every parent render
+  (which happens on metric change, period data update, etc.). For 20-30
+  periods, this is negligible.
+Fix: Either move the renderers outside the component (they don't use
+  component state), or wrap in `useCallback([])`. Moving outside is cleanest:
+  ```js
+  function renderZDot(props) { ... }  // module scope
+  function renderMeanDot(props) { ... }
+  ```
+```
+
+```
+DEEP-FE-16 [P3]: HistoricalZScoreCard zScoreColor has dead branches in devBom mode
+File: src/components/dashboard/HistoricalZScoreCard.tsx:18-25
+Problem: `zScoreColor` has 5 branches: z>3, z>2, z>1, z<-2, z<-1. But the
+  `items` filter (line 51) requires `i.zScore > 0` (Dev/BOM), so negative
+  branches (z<-1, z<-2) are unreachable in Dev/BOM mode. They become
+  reachable in `qtyDeviasi` mode (where qtyDeviasiZScore can be negative
+  for items below historical mean).
+Impact: No bug — the branches correctly handle the qtyDeviasi case. But
+  code reviewers might think the negative branches are dead code.
+Fix: Add a comment explaining that the filter is metric-specific and
+  negative z is possible in qtyDeviasi mode. OR refactor to apply the
+  same metric-specific filter (DEEP-FE-05) so the table only shows
+  positive z values — then the negative branches become truly dead and
+  can be removed.
+```
+
+```
+DEEP-FE-17 [P3]: ItemTrendTab tab switch loses selectedItem state (Radix default unmount)
+File: src/app/page.tsx:189-213
+Problem: Radix Tabs unmount inactive TabsContent by default. Switching away
+  from Trend Item tab unmounts ItemTrendTab → `selectedItem` state is lost.
+  Switching back requires re-searching for the item.
+Impact: UX friction — user switches to Dashboard to check something, comes
+  back to Trend Item, has to re-search the item.
+Fix: Either (a) lift `selectedItem` state to Zustand store (so it persists
+  across tab switches); (b) add `forceMount` to TabsContent (keeps all tabs
+  mounted — heavier memory); (c) accept the behavior (simplest).
+```
+
+```
+DEEP-FE-18 [P3]: `comparisonMonth` parameter accepted but unused in useDashboardEffects
+File: src/hooks/useDashboardEffects.ts:34, 46, 153-157
+Problem: `comparisonMonth` is in the params interface + destructured, but
+  only used as `void comparisonMonth;` (line 157) to silence the lint rule.
+  The actual auto-compare effect (line 110-137) doesn't reference it.
+Impact: No bug — `comparisonMonth` is set by `setCompareWeek(week, month)`
+  which already updates both fields atomically. The effect only needs to
+  check `!comparisonWeek` to decide whether to fire. Including
+  `comparisonMonth` in deps would be redundant.
+Fix: Optional — remove `comparisonMonth` from the hook's params interface
+  to make the API surface honest. Document why it's not needed.
+```
+
+### Items Verified CORRECT (no bugs)
+- Signed Z-Score coloring (HistoricalZScoreCard): correct (positive=red, negative=green). ✓
+- Severity filter logic (only positive zScore counts as anomalous). ✓
+- Sort with signed values (desc → high positive first). ✓
+- Empty state for 0 items (HistoricalZScoreCard). ✓
+- Chart tooltip (ItemTrendLineChart) shows correct metric value via `row.qty`. ✓
+- Chart uses ABS for qtyDeviasi line (comparable to ABS historicalMean). ✓
+- Chart null Z-Score handling (dots not rendered via `connectNulls={false}`). ✓
+- `metric` in useItemTrend queryKey → refetch on metric change. ✓
+- Week filter respected (useItemTrend takes `week` from dashboard). ✓
+- `useEffect` mousedown listener properly cleaned up (ItemTrendTab). ✓
+- Pola Item labels: Massal/Regional/Lokal (not SYSTEMIC/WIDESPREAD/ISOLATED). ✓
+- Pola Item drilldown opens only 1 pop-up (DrillDownDrawer only, not ItemDeepDive). ✓
+- Pola Item respects dashboard filters (via DrillDownDrawer's useDashboard). ✓
+- All 5 tabs rendered (dashboard/resto/peer/pareto/trend). ✓
+- Keyboard shortcut '5' → trend tab. ✓
+- All tabs have ErrorBoundary (either page-level or tab-internal). ✓
+- Zustand selectors use useShallow (AreaItemHeatmap, ItemTrendTab, etc.). ✓
+- No infinite loops in useDashboardEffects (auto-compare guarded by !comparisonWeek). ✓
+- Cache warming fires once per status payload (warmedStatusKey ref). ✓
+- Keyboard shortcuts (Cmd+E/R/K, 1-5, Escape) working. ✓
+- Escape closes dialogs/drawers (with !isTyping guard for SearchableComboBox compat). ✓
+- clickableRowProps (a11y helper) properly handles Enter/Space keyboard activation. ✓
+- format.ts functions (fmtIDR, fmtNum, fmtPct, fmtPctAbs) handle null/NaN/Infinity. ✓
+- HeatmapCellView custom memo comparator (compares displayed fields only). ✓
+- Heatmap Sheet `flex-1 overflow-auto min-h-0` scroll pattern. ✓
+- DrillDownDrawer virtualized table with sticky header + measureElement. ✓
+- Load More appends (not replaces) via `setAllRecords(prev => [...prev, ...data.records])`. ✓
+- Auto-set compare period uses same-weekLabel-in-prior-month (BUG-1 fix preserved). ✓
+- BUG-8 week validation preserved (resets if currentWeek invalid for monthLabel). ✓
+
+### Test Method
+- Static code review (no runtime testing).
+- Cross-referenced types in useAnalysis.ts with usage in components.
+- Verified backend SQL in heatmap.ts (cell-detail query uses ABS — root cause
+  of DEEP-FE-02 + DEEP-FE-03).
+- Verified Radix Tooltip source (node_modules) for anchor behavior
+  (DEEP-FE-04).
+- Verified Radix Tabs default unmount behavior (DEEP-FE-17).
+- No code changes made — audit only.
+
+### Conclusion
+The frontend is largely correct. The 4 P1 bugs cluster around 2 root causes:
+1. ItemTrendTab tooltip hardcodes Deviasi value instead of using the active
+   metric's field (DEEP-FE-01).
+2. AreaItemHeatmapSheet mixes `nominalDeviasi` (totals) with
+   `nominalLossSurplus` (body), AND the backend SQL uses ABS so `isLoss`
+  is always false (DEEP-FE-02 + DEEP-FE-03).
+Plus the Radix Tooltip-without-Trigger pattern (DEEP-FE-04) — needs
+visual verification but likely positions the tooltip at viewport top-left.
+
+The 6 P2 bugs are mostly state-management / UX issues:
+- Metric selector doesn't update the items filter (DEEP-FE-05).
+- Load More race condition (DEEP-FE-06).
+- Misleading empty state in autocomplete (DEEP-FE-07).
+- Incomplete cache invalidation on refresh (DEEP-FE-08).
+- Confusing input UX after item select (DEEP-FE-09).
+- Degenerate 1-period chart (DEEP-FE-10).
+
+The 8 P3 bugs are polish / minor perf — defer until P1+P2 are fixed.
+
+### Next Actions
+1. **DEEP-FE-01** (P1): Fix ItemTrendTab tooltip to use active metric's field.
+2. **DEEP-FE-02 + DEEP-FE-03** (P1): Align Heatmap Sheet body + totals on
+   ONE field. Backend may need to expose direction separately for red/green
+   coloring to work.
+3. **DEEP-FE-04** (P1): Verify Tooltip positioning visually. If broken,
+   switch to virtual-anchor Popper pattern OR per-cell Trigger.
+4. **DEEP-FE-05** (P2): Make items filter metric-aware.
+5. **DEEP-FE-06** (P2): Migrate Load More to useInfiniteQuery OR add filter-
+   signature guard.
+6. **DEEP-FE-07..10** (P2): UX fixes — defer until P1 done.
+7. **DEEP-FE-11..18** (P3): Polish — defer.
+
+### Verification
+- `bunx tsc --noEmit` not run (no code changes made — audit only).
+- All findings verified against source code + Radix internals + SQL queries.
+- No runtime testing performed (would require running the dev server + UI
+  interaction).
+
+---
+
+## Task ID: DEEP-BUG-API — Deep Bug Hunter (API + Backend)
+
+**Scope:** Deep audit of recent changes (Z-Score signed fix, Trend Item tab,
+heatmap optimization, covering indexes, SWR cache, drilldown filters) +
+critical paths (analysis pipeline, cache invalidation, export report, security).
+
+**Methodology:** Read MASTER_CONTEXT.md §4/§6/§8 + CONVENTIONS.md §1/§3 +
+worklog.md tail. Audited 12 files in detail: historical.ts, rule-evaluation.ts,
+post-process.ts, historical.ts (query), item-trend route+query, heatmap
+route+cell-detail+query, drilldown route, analysis validate-and-resolve+route,
+aggregation-cache.ts, export-report route. Cross-checked against prior audits
+(DEEP-AUDIT-API, TREND-BE, BUG-2-*).
+
+### Findings (12 bugs: 1 P1, 5 P2, 6 P3)
+
+```
+DEEP-BUG-API-01 [P1]: HISTORICAL_ABNORMAL_SURPLUS excluded from critical items
+File: src/app/api/analysis/services/post-process.ts:580
+      src/app/api/export-report/route.ts:608-610
+Problem: The `histCriticalKeys` filter only includes `HISTORICAL_ABNORMAL`
+  + `HISTORICAL_WARNING`. It MISSES `HISTORICAL_ABNORMAL_SURPLUS` (priority
+  77, severity ABNORMAL). The rule fires for SURPLUS direction + zScore > high
+  (per rule-evaluation.ts:274-277). Since HISTORICAL_WARNING only fires for
+  zScore in (warn, high] range, a SURPLUS record with zScore > high fires
+  HISTORICAL_ABNORMAL_SURPLUS but NOT HISTORICAL_WARNING — and is therefore
+  EXCLUDED from the criticalItems list.
+Impact: SURPLUS items with abnormally high zScore (current magnitude far
+  ABOVE historical mean — a "worse than usual" anomaly) are missing from
+  the dashboard's Historical Analysis critical items section AND from the
+  Word export's historical anomaly section. Users miss investigation targets.
+  This was previously identified as BUG-2-6 (worklog line 3812) but NEVER
+  fixed — the bug has persisted across multiple sessions.
+Fix: Add `|| f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS'` to BOTH filter
+  conditions (post-process.ts:580 + export-report:609).
+```
+
+```
+DEEP-BUG-API-02 [P2]: SWR fire-and-forget delete silently swallows errors
+File: src/app/api/analysis/services/validate-and-resolve.ts:219
+Problem: `void db.aggregationCache.delete({ where: { cacheKey } }).catch(() => {})`
+  swallows ALL errors with an empty catch. If the delete persistently fails
+  (DB permission issue, connection pool exhaustion, deadlock), the stale
+  cache entry remains. Every subsequent request hits the same stale entry,
+  returns `stale: true`, fires another void delete (which also fails), and
+  the cycle continues INDEFINITELY.
+Impact: Stale data served forever if delete fails persistently. No telemetry
+  to detect this — the empty `.catch(() => {})` hides the failure from logs.
+  The only recovery is a mutation-triggered `invalidateAnalysisCache()` (which
+  may not happen for hours) or manual DB intervention.
+Fix: At minimum, log the error:
+  `.catch((e) => logger.error('[analysis cache] stale delete failed', {
+    error: e instanceof Error ? e.message : String(e), cacheKey
+  }))`
+  Better: trigger a real SWR recompute (call the full pipeline in background)
+  instead of just deleting — see DEEP-BUG-API-03.
+```
+
+```
+DEEP-BUG-API-03 [P2]: /api/analysis SWR is "stale-then-invalidate", not true SWR
+File: src/app/api/analysis/services/validate-and-resolve.ts:208-222
+Problem: The "SWR" implementation for /api/analysis is incomplete. On stale
+  cache hit, it returns stale data + fires-and-forgets a DELETE. It does NOT
+  trigger a background recompute. The NEXT request sees no cache entry (just
+  deleted) and computes synchronously (6-8s). Compare to withCacheAndDedup
+  (aggregation-cache.ts:294-303) which DOES trigger a background recompute
+  via an IIFE that calls computeFn + setCached + resolves in-flight Promise.
+Impact: After 5-min TTL expiry, the FIRST user gets stale (<100ms), but the
+  SECOND user pays full recompute cost (6-8s). For a high-traffic dashboard,
+  this creates periodic latency spikes every 5 min. The CONVENTIONS §3.1
+  item 7 says "/api/analysis is NOT migrated to SWR yet" — the code DOES
+  use getCachedWithMeta (partial migration) but doesn't complete the SWR
+  pattern. Half-migration is worse than no migration (misleading).
+Fix: Either (a) complete the SWR migration by firing a background recompute
+  (similar to withCacheAndDedup's IIFE pattern), or (b) revert to plain
+  getCached (delete + return null) so behavior is consistent. Option (a)
+  is better — eliminates the latency spike.
+```
+
+```
+DEEP-BUG-API-04 [P2]: Concurrent requests during 404 short-circuit get 500
+File: src/app/api/analysis/services/validate-and-resolve.ts:193-202
+      src/app/api/analysis/route.ts:52-58, 95-102
+Problem: When the first caller's computation rejects the in-flight Promise
+  (e.g., 404 "No records found" at route.ts:53), concurrent requests
+  awaiting the same in-flight Promise (validate-and-resolve.ts:194-202)
+  receive the rejection as a thrown error. The rejection is a generic
+  `new Error('No records found for X / Y with given filters.')`. The
+  concurrent caller's route.ts catch block (line 95-102) calls
+  `errorResponse(e, "analysis")` which returns HTTP 500. The original
+  404 status code is lost.
+Impact: API contract violation — concurrent requests during a 404
+  short-circuit receive 500 instead of 404. Could confuse clients that
+  retry on 500 but not on 404. Rare in practice (requires concurrent
+  requests for the same empty filter set).
+Fix: Use a custom Error subclass (like EarlyHttpResponse in export-report/
+  outlet-items/item-history) that carries the NextResponse. The catch block
+  in route.ts should check `if (e instanceof EarlyHttpResponse) return
+  e.response;` before falling back to errorResponse. Same pattern already
+  used by 3 other routes.
+```
+
+```
+DEEP-BUG-API-05 [P2]: resolveKelompokOutletCodes never returns __NO_MATCH__ sentinel
+File: src/lib/kelompok-resolver.ts:53-71
+      src/app/api/area-item-heatmap/route.ts:104
+      src/app/api/area-item-heatmap/cell-detail/route.ts:50
+Problem: resolveKelompokOutletCodes returns `[]` (empty array) when no
+  outlets match the kelompok prefix. But the route handlers check for
+  `['__NO_MATCH__']` sentinel (same pattern as resolvePICOutletCodes).
+  The sentinel check is DEAD CODE — it never fires for kelompok. The
+  actual behavior is correct (SQL filter returns 0 rows → empty result),
+  but the dead check is misleading and inconsistent with the PIC path.
+Impact: No wrong data. Extra SQL query is wasted when kelompok matches
+  no outlets (could short-circuit at the route level). Code maintenance
+  hazard — a future dev might "fix" the dead check thinking it's a bug,
+  introducing actual broken behavior.
+Fix: Either (a) make resolveKelompokOutletCodes return `['__NO_MATCH__']`
+  sentinel for consistency with resolvePICOutletCodes (line 32-35), OR
+  (b) remove the dead sentinel check from the 2 heatmap route handlers.
+```
+
+```
+DEEP-BUG-API-06 [P2]: Heatmap routes lack Zod validation (schema is dead code)
+File: src/app/api/area-item-heatmap/route.ts:50-59
+      src/app/api/area-item-heatmap/cell-detail/route.ts:29-36
+      src/lib/validation.ts:255-266 (heatmapQuerySchema — UNUSED)
+Problem: Both heatmap routes use raw `url.searchParams.get()` for all
+  params. The `heatmapQuerySchema` in validation.ts is defined (with
+  `.strict()` mode + enum checks on metric/mode + integer validation on
+  itemLimit) but NEVER imported by the route. The route does inline
+  validation (lines 66-74) but it's ad-hoc — silent fallback to default
+  metric instead of 400 error.
+Impact: Inconsistent with CONVENTIONS §12 security checklist ("Zod
+  validation on ALL params"). Malformed query params (very long strings,
+  non-integer itemLimit, unknown params like `?foo=bar`) flow through
+  without rejection. Prisma parameterizes so no SQL injection, but a
+  10MB `area` param creates a slow query. The cell-detail route is
+  WORSE — it has NO inline validation at all (just `if (!rawMonth ||
+  !rawWeek || !areaName || !itemName)` presence check).
+Fix: Replace raw `url.searchParams.get()` with `validateQuery(heatmapQuerySchema,
+  url.searchParams)` in both routes. Use `validation.data` for typed access.
+  Apply same fix to cell-detail (needs its own schema — area+item required,
+  not optional).
+```
+
+```
+DEEP-BUG-API-07 [P3]: Cache key uses raw monthLabel (case-sensitive) in 4 routes
+File: src/app/api/export-report/route.ts:333
+      src/app/api/outlet-items/route.ts:99
+      src/app/api/item-history/route.ts:85
+      src/app/api/recommendations/route.ts:61
+Problem: Cache key is built with the RAW `month` URL param (line numbers
+  above) BEFORE `resolveMonthLabel` is called (which happens inside the
+  computeFn). So `?month=agustus 2026` and `?month=Agustus 2026` get
+  DIFFERENT cache keys but produce the SAME data. Violates CONVENTIONS
+  §8.3 ("Resolve month BEFORE building the cache key").
+Impact: Cache pollution — 2 cache entries per logical request when casing
+  differs. Cache miss on case variant → full recompute (6-8s for analysis,
+  1-2s for others). The /api/analysis route (validate-and-resolve.ts:174-189)
+  and /api/item-trend route (route.ts:82-98) already do this correctly —
+  these 4 routes are inconsistent.
+Fix: Move `resolveMonthLabel` call BEFORE `buildCacheKey`. Pattern:
+  `const resolver = await getMonthResolver();
+   const month = resolveMonthLabel(monthRaw, resolver) || monthRaw;
+   const cacheKey = buildCacheKey({ route: '...', month, ... });`
+  Then inside computeFn, `month` is already resolved (idempotent re-resolve
+  is a no-op).
+```
+
+```
+DEEP-BUG-API-08 [P3]: histCriticalItems.sort uses Math.abs on signed zScore
+File: src/app/api/analysis/services/post-process.ts:626
+      src/app/api/export-report/route.ts:631
+Problem: `histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore))`
+  uses Math.abs which is incompatible with the SIGNED zScore convention
+  (positive=worse, negative=better). Today this is safe because the filter
+  (post-process.ts:580) only includes positive-zScore rules
+  (HISTORICAL_ABNORMAL + HISTORICAL_WARNING), so all zScores are positive
+  and Math.abs is a no-op. But the Math.abs suggests the sort handles
+  negative zScores, which it doesn't actually need to. Misleading for
+  maintainers — and if DEEP-BUG-API-01 fix adds HISTORICAL_ABNORMAL_SURPLUS,
+  those are also positive zScore, so still safe. But if a future rule
+  fires on negative zScore, this sort would incorrectly rank "better than
+  historical" items high.
+Impact: No wrong data today. Misleading code — future maintainer might
+  think Math.abs is intentional for handling negative zScores.
+Fix: Change to `b.zScore - a.zScore` (plain descending sort by signed
+  zScore). Add a comment: "// Sort by signed zScore DESC — all zScores
+  here are positive per the filter (HISTORICAL_* rules only fire on
+  positive zScore per evaluateHistoricalRulesJs)."
+```
+
+```
+DEEP-BUG-API-09 [P3]: ParetoDashboard uses Math.abs(zScore) for color (FRONTEND)
+File: src/components/dashboard/ParetoDashboard.tsx:189
+Problem: `Math.abs(d.zScore) > 2 ? 'text-red-600' : Math.abs(d.zScore) > 1
+  ? 'text-amber-600' : 'text-muted-foreground'` — uses Math.abs which
+  marks BOTH positive AND negative zScores as red/amber. With the SIGNED
+  zScore convention (positive=worse/red, negative=better/green per
+  MASTER_CONTEXT §6 + historical.ts:6-8), a zScore of -3 (current
+  magnitude 3 stdDev BELOW historical mean = BETTER than usual) is
+  incorrectly colored RED.
+Impact: Items with abnormally LOW deviation (better than historical) are
+  visually flagged as "red/abnormal" in the Pareto dashboard. Misleading
+  visual indicator — user investigates "good" items thinking they're bad.
+  This is a FRONTEND bug but in scope per audit spec ("Is the signed
+  Z-Score consistently applied everywhere? Any place still using
+  Math.abs() on the result?").
+Fix: Change to signed comparison:
+  `d.zScore > 2 ? 'text-red-600 dark:text-red-400 font-bold'
+ : d.zScore > 1 ? 'text-amber-600 dark:text-amber-400'
+ : d.zScore < -2 ? 'text-green-600 dark:text-green-400 font-bold'
+ : d.zScore < -1 ? 'text-emerald-600 dark:text-emerald-400'
+ : 'text-muted-foreground'`
+```
+
+```
+DEEP-BUG-API-10 [P3]: evaluateHistoricalRulesJs skips null-direction records
+File: src/lib/queries/rule-evaluation.ts:266-267
+Problem: `const isLoss = (curr.nominalLossSurplus ?? 0) < 0; const isSurplus =
+  (curr.nominalLossSurplus ?? 0) > 0;` — if nominalLossSurplus is null, both
+  are false. HISTORICAL_ABNORMAL (requires isLoss) and
+  HISTORICAL_ABNORMAL_SURPLUS (requires isSurplus) don't fire. Only
+  HISTORICAL_WARNING (no direction check) could fire — but only if zScore
+  is in (warn, high] range. A record with zScore > high AND null
+  nominalLossSurplus is silently dropped from ALL abnormal rules.
+Impact: Records with abnormally high zScore but missing nominalLossSurplus
+  (data quality issue, partial migration) are not flagged as ABNORMAL.
+  They might fire HISTORICAL_WARNING (if zScore ≤ high) or be silently
+  dropped (if zScore > high). Missed investigation targets. Latent —
+  depends on whether nominalLossSurplus is ever null in production data.
+Fix: Fall back to qtyDeviasi sign (like DIRECTION_FLIP rule does at lines
+  105-128):
+  `const direction = curr.nominalLossSurplus != null
+    ? Math.sign(curr.nominalLossSurplus)
+    : (curr.pctQtyDeviasiToBom != null ? Math.sign(curr.pctQtyDeviasiToBom) : 0);
+   const isLoss = direction < 0;
+   const isSurplus = direction > 0;`
+  OR document that null-direction records are intentionally skipped (if
+  that's the desired behavior — but it's inconsistent with DIRECTION_FLIP).
+```
+
+```
+DEEP-BUG-API-11 [P3]: Export-report cache stores Buffer as number[] (4-7x bloat)
+File: src/app/api/export-report/route.ts:1094, 1099
+Problem: `return { buffer: Array.from(buffer), fileName }` converts a Buffer
+  to a number array for JSON serialization. A 1MB Word doc becomes 1M Number
+  entries in JSON (~4-7MB string). Every cache hit does JSON.parse +
+  Buffer.from(numberArray) — CPU/memory cost. The cache payload is 4-7x
+  larger than the binary.
+Impact: Cache storage bloat (4-7x). Slower cache read/write. For a 1MB
+  docx, ~5-10ms extra per cache hit + ~5MB DB row size per cache entry.
+  With 10 concurrent users exporting different periods, cache table grows
+  by 50MB.
+Fix: Use base64 encoding:
+  `return { bufferBase64: buffer.toString('base64'), fileName };`
+  Then: `Buffer.from(exportData.bufferBase64, 'base64')`
+  Base64 is ~33% larger than binary but ~3-5x smaller than number[] JSON.
+  Alternatively, store the buffer as a bytea column (requires schema
+  change — AggregationCache.payload is text).
+```
+
+```
+DEEP-BUG-API-12 [P3]: Heatmap cache key uses user-requested mode, not effectiveMode
+File: src/app/api/area-item-heatmap/route.ts:95
+      src/lib/queries/heatmap.ts:93-96
+Problem: Cache key includes `mode` (user-requested). But for metrics
+  `pctQtyDeviasiToBom` + `recordCount`, the query falls back to
+  `effectiveMode = 'top'` internally (heatmap.ts:93-96). So:
+  - Request A: `mode=pareto80, metric=pctQtyDeviasiToBom` → cache key has
+    `mode=pareto80`, response has `itemSelectMode=top`
+  - Request B: `mode=top, metric=pctQtyDeviasiToBom` → cache key has
+    `mode=top`, response has `itemSelectMode=top`
+  Both responses are IDENTICAL but have DIFFERENT cache keys. Request B
+  doesn't hit Request A's cache.
+Impact: Cache pollution — 2 cache entries for the same logical request
+  when metric is pctQtyDeviasiToBom or recordCount + mode differs. Wasted
+  compute (~200ms) on the second request. Minor — only affects 2 of 5
+  metrics.
+Fix: Compute `effectiveMode` in the route BEFORE `buildCacheKey`:
+  `const effectiveMode = (mode === 'pareto80' && (metric ===
+  'pctQtyDeviasiToBom' || metric === 'recordCount')) ? 'top' : mode;`
+  Then use `effectiveMode` in the cache key's `extra: { metric, itemLimit,
+  mode: effectiveMode }`. Pass `effectiveMode` to queryAreaItemHeatmap
+  (or let the query compute it — current behavior is fine, just use
+  effectiveMode in the cache key).
+```
+
+### Items Verified CORRECT (no bugs)
+
+- **Z-Score signed convention**: calcZScoreFromStats (historical.ts:167-175)
+  correctly returns SIGNED zScore. computeZScore (historical.ts:64-132)
+  also signed. evaluateHistoricalRulesJs (rule-evaluation.ts:263) computes
+  signed zScore. Only POSITIVE zScore triggers HISTORICAL_* rules ✓.
+- **qtyDeviasi metric**: historical.ts query uses SUM(ABS(qtyDeviasi)) for
+  baseline (magnitude). post-process.ts:611 displays `row.qtyDeviasi`
+  (signed) for direction. calcZScoreFromStats uses Math.abs(value)
+  internally. Consistent ✓.
+- **HISTORICAL_* rules only fire on positive zScore**: confirmed in
+  rule-evaluation.ts:270, 275, 280. HISTORICAL_WARNING (line 280) has
+  `zScore > zWarn && zScore <= zHigh` — both positive bounds. ✓
+- **Trend Item Z-Score**: item-trend.ts:233-238 correctly requires
+  `stats.n >= HISTORICAL_MIN_WEEKS && stats.stdDev > 0`. Same-week
+  baseline (line 223). Excludes current period (line 225 `.filter((q) => q !== p)`).
+  Sample variance N-1 (computeSampleStats line 108-110). ✓
+- **Trend Item cache key**: includes `week` (route.ts:90) + `metric`
+  (route.ts:97) + all filters. Month resolved before key (route.ts:82-83). ✓
+- **Trend Item edge cases**: 0 periods → empty array. 1 period →
+  zScore=null (n=0 < 4). All zeros → stdDev=0 → zScore=null. Non-existent
+  item → `success: true, periods: []` (not 404). ✓
+- **Heatmap Pareto 80/20**: correct fallback to 'top' for
+  pctQtyDeviasiToBom + recordCount (heatmap.ts:93-96). Pareto logic
+  (lines 125-147) correctly accumulates share% until 80% threshold. ✓
+- **Heatmap outletCount**: `CAST(COUNT(DISTINCT ir."outletId") AS INTEGER)`
+  (heatmap.ts:175). ✓
+- **Drilldown area filter**: `where.area = areaFilter` (route.ts:103).
+  Kelompok + PIC intersection logic (lines 138-150) correct — intersects
+  outlet codes when both set, returns empty if intersection is empty. ✓
+- **Drilldown sentinel**: `__NO_MATCH__` correctly checked for kelompok
+  (line 116) + pic (line 122). Early-return empty when either matches
+  no outlets. ✓ (Note: kelompok sentinel is dead code per DEEP-BUG-API-05,
+  but the check itself is correct.)
+- **Cache invalidation list**: all 10 cached routes present in
+  invalidateAnalysisCache (aggregation-cache.ts:413-417): analysis, pareto,
+  recommendations, resto-bahan-matrix, export-report, heatmap, outlet-items,
+  item-history, drilldown, item-trend. 'diagnosis' not present (correctly
+  removed). ✓
+- **invalidateAnalysisCache awaits properly**: `await Promise.all(routes.map(r
+  => invalidateCache(...)))` (line 418). ✓
+- **Export-report thresholds**: uses configurable
+  `thresholds.BOM_DISPROPORTIONATE_FACTOR ?? 1.5` (route.ts:816) +
+  `thresholds.BOM_DEVIATION_FACTOR ?? 2.0` (line 817). No hardcoded
+  1.5/2.0 in the BOM correlation section. ✓
+- **SQL injection**: zero `$queryRawUnsafe` calls. All raw SQL uses
+  `Prisma.sql` tagged templates. `Prisma.raw` only used for hardcoded
+  column names + aliases (safe — not user input). ✓
+- **Error sanitization**: all routes use `errorResponse(e, 'route-name')`
+  or inline `NextResponse.json({ error: 'Internal server error' }, { status:
+  500 })`. No `console.error` in route handlers. ✓
+- **Rate limiting**: all 23 routes have rate limiting (verified per
+  MASTER_CONTEXT §4 table). ✓
+- **Div-by-zero**: calcGrowth/calcGrowthAbs (growth.ts:31-49) handle
+  prev=0. calcZScoreFromStats (historical.ts:172) handles stdDev=0.
+  safeRatio (growth.ts:111-114) handles denom=0. computeSampleStats
+  (item-trend.ts:104-112) handles n=0/1. ✓
+- **In-flight Promise rejection**: route.ts:53 rejects on 404, route.ts:99
+  rejects on error. Both correctly use `rejectComputation?.(e)`. ✓
+
+### Test Results
+
+No runtime tests performed (audit-only task). All findings verified by
+code reading + cross-referencing prior audits.
+
+### Severity Distribution
+
+- P1: 1 (DEEP-BUG-API-01 — wrong data, user misses investigation targets)
+- P2: 5 (DEEP-BUG-API-02..06 — error swallowing, half-migration, wrong
+  status code, dead code, missing validation)
+- P3: 6 (DEEP-BUG-API-07..12 — cache pollution, redundant Math.abs,
+  frontend color, null-direction skip, buffer bloat, cache key dup)
+
+### Recommended Fix Priority
+
+1. **DEEP-BUG-API-01** (P1, 1-line fix in 2 files): Add
+   `HISTORICAL_ABNORMAL_SURPLUS` to critical items filter. Highest user
+   impact — SURPLUS anomalies missing from dashboard + Word export.
+2. **DEEP-BUG-API-02** (P2, 1-line fix): Add logging to the empty
+   `.catch(() => {})` in validate-and-resolve.ts:219. Quick win for
+   observability.
+3. **DEEP-BUG-API-06** (P2, ~20 lines): Add Zod validation to heatmap
+   routes. Security checklist compliance.
+4. **DEEP-BUG-API-04** (P2, ~10 lines): Use EarlyHttpResponse pattern in
+   analysis route. API contract consistency.
+5. **DEEP-BUG-API-03** (P2, larger refactor): Complete SWR migration for
+   /api/analysis. Defer if perf is acceptable.
+6. **DEEP-BUG-API-05** (P2, ~5 lines): Make resolveKelompokOutletCodes
+   consistent with resolvePICOutletCodes sentinel pattern.
+7. **DEEP-BUG-API-07..12** (P3): Defer or batch-fix in next maintenance
+   sprint.
+
+### Verification
+
+- `bunx tsc --noEmit` not run (no code changes made — audit only).
+- All findings verified against source code (12 files read in full).
+- Cross-referenced against prior audits (DEEP-AUDIT-API, TREND-BE,
+  BUG-2-*) to avoid duplication + identify persistent bugs.
+- No runtime testing performed (would require running the dev server +
+  triggering edge cases).
+
+
+---
+
+## DEEP-BUG-DB — Deep Bug Hunter Audit (DB Queries + Calculations)
+**Date:** 2026-08-30 · **Agent:** Deep Bug Hunter · **Task ID:** DEEP-BUG-DB
+
+### Scope
+Deep audit of DB queries, SQL correctness, and calculation accuracy across
+the 8 focus areas: Z-Score (signed), 19-rule SQL evaluation, heatmap,
+dashboard, item-trend, item-consistency, schema/indexes, and cross-file
+calculation consistency.
+
+### Files Audited
+- `src/lib/metrics/historical.ts` (207 lines) — calcZScoreFromStats + computeZScore
+- `src/lib/queries/historical.ts` (140 lines) — queryHistoricalStatsMultiMetric
+- `src/lib/queries/rule-evaluation.ts` (292 lines) — evaluateRulesSql + evaluateHistoricalRulesJs
+- `src/app/api/analysis/services/post-process.ts` (839 lines) — buildHistoricalAnalysis
+- `src/lib/queries/heatmap.ts` (272 lines) — queryAreaItemHeatmap + queryHeatmapCellDetail
+- `src/lib/queries/item-trend.ts` (243 lines) — queryItemTrendTimeline
+- `src/lib/queries/dashboard.ts` (347 lines) — queryTrendAgg + queryExecSummary
+- `src/lib/queries/items/top-items.ts` (723 lines) — queryItemConsistency
+- `src/lib/queries/shared.ts` (202 lines) — buildSqlFilters + DIRECTION_FROM_SUM_SQL
+- `src/lib/queries/health-ranking.ts` (354 lines) — queryHistoricalCriticalItems
+- `src/app/api/item-history/route.ts` (372 lines) — area/network benchmark
+- `src/app/api/outlet-items/route.ts` (674 lines) — Dev/BOM per-record vs aggregate
+- `src/lib/metrics/deviation.ts` (295 lines) — computeDevBomAggregate + computeResidual
+- `src/lib/metrics/definitions.ts` — formula reference
+- `src/lib/settings.ts` (567 lines) — runtime thresholds
+- `src/engine/transform.ts` (345 lines) — deriveRecord + computeResidual
+- `src/components/dashboard/HistoricalZScoreCard.tsx` (309 lines) — Z-Score UI
+- `src/components/dashboard/AdvancedAnalysis.tsx` (354 lines) — Pola Item UI
+- `prisma/schema.prisma` (297 lines) — schema + indexes
+
+### Methodology
+1. Line-by-line static review of all 19 files.
+2. Cross-check formulas against PRD §5.1 (rules), §5.2 (Z-Score), §5.3
+   (priority), §5.5 (direction), §5.6 (Dev/BOM), §5.7 (residual).
+3. Cross-file consistency check for Dev/BOM, Residual, Direction, Growth,
+   Pareto formulas.
+4. Threshold verification: PRD §5.1 defaults vs settings.ts defaults.
+5. Numerical stability analysis for Z-Score variance computation.
+
+### Bugs Found
+
+```
+DEEP-DB-01 [P1]: Heatmap Dev/BOM metric uses per-row average, not volume-weighted SUM/SUM
+File: src/lib/queries/heatmap.ts:71, 256
+Problem: The `pctQtyDeviasiToBom` metric uses `AVG(ABS(ir."pctQtyDeviasiToBom"))`
+  — a per-row average of per-row ratios. PRD §5.6 mandates
+  `SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom))` (volume-weighted aggregate)
+  "applied consistently at every level: outlet, area, network, trend."
+  A per-row average lets low-BOM items with high deviation skew the ratio.
+  Same issue in `queryHeatmapCellDetail` (line 256).
+Impact: Wrong Dev/BOM % values displayed in heatmap cells + drill-down Sheet.
+  Heatmap color intensity is based on incorrect metric. Cells with many
+  low-BOM high-deviation records show inflated Dev/BOM %, misdirecting
+  analyst attention. Affects the default heatmap view (pctQtyDeviasiToBom
+  is one of 5 metric selectors).
+Fix: Replace `AVG(ABS(ir."pctQtyDeviasiToBom"))` with:
+  `CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+    THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+    ELSE 0 END`
+  in both queryAreaItemHeatmap (line 71) and queryHeatmapCellDetail (line 256).
+  Same fix applies to item-history route (line 227, 238) and
+  resto-bahan-matrix route (line 150) — see DEEP-DB-11.
+```
+
+```
+DEEP-DB-02 [P1]: HistoricalZScoreCard uses wrong Z-Score thresholds (1/2/3 instead of 1.5/2.0)
+File: src/components/dashboard/HistoricalZScoreCard.tsx:19-34, 72-74, 116-117, 129
+Problem: The UI classifies Z-Score severity using hardcoded thresholds
+  1/2/3 (ELEVATED/WARNING/ABNORMAL). But the rule engine uses runtime
+  thresholds HISTORICAL_ZSCORE_WARN=1.5 and HISTORICAL_ZSCORE_HIGH=2.0
+  (settings.ts:538-539, rule-evaluation.ts:250-251). Concrete mismatches:
+  - z=1.7: rule fires HISTORICAL_WARNING; UI shows "ELEVATED" (not WARNING)
+  - z=2.5: rule fires HISTORICAL_ABNORMAL; UI shows "WARNING" (not ABNORMAL)
+  - z=3.5: rule fires HISTORICAL_ABNORMAL; UI shows "ABNORMAL" (matches)
+  The FormulaInfo description (line 129) also says "Z-Score > 2 = WARNING,
+  > 3 = ABNORMAL" — contradicts PRD §5.2 (warn=1.5, high=2.0).
+  The abnormalCount/warningCount (lines 116-117) use the wrong thresholds,
+  so the header summary shows wrong counts vs actual rule firings.
+Impact: Misleading severity classification. Analyst sees "5 abnormal, 12
+  warning" in the UI, but the rule engine actually fired "15 abnormal, 25
+  warning" (based on the real 1.5/2.0 thresholds). User loses trust in
+  the dashboard. Also affects the severity filter (lines 72-74) — clicking
+  "abnormal" filters z>3, missing the z=2-3 range that the rule engine
+  flags as ABNORMAL.
+Fix: Replace hardcoded 1/2/3 with runtime thresholds from settings:
+  - abnormalCount: z > HISTORICAL_ZSCORE_HIGH (2.0)
+  - warningCount: HISTORICAL_ZSCORE_WARN < z ≤ HISTORICAL_ZSCORE_HIGH (1.5-2.0)
+  - zScoreColor/zScoreBadge: use the same thresholds
+  The settings are already passed to /api/analysis response (thresholds
+  object) — just need to wire them through to the UI. Alternatively, if
+  1/2/3 is an intentional UI design choice (granular filtering), rename
+  the labels to avoid confusion with rule severities (e.g. "Tier 3/2/1"
+  instead of "ABNORMAL/WARNING/ELEVATED").
+```
+
+```
+DEEP-DB-03 [P1]: Z-Score compares per-record current value to per-outlet+item aggregate baseline (unit mismatch)
+File: src/lib/queries/rule-evaluation.ts:263, src/app/api/analysis/services/post-process.ts:588, 592-599
+Problem: PRD §5.2 says "Each week = 1 observation. Observation = aggregate
+  value for that outlet+item pair (e.g. for Dev/BOM: SUM(ABS(qtyDeviasi)) /
+  SUM(ABS(qtyBom))). Not per-row average." Both current AND historical
+  values should be per-outlet+item aggregates.
+  But the code uses PER-RECORD current values:
+  - `evaluateHistoricalRulesJs` (rule-evaluation.ts:263): uses
+    `curr.pctQtyDeviasiToBom` from `currSlim` (per-record, 1 row per
+    outlet+item+akunPenyesuaian).
+  - `buildHistoricalAnalysis` (post-process.ts:588, 592-599): uses
+    `row.pctQtyDeviasiToBom`, `row.qtyDeviasi`, `row.qtyWaste`, etc.
+    from `queryHistoricalCriticalItems` (per-record).
+  The baseline (historicalByOutletItem) is correctly aggregated per
+  outlet+item per week. But the current value is per-record.
+  For an outlet+item with 2 akunPenyesuaian (e.g. "COM DEVIASI - RESTO"
+  + "COM DEVIASI - PACKAGING"):
+  - Dev/BOM: per-record ratio ≠ aggregated ratio (different denominators)
+  - QTY Deviasi: per-record |qtyDeviasi| ≈ half of SUM(|qtyDeviasi|)
+  The Z-Score is computed against a mismatched baseline. For QTY Deviasi,
+  per-record current is ~half of aggregated baseline → zScore is
+  artificially LOW (negative) → real anomalies are MISSED.
+Impact: Z-Score is mathematically wrong for items with multiple
+  akunPenyesuaian records per outlet+item. The rule engine (HISTORICAL_*)
+  may fail to fire on legitimate anomalies, and the HistoricalZScoreCard
+  ranking is incorrect. For Dev/BOM the impact is moderate (both are
+  ratios); for QTY Deviasi the impact is severe (magnitude mismatch).
+  Most common case: items with separate RESTO + PACKAGING adjustments
+  in the same outlet.
+Fix: Aggregate current values per (outletId, itemId) before Z-Score:
+  ```sql
+  -- In queryHistoricalCriticalItems, GROUP BY outletId, itemId (drop akunPenyesuaian):
+  SELECT c."outletId", c."itemId", i.name, o.code, c.area,
+    CASE WHEN SUM(ABS(c."qtyBom")) > 0
+      THEN SUM(ABS(c."qtyDeviasi")) / SUM(ABS(c."qtyBom"))
+      ELSE NULL END as "pctQtyDeviasiToBom",
+    SUM(ABS(c."qtyDeviasi")) as "qtyDeviasi",
+    SUM(ABS(c."qtyWaste")) as "qtyWaste",
+    SUM(ABS(c."qtySusut")) as "qtySusut",
+    SUM(ABS(c."qtyTrial")) as "qtyTrial",
+    SUM(c."absNominalDeviasi") as "absNominalDeviasi"
+  FROM "InventoryRecord" c
+  JOIN "Item" i ON c."itemId" = i.id
+  JOIN "Outlet" o ON c."outletId" = o.id
+  JOIN (VALUES ...) AS v(outletId, itemId) ON ...
+  WHERE c."monthLabel" = ${month} AND c."weekLabel" = ${week}
+  GROUP BY c."outletId", c."itemId", i.name, o.code, c.area
+  ```
+  Then in evaluateHistoricalRulesJs, dedupe currSlim by (outletId, itemId)
+  before evaluating. This matches the baseline's per-outlet+item grouping.
+  NOTE: this changes the flag granularity (1 flag per outlet+item, not per
+  outlet+item+akun). The topFlagByKey Map key would change from
+  `outlet|item|akun` to `outlet|item`. Downstream consumers (severity
+  counts) need to be updated accordingly.
+```
+
+```
+DEEP-DB-04 [P2]: BOM_DEVIATION_DISPROPORTIONATE rule missing upper-bound check (≤ BOM_DEVIATION_FACTOR)
+File: src/lib/queries/rule-evaluation.ts:143-145
+Problem: Rule 8 SQL checks `qtyDeviasiGrowth > bomGrowth *
+  BOM_DISPROPORTIONATE_FACTOR (1.5)` but does NOT check `<= bomGrowth *
+  BOM_DEVIATION_FACTOR (2.0)`. PRD §5.1 Rule 8 says "ratio >
+  BOM_DISPROPORTIONATE_FACTOR (1.5×) AND ≤ BOM_DEVIATION_FACTOR (2×, else
+  rule 3 fires)". The comment in rules.yaml (PRD §5.1.1) explicitly says
+  rule 8 "catches the 1.5×–2× band that BOM_DEVIATION_MISMATCH (rule 3)
+  misses". Without the upper bound, when ratio > 2, BOTH rule 3
+  (ABNORMAL, P88) AND rule 8 (WARNING, P56) fire — producing duplicate
+  flags with different severities.
+Impact: Duplicate flag firing for high-ratio cases (ratio > 2). The
+  topFlagByKey Map keeps the highest-priority flag (rule 3, P88), so the
+  duplicate is deduped — but the ruleCodeCounts (used for the rule
+  breakdown chart) double-counts. Also wastes compute on the redundant
+  CASE evaluation.
+Fix: Add upper bound:
+  ```sql
+  CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0
+    AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0
+    AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DISPROPORTIONATE_FACTOR}
+    AND g."qtyDeviasiGrowth" <= g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR}
+  THEN 1 ELSE 0 END as "f_bom_disproportionate"
+  ```
+```
+
+```
+DEEP-DB-05 [P2]: SQL rules 13/14/15 don't use direction fallback chain (nominalLossSurplus NULL → qtyDeviasi)
+File: src/lib/queries/rule-evaluation.ts:97-99
+Problem: Rules 13 (RESIDUAL_LOSS_HIGH), 14 (RESIDUAL_LOSS_WARN), 15
+  (HIGH_LOSS_NOMINAL) check `c."nominalLossSurplus" < 0` directly. Per
+  PRD §5.5, the fallback chain is: nominalLossSurplus → qtyDeviasi →
+  stored direction. The f_dir_flip rule (line 105-128) correctly uses
+  the fallback (COALESCE on nominalLossSurplus then qtyDeviasi). But
+  rules 13/14/15 don't — if nominalLossSurplus is NULL but qtyDeviasi < 0
+  (indicating LOSS via fallback), these rules DON'T fire.
+  Inconsistency within the same file: f_dir_flip uses fallback, but
+  f_resid_high/f_resid_warn/f_high_loss don't.
+Impact: Rules 13/14/15 miss legitimate LOSS records where
+  nominalLossSurplus is NULL but qtyDeviasi < 0. The JS rule evaluator
+  (ruleService.ts:68-86) uses the fallback, so the SQL and JS paths
+  disagree. Edge case — depends on how often nominalLossSurplus is NULL.
+Fix: Replace `c."nominalLossSurplus" < 0` with:
+  `COALESCE(c."nominalLossSurplus", c."qtyDeviasi") < 0`
+  (matches PRD §5.5 fallback: nominalLossSurplus → qtyDeviasi).
+  For rule 15, also wrap the ABS check: `ABS(COALESCE(c."nominalLossSurplus",
+  c."qtyDeviasi")) > ${thresholds.HIGH_LOSS_NOMINAL_THRESHOLD}` — but
+  note that qtyDeviasi is QTY (not nominal IDR), so the comparison
+  would be wrong. Better: skip rule 15 entirely when nominalLossSurplus
+  is NULL (since the threshold is in IDR, not QTY).
+```
+
+```
+DEEP-DB-06 [P2]: PRD §5.1 default thresholds don't match settings.ts defaults (Rule 13/14/15)
+File: src/lib/settings.ts:534-535, 551; PRD_RETROAKTIF.md:295-297
+Problem: PRD §5.1 documents these defaults:
+  - Rule 13: residualLossHighPct = 0.50
+  - Rule 14: residualLossWarnPct = 0.30
+  - Rule 15: highLossNominalThreshold = Rp 10 jt
+  But settings.ts has:
+  - RESIDUAL_LOSS_HIGH_PCT = 0.70 (P1 tier value per PRD §5.3)
+  - RESIDUAL_LOSS_WARN_PCT = 0.50
+  - HIGH_LOSS_NOMINAL_THRESHOLD = 50,000,000 (50 jt — P1 tier value per PRD §5.3)
+  The setting keys are SHARED between Rule triggers (PRD §5.1) and P1
+  priority tier (PRD §5.3), but the documented defaults differ. The code
+  uses the P1-tier values for both, making rules fire LESS often than
+  PRD §5.1 documents.
+  Example: residualRatio = 0.6 (between 0.50 and 0.70):
+  - PRD §5.1: Rule 13 (ABNORMAL) fires (0.6 > 0.50)
+  - Code: Only Rule 14 (WARNING) fires (0.6 > 0.50 AND ≤ 0.70)
+Impact: Rules 13/14/15 fire less often than PRD §5.1 documents. Analysts
+  expecting ABNORMAL severity at residualRatio=0.6 see only WARNING.
+  The PRD itself is internally inconsistent (§5.1 vs §5.3 use the same
+  key with different defaults).
+Fix: Either (a) update PRD §5.1 to match code (0.70 / 0.50 / 50jt), OR
+  (b) split the setting keys: `RULE_RESIDUAL_LOSS_HIGH_PCT` (0.50) for
+  rule trigger + `P1_RESIDUAL_LOSS_HIGH_PCT` (0.70) for P1 tier. Option
+  (a) is simpler if the code's behavior is the intended one. Document
+  the decision in PRD §5.1.
+```
+
+```
+DEEP-DB-07 [P2]: Multi-metric Z-Score guards use hardcoded n>=4 instead of HISTORICAL_MIN_WEEKS
+File: src/app/api/analysis/services/post-process.ts:592, 594, 596, 598
+Problem: buildHistoricalAnalysis checks `stats.qtyDeviasi.n >= 4`,
+  `stats.waste.n >= 4`, etc. — hardcoded 4. But the primary zScore (Dev/BOM,
+  line 588) uses calcZScoreFromStats which doesn't check n at all (only
+  checks stdDev > 0). And evaluateHistoricalRulesJs (rule-evaluation.ts:247,
+  256) uses `thresholds.HISTORICAL_MIN_WEEKS ?? 4`.
+  If a user changes HISTORICAL_MIN_WEEKS to 5 (via Settings):
+  - Dev/BOM rule (HISTORICAL_ABNORMAL/WARNING): won't fire (uses 5)
+  - Dev/BOM displayed zScore: still computed (no n check in calcZScoreFromStats)
+  - Multi-metric zScores (qtyDeviasi/waste/susut/trial): still computed (uses 4)
+  Three different behaviors for the same configurable threshold.
+Impact: Inconsistent Z-Score computation when HISTORICAL_MIN_WEEKS is
+  changed from default. Displayed zScores may not match rule firings.
+Fix: Pass thresholds to buildHistoricalAnalysis and use
+  `thresholds.HISTORICAL_MIN_WEEKS` consistently for all 5 metrics
+  (devBom + qtyDeviasi + waste + susut + trial). Also add the n check to
+  the primary zScore (line 588) for consistency.
+```
+
+```
+DEEP-DB-08 [P2]: item-trend.ts HISTORICAL_MIN_WEEKS hardcoded to 4 (function doesn't accept thresholds)
+File: src/lib/queries/item-trend.ts:90
+Problem: `const HISTORICAL_MIN_WEEKS = 4;` is a module-level constant.
+  The function `queryItemTrendTimeline` doesn't accept a thresholds
+  parameter, so it can't use the runtime-configurable
+  HISTORICAL_MIN_WEEKS. If a user changes the setting to 5, the
+  /api/item-trend route still uses 4.
+Impact: Inconsistent with /api/analysis route (which uses runtime
+  threshold). The Trend Item tab's Z-Scores may be computed with a
+  different minimum than the Historical Z-Score card.
+Fix: Add `thresholds?: { HISTORICAL_MIN_WEEKS: number }` parameter to
+  queryItemTrendTimeline, default to 4 if not provided. Pass
+  thresholds from route.ts (already loaded for cache key — just need
+  to fetch via getThresholds()).
+```
+
+```
+DEEP-DB-09 [P2]: Numerical instability in historical.ts computeStats (catastrophic cancellation)
+File: src/lib/queries/historical.ts:38
+Problem: `variance = (sumSq - n * mean * mean) / (n - 1)` is mathematically
+  correct but numerically unstable. For QTY Deviasi values (often in
+  millions): mean ~10M, mean² ~10^14, n*mean² ~4×10^14, sumSq ~4×10^14.
+  The subtraction `sumSq - n*mean²` can lose ~10 digits of precision due
+  to floating-point cancellation. The Math.max(0, ...) clamps negative
+  variance to 0, but precision loss inflates stdDev for legitimate cases.
+  Affects QTY Deviasi Z-Score most severely (large magnitudes). Dev/BOM
+  ratios (small numbers 0.05-0.50) are less affected.
+Impact: QTY Deviasi Z-Score may be inaccurate for items with large weekly
+  quantities. Could cause false positives (inflated zScore) or false
+  negatives (deflated zScore). Hard to detect without comparing to a
+  stable recomputation.
+Fix: Use PostgreSQL's built-in STDDEV_SAMP directly in SQL:
+  ```sql
+  SELECT
+    "outletId", "itemId",
+    AVG("weeklyDevBom") as "devBomMean",
+    STDDEV_SAMP("weeklyDevBom") as "devBomStdDev",  -- PG computes stably
+    CAST(COUNT("weeklyDevBom") AS INTEGER) as "devBomN",
+    ...
+  ```
+  Then computeStats just returns { mean, stdDev, n } directly. PG's
+  STDDEV_SAMP uses Welford's online algorithm (numerically stable).
+  Alternatively, use a two-pass JS computation (requires fetching raw
+  weekly values, not just aggregates).
+```
+
+```
+DEEP-DB-10 [P3]: OutletPeriodSales.outlet uses onDelete: Cascade while InventoryRecord.outlet uses onDelete: Restrict (inconsistent)
+File: prisma/schema.prisma:92, 186
+Problem: InventoryRecord.outlet has `onDelete: Restrict` (line 92) —
+  prevents outlet deletion if any InventoryRecord references it.
+  OutletPeriodSales.outlet has `onDelete: Cascade` (line 186) — would
+  auto-delete OutletPeriodSales rows if outlet is deleted. Inconsistent
+  FK behavior between the two tables that reference Outlet.
+Impact: In practice, the Restrict on InventoryRecord prevents outlet
+  deletion entirely, so the Cascade on OutletPeriodSales never triggers.
+  But if someone manually deletes from OutletPeriodSales (or the Restrict
+  is ever relaxed), the inconsistency surfaces. Also confusing for future
+  maintainers.
+Fix: Make OutletPeriodSales.outlet use `onDelete: Restrict` for
+  consistency with InventoryRecord.outlet (both are derived from
+  InventoryRecord and should have the same lifecycle). OR document why
+  the asymmetry is intentional (OutletPeriodSales is "more derived" and
+  safe to cascade-delete).
+```
+
+```
+DEEP-DB-11 [P2]: item-history + resto-bahan-matrix use AVG(ABS(pctQtyDeviasiToBom)) for area/network benchmark (contradicts PRD §5.6)
+File: src/app/api/item-history/route.ts:227, 238; src/app/api/resto-bahan-matrix/route.ts:150
+Problem: Same issue as DEEP-DB-01 — uses per-row average instead of
+  volume-weighted SUM/SUM. The code comment (item-history route:209-214)
+  explicitly justifies this as intentional: "This is CORRECT for
+  item-level benchmarking (each outlet = 1 equal observation for the same
+  item). This is DIFFERENT from DevBomAggregate (SUM/SUM) used for
+  outlet-level Dev/BOM." But PRD §5.6 says "Applied consistently at every
+  level: outlet, area, network, trend."
+Impact: Area/network benchmark Dev/BOM values are per-row averages, not
+  volume-weighted. An outlet with low BOM but high deviation skews the
+  benchmark. The displayed "area avg" and "network avg" Dev/BOM in the
+  item-history page may not match the dashboard's Dev/BOM (which uses
+  SUM/SUM).
+Fix: Either (a) change to SUM/SUM for consistency with PRD §5.6, OR (b)
+  update PRD §5.6 to acknowledge the item-level benchmark uses per-row
+  average (documented design choice). The code comment suggests (b) is
+  the intent — but PRD §5.6 hasn't been updated to reflect this.
+```
+
+```
+DEEP-DB-12 [P3]: @@index([direction]) on InventoryRecord — low cardinality, likely unused by PostgreSQL planner
+File: prisma/schema.prisma:148
+Problem: The `direction` column has only 3 possible values (LOSS /
+  SURPLUS / NEUTRAL). PostgreSQL's planner typically skips B-tree indexes
+  on low-cardinality columns because a seq scan is cheaper. The index
+  consumes disk space + slows writes (every INSERT/UPDATE on direction
+  updates the index) but provides no query benefit.
+Impact: Minor write perf overhead + disk waste. No read perf benefit.
+Fix: Drop the index: `@@index([direction])` → remove line 148. Verify
+  no query uses `WHERE direction = ...` with high selectivity first
+  (grep for `WHERE.*direction` — if all queries filter direction together
+  with other high-cardinality columns, the composite indexes already
+  cover them).
+```
+
+```
+DEEP-DB-13 [P3]: AdvancedAnalysis.tsx UI description says "Lokal (2-4 outlet)" but SQL classifies outletCount=1 as ISOLATED too
+File: src/components/dashboard/AdvancedAnalysis.tsx:222; src/lib/queries/items/top-items.ts:521-523
+Problem: The FormulaInfo description says "Lokal (2-4 outlet) = anomali
+  outlet spesifik." But the SQL classification (top-items.ts:520-524):
+  `WHEN "outletCount" >= 10 THEN 'SYSTEMIC'
+   WHEN "outletCount" >= 5 THEN 'WIDESPREAD'
+   ELSE 'ISOLATED'`
+  This classifies outletCount=1 as ISOLATED too (not 2-4 as documented).
+Impact: Minor UI text inconsistency. An item with only 1 deviating outlet
+  is shown as "Lokal" but the description says "2-4 outlet." Confusing
+  for the analyst.
+Fix: Either (a) update the SQL to filter `outletCount >= 2` before
+  classification (items with 1 outlet are not "pattern" — just single
+  anomaly), OR (b) update the UI description to "Lokal (1-4 outlet)".
+```
+
+```
+DEEP-DB-14 [P3]: Math.abs() redundant in item-trend.ts Z-Score computation
+File: src/lib/queries/item-trend.ts:226, 234
+Problem: `Math.abs(getMetricValue(q, metric))` and `Math.abs(getMetricValue(p, metric))`
+  apply Math.abs to values that are already ABS (e.g. `p.qtyDeviasi` is
+  `SUM(ABS(qtyDeviasi))` per line 171). The Math.abs is a no-op.
+Impact: No functional impact (correct result). Minor wasted CPU cycles.
+Fix: Remove the redundant Math.abs() calls. Add a comment that
+  getMetricValue already returns ABS magnitude.
+```
+
+```
+DEEP-DB-15 [P3]: buildHistoricalAnalysis sorts by Math.abs(zScore) instead of signed zScore
+File: src/app/api/analysis/services/post-process.ts:626
+Problem: `histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore))`
+  sorts by absolute zScore. This works because all items in the list
+  have positive zScore (filtered by HISTORICAL_ABNORMAL/WARNING flags
+  which only fire for z > 1.5). But it's inconsistent with the SIGNED
+  Z-Score convention (positive=worse, negative=better) — if a future
+  change includes negative zScores in this list, the sort would be wrong.
+Impact: No current functional impact (all zScores positive). Future-proofing.
+Fix: Change to `b.zScore - a.zScore` (signed sort, highest first) for
+  clarity + future-proofing.
+```
+
+### Items Verified CORRECT (no bugs)
+
+**Z-Score formula (PRD §5.2):**
+- `(ABS(current) - mean(ABS(historical))) / STDDEV_SAMP(ABS(historical))` ✓
+- Sample variance (N-1, Bessel's correction) ✓ in historical.ts:92-94, item-trend.ts:108-110
+- Exclude current period from baseline ✓ (`.filter((q) => q !== p)` in item-trend.ts:225)
+- n >= 4 required ✓ (historical.ts:76, rule-evaluation.ts:256, item-trend.ts:233)
+- stdDev > 0 required ✓ (historical.ts:99, rule-evaluation.ts:256, item-trend.ts:233)
+- Same-week baseline (W4 vs W4) ✓ (item-trend.ts:212-217, item-history route:259)
+- Only POSITIVE zScore triggers rules ✓ (rule-evaluation.ts:270, 275, 280)
+- ABS magnitude in SQL aggregates ✓ (historical.ts:88, 91, 93-97)
+- SIGNED result for direction display ✓ (calcZScoreFromStats:174, item-trend.ts:235)
+- qtyDeviasi uses SUM(ABS(qtyDeviasi)) for baseline ✓ (historical.ts:91)
+- qtyDeviasiSigned uses raw signed value for display ✓ (item-trend.ts:172)
+- No place wraps signed zScore in Math.abs() ✓ (verified via grep)
+
+**Rule evaluation (PRD §5.1):**
+- Rule 1 (SALES_DEVIATION_MISMATCH): deviation growth > 2× sales growth (both positive) ✓
+- Rule 3 (BOM_DEVIATION_MISMATCH): deviation growth > 2× BOM growth ✓
+- Rule 9 (TOLERANCE_BREACH_HIGH): |Dev/BOM| > 2× |tolerancePct| ✓
+- Rule 12 (OVER_EXPLAINED): Waste + Susut + Trial > |deviation| AND |deviation| > 0 ✓
+- Rule 13 (RESIDUAL_LOSS_HIGH): residualRatio > threshold AND LOSS ✓ (except fallback — DEEP-DB-05)
+- Rule 15 (HIGH_LOSS_NOMINAL): |nominalLossSurplus| > threshold AND LOSS ✓ (except fallback)
+- Thresholds read from runtime settings (not hardcoded) ✓
+- BOM_DISPROPORTIONATE_FACTOR decoupled from BOM_DEVIATION_FACTOR ✓ (separate settings)
+- Growth CTE fields use ABS magnitude ✓ (rule-evaluation.ts:163, 166, 169, 173, 176, 179)
+- LATERAL JOIN correct (unique constraint guarantees ≤1 prev row) ✓
+
+**Heatmap:**
+- Pareto 80/20 computation correct (cumulative share >= 80%) ✓ (heatmap.ts:131-139)
+- Smart fallback for pctQtyDeviasiToBom + recordCount ✓ (heatmap.ts:93-96)
+- outletCount = COUNT(DISTINCT outletId) ✓ (heatmap.ts:175)
+
+**Dashboard:**
+- filtered_periods CTE correct (uses OutletPeriodSales when no IR filter) ✓ (dashboard.ts:55-68)
+- "ops" alias bug fixed (uses weekFilterOps for OutletPeriodSales) ✓ (dashboard.ts:41-43)
+- sales = SUM(MODE per outlet) via OutletPeriodSales ✓ (dashboard.ts:81)
+- lossNominal = SUM(ABS(nominalLossSurplus)) WHERE < 0 ✓ (dashboard.ts:100)
+- Dev/BOM = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) ✓ (dashboard.ts:94-96)
+
+**Item trend:**
+- Same-week baseline ✓
+- Week filter applied ✓ (item-trend.ts:148-150)
+- ORDER BY chronological (for single-digit weeks) ✓
+- itemName exact match (i.name = ${itemName}) ✓
+
+**Item consistency:**
+- Classification: >=10 SYSTEMIC, >=5 WIDESPREAD, else ISOLATED ✓
+- Display label mapping: SYSTEMIC→Massal, WIDESPREAD→Regional, ISOLATED→Lokal ✓
+- lossOutlets/surplusOutlets via COUNT(DISTINCT CASE WHEN ...) ✓
+- avgDevBom uses SUM/SUM (volume-weighted) ✓
+
+**Schema:**
+- @@unique([weekId, outletId, itemId, akunPenyesuaian]) correct ✓
+- AggregationCache.payload is text (no size limit) ✓
+- 12 indexes on InventoryRecord (covering indexes for heatmap + trend present) ✓
+
+**Cross-file consistency:**
+- Dev/BOM ratio: SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) consistent in dashboard, top-items, peer-comparison ✓
+- Residual: Math.max(0, absDev - explained) consistent in deviation.ts, transform.ts ✓
+- Direction: nominalLossSurplus < 0 = LOSS consistent in DIRECTION_FROM_SUM_SQL, dashboard, rule-eval ✓
+- Growth: ABS magnitude with div-by-zero guards consistent ✓
+- Pareto: sort by |value| DESC, cumulative >= 80% consistent (shared.ts:128-141) ✓
+
+### Summary
+
+**3 P1 bugs** (wrong calculations / data corruption):
+- DEEP-DB-01: Heatmap Dev/BOM uses AVG instead of SUM/SUM (PRD §5.6 violation)
+- DEEP-DB-02: HistoricalZScoreCard uses wrong Z-Score thresholds (1/2/3 vs 1.5/2.0)
+- DEEP-DB-03: Z-Score compares per-record current to per-outlet+item aggregate baseline (unit mismatch)
+
+**7 P2 bugs** (edge cases / inconsistencies):
+- DEEP-DB-04: BOM_DEVIATION_DISPROPORTIONATE missing upper-bound check
+- DEEP-DB-05: SQL rules 13/14/15 don't use direction fallback chain
+- DEEP-DB-06: PRD §5.1 default thresholds don't match settings.ts defaults
+- DEEP-DB-07: Multi-metric Z-Score guards use hardcoded n>=4
+- DEEP-DB-08: item-trend.ts HISTORICAL_MIN_WEEKS hardcoded to 4
+- DEEP-DB-09: Numerical instability in computeStats (catastrophic cancellation)
+- DEEP-DB-11: item-history + resto-bahan-matrix use AVG for Dev/BOM benchmark
+
+**5 P3 bugs** (minor / perf):
+- DEEP-DB-10: Inconsistent FK cascade behavior (OutletPeriodSales vs InventoryRecord)
+- DEEP-DB-12: Low-cardinality index on `direction` column
+- DEEP-DB-13: UI description says "Lokal (2-4 outlet)" but SQL allows outletCount=1
+- DEEP-DB-14: Redundant Math.abs() in item-trend.ts
+- DEEP-DB-15: Sort by Math.abs(zScore) instead of signed zScore
+
+### Next Actions (Priority Order)
+
+1. **DEEP-DB-01** (P1): Fix heatmap Dev/BOM to use SUM/SUM. Same fix for
+   item-history (DEEP-DB-11) and resto-bahan-matrix. Single SQL change
+   in 4 locations.
+2. **DEEP-DB-02** (P1): Fix HistoricalZScoreCard thresholds to use
+   runtime values (1.5/2.0) instead of hardcoded (1/2/3). Wire settings
+   through to UI.
+3. **DEEP-DB-03** (P1): Aggregate current values per (outletId, itemId)
+   before Z-Score computation. Requires schema change to
+   queryHistoricalCriticalItems (GROUP BY outlet+item, drop akun).
+   Coordinate with downstream consumers (topFlagByKey Map key changes).
+4. **DEEP-DB-04** (P2): Add upper-bound check to f_bom_disproportionate.
+5. **DEEP-DB-05** (P2): Add direction fallback to rules 13/14/15.
+6. **DEEP-DB-06** (P2): Reconcile PRD §5.1 vs settings.ts defaults.
+   Decide: update PRD or split setting keys.
+7. **DEEP-DB-07, 08** (P2): Pass thresholds to buildHistoricalAnalysis
+   and queryItemTrendTimeline. Use HISTORICAL_MIN_WEEKS consistently.
+8. **DEEP-DB-09** (P2): Use SQL STDDEV_SAMP directly instead of unstable
+   JS formula. Single SQL change in historical.ts.
+9. **DEEP-DB-10-15** (P3): Defer — minor perf/cosmetic issues.
+
+### Verification
+- No code changes made (audit only).
+- All findings verified against source code (19 files read in full).
+- Cross-referenced against PRD §5.1-5.7 + MASTER_CONTEXT §6.
+- No runtime testing (would require live DB + edge-case data).
