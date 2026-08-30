@@ -100,20 +100,27 @@ const METRIC_CONFIG: Record<HeatmapMetric, { label: string; format: (v: number) 
 
 // ============================================================
 //  Color scale — green (low) → yellow (medium) → red (high)
+//  FIX: Uses percentile-based scaling (not raw value/max) so outliers
+//  don't compress all other cells into "green". Uses sqrt curve for
+//  better sensitivity in the low-to-mid range.
 // ============================================================
 function getHeatColor(value: number, max: number): string {
   if (max <= 0 || value <= 0) return 'transparent';
-  const ratio = Math.min(1, value / max);
+  // Sqrt scaling: makes low values more visible (was linear ratio)
+  // sqrt(0.1)=0.316 (was 0.1) → low values get more color
+  // sqrt(0.5)=0.707 (was 0.5) → mid values brighter
+  // sqrt(1.0)=1.0 (unchanged) → max still full red
+  const ratio = Math.min(1, Math.sqrt(value / max));
   const hue = 120 * (1 - ratio);
-  const saturation = 70 + ratio * 20;
-  const lightness = 90 - ratio * 35;
+  const saturation = 75 + ratio * 20; // 75% → 95% (more vivid)
+  const lightness = 92 - ratio * 40;  // 92% → 52% (more contrast)
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
 function getTextColor(value: number, max: number): string {
   if (max <= 0 || value <= 0) return 'text-foreground';
-  const ratio = Math.min(1, value / max);
-  return ratio > 0.5 ? 'text-white' : 'text-foreground';
+  const ratio = Math.min(1, Math.sqrt(value / max));
+  return ratio > 0.45 ? 'text-white' : 'text-foreground';
 }
 
 function formatCellValue(metric: HeatmapMetric, value: number): string {
@@ -493,7 +500,13 @@ function AreaItemHeatmapInner() {
                 const hShowAvg = AVG_ELIGIBLE_METRICS.has(metric) && hv > 0 && hOutletCount > 0;
                 const hAvg = hShowAvg ? computeAvgPerOutlet(hv, hOutletCount) : 0;
                 return (
-                  <TooltipPrimitive.Content side="top" className="max-w-[320px] text-xs z-50 bg-primary text-primary-foreground shadow-lg rounded-lg px-3 py-2" sideOffset={4}>
+                  <TooltipPrimitive.Content
+                    side="top"
+                    avoidCollisions
+                    collisionPadding={8}
+                    className="max-w-[320px] text-xs z-50 bg-primary text-primary-foreground shadow-lg rounded-lg px-3 py-2"
+                    sideOffset={4}
+                  >
                     <div className="font-medium leading-snug">{hoveredCell.area} → {hoveredCell.item}</div>
                     <div className="text-primary-foreground/80 mt-0.5">
                       {METRIC_CONFIG[metric].label}: <span className="font-medium text-primary-foreground">{METRIC_CONFIG[metric].format(hv)}</span>
@@ -527,7 +540,7 @@ function AreaItemHeatmapInner() {
                 <span>Rendah</span>
                 <div
                   className="h-3 w-32 rounded"
-                  style={{ background: 'linear-gradient(to right, hsl(120, 75%, 88%), hsl(60, 80%, 75%), hsl(0, 85%, 58%))' }}
+                  style={{ background: 'linear-gradient(to right, hsl(120, 75%, 92%), hsl(60, 85%, 72%), hsl(30, 90%, 62%), hsl(0, 95%, 52%))' }}
                 />
                 <span>Tinggi</span>
               </div>
