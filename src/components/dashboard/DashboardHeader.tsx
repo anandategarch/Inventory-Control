@@ -15,9 +15,11 @@ import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity, Boxes, FileDown, History, Keyboard, Loader2, Search,
+  Activity, Boxes, FileDown, FileText, History, Keyboard, Loader2, Search,
 } from 'lucide-react';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 
 export interface DashboardHeaderProps {
   status: StatusData | undefined;
@@ -40,6 +42,23 @@ export function DashboardHeader({
   onItemSearchClick,
   onAuditLogClick,
 }: DashboardHeaderProps) {
+  const { outletCode, monthLabel, currentWeek } = useDashboard(useShallow((s) => ({
+    outletCode: s.outletCode,
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+  })));
+
+  const handlePdfDownload = () => {
+    if (!outletCode || outletCode === 'all' || !monthLabel || !currentWeek) return;
+    const params = new URLSearchParams({
+      outletCode,
+      month: monthLabel,
+      week: currentWeek,
+    });
+    window.open(`/api/report-pdf?${params.toString()}`, '_blank');
+  };
+
+  const canDownloadPdf = !!(outletCode && outletCode !== 'all' && monthLabel && currentWeek);
   return (
     <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
       {/* Tier 1: Brand + actions */}
@@ -102,6 +121,23 @@ export function DashboardHeader({
                 <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export</span></>
               )}
             </Button>
+          )}
+          {/* PDF Resto Report — download detailed analysis PDF for selected outlet */}
+          {canDownloadPdf && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Download PDF Resto"
+                  onClick={handlePdfDownload}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors px-2 text-xs font-medium"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">PDF Resto</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">Download laporan PDF untuk resto terpilih</TooltipContent>
+            </Tooltip>
           )}
           {/* Audit Log button — zombie revival (AuditLog model had 11 writes, 0 reads) */}
           <Tooltip>
