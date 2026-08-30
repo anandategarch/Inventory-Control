@@ -20,3 +20,4 @@ export * from './historical';
 // collision with src/app/api/analysis/services/growth-drivers.ts — callers
 // import directly from '@/lib/queries/growth-drivers' instead.)
 export * from './health-ranking';
+export * from './heatmap';
