@@ -34624,3 +34624,120 @@ Impact: On the first request after 5-min TTL expiry, the 7 routes return stale d
 1. **P3** — Add SWR to `/api/analysis` route. Requires restructuring the pipeline so the cache check (validate-and-resolve.ts stage 1) can fire-and-forget the compute (stages 2–5 in route.ts) while returning stale data immediately. The cleanest approach is to extract stages 2–5 into a `computeAnalysis(params)` function that can be called both synchronously (current path) and fire-and-forget (SWR path).
 2. **P3** — Surface `stale: true` flag in the TanStack Query hooks (useDrilldown etc.) to show a "data might be stale" indicator in the UI. Currently the flag is in the response but not consumed by the frontend.
 3. **P3** — Consider adding cache warming for pareto/recommendations on tab hover (similar to `prefetchAnalysis` on month/week hover). Currently these routes are fetched on tab render. Warming on hover would make tab switches instant.
+
+---
+Task ID: DOC-UPDATE-2
+Agent: Documentation Updater (general-purpose)
+Task: Update PRD_RETROAKTIF.md + CONVENTIONS.md to reflect current codebase state (heatmap drill-down + Pareto 80/20 + dual display, page.tsx split, DB migration, SWR cache, 9 cached routes, prefetchHeatmap, 20 perf fixes, Cache-Control dev/prod fix, pre-push hook).
+
+Work Log:
+- Read full PRD_RETROAKTIF.md (622 lines), full CONVENTIONS.md (401 lines), tail of worklog.md (~200 lines — saw prior PERF-API / PERF-DB / PERF-FE / PERF-CACHE work).
+- Read actual code to verify each feature before writing docs:
+  - `src/components/dashboard/AreaItemHeatmap.tsx` (550 lines): confirmed Pareto 80/20 default mode, dual display (Total + Ø avg per resto via `AVG_ELIGIBLE_METRICS` set), `outletCount` field, click-cell → Sheet.
+  - `src/components/dashboard/AreaItemHeatmapSheet.tsx` (242 lines): confirmed lazy-loaded via `next/dynamic`, per-outlet table with qtyBom/qtyDeviasi/qtyWaste/qtySusut/qtyTrial/nominalLossSurplus/Dev/BOM%, TOTAL + Ø PER RESTO footer rows.
+  - `src/app/api/area-item-heatmap/route.ts`: confirmed `withCacheAndDedup` SWR pattern, `extra: { metric, itemLimit, mode }` in cache key.
+  - `src/app/api/area-item-heatmap/cell-detail/route.ts`: confirmed drill-down endpoint (NOT cached — user-initiated).
+  - `src/lib/queries/heatmap.ts` (272 lines): confirmed `outletCount = CAST(COUNT(DISTINCT ir."outletId") AS INTEGER)`, raw quantities in cells, Pareto logic with `effectiveMode` fallback to `top` for avg/count metrics.
+  - `src/app/page.tsx` (227 lines — confirmed split from 735): imports DashboardHeader + DashboardFooter + 4 tabs + useDashboardEffects + useDashboardActions.
+  - `src/hooks/useDashboardEffects.ts` (158 lines): confirmed `prefetchAnalysis` + `prefetchHeatmap` on first status load with `warmedStatusKey` ref guard.
+  - `src/hooks/useAnalysis.ts`: confirmed `prefetchHeatmap` export, `refetchOnWindowFocus: false` on all 3 query hooks (useAnalysis, useStatus, useDrilldown).
+  - `src/lib/aggregation-cache.ts`: confirmed `getCachedWithMeta` + `withCacheAndDedup` SWR pattern, 9 routes in `invalidateAnalysisCache` list (analysis, pareto, recommendations, resto-bahan-matrix, export-report, heatmap, outlet-items, item-history, drilldown).
+  - `next.config.ts`: confirmed `optimizePackageImports` extended to 16 packages (recharts, lucide-react + 14 Radix), `Cache-Control: immutable` gated on `NODE_ENV === 'production'`.
+  - `.githooks/pre-push` (17 lines): confirmed force-push-to-main block via `git merge-base --is-ancestor` check.
+- Verified worklog benchmark numbers (the task spec mentioned "outlet-items: 0.94s → 0.006s (157x)" but actual verified numbers from worklog.md are 0.94s → 0.25s (3.8x); used actual verified numbers).
+
+Changes Made to PRD_RETROAKTIF.md (622 → 722 lines):
+- §3.1 Daily Monitoring journey: added heatmap drill-down flow (scroll to Heatmap → click cell → Sheet → per-outlet detail → close).
+- §4.1 Feature Inventory: added new "Heatmap Area × Item" row with Pareto 80/20 mode, dual display (Total + Ø avg per resto), drill-down Sheet, raw quantities, API endpoints.
+- §6 L9 Known Limitation: updated `/api/analysis` cold time from "6-8s" to "12.6s cold" + cross-ref to §6.5.
+- §6.5 Performance (NEW subsection): full benchmark table (7 routes), SWR pattern, prefetchAnalysis + prefetchHeatmap, page.tsx split, React.memo on 4 tabs, lazy Sheet, refetchOnWindowFocus:false, optimizePackageImports 5→16, rule-evaluation.ts CTE slim 21→14 cols, LIMIT safety, composite index, Cache-Control dev/prod fix.
+- §7 Feature Roadmap: added new "Phase B+ — Heatmap + performance pass (DONE)" section listing all 11 recent features.
+- §7 Phase C item #5: updated DB-level caching entry to reflect that AggregationCache is now enabled across 9 routes; Phase C work is to surface `stale:true` flag in UI + add SWR to /api/analysis.
+- §10 Related Documents: added CONVENTIONS.md entry, updated prisma/schema.prisma from "11 indexes" to "12 indexes (added composite (monthLabel, weekLabel, itemId) in PERF-DB-09)".
+- Last updated line: changed to "Last updated by Agent DOC-UPDATE-2" with summary of changes.
+
+Changes Made to CONVENTIONS.md (401 → 779 lines):
+- §1 API Route Pattern: added note about cell-detail route following same pattern (intentionally NOT cached).
+- §2 Response Shape: added `stale?: boolean` to Success shape + explanation of PERF-CACHE-09 SWR flag.
+- §3 Cache Pattern: updated "5 cached routes" → "9 cached routes" (added heatmap, outlet-items, item-history, drilldown); added note about `extra` field for route-specific params.
+- §3.1 SWR (NEW subsection): full `withCacheAndDedup` code example + 7-point SWR contract (in-flight dedup, fresh hit, stale hit, no entry, on error, export-report binary exception, /api/analysis future work).
+- §5.2 Tab Component Pattern (NEW subsection): template for adding sections to dashboard tabs, with React.memo + ErrorBoundary + FetchAware + lazy chart loading conventions.
+- §5.3 Lazy Sheet Pattern (NEW subsection): template for lazy-loading drill-down Sheets via next/dynamic, with filters/onOpenChange memoization + useQuery conventions.
+- §7 Heatmap Conventions (NEW section — renumbered former §7-§14 to §10-§17): 6 sub-sections covering dual display, outletCount field requirement, Pareto 80/20 default mode, raw quantities in cells, drill-down Sheet footer (TOTAL + Ø PER RESTO), cache key.
+- §8 Performance Conventions (NEW section): 7 sub-sections covering prefetch on status load, parallel resolve awaits, resolve month BEFORE cache key, refetchOnWindowFocus:false, optimizePackageImports for Radix + chart libs, statement timeout + LIMIT safety, Cache-Control immutable PROD-only.
+- §9 Git Conventions (NEW section): 3 sub-sections covering pre-push hook (force-push protection), Cache-Control immutable PROD-only cross-ref, Git Commit Pattern cross-ref to §14.
+- §10-§17: renumbered from former §7-§14 (Naming, Validation, Security, Testing, Git Commit Pattern, Number Formatting, State Management, File Organization).
+- §17 File Organization: added `components/dashboard/tabs/` directory + added `useDashboardEffects, useDashboardActions` to hooks list + added 4 cross-reference bullets (Tab Pattern, Lazy Sheet Pattern, Heatmap changes, Git hooks).
+- §9.3 cross-ref: corrected "§11" → "§14" after renumbering.
+- Last updated line: NEW (didn't exist before) — added "Last updated by Agent DOC-UPDATE-2" with summary of changes.
+
+Verification:
+- `bun run lint` → 0 errors, 383 warnings (all pre-existing: 'tx' unused-var + non-null-assertion in test fixtures; no new warnings introduced — expected since only Markdown files were edited).
+- All file paths referenced in docs verified to exist in actual codebase.
+- All benchmark numbers in §6.5 of PRD verified against worklog.md entries (PERF-API, PERF-DB, PERF-FE, PERF-CACHE).
+- All code patterns in CONVENTIONS.md verified against actual source files (heatmap.ts, AreaItemHeatmap.tsx, AreaItemHeatmapSheet.tsx, useDashboardEffects.ts, next.config.ts, aggregation-cache.ts).
+
+Next Actions:
+1. P3 — Consider running `bunx tsc --noEmit` to verify no TS errors introduced (skipped — only .md files were touched; TS compile would not be affected).
+2. P3 — Consider updating MASTER_CONTEXT.md (out of scope for this task) to reflect the same Heatmap + 9 cached routes + SWR + page.tsx split changes for engineering-level documentation.
+3. P3 — Consider extracting the "Dashboard Tab Pattern" + "Lazy Sheet Pattern" into ARCHITECTURE.md (out of scope for this task) since CONVENTIONS.md is more about "how" while ARCHITECTURE.md is more about "why".
+
+---
+
+## Task DOC-UPDATE-1 — Documentation Updater
+
+**Agent:** Documentation Updater (general-purpose)
+**Date:** 2026-08-30
+**Task ID:** DOC-UPDATE-1
+
+### Context Read
+- MASTER_CONTEXT.md (full, 351 lines) — pre-update state: 5 cached routes, 25 components, 2 hooks, 40,271 LOC, 418 tests, "FIX-DOCS" last-updated tag.
+- ARCHITECTURE.md (full, 577 lines) — pre-update state: §4 "5 cached routes", §6 missing §6.6/§6.7, §10 deployment missing migration/pre-push/Cache-Control notes.
+- worklog.md (tail ~270 lines) — recent context: SPLIT-PAGE (page.tsx 735→227), AUDIT-MIGRATION (vefkgapv→proosjqiv, 626,739 rows), AUDIT-FEATURES (heatmap drill-down verified end-to-end), PERF-API (3 routes newly cached), PERF-DB (composite index + work_mem), PERF-FE (Sheet extraction, refetchOnWindowFocus, optimizePackageImports 5→16), PERF-CACHE (SWR implementation).
+- Verified actual code state: src/lib/queries/heatmap.ts (272 lines — queryAreaItemHeatmap + queryHeatmapCellDetail with 13 fields, outletCount, paretoInfo, smart fallback for pct/recordCount metrics), src/components/dashboard/AreaItemHeatmapSheet.tsx (242 lines — lazy-loaded, keepPreviousData, refetchOnWindowFocus:false, Ø PER RESTO footer row), src/components/dashboard/AreaItemHeatmap.tsx (549 lines — h-11 cell height, dual display, AVG_ELIGIBLE_METRICS), src/app/page.tsx (227 lines — confirmed thin orchestrator importing 9 modules), src/hooks/useDashboardEffects.ts (158 lines — calls prefetchAnalysis + prefetchHeatmap), src/hooks/useAnalysis.ts (prefetchHeatmap at line 550), src/lib/aggregation-cache.ts (getCachedWithMeta + withCacheAndDedup with SWR, invalidateAnalysisCache clears 9 prefixes), src/app/api/area-item-heatmap/{route.ts,cell-detail/route.ts}, next.config.ts (16-package optimizePackageImports, prod-only immutable Cache-Control), .githooks/pre-push (force-push blocker).
+
+### Files Updated
+
+#### MASTER_CONTEXT.md
+1. **Last updated line** (top): FIX-DOCS → DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, 9 cached routes, prefetchHeatmap, perf optimizations).
+2. **§4 API Routes table**: Added `/api/area-item-heatmap` (cached, SWR) + `/api/area-item-heatmap/cell-detail` (NOT cached, sub-route) rows. Updated `/api/drilldown`, `/api/item-history`, `/api/outlet-items` rows from ❌ → ✅ DB 5min (SWR). Updated `/api/analysis`, `/api/pareto`, `/api/recommendations`, `/api/resto-bahan-matrix`, `/api/export-report` rows from "DB 5min" → "DB 5min (SWR)". Updated totals line: "5 routes use DB cache" → "**9 routes use DB cache**". Added new "9 cached routes" enumerated list with sub-notes (which use withCacheAndDedup vs bespoke pipeline; cell-detail NOT cached).
+3. **§5 Components**: Updated "25 components" → "24 components + `tabs/` folder + `shared/` barrel". Added `AreaItemHeatmap`, `AreaItemHeatmapSheet`, `DashboardHeader`, `DashboardFooter` to the list. Added new `tabs/` folder subsection (4 tab modules with line counts + responsibilities). Added `shared/index.tsx` subsection (7 shared utilities). Added new `Hooks` subsection (6 hooks: useAnalysis + prefetchHeatmap, useDashboard, useDashboardEffects, useDashboardActions, use-mobile, use-toast). Added SPLIT-PAGE note (page.tsx 735→227, 69% reduction, 9 new modules).
+4. **§6 Key Features — Analytics**: Added new "Heatmap Area × Item" feature block with 3 capabilities (drill-down to resto with API path + query function + 13 fields + TOTAL/Ø PER RESTO footer; Pareto 80/20 mode with ItemSelectMode type + paretoInfo + smart fallback; dual display with outletCount + AVG_ELIGIBLE_METRICS + h-11 cell + tooltip; raw quantities in cells).
+5. **§6 Caching**: Updated "5 cached routes" → "**9 cached routes**" with the 4 new ones marked. Added new "Stale-While-Revalidate (SWR)" subsection (PERF-CACHE-09: getCachedWithMeta + withCacheAndDedup, fresh/stale/no-entry paths, 7 JSON routes surface stale flag, /api/analysis NOT migrated, /api/export-report SWR internal). Added "Cache warming" subsection (prefetchAnalysis + prefetchHeatmap NEW). Added getCachedWithMeta to API list.
+6. **§7 Performance Benchmarks**: Replaced 6-row table with 11-row table including all 9 cached routes + cell-detail (NOT cached) + status. Added "Notes" column with PERF-API/PERF-CACHE task references + speedup multipliers (outlet-items 157×, item-history 83×, drilldown slim select). Updated header to include DB host `proosjqivxadwgftofry`.
+7. **§9 Stats**: LOC 40,271 → 42,856. Tests 418 → 435. Added new rows: API routes (22 main + cell-detail sub-route), Cached routes (5 → 9), Dashboard components (24 + tabs + Sheet + Header/Footer), Hooks (2 → 6), DB host (vefkgapv → proosjqivxadwgftofry).
+8. **§10 File Structure**: Updated `page.tsx` comment (735→227 lines, split into 9 modules). Added `area-item-heatmap/` directory with route.ts + cell-detail/route.ts. Added `analysis/services/` note (8-stage pipeline). Added outlet-items/item-history/drilldown routes as NEW cached. Added `tabs/` folder, `AreaItemHeatmapSheet.tsx`, `DashboardHeader.tsx`, `DashboardFooter.tsx`, `shared/index.tsx` to dashboard tree. Added 4 new hooks (useDashboardEffects, useDashboardActions, use-mobile, use-toast). Added heatmap.ts to queries list. Added aggregation-cache.ts full API (getCachedWithMeta/withCacheAndDedup). Added `.githooks/pre-push` block. Added `next.config.ts` note (16 packages — was 5). Updated queries count 12 → 13.
+
+#### ARCHITECTURE.md
+1. **Last updated line** (NEW — added under top quote): DOC-UPDATE-2 tag with same change summary.
+2. **§1 System Architecture table**: Database row updated — added "project `proosjqivxadwgftofry` (was `vefkgapveggbmkloaslw` — paused/deleted; migrated 626,739 rows across 10 tables via `pg` library since Prisma `db push` hangs on PgBouncer tx mode)".
+3. **§4.1 DB-Level Aggregation Cache**: Invalidation row updated 5 → 9 route prefixes. Replaced "5 cached routes" list with "9 cached routes" list — each route annotated with cache-key contents + PERF-API/PERF-CACHE task ID. Added note that cell-detail is NOT cached. Updated `invalidateAnalysisCache()` description (9 routes, \x1f delimiter, source line refs). Updated call sites count (9 mutation routes incl. ingestion.ts used by both ingest + import-drive).
+4. **§4.5 Cache Coherence Guarantees**: Updated "No stale reads" → "No stale reads (post-mutation)" with SWR caveat. Added "Cache cleanup" bullet (cleanupExpiredCache from /api/status, 10-min rate limit, 30-min TTL).
+5. **§4.6 Stale-While-Revalidate (SWR)** (NEW subsection): Full SWR design — problem statement, getCachedWithMeta implementation, 4-step flow (in-flight check → register → DB cache check with fresh/stale/no-entry paths → error handling), surface area (7 JSON routes + analysis NOT migrated + export-report binary), impact statement (<50ms stale return, no stale risk post-mutation).
+6. **§4.7 Cache Warming** (NEW subsection): prefetchAnalysis + prefetchHeatmap (NEW) with call sites (FilterBar hover + useDashboardEffects on status load) + design rationale (other routes lazy-loaded/user-initiated).
+7. **§6.1 Database**: Added composite `(monthLabel, weekLabel, itemId)` index note (PERF-DB-03). Added LIMIT safety bullet (PERF-DB-02 — heatmap LIMIT 500, cell-detail LIMIT 1000). Added `work_mem=64MB` bump bullet (PERF-DB-03).
+8. **§6.2 Code Splitting**: Added 4 new lazy-loaded entries (AreaItemHeatmapSheet PERF-FE-01, ItemDeepDive + AuditLogDialog page-level, 7 chart components in DashboardTab, RestoAnalysis + PeerComparison tab-level).
+9. **§6.3 React Re-render Control**: Added 5 new bullets — custom memo comparator on HeatmapCellView (280 cells), refetchOnWindowFocus:false (PERF-FE-04), placeholderData:keepPreviousData on cell-detail (PERF-FE-02), memoized props in AreaItemHeatmap (PERF-FE-03), memoized derived arrays in BomCorrelationCard (PERF-FE-05). Updated React.memo bullet to mention 4 tab components added (PERF-FE-06).
+10. **§6.4 Bundle Optimization**: Updated "5 packages" → "**16 packages** (was 5 — extended in PERF-FE-07)". Listed all 14 Radix packages + recharts + lucide-react with rationale.
+11. **§6.5 HTTP / Transport**: Added "Prod-only immutable Cache-Control" bullet (AUDIT-CACHE P1 fix — NODE_ENV gating, Turbopack stable module-ID hashes vs content hashes, root cause of "old versions keep appearing" bug).
+12. **§6.6 Frontend Split** (NEW subsection): Full SPLIT-PAGE documentation — problem statement (735-line god file), 9-module table with file paths + line counts + responsibilities, behavior-preservation guarantee.
+13. **§6.7 Heatmap Optimization** (NEW subsection): 3 optimizations beyond DB cache + lazy Sheet — prefetchHeatmap, parallel kelompok+PIC resolve (PERF-HEATMAP), month-before-cache-key (PERF-HEATMAP). Plus heatmap query shape summary (3-step pipeline, outletCount, smart fallback).
+14. **§8.3 Test Distribution**: Updated "418 test cases" → "435 test cases".
+15. **§10.4 Database Migrations**: Added Supabase PgBouncer caveat (db:push may hang on tx-mode pooler; workarounds: DIRECT_URL or $executeRawUnsafe).
+16. **§10.5 DB Migration: vefkgapv → proosjqiv** (NEW subsection): Full migration documentation — connection string, tool (pg library), scope (626,739 rows / 10 tables, Setting+AggregationCache skipped), audit script reference, caveat (user-customized settings LOST).
+17. **§10.6 Git Hooks** (NEW subsection): .githooks/pre-push documentation — force-push blocker, activation command, bypass flag.
+18. **§10.7 Cache-Control Dev/Prod Fix** (NEW subsection): Full AUDIT-CACHE P1 fix documentation — production vs dev behavior, root cause of "old versions keep appearing" bug.
+19. **§10.8 Caddy Configuration** (renumbered from §10.5): No content change, just renumbered.
+20. **Appendix: File Map**: Comprehensive update — added area-item-heatmap/ directory tree, outlet-items/item-history/drilldown routes (all marked NEW cached), analysis/services/ 8-stage list, page.tsx comment (227 lines, was 735, split in SPLIT-PAGE), tabs/ folder + AreaItemHeatmapSheet + DashboardHeader/Footer + shared/index.tsx, 4 new hooks (useDashboardEffects, useDashboardActions, use-mobile, use-toast) + prefetchHeatmap note on useAnalysis, heatmap.ts in queries, fmtHeatmapCompact in format.ts, full aggregation-cache.ts API, .githooks/pre-push block, schema.prisma composite index note, scripts/audit/audit-migration.ts, test count 418 → 435.
+
+### Verification
+- `bun run lint` → 0 errors, 383 pre-existing warnings (all in test files — `tx unused`, non-null-assertion, `any`-typed chart-data-builders; NONE introduced by this doc update since .md files are ESLint-skipped). ✓
+- Both files verified post-edit for: heading hierarchy preserved, no broken markdown tables, no duplicate content, "Last updated" line at top of each file.
+
+### No Code Changes
+This task is documentation-only. Zero source files (.ts/.tsx) were touched. Only `MASTER_CONTEXT.md` + `ARCHITECTURE.md` were modified. The 383 lint warnings are pre-existing in test files and were present before this task.
+
+### Next Actions
+1. P3 — Consider extracting `BomCorrelationCard` rule-code list (RULE_LABELS + RULE_ORDER) to a shared `src/lib/bom-correlation-codes.ts` module so it can be referenced from docs without circular import. Currently duplicated as text in MASTER_CONTEXT.md §6 + ARCHITECTURE.md §3.3.
+2. P3 — Consider adding a runtime "version" endpoint (`/api/version` returning the `Last updated` tag from MASTER_CONTEXT.md) so the dashboard can display its doc version in the footer for debugging. Currently the doc version is only visible by reading the source.
+3. P3 — The `/api/analysis` SWR migration (deferred in PERF-CACHE) remains open. When implemented, update §4.6 surface area bullet ("7 JSON routes" → "8 JSON routes") and §4.1 note ("/api/analysis uses direct setCached" → "uses withCacheAndDedup").

@@ -104,6 +104,13 @@ Open dashboard (Tab 1)
   → DrillDownDrawer opens (right sheet, raw records capped at 100)
   → "View all source records" → SourceDataModal (full-screen, CSV export)
   → Identify root cause → close drawer → next anomaly
+  → Scroll to Heatmap Area × Item → scan color-coded grid (default Pareto 80%
+     mode auto-selects items contributing 80% of total magnitude; each cell
+     shows Total magnitude + Ø avg per resto for nominal metrics)
+  → Click a heatmap cell → AreaItemHeatmapSheet opens (right sheet) with
+     per-outlet drill-down (qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial,
+     nominalLossSurplus, Dev/BOM%) — footer shows TOTAL + Ø PER RESTO rows
+  → Close sheet → next heatmap cell of interest
 ```
 
 **Exit criteria**: Analyst has triaged all P1 anomalies and noted follow-ups.
@@ -215,6 +222,7 @@ Open Pengaturan dialog (gear icon)
 | Multi-Period Comparison | Dashboard | 8-week trend table |
 | Advanced Analysis | Dashboard | Variance analysis (top worsened / improved) + Historical Z-Score analysis (critical items vs historical avg, multi-metric selector: Dev/BOM / Waste / Susut / Trial) |
 | BOM Correlation | Dashboard | Per-record findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate Deviasi/Waste/Susut/Trial vs BOM alignment table + narrative findings (`BomCorrelationCard`) |
+| Heatmap Area × Item | Dashboard | Color-coded Area × Item grid (`AreaItemHeatmap`) with 5 metric selectors (Deviasi / Waste / Susut / Dev/BOM % / Record Count). Default mode **Pareto 80%** — auto-selects items contributing to 80% of total magnitude (banner shows "Menampilkan X dari Y item · Kontribusi: Z%"). Each cell displays **Total magnitude (bold) + Ø avg per resto (muted)** for nominal metrics (Deviasi/Waste/Susut). Cell tooltip shows Total + Avg + Outlet Count + Record Count. Click any cell → `AreaItemHeatmapSheet` (right-side Sheet, lazy-loaded via `next/dynamic`) with per-outlet drill-down: qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial, nominalLossSurplus, Dev/BOM%. Sheet footer: TOTAL row + Ø PER RESTO row. API: `/api/area-item-heatmap` + `/api/area-item-heatmap/cell-detail`. |
 | Resto Profile | Resto Analysis | 6-section outlet profile (Performance / Behavior / Historical / Benchmark / Top Risk / Investigation) |
 | Bahan Analysis | Resto Analysis | 3 ranking tabs: Financial Impact / Operational / Unexplained |
 | Menu Analysis | Resto Analysis | Group by first 2 words of item name; outlier detection (avg + 2σ) |
@@ -509,9 +517,69 @@ These are **current** limitations, not bugs. Each is tracked for a future phase
 | L6 | **No mobile app** — responsive web only | Outlet Managers cannot self-serve on the floor | Use desktop / tablet browser; (Phase D will add PWA) |
 | L7 | **Single-tenant** — one F&B chain per deployment | Cannot sell to multiple chains on same instance | Separate deploy per chain |
 | L8 | **Weeks are 1, 2, 4 only** (no WEEK 3 in source data) | Analyst must confirm with business whether intentional | Treat as a data-quality quirk; document in monthly report |
-| L9 | **`/api/analysis` route is 6–8 s** | Dashboard first-paint is slow | In-memory cache disabled for serverless consistency; `maxDuration = 60` set for Vercel |
+| L9 | **`/api/analysis` route is 12.6s cold** | Dashboard first-paint is slow on cold cache | 5-min DB cache (`AggregationCache`) + in-flight dedup + SWR for 7 sibling routes → warm cache hit returns in <50ms. See §6.5. |
 | L10 | **AI narrative disabled** | Insights are rule-based, not LLM-generated | Re-enable with caching in Phase D |
 | L11 | **No alerting** — analyst must poll the dashboard | Anomaly could sit unnoticed between Monday check-ins | (Phase C will add email/Slack alerts) |
+
+### 6.5 Performance (as-shipped benchmarks)
+
+After the PERF-API / PERF-DB / PERF-FE / PERF-CACHE passes (Tasks PERF-*, see
+`worklog.md`), the dashboard's hot paths are:
+
+| Route | Cold (uncached) | Warm (cached) | Speedup | Cache layers |
+|-------|-----------------|---------------|---------|--------------|
+| `/api/analysis` | 12.6 s → 0.56 s* | ~50 ms (cache hit) | 3–5× warm | DB AggregationCache (5 min) + in-flight dedup + HTTP SWR + TanStack `keepPreviousData` |
+| `/api/pareto` | 3.87 s | 0.22 s | ~18× | DB cache + SWR (PERF-CACHE-09) |
+| `/api/recommendations` | 1.82 s | 0.21 s | ~8.6× | DB cache + SWR |
+| `/api/outlet-items` | 1.06 s | 0.25 s | ~3.8× | DB cache (PERF-API-01) + SWR |
+| `/api/item-history` | 0.65 s | 0.23 s | ~2.2× | DB cache (PERF-API-02) + SWR |
+| `/api/drilldown` | 0.42 s | 0.23 s | similar (reliable) | DB cache (PERF-API-03) + SWR |
+| `/api/area-item-heatmap` | ~2–3 s | ~50 ms | ~30× | DB cache (PERF-CACHE-08) + SWR |
+
+*After PERF-API-04 parallelisation of post-process sub-steps; was 12.60 s.
+
+**SWR pattern** (`PERF-CACHE-09`): the 7 JSON cached routes (pareto, recommendations,
+resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap) return the
+stale DB cache entry immediately (`stale: true` flag) on the first request after
+the 5-min TTL expires, while a fire-and-forget background recompute refreshes
+the cache. Concurrent requests during the recompute get fresh data (via in-flight
+dedup). Mutations (`invalidateAnalysisCache`) delete all 9 route prefixes so no
+stale entry is served after a write.
+
+**Frontend cache warming** (`prefetchAnalysis` + `prefetchHeatmap`): on the
+first `/api/status` load, `useDashboardEffects` fires both prefetches for the
+latest period so the dashboard's first paint doesn't wait for the user to
+interact. FilterBar additionally prefetches `analysis` on month/week dropdown
+hover.
+
+**Bundle / rendering** (`PERF-FE`):
+- `page.tsx` split from 735 → 227 lines: dashboard sections live in
+  `tabs/{DashboardTab,RestoTab,PeerTab,ParetoTab}.tsx`; side-effects in
+  `hooks/{useDashboardEffects,useDashboardActions}.ts`; chrome in
+  `DashboardHeader.tsx` + `DashboardFooter.tsx`.
+- 4 tabs wrapped in `React.memo` (TanStable `data` ref → skips re-render on
+  unrelated Zustand state changes).
+- `AreaItemHeatmapSheet` (drill-down Sheet, ~240 lines) extracted + lazy-loaded
+  via `next/dynamic` — not in the eager heatmap chunk.
+- `refetchOnWindowFocus: false` on `useAnalysis` + `useStatus` + `useDrilldown`
+  (was triggering 6–8s analysis refetches on every browser-tab switch).
+- `optimizePackageImports` extended from 5 → 16 packages (recharts, lucide-react
+  + 14 Radix primitives used by the 29 shadcn/ui components).
+
+**DB / query** (`PERF-DB`):
+- `rule-evaluation.ts` `curr` CTE slimmed from 21 → 14 columns (dropped 7
+  unused columns — `qtyLossSurplus`, `absNominalDeviasi`, `absQtyDeviasi`,
+  `absNominalLossSurplus`, `absQtyLossSurplus`, `residualQty`, `direction`).
+- `heatmap.ts` queries gain `LIMIT 500` / `LIMIT 1000` safety (no-op today,
+  defense-in-depth against future catalog growth or multi-tenant scenarios).
+- New composite index `InventoryRecord(monthLabel, weekLabel, itemId)` — speeds
+  up the heatmap cells query when the item `IN` list is small (typical case) and
+  reduces sort cost in `historical.ts` GROUP BY.
+
+**Cache-Control dev vs prod fix** (`AUDIT-CACHE`): `next.config.ts` now gates
+the `immutable` static-asset cache header on `NODE_ENV === 'production'`.
+Turbopack dev mode uses stable module-ID hashes (not content hashes), so
+`immutable` in dev caused "old chunks keep appearing" after source edits.
 
 ---
 
@@ -538,6 +606,34 @@ Shipped as part of AUDIT-1 to AUDIT-4 + FIX-HIGH + FIX-MEDIUM:
 - Pareto 80% drill-down on Growth Comparison + Deviation Breakdown charts.
 - A11y hardening (44px touch targets, ARIA on expandable panels, keyboard nav).
 
+### Phase B+ — Heatmap + performance pass (DONE)
+
+Shipped as part of PERF-API / PERF-DB / PERF-FE / PERF-CACHE / AUDIT-CACHE:
+
+- **Heatmap Area × Item** (`AreaItemHeatmap.tsx` + `AreaItemHeatmapSheet.tsx`):
+  color-coded grid with Pareto 80% default mode, dual display (Total + Ø avg per
+  resto), click-cell drill-down Sheet with per-outlet detail + TOTAL / Ø PER RESTO
+  footer. API: `/api/area-item-heatmap` + `/api/area-item-heatmap/cell-detail`.
+- **page.tsx split** (735 → 227 lines): dashboard sections moved to
+  `tabs/{DashboardTab,RestoTab,PeerTab,ParetoTab}.tsx`; effects to
+  `hooks/{useDashboardEffects,useDashboardActions}.ts`; chrome to
+  `DashboardHeader.tsx` + `DashboardFooter.tsx`.
+- **DB migration** to Supabase project `proosjqivxadwgftofry` (ap-southeast-1),
+  626,739 rows migrated from prior project (`vefkgapveggbmkloaslw` — now paused).
+- **SWR cache pattern** (`PERF-CACHE-09`) on 7 JSON cached routes — stale hit
+  returns in <50ms while background recompute refreshes.
+- **9 cached routes** (was 5) — added `outlet-items`, `item-history`, `drilldown`,
+  `area-item-heatmap`. All invalidated on any mutation.
+- **`prefetchHeatmap`** alongside existing `prefetchAnalysis` — fired on first
+  status load in `useDashboardEffects`.
+- **20 perf fixes across 4 agents** — DB cache on 3 new routes, parallelise
+  metadata + post-process, slim `SELECT` columns, drop unused CTE columns, LIMIT
+  safety, composite index, lazy Sheet, `React.memo` on 4 tabs, `refetchOnWindowFocus:
+  false` on 3 queries, `optimizePackageImports` 5 → 16 packages.
+- **Cache-Control dev vs prod fix** — `immutable` static-asset header gated on
+  `NODE_ENV === 'production'` (was breaking Turbopack dev HMR).
+- **Pre-push hook** (`.githooks/pre-push`) blocks force-push to `main`.
+
 ### Phase C — Foundation (PLANNED)
 
 Multi-quarter effort, prerequisites for enterprise readiness:
@@ -547,8 +643,10 @@ Multi-quarter effort, prerequisites for enterprise readiness:
 2. **Scheduled reports** — Cron-style monthly Word/PDF email to distribution list.
 3. **Alerting** — Email / Slack / WhatsApp push when a P1 anomaly fires.
 4. **PDF export** — In addition to `.docx` (likely via Playwright headless render).
-5. **DB-level caching** — `AggregationCache` table exists, currently disabled; enable
-   with proper invalidation on ingest / settings change.
+5. **DB-level caching** — `AggregationCache` table now enabled across 9 routes
+   (see §6.5); Phase C work is to surface `stale: true` flag in the UI + add
+   SWR to `/api/analysis` (currently uses bespoke pipeline + in-flight dedup
+   only).
 6. **Statement timeout** on DB pool — single hung query no longer blocks the pool.
 
 ### Phase D — Growth (FUTURE)
@@ -607,15 +705,18 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 | Document | Purpose |
 |----------|---------|
 | `MASTER_CONTEXT.md` | Architecture, DB schema, API surface, rule DSL, audit history. **Read first** for any code change. |
+| `CONVENTIONS.md` | Code conventions (API route pattern, cache pattern, component pattern, rule DSL, performance + git conventions). Read before writing any new code. |
 | `worklog.md` | Full chronological task history (every agent run, every fix). Search by Task ID. |
 | `src/config/rules.yaml` | The 19 anomaly rules (15 original + 4 BOM correlation) — edit here to add/tune rules without touching engine code. Sole source of truth (legacy `rules.ts` mirror deleted). |
 | `src/lib/settings.ts` | The 43 runtime thresholds — defaults + descriptions. |
 | `src/lib/metrics/definitions.ts` | Single source of truth for metric formulas (Dev/BOM, Z-Score, Health Score, Priority, Direction, Three-Layer). |
 | `src/config/thresholds.ts` | Static default thresholds (overridden at runtime by `Setting` table). |
-| `prisma/schema.prisma` | 14 DB models, 11 indexes. |
+| `prisma/schema.prisma` | 14 DB models, 12 indexes (added composite `(monthLabel, weekLabel, itemId)` in PERF-DB-09). |
 
 ---
 
-*Authored retroactively by Agent DOC-PRD. Last updated alongside AUDIT-1 to AUDIT-4 +
-FIX-HIGH + FIX-MEDIUM + Phase A & B completion. Update this document whenever a
-Phase C+ feature ships or a Non-Goal is reconsidered.*
+*Authored retroactively by Agent DOC-PRD. Last updated by Agent DOC-UPDATE-2
+(Heatmap drill-down + Pareto 80/20 + dual display, page.tsx split, DB migration
+to `proosjqivxadwgftofry`, SWR cache, 9 cached routes, prefetchHeatmap, 20
+perf fixes, Cache-Control dev/prod fix, pre-push hook). Update this document
+whenever a Phase C+ feature ships or a Non-Goal is reconsidered.*

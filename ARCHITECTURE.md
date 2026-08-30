@@ -1,6 +1,8 @@
 # Technical Architecture
 
 > **Technical Architecture** — Read when fixing bugs or optimizing performance.
+>
+> **Last updated:** Session DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, 9 cached routes, prefetchHeatmap, perf optimizations)
 
 This document describes **HOW** the Inventory Control Intelligence application is built. It covers the runtime topology, data ingestion pipeline, query architecture, caching layers, auth model, performance optimizations, security controls, test coverage, known tech debt, and deployment pipeline.
 
@@ -19,7 +21,7 @@ User Browser → Caddy (port 81, zstd gzip, static bypass) → Next.js (port 300
 | Edge / Gateway  | **Caddy** on port 81                                                  | Reverse proxy to Next.js (port 3000). zstd + gzip compression. Static asset bypass (serves `/static` directly). |
 | Application     | **Next.js 16** (App Router, TypeScript 5, React 19)                   | Server Components by default; Route Handlers for API. Runs on Node.js runtime.                              |
 | ORM             | **Prisma** (PostgreSQL driver)                                        | Single `PrismaClient` instance via `src/lib/db.ts`. Connection pool limit=30, pool_timeout=60s.             |
-| Database        | **Supabase PostgreSQL** — `ap-southeast-1` (Singapore)                | Free tier. Public schema. Timezone: UTC at DB layer, ISO strings everywhere in app code.                    |
+| Database        | **Supabase PostgreSQL** — `ap-southeast-1` (Singapore), project `proosjqivxadwgftofry` (was `vefkgapveggbmkloaslw` — paused/deleted; migrated 626,739 rows across 10 tables via `pg` library since Prisma `db push` hangs on PgBouncer tx mode) | Free tier. Public schema. Timezone: UTC at DB layer, ISO strings everywhere in app code.                    |
 | Object Storage  | Google Drive (read-only, server-side fetch)                           | Optional import source; SSRF allowlist enforced.                                                            |
 | Client State    | **Zustand** (UI filters) + **TanStack Query** (server cache)          | Client-only state never hits the server.                                                                    |
 | Real-time       | Polling via TanStack Query (no WebSocket on hot path)                 | Mini-service WebSocket demo exists under `mini-services/` but is not on the dashboard hot path.             |
@@ -191,19 +193,25 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | Value           | JSON-serialized payload (text column, no size limit)                                 |
 | TTL             | 5 minutes (`expiresAt` column)                                                       |
 | Write mode      | `awaitWrite=true` — readers wait for in-flight writers (prevents cache stampede)     |
-| Invalidation    | `invalidateAnalysisCache()` clears ALL 5 route prefixes on any mutation              |
+| Invalidation    | `invalidateAnalysisCache()` clears ALL 9 route prefixes on any mutation              |
 
-**5 cached routes** (all use `getCached` / `await setCached` — note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
+**9 cached routes** (`/api/analysis` uses direct `getCached` / `await setCached` with bespoke in-flight dedup; the other 8 use `withCacheAndDedup` which bundles cache lookup + in-flight dedup + SWR — see §4.6. Note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
 
-1. `/api/analysis`
+1. `/api/analysis` (direct `setCached`; bespoke 8-stage pipeline makes SWR complex — has in-flight dedup + TanStack `keepPreviousData` instead)
 2. `/api/pareto`
 3. `/api/recommendations`
 4. `/api/resto-bahan-matrix`
-5. `/api/export-report` (added in DOC-UPDATE — cached per `month|week|compareWeek|compareMonth|sections` hash; full report build is ~8s cold, ~0.2s warm)
+5. `/api/export-report` (cached per `month|week|compareWeek|compareMonth|sections` hash; full report build is ~8s cold, ~0.2s warm; binary docx — SWR flag not surfaced on response)
+6. `/api/outlet-items` (NEW — PERF-API-01; cache key includes outletCode+month+week+compareWeek+compareMonth)
+7. `/api/item-history` (NEW — PERF-API-02; cache key includes outletCode+itemName+month+week)
+8. `/api/drilldown` (NEW — PERF-API-03; cache key includes outletCode+itemName+weekLabel+monthLabel+limit+cursor)
+9. `/api/area-item-heatmap` (NEW — PERF-CACHE-08; cache key includes metric+itemLimit+mode + standard filter set)
 
-**`invalidateAnalysisCache()`** deletes rows where `key LIKE 'analysis␟%'` OR `'pareto␟%'` OR `'recommendations␟%'` OR `'resto-bahan-matrix␟%'` OR `'export-report␟%'`.
+> `/api/area-item-heatmap/cell-detail` is NOT cached (direct query, LIMIT 1000, user-initiated drill-down — small payload, low latency).
 
-**Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts`, `DriveImportDialog`.
+**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the 9 routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts:397-413`).
+
+**Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts` (used by `ingest` + `import-drive`), `DriveImportDialog`.
 
 > **Cache key note for BOM Correlation:** the BOM Correlation rules + card do NOT introduce a new cached route or filter dimension. They run inside `/api/analysis` and read the existing `executiveSummary.qty{Bom,Deviasi,Waste,Susut,Trial}.growth` fields (aggregate alignment table) plus a new `bomCorrelationFindings[]` array (per-record findings table) populated by `buildBomCorrelationFindings()` in `src/app/api/analysis/services/post-process.ts`. The findings array is bounded to the top-50 most-severe BOM flags and adds one extra SQL fetch per cold request (~50–600ms). No changes to cache keys are required.
 >
@@ -237,8 +245,34 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
 ### 4.5 Cache Coherence Guarantees
 
 - **Write-through**: Mutations write to DB first, then invalidate cache. No write-behind.
-- **No stale reads**: Cache reads check `expiresAt` server-side; expired rows are never returned.
+- **No stale reads** (post-mutation): `invalidateAnalysisCache()` deletes ALL 9 cached route prefixes on any mutation, so no stale entry survives a write. (Between mutations, SWR may serve stale-but-not-yet-recomputed data — see §4.6.)
 - **Stampede protection**: In-flight Promise dedup + `awaitWrite=true` ensures a single cold-miss request triggers exactly one DB query, even under 100 concurrent identical requests.
+- **Cache cleanup**: `cleanupExpiredCache()` (called fire-and-forget from `/api/status`, rate-limited to once per 10 min) removes entries older than 30 min — bounds table growth.
+
+### 4.6 Stale-While-Revalidate (SWR) — NEW (PERF-CACHE-09)
+
+**Problem:** Pre-SWR, the first request after the 5-min TTL had to wait for a full recompute (0.3–3.9s depending on route), even though an expired entry existed in the DB.
+
+**Implementation:** New `getCachedWithMeta<T>(cacheKey, ttlMs)` returns `{ data, stale }` WITHOUT deleting the expired row (existing `getCached()` deletes on expiry). `withCacheAndDedup` then implements SWR:
+
+1. **In-flight check** → if a Promise exists for this key, await it (concurrent request gets FRESH data).
+2. **Register in-flight** BEFORE any `await` (closes the check-then-act race).
+3. **DB cache check** via `getCachedWithMeta`:
+   - **Fresh hit** → resolve in-flight + return `{ data, cached: true }`.
+   - **Stale hit (SWR)** → return `{ data: stale, cached: true, stale: true }` immediately + fire-and-forget background recompute. The recompute writes fresh cache via `setCached(awaitWrite=true)` + resolves the in-flight Promise so concurrent awaiters get FRESH data (not stale).
+   - **No entry** → compute synchronously + write cache + resolve in-flight.
+4. **On error** → reject in-flight + re-throw.
+
+**Surface area:** 7 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap). `/api/analysis` was NOT migrated to SWR (bespoke 8-stage pipeline makes fire-and-forget recompute complex — left as future P3 improvement; analysis already has in-flight dedup + TanStack `keepPreviousData` + HTTP SWR for marginal benefit). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
+
+**Impact:** On the first request after 5-min TTL expiry, the 7 routes return stale data in <50ms instead of waiting 0.3–3.9s for a recompute. Background recompute refreshes the cache so the next request gets fresh data. **No stale data risk after mutations** — `invalidateAnalysisCache()` deletes entries, so there's no stale entry to serve post-mutation.
+
+### 4.7 Cache Warming
+
+- **`prefetchAnalysis(queryClient, params)`** — called from FilterBar hover (month/week hover) + first status load in `useDashboardEffects`. Fires a background TanStack Query `prefetchQuery` for the latest period as soon as `/api/status` returns, before the auto-select useEffect chain sets `monthLabel`/`currentWeek`. Saves ~1 render cycle on initial dashboard load.
+- **`prefetchHeatmap(queryClient, { month, week })`** (NEW) — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load. Heatmap matrix is warm before user scrolls down to it. Uses the SAME queryKey shape as `AreaItemHeatmap`'s `useQuery` so the prefetched entry is a cache hit when the component mounts.
+
+> Other routes (pareto, recommendations, drilldown, etc.) do NOT have explicit prefetch hooks — they're lazy-loaded tabs or user-initiated drill-downs, so prefetching would waste a cold query on a tab the user may never open.
 
 ---
 
@@ -284,8 +318,10 @@ function constantTimeCompare(a: string, b: string): boolean {
 - **Prisma query logging**: OFF by default. Set `PRISMA_LOG_QUERIES=true` to enable (dev only — logs every query; can flood logs and slow down hot routes in prod). Disabled in `src/lib/db.ts` constructor.
 - **Connection pool**: `limit=30`, `pool_timeout=60s`, `idle_timeout=20s`. Tuned for Supabase free tier (max 60 connections).
 - **`createMany`**: Used for bulk inserts (ingestion). Skips ORM lifecycle hooks — ~10x faster than per-row `create`.
-- **Indexes**: All filterable columns indexed (outlet_id, period_week, period_month, pic_id). See `prisma/schema.prisma`.
+- **Indexes**: All filterable columns indexed (outlet_id, period_week, period_month, pic_id, plus composite `(monthLabel, weekLabel, itemId)` added in PERF-DB-03 for heatmap cells query). See `prisma/schema.prisma`.
 - **Export-report DB cache**: the Word export route caches the full generated payload (5-min TTL) keyed by `month|week|compareWeek|compareMonth|sections` — repeat exports of the same period+sections hit the cache in ~0.2s instead of regenerating (~8s).
+- **LIMIT safety** (PERF-DB-02): All top-N queries have explicit `LIMIT` clauses; heatmap items query has `LIMIT 500` defense-in-depth cap (production Item catalog is ~153 rows); cell-detail query has `LIMIT 1000`.
+- **`work_mem=64MB`** bump (PERF-DB-03): All heavy query modules wrapped in `withStatementTimeout()` which now also sets `work_mem='64MB'` to give PG planner headroom for hash joins + sorts on the 306K-row `InventoryRecord` table.
 
 ### 6.2 Code Splitting (Client)
 
@@ -294,25 +330,63 @@ function constantTimeCompare(a: string, b: string): boolean {
 | Recharts + all chart components| Charts are below-the-fold on most routes.          |
 | 5 filter dialogs               | Dialogs only mount on user action.                 |
 | `export-report` client logic   | Heavy; only needed when user clicks "Export".      |
+| `AreaItemHeatmapSheet`         | NEW (PERF-FE-01): drill-down Sheet (~150 lines + Sheet + ScrollArea + table primitives) loads on first cell click. `loading: () => null` because the Sheet renders its own skeleton. |
+| `ItemDeepDive`, `AuditLogDialog`| Heavy components lazy-loaded at page level.         |
+| 7 chart components in `DashboardTab`| `GrowthComparison`, `DeviationBreakdownChart`, `LossVsSurplusChart`, `MultiPeriodComparisonCard`, `HistoricalZScoreCard`, `BomCorrelationCard`, `AreaItemHeatmap` — keeps Recharts (5.4MB) out of main bundle. |
+| `RestoAnalysis`, `PeerComparison`| Tab-level lazy-load via `RestoTab` + `PeerTab`.     |
 
 ### 6.3 React Re-render Control
 
-- **`React.memo`**: 41+ components memoized (all leaf chart components, KPI cards, table rows).
+- **`React.memo`**: 41+ components memoized (all leaf chart components, KPI cards, table rows, 4 tab components `DashboardTab`/`RestoTab`/`PeerTab`/`ParetoTab` added in PERF-FE-06).
 - **`useShallow` (Zustand)**: 13 callsites — selectors return new object refs only when shallow-equal values change.
 - **`keepPreviousData` (TanStack Query)**: Drilldown navigation shows previous data while new data loads — no layout shift.
+- **Custom memo comparator** on `HeatmapCellView` — only re-renders when `value`/`recordCount`/`outletCount`/`maxVal`/`metric` change (280 cells efficiently memoized).
+- **`refetchOnWindowFocus: false`** (PERF-FE-04): `useAnalysis`, `useStatus`, `useDrilldown`, and `AreaItemHeatmapSheet`'s cell-detail query all explicitly disable window-focus refetch (was triggering 6-8s cold refetches on every browser tab switch).
+- **`placeholderData: keepPreviousData`** on cell-detail query (PERF-FE-02): switching cells keeps the previous cell's data visible while the new one loads (no skeleton flicker between cells).
+- **Memoized props** (PERF-FE-03): `AreaItemHeatmap` memoizes `sheetFilters` via `useMemo` + `handleSheetOpenChange` via `useCallback` so the Sheet's internal `useMemo` for params stays stable.
+- **Memoized derived arrays** (PERF-FE-05): `BomCorrelationCard` wraps `rows` + `findingsNarrative` + `totalBomFlags` in `useMemo` for stable array refs.
 
 ### 6.4 Bundle Optimization
 
-`next.config.ts` `experimental.optimizePackageImports` enabled for:
+`next.config.ts` `experimental.optimizePackageImports` enabled for **16 packages** (was 5 — extended in PERF-FE-07 to cover all 14 Radix packages used by the 29 shadcn/ui components):
 - `recharts` (tree-shakeable chart imports)
 - `lucide-react` (only used icons bundled)
-- `@radix-ui/react-dialog`, `@radix-ui/react-popover`, `@radix-ui/react-select`
+- `@radix-ui/react-dialog`, `@radix-ui/react-popover`, `@radix-ui/react-select`, `@radix-ui/react-tooltip`, `@radix-ui/react-tabs`, `@radix-ui/react-scroll-area`, `@radix-ui/react-checkbox`, `@radix-ui/react-switch`, `@radix-ui/react-slider`, `@radix-ui/react-label`, `@radix-ui/react-alert-dialog`, `@radix-ui/react-collapsible`, `@radix-ui/react-progress`, `@radix-ui/react-toast` (each Radix package barrel-exports 5-10 primitives — `optimizePackageImports` rewrites to per-file imports at build time, no runtime cost).
 
 ### 6.5 HTTP / Transport
 
 - **zstd + gzip** at Caddy layer (zstd preferred, gzip fallback).
 - **Static asset bypass**: Caddy serves `/static`, `/_next/static` directly — never hits Next.js.
 - **Cache-Control** headers (see §4.3) enable CDN edge caching.
+- **Prod-only immutable Cache-Control** (AUDIT-CACHE P1 fix): `/_next/static/*` immutable 1-year header gated on `NODE_ENV === 'production'`. In dev, the rule is OMITTED entirely so Turbopack's default `no-cache` applies — was previously `immutable` in dev too, which caused browser to cache the FIRST version of each chunk URL (Turbopack uses stable module-ID hashes, not content hashes) and never re-fetch, so source edits never reached the browser. This was the root cause of the earlier "old versions keep appearing" bug.
+
+### 6.6 Frontend Split (NEW — SPLIT-PAGE task)
+
+`page.tsx` was a 735-line god file bundling 5 `useEffect`s, `useCallback` handlers, keyboard shortcuts, derived state, header JSX, 4 `TabsContent`s, footer, and modals. Split into **9 modules** (page.tsx reduced to 227 lines — 69% reduction):
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| `DashboardHeader` | `src/components/dashboard/DashboardHeader.tsx` (156 lines) | Sticky 2-tier header (logo + actions + FilterBar) |
+| `DashboardFooter` | `src/components/dashboard/DashboardFooter.tsx` (48 lines) | Sticky bottom footer (brand + stats + last-analysis perf) |
+| `DashboardTab` | `src/components/dashboard/tabs/DashboardTab.tsx` (194 lines) | Main overview tab (11 sections, 7 lazy-loaded chart components) |
+| `RestoTab` | `src/components/dashboard/tabs/RestoTab.tsx` (43 lines) | Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary` |
+| `PeerTab` | `src/components/dashboard/tabs/PeerTab.tsx` (37 lines) | Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary` |
+| `ParetoTab` | `src/components/dashboard/tabs/ParetoTab.tsx` (39 lines) | Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary` |
+| `useDashboardEffects` | `src/hooks/useDashboardEffects.ts` (158 lines) | 5 useEffects: auto-select month/week, cache warming, auto-set compare period (BUG-1 fix), week validation (BUG-8 fix). Side-effect-only, no return value. |
+| `useDashboardActions` | `src/hooks/useDashboardActions.ts` (195 lines) | `handleExport` + `handleRefresh` (useCallback) + `isExporting` state + global keyboard shortcuts (`Cmd+E/R/K`, `1/2/3/4` tab switch, `Escape` close-all). |
+| `shared/index.tsx` (extended) | `src/components/dashboard/shared/index.tsx` (299 lines, was 262) | Added `FetchAware` + `LoadingChart` to existing `EmptyState`/`LoadingState`/`ErrorState`/`SectionHeader`/`ScrollToTop`. |
+
+**Behavior preserved 1:1**: all `dynamic()` imports kept, all `ErrorBoundary` + `FetchAware` wrappers in the same order, all keyboard shortcuts wired to the same setters, all 5 useEffect dependency arrays unchanged, file-naming logic for export preserved verbatim.
+
+### 6.7 Heatmap Optimization (NEW — PERF-HEATMAP)
+
+The `/api/area-item-heatmap` route + `AreaItemHeatmap` component received 3 optimizations beyond the DB cache (PERF-CACHE-08) + lazy-loaded Sheet (PERF-FE-01):
+
+1. **`prefetchHeatmap()`** (see §4.7): fires a background TanStack Query `prefetchQuery` for the latest period as soon as `/api/status` returns. Heatmap is warm before user scrolls down — eliminates the 0.2-0.5s cold-fetch wait when the dashboard first renders.
+2. **Parallel kelompok + PIC resolve** (PERF-HEATMAP): inside the `withCacheAndDedup` computeFn, `resolveKelompokOutletCodes(kelompok)` + `resolvePICOutletCodes(pic)` are wrapped in `Promise.all` (was sequential, saves 50-100ms on cold path).
+3. **Month-before-cache-key** (PERF-HEATMAP): `resolveMonthLabel(rawMonth, resolver)` is called BEFORE `buildCacheKey(...)` so that `"Agustus 2026"` and `"agustus 2026"` share one cache entry. Previously `rawMonth` was used in the key → case mismatch = cache miss + duplicate entries.
+
+**Heatmap query shape** (`src/lib/queries/heatmap.ts`): 3-step pipeline — (1) fetch all items with total metric value, (2) select items via Pareto 80% or top-N, (3) fetch area × item matrix for selected items with full qty + nominal aggregates. `outletCount` (from `COUNT(DISTINCT outletId)`) powers the dual display (Total + Ø per resto). Smart fallback: `pctQtyDeviasiToBom` + `recordCount` metrics auto-use "Top N" mode (Pareto not meaningful for averages/counts).
 
 ---
 
@@ -395,7 +469,7 @@ Implementation: `src/lib/rate-limit.ts` — sliding window, Map-based, no extern
 
 ### 8.3 Test Distribution
 
-**22 test files**, **418 test cases**, focused on:
+**22 test files**, **435 test cases**, focused on:
 
 | Area                          | Files | Approach                                                              |
 | ----------------------------- | ----- | --------------------------------------------------------------------- |
@@ -497,7 +571,32 @@ bun run db:migrate # Create + apply migration (production)
 
 **Workflow**: Use `db:push` during active development (fast iteration). Use `db:migrate` for production releases (creates versioned migration files in `prisma/migrations/`).
 
-### 10.5 Caddy Configuration
+**Supabase PgBouncer caveat**: `bun run db:push` may HANG on the Supabase transaction-mode pooler (port 6543) because PgBouncer doesn't support all the interactive prompts Prisma uses. Workarounds: (a) use `DIRECT_URL` (port 5432) for migrations, or (b) apply schema changes directly via raw SQL through Prisma's `$executeRawUnsafe` (verified present in `pg_indexes` after running).
+
+### 10.5 DB Migration: vefkgapv → proosjqiv (2026-08-30)
+
+The original Supabase project `vefkgapveggbmkloaslw` (ap-southeast-1) became unreachable (paused/deleted — free tier auto-pauses after 7d inactivity). All data was migrated to a new project `proosjqivxadwgftofry` (same region):
+
+- **Connection string**: `postgresql://postgres.proosjqivxadwgftofry:***@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres`
+- **Tool**: `pg` library (v8.23.0) — Prisma `db push` hung on PgBouncer tx mode.
+- **Scope**: 626,739 rows migrated across 10 tables (InventoryRecord 306K + DQIssue 315K + Outlet 342 + Item 153 + OutletPIC 341 + OutletPeriodSales 4.4K + Week 20 + SourceFile 8 + AuditLog 358 + FileChunk 6). `Setting` + `AggregationCache` SKIPPED — auto-seeded by `ensureDefaultSettings()` + lazily rebuilt on first API call.
+- **Audit**: `scripts/audit/audit-migration.ts` (770 lines) verified FK integrity (0 orphans), sequence sync (all 12 `_id_seq` aligned), index integrity (28/28 present), unique constraints (0 duplicates), NULL checks (0 unexpected NULLs), performance (53ms aggregate, 0.9ms indexed point lookup). See worklog `AUDIT-MIGRATION` for full report.
+- **Caveat**: Any user-customized settings from OLD DB are LOST (NEW has only hardcoded defaults from `SETTING_DEFINITIONS`). Users must re-apply customizations via `/api/settings` UI.
+
+### 10.6 Git Hooks (NEW)
+
+- `.githooks/pre-push` — shell script that blocks force push to `main` (non-fast-forward detection via `git merge-base --is-ancestor`). Prevents orphaning commits — the root cause of the earlier "old versions keep appearing" bug (commits were being lost during force-push recovery, never cherry-picked back).
+- **Activation**: `git config core.hooksPath .githooks` (NOT wired by default — must be run once per clone).
+- **Bypass**: `git push --no-verify` for legitimate force-push needs.
+
+### 10.7 Cache-Control Dev/Prod Fix (AUDIT-CACHE P1)
+
+`next.config.ts` `headers()` function gates the `/_next/static/*` immutable 1-year `Cache-Control` on `NODE_ENV === 'production'`:
+
+- **Production**: `Cache-Control: public, max-age=31536000, immutable` (content-hashed filenames — safe to cache forever).
+- **Dev**: rule OMITTED entirely → Turbopack's default `no-cache` applies. Previously, `immutable` was set in dev too, which caused the browser to cache the FIRST version of each chunk URL (Turbopack uses stable module-ID hashes, not content hashes) and never re-fetch — source edits never reached the browser. This was the root cause of the "old versions keep appearing" bug.
+
+### 10.8 Caddy Configuration
 
 ```caddy
 # Caddyfile (simplified)
@@ -525,29 +624,44 @@ bun run db:migrate # Create + apply migration (production)
 src/
 ├── app/
 │   ├── api/
-│   │   ├── analysis/route.ts              # Main analytics endpoint (cached)
-│   │   │   └── services/                  # Pipeline stages (validate, fetch, run-queries, post-process, assemble)
-│   │   ├── pareto/route.ts                # Pareto 80/20 (cached)
-│   │   ├── recommendations/route.ts       # AI recommendations (cached)
-│   │   ├── resto-bahan-matrix/route.ts    # Restaurant × ingredient matrix (cached)
-│   │   ├── export-report/route.ts         # Word export (cached)
+│   │   ├── analysis/route.ts              # Main analytics endpoint (cached, bespoke 8-stage pipeline)
+│   │   │   └── services/                  # Pipeline stages (validate-and-resolve, fetch-records, run-queries, post-process, exec-summary, assemble-response, trend-builder, deviation-drivers)
+│   │   ├── area-item-heatmap/             # NEW (heatmap drill-down)
+│   │   │   ├── route.ts                   # Heatmap matrix (cached, SWR)
+│   │   │   └── cell-detail/route.ts       # Per-outlet drill-down (NOT cached)
+│   │   ├── pareto/route.ts                # Pareto 80/20 (cached, SWR)
+│   │   ├── recommendations/route.ts       # AI recommendations (cached, SWR)
+│   │   ├── resto-bahan-matrix/route.ts    # Restaurant × ingredient matrix (cached, SWR)
+│   │   ├── export-report/route.ts         # Word export (cached, binary docx, SWR internal)
+│   │   ├── outlet-items/route.ts          # NEW cached (PERF-API-01, SWR)
+│   │   ├── item-history/route.ts          # NEW cached (PERF-API-02, SWR)
+│   │   ├── drilldown/route.ts             # NEW cached (PERF-API-03, slim select PERF-API-06, SWR)
 │   │   ├── ingest-upload/route.ts         # Chunked upload receiver
 │   │   ├── ingest-process/route.ts        # Reassemble + parse + persist
-│   │   ├── metadata/route.ts              # Outlets, PICs, periods list
-│   │   └── status/route.ts                # Health check (in-memory cached)
-│   └── page.tsx                           # Single-page dashboard (only route)
+│   │   └── status/route.ts                # Health check (in-memory cached + cleanupExpiredCache)
+│   └── page.tsx                           # Thin orchestrator (227 lines — was 735; split in SPLIT-PAGE)
 ├── components/
-│   ├── ui/                                # shadcn/ui primitives
-│   └── dashboard/                         # Chart + KPI components (memoized)
+│   ├── ui/                                # shadcn/ui primitives (29 components)
+│   └── dashboard/                         # Chart + KPI components (memoized, 24 top-level + tabs/ + shared/)
+│       ├── tabs/                          # NEW folder (SPLIT-PAGE): DashboardTab + RestoTab + PeerTab + ParetoTab
+│       ├── AreaItemHeatmap.tsx            # Heatmap matrix (Pareto 80/20 + dual display + drill-down Sheet trigger)
+│       ├── AreaItemHeatmapSheet.tsx       # NEW: drill-down Sheet (lazy-loaded via next/dynamic)
 │       ├── BomCorrelationCard.tsx         # Per-record BOM findings table + count badges + aggregate alignment table + narrative
+│       ├── DashboardHeader.tsx            # NEW: sticky header (extracted from page.tsx)
+│       ├── DashboardFooter.tsx            # NEW: sticky footer (extracted from page.tsx)
 │       ├── HistoricalZScoreCard.tsx       # Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
+│       ├── shared/index.tsx               # EmptyState/LoadingState/ErrorState/SectionHeader/ScrollToTop/FetchAware/LoadingChart
 │       └── ...                            # Other dashboard components (AreaTrendChart + CardDrillDown deleted in FIX-DOCS)
 ├── hooks/
-│   ├── useAnalysis.ts                     # TanStack Query wrapper (AnalysisData type)
-│   └── useFilters.ts                      # Zustand filter store
+│   ├── useAnalysis.ts                     # TanStack Query wrapper (AnalysisData type) + prefetchAnalysis + prefetchHeatmap (NEW)
+│   ├── useDashboard.ts                    # Zustand filter store
+│   ├── useDashboardEffects.ts             # NEW: 5 useEffects (auto-select + cache warm + validate)
+│   ├── useDashboardActions.ts             # NEW: export/refresh handlers + keyboard shortcuts
+│   ├── use-mobile.ts                      # shadcn responsive viewport hook
+│   └── use-toast.ts                       # shadcn toast hook
 ├── lib/
-│   ├── db.ts                              # PrismaClient singleton + withStatementTimeout (log OFF)
-│   ├── aggregation-cache.ts               # DB-level cache (get/set/invalidate) — setCached MUST be awaited
+│   ├── db.ts                              # PrismaClient singleton + withStatementTimeout (log OFF, work_mem=64MB)
+│   ├── aggregation-cache.ts               # DB-level cache: getCached/setCached/getCachedWithMeta/withCacheAndDedup (SWR)/invalidateAnalysisCache — setCached MUST be awaited
 │   ├── rate-limit.ts                      # In-memory per-IP limiter
 │   ├── auth.ts                            # Constant-time token compare
 │   ├── api/error.ts                       # errorResponse() helper (MUST be `return`-ed)
@@ -559,18 +673,25 @@ src/
 │   │   ├── buildSqlFilters.ts             # Parameterized WHERE builder
 │   │   ├── historical-stats.ts            # Two-level CTE (multi-metric)
 │   │   ├── rule-evaluation.ts             # 19-rule SQL push-down + 3-rule JS post-process
+│   │   ├── heatmap.ts                     # NEW: queryAreaItemHeatmap + queryHeatmapCellDetail (Pareto 80/20 + dual display)
 │   │   ├── z-score.ts                     # Z-score query
 │   │   └── month.ts                       # resolveMonthLabel()
-│   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs
+│   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs / fmtHeatmapCompact
 ├── config/
 │   └── rules.yaml                         # 19 anomaly rules (sole source of truth; rules.ts deleted as dead code)
 ├── engine/rules/evaluator.ts              # Legacy JS rule evaluator (used by item-history, outlet-items)
 ├── middleware.ts                          # Auth gate (Edge runtime) — ADMIN_TOKEN middleware (fixed in DOC-UPDATE)
-└── next.config.ts                         # CSP, optimizePackageImports, headers
+└── next.config.ts                         # CSP, optimizePackageImports (16 packages — was 5), prod-only immutable Cache-Control
+
+.githooks/
+└── pre-push                               # NEW: blocks force push to main (activate via `git config core.hooksPath .githooks`)
 
 prisma/
-├── schema.prisma                          # Models + indexes
+├── schema.prisma                          # Models + indexes (incl. composite (monthLabel, weekLabel, itemId) index added in PERF-DB-03)
 └── migrations/                            # Versioned SQL migrations
 
-tests/                                     # 22 files, 418 cases
+scripts/
+└── audit/audit-migration.ts               # NEW: DB migration audit (OLD vs NEW row counts, FK, sequences, indexes, NULLs)
+
+tests/                                     # 22 files, 435 cases
 ```

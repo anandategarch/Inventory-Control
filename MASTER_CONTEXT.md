@@ -6,7 +6,7 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session FIX-DOCS (rules.ts deletion, 19-rule cleanup, BOM_DISPROPORTIONATE_FACTOR setting, dead-code cleanup, BomCorrelationCard per-record rewrite)
+> **Last updated:** Session DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, 9 cached routes, prefetchHeatmap, perf optimizations)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -90,35 +90,50 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 | Route | Cache | Zod | Rate Limit | Auth |
 |-------|-------|------|------------|------|
-| `/api/analysis` | ✅ DB 5min | ✅ | ✅ | Public GET |
+| `/api/analysis` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/area-item-heatmap` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/area-item-heatmap/cell-detail` | ❌ | ✅ | ✅ | Public GET (sub-route) |
 | `/api/audit-log` | ❌ | ✅ | ✅ | Protected |
 | `/api/data` | ❌ | ✅ | ✅ | Protected mutations |
-| `/api/drilldown` | ❌ | ✅ | ✅ | Public GET |
-| `/api/export-report` | ✅ DB 5min | ✅ | ✅ | Public GET |
+| `/api/drilldown` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/export-report` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/import-drive` | ❌ | ✅ | ✅ | Protected POST |
 | `/api/ingest` | ❌ | ✅ | ✅ | Protected |
 | `/api/ingest-process` | ❌ | ✅ | ✅ | Protected |
 | `/api/ingest-upload` | ❌ | ✅ | ✅ | Protected POST |
-| `/api/item-history` | ❌ | ✅ | ✅ | Public GET |
+| `/api/item-history` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/item-search` | ❌ | ❌ | ✅ | Public GET |
 | `/api/migrate-direction` | ❌ | ✅ | ✅ | Protected |
-| `/api/outlet-items` | ❌ | ✅ | ✅ | Public GET |
-| `/api/pareto` | ✅ DB 5min | ✅ | ✅ | Public GET |
+| `/api/outlet-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/pareto` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/peer-comparison` | ❌ | ✅ | ✅ | Public GET |
 | `/api/pic` | ❌ | ✅ | ✅ | Protected mutations |
-| `/api/recommendations` | ✅ DB 5min | ✅ | ✅ | Public GET |
-| `/api/resto-bahan-matrix` | ✅ DB 5min | ✅ | ✅ | Public GET |
+| `/api/recommendations` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/resto-bahan-matrix` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/settings` | ❌ | ✅ | ✅ | Protected |
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 20/22 routes use Zod validation · 5 routes use DB cache · All protected routes use `ADMIN_TOKEN` middleware.
+**Totals:** 20/22 main routes use Zod validation · **9 routes use DB cache** (5 original analysis routes + 4 new: outlet-items, item-history, drilldown, area-item-heatmap) · All protected routes use `ADMIN_TOKEN` middleware.
+
+**9 cached routes** (use `withCacheAndDedup` — except `/api/analysis` which has a bespoke pipeline):
+1. `/api/analysis` (direct `setCached` call, in-flight dedup via `getInflight`/`setInflight`)
+2. `/api/pareto`
+3. `/api/recommendations`
+4. `/api/resto-bahan-matrix`
+5. `/api/export-report` (binary docx buffer)
+6. `/api/outlet-items` (NEW — PERF-API-01)
+7. `/api/item-history` (NEW — PERF-API-02)
+8. `/api/drilldown` (NEW — PERF-API-03)
+9. `/api/area-item-heatmap` (NEW — PERF-CACHE-08)
+
+> `/api/area-item-heatmap/cell-detail` is NOT cached (direct query — small result set, low latency, user-initiated drill-down).
 
 ---
 
 ## 5. Components (35+)
 
-### Dashboard (`src/components/dashboard/` — 25 components)
+### Dashboard (`src/components/dashboard/` — 24 components + `tabs/` folder + `shared/` barrel)
 - `ExecutiveSummary` — KPI cards (sales, deviation, abnormal count)
 - `TopItems` — Top items by deviation
 - `TopOutlets` — Top outlets by deviation
@@ -132,8 +147,31 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
 - `RestoAnalysis` — Restaurant analysis panel
+- `AreaItemHeatmap` — Area × Item heatmap with Pareto 80/20 mode + dual display (Total + Ø per resto) + drill-down Sheet (lazy-loaded)
+- `AreaItemHeatmapSheet` — Drill-down Sheet (right-side) showing per-outlet detail for a clicked cell — lazy-loaded via `next/dynamic` (PERF-FE-01)
+- `DashboardHeader` — Sticky 2-tier header (logo + actions + FilterBar); extracted from `page.tsx` split
+- `DashboardFooter` — Sticky bottom footer (brand + stats + last-analysis perf); extracted from `page.tsx` split
+
+#### `tabs/` folder (4 tab modules — extracted from `page.tsx` split)
+- `DashboardTab.tsx` — Main overview tab (11 sections: Exec Summary, Resto Rec, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency, Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 `next/dynamic` lazy imports for heavy chart components.
+- `RestoTab.tsx` — Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary`
+- `PeerTab.tsx` — Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary`
+- `ParetoTab.tsx` — Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary`
+
+#### `shared/index.tsx` (7 shared utilities)
+`EmptyState`, `LoadingState`, `ErrorState`, `SectionHeader`, `ScrollToTop`, `FetchAware`, `LoadingChart` (last 2 added in `page.tsx` split).
 
 > **Removed (FIX-DOCS dead-code cleanup):** `AreaTrendChart.tsx`, `CardDrillDown.tsx` files deleted. `cardDrillDown` Zustand state removed from `useDashboard`. ExecutiveSummary KPI cards are now static display (no click-through drilldown). `RestoAnalisa` priority-score drilldown is also a static card display.
+>
+> **`page.tsx` split (SPLIT-PAGE task):** `page.tsx` reduced from 735 → 227 lines (69% reduction). 9 new modules created: 4 tab components + 2 layout components (`DashboardHeader`/`DashboardFooter`) + 2 hooks (`useDashboardEffects`/`useDashboardActions`) + `shared/index.tsx` extension (`FetchAware` + `LoadingChart`).
+
+### Hooks (`src/hooks/` — 6 hooks)
+- `useAnalysis.ts` — TanStack Query hooks (`useAnalysis`, `useStatus`, `useDrilldown`) + `prefetchAnalysis` + `prefetchHeatmap` (NEW — fires background fetch for heatmap API so the matrix is warm before user scrolls down)
+- `useDashboard.ts` — Zustand store (filters + UI state)
+- `useDashboardEffects.ts` — NEW (SPLIT-PAGE): bundles 5 `useEffect` hooks (auto-select month, auto-select week, cache warming via `prefetchAnalysis` + `prefetchHeatmap`, auto-set compare period with BUG-1 fix, week validation BUG-8 fix). Side-effect-only — no return value.
+- `useDashboardActions.ts` — NEW (SPLIT-PAGE): export/refresh handlers (`handleExport` + `handleRefresh` + `isExporting` state) + global keyboard shortcuts (`Cmd+E/R/K`, `1/2/3/4` tab switch, `Escape` close-all).
+- `use-mobile.ts` — Responsive viewport hook (shadcn)
+- `use-toast.ts` — Toast notification hook (shadcn)
 
 ### Filters (`src/components/filters/` — 10 components)
 - `FilterBar` — Main filter bar
@@ -198,6 +236,11 @@ Deviation is decomposed into 4 categories for root cause identification:
 - Dashboard component: `BomCorrelationCard` (`src/components/dashboard/BomCorrelationCard.tsx`) renders (1) a per-record findings table with per-rule count badges — read from the `bomCorrelationFindings` + `bomCorrelationCounts` fields on the `/api/analysis` response, and (2) an aggregate Deviasi/Waste/Susut/Trial vs BOM alignment table. The card lives on the Dashboard tab (under "Analisis Historis").
 
 ### Analytics
+- **Heatmap Area × Item** (NEW — 3 capabilities):
+  - **Drill-down to Resto**: Click any heatmap cell → opens right-side Sheet (`AreaItemHeatmapSheet`) with per-outlet detail. API: `/api/area-item-heatmap/cell-detail?month=&week=&area=&item=`. Query: `queryHeatmapCellDetail()` in `src/lib/queries/heatmap.ts` — JOINs `Outlet` + `Item`, returns 13 fields per row (outlet name/code, akun penyesuaian, qtyBom/Deviasi/Waste/Susut/Trial, nominalDeviasi/LossSurplus, pctQtyDeviasiToBom, recordCount). Footer has TOTAL row + Ø PER RESTO row (avg per outlet). Header has aggregate summary incl. a `Ø per Resto` column.
+  - **Pareto 80/20 mode** (default): shows only items contributing to 80% of total magnitude. Mode selector: "Pareto 80%" (default) or "Top N" (legacy). `ItemSelectMode` type in `heatmap.ts`. `paretoInfo` in response: `{ totalItems, selectedItems, cumulativePct, totalMagnitude }`. Smart fallback: `pctQtyDeviasiToBom` + `recordCount` metrics auto-use "Top N" (Pareto not meaningful for averages/counts).
+  - **Dual display (Total + Avg per outlet)**: Each cell shows 2 values — Total (bold, top) + Ø Avg per resto (muted, bottom). `outletCount` field in `HeatmapCell` (from `COUNT(DISTINCT outletId)`). Avg only for nominal metrics (`absNominalDeviasi`/`nominalWaste`/`nominalSusut`) — NOT for `pctQtyDeviasiToBom` or `recordCount`. Cell height `h-11` (44px) fits 2 lines. Tooltip shows Total + Avg + Outlet Count + Record Count.
+  - **Raw quantities in cells**: Each cell returns `qtyBom`/`qtyDeviasi`/`qtyWaste`/`qtySusut`/`qtyTrial` + `nominalDeviasi`/`nominalLossSurplus` so the drill-down Sheet can show real quantities without an extra query on the parent heatmap.
 - **BOM Correlation analysis** (per-record findings + aggregate alignment table) — surfaced as dashboard card + 4 rules
 - **Historical Z-Score** analysis (multi-metric: Dev/BOM + Waste + Susut + Trial)
 - **Pareto 80/20** analysis (5 dimensions: Item, Outlet, Area, Kelompok, PIC)
@@ -212,9 +255,15 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ### Caching
 - **DB-level `AggregationCache`** (5-min TTL, `awaitWrite` pattern)
-  - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`
-  - 5 cached routes: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`
-  - `invalidateAnalysisCache()` clears all 5 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction)
+  - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (NEW — returns `{ data, stale }` without deleting expired row, for SWR pattern)
+  - **9 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items` (NEW), `item-history` (NEW), `drilldown` (NEW), `area-item-heatmap` (NEW)
+  - `invalidateAnalysisCache()` clears ALL 9 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
+- **Stale-While-Revalidate (SWR)** (NEW — PERF-CACHE-09): `withCacheAndDedup()` implements SWR on top of `getCachedWithMeta`:
+  - Fresh hit → return immediately
+  - Stale hit → return stale data in <50ms + fire-and-forget background recompute (writes fresh cache via `setCached(awaitWrite=true)`, resolves in-flight Promise so concurrent requests get fresh data)
+  - No entry → compute synchronously + write cache
+  - 7 JSON routes surface `stale: true` flag in response when serving from expired cache (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap). `/api/analysis` NOT migrated to SWR (bespoke pipeline) — has in-flight dedup + TanStack `keepPreviousData`. `/api/export-report` uses SWR internally but binary response doesn't surface flag.
+- **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (NEW — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it.
 - **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes)
 - **Performance:** Prisma query log disabled by default (`PRISMA_LOG_QUERIES=true` to enable); export-report route uses DB cache (5-min TTL) to skip recomputation on repeat exports.
 
@@ -222,16 +271,21 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ## 7. Performance Benchmarks
 
-Measured against Supabase Singapore (`ap-southeast-1`):
+Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgftofry`):
 
-| Route | Cold | Warm (cache) |
-|-------|------|-------------|
-| `/api/analysis` | 0.6s | 0.2s |
-| `/api/pareto` | 0.3s | 0.2s |
-| `/api/recommendations` | 0.3s | 0.2s |
-| `/api/resto-bahan-matrix` | 0.3s | 0.2s |
-| `/api/export-report` | 8s | 0.2s |
-| `/api/status` | 0.01s | 0.007s |
+| Route | Cold | Warm (cache) | Notes |
+|-------|------|-------------|-------|
+| `/api/analysis` | 0.56s | 0.24s | DB cache + parallelized post-process (PERF-API-04) |
+| `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms |
+| `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) |
+| `/api/resto-bahan-matrix` | 0.3s | 0.2s | SWR |
+| `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal |
+| `/api/outlet-items` | 2.17s | 0.006s | NEW cached (PERF-API-01) — 157× warm speedup |
+| `/api/item-history` | 1.37s | 0.006s | NEW cached (PERF-API-02) — 83× warm speedup |
+| `/api/drilldown` | 1.01s | 0.023s | NEW cached (PERF-API-03) + slim `select` (PERF-API-06) |
+| `/api/area-item-heatmap` | 0.21s | 0.21s | NEW cached (PERF-CACHE-08); warm ≈ cold (already fast) |
+| `/api/area-item-heatmap/cell-detail` | 0.05s | n/a | NOT cached (direct query, LIMIT 1000) |
+| `/api/status` | 0.01s | 0.007s | In-memory LRU cache + cleanupExpiredCache |
 
 ---
 
@@ -266,11 +320,16 @@ Measured against Supabase Singapore (`ap-southeast-1`):
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 40,271 |
+| Lines of code in `src/` | 42,856 |
 | Test files | 22 |
-| Test cases | 418 |
-| Git commits | 387 |
+| Test cases | 435 |
+| Git commits | 387+ |
 | npm dependencies | 23 (down from 40+ after cleanup) |
+| API routes (main) | 22 (incl. `area-item-heatmap` + `cell-detail` sub-route) |
+| Cached routes | 9 (was 5) |
+| Dashboard components | 24 + `tabs/` folder (4 files) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` |
+| Hooks | 6 (was 2) |
+| DB host | `proosjqivxadwgftofry` (was `vefkgapveggbmkloaslw` — paused/deleted) |
 
 ---
 
@@ -279,23 +338,44 @@ Measured against Supabase Singapore (`ap-southeast-1`):
 ```
 src/
 ├── app/
-│   ├── page.tsx                    # Main dashboard (4 tabs: Dashboard/Resto/Peer/Pareto)
+│   ├── page.tsx                    # Thin orchestrator (227 lines — was 735; split into 9 modules in SPLIT-PAGE)
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
-│   └── api/                        # 22 API routes (incl. pic/import)
+│   └── api/                        # 22 API routes + sub-routes
+│       ├── area-item-heatmap/
+│       │   ├── route.ts            # Heatmap matrix (cached, SWR)
+│       │   └── cell-detail/route.ts # Per-outlet drill-down (NOT cached)
+│       ├── analysis/services/      # 8-stage pipeline (validate/fetch/run-queries/post-process/exec-summary/assemble/trend-builder/deviation-drivers)
+│       ├── outlet-items/route.ts   # Cached (NEW — PERF-API-01)
+│       ├── item-history/route.ts   # Cached (NEW — PERF-API-02)
+│       ├── drilldown/route.ts      # Cached (NEW — PERF-API-03, slim select PERF-API-06)
+│       ├── pareto|recommendations|resto-bahan-matrix|export-report|analysis  # Original 5 cached routes
+│       └── ...                     # 13 other routes (audit-log, data, ingest-*, etc.)
 ├── components/
-│   ├── dashboard/                  # Dashboard components (incl. BomCorrelationCard; AreaTrendChart + CardDrillDown deleted in FIX-DOCS)
+│   ├── dashboard/
+│   │   ├── tabs/                   # NEW folder (SPLIT-PAGE): DashboardTab + RestoTab + PeerTab + ParetoTab
+│   │   ├── AreaItemHeatmap.tsx     # Heatmap matrix component (549 lines)
+│   │   ├── AreaItemHeatmapSheet.tsx # NEW: drill-down Sheet (lazy-loaded via next/dynamic)
+│   │   ├── BomCorrelationCard.tsx  # Per-record BOM findings table
+│   │   ├── DashboardHeader.tsx     # NEW: sticky header (extracted from page.tsx)
+│   │   ├── DashboardFooter.tsx     # NEW: sticky footer (extracted from page.tsx)
+│   │   ├── shared/index.tsx        # EmptyState/LoadingState/ErrorState/SectionHeader/ScrollToTop/FetchAware/LoadingChart
+│   │   └── ...                     # 16 other dashboard components
 │   ├── filters/                    # 10 components (FilterBar + 5 dialogs + SearchableComboBox)
 │   ├── drilldown/                  # 2 components
 │   └── ui/                         # 29 shadcn components
 ├── hooks/
-│   ├── useAnalysis.ts              # TanStack Query hooks (analysis, status, drilldown, prefetch)
-│   └── useDashboard.ts             # Zustand store (filters + UI state)
+│   ├── useAnalysis.ts              # TanStack Query hooks + prefetchAnalysis + prefetchHeatmap (NEW)
+│   ├── useDashboard.ts             # Zustand store (filters + UI state)
+│   ├── useDashboardEffects.ts      # NEW (SPLIT-PAGE): 5 useEffects (auto-select + cache warm + validate)
+│   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts
+│   ├── use-mobile.ts               # shadcn responsive viewport hook
+│   └── use-toast.ts                # shadcn toast hook
 ├── lib/
-│   ├── queries/                    # 12 query modules (SQL push-down)
+│   ├── queries/                    # 13 query modules (SQL push-down, incl. heatmap.ts with queryAreaItemHeatmap + queryHeatmapCellDetail)
 │   ├── metrics/                    # 8 metric functions (deviation, benchmark, historical, growth)
 │   ├── cache-headers.ts            # HTTP Cache-Control presets
 │   ├── error-response.ts           # Sanitized error helper
-│   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/invalidateAll)
+│   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/getCachedWithMeta/withCacheAndDedup/invalidateAnalysisCache)
 │   ├── db.ts                       # Prisma client (connection_limit=30, pool_timeout=60)
 │   ├── rate-limit.ts               # In-memory rate limiter
 │   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)
@@ -306,6 +386,11 @@ src/
 ├── config/
 │   └── rules.yaml                  # 19 anomaly rules definition (sole source of truth)
 └── middleware.ts                   # Auth (ADMIN_TOKEN, PROTECTED_PATHS)
+
+.githooks/
+└── pre-push                       # NEW: blocks force push to main (activate via `git config core.hooksPath .githooks`)
+
+next.config.ts                     # CSP, optimizePackageImports (16 packages — was 5), prod-only immutable Cache-Control
 ```
 
 ---

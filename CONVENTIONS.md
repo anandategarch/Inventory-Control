@@ -41,17 +41,26 @@ export async function GET(req: NextRequest) {
 }
 ```
 
+> **Note.** Sub-routes under the same path (e.g. `/api/area-item-heatmap/cell-detail`)
+> follow the same pattern but with their own `rateLimit` namespace, Zod schema,
+> and (optional) cache wrapper. The cell-detail route is intentionally NOT cached
+> (drill-down is user-initiated, low QPS, fresh data expected on every click).
+
 ## 2. Response Shape
 
 | Type | Shape |
 |------|-------|
-| Success | `{ success: true, ...data, durationMs: number, cached?: boolean }` |
+| Success | `{ success: true, ...data, durationMs: number, cached?: boolean, stale?: boolean }` |
 | Error | `{ success: false, error: string }` + HTTP status code |
 | Binary (export) | `new NextResponse(new Uint8Array(buffer), { headers: {...} })` |
 
 - Always include `durationMs` for analysis routes
 - Include `period: { month, week }` for data routes
 - `cached: true` flag when returning from DB cache
+- `stale: true` flag (PERF-CACHE-09 SWR) when returning from an EXPIRED cache
+  entry while a background recompute is in flight. Surfaced by 7 JSON routes
+  (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history,
+  drilldown, heatmap) — see §3.1.
 
 ## 3. Cache Pattern
 
@@ -75,11 +84,70 @@ if (cached && typeof cached === 'object' && 'success' in cached) {
 await setCached(cacheKey, result, true);
 
 // Invalidate (on mutations: ingest, settings, pic, data delete, migrate)
-await invalidateAnalysisCache(); // Clears ALL 5 cached routes
+await invalidateAnalysisCache(); // Clears ALL 9 cached routes
 ```
 
-### Cached Routes (5)
-`analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`
+### 3.1 SWR (Stale-While-Revalidate) — PERF-CACHE-09
+
+`withCacheAndDedup()` implements SWR on top of the DB cache. On an EXPIRED cache
+entry, the stale payload is returned immediately (marked `stale: true`) while a
+fire-and-forget background recompute refreshes the cache. Concurrent requests
+during the recompute get FRESH data (via in-flight dedup) — only the first
+request after TTL expiry sees the stale response.
+
+```typescript
+// In a route handler — preferred over the manual getCached/setCached dance.
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+
+const cacheKey = buildCacheKey({ route: 'route-name', month, week, ...filters, extra: { ...routeSpecificParams } });
+const { data, cached, stale } = await withCacheAndDedup<ResponseType>(
+  cacheKey,
+  5 * 60 * 1000, // 5-min TTL — same as the manual getCached pattern
+  async () => {
+    // computeFn — runs only on miss (or as the background SWR recompute).
+    // MUST return a plain JSON-serialisable object (no Date, no class instances).
+    const result = await heavyQuery(...);
+    return { success: true, period: { month, week }, ...result, durationMs: Date.now() - startedAt };
+  },
+);
+
+// Surface the cache flags on the response per §2.
+const payload = cached
+  ? { ...data, cached: true, ...(stale ? { stale: true } : {}) }
+  : data;
+return NextResponse.json(payload, { headers: CACHE_ANALYSIS });
+```
+
+SWR contract:
+1. **In-flight dedup**: register the Promise BEFORE any `await`. Concurrent
+   requests for the same key await the same Promise.
+2. **Fresh hit** → return `{ data, cached: true }` (no `stale` flag).
+3. **Stale hit (SWR)** → return `{ data: stale, cached: true, stale: true }` in
+   <50ms; fire-and-forget background recompute that writes the fresh cache via
+   `setCached(awaitWrite=true)` and resolves the in-flight Promise.
+4. **No entry** → compute synchronously + write cache + resolve in-flight.
+5. **On error**: reject in-flight + re-throw.
+6. **`/api/export-report`** uses `withCacheAndDedup` but returns binary (docx
+   buffer) — the `stale` flag is NOT surfaced on the response (the client gets
+   the stale file immediately; the next download gets fresh). SWR still works
+   internally.
+7. **`/api/analysis`** is NOT migrated to SWR yet (bespoke multi-stage pipeline
+   in `services/`; the cache check is in `validate-and-resolve.ts` stage 1 but
+   the compute is in `route.ts` stages 2–5). Already has in-flight dedup +
+   TanStack `keepPreviousData` + HTTP SWR. Phase C work.
+
+### Cached Routes (9)
+
+`analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`,
+`heatmap` (added PERF-CACHE-08), `outlet-items` (added PERF-API-01),
+`item-history` (added PERF-API-02), `drilldown` (added PERF-API-03).
+
+All 9 are invalidated on any mutation via `invalidateAnalysisCache()` (clears
+every prefix in the list). The `extra` field on `buildCacheKey` carries
+route-specific params (e.g. `metric + itemLimit + mode` for heatmap,
+`parentDim + childDim` for pareto, `priority + limit` for resto-bahan-matrix,
+`sections` for export-report) — omitting these from the key causes cache
+poisoning between two requests with different params.
 
 ## 4. Error Handling
 
@@ -173,6 +241,95 @@ Key conventions:
 - Add `<TableCaption className="sr-only">` per table for screen-reader accessibility.
 - Compute alignment booleans in TS, not SQL — keeps the SQL evaluator simple.
 
+### 5.2 Tab Component Pattern
+
+Dashboard sections live in `tabs/{DashboardTab,RestoTab,PeerTab,ParetoTab}.tsx`,
+NOT in `page.tsx` (which is a 227-line thin orchestrator). When adding a new
+section to a tab, follow this template:
+
+```typescript
+// src/components/dashboard/tabs/DashboardTab.tsx
+'use client';
+import { memo } from 'react';
+import dynamic from 'next/dynamic';
+import { ErrorBoundary } from '@/components/ui/error-boundary';
+import { FetchAware, LoadingChart, SectionHeader } from '@/components/dashboard/shared';
+
+// Lazy-load heavy chart components (Recharts = 5.4MB). ssr: false — charts
+// use ResponsiveContainer which needs window.
+const NewChart = dynamic(() => import('@/components/dashboard/NewChart').then(m => m.NewChart), {
+  ssr: false,
+  loading: () => <LoadingChart />,
+});
+
+export const DashboardTab = memo(function DashboardTab({ data, isFetching }: DashboardTabProps) {
+  return (
+    <FetchAware isFetching={isFetching}>
+      <ErrorBoundary label="New Section">
+        <NewChart data={data} />
+      </ErrorBoundary>
+    </FetchAware>
+  );
+});
+```
+
+Conventions:
+- Wrap the tab in `React.memo` — `page.tsx` re-renders on any Zustand state
+  change (modal toggles, filter selections); without memo, the active tab
+  re-renders unnecessarily. TanStack Query returns stable `data` refs (same ref
+  unless data actually changes), so memo is effective.
+- Always wrap sections in `ErrorBoundary` + `FetchAware` so a single chart
+  failure doesn't nuke the whole tab.
+- Lazy-load chart components via `next/dynamic({ ssr: false, loading: () => <LoadingChart /> })`.
+- The `data` prop is `AnalysisData` (typed in `src/hooks/useAnalysis.ts`).
+  Don't pass derived values as separate props (keeps the prop interface stable
+  + memo effective).
+- New tabs (5th tab onwards) also need: a `<TabsTrigger>` in `page.tsx`, a
+  `<TabsContent>` in `page.tsx`, and an entry in the keyboard-shortcut handler
+  in `useDashboardActions.ts`.
+
+### 5.3 Lazy Sheet Pattern
+
+Heavy drill-down Sheets (e.g. `AreaItemHeatmapSheet`) MUST be lazy-loaded so
+their code is not in the eager parent chunk. The Sheet's own `useQuery` makes
+the chunk code-loaded-only-on-first-open.
+
+```typescript
+// In the parent component (e.g. AreaItemHeatmap.tsx)
+import dynamic from 'next/dynamic';
+
+const AreaItemHeatmapSheet = dynamic(
+  () => import('@/components/dashboard/AreaItemHeatmapSheet'),
+  { ssr: false, loading: () => null }, // null — Sheet renders its own skeleton
+);
+
+// Then render conditionally — only mounted when needed.
+{selectedCell && (
+  <AreaItemHeatmapSheet
+    open={!!selectedCell}
+    onOpenChange={handleSheetOpenChange}
+    areaName={selectedCell.area}
+    itemName={selectedCell.item}
+    monthLabel={monthLabel}
+    currentWeek={currentWeek}
+    filters={sheetFilters} // MUST be memoized — see below
+  />
+)}
+```
+
+Conventions:
+- Memoize the `filters` prop with `useMemo` — otherwise the Sheet's internal
+  `useMemo(() => params, [filters])` recomputes every render (busts the query
+  key → spurious refetches).
+- Memoize the `onOpenChange` callback with `useCallback` — otherwise the Sheet
+  can remount on every parent render.
+- In the Sheet's `useQuery`: set `placeholderData: keepPreviousData` (no
+  skeleton flicker when switching between cells/records) + `refetchOnWindowFocus:
+  false` (user-initiated drill-down — no need to refetch on tab focus).
+- The Sheet's `queryFn` should be enabled only when `open === true` (via
+  `enabled: open && !!monthLabel && ...`) so closing the Sheet cancels any
+  pending fetch.
+
 ## 6. Rule Definition Conventions
 
 Rules live in one place:
@@ -234,7 +391,216 @@ The codebase has TWO rule evaluators — they serve different routes and must st
 
 When adding a rule, prefer the **SQL push-down** path (Stage 1) unless the rule needs historical stats. Update `RULE_MAP` in `rule-evaluation.ts` and add the corresponding `CASE WHEN` column. Do NOT add the rule to `src/engine/rules/evaluator.ts` unless the `/api/item-history` route needs it — and if you do, document the divergence in a comment.
 
-## 7. Naming Conventions
+## 7. Heatmap Conventions
+
+The Heatmap Area × Item (`AreaItemHeatmap.tsx` + `AreaItemHeatmapSheet.tsx` +
+`src/lib/queries/heatmap.ts` + `/api/area-item-heatmap` +
+`/api/area-item-heatmap/cell-detail`) is a visualization feature on the Dashboard
+tab — NOT a business rule (it does not feed into the 19-rule engine or the
+Priority Summary). When adding or modifying heatmap behaviour:
+
+### 7.1 Dual Display (Total + Avg per Outlet)
+
+Each cell MUST show two values when the active metric is a nominal magnitude:
+
+- **Line 1 (bold)** — Total magnitude across all outlets in the area for that
+  item (`value` field on `HeatmapCell`).
+- **Line 2 (muted, smaller)** — Ø average per resto (`value / outletCount`).
+
+Avg is computed ONLY for nominal metrics where summation is meaningful:
+`absNominalDeviasi`, `nominalWaste`, `nominalSusut`. The other two metrics
+(`pctQtyDeviasiToBom` is an AVG, `recordCount` is a COUNT) do NOT show avg —
+dividing an average by outlet count is meaningless.
+
+Enforced by the `AVG_ELIGIBLE_METRICS` set in `AreaItemHeatmap.tsx`. Add new
+metrics to the set only if they are SUM-based magnitudes.
+
+### 7.2 `outletCount` field is REQUIRED
+
+The heatmap cells SQL query MUST include `CAST(COUNT(DISTINCT ir."outletId") AS
+INTEGER) as "outletCount"` — without it, the dual-display avg cannot be
+computed (div-by-zero guard). The drill-down Sheet's footer also uses
+`rows.length` as the outlet count.
+
+### 7.3 Pareto 80/20 is the default `mode`
+
+The mode selector defaults to `pareto80` — items are auto-selected by
+contributing to 80% of the total magnitude (cumulative). The alternative is
+`top` (top N items by magnitude, where N = `itemLimit`).
+
+For metrics where Pareto is semantically meaningless (`pctQtyDeviasiToBom` is
+an AVG, `recordCount` is a COUNT), the query layer falls back to `top` mode
+internally (`effectiveMode` in `queryAreaItemHeatmap`) — do NOT silently
+apply Pareto to averages/counts.
+
+The `paretoInfo` object (`totalItems`, `selectedItems`, `cumulativePct`,
+`totalMagnitude`) MUST be returned on every response so the UI can render the
+banner: "Menampilkan X dari Y item · Kontribusi: Z%".
+
+### 7.4 Raw Quantities in Cells
+
+Cells MUST return raw quantity aggregates (`qtyBom`, `qtyDeviasi`, `qtyWaste`,
+`qtySusut`, `qtyTrial`, `nominalDeviasi`, `nominalLossSurplus`) in addition to
+the metric `value`. The drill-down Sheet reuses these for the per-outlet table
++ TOTAL / Ø PER RESTO footer without an extra query.
+
+### 7.5 Drill-down Sheet Footer
+
+The Sheet MUST render TWO footer rows:
+
+1. **TOTAL** — sum across all outlets shown (background: muted, font:
+   semibold).
+2. **Ø PER RESTO** — average across all outlets shown (background:
+   amber-tinted, font: medium).
+
+Dev/BOM% in the footer is recomputed as `totalQtyDeviasi / totalQtyBom` (NOT
+the average of per-outlet Dev/BOM% — that would be a per-row average, which
+is explicitly forbidden per §5.6 of the PRD).
+
+### 7.6 Cache Key
+
+The heatmap cache key MUST include `metric`, `itemLimit`, and `mode` in the
+`extra` field (in addition to the standard filter set). Without these, two
+requests with different metric/mode would share one cache entry → wrong
+heatmap rendered.
+
+## 8. Performance Conventions
+
+### 8.1 Prefetch on Status Load
+
+`useDashboardEffects.ts` fires both `prefetchAnalysis` AND `prefetchHeatmap`
+on the first successful `/api/status` load — before the user has interacted
+with the FilterBar. The prefetches use the SAME queryKey shape as the real
+`useQuery` calls so TanStack dedupes them with the in-flight request.
+
+```typescript
+// In useDashboardEffects.ts
+useEffect(() => {
+  if (warmedStatusKey.current === warmKey) return;
+  warmedStatusKey.current = warmKey;
+  prefetchAnalysis(queryClient, params);
+  prefetchHeatmap(queryClient, { month: params.month, week: params.week });
+}, [status, queryClient, monthLabel, currentWeek]);
+```
+
+A `warmedStatusKey` ref guards against re-prefetching on every status
+re-render (status has 5-min staleTime but its reference may update on
+invalidation).
+
+### 8.2 Parallel Resolve Independent Awaits
+
+Independent `await`s in a route handler MUST be batched via `Promise.all`:
+
+```typescript
+// CORRECT — parallel
+const [kelompokOutletCodes, picOutletCodes] = await Promise.all([
+  resolveKelompokOutletCodes(kelompok),
+  resolvePICOutletCodes(pic),
+]);
+
+// WRONG — sequential (wastes 50–100 ms)
+const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
+const picOutletCodes = await resolvePICOutletCodes(pic);
+```
+
+Same applies inside `withCacheAndDedup` computeFn — batch metadata fetches
+(`db.sourceFile.findFirst`, `getRuntimeThresholds`, `resolvePICOutletCodes`)
+into one `Promise.all` (saves ~50–100 ms on cold path).
+
+### 8.3 Resolve Month BEFORE Building the Cache Key
+
+```typescript
+// CORRECT — resolve first, then build key
+const resolver = await getMonthResolver();
+const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
+const cacheKey = buildCacheKey({ route: 'route-name', month, week, ... });
+
+// WRONG — rawMonth in the key → "Agustus 2026" and "agustus 2026"
+// get different cache entries for the same period.
+const cacheKey = buildCacheKey({ route: 'route-name', month: rawMonth, week, ... });
+```
+
+### 8.4 `refetchOnWindowFocus: false` on All Queries
+
+Every `useQuery` call MUST set `refetchOnWindowFocus: false`. Browser-tab
+switches are frequent; default `true` triggers 6–8 s analysis refetches every
+time the user returns to the tab. Manual refresh button is in `DashboardHeader`
+for the rare case where the user wants to force a refetch.
+
+Applies to: `useAnalysis`, `useStatus`, `useDrilldown`, the cell-detail query in
+`AreaItemHeatmapSheet`, the heatmap query in `AreaItemHeatmap`, and any future
+`useQuery`.
+
+### 8.5 `optimizePackageImports` for Radix + Chart Libraries
+
+`next.config.ts` MUST list every barrel-exported library used by the codebase
+in `experimental.optimizePackageImports`:
+
+- `recharts` (50+ chart primitives)
+- `lucide-react` (1000+ icons)
+- ALL 14 `@radix-ui/react-*` packages used by the 29 shadcn/ui components
+  (dialog, select, popover, tooltip, tabs, scroll-area, checkbox, switch,
+  slider, label, alert-dialog, collapsible, progress, toast).
+
+When adding a new shadcn/ui component that pulls in a new Radix package, add
+the package to `optimizePackageImports` in the same PR.
+
+### 8.6 Statement Timeout + LIMIT Safety
+
+Every raw SQL query MUST be wrapped in `withStatementTimeout()` (sets
+`statement_timeout` + bumps `work_mem` to 64 MB). Every top-N or unbounded
+`GROUP BY` query MUST have an explicit `LIMIT` clause (defense-in-depth —
+current production data is small but prevents unbounded payloads if the
+catalog ever grows or multi-tenant scenarios arrive).
+
+### 8.7 Cache-Control Immutable — PROD Only
+
+`next.config.ts` MUST gate the `Cache-Control: immutable` header for
+`/_next/static/*` on `NODE_ENV === 'production'`. Turbopack dev mode uses
+stable module-ID hashes (not content hashes), so `immutable` in dev causes
+stale-chunk issues after source edits.
+
+```typescript
+async headers() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const staticAssetRules = isProd
+    ? [{ source: '/_next/static/(.*)', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] }]
+    : []; // DEV: omit → Turbopack's default no-cache applies
+  return [ ...staticAssetRules, { source: '/(.*)', headers: [ ...securityHeaders ] } ];
+}
+```
+
+## 9. Git Conventions
+
+### 9.1 Pre-push Hook (Force-Push Protection)
+
+The repo ships `.githooks/pre-push` that BLOCKS force-push (`git push --force` /
+`--force-with-lease`) to `main`. Force-push can orphan commits and cause "old
+versions" to reappear in the working tree.
+
+Activate the hook on a fresh clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook checks `git merge-base --is-ancestor` to detect non-fast-forward
+pushes. To bypass (emergency only): `git push --no-verify`.
+
+### 9.2 Cache-Control Immutable — PROD Only (Cross-Ref)
+
+See §8.7 — the `immutable` static-asset cache header is gated on
+`NODE_ENV === 'production'` to avoid breaking Turbopack dev HMR. This is a
+build-config convention, not a runtime one — it lives in `next.config.ts`
+`headers()`, not in any application code.
+
+### 9.3 Git Commit Pattern (Cross-Ref to §14)
+
+Commit message format (`type(scope): short description` + bullet body +
+"Verified: 0 lint errors, N tests pass, tsc clean." footer) is documented in
+§14 below.
+
+## 10. Naming Conventions
 
 | Type | Convention | Example |
 |------|-----------|---------|
@@ -247,7 +613,7 @@ When adding a rule, prefer the **SQL push-down** path (Stage 1) unless the rule 
 | Zod schemas | camelCase + `Schema` suffix | `analysisQuerySchema` |
 | Test files | `{module}.test.ts` | `historical.test.ts` |
 
-## 8. Validation Pattern
+## 11. Validation Pattern
 
 ```typescript
 // In src/lib/validation.ts
@@ -269,7 +635,7 @@ if (!validation.success) {
 ### Available Schemas
 `monthLabelSchema`, `weekLabelSchema`, `areaSchema`, `kelompokSchema`, `outletCodeSchema`, `picSchema`, `itemNameSchema`, `limitSchema`, `cursorSchema`
 
-## 9. Security Checklist (for new routes)
+## 12. Security Checklist (for new routes)
 
 - [ ] Zod validation on ALL params
 - [ ] Rate limiting (`rateLimit` + `getClientIP`)
@@ -280,7 +646,7 @@ if (!validation.success) {
 - [ ] No `console.error` — use `logger.error`
 - [ ] HTTP Cache-Control header (`CACHE_ANALYSIS` or `CACHE_METADATA`)
 
-## 10. Testing Pattern
+## 13. Testing Pattern
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -315,7 +681,7 @@ describe('functionName', () => {
 });
 ```
 
-## 11. Git Commit Pattern
+## 14. Git Commit Pattern
 
 ```
 type(scope): short description
@@ -335,7 +701,7 @@ Verified: 0 lint errors, N tests pass, tsc clean.
 | `docs` | Documentation only |
 | `refactor` | Code restructuring (no behavior change) |
 
-## 12. Number Formatting
+## 15. Number Formatting
 
 | Function | Use Case | Example |
 |----------|----------|---------|
@@ -348,7 +714,7 @@ Verified: 0 lint errors, N tests pass, tsc clean.
 - Indonesian decimal separator: `,` (not `.`)
 - Indonesian thousand separator: `.` (not `,`)
 
-## 13. State Management
+## 16. State Management
 
 ### Zustand (client state)
 ```typescript
@@ -377,25 +743,37 @@ const { data, isLoading, isFetching, error, refetch } = useQuery({
 });
 ```
 
-## 14. File Organization
+## 17. File Organization
 
 ```
 src/
 ├── app/api/{route}/route.ts          # API handler
 ├── app/api/{route}/services/         # Extracted orchestrators (if route > 200 lines)
 ├── components/dashboard/             # Dashboard components
+├── components/dashboard/tabs/        # Tab-level sections (DashboardTab, RestoTab, PeerTab, ParetoTab)
 ├── components/filters/               # Filter + dialog components
 ├── components/ui/                    # shadcn/ui primitives (don't modify)
 ├── lib/queries/                      # SQL query modules
 ├── lib/metrics/                      # Pure calculation functions
-├── hooks/                            # React hooks (useAnalysis, useDashboard)
+├── hooks/                            # React hooks (useAnalysis, useDashboard, useDashboardEffects, useDashboardActions)
 ├── engine/                           # Business logic (rules, analysis)
 └── config/                           # YAML config (rules, thresholds) — rules.ts deleted as dead code
 ```
 
 - **Route > 200 lines?** Extract to `services/` folder
 - **Query > 200 lines?** Split into sub-functions
-- **Component > 300 lines?** Split into sub-components
+- **Component > 300 lines?** Split into sub-components (see §5.2 Tab Component Pattern, §5.3 Lazy Sheet Pattern)
+- **Dashboard page.tsx** is now a 227-line thin orchestrator — do NOT add new sections directly; put them in `tabs/*.tsx` instead (see §5.2)
 - shadcn/ui files: **never modify** (regenerated by CLI)
 - **Rule definitions**: edit `src/config/rules.yaml` (sole source of truth) AND `src/lib/queries/rule-evaluation.ts` `RULE_MAP` + `CASE WHEN` column — keep both in sync.
 - **Growth fields**: add to the `CROSS JOIN LATERAL` growth CTE in `rule-evaluation.ts` with `ABS(curr) - ABS(prev)` numerator + div-by-zero guard. Return `NULL` when prev is missing.
+- **Heatmap changes**: see §7 for the dual-display / Pareto 80% / outlet-count / drill-down Sheet conventions. The heatmap is NOT a rule — it does not feed the 19-rule engine.
+- **Git hooks**: `.githooks/pre-push` blocks force-push to `main` (see §9.1). Activate via `git config core.hooksPath .githooks`.
+
+---
+
+*Authored by Agent DOC-PRD. Last updated by Agent DOC-UPDATE-2 (added §3.1
+SWR, §5.2 Tab Component Pattern, §5.3 Lazy Sheet Pattern, §7 Heatmap
+Conventions, §8 Performance Conventions, §9 Git Conventions; renumbered
+subsequent sections §10–§17; updated §1 cell-detail note, §2 `stale` flag,
+§3 cached routes 5 → 9).*
