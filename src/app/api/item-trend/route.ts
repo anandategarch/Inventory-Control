@@ -84,10 +84,10 @@ export async function GET(req: NextRequest) {
     const week = rawWeek;
 
     // 3. DB cache check — cache key includes ALL response-affecting params.
-    // TREND-DATA-02 FIX: month/week NOT in cache key — query returns ALL periods
-    // regardless of selected month/week. Including them caused 8x cache fragmentation.
+    // week IS in cache key — query filters by weekLabel (W4 → only W4 across months).
     const cacheKey = buildCacheKey({
       route: 'item-trend',
+      week,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
@@ -131,7 +131,7 @@ export async function GET(req: NextRequest) {
           picOutletCodes,
         };
 
-        const result = await queryItemTrendTimeline(itemName, filterOpts, metric);
+        const result = await queryItemTrendTimeline(itemName, filterOpts, metric, week);
 
         return {
           success: true,

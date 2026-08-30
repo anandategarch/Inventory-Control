@@ -41,6 +41,7 @@
 //    weekLabel) and all rows for the same monthLabel share one
 //    SourceFile.monthKey.
 // ============================================================
+import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
 
 export type ItemTrendMetric = 'qtyDeviasi' | 'qtyWaste' | 'qtySusut' | 'qtyTrial';
@@ -128,6 +129,7 @@ export async function queryItemTrendTimeline(
   itemName: string,
   filters: SqlFilterOpts,
   metric: ItemTrendMetric = 'qtyDeviasi',
+  weekLabel?: string | null,
 ): Promise<ItemTrendResult> {
   // NOTE: buildSqlFilters applies `itemName` as a LIKE filter (substring match),
   // which would over-match the trend query (e.g. "CABAI" matches both
@@ -140,6 +142,12 @@ export async function queryItemTrendTimeline(
     itemName: null,
     picOutletCodes: filters.picOutletCodes ?? null,
   });
+
+  // Build week filter — if weekLabel provided, only show that week across all months
+  // (e.g. WEEK 4 → show W4 of Januari, Februari, Maret, etc.)
+  const weekFilter = weekLabel
+    ? Prisma.sql`AND ir."weekLabel" = ${weekLabel}`
+    : Prisma.empty;
 
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
     monthLabel: string;
@@ -173,6 +181,7 @@ export async function queryItemTrendTimeline(
     LEFT JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
     WHERE i.name = ${itemName}
       ${f}
+      ${weekFilter}
     GROUP BY ir."monthLabel", ir."weekLabel"
     ORDER BY MAX(sf."monthKey") ASC NULLS LAST, ir."weekLabel" ASC
   `);
