@@ -71,7 +71,8 @@ function buildRow(p: ItemTrendPeriod, metric: ItemTrendMetric): ChartRow {
   let qty: number;
   switch (metric) {
     case 'qtyDeviasi':
-      qty = p.qtyDeviasiSigned;
+      // Use ABS for chart — historicalMean is also ABS (comparable on same axis)
+      qty = Math.abs(p.qtyDeviasiSigned);
       break;
     case 'qtyWaste':
       qty = p.qtyWaste;
@@ -328,6 +329,7 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
             <ReferenceLine yAxisId="right" y={3} stroke="#dc2626" strokeDasharray="2 4" strokeOpacity={0.4} />
             <ReferenceLine yAxisId="right" y={0} stroke="var(--muted-foreground)" strokeDasharray="1 3" strokeOpacity={0.3} />
             <ReferenceLine yAxisId="right" y={-2} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.3} />
+            <ReferenceLine yAxisId="right" y={-3} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.4} />
           </LineChart>
         </ResponsiveContainer>
       </div>

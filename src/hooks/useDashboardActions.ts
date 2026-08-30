@@ -169,8 +169,8 @@ export function useDashboardActions({
       const isDropdownOpen = Boolean(
         document.querySelector('[role="combobox"][aria-expanded="true"], [data-state="open"][role="listbox"], [data-state="open"][role="combobox"]')
       );
-      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4')) {
-        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto' };
+      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend' };
         setActiveTab(tabMap[e.key]);
         return;
       }

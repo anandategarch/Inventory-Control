@@ -28,7 +28,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { queryItemTrendTimeline, type ItemTrendMetric } from '@/lib/queries/item-trend';
 import { validateQuery, itemTrendQuerySchema } from '@/lib/validation';
@@ -84,13 +83,11 @@ export async function GET(req: NextRequest) {
     const month = rawMonth ? (resolveMonthLabel(rawMonth, resolver) || rawMonth) : '';
     const week = rawWeek;
 
-    // 3. DB cache check — cache key includes ALL response-affecting params:
-    // itemName + metric (route-specific) + standard filter set. Without these,
-    // two requests with different metric/itemName would share one cache entry
-    // → wrong data served (cache poisoning).
+    // 3. DB cache check — cache key includes ALL response-affecting params.
+    // TREND-DATA-02 FIX: month/week NOT in cache key — query returns ALL periods
+    // regardless of selected month/week. Including them caused 8x cache fragmentation.
     const cacheKey = buildCacheKey({
       route: 'item-trend',
-      month, week,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
@@ -105,26 +102,12 @@ export async function GET(req: NextRequest) {
       cacheKey,
       ITEM_TREND_CACHE_TTL,
       async () => {
-        // PERF-HEATMAP pattern: parallel resolve kelompok + PIC (was sequential,
-        // saves 50-100ms on cold path). Both are independent of each other and
-        // of the trend query.
-        const [kelompokOutletCodes, picOutletCodes] = await Promise.all([
-          resolveKelompokOutletCodes(kelompok),
-          resolvePICOutletCodes(pic),
-        ]);
+        // TREND-BE-01 FIX: removed resolveKelompokOutletCodes — kelompok is already
+        // handled by buildSqlFilters via the kelompok string in filterOpts.
+        // Only resolve PIC (which returns outlet codes, not a kelompok prefix).
+        const picOutletCodes = await resolvePICOutletCodes(pic);
 
-        // Sentinel handling: if kelompok/PIC matches no outlets, return empty
-        // periods (don't query all outlets — would be incorrect).
-        if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
-          return {
-            success: true,
-            period: { month, week },
-            itemName,
-            metric,
-            periods: [],
-            durationMs: Date.now() - startedAt,
-          };
-        }
+        // Sentinel handling: if PIC matches no outlets, return empty periods.
         if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
           return {
             success: true,

@@ -171,9 +171,9 @@ function ItemTrendTabImpl() {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Sort state for the table — default Z-Score desc (most anomalous first).
+  // Sort state for the table — default period asc (chronological, matches chart).
   const [sortKey, setSortKey] = useState<SortKey>('period');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   // Close autocomplete dropdown when clicking outside.
   useEffect(() => {

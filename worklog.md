@@ -35888,3 +35888,473 @@ Work Log:
   4. ✅ Hook added to useAnalysis.ts (useItemTrend + 4 exported types)
   5. ✅ Component created in src/components/dashboard/tabs/ItemTrendTab.tsx
      (+ lazy-loaded chart in ItemTrendLineChart.tsx)
+
+---
+
+## AUDIT-TREND-FRONTEND — Bug Hunter Report
+**Agent:** Bug Hunter (general-purpose)
+**Scope:** Audit Trend Item tab frontend + chart (ItemTrendTab.tsx, ItemTrendLineChart.tsx, useItemTrend hook, page.tsx integration)
+**Files reviewed:**
+- `src/components/dashboard/tabs/ItemTrendTab.tsx` (653 lines)
+- `src/components/dashboard/tabs/ItemTrendLineChart.tsx` (336 lines)
+- `src/hooks/useAnalysis.ts` (useItemTrend, lines 731-839)
+- `src/app/page.tsx` (240 lines)
+- `src/hooks/useDashboardActions.ts` (keyboard handler, lines 130-195)
+- `src/lib/format.ts` (fmtIDR, fmtNum)
+
+### Summary
+- **0 P1** (no crashes / blank screens / wrong data)
+- **5 P2** (broken features / misleading displays)
+- **12 P3** (minor / polish)
+
+### Findings
+
+**P2 bugs:**
+1. **TREND-FE-01** — Keyboard shortcut "5" not mapped to Trend Item tab. `useDashboardActions.ts:172-174` only handles keys 1-4. Worklog acknowledged this as a follow-up but it remains a gap.
+2. **TREND-FE-02** — Autocomplete shows misleading "Tidak ada item ditemukan" when `monthLabel` or `currentWeek` is missing. Query is disabled (`enabled` flag) but dropdown still renders with empty-results message.
+3. **TREND-FE-03** — Chart mixes signed `qtyDeviasiSigned` with ABS `historicalMean` on the same left Y-axis. For the Deviasi metric, the qty line dips below 0 while the mean line stays positive — visually inconsistent comparison (apples-to-oranges).
+4. **TREND-FE-04** — Table default sort is `period DESC` (newest first) but chart is chronological ASC (oldest first). Comment on line 174 also says "default Z-Score desc" which is wrong. Worklog claims "period chronological asc" — neither matches code.
+5. **TREND-FE-05** — Autocomplete error state not handled. `acError` not destructured from useQuery. On refetch failure, `keepPreviousData` shows stale results from the previous query (which may not match current input). User sees no error indication.
+
+**P3 bugs:**
+6. **TREND-FE-06** — `ReferenceLine y={-3}` missing. Chart has y={2}, y={3}, y={0}, y={-2} but no y={-3}. Worklog claims "ReferenceLines at z=±2, ±3".
+7. **TREND-FE-07** — Z-Score dot for null values likely not rendered. `connectNulls={false}` on zScore Line means Recharts skips null points entirely. Worklog claims "muted gray dot" but actual behavior is no dot.
+8. **TREND-FE-08** — Search input spinner only shows during initial load (`isLoading`), not during refetch (`isFetching`). `isFetching` not destructured.
+9. **TREND-FE-09** — Table row key includes sorted index `i` (`key={...-${i}}`). Sort changes cause full row re-renders. Should use stable key (`${monthKey}-${weekLabel}`).
+10. **TREND-FE-10** — Right Y-axis domain `[-4, 4]` clips Z-Scores > 4 or < -4. No `allowDataOverflow` set.
+11. **TREND-FE-11** — Summary "tanpa baseline (n<4)" label is incomplete. Null zScore also occurs when `stdDev === 0` (all historical values identical), not just when sampleSize < 4.
+12. **TREND-FE-12** — Selected item shown twice: as input placeholder AND as badge below header. Redundant.
+13. **TREND-FE-13** — Escape key doesn't close autocomplete dropdown. Only outside-click closes it. Global Escape handler in `useDashboardActions` doesn't target this dropdown.
+14. **TREND-FE-14** — No arrow-key navigation in autocomplete dropdown. Only Tab/Enter works. Basic ARIA keyboard nav missing.
+15. **TREND-FE-15** — Metric change triggers immediate refetch. Rapid metric button clicks (4 in 500ms) fire 4 separate fetches (different queryKeys) — only the last result is shown.
+16. **TREND-FE-16** — Only Trend tab wrapped in `ErrorBoundary` in page.tsx. Other tabs (Dashboard/Resto/Peer/Pareto) are not. Inconsistent (though intentional per worklog).
+17. **TREND-FE-17** — Z-Score Line in Legend shows transparent/empty color swatch (`stroke="transparent"`). Legend entry is visually broken.
+
+### Quality verification
+- ✅ TypeScript: `tsc --noEmit` passes (per worklog)
+- ✅ Lint: 0 errors (per worklog)
+- ✅ No runtime crashes found in code paths
+- ✅ All edge cases (empty/loading/error/no-data) have explicit handling
+- ✅ Hook config (queryKey, enabled, placeholderData, staleTime, refetchOnWindowFocus) is correct
+
+### Next actions (priority order)
+1. **Fix TREND-FE-01** — Add `'5': 'trend'` to tabMap in useDashboardActions.ts (1-line fix)
+2. **Fix TREND-FE-02** — Add `monthLabel && currentWeek` to dropdown render condition, or show "Pilih bulan/week dulu" message
+3. **Fix TREND-FE-05** — Destructure `error` from autocomplete useQuery; show error state in dropdown
+4. **Fix TREND-FE-04** — Change default sortDir to 'asc' for period, or update worklog/comment to match
+5. **Fix TREND-FE-03** — Either use ABS qty for Deviasi metric in chart, or document the signed-vs-ABS design choice
+6. **Fix TREND-FE-06** — Add `<ReferenceLine yAxisId="right" y={-3} stroke="#dc2626" ... />`
+7. **Fix TREND-FE-09** — Remove `-${i}` from table row key
+8. **Fix TREND-FE-08** — Use `isFetching` instead of `isLoading` for search input spinner
+9. Remaining P3 items — batch into a polish PR
+
+### Files NOT modified
+This was a read-only audit. No code changes made. All findings are recommendations for the implementing engineer.
+
+---
+
+## Task: AUDIT-TREND-DATA — Trend Item Data Integrity Audit
+
+**Agent:** Data Integrity Auditor
+**Scope:** Verify data correctness of the new "Trend Item" feature
+(`/api/item-trend` route + `queryItemTrendTimeline` query).
+
+### Audit Coverage
+1. Cross-verify API response vs raw SQL (per-period QTY aggregates)
+2. Verify Z-Score formula (mean + sample stddev, N-1, exclude self)
+3. Filter integration (area / kelompok / outlet / pic)
+4. Metric switching (qtyDeviasi / qtyWaste / qtySusut / qtyTrial)
+5. Period coverage + chronological sorting
+6. Cache invalidation (invalidateAnalysisCache) + cache-key partitioning
+7. Edge cases (sampleSize<4 → null, stdDev=0 → null, missing itemName, invalid metric)
+
+### Methodology
+- Connected directly to production Supabase DB via `pg` Client (port 6543).
+- Started Next.js dev server, fired curl requests within the ~30s
+  stability window noted in TREND-BACKEND worklog.
+- Compared API JSON output against raw SQL aggregates for multiple items
+  (CABAI FROZEN, KULIT PANGSIT (V.20), CABE RAWIT - RESTO (V.20),
+  AIR MINERAL BOTOL (V.20), CUP 22, SUSU EVAPORASI (V.20)).
+- Manually recomputed Z-Score for 6 periods using raw DB values
+  and compared against API zScore field to 10-decimal precision.
+
+### Verification Results
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Per-period QTY aggregates match raw SQL | ✅ PASS | All 9 fields (qtyBom, qtyDeviasi, qtyDeviasiSigned, qtyWaste, qtySusut, qtyTrial, nominalDeviasi, outletCount, recordCount) match exactly for all 3 CABAI FROZEN periods |
+| Z-Score math | ✅ PASS | For CABE RAWIT Agustus W4: manual z=-2.8081959549975344 vs API z=-2.80819595499753 (diff = 4.4e-15) |
+| Z-Score null when sampleSize<4 | ✅ PASS | CUP 22 (4 periods → n=3) → zScore=null |
+| Z-Score null when stdDev=0 | ✅ PASS | SUSU EVAPORASI qtyWaste (all 0s) → zScore=null |
+| Filter: area reduces outletCount | ✅ PASS | CABAI FROZEN Agustus W4: no filter=24, JAWA BARAT 1=17, JAWA BARAT 2=6, KALIMANTAN 1=1 |
+| Filter: kelompok reduces outletCount | ✅ PASS | CABAI FROZEN Agustus W4 + kelompok=BDG → 3 outlets (matches raw SQL) |
+| Metric switching produces different baselines | ✅ PASS | KULIT PANGSIT Januari W1: qtyWaste baseline mean=5298433.98 vs qtyDeviasi baseline mean=20863394.28 (different) |
+| Period coverage returns ALL periods for item | ✅ PASS | KULIT PANGSIT: 20 periods (8 months × W1+W2+W4 minus some) returned, all 20 in DB |
+| Periods sorted chronologically | ✅ PASS | monthKey\|weekLabel monotonic for all 20 periods |
+| Cache invalidation includes 'item-trend' | ✅ PASS | Listed in invalidateAnalysisCache routes array |
+| Cache key changes with metric | ✅ PASS | qtyDeviasi call (cached=null) → qtyWaste call (cached=null, separate entry) → qtyWaste again (cached=true) |
+| Cache key changes with area filter | ✅ PASS | Switching area → cached=null (fresh) |
+| qtyDeviasiSigned ≠ qtyDeviasi when mixed signs | ✅ CORRECT | CABE RAWIT Januari W1: 127 pos + 22 neg outlets → SUM(ABS)=5,263,873.40 vs SUM=4,574,658.55 (both API values match raw SQL) |
+| Invalid metric → Zod rejects | ✅ PASS | ?metric=xyz → HTTP 400 |
+| Missing itemName → Zod rejects | ✅ PASS | HTTP 400 |
+
+### Issues Found
+
+**TREND-DATA-01 [P3]: itemName exact match is case-sensitive**
+- Finding: `i.name = ${itemName}` in `queryItemTrendTimeline` does an exact
+  case-sensitive match. A user typing "cup 22" (lowercase) gets 0 periods
+  while "CUP 22" returns 4.
+- Impact: No wrong data returned. Just empty result if case mismatches.
+  Mitigated on the frontend by autocomplete (which returns DB-stored case),
+  but a user manually editing the URL or typing in a non-autocomplete path
+  would silently get empty results.
+- Fix: Either (a) document that `itemName` must come from autocomplete
+  (already enforced by ItemTrendTab UI), or (b) change to
+  `LOWER(i.name) = LOWER(${itemName})` for case-insensitive match. Option
+  (b) would require an index on `LOWER(name)` to avoid full scan.
+
+**TREND-DATA-02 [P3]: Cache key includes `month`/`week` but trend query doesn't use them**
+- Finding: The route resolves `month` via month-resolver and includes both
+  `month` and `week` in `buildCacheKey`. However, `queryItemTrendTimeline`
+  ignores both — it always returns ALL periods for the item.
+- Impact: Cache fragmentation. Navigating from "Agustus 2026 WEEK 4" to
+  "Juli 2026 WEEK 4" causes a fresh DB hit even though the trend data is
+  identical. Same item+metric → 8 different cache entries (one per period).
+  Wasted DB compute (~80ms per cold path) + cache bloat.
+- Fix: Drop `month` and `week` from the trend cache key:
+  ```ts
+  const cacheKey = buildCacheKey({
+    route: 'item-trend',
+    // month, week omitted — trend doesn't depend on selected period
+    area: area && area !== 'all' ? area : null,
+    kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+    outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+    itemName,
+    pic,
+    extra: { metric },
+  });
+  ```
+  The `period: { month, week }` field in the response can still echo back
+  the requested period (for client-side display) — that doesn't need to
+  come from the cache key.
+
+**TREND-DATA-03 [P3]: Z-Score baseline differs from HistoricalZScoreCard**
+- Finding: ItemTrendTab computes Z-Score per **item+period** (aggregating
+  all outlets' QTY into one SUM, then comparing periods). HistoricalZScoreCard
+  computes Z-Score per **outlet+item** (each outlet compared against its
+  own historical baseline, with Dev/BOM or QTY Deviasi metric).
+- Impact: The two tabs may show different Z-Scores for the "same" item —
+  e.g., ItemTrendTab shows Agustus W4 Z=-2.81 for CABE RAWIT (item-level
+  drop), but HistoricalZScoreCard may show 0 anomalous outlets if each
+  individual outlet stayed within its own historical range. Users may be
+  confused why "the same Z-Score" differs.
+- Fix: This is a legitimate design choice (different questions answered).
+  Recommend adding a `FormulaInfo` tooltip in ItemTrendTab clarifying:
+  "Z-Score dihitung per item+periode (semua outlet digabung dalam satu
+  SUM). Berbeda dengan Historical Z-Score Card yang hitung per
+  outlet+item." The tooltip already exists in ItemTrendTab but should
+  explicitly contrast with HistoricalZScoreCard.
+
+### Positive Findings
+- Z-Score computation is mathematically correct to floating-point precision
+  (diff ~10⁻¹⁵ vs manual recomputation).
+- Filter integration is correct — area/kelompok/outlet/pic all properly
+  reduce outletCount and the historical baseline.
+- The same-week baseline pattern (W4 vs W4, not W4 vs W1) is correctly
+  implemented, matching the `historical.ts` cumulative-weeks convention.
+- ABS magnitude used for both current value and baseline (per PRD §5.2),
+  with SIGNED zScore for direction display — consistent with
+  `calcZScoreFromStats` in `src/lib/metrics/historical.ts`.
+- Object-identity exclusion (`q !== p`) correctly prevents data leakage
+  (current period excluded from its own baseline).
+- Zod validation rejects unknown params + invalid metric enum values.
+- Rate limiting (30 req/min per IP) is in place.
+- Cache invalidation on mutations (ingest, settings, pic, data delete,
+  migrate-direction) is wired up via `invalidateAnalysisCache`.
+
+### Files Inspected
+- `src/lib/queries/item-trend.ts` (234 lines) — query + Z-Score computation
+- `src/app/api/item-trend/route.ts` (177 lines) — API route + cache logic
+- `src/lib/queries/historical.ts` (140 lines) — comparison reference
+- `src/lib/queries/shared.ts` (202 lines) — buildSqlFilters + withStatementTimeout
+- `src/lib/aggregation-cache.ts` — buildCacheKey + invalidateAnalysisCache
+- `src/lib/metrics/historical.ts` (207 lines) — Z-Score formula reference
+- `src/components/dashboard/HistoricalZScoreCard.tsx` (308 lines) — comparison
+- `src/components/dashboard/tabs/ItemTrendTab.tsx` — frontend consumer
+
+### Conclusion
+The Trend Item feature returns CORRECT data. All QTY aggregates match raw
+SQL, Z-Score computation is mathematically verified, filters apply correctly,
+and cache invalidation is wired up. The three P3 issues are minor
+documentation/optimization concerns — no P1 (wrong data) or P2 (filter/cache
+bug) issues found. The feature is production-ready from a data-integrity
+perspective.
+
+
+---
+
+## AUDIT-TREND-BACKEND — Bug Hunter Audit (Trend Item Backend + Z-Score Math)
+**Date:** 2026-08-30 · **Agent:** Bug Hunter · **Task ID:** AUDIT-TREND-BACKEND
+
+### Scope
+Audit the NEW Trend Item backend (built in TREND-BACKEND):
+- `src/lib/queries/item-trend.ts` (233 lines) — Z-Score computation + SQL
+- `src/app/api/item-trend/route.ts` (176 lines) — API route, cache, validation
+- `src/lib/validation.ts` — `itemTrendQuerySchema` (lines 268-281)
+- Cross-check vs `src/lib/metrics/historical.ts` (`calcZScoreFromStats`) + `src/app/api/analysis/services/post-process.ts` + `src/app/api/item-history/route.ts` (BUG 5 same-week baseline pattern)
+
+### Methodology
+1. Static review of all 3 files (line-by-line).
+2. Cross-check Z-Score formula vs PRD §5.2 + canonical `calcZScoreFromStats`.
+3. Live API testing via `bun run dev` against Supabase PostgreSQL:
+   - 7 HTTP test scenarios (existing item, cache hit, non-existent item,
+     missing itemName, bad metric, unknown param strict-mode, alt metric).
+   - 3 high-volume items (AYAM CINCANG, CABE RAWIT, MINYAK MIE) — 20 periods
+     each, all with non-null Z-Scores (n≥4 baseline).
+4. Manual Z-Score verification: recomputed mean/stdDev/zScore in Python
+   for all 20 AYAM CINCANG periods — 0/20 mismatches. Formula confirmed
+   correct per PRD §5.2.
+
+### Z-Score Verification (PASS)
+- Formula matches `calcZScoreFromStats`: `(ABS(current) - mean(ABS(others))) / STDDEV_SAMP(ABS(others))`. ✓
+- SIGNED zScore (positive=above mean=worse, negative=below=better) per
+  `historical.ts` convention. ✓
+- Sample variance (N-1, Bessel's correction) — `computeSampleStats` divides
+  by `(n-1)`. ✓
+- Excludes current period from baseline — `.filter((q) => q !== p)`. ✓
+- `n >= HISTORICAL_MIN_WEEKS (4)` AND `stdDev > 0` required — else `zScore: null`. ✓
+- Same-week baseline (W4 vs W4 across months, NOT W4 vs W1/W2/W4) — matches
+  `item-history` route's BUG 5 fix. ✓
+- ABS magnitude in SQL (`SUM(ABS(qtyDeviasi))` etc.) + SIGNED
+  `qtyDeviasiSigned` (`SUM(qtyDeviasi)`) for direction display. ✓
+- `withStatementTimeout` applied. ✓
+- `Prisma.sql` tagged templates throughout (zero `$queryRawUnsafe`). ✓
+- itemName matched EXACTLY (`i.name = ${itemName}`), not LIKE — avoids
+  over-matching "CABAI" → "CABAI FROZEN" + "CABAI MERAH". ✓
+- Manual verification (20 periods, AYAM CINCANG):
+  - Period Januari W1: current=5,427,439, mean=10,232,744.20, std=1,496,375.52, z=-3.2113 ✓
+  - Period Mei W2: current=20,103,664.38, mean=14,185,483.00, std=2,753,584.53, z=+2.1493 ✓
+  - All 20 periods: 0 mismatches.
+
+### Bugs Found
+
+```
+TREND-BE-01 [P2]: Dead kelompok sentinel check + wasted DB query
+File: src/app/api/item-trend/route.ts:111-127
+Problem: Route calls `resolveKelompokOutletCodes(kelompok)` (DB query),
+  then checks for `['__NO_MATCH__']` sentinel at line 118. BUT
+  `resolveKelompokOutletCodes` (src/lib/kelompok-resolver.ts:53-71) returns
+  `[]` (empty array) on no match — NOT `['__NO_MATCH__']`. The sentinel
+  check is dead code (never fires). The actual kelompok filter is applied
+  via `buildSqlFilters` using the original `kelompok` string (passed in
+  filterOpts), so behavior is still correct (empty periods on no match).
+Impact: (1) Wasted DB round-trip — `resolveKelompokOutletCodes` result is
+  never used for filtering (only the dead sentinel check). ~1-2ms wasted
+  per request. (2) Misleading code — future maintainer might think the
+  sentinel handles kelompok when it actually doesn't.
+Fix: Either (a) remove the `resolveKelompokOutletCodes` call + sentinel
+  check entirely (kelompok is handled by buildSqlFilters), OR (b) pass
+  `kelompokOutletCodes` to filterOpts and have buildSqlFilters use it
+  (like the analysis route does in fetch-records.ts:180). Option (a) is
+  simpler — just delete lines 111, 118-127, and the `kelompokOutletCodes`
+  variable. Compare to analysis route which DOES use kelompokOutletCodes
+  for buildInventoryWhere (Prisma where clause, different path).
+```
+
+```
+TREND-BE-02 [P3]: SQL ORDER BY weekLabel ASC is alphabetic, not numeric
+File: src/lib/queries/item-trend.ts:177
+Problem: `ORDER BY MAX(sf."monthKey") ASC NULLS LAST, ir."weekLabel" ASC`
+  sorts weekLabel as a string. "WEEK 10" would sort BEFORE "WEEK 2"
+  alphabetically. Current data only has WEEK 1, 2, 4 (single-digit), so
+  order is correct in practice. But the weekLabelSchema regex
+  (`/^WEEK\s+[0-9]+$/i`) accepts any integer, so WEEK 10+ is valid input.
+Impact: API consumers that trust the API's period order would see wrong
+  chronological order if WEEK 10+ data ever appears. The frontend
+  (ItemTrendTab) re-sorts with zero-padded key (`monthKey|weekNumber`),
+  so it's not affected.
+Fix: Cast week number to integer in ORDER BY:
+  `ORDER BY MAX(sf."monthKey") ASC NULLS LAST,
+   CAST(SUBSTRING(ir."weekLabel" FROM 'WEEK\s+([0-9]+)') AS INTEGER) ASC`
+  OR pad in JS (like item-history route does at line 166:
+  `String(parseInt(r.weekLabel?.replace(/\D/g, '') || '0') || 0).padStart(2, '0')`
+  then sort by `sortKey`).
+```
+
+```
+TREND-BE-03 [P3]: Cache key includes `metric` but DB query returns ALL metrics
+File: src/app/api/item-trend/route.ts:100 (extra: { metric })
+Problem: The SQL query (item-trend.ts:158-178) returns ALL 4 QTY metrics
+  (qtyDeviasi, qtyWaste, qtySusut, qtyTrial) in every response. The
+  `metric` parameter only controls which metric is used for Z-Score
+  computation in JS. But the cache key includes `metric` (via
+  `extra: { metric }`), so switching metric triggers a cache MISS + an
+  identical DB query.
+Impact: 4x DB queries when user switches between the 4 metrics for the
+  same item. ~1.5s wasted per switch (cold path).
+Fix: Either (a) compute Z-Score for ALL 4 metrics in the query, store
+  all 4 in the cache, and return only the requested metric's Z-Score —
+  cache hits regardless of metric. OR (b) accept the current design
+  (simpler, 4 separate cache entries). Option (a) is more efficient but
+  changes the response shape (need `zScores: { deviasi, waste, susut,
+  trial }` instead of single `zScore`). Defer unless perf becomes an
+  issue.
+```
+
+```
+TREND-BE-04 [P3]: `cached: false` not added to fresh-compute response
+File: src/app/api/item-trend/route.ts:167-169
+Problem: Response payload only adds `cached: true` on cache hit. On fresh
+  compute (cache miss), the `cached` field is OMITTED entirely (not set
+  to `false`). Same for `stale` (only added when `stale === true`).
+Impact: Frontend has to treat missing `cached` field as `false`. Minor
+  API contract inconsistency. Same pattern as heatmap + item-history
+  routes (so consistent across the codebase).
+Fix: Optional — change to `{ ...cachedOrFresh, cached, ...(stale ? {
+  stale: true } : {}) }` to always include `cached: true|false`. Low
+  priority since the frontend already handles missing field.
+```
+
+```
+TREND-BE-05 [P3]: `historicalMean = 0` when `sampleSize = 0` (misleading)
+File: src/lib/queries/item-trend.ts:103-111 (computeSampleStats)
+Problem: When baseline is empty (n=0, e.g. item only has 1 period total),
+  `computeSampleStats` returns `{ mean: 0, stdDev: 0, n: 0 }`. The
+  response shows `historicalMean: 0, historicalStdDev: 0, sampleSize: 0`.
+Impact: Frontend might display "Mean: 0" instead of "No baseline" if it
+  doesn't check `sampleSize === 0`. Mean of empty set is undefined, not 0.
+Fix: Return `{ mean: null, stdDev: null, n: 0 }` when n=0, OR document
+  that frontend MUST check `sampleSize === 0` before displaying mean.
+  Current frontend (ItemTrendTab) handles this correctly per worklog
+  (shows "—" when sampleSize < 4), so this is a defensive suggestion.
+```
+
+```
+TREND-BE-06 [P3]: `month` validation is loose (no regex)
+File: src/lib/validation.ts:273
+Problem: `month: z.string().min(3).max(50).optional()` — accepts any
+  string 3-50 chars. Doesn't use `monthLabelSchema` (which has regex
+  `/^[A-Za-z]+\s+20\d{2}$/`). Garbage like `month=xyz` passes validation,
+  then `resolveMonthLabel('xyz', resolver)` returns null, fallback to
+  `'xyz'`, used as cache key.
+Impact: No wrong data (month is only used for cache key, not SQL filter).
+  But cache pollution — garbage month strings get unique cache entries.
+  Inconsistent with `itemHistoryQuerySchema` which uses `monthLabelSchema`.
+  Consistent with `heatmapQuerySchema` which also uses loose validation.
+Fix: Optional — switch to `month: monthLabelSchema` for consistency with
+  item-history. Low priority since the resolver handles garbage gracefully.
+```
+
+```
+TREND-BE-07 [P3]: `period: { month: '', week: '' }` echoes empty strings
+File: src/app/api/item-trend/route.ts:121, 134, 155
+Problem: When `month`/`week` are not provided in the request, the response
+  includes `period: { month: '', week: '' }` (empty strings). Frontend
+  might display "Period: " (empty).
+Impact: Minor cosmetic. The frontend handles this (doesn't display the
+  period field when empty), but the API contract is slightly awkward.
+Fix: Optional — return `period: null` when month+week are both empty,
+  OR omit the `period` field entirely. Low priority.
+```
+
+```
+TREND-BE-08 [P3]: Z-Score uses TOTAL qty across outlets (not normalized)
+File: src/lib/queries/item-trend.ts:158-178 (SQL aggregate)
+Problem: The SQL aggregates `SUM(ABS(qtyDeviasi))` across ALL outlets for
+  the item per period. The Z-Score baseline compares TOTAL magnitudes
+  across periods. But outlet count varies between periods (e.g. AYAM
+  CINCANG: WEEK 1 has 149-182 outlets, WEEK 4 has 323-333 outlets). A
+  period with more outlets naturally has higher total qtyDeviasi, which
+  the Z-Score may flag as "abnormal" when it's actually just "more
+  outlets reported".
+Impact: Z-Score may be misleading when outlet count varies significantly
+  between periods. For AYAM CINCANG WEEK 4 (n=7 baseline, 323-333
+  outlets), the Z-Scores are still meaningful (within ±2.5). But for
+  items with high outlet-count variance, the Z-Score could be biased.
+  This is a methodological concern, not a code bug — the PRD §5.2
+  specifies per-outlet+item Z-Score (not per-item-across-outlets), so
+  the trend feature's aggregation is a design choice.
+Fix: Optional — normalize by outlet count: `SUM(ABS(qtyDeviasi)) /
+  COUNT(DISTINCT outletId)` (per-outlet average). This would make Z-Score
+  compare like-for-like. BUT this changes the semantic (per-outlet avg
+  vs total) and may not match user expectation. Defer unless users
+  report misleading Z-Scores.
+```
+
+### Items Verified CORRECT (no bugs)
+- Z-Score formula: matches `calcZScoreFromStats` exactly. ✓
+- SIGNED zScore: positive=above mean=worse, negative=below=better. ✓
+- Sample variance (N-1, Bessel's correction). ✓
+- Exclude current period from baseline (`.filter((q) => q !== p)`). ✓
+- `n >= 4` (HISTORICAL_MIN_WEEKS) AND `stdDev > 0` required. ✓
+- Same-week baseline (cumulative weeks pattern, matches item-history BUG 5 fix). ✓
+- ABS magnitude in SQL aggregates. ✓
+- SIGNED `qtyDeviasiSigned` (not ABS'd). ✓
+- GROUP BY monthLabel, weekLabel (per period, not per outlet). ✓
+- ORDER BY monthKey ASC, weekLabel ASC (chronological — works for single-digit weeks). ✓
+- COUNT(DISTINCT outletId) for outletCount. ✓
+- Filters (area, kelompok, outlet, pic) applied correctly via buildSqlFilters. ✓
+- `withStatementTimeout` wraps the heavy query. ✓
+- `Prisma.sql` tagged templates (zero `$queryRawUnsafe`, no SQL injection). ✓
+- itemName exact match (`i.name = ${itemName}`). ✓
+- Cache key complete (itemName, metric, month, week, area, kelompok, outlet, pic). ✓
+- Month resolved BEFORE cache key (case-insensitive cache sharing). ✓
+- `withCacheAndDedup` used correctly (SWR + in-flight dedup). ✓
+- `'item-trend'` registered in `invalidateAnalysisCache` (aggregation-cache.ts:416). ✓
+- Zod schema is `.strict()` (rejects unknown params — verified by Test 6). ✓
+- `itemName` required (Test 4 → 400). ✓
+- `metric` validated as enum (Test 5 → 400). ✓
+- Generic error message on failure (no DB schema/SQL leakage). ✓
+- `startedAt` before try block. ✓
+- `durationMs` in response. ✓
+- Response shape: `success`, `period`, `itemName`, `metric`, `periods`, `durationMs`, `cached?`, `stale?`. ✓
+- Non-existent item → `success: true, periods: []` (not 404). ✓
+- All qty values NULL → COALESCE to 0 in SQL. ✓
+- Duplicate periods → GROUP BY deduplicates. ✓
+- `monthKey` derived from SourceFile (LEFT JOIN, NULLS LAST for missing). ✓
+
+### Test Results Summary
+| Test | Result |
+|------|--------|
+| Test 1: CABAI FROZEN (qtyDeviasi) | 200 — 3 periods, all zScore=null (n=2 < 4) — CORRECT |
+| Test 2: Cache hit (same params) | 200 — `cached: true` (no stale) — CORRECT |
+| Test 3: Non-existent item | 200 — `success: true, periods: []` — CORRECT (not 404) |
+| Test 4: Missing itemName | 400 — Zod validation error — CORRECT |
+| Test 5: Bad metric (`invalid`) | 400 — Zod enum error — CORRECT |
+| Test 6: Strict mode (unknown param) | 400 — `Unrecognized key` — CORRECT |
+| Test 7: qtyWaste metric | 200 — same 3 periods, baseline mean=0/std=0 (no waste) — CORRECT |
+| AYAM CINCANG (20 periods) | 200 — all 20 zScores non-null, manually verified — CORRECT |
+| CABE RAWIT (20 periods) | 200 — all 20 zScores non-null — CORRECT |
+| MINYAK MIE (20 periods) | 200 — all 20 zScores non-null — CORRECT |
+
+### Conclusion
+The Trend Item backend is **largely correct**. The Z-Score formula,
+sign convention, baseline exclusion, sample variance, and minimum-sample
+guard all match the canonical `calcZScoreFromStats` implementation and
+PRD §5.2. Manual verification of 20 periods (AYAM CINCANG) showed 0
+mismatches.
+
+**1 P2 bug** (TREND-BE-01: dead kelompok sentinel + wasted DB query) —
+should be fixed for code clarity + minor perf. Behavior is still correct.
+
+**7 P3 bugs** — minor (perf, cosmetic, methodological). None cause wrong
+data or crashes. Can be deferred.
+
+**No P1 bugs** — Z-Score math is correct, no crashes, no security issues,
+no SQL injection, no cache poisoning.
+
+### Next Actions
+1. **TREND-BE-01** (P2): Remove the dead `resolveKelompokOutletCodes` call
+   + sentinel check in `route.ts:111, 118-127`. Kelompok is already
+   handled by `buildSqlFilters` via the `kelompok` string in filterOpts.
+2. **TREND-BE-02** (P3): Cast weekLabel to integer in SQL ORDER BY (or
+   pad in JS like item-history does). Low priority — only affects WEEK 10+.
+3. **TREND-BE-03** (P3): Consider caching all 4 metrics' Z-Scores in one
+   entry. Defer unless perf becomes an issue.
+4. **TREND-BE-04..08** (P3): Optional polish — defer.
+
+### Verification
+- `bunx tsc --noEmit` not re-run (no code changes made — audit only).
+- 10 HTTP test scenarios passed (7 item-trend + 3 high-volume items).
+- 20/20 Z-Scores manually verified correct (Python recompute).
+- Cross-check vs `calcZScoreFromStats` + `item-history` route: consistent.
