@@ -48,7 +48,7 @@ export interface DashboardTabProps {
 
 export const DashboardTab = memo(function DashboardTab({ data, isFetching }: DashboardTabProps) {
   return (
-    <>
+    <div className="space-y-4 min-w-0">
       {/* Section: Executive Summary */}
       <FetchAware isFetching={isFetching}>
         <ErrorBoundary label="Executive Summary">
@@ -105,7 +105,7 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
           isFetching={isFetching}
         />
         <FetchAware isFetching={isFetching}>
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-1 lg:grid-cols-3 gap-4 min-w-0">
             <ErrorBoundary label="Top Items & Outlets">
               <TopItemsByNominal data={data} />
               <TopItemsByDevBom data={data} />
@@ -116,7 +116,7 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
       </section>
 
       {/* Section: Area Comparison + Outlet Health Ranking */}
-      <section className="grid lg:grid-cols-2 gap-4">
+      <section className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4 min-w-0">
         <div>
           <SectionHeader
             icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
@@ -189,6 +189,6 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
       <ErrorBoundary label="Heatmap Area × Item">
         <AreaItemHeatmap />
       </ErrorBoundary>
-    </>
+    </div>
   );
 });

@@ -459,7 +459,7 @@ function ItemTrendTabImpl() {
               <>
                 <span>·</span>
                 <span className="text-muted-foreground/70 tabular-nums">
-                  {summary.periodCount - summary.withZScore} tanpa baseline (n&lt;4)
+                  {summary.periodCount - summary.withZScore} tanpa baseline
                 </span>
               </>
             )}

@@ -156,7 +156,7 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      <main id="main-content" aria-label="Dashboard Inventory Control" className="flex-1 px-4 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto">
+      <main id="main-content" aria-label="Dashboard Inventory Control" className="flex-1 px-3 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
         {!statusLoaded ? (
           <LoadingState />
         ) : !hasData ? (
@@ -166,8 +166,8 @@ export default function DashboardPage() {
         ) : analysis.error ? (
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-md shadow-black/5 dark:shadow-black/20">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-md shadow-black/5 dark:shadow-black/20">
               <TabsTrigger value="dashboard" className={tabTriggerClass}>
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>

@@ -41,9 +41,9 @@ export function DashboardHeader({
   onAuditLogClick,
 }: DashboardHeaderProps) {
   return (
-    <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20">
+    <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
       {/* Tier 1: Brand + actions */}
-      <div className="px-4 sm:px-6 py-1.5 flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
+      <div className="px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 max-w-[1600px] mx-auto">
         <div className="flex items-center gap-2.5 min-w-0">
           {/* Logo — compact 28px (was 40px) */}
           <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-400 dark:to-orange-500 text-white shadow-sm shadow-amber-500/20 ring-1 ring-amber-500/20 shrink-0">
@@ -60,7 +60,7 @@ export function DashboardHeader({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
           {/* GLOBAL-ITEM-SEARCH: Cmd+K trigger button (always available when data exists) */}
           {hasData && (
             <Button
@@ -147,7 +147,7 @@ export function DashboardHeader({
 
       {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists */}
       {hasData && (
-        <div className="px-4 sm:px-6 pb-1.5 max-w-[1600px] mx-auto">
+        <div className="px-3 sm:px-6 pb-1.5 max-w-[1600px] mx-auto overflow-x-auto">
           <FilterBar />
         </div>
       )}
