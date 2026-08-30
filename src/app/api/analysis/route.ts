@@ -66,9 +66,11 @@ export async function GET(req: NextRequest) {
     // Stage 5 — assemble the final JSON response.
     const result = assembleResponse(params, records, queries, processed);
 
-    // FIX Medium #1: Store result in DB cache (fire-and-forget, non-blocking).
-    // Next request with same filter params will hit cache (<100ms vs 6-8s).
-    setCached(cacheKey, result);
+    // FIX Medium #1: Store result in DB cache.
+    // awaitWrite=true — blocks ~150ms to ensure DB write completes before
+    // response returns. Without this, the next request (fire-and-forget
+    // write still in-flight) misses cache and recomputes 10s.
+    await setCached(cacheKey, result, true);
 
     // FIX M3: Resolve the in-flight Promise so concurrent requests get the result.
     resolveComputation(result);

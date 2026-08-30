@@ -15,17 +15,13 @@ interface SectionOption {
 }
 
 const SECTIONS: SectionOption[] = [
-  { key: 'exec', label: '1. Executive Summary', description: '14 KPI: Sales, Deviasi, BOM, Waste, Susut, Trial, Loss/Surplus, Dev/BOM, Loss/Surplus', default: true },
-  { key: 'restoPriority', label: '2. Resto Prioritas Analisa', description: 'Top resto by priority score (15 sinyal: Dev/BOM vs Peer, Growth, Residual, Direction Flip, dll) + level TINGGI/SEDANG/RENDAH', default: true },
-  { key: 'growth', label: '3. Analisis Pertumbuhan', description: '4 growth metrics + multi-period comparison', default: true },
-  { key: 'topItems', label: '4. Top Items', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
-  { key: 'breakdown', label: '5. Deviation Breakdown', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },
-  { key: 'area', label: '7. Perbandingan Area', description: 'Per-area: outlets, sales, nominal, Dev/BOM, Loss/Sales', default: true },
-  { key: 'variance', label: '11. Variance Analysis', description: 'Items memburuk + membaik (selisih vs previous) + direction flip detection', default: true },
-  { key: 'consistency', label: '13. Ranking Item Nasional', description: 'Ranking item per resto: Rank Nasional, Rank BOM, QTY Deviasi/Waste/LS, %LS to BOM, AVG Deviasi By BOM, Nominal Deviasi', default: true },
-  { key: 'itemCrossOutlet', label: '14. Item Cross-Outlet Analysis', description: 'Top 10 item by total impact across all outlets + z-score outlier detection (ABNORMAL/ELEVATED)', default: false },
-  { key: 'trend', label: '15. Trend Multi-Periode', description: 'Same-weekLabel across months', default: true },
-  { key: 'historical', label: '19. Historical Anomaly', description: 'Item dengan z-score > 1.0 vs periode sama di bulan sebelumnya', default: true },
+  { key: 'exec', label: '1. Rangkuman', description: 'KPI: Deviasi, BOM, Waste, Susut, Trial, Loss/Surplus, Dev/BOM', default: true },
+  { key: 'growth', label: '2. Perubahan (Growth)', description: 'Growth metrics: Sales, BOM, Deviasi, Nominal', default: true },
+  { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
+  { key: 'breakdown', label: '4. Rincian Komposisi Selisih', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },
+  { key: 'bomCorrelation', label: '5. Analisis Korelasi BOM', description: 'Cek apakah Deviasi/Waste/Susut/Trial sejalan dengan BOM + temuan ketidaksesuaian', default: true },
+  { key: 'variance', label: '6. Perubahan Item (Selisih Terbesar)', description: 'Top 10 item dengan selisih nominal terbesar vs periode sebelumnya', default: true },
+  { key: 'trend', label: '7. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, % Nominal to Sales per periode', default: true },
 ];
 
 interface ExportDialogProps {

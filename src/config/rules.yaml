@@ -21,7 +21,7 @@
 #    stdDeviasiBomPct, stdSusutPct, stdWastePct, stdTrialPct
 #    fallbackTolerancePct, residualLossWarnPct, residualLossHighPct
 #    highLossNominalThreshold, historicalZscoreWarn, historicalZscoreHigh
-#    salesDeviationFactor, bomDeviationFactor
+#    salesDeviationFactor, bomDeviationFactor, bomDisproportionateFactor
 #    (contoh: { pctQtyDeviasiToBom: { gt: stdDeviasiBomPct } })
 #
 #  severity: NORMAL | WARNING | ABNORMAL
@@ -78,6 +78,68 @@ rules:
         - qtyDeviasiGrowth: { gt: 0 }
     narrative_template: >
       QTY BOM turun {{bomGrowth}} namun QTY Deviasi naik {{qtyDeviasiGrowth}}.
+
+  # ===== BOM CORRELATION (Waste/Susut/Trial vs BOM) =====
+  - code: WASTE_BOM_MISMATCH
+    name: "Waste tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 55
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - wasteGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - wasteGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Waste {{wasteGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Waste harusnya ikut arah BOM.
+
+  - code: SUSUT_BOM_MISMATCH
+    name: "Susut tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 54
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - susutGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - susutGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Susut {{susutGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Susut harusnya ikut arah BOM.
+
+  - code: TRIAL_BOM_MISMATCH
+    name: "Trial tidak sejalan dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 53
+    condition:
+      any:
+        - all:
+            - bomGrowth: { lt: 0 }
+            - trialGrowth: { gt: 0 }
+        - all:
+            - bomGrowth: { gt: 0 }
+            - trialGrowth: { lt: 0 }
+    narrative_template: >
+      QTY Trial {{trialGrowth}} tidak sejalan dengan QTY BOM {{bomGrowth}}. Trial harusnya ikut arah BOM.
+
+  - code: BOM_DEVIATION_DISPROPORTIONATE
+    name: "Deviasi naik tidak proporsional dengan BOM"
+    category: BOM
+    severity: WARNING
+    priority: 56
+    condition:
+      all:
+        - bomGrowth: { gt: 0 }
+        - qtyDeviasiGrowth: { gt: 0 }
+        - deviationBomRatio: { gt: bomDisproportionateFactor }
+    narrative_template: >
+      QTY Deviasi naik {{qtyDeviasiGrowth}} tidak proporsional dengan QTY BOM {{bomGrowth}} (rasio {{deviationBomRatio}}×).
 
   # ===== TOLERANSI =====
   # FIX CALC-2: Use absPctQtyDeviasiToBom + absTolerancePct for magnitude comparison.
@@ -172,30 +234,11 @@ rules:
     narrative_template: >
       Nominal LOSS {{absNominalLossSurplus}} tinggi.
 
-  # ===== BENCHMARK (berbasis zScore historis, BUKAN pooled area/network) =====
-  # FIX: nilai benchmarkFlag di-rename dari ABOVE_AREA_AVG/ABOVE_NETWORK_AVG
-  # ke HISTORICAL_WARNING/HISTORICAL_HIGH pada audit fix. Aturan ini sekarang
-  # fire pada nilai flag yang benar. Perbandingan pooled area/network dilakukan
-  # terpisah di computeBenchmark() (benchmark.ts) dan route outlet-items.
-  - code: BENCHMARK_ABOVE_AREA
-    name: "Deviasi di atas rata-rata historis (level peringatan)"
-    category: BENCHMARK
-    severity: WARNING
-    priority: 50
-    condition:
-      benchmarkFlag: { eq: "HISTORICAL_WARNING" }
-    narrative_template: >
-      Deviasi/BOM outlet di atas rata-rata historis (zScore peringatan).
-
-  - code: BENCHMARK_ABOVE_NETWORK
-    name: "Deviasi jauh di atas rata-rata historis (level tinggi)"
-    category: BENCHMARK
-    severity: ABNORMAL
-    priority: 72
-    condition:
-      benchmarkFlag: { eq: "HISTORICAL_HIGH" }
-    narrative_template: >
-      Deviasi/BOM outlet jauh di atas rata-rata historis (zScore tinggi).
+  # ===== BENCHMARK rules removed in FIX-RULE-CONFIG (CONFIG-05) =====
+  # BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK were duplicates of
+  # HISTORICAL_WARNING/HISTORICAL_ABNORMAL (same zScore condition).
+  # Already removed from SQL (rule-evaluation.ts) + JS post-process in Phase A-2.
+  # YAML definitions deleted here to keep config consistent with runtime.
 
   # ===== DIRECTION FLIP (master context #23 Variance Analysis + #9 Loss/Surplus) =====
   - code: DIRECTION_FLIP

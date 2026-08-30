@@ -232,7 +232,8 @@ export async function GET(req: NextRequest) {
 
       // Over-explained check
       const isOverExplained = (() => {
-        const explained = Math.abs((toNum(r.qtyWaste) ?? 0) + (toNum(r.qtySusut) ?? 0) + (toNum(r.qtyTrial) ?? 0));
+        // DEV-01/PR-02 FIX: Use abs-each (not abs-of-sum) — matches transform.ts + deviation.ts
+        const explained = Math.abs(toNum(r.qtyWaste) ?? 0) + Math.abs(toNum(r.qtySusut) ?? 0) + Math.abs(toNum(r.qtyTrial) ?? 0);
         const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
         return absDev > 0 && explained > absDev;
       })();
@@ -309,7 +310,7 @@ export async function GET(req: NextRequest) {
     };
 
     // PERF-02: Cache the result for 5 min
-    setCached(cacheKey, responseResult);
+    await setCached(cacheKey, responseResult, true);
 
     return NextResponse.json(responseResult, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {

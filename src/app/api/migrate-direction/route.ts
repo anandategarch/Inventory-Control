@@ -16,7 +16,6 @@ import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
 import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { validateQuery, migrateDirectionQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
-import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // may take time on large DBs

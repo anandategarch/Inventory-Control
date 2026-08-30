@@ -24,7 +24,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import { queryHistoricalStats } from '@/lib/queries';
+import { queryHistoricalStats, queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams } from './validate-and-resolve';
 
@@ -57,7 +57,7 @@ export interface FilterOpts {
 // Stage-2 output — everything needed by run-queries + post-process.
 export interface FetchedRecords {
   currSlim: CurrSlimRow[];
-  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>;
+  historicalByOutletItem: Map<string, MultiMetricHistoricalStats>;
   weeksRaw: Array<{ weekLabel: string; monthKey: string }>;
   monthKeyByLabel: Map<string, string>;
   monthLabelByKey: Map<string, string>;
@@ -249,8 +249,8 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
       },
     }),
     historicalPeriods.length > 0
-      ? queryHistoricalStats(historicalPeriods, filterOpts)
-      : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
+      ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
+      : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
   ]);
 
   return {

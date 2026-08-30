@@ -251,6 +251,20 @@ export const importDriveBodySchema = z.object({
   numberLocale: z.enum(['auto', 'id', 'us']).optional(),
 });
 
+// /api/area-item-heatmap GET query params (BUG-A-01 from orphaned 400b538)
+export const heatmapQuerySchema = z.object({
+  month: z.string().min(3).max(50),
+  week: weekLabelSchema,
+  metric: z.enum(['absNominalDeviasi', 'nominalWaste', 'nominalSusut', 'pctQtyDeviasiToBom', 'recordCount']).optional(),
+  itemLimit: z.coerce.number().int().min(5).max(100).optional(),
+  mode: z.enum(['pareto80', 'top']).optional(),
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  outlet: outletCodeSchema,
+  item: itemNameSchema,
+  pic: picSchema,
+}).strict();
+
 // ============================================================
 //  Helper: validate query params, return 400 on failure
 // ============================================================

@@ -37,6 +37,14 @@ export function buildRuleContext(
   const nominalDeviasiGrowth = computeNominalDeviationGrowth(curr.nominalDeviasi, prev?.nominalDeviasi ?? null);
   const salesGrowth = calcGrowth(curr.nominalSales, prev?.nominalSales ?? null);
 
+  // BOM Correlation: growth of waste/susut/trial vs BOM
+  const wasteGrowth = calcGrowthAbs(curr.qtyWaste, prev?.qtyWaste ?? null);
+  const susutGrowth = calcGrowthAbs(curr.qtySusut, prev?.qtySusut ?? null);
+  const trialGrowth = calcGrowthAbs(curr.qtyTrial, prev?.qtyTrial ?? null);
+  // Proportionality: how many times deviasi grew vs BOM (1.0 = proportional, >1.5 = disproportionate)
+  const deviationBomRatio = (bomGrowth != null && bomGrowth > 0 && qtyDeviasiGrowth != null)
+    ? qtyDeviasiGrowth / bomGrowth : null;
+
   // Phase 4: use precomputed stats (mean + stdDev) from SQL aggregate query
   // LOGIC-03 fix: enforce HISTORICAL_MIN_WEEKS — skip zScore if sample size too small
   // Phase 5: use calcZScoreFromStats from Metric Engine (single source of truth)
@@ -87,6 +95,8 @@ export function buildRuleContext(
 
   return {
     salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth,
+    // BOM Correlation fields
+    wasteGrowth, susutGrowth, trialGrowth, deviationBomRatio,
     deviationToSalesRatio: safeRatio(curr.absNominalDeviasi, curr.nominalSales),
     deviationToBomRatio: safeRatio(curr.absQtyDeviasi, curr.qtyBom != null ? Math.abs(curr.qtyBom) : null),
     benchmarkFlag, zScore,
@@ -120,6 +130,10 @@ export function buildRuleContext(
     historicalZscoreHigh: t.HISTORICAL_ZSCORE_HIGH,
     salesDeviationFactor: t.SALES_DEVIATION_FACTOR,
     bomDeviationFactor: t.BOM_DEVIATION_FACTOR,
+    // FIX-RULE-CONFIG (EVAL-02): inject BOM_DISPROPORTIONATE_FACTOR so rules.yaml
+    // BOM_DEVIATION_DISPROPORTIONATE condition `{ deviationBomRatio: { gt: bomDisproportionateFactor } }`
+    // resolves correctly. Mirrors the SQL push-down which now uses the same threshold.
+    bomDisproportionateFactor: t.BOM_DISPROPORTIONATE_FACTOR,
   };
 }
 
@@ -143,6 +157,20 @@ export function recommendAction(ruleCodes: string[]): string {
   if (set.has('BOM_DEVIATION_MISMATCH') || set.has('BOM_DOWN_DEV_UP')) {
     actions.push('Rekonsiliasi BOM aktual vs sistem + periksa receiving/transfer/UOM conversion');
   }
+  // FIX-RULE-CONFIG (CONFIG-03): BOM correlation rules — surface root-cause actions
+  // for Waste/Susut/Trial-vs-BOM divergence and disproportionate deviasi growth.
+  if (set.has('WASTE_BOM_MISMATCH')) {
+    actions.push('Sampling fisik waste vs pencatatan + audit input waste oleh SPV + rekonsiliasi BOM vs resep aktual');
+  }
+  if (set.has('SUSUT_BOM_MISMATCH')) {
+    actions.push('Audit fisik susut + verifikasi kondisi penyimpanan + update standar susut di BOM');
+  }
+  if (set.has('TRIAL_BOM_MISMATCH')) {
+    actions.push('Verifikasi dokumentasi trial + update BOM master untuk trial items + audit input trial oleh SPV');
+  }
+  if (set.has('BOM_DEVIATION_DISPROPORTIONATE')) {
+    actions.push('Audit porsioning saat peak volume + analisa sales mix shift + update BOM master');
+  }
   if (set.has('SALES_DEVIATION_MISMATCH') || set.has('SALES_DEV_DECREASE')) {
     actions.push('Cek apakah deviation naik karena quantity atau price effect + audit transaksi inventory');
   }
@@ -151,9 +179,6 @@ export function recommendAction(ruleCodes: string[]): string {
   }
   if (set.has('TOLERANCE_NOT_SET_HIGH_DEV')) {
     actions.push('Set tolerance baseline + monitoring deviasi tanpa official tolerance');
-  }
-  if (set.has('BENCHMARK_ABOVE_AREA') || set.has('BENCHMARK_ABOVE_NETWORK')) {
-    actions.push('Benchmarking vs outlet serupa + cek prosedur operasional');
   }
   if (set.has('HISTORICAL_ABNORMAL') || set.has('HISTORICAL_ABNORMAL_SURPLUS') || set.has('HISTORICAL_WARNING')) {
     actions.push('Investigasi pola abnormal vs historical behavior (outlier detection)');

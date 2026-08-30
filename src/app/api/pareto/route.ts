@@ -153,7 +153,7 @@ export async function GET(req: NextRequest) {
     };
 
     // DP-14: Cache the result for 5 min
-    setCached(cacheKey, result);
+    await setCached(cacheKey, result, true);
 
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {

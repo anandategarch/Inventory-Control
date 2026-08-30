@@ -39,19 +39,32 @@ function baseCtx(overrides: Partial<RuleContext> = {}): RuleContext {
     residualLossWarnPct: 0.3,
     residualLossHighPct: 0.5,
     highLossNominalThreshold: 10000000,
-    historicalZscoreWarn: 2,
-    historicalZscoreHigh: 3,
+    // CONFIG-14: align with PRD §5.2 + settings.ts defaults (WARN=1.5, HIGH=2.0).
+    // Previously 2/3 — caused HISTORICAL_WARNING range to be 2 < z ≤ 3, which
+    // over-flagged records that should have been ABNORMAL (>2.0).
+    historicalZscoreWarn: 1.5,
+    historicalZscoreHigh: 2.0,
     salesDeviationFactor: 2,
     bomDeviationFactor: 2,
+    // FIX-RULE-CONFIG: BOM correlation rule inputs. Safe defaults chosen so that
+    // no BOM correlation rule fires from baseCtx alone (all growths same sign as
+    // bomGrowth, deviationBomRatio below the disproportionate threshold).
+    wasteGrowth: 0.1,
+    susutGrowth: 0.1,
+    trialGrowth: 0.1,
+    deviationBomRatio: 1.0,
+    bomDisproportionateFactor: 1.5,
     isOverExplained: false,
     ...overrides,
   };
 }
 
 describe('Rule Engine — loadRules', () => {
-  it('loads 17 rules from rules.yaml', () => {
+  it('loads 19 rules from rules.yaml', () => {
+    // FIX-RULE-CONFIG: 21 → 19 rules (BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK
+    // removed — duplicates of HISTORICAL_WARNING/HISTORICAL_ABNORMAL).
     const rules = loadRules();
-    expect(rules.length).toBe(17);
+    expect(rules.length).toBe(19);
   });
 
   it('all rules have required fields', () => {
@@ -227,22 +240,27 @@ describe('Rule Engine — individual rules', () => {
   });
 
   it('HISTORICAL_ABNORMAL fires when zScore > historicalZscoreHigh', () => {
+    // CONFIG-14: defaults now warn=1.5, high=2.0. zScore=3.5 > 2.0 → fires ABNORMAL.
     const ctx = baseCtx({
-      zScore: 3.5, // > 3
-      historicalZscoreHigh: 3,
+      zScore: 3.5, // > 2.0
+      historicalZscoreHigh: 2.0,
     });
     const flags = evaluateRules(ctx);
     expect(flags.some(f => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(true);
   });
 
   it('HISTORICAL_WARNING fires when zScore > historicalZscoreWarn but <= high', () => {
+    // CONFIG-14: zScore=1.7 between warn(1.5) and high(2.0) → fires WARNING only.
+    // Previously used zScore=2.5 with warn=2/high=3 (wrong defaults).
     const ctx = baseCtx({
-      zScore: 2.5, // > 2, < 3
-      historicalZscoreWarn: 2,
-      historicalZscoreHigh: 3,
+      zScore: 1.7, // > 1.5, < 2.0
+      historicalZscoreWarn: 1.5,
+      historicalZscoreHigh: 2.0,
     });
     const flags = evaluateRules(ctx);
     expect(flags.some(f => f.ruleCode === 'HISTORICAL_WARNING')).toBe(true);
+    // Should NOT fire ABNORMAL (zScore not > high)
+    expect(flags.some(f => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(false);
   });
 
   it('HISTORICAL_ABNORMAL does NOT fire when zScore is null', () => {
@@ -287,5 +305,151 @@ describe('Rule Engine — individual rules', () => {
     const flags = evaluateRules(ctx);
     // No HISTORICAL_* rules should fire
     expect(flags.some(f => f.ruleCode.startsWith('HISTORICAL'))).toBe(false);
+  });
+
+  // ============================================================
+  //  BOM Correlation rules (FIX-RULE-CONFIG / CONFIG-12)
+  //  ----------------------------------------------------------
+  //  4 new rules added to rules.yaml + SQL evaluator:
+  //  - WASTE_BOM_MISMATCH (priority 55, WARNING, BOM)
+  //  - SUSUT_BOM_MISMATCH (priority 54, WARNING, BOM)
+  //  - TRIAL_BOM_MISMATCH (priority 53, WARNING, BOM)
+  //  - BOM_DEVIATION_DISPROPORTIONATE (priority 56, WARNING, BOM)
+  //  Each rule checks growth direction divergence (or ratio excess)
+  //  between a sub-metric (waste/susut/trial/deviasi) and BOM growth.
+  // ============================================================
+
+  // ---- WASTE_BOM_MISMATCH ----
+  it('WASTE_BOM_MISMATCH fires when bomGrowth < 0 AND wasteGrowth > 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: -0.1, // BOM down
+      wasteGrowth: 0.1, // waste up — opposite sign → mismatch
+    });
+    const flags = evaluateRules(ctx);
+    const wasteFlag = flags.find(f => f.ruleCode === 'WASTE_BOM_MISMATCH');
+    expect(wasteFlag).toBeDefined();
+    expect(wasteFlag!.severity).toBe('WARNING');
+    expect(wasteFlag!.category).toBe('BOM');
+    expect(wasteFlag!.priority).toBe(55);
+  });
+
+  it('WASTE_BOM_MISMATCH fires when bomGrowth > 0 AND wasteGrowth < 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1, // BOM up
+      wasteGrowth: -0.1, // waste down — opposite sign → mismatch
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'WASTE_BOM_MISMATCH')).toBe(true);
+  });
+
+  it('WASTE_BOM_MISMATCH does NOT fire when bomGrowth and wasteGrowth same sign', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1, // both positive
+      wasteGrowth: 0.1,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'WASTE_BOM_MISMATCH')).toBe(false);
+  });
+
+  // ---- SUSUT_BOM_MISMATCH ----
+  it('SUSUT_BOM_MISMATCH fires when bomGrowth < 0 AND susutGrowth > 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: -0.1,
+      susutGrowth: 0.1,
+    });
+    const flags = evaluateRules(ctx);
+    const susutFlag = flags.find(f => f.ruleCode === 'SUSUT_BOM_MISMATCH');
+    expect(susutFlag).toBeDefined();
+    expect(susutFlag!.severity).toBe('WARNING');
+    expect(susutFlag!.category).toBe('BOM');
+    expect(susutFlag!.priority).toBe(54);
+  });
+
+  it('SUSUT_BOM_MISMATCH fires when bomGrowth > 0 AND susutGrowth < 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      susutGrowth: -0.1,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'SUSUT_BOM_MISMATCH')).toBe(true);
+  });
+
+  it('SUSUT_BOM_MISMATCH does NOT fire when bomGrowth and susutGrowth same sign', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      susutGrowth: 0.1,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'SUSUT_BOM_MISMATCH')).toBe(false);
+  });
+
+  // ---- TRIAL_BOM_MISMATCH ----
+  it('TRIAL_BOM_MISMATCH fires when bomGrowth < 0 AND trialGrowth > 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: -0.1,
+      trialGrowth: 0.1,
+    });
+    const flags = evaluateRules(ctx);
+    const trialFlag = flags.find(f => f.ruleCode === 'TRIAL_BOM_MISMATCH');
+    expect(trialFlag).toBeDefined();
+    expect(trialFlag!.severity).toBe('WARNING');
+    expect(trialFlag!.category).toBe('BOM');
+    expect(trialFlag!.priority).toBe(53);
+  });
+
+  it('TRIAL_BOM_MISMATCH fires when bomGrowth > 0 AND trialGrowth < 0', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      trialGrowth: -0.1,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'TRIAL_BOM_MISMATCH')).toBe(true);
+  });
+
+  it('TRIAL_BOM_MISMATCH does NOT fire when bomGrowth and trialGrowth same sign', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      trialGrowth: 0.1,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'TRIAL_BOM_MISMATCH')).toBe(false);
+  });
+
+  // ---- BOM_DEVIATION_DISPROPORTIONATE ----
+  it('BOM_DEVIATION_DISPROPORTIONATE fires when bomGrowth > 0, qtyDeviasiGrowth > 0, deviationBomRatio > bomDisproportionateFactor', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      qtyDeviasiGrowth: 0.1,
+      deviationBomRatio: 2.0, // 2.0 > 1.5 threshold
+      bomDisproportionateFactor: 1.5,
+    });
+    const flags = evaluateRules(ctx);
+    const dispropFlag = flags.find(f => f.ruleCode === 'BOM_DEVIATION_DISPROPORTIONATE');
+    expect(dispropFlag).toBeDefined();
+    expect(dispropFlag!.severity).toBe('WARNING');
+    expect(dispropFlag!.category).toBe('BOM');
+    expect(dispropFlag!.priority).toBe(56);
+  });
+
+  it('BOM_DEVIATION_DISPROPORTIONATE does NOT fire when deviationBomRatio <= bomDisproportionateFactor', () => {
+    const ctx = baseCtx({
+      bomGrowth: 0.1,
+      qtyDeviasiGrowth: 0.1,
+      deviationBomRatio: 1.0, // 1.0 < 1.5 threshold
+      bomDisproportionateFactor: 1.5,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'BOM_DEVIATION_DISPROPORTIONATE')).toBe(false);
+  });
+
+  it('BOM_DEVIATION_DISPROPORTIONATE does NOT fire when bomGrowth <= 0 (precondition fails)', () => {
+    const ctx = baseCtx({
+      bomGrowth: -0.1, // negative → precondition bomGrowth > 0 fails
+      qtyDeviasiGrowth: 0.1,
+      deviationBomRatio: 5.0, // even huge ratio won't fire
+      bomDisproportionateFactor: 1.5,
+    });
+    const flags = evaluateRules(ctx);
+    expect(flags.some(f => f.ruleCode === 'BOM_DEVIATION_DISPROPORTIONATE')).toBe(false);
   });
 });

@@ -11,7 +11,6 @@ import { validateQuery, statusQuerySchema } from '@/lib/validation';
 import { CACHE_METADATA } from '@/lib/cache-headers';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
-import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout

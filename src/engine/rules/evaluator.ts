@@ -32,7 +32,6 @@ export function loadRules(): Rule[] {
 
   // FIX: validate each rule has required fields — catch typos/silent failures at startup
   const VALID_SEVERITIES = new Set(['NORMAL', 'WARNING', 'ABNORMAL']);
-  const VALID_CATEGORIES = new Set(['TOLERANCE', 'RESIDUAL', 'DIRECTION', 'OVER_EXPLAINED', 'GROWTH', 'HISTORICAL', 'BENCHMARK', 'OPERATIONAL']);
   const seenCodes = new Set<string>();
 
   _rules = (parsed.rules || []).map((r, i) => {
@@ -353,6 +352,7 @@ function evalCondition(cond: unknown, ctx: Record<string, unknown>): boolean {
 const PERCENT_KEYS = new Set([
   'pctQtyDeviasiToBom', 'residualRatio', 'tolerancePct',
   'salesGrowth', 'bomGrowth', 'qtyDeviasiGrowth', 'nominalDeviasiGrowth',
+  'wasteGrowth', 'susutGrowth', 'trialGrowth', 'deviationBomRatio',
   'deviationToSalesRatio', 'deviationToBomRatio',
   'pctWasteSusut', 'pctQtyWasteToBom', 'pctQtySusutToBom', 'pctQtyTrialToBom', 'pctQtyLossToBom',
 ]);
@@ -399,6 +399,11 @@ export interface RuleContext extends Record<string, unknown> {
   bomGrowth?: number | null;
   qtyDeviasiGrowth?: number | null;
   nominalDeviasiGrowth?: number | null;
+  // BOM Correlation: growth of waste/susut/trial vs BOM
+  wasteGrowth?: number | null;
+  susutGrowth?: number | null;
+  trialGrowth?: number | null;
+  deviationBomRatio?: number | null; // qtyDeviasiGrowth / bomGrowth (proportionality check)
   deviationToSalesRatio?: number | null;
   deviationToBomRatio?: number | null;
   benchmarkFlag?: string | null;
@@ -436,6 +441,9 @@ export interface RuleContext extends Record<string, unknown> {
   historicalZscoreHigh?: number;
   salesDeviationFactor?: number;
   bomDeviationFactor?: number;
+  // FIX-RULE-CONFIG (EVAL-02): separate threshold for BOM_DEVIATION_DISPROPORTIONATE
+  // lower bound (decoupled from bomDeviationFactor upper-bound rule). Default 1.5.
+  bomDisproportionateFactor?: number;
   // Bug 8 fix: fraud red flag — Waste+Susut+Trial exceeds total deviation
   isOverExplained?: boolean;
   // FIX CALC-2: ABS values for signed percent fields (for correct magnitude comparison)

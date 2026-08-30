@@ -70,7 +70,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('skips records when stats.stdDev <= 0', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -82,7 +82,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('skips records when stats.n < minWeeks', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 3 }], // n=3 < 4
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 3 } }], // n=3 < 4
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -95,7 +95,7 @@ describe('evaluateHistoricalRulesJs', () => {
   it('fires HISTORICAL_ABNORMAL when LOSS direction + zScore > high', () => {
     // mean=0.2, stdDev=0.05, current=0.5 (|.|) → z = (0.5 - 0.2) / 0.05 = 6 > 3
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -103,12 +103,12 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_NETWORK')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
   });
 
   it('fires HISTORICAL_ABNORMAL_SURPLUS when SURPLUS direction + zScore > high', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: 1000, pctQtyDeviasiToBom: 0.5 }],
@@ -116,14 +116,16 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_NETWORK')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
   });
 
-  it('fires HISTORICAL_WARNING + BENCHMARK_ABOVE_AREA when zScore between warn and high', () => {
+  it('fires HISTORICAL_WARNING when zScore between warn and high', () => {
     // mean=0.2, stdDev=0.05, current=0.35 → z = (0.35 - 0.2) / 0.05 = 3 → at boundary (high)
     // Use current=0.32 → z = 2.4 → between warn(2) and high(3)
+    // CONFIG-13: title corrected — previously claimed to also fire BENCHMARK_ABOVE_AREA,
+    // but BENCHMARK rules were removed in Phase A-2 (duplicate of HISTORICAL_WARNING).
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.32 }],
@@ -131,7 +133,7 @@ describe('evaluateHistoricalRulesJs', () => {
       baseThresholds({ HISTORICAL_ZSCORE_WARN: 2, HISTORICAL_ZSCORE_HIGH: 3 }),
     );
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_WARNING')).toBe(true);
-    expect(flags.some((f) => f.ruleCode === 'BENCHMARK_ABOVE_AREA')).toBe(true);
+    // Phase A-2: BENCHMARK_ABOVE_AREA removed (duplicate of HISTORICAL_WARNING)
     // Should NOT fire ABNORMAL (zScore not > high)
     expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(false);
   });
@@ -139,7 +141,7 @@ describe('evaluateHistoricalRulesJs', () => {
   it('fires no historical rules when zScore <= warn', () => {
     // mean=0.2, stdDev=0.05, current=0.25 → z = 1 → below warn(2)
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.25 }],
@@ -153,7 +155,7 @@ describe('evaluateHistoricalRulesJs', () => {
     // Even with same outletId + itemId, different akunPenyesuaian → same map entry
     // (the map is keyed only on outletId|itemId — akun is for downstream filtering)
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: 'AKUN_X', nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
@@ -166,7 +168,7 @@ describe('evaluateHistoricalRulesJs', () => {
 
   it('handles null pctQtyDeviasiToBom (uses 0 fallback)', () => {
     const map = new Map([
-      ['1|1', { mean: 0.2, stdDev: 0.05, n: 5 }],
+      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
     ]);
     const flags = evaluateHistoricalRulesJs(
       [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: null }],
@@ -207,6 +209,11 @@ describe('evaluateRulesSql', () => {
         f_sales_decrease: 0,
         f_bom_mismatch: 0,
         f_bom_down_dev_up: 0,
+        // CONFIG-11: 4 new BOM correlation f_* columns (all 0 = not firing)
+        f_waste_bom_mismatch: 0,
+        f_susut_bom_mismatch: 0,
+        f_trial_bom_mismatch: 0,
+        f_bom_disproportionate: 0,
       },
     ]);
     const flags = await evaluateRulesSql('WEEK 1', 'Agustus 2026', 'WEEK 1', 'Juli 2026', {}, baseThresholds());
@@ -238,6 +245,11 @@ describe('evaluateRulesSql', () => {
         f_sales_decrease: 0,
         f_bom_mismatch: 0,
         f_bom_down_dev_up: 0,
+        // CONFIG-11: 4 new BOM correlation f_* columns
+        f_waste_bom_mismatch: 0,
+        f_susut_bom_mismatch: 0,
+        f_trial_bom_mismatch: 0,
+        f_bom_disproportionate: 0,
       },
     ]);
     const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
@@ -262,5 +274,184 @@ describe('evaluateRulesSql', () => {
     expect(sqlText).toContain('WITH curr AS');
     expect(sqlText).toContain('LATERAL');
     expect(sqlText).toContain('prev AS');
+  });
+
+  // ============================================================
+  //  EVAL-06 / CONFIG-11: New BOM correlation rules (4 rules)
+  //  ----------------------------------------------------------
+  //  Each test sets one f_*_bom_* (or f_bom_disproportionate) column to 1
+  //  and verifies the corresponding rule code surfaces with correct
+  //  severity/category/priority per the SQL RULE_MAP.
+  // ============================================================
+
+  it('WASTE_BOM_MISMATCH flag surfaces when f_waste_bom_mismatch = 1', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        outletId: 1,
+        itemId: 10,
+        akunPenyesuaian: 'AKUN_W',
+        f_tol_breach_high: 0,
+        f_tol_breach: 0,
+        f_tol_not_set: 0,
+        f_over_explained: 0,
+        f_resid_high: 0,
+        f_resid_warn: 0,
+        f_high_loss: 0,
+        f_dir_flip: 0,
+        f_sales_mismatch: 0,
+        f_sales_decrease: 0,
+        f_bom_mismatch: 0,
+        f_bom_down_dev_up: 0,
+        f_waste_bom_mismatch: 1,
+        f_susut_bom_mismatch: 0,
+        f_trial_bom_mismatch: 0,
+        f_bom_disproportionate: 0,
+      },
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
+    expect(flags.length).toBe(1);
+    const wasteFlag = flags[0];
+    expect(wasteFlag.ruleCode).toBe('WASTE_BOM_MISMATCH');
+    expect(wasteFlag.severity).toBe('WARNING');
+    expect(wasteFlag.category).toBe('BOM');
+    expect(wasteFlag.priority).toBe(55);
+  });
+
+  it('SUSUT_BOM_MISMATCH flag surfaces when f_susut_bom_mismatch = 1', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        outletId: 1,
+        itemId: 10,
+        akunPenyesuaian: 'AKUN_S',
+        f_tol_breach_high: 0,
+        f_tol_breach: 0,
+        f_tol_not_set: 0,
+        f_over_explained: 0,
+        f_resid_high: 0,
+        f_resid_warn: 0,
+        f_high_loss: 0,
+        f_dir_flip: 0,
+        f_sales_mismatch: 0,
+        f_sales_decrease: 0,
+        f_bom_mismatch: 0,
+        f_bom_down_dev_up: 0,
+        f_waste_bom_mismatch: 0,
+        f_susut_bom_mismatch: 1,
+        f_trial_bom_mismatch: 0,
+        f_bom_disproportionate: 0,
+      },
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
+    expect(flags.length).toBe(1);
+    const susutFlag = flags[0];
+    expect(susutFlag.ruleCode).toBe('SUSUT_BOM_MISMATCH');
+    expect(susutFlag.severity).toBe('WARNING');
+    expect(susutFlag.category).toBe('BOM');
+    expect(susutFlag.priority).toBe(54);
+  });
+
+  it('TRIAL_BOM_MISMATCH flag surfaces when f_trial_bom_mismatch = 1', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        outletId: 1,
+        itemId: 10,
+        akunPenyesuaian: 'AKUN_T',
+        f_tol_breach_high: 0,
+        f_tol_breach: 0,
+        f_tol_not_set: 0,
+        f_over_explained: 0,
+        f_resid_high: 0,
+        f_resid_warn: 0,
+        f_high_loss: 0,
+        f_dir_flip: 0,
+        f_sales_mismatch: 0,
+        f_sales_decrease: 0,
+        f_bom_mismatch: 0,
+        f_bom_down_dev_up: 0,
+        f_waste_bom_mismatch: 0,
+        f_susut_bom_mismatch: 0,
+        f_trial_bom_mismatch: 1,
+        f_bom_disproportionate: 0,
+      },
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
+    expect(flags.length).toBe(1);
+    const trialFlag = flags[0];
+    expect(trialFlag.ruleCode).toBe('TRIAL_BOM_MISMATCH');
+    expect(trialFlag.severity).toBe('WARNING');
+    expect(trialFlag.category).toBe('BOM');
+    expect(trialFlag.priority).toBe(53);
+  });
+
+  it('BOM_DEVIATION_DISPROPORTIONATE flag surfaces when f_bom_disproportionate = 1', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        outletId: 1,
+        itemId: 10,
+        akunPenyesuaian: 'AKUN_D',
+        f_tol_breach_high: 0,
+        f_tol_breach: 0,
+        f_tol_not_set: 0,
+        f_over_explained: 0,
+        f_resid_high: 0,
+        f_resid_warn: 0,
+        f_high_loss: 0,
+        f_dir_flip: 0,
+        f_sales_mismatch: 0,
+        f_sales_decrease: 0,
+        f_bom_mismatch: 0,
+        f_bom_down_dev_up: 0,
+        f_waste_bom_mismatch: 0,
+        f_susut_bom_mismatch: 0,
+        f_trial_bom_mismatch: 0,
+        f_bom_disproportionate: 1,
+      },
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
+    expect(flags.length).toBe(1);
+    const dispropFlag = flags[0];
+    expect(dispropFlag.ruleCode).toBe('BOM_DEVIATION_DISPROPORTIONATE');
+    expect(dispropFlag.severity).toBe('WARNING');
+    expect(dispropFlag.category).toBe('BOM');
+    expect(dispropFlag.priority).toBe(56);
+  });
+
+  it('multiple BOM correlation rules can fire on the same row (priority-sorted)', async () => {
+    // Verify that when 2+ new BOM rules fire on the same record, both surface
+    // as separate flags (RULE_MAP iterates all 16 SQL columns).
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        outletId: 1,
+        itemId: 10,
+        akunPenyesuaian: 'AKUN_MULTI',
+        f_tol_breach_high: 0,
+        f_tol_breach: 0,
+        f_tol_not_set: 0,
+        f_over_explained: 0,
+        f_resid_high: 0,
+        f_resid_warn: 0,
+        f_high_loss: 0,
+        f_dir_flip: 0,
+        f_sales_mismatch: 0,
+        f_sales_decrease: 0,
+        f_bom_mismatch: 0,
+        f_bom_down_dev_up: 0,
+        f_waste_bom_mismatch: 1,
+        f_susut_bom_mismatch: 1,
+        f_trial_bom_mismatch: 1,
+        f_bom_disproportionate: 1,
+      },
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'M', null, null, {}, baseThresholds());
+    expect(flags.length).toBe(4);
+    const codes = flags.map((f) => f.ruleCode).sort();
+    expect(codes).toEqual([
+      'BOM_DEVIATION_DISPROPORTIONATE',
+      'SUSUT_BOM_MISMATCH',
+      'TRIAL_BOM_MISMATCH',
+      'WASTE_BOM_MISMATCH',
+    ]);
+    // All 4 should be WARNING + BOM category
+    expect(flags.every((f) => f.severity === 'WARNING' && f.category === 'BOM')).toBe(true);
   });
 });

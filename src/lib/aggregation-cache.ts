@@ -100,20 +100,30 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
 
 /**
  * Store a computed result in the DB cache.
- * Fire-and-forget — doesn't block the response.
+ * Fire-and-forget by default — doesn't block the response.
+ * Pass `awaitWrite: true` for critical caches (export-report) where the next
+ * request might arrive before the write completes.
  */
-export function setCached(cacheKey: string, payload: unknown): void {
+export async function setCached(cacheKey: string, payload: unknown, awaitWrite: boolean = false): Promise<void> {
   try {
     const json = JSON.stringify(payload);
     // upsert: insert or update if exists (cacheKey is unique)
-    db.aggregationCache.upsert({
+    const writePromise = db.aggregationCache.upsert({
       where: { cacheKey },
       create: { cacheKey, payload: json, computedAt: new Date() },
       update: { payload: json, computedAt: new Date() },
-    }).catch((e) => {
-      // Non-blocking: if cache write fails, just log
-      logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     });
+    if (awaitWrite) {
+      // For critical caches — block until write completes so next request hits cache
+      await writePromise.catch((e) => {
+        logger.error('[cache] setCached (awaited) error', { error: e instanceof Error ? e.message : String(e) });
+      });
+    } else {
+      // Fire-and-forget — non-blocking
+      writePromise.catch((e) => {
+        logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+      });
+    }
   } catch (e) {
     // Synchronous error (JSON.stringify failed) — non-blocking
     logger.error('[cache] setCached sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
@@ -190,6 +200,10 @@ export async function invalidateCache(prefix?: string): Promise<void> {
  * migrate-direction).
  */
 export async function invalidateAnalysisCache(): Promise<void> {
-  // \x1f = ASCII Unit Separator — must match buildCacheKey's SEP constant.
-  return invalidateCache(`analysis\x1f`);
+  // CACHE-01 FIX: Invalidate ALL cached routes — not just analysis.
+  // Mutations (ingest, settings, pic, data delete, migrate-direction) affect
+  // ALL cached data, not just /api/analysis. Without this, pareto/recommendations/
+  // resto-bahan-matrix/export-report serve stale data for 5 min after mutation.
+  const routes = ['analysis', 'pareto', 'recommendations', 'resto-bahan-matrix', 'export-report'];
+  await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

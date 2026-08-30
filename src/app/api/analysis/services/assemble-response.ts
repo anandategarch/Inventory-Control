@@ -55,7 +55,6 @@ export interface AnalysisResponse {
   costImpact: unknown;
   itemConsistencyAnalysis: unknown;
   netCostTrend: unknown;
-  areaTrend: unknown;
   trendProjection: unknown;
   patterns: unknown;
   durationMs: number;
@@ -87,7 +86,6 @@ export function assembleResponse(
     breakdown,
     lvs,
     topDeviasiRank,
-    areaTrendRows,
     varianceAnalysis,
     growthDrivers,
   } = queries;
@@ -109,6 +107,8 @@ export function assembleResponse(
     costImpact,
     itemConsistencyAnalysis,
     deviationDrivers,
+    bomCorrelationFindings,
+    bomCorrelationCounts,
   } = processed;
 
   return {
@@ -152,11 +152,13 @@ export function assembleResponse(
     costImpact,
     itemConsistencyAnalysis,
     netCostTrend,
-    // NEW: area trend for AreaTrendChart (Dev/BOM% per area × period)
-    areaTrend: areaTrendRows,
     // ANALYZE-BACKEND-2: trend projection + cross-outlet pattern detection
     trendProjection,
     patterns,
+    // FIX-BOM-UI (CONFIG-02): per-record BOM correlation findings (top 50 by
+    // priority) + per-rule counts. Consumed by BomCorrelationCard primary section.
+    bomCorrelationFindings,
+    bomCorrelationCounts,
     durationMs: Date.now() - startedAt,
   };
 }

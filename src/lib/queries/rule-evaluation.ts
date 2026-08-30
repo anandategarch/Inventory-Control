@@ -1,6 +1,7 @@
 // ============================================================
-//  SQL Rule Evaluation — pushes all 17 rule checks to PostgreSQL.
-//  Eliminates the 35K-record load to RAM + JS loop.
+//  SQL Rule Evaluation — pushes 16 rule checks to PostgreSQL
+//  (3 zScore-based rules evaluated via JS post-process below).
+//  Production total: 16 SQL + 3 JS post-process = 19 rules.
 //
 //  Returns: array of { outletId, itemId, akunPenyesuaian, ruleCode,
 //    severity, category, priority } — one row per fired rule per record.
@@ -9,7 +10,7 @@
 //  - CTE for current records (filtered by month/week/area/outlet/item/PIC)
 //  - LATERAL JOIN for prev period records (same outlet+item+akun)
 //  - LATERAL JOIN for historical stats (mean, stddev, n)
-//  - CASE WHEN for each of 17 rules
+//  - CASE WHEN for each of 16 SQL rules
 //  - UNNEST(ARRAY[...]) to produce one row per fired rule
 //
 //  Performance: single query, ~2-3s (was 6-8s with 35K record load + JS loop)
@@ -40,19 +41,6 @@ export async function evaluateRulesSql(
   const f = buildSqlFilters(filters);
   const hasPrev = prevWeek && prevMonth;
 
-  // Threshold values injected as Prisma.sql parameters
-  const t = Prisma.join([
-    thresholds.STD_DEVIASI_BOM_PCT,
-    thresholds.RESIDUAL_LOSS_WARN_PCT,
-    thresholds.RESIDUAL_LOSS_HIGH_PCT,
-    thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-    thresholds.HISTORICAL_ZSCORE_WARN,
-    thresholds.HISTORICAL_ZSCORE_HIGH,
-    thresholds.HISTORICAL_MIN_WEEKS,
-    thresholds.SALES_DEVIATION_FACTOR,
-    thresholds.BOM_DEVIATION_FACTOR,
-  ], ', ');
-
   // Prev period filter (if no prev, use a sentinel that matches nothing)
   const prevFilter = hasPrev
     ? Prisma.sql`AND ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}`
@@ -77,7 +65,8 @@ export async function evaluateRulesSql(
     prev AS (
       SELECT ir."outletId", ir."itemId", ir."akunPenyesuaian",
         ir."qtyBom", ir."qtyDeviasi", ir."nominalDeviasi", ir."nominalSales",
-        ir."nominalLossSurplus", ir."qtyLossSurplus"
+        ir."nominalLossSurplus", ir."qtyLossSurplus",
+        ir."qtyWaste", ir."qtySusut", ir."qtyTrial"
       FROM "InventoryRecord" ir
       WHERE 1=1
         ${prevFilter}
@@ -140,12 +129,26 @@ export async function evaluateRulesSql(
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" > 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > g."salesGrowth" * ${thresholds.SALES_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_sales_mismatch",
       CASE WHEN g."salesGrowth" IS NOT NULL AND g."salesGrowth" < 0 AND g."nominalDeviasiGrowth" IS NOT NULL AND g."nominalDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_sales_decrease",
       CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DEVIATION_FACTOR} THEN 1 ELSE 0 END as "f_bom_mismatch",
-      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" < 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_bom_down_dev_up"
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" < 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0 THEN 1 ELSE 0 END as "f_bom_down_dev_up",
+      -- BOM Correlation rules
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."wasteGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."wasteGrowth" > 0) OR (g."bomGrowth" > 0 AND g."wasteGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_waste_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."susutGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."susutGrowth" > 0) OR (g."bomGrowth" > 0 AND g."susutGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_susut_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."trialGrowth" IS NOT NULL AND
+        ((g."bomGrowth" < 0 AND g."trialGrowth" > 0) OR (g."bomGrowth" > 0 AND g."trialGrowth" < 0))
+      THEN 1 ELSE 0 END as "f_trial_bom_mismatch",
+      CASE WHEN g."bomGrowth" IS NOT NULL AND g."bomGrowth" > 0 AND g."qtyDeviasiGrowth" IS NOT NULL AND g."qtyDeviasiGrowth" > 0
+        AND g."qtyDeviasiGrowth" > g."bomGrowth" * ${thresholds.BOM_DISPROPORTIONATE_FACTOR}
+      THEN 1 ELSE 0 END as "f_bom_disproportionate"
     FROM curr c
     LEFT JOIN LATERAL (
       SELECT p."qtyBom" as "prevQtyBom", p."qtyDeviasi" as "prevQtyDeviasi",
              p."nominalDeviasi" as "prevNominalDeviasi", p."nominalSales" as "prevNominalSales",
-             p."nominalLossSurplus" as "prevNominalLossSurplus"
+             p."nominalLossSurplus" as "prevNominalLossSurplus",
+             p."qtyWaste" as "prevQtyWaste", p."qtySusut" as "prevQtySusut", p."qtyTrial" as "prevQtyTrial"
       FROM prev p
       WHERE p."outletId" = c."outletId" AND p."itemId" = c."itemId"
         AND p."akunPenyesuaian" IS NOT DISTINCT FROM c."akunPenyesuaian"
@@ -164,7 +167,17 @@ export async function evaluateRulesSql(
           ELSE NULL END as "qtyDeviasiGrowth",
         CASE WHEN p."prevNominalDeviasi" IS NOT NULL AND p."prevNominalDeviasi" != 0
           THEN (ABS(c."nominalDeviasi") - ABS(p."prevNominalDeviasi")) / ABS(p."prevNominalDeviasi")
-          ELSE NULL END as "nominalDeviasiGrowth"
+          ELSE NULL END as "nominalDeviasiGrowth",
+        -- BOM Correlation: growth of waste/susut/trial
+        CASE WHEN p."prevQtyWaste" IS NOT NULL AND p."prevQtyWaste" != 0
+          THEN (ABS(c."qtyWaste") - ABS(p."prevQtyWaste")) / ABS(p."prevQtyWaste")
+          ELSE NULL END as "wasteGrowth",
+        CASE WHEN p."prevQtySusut" IS NOT NULL AND p."prevQtySusut" != 0
+          THEN (ABS(c."qtySusut") - ABS(p."prevQtySusut")) / ABS(p."prevQtySusut")
+          ELSE NULL END as "susutGrowth",
+        CASE WHEN p."prevQtyTrial" IS NOT NULL AND p."prevQtyTrial" != 0
+          THEN (ABS(c."qtyTrial") - ABS(p."prevQtyTrial")) / ABS(p."prevQtyTrial")
+          ELSE NULL END as "trialGrowth"
     ) g
     ORDER BY c."outletId", c."itemId"
   `);
@@ -183,6 +196,10 @@ export async function evaluateRulesSql(
     { col: 'f_sales_decrease', code: 'SALES_DEV_DECREASE', severity: 'ABNORMAL', category: 'SALES', priority: 85 },
     { col: 'f_bom_mismatch', code: 'BOM_DEVIATION_MISMATCH', severity: 'ABNORMAL', category: 'BOM', priority: 88 },
     { col: 'f_bom_down_dev_up', code: 'BOM_DOWN_DEV_UP', severity: 'ABNORMAL', category: 'BOM', priority: 82 },
+    { col: 'f_waste_bom_mismatch', code: 'WASTE_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 55 },
+    { col: 'f_susut_bom_mismatch', code: 'SUSUT_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 54 },
+    { col: 'f_trial_bom_mismatch', code: 'TRIAL_BOM_MISMATCH', severity: 'WARNING', category: 'BOM', priority: 53 },
+    { col: 'f_bom_disproportionate', code: 'BOM_DEVIATION_DISPROPORTIONATE', severity: 'WARNING', category: 'BOM', priority: 56 },
   ];
 
   const flags: SqlRuleFlag[] = [];
@@ -209,9 +226,12 @@ export async function evaluateRulesSql(
 //  These rules need the historicalByOutletItem map (pre-fetched
 //  SQL aggregate) which can't be easily inlined in the main query.
 //
-//  Returns additional flags for: HISTORICAL_ABNORMAL,
-//  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING,
-//  BENCHMARK_ABOVE_AREA, BENCHMARK_ABOVE_NETWORK
+//  Returns additional flags for 3 rules: HISTORICAL_ABNORMAL,
+//  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING.
+//
+//  NOTE: BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK were removed
+//  in Phase A-2 (duplicate of HISTORICAL_WARNING/HIGH). YAML config
+//  entries deleted in FIX-RULE-CONFIG.
 // ============================================================
 export function evaluateHistoricalRulesJs(
   currentRecs: Array<{
@@ -221,19 +241,25 @@ export function evaluateHistoricalRulesJs(
     nominalLossSurplus: number | null;
     pctQtyDeviasiToBom: number | null;
   }>,
-  historicalByOutletItem: Map<string, { mean: number; stdDev: number; n: number }>,
+  historicalByOutletItem: Map<string, { devBom: { mean: number; stdDev: number; n: number } }>,
   thresholds: RuntimeThresholds,
 ): SqlRuleFlag[] {
   const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
-  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 2;
-  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 3;
+  // EVAL-10 FIX: zScore fallback defaults must align with PRD §5.2 (warn=1.5, high=2).
+  // Previously `?? 2` / `?? 3` over-flagged when settings table row was missing.
+  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 1.5;
+  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 2;
   const flags: SqlRuleFlag[] = [];
 
   for (const curr of currentRecs) {
     const stats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`);
-    if (!stats || stats.stdDev <= 0 || stats.n < minWeeks) continue;
+    if (!stats || stats.devBom.stdDev <= 0 || stats.devBom.n < minWeeks) continue;
 
-    const zScore = (Math.abs(curr.pctQtyDeviasiToBom ?? 0) - stats.mean) / stats.stdDev;
+    // ZS-05 FIX: Skip if pctQtyDeviasiToBom is null (don't coerce to 0)
+    if (curr.pctQtyDeviasiToBom == null) continue;
+
+    // ZS-01 FIX: Use Math.abs for non-negative magnitude per PRD §5.2
+    const zScore = Math.abs((Math.abs(curr.pctQtyDeviasiToBom) - stats.devBom.mean) / stats.devBom.stdDev);
     if (zScore == null || isNaN(zScore)) continue;
 
     const isLoss = (curr.nominalLossSurplus ?? 0) < 0;
@@ -254,15 +280,10 @@ export function evaluateHistoricalRulesJs(
       flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_WARNING', severity: 'WARNING', category: 'HISTORICAL', priority: 58 });
     }
 
-    // BENCHMARK_ABOVE_AREA (benchmarkFlag = HISTORICAL_WARNING)
-    if (zScore > zWarn && zScore <= zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'BENCHMARK_ABOVE_AREA', severity: 'WARNING', category: 'BENCHMARK', priority: 50 });
-    }
-
-    // BENCHMARK_ABOVE_NETWORK (benchmarkFlag = HISTORICAL_HIGH)
-    if (zScore > zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'BENCHMARK_ABOVE_NETWORK', severity: 'ABNORMAL', category: 'BENCHMARK', priority: 72 });
-    }
+    // Phase A-2 FIX: Removed BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK duplicates.
+    // These were firing on the SAME zScore condition as HISTORICAL_WARNING/HIGH,
+    // producing duplicate flags with different rule codes. They should compare
+    // against area/network avg (not historical), but that's a separate feature.
   }
 
   return flags;

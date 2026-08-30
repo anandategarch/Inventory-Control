@@ -19,6 +19,7 @@
 //    - sqlFlagsPromise (fired in stage 3, usually resolved by now)
 //    - queryHistoricalCriticalItems (fresh SQL for HISTORICAL_* items)
 // ============================================================
+import { Prisma } from '@prisma/client';
 import {
   computeNominalDeviationGrowth,
   projectTrend,
@@ -31,6 +32,7 @@ import {
   type HealthScoreWeights,
   type HealthScoreThresholds,
 } from '@/lib/metrics';
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '@/lib/queries/shared';
 import { detectPatterns } from '@/engine/analysis/analysis';
 import type { AnalysisOutlet, AnalysisArea } from '@/engine/analysis';
 import { queryHistoricalCriticalItems } from '@/lib/queries';
@@ -40,6 +42,251 @@ import { computeDeviationDrivers } from './deviation-drivers';
 import type { FetchedRecords } from './fetch-records';
 import type { QueryResults } from './run-queries';
 import type { ResolvedParams } from './validate-and-resolve';
+
+// ============================================================
+//  BOM Correlation Findings — per-record rule fire details
+//  --------------------------------------------------------
+//  FIX-BOM-UI (CONFIG-02): BomCorrelationCard previously read ONLY
+//  aggregate growth from `executiveSummary` and computed alignment
+//  inline with hardcoded thresholds. It never saw the per-record
+//  rule engine results (sqlFlags where category === 'BOM').
+//
+//  We now extract ALL BOM rule fires from `sqlFlags` (NOT the
+//  topFlagByKey — that's de-duped to highest-priority flag per
+//  record and would hide secondary BOM warnings), and join each
+//  flag to its underlying record's growth values via a fresh SQL
+//  fetch (curr + prev period LATERAL JOIN, same shape as the
+//  rule-evaluation CTE but only for the flagged tuples — bounded
+//  to ~50 rows by the slice).
+//
+//  `deviationBomRatio` = qtyDeviasiGrowth / bomGrowth (when bomGrowth > 0).
+//  Used by BOM_DEVIATION_DISPROPORTIONATE to show how many times
+//  faster deviation grew vs BOM.
+// ============================================================
+
+export interface BomCorrelationFinding {
+  outletId: number;
+  outletName: string;
+  itemId: number;
+  itemName: string;
+  akunPenyesuaian: string | null;
+  ruleCode: string;
+  rulePriority: number;
+  severity: string;
+  bomGrowth: number | null;
+  /** Growth of the metric relevant to the rule (waste/susut/trial/qtyDeviasi). */
+  metricGrowth: number | null;
+  /** qtyDeviasiGrowth / bomGrowth (only meaningful when bomGrowth > 0). */
+  deviationBomRatio: number | null;
+}
+
+export interface BomCorrelationCounts {
+  WASTE_BOM_MISMATCH: number;
+  SUSUT_BOM_MISMATCH: number;
+  TRIAL_BOM_MISMATCH: number;
+  BOM_DEVIATION_DISPROPORTIONATE: number;
+  BOM_DEVIATION_MISMATCH: number;
+  BOM_DOWN_DEV_UP: number;
+}
+
+interface BomDetailRow {
+  outletId: number;
+  itemId: number;
+  akunPenyesuaian: string | null;
+  outletName: string;
+  itemName: string;
+  bomGrowth: number | null;
+  wasteGrowth: number | null;
+  susutGrowth: number | null;
+  trialGrowth: number | null;
+  qtyDeviasiGrowth: number | null;
+}
+
+/**
+ * Helper — pick the relevant per-metric growth for a given BOM rule.
+ * - WASTE_BOM_MISMATCH       → wasteGrowth
+ * - SUSUT_BOM_MISMATCH       → susutGrowth
+ * - TRIAL_BOM_MISMATCH       → trialGrowth
+ * - BOM_DEVIATION_DISPROPORTIONATE → qtyDeviasiGrowth
+ * - BOM_DEVIATION_MISMATCH   → qtyDeviasiGrowth
+ * - BOM_DOWN_DEV_UP          → qtyDeviasiGrowth
+ */
+function getMetricGrowthForRule(ruleCode: string, detail: BomDetailRow | undefined): number | null {
+  if (!detail) return null;
+  switch (ruleCode) {
+    case 'WASTE_BOM_MISMATCH': return detail.wasteGrowth;
+    case 'SUSUT_BOM_MISMATCH': return detail.susutGrowth;
+    case 'TRIAL_BOM_MISMATCH': return detail.trialGrowth;
+    case 'BOM_DEVIATION_DISPROPORTIONATE':
+    case 'BOM_DEVIATION_MISMATCH':
+    case 'BOM_DOWN_DEV_UP':
+      return detail.qtyDeviasiGrowth;
+    default: return null;
+  }
+}
+
+/**
+ * Sub-step 1b — fetch per-record growth values for the (outletId, itemId,
+ * akunPenyesuaian) tuples that fired any BOM rule. Bounded to the unique
+ * tuple set (typically ≤ 200 rows even for 35K-record periods).
+ *
+ * Mirrors the rule-evaluation.ts CTE shape: curr LEFT JOIN LATERAL prev,
+ * with ABS() growth magnitude and div-by-zero guards. Returns a Map keyed
+ * by `${outletId}|${itemId}|${akunPenyesuaian ?? ''}` for O(1) lookup.
+ */
+export async function fetchBomCorrelationDetails(
+  week: string,
+  month: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: SqlFilterOpts,
+  keys: Array<{ outletId: number; itemId: number; akunPenyesuaian: string | null }>,
+): Promise<Map<string, BomDetailRow>> {
+  const result = new Map<string, BomDetailRow>();
+  if (keys.length === 0) return result;
+  if (!prevWeek || !prevMonth) {
+    // No comparison period — every growth field is null. Still return the
+    // rows so we have outlet/item names for display.
+  }
+  const f = buildSqlFilters(filters, 'c');
+  const tupleValues = keys.map((k) =>
+    Prisma.sql`(${k.outletId}, ${k.itemId}, ${k.akunPenyesuaian})`,
+  );
+  const tuples = Prisma.join(tupleValues, ', ');
+  // prevFilter — if no compare period, sentinel 1=0 (matches nothing → all growth NULL).
+  const prevFilter = prevWeek && prevMonth
+    ? Prisma.sql`AND p."monthLabel" = ${prevMonth} AND p."weekLabel" = ${prevWeek}`
+    : Prisma.sql`AND 1=0`;
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<BomDetailRow[]>`
+    SELECT
+      c."outletId", c."itemId", c."akunPenyesuaian",
+      o.name AS "outletName",
+      i.name AS "itemName",
+      CASE WHEN p."prevQtyBom" IS NOT NULL AND p."prevQtyBom" != 0
+        THEN (ABS(c."qtyBom") - ABS(p."prevQtyBom")) / ABS(p."prevQtyBom")
+        ELSE NULL END AS "bomGrowth",
+      CASE WHEN p."prevQtyWaste" IS NOT NULL AND p."prevQtyWaste" != 0
+        THEN (ABS(c."qtyWaste") - ABS(p."prevQtyWaste")) / ABS(p."prevQtyWaste")
+        ELSE NULL END AS "wasteGrowth",
+      CASE WHEN p."prevQtySusut" IS NOT NULL AND p."prevQtySusut" != 0
+        THEN (ABS(c."qtySusut") - ABS(p."prevQtySusut")) / ABS(p."prevQtySusut")
+        ELSE NULL END AS "susutGrowth",
+      CASE WHEN p."prevQtyTrial" IS NOT NULL AND p."prevQtyTrial" != 0
+        THEN (ABS(c."qtyTrial") - ABS(p."prevQtyTrial")) / ABS(p."prevQtyTrial")
+        ELSE NULL END AS "trialGrowth",
+      CASE WHEN p."prevQtyDeviasi" IS NOT NULL AND p."prevQtyDeviasi" != 0
+        THEN (ABS(c."qtyDeviasi") - ABS(p."prevQtyDeviasi")) / ABS(p."prevQtyDeviasi")
+        ELSE NULL END AS "qtyDeviasiGrowth"
+    FROM "InventoryRecord" c
+    JOIN "Item" i ON c."itemId" = i.id
+    JOIN "Outlet" o ON c."outletId" = o.id
+    JOIN (VALUES ${tuples}) AS v(outletId, itemId, akunPenyesuaian)
+      ON c."outletId" = v.outletId
+      AND c."itemId" = v.itemId
+      AND c."akunPenyesuaian" IS NOT DISTINCT FROM v.akunPenyesuaian
+    LEFT JOIN LATERAL (
+      SELECT p."qtyBom" AS "prevQtyBom", p."qtyDeviasi" AS "prevQtyDeviasi",
+             p."qtyWaste" AS "prevQtyWaste", p."qtySusut" AS "prevQtySusut",
+             p."qtyTrial" AS "prevQtyTrial"
+      FROM "InventoryRecord" p
+      WHERE p."outletId" = c."outletId" AND p."itemId" = c."itemId"
+        AND p."akunPenyesuaian" IS NOT DISTINCT FROM c."akunPenyesuaian"
+        ${prevFilter}
+      LIMIT 1
+    ) p ON true
+    WHERE c."monthLabel" = ${month} AND c."weekLabel" = ${week}
+      ${f}
+  `);
+  for (const r of rows) {
+    const key = `${r.outletId}|${r.itemId}|${r.akunPenyesuaian ?? ''}`;
+    result.set(key, {
+      outletId: Number(r.outletId),
+      itemId: Number(r.itemId),
+      akunPenyesuaian: r.akunPenyesuaian,
+      outletName: r.outletName,
+      itemName: r.itemName,
+      bomGrowth: r.bomGrowth == null ? null : Number(r.bomGrowth),
+      wasteGrowth: r.wasteGrowth == null ? null : Number(r.wasteGrowth),
+      susutGrowth: r.susutGrowth == null ? null : Number(r.susutGrowth),
+      trialGrowth: r.trialGrowth == null ? null : Number(r.trialGrowth),
+      qtyDeviasiGrowth: r.qtyDeviasiGrowth == null ? null : Number(r.qtyDeviasiGrowth),
+    });
+  }
+  return result;
+}
+
+/**
+ * Sub-step 1c — build the bomCorrelationFindings array + per-rule counts.
+ *
+ * Filters `sqlFlags` for category === 'BOM' (NOT topFlagByKey — that's
+ * de-duped per record). Sorts by priority DESC (most severe first) and
+ * slices top 50. Joins each flag to its detail row (if any) to attach
+ * growth values + names.
+ */
+export async function buildBomCorrelationFindings(
+  week: string,
+  month: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: SqlFilterOpts,
+  sqlFlags: SqlRuleFlag[],
+): Promise<{ findings: BomCorrelationFinding[]; counts: BomCorrelationCounts }> {
+  const bomFlags = sqlFlags.filter(f => f.category === 'BOM');
+  // Per-rule counts (computed from the FULL bomFlags set, not the sliced top-50).
+  const counts: BomCorrelationCounts = {
+    WASTE_BOM_MISMATCH: bomFlags.filter(f => f.ruleCode === 'WASTE_BOM_MISMATCH').length,
+    SUSUT_BOM_MISMATCH: bomFlags.filter(f => f.ruleCode === 'SUSUT_BOM_MISMATCH').length,
+    TRIAL_BOM_MISMATCH: bomFlags.filter(f => f.ruleCode === 'TRIAL_BOM_MISMATCH').length,
+    BOM_DEVIATION_DISPROPORTIONATE: bomFlags.filter(f => f.ruleCode === 'BOM_DEVIATION_DISPROPORTIONATE').length,
+    BOM_DEVIATION_MISMATCH: bomFlags.filter(f => f.ruleCode === 'BOM_DEVIATION_MISMATCH').length,
+    BOM_DOWN_DEV_UP: bomFlags.filter(f => f.ruleCode === 'BOM_DOWN_DEV_UP').length,
+  };
+  if (bomFlags.length === 0) {
+    return { findings: [], counts };
+  }
+  // Sort most-severe first (priority is a number; higher = more severe).
+  // Stable sort preserves insertion order (DB row order) for equal-priority ties.
+  const sorted = [...bomFlags].sort((a, b) => b.priority - a.priority);
+  // Fetch growth values only for the unique tuple set of the top-50 slice
+  // (bounded — typically ≤ 50 distinct tuples since one record rarely fires
+  // multiple BOM rules of different priorities).
+  const top = sorted.slice(0, 50);
+  const uniqueKeys = new Map<string, { outletId: number; itemId: number; akunPenyesuaian: string | null }>();
+  for (const f of top) {
+    const key = `${f.outletId}|${f.itemId}|${f.akunPenyesuaian ?? ''}`;
+    if (!uniqueKeys.has(key)) {
+      uniqueKeys.set(key, { outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian });
+    }
+  }
+  const details = await fetchBomCorrelationDetails(
+    week, month, prevWeek, prevMonth, filters, [...uniqueKeys.values()],
+  );
+  const findings: BomCorrelationFinding[] = top.map(flag => {
+    const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;
+    const detail = details.get(key);
+    const qtyDeviasiGrowth = detail?.qtyDeviasiGrowth ?? null;
+    const bomGrowth = detail?.bomGrowth ?? null;
+    // deviationBomRatio only meaningful when bomGrowth > 0 (used by the
+    // disproportionate rule, which requires bomGrowth > 0 to fire anyway).
+    const deviationBomRatio = (bomGrowth != null && bomGrowth > 0 && qtyDeviasiGrowth != null)
+      ? qtyDeviasiGrowth / bomGrowth
+      : null;
+    return {
+      outletId: flag.outletId,
+      outletName: detail?.outletName ?? String(flag.outletId),
+      itemId: flag.itemId,
+      itemName: detail?.itemName ?? String(flag.itemId),
+      akunPenyesuaian: flag.akunPenyesuaian,
+      ruleCode: flag.ruleCode,
+      rulePriority: flag.priority,
+      severity: flag.severity,
+      bomGrowth,
+      metricGrowth: getMetricGrowthForRule(flag.ruleCode, detail),
+      deviationBomRatio,
+    };
+  });
+  return { findings, counts };
+}
 
 // Stage-4 output — everything needed by assemble-response.
 export interface ProcessedData {
@@ -79,6 +326,10 @@ export interface ProcessedData {
   costImpact: Record<string, unknown>;
   itemConsistencyAnalysis: Record<string, unknown>;
   deviationDrivers: ReturnType<typeof computeDeviationDrivers>;
+  // FIX-BOM-UI (CONFIG-02): per-record BOM rule findings (top 50 by priority)
+  // + per-rule counts. Consumed by BomCorrelationCard's primary section.
+  bomCorrelationFindings: BomCorrelationFinding[];
+  bomCorrelationCounts: BomCorrelationCounts;
 }
 
 // Internal: severity-count maps derived from topFlagByKey + healthRankingRows.
@@ -317,15 +568,13 @@ export async function buildHistoricalAnalysis(
   historicalByOutletItem: FetchedRecords['historicalByOutletItem'],
 ): Promise<{ criticalItems: Array<Record<string, unknown>> }> {
   // ============================================================
-  //  Historical Analysis (SQL-OPTIMIZE)
+  //  Historical Analysis (SQL-OPTIMIZE + Multi-Metric Phase B-1)
   //  --------------------------------------------------------
-  //  Old: computeHistoricalAnalysis iterated over recsWithFlags (35K)
-  //       + filtered for HISTORICAL_* flags + looked up stats map.
-  //  New: filter topFlagByKey for HISTORICAL_* flags (small — ~50-200
-  //       entries), run queryHistoricalCriticalItems SQL to fetch the
-  //       per-record fields (itemName, outletCode, area, pctQtyDeviasiToBom,
-  //       absNominalDeviasi) for those flagged records only, then compute
-  //       zScore + sort + slice top 50 in JS.
+  //  Computes Z-Score for 4 metrics:
+  //  - Dev/BOM (pctQtyDeviasiToBom) — primary, used for rule evaluation
+  //  - Waste (nominalWaste) — |current waste| vs historical mean
+  //  - Susut (nominalSusut) — |current susut| vs historical mean
+  //  - Trial (nominalTrial) — |current trial| vs historical mean
   // ============================================================
   const histCriticalKeys = [...topFlagByKey.values()]
     .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_WARNING')
@@ -334,22 +583,42 @@ export async function buildHistoricalAnalysis(
   const histCriticalItems = histCriticalRows.map(row => {
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);
-    if (!stats || stats.stdDev <= 0) return null;
-    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+    if (!stats || stats.devBom.stdDev <= 0) return null;
+    // ZS-03 FIX: Don't coerce null to 0 — pass raw value to calcZScoreFromStats
+    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
+
+    // Phase B-1 MM-01 + ZS-02 FIX: Multi-metric Z-Scores with per-metric MIN_WEEKS + stdDev guards
+    const wasteZScore = (stats.waste.n >= 4 && stats.waste.stdDev > 0)
+      ? calcZScoreFromStats(row.qtyWaste, stats.waste.mean, stats.waste.stdDev) : 0;
+    const susutZScore = (stats.susut.n >= 4 && stats.susut.stdDev > 0)
+      ? calcZScoreFromStats(row.qtySusut, stats.susut.mean, stats.susut.stdDev) : 0;
+    const trialZScore = (stats.trial.n >= 4 && stats.trial.stdDev > 0)
+      ? calcZScoreFromStats(row.qtyTrial, stats.trial.mean, stats.trial.stdDev) : 0;
+
     return {
       itemName: row.itemName,
       outletCode: row.outletCode,
       area: row.area,
       currentDevBom: row.pctQtyDeviasiToBom ?? 0,
-      historicalAvg: stats.mean,
+      historicalAvg: stats.devBom.mean,
       zScore: zScore ?? 0,
       absNominal: row.absNominalDeviasi ?? 0,
+      // Multi-metric current values + zScores (Phase B-1)
+      currentWaste: Math.abs(row.qtyWaste ?? 0),
+      currentSusut: Math.abs(row.qtySusut ?? 0),
+      currentTrial: Math.abs(row.qtyTrial ?? 0),
+      wasteZScore: wasteZScore ?? 0,
+      susutZScore: susutZScore ?? 0,
+      trialZScore: trialZScore ?? 0,
+      wasteHistoricalAvg: stats.waste.mean,
+      susutHistoricalAvg: stats.susut.mean,
+      trialHistoricalAvg: stats.trial.mean,
     };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-  // FIX: return top 50 (was 10) — HistoricalZScoreCard displays a sortable table.
-  // 50 is manageable payload (~5KB) and gives users enough data to explore.
-  return { criticalItems: histCriticalItems.slice(0, 50) };
+  // FIX: return top 200 (was 50) — Phase B-4: increased limit for pagination.
+  // HistoricalZScoreCard shows 20 initially with "load more" button.
+  return { criticalItems: histCriticalItems.slice(0, 200) };
 }
 
 /**
@@ -440,7 +709,7 @@ export function mapTopOutlets(
  * Thin orchestrator — delegates to 7 sub-functions (each < 150 lines).
  */
 export async function postProcess(params: ResolvedParams, records: FetchedRecords, queries: QueryResults): Promise<ProcessedData> {
-  const { week, month } = params;
+  const { week, month, prevWeek, prevMonth } = params;
   const { currSlim, historicalByOutletItem, thresholds, monthKeyByLabel, filterOpts } = records;
   const {
     earlyPromises,
@@ -462,6 +731,14 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   // Sub-step 1: rule flag evaluation + merge
   const { topFlagByKey, severityMaps, normal, warning, abnormal, ruleBreakdown } = await evaluateAndMergeFlags(
     currSlim, historicalByOutletItem, thresholds, earlyPromises.sqlFlagsPromise, healthRankingRows,
+  );
+
+  // Sub-step 1b: BOM correlation findings — needs the raw sqlFlags array
+  // (NOT topFlagByKey, which is de-duped per record). Awaiting the same
+  // promise twice is safe — the second await resolves immediately.
+  const sqlFlags = await earlyPromises.sqlFlagsPromise;
+  const { findings: bomCorrelationFindings, counts: bomCorrelationCounts } = await buildBomCorrelationFindings(
+    week, month, prevWeek, prevMonth, filterOpts, sqlFlags,
   );
 
   // Sub-step 2: growth metrics + trend
@@ -543,5 +820,6 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
     trend, netCostTrend, trendProjection, patterns,
     dqSeverityCounts, areaAnalysis, topOut, topOutletsSales,
     outletHealthRanking, costImpact, itemConsistencyAnalysis, deviationDrivers,
+    bomCorrelationFindings, bomCorrelationCounts,
   };
 }

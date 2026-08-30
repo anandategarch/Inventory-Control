@@ -35,6 +35,7 @@ import {
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
 import { evaluateRulesSql, evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
+import { queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 // FIX (BUG-PERF-4): use shared kelompok resolver instead of inline fetch-all + JS filter
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -47,6 +48,7 @@ import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, getCached, setCached } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -298,6 +300,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
 
+    // PERF: DB-level cache check — export-report is the heaviest route (7-12s).
+    // Cache the generated .docx buffer for 5 min. Same filter params = same report.
+    const cacheKey = buildCacheKey({
+      route: 'export-report', month, week,
+      compareWeek: userCompareWeek, compareMonth: userCompareMonth,
+      area: area && area !== 'all' ? area : null,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+      itemName: itemName || null, pic: pic || null,
+    });
+    const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    const cachedExport = await getCached<{ buffer: number[]; fileName: string } | null>(cacheKey, EXPORT_CACHE_TTL);
+    if (cachedExport && cachedExport.buffer && cachedExport.fileName) {
+      const buffer = Buffer.from(cachedExport.buffer);
+      return new NextResponse(new Uint8Array(buffer) as BodyInit, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'Content-Disposition': `attachment; filename="${cachedExport.fileName}"`,
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',
+        },
+      });
+    }
+
     // Load thresholds
     const thresholds = await getRuntimeThresholds();
 
@@ -405,8 +431,8 @@ export async function GET(req: NextRequest) {
         },
       }),
       historicalPeriods.length > 0
-        ? queryHistoricalStats(historicalPeriods, filterOpts)
-        : Promise.resolve(new Map<string, { mean: number; stdDev: number; n: number }>()),
+        ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
+        : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
       evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
       queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
     ]);
@@ -554,20 +580,24 @@ export async function GET(req: NextRequest) {
     const histCriticalItems = histCriticalRows.map(row => {
       const key = `${row.outletId}|${row.itemId}`;
       const stats = historicalByOutletItem.get(key);
-      if (!stats || stats.stdDev <= 0) return null;
-      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom ?? 0, stats.mean, stats.stdDev);
+      if (!stats || stats.devBom.stdDev <= 0) return null;
+      // ZS-03 FIX: Don't coerce null to 0 — pass raw value to calcZScoreFromStats
+      const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
       return {
         itemName: row.itemName,
         outletCode: row.outletCode,
         area: row.area,
         currentDevBom: row.pctQtyDeviasiToBom ?? 0,
-        historicalAvg: stats.mean,
+        historicalAvg: stats.devBom.mean,
         zScore: zScore ?? 0,
         absNominal: row.absNominalDeviasi ?? 0,
+        currentWaste: Math.abs(row.qtyWaste ?? 0),
+        currentSusut: Math.abs(row.qtySusut ?? 0),
+        currentTrial: Math.abs(row.qtyTrial ?? 0),
       };
     }).filter((x): x is NonNullable<typeof x> => x !== null);
     histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 50) };
+    const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 200) };
     const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
     // FIX: fetch additional data for new export sections (restoPriority + itemCrossOutlet)
@@ -609,46 +639,58 @@ export async function GET(req: NextRequest) {
     // ============================================================
     const children: Array<Paragraph | Table> = [];
 
-    // Build dynamic period labels for column headers (replace static Current/Prev/Hist)
-    // Current period: e.g., "WEEK 4 MEI 2026"
-    const currLabel = `${data.period.weekLabel} ${data.period.monthLabel}`;
-    // Previous period: e.g., "WEEK 4 APR 2026" (or "—" if no comparison)
-    const prevLabel = data.period.comparisonWeek
-      ? `${data.period.comparisonWeek} ${data.period.comparisonMonth || ''}`
+    // Build dynamic period labels — short format (no week, month abbreviated to 3 chars + 2-digit year)
+    // e.g., "MEI 2026" → "MEI 26", "WEEK 4 MEI 2026" → "MEI 26" (week removed per user request)
+    const shortMonth = (label: string): string => {
+      if (!label) return '—';
+      const parts = label.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        const month = parts[0].substring(0, 3).toUpperCase();
+        const year = parts[1].length === 4 ? parts[1].substring(2) : parts[1];
+        return `${month} ${year}`;
+      }
+      return label.substring(0, 10);
+    };
+    const currLabel = shortMonth(data.period.monthLabel);
+    const prevLabel = data.period.comparisonMonth
+      ? shortMonth(data.period.comparisonMonth)
       : '—';
-    // Historical periods: list of months/weeks the avg comes from
-    // All historical periods share the same weekLabel (filtered), so list the months
-    // BUG FIX (AUDIT-EXPORT-AI-5): cap to 3 months + "+N lainnya" to avoid overly long column headers
-    const histMonths = historicalPeriods.map(p => p.monthLabel).filter(Boolean);
+    // Historical periods: show range "Jan-Jul 26" (earliest to latest)
+    const histMonths = historicalPeriods.map(p => shortMonth(p.monthLabel)).filter(m => m !== '—');
     const histLabel = histMonths.length === 0
-      ? 'Hist Avg (—)'
-      : histMonths.length <= 3
-        ? `Hist Avg (${histMonths.join(', ')})`
-        : `Hist Avg (${histMonths.slice(0, 3).join(', ')} +${histMonths.length - 3} lainnya)`;
+      ? 'Hist (—)'
+      : histMonths.length === 1
+        ? `Hist (${histMonths[0]})`
+        : `Hist (${histMonths[histMonths.length - 1]}-${histMonths[0]})`;
 
-    // Title — branded header with color band
+    // Title — simplified header per user request
+    const restoName = outletCode && outletCode !== 'all' ? outletCode : 'Semua Resto';
+    const compareText = data.period.comparisonMonth
+      ? ` vs ${prevLabel}`
+      : '';
+    // History range label (e.g., "Jan-Jul 26") for header
+    const histRange = histMonths.length >= 2
+      ? `${histMonths[histMonths.length - 1]}-${histMonths[0]}`
+      : histMonths.length === 1
+        ? histMonths[0]
+        : currLabel;
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: 'INVENTORY CONTROL INTELLIGENCE', bold: true, size: 36, color: COLOR.PRIMARY })],
+        children: [new TextRun({ text: 'Ringkasan Laporan Deviasi', bold: true, size: 36, color: COLOR.PRIMARY })],
         alignment: AlignmentType.CENTER, spacing: { before: 400, after: 80 },
       }),
       new Paragraph({
-        children: [new TextRun({ text: 'LAPORAN ANALISIS DEVIASI PEMAKAIAN BAHAN', bold: true, size: 22, color: COLOR.MUTED })],
+        children: [new TextRun({ text: `${restoName}  |  ${histRange}${compareText}`, size: 22, color: COLOR.MUTED })],
         alignment: AlignmentType.CENTER, spacing: { after: 200 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: COLOR.PRIMARY, space: 6 } },
       }),
-      new Paragraph({ children: [new TextRun({ text: `Periode: ${currLabel}`, bold: true, size: 26, color: COLOR.BODY_TEXT })], alignment: AlignmentType.CENTER, spacing: { before: 200, after: 80 } }),
-      new Paragraph({ children: [new TextRun({ text: `${outletCode && outletCode !== 'all' ? `Resto: ${outletCode}` : 'Network (Semua Resto)'}  |  ${area && area !== 'all' ? `Area: ${area}` : 'Semua Area'}`, size: 20, color: COLOR.MUTED })], alignment: AlignmentType.CENTER, spacing: { after: 60 } }),
-      new Paragraph({ children: [new TextRun({ text: data.period.comparisonWeek ? `Perbandingan: ${prevLabel}` : 'Perbandingan: Otomatis', size: 18, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER, spacing: { after: 300 } }),
       divider(),
     );
 
     if (hasSection('exec')) {
     const s = data.executiveSummary;
-    children.push(heading('1. RINGKASAN UTAMA (Executive Summary)'));
-    children.push(paragraph('Ringkasan KPI utama periode ini dibandingkan periode sebelumnya. Growth = persentase perubahan.'));
+    children.push(heading('1. Rangkuman'));
     children.push(makeTable(['Metrik', currLabel, 'Perubahan', prevLabel], [
-      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
       ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
       ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
       ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth != null ? fmtPct(s.qtyDeviasi.growth, true) : '—', fmtNum(s.qtyDeviasi.previous)],
@@ -656,7 +698,6 @@ export async function GET(req: NextRequest) {
       ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
-      // FIX: 6 metrics now show prev value + growth (previously '—')
       ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), s._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, s._prevMetrics.deviationToBom), true) : '—', s._prevMetrics?.deviationToBom != null ? fmtPct(s._prevMetrics.deviationToBom, false) : '—'],
       ['Loss To Sales', fmtPct(s.lossToSales, false), s._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, s._prevMetrics.lossToSales), true) : '—', s._prevMetrics?.lossToSales != null ? fmtPct(s._prevMetrics.lossToSales, false) : '—'],
       ['Total LOSS', fmtIDR(s.totalLoss), s._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, s._prevMetrics.totalLoss), true) : '—', s._prevMetrics?.totalLoss != null ? fmtIDR(s._prevMetrics.totalLoss) : '—'],
@@ -668,8 +709,7 @@ export async function GET(req: NextRequest) {
     }
     if (hasSection('growth')) {
     const g = data.growthComparison || {};
-    children.push(heading('3. ANALISIS PERUBAHAN (GROWTH)'));
-    children.push(paragraph('Perubahan antar periode untuk metrik kunci (Sales, BOM, QTY Deviasi, Nominal Deviasi).'));
+    children.push(heading('2. Perubahan (Growth)'));
     children.push(makeTable(['Metric', 'Value'], [
       ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
       ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
@@ -680,7 +720,7 @@ export async function GET(req: NextRequest) {
 
     }
     if (hasSection('topItems')) {
-    children.push(heading('4. ITEM PRIORITAS (TOP ITEMS)'));
+    children.push(heading('3. Item Prioritas (Top Items)'));
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
@@ -706,7 +746,7 @@ export async function GET(req: NextRequest) {
     if (hasSection('breakdown')) {
     const b = data.deviationBreakdown || {};
     const bdTotal = b.total || 0;
-    children.push(heading('5. RINCIAN KOMPOSISI SELISIH (Deviation Breakdown)'));
+    children.push(heading('4. Rincian Komposisi Selisih'));
     children.push(makeTable(['Component', 'QTY', '% of Total'], [
       ['QTY Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
       ['QTY Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
@@ -717,72 +757,275 @@ export async function GET(req: NextRequest) {
     children.push(divider());
 
     }
-    if (hasSection('area')) {
-    if (data.areaAnalysis && data.areaAnalysis.length > 0) {
-      children.push(heading('7. PERBANDINGAN ANTAR AREA'));
-    children.push(paragraph('Perbandingan performa antar area. Loss/Sales = efisiensi area (makin rendah makin baik).'));
-      children.push(makeTable(['Area', 'Resto', 'Penjualan', 'Abs Nominal Deviasi', '% Deviasi To BOM', 'Loss/Sales'],
-        data.areaAnalysis.map((a) => [a.area, String(a.outletCount || 0), fmtIDR(a.totalSales), fmtIDR(a.totalAbsNominal), fmtPct(a.avgDevBom, false), fmtPct(a.lossToSales, false)])));
-      children.push(divider());
+    // Section 5: BOM Correlation Analysis
+    if (hasSection('bomCorrelation')) {
+    const s = data.executiveSummary;
+    children.push(heading('5. Analisis Korelasi BOM'));
+    const bomUp = (s.qtyBom.growth ?? 0) > 0;
+    const bomDown = (s.qtyBom.growth ?? 0) < 0;
+    const devUp = (s.qtyDeviasi.growth ?? 0) > 0;
+    const devDown = (s.qtyDeviasi.growth ?? 0) < 0;
+    const wasteUp = (s.qtyWaste.growth ?? 0) > 0;
+    const wasteDown = (s.qtyWaste.growth ?? 0) < 0;
+    const susutUp = (s.qtySusut.growth ?? 0) > 0;
+    const susutDown = (s.qtySusut.growth ?? 0) < 0;
+    const trialUp = (s.qtyTrial.growth ?? 0) > 0;
+    const trialDown = (s.qtyTrial.growth ?? 0) < 0;
+
+    // Build correlation findings
+    // FIX (CONFIG-07 / EVAL-09): use configurable thresholds instead of hardcoded
+    // `> 2` and `> 1.5`. The `thresholds` object is fetched at line ~335 via
+    // getRuntimeThresholds(). BOM_DEVIATION_FACTOR (default 2.0) corresponds to
+    // the BOM_DEVIATION_MISMATCH SQL rule's multiplier; BOM_DISPROPORTIONATE_FACTOR
+    // (default 1.5) corresponds to the BOM_DEVIATION_DISPROPORTIONATE rule's lower
+    // bound (decoupled from BOM_DEVIATION_FACTOR by FIX-SETTINGS — was previously
+    // hardcoded to 1.5 in rule-evaluation.ts:156, which made the rule silently
+    // never fire if a user lowered BOM_DEVIATION_FACTOR ≤ 1.5).
+    const disproportionateFactor = thresholds.BOM_DISPROPORTIONATE_FACTOR ?? 1.5;
+    const deviationFactor = thresholds.BOM_DEVIATION_FACTOR ?? 2.0;
+    const findings: string[] = [];
+    if (bomUp && devUp) {
+      const ratio = (s.qtyBom.growth ?? 0) > 0 ? (s.qtyDeviasi.growth ?? 0) / (s.qtyBom.growth ?? 1) : 0;
+      if (ratio > deviationFactor) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% jauh melebihi BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×, ambang ${deviationFactor}×)`);
+      else if (ratio > disproportionateFactor) findings.push(`⚠ Deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% tidak proporsional dengan BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% (rasio ${ratio.toFixed(1)}×, ambang ${disproportionateFactor}×)`);
+      else findings.push(`✓ Deviasi naik proporsional dengan BOM (rasio ${ratio.toFixed(1)}×)`);
     }
+    if (bomDown && devUp) findings.push(`⚠ BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% tapi deviasi naik ${(s.qtyDeviasi.growth ?? 0).toFixed(1)}% — tidak sejalan`);
+    if (bomUp && wasteDown) findings.push(`⚠ Waste turun ${(s.qtyWaste.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && wasteUp) findings.push(`⚠ Waste naik ${(s.qtyWaste.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (bomUp && susutDown) findings.push(`⚠ Susut turun ${(s.qtySusut.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && susutUp) findings.push(`⚠ Susut naik ${(s.qtySusut.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (bomUp && trialDown) findings.push(`⚠ Trial turun ${(s.qtyTrial.growth ?? 0).toFixed(1)}% saat BOM naik ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut naik`);
+    if (bomDown && trialUp) findings.push(`⚠ Trial naik ${(s.qtyTrial.growth ?? 0).toFixed(1)}% saat BOM turun ${(s.qtyBom.growth ?? 0).toFixed(1)}% — harusnya ikut turun`);
+    if (findings.length === 0) findings.push('✓ Semua metrik sejalan dengan BOM');
+
+    children.push(makeTable(['Metrik', `${currLabel}`, 'Growth', `${prevLabel}`, 'Sejalan?'], [
+      ['QTY BOM', fmtNum(s.qtyBom.current), fmtPct(s.qtyBom.growth, true), fmtNum(s.qtyBom.previous), '— (baseline)'],
+      ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), fmtPct(s.qtyDeviasi.growth, true), fmtNum(s.qtyDeviasi.previous),
+        (bomUp && devUp) || (bomDown && devDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Waste', fmtNum(s.qtyWaste.current), fmtPct(s.qtyWaste.growth, true), fmtNum(s.qtyWaste.previous),
+        (bomUp && wasteUp) || (bomDown && wasteDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Susut', fmtNum(s.qtySusut.current), fmtPct(s.qtySusut.growth, true), fmtNum(s.qtySusut.previous),
+        (bomUp && susutUp) || (bomDown && susutDown) ? '✓ Ya' : '⚠ Tidak'],
+      ['QTY Trial', fmtNum(s.qtyTrial.current), fmtPct(s.qtyTrial.growth, true), fmtNum(s.qtyTrial.previous),
+        (bomUp && trialUp) || (bomDown && trialDown) ? '✓ Ya' : '⚠ Tidak'],
+    ]));
+    for (const f of findings) children.push(paragraph(f));
+
+    // ==========================================================
+    // FIX (CONFIG-06): 5.1 Detail Per-Record Findings
+    // The aggregate analysis above only shows execSummary-level growth.
+    // Add a per-record table listing top outlets where BOM correlation
+    // rules actually fired (from sqlFlags, the SQL rule evaluator output).
+    // Previously the Word report's Section 5 duplicated BomCorrelationCard
+    // with the same divergences — now it adds actionable per-record detail.
+    // ==========================================================
+    const bomCategoryFlags = sqlFlags.filter(f => f.category === 'BOM');
+    const bomRuleCounts = new Map<string, number>();
+    for (const f of bomCategoryFlags) {
+      bomRuleCounts.set(f.ruleCode, (bomRuleCounts.get(f.ruleCode) ?? 0) + 1);
+    }
+    // Top 20 most severe (highest priority first). Task spec lists ascending
+    // sort `a.priority - b.priority` but the comment says "top 20" — using
+    // descending so ABNORMAL (priority 88, 82) appears before WARNING (53-56).
+    const bomFindings = [...bomCategoryFlags]
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 20);
+
+    if (bomFindings.length > 0) {
+      children.push(paragraph('5.1 Detail Per-Record Findings (BOM Correlation)', true));
+      // Count summary — total + per-rule breakdown (all BOM-category rules)
+      children.push(paragraph(`Total anomali korelasi BOM: ${bomCategoryFlags.length} record`));
+      const ruleOrder = [
+        'BOM_DEVIATION_MISMATCH',
+        'BOM_DOWN_DEV_UP',
+        'BOM_DEVIATION_DISPROPORTIONATE',
+        'WASTE_BOM_MISMATCH',
+        'SUSUT_BOM_MISMATCH',
+        'TRIAL_BOM_MISMATCH',
+      ];
+      for (const ruleCode of ruleOrder) {
+        const cnt = bomRuleCounts.get(ruleCode) ?? 0;
+        if (cnt > 0) children.push(paragraph(`- ${ruleCode}: ${cnt}`));
+      }
+
+      // Batch-fetch current + prev InventoryRecord rows for the top-20 keys.
+      // Includes outlet.outletCode + item.name for human-readable display.
+      // Prisma `OR` with nullable akunPenyesuaian generates `IS NULL` for null
+      // entries and `= 'value'` for non-null — same semantics as the SQL
+      // `IS NOT DISTINCT FROM` used in rule-evaluation.ts:166.
+      const bomKeys = bomFindings.map(f => ({
+        outletId: f.outletId,
+        itemId: f.itemId,
+        akunPenyesuaian: f.akunPenyesuaian,
+      }));
+      const bomKeyOf = (o: { outletId: number; itemId: number; akunPenyesuaian: string | null }) =>
+        `${o.outletId}|${o.itemId}|${o.akunPenyesuaian ?? ''}`;
+
+      const [currBomRecs, prevBomRecs] = await Promise.all([
+        db.inventoryRecord.findMany({
+          where: {
+            monthLabel: month,
+            weekLabel: week,
+            OR: bomKeys.map(k => ({
+              outletId: k.outletId,
+              itemId: k.itemId,
+              akunPenyesuaian: k.akunPenyesuaian,
+            })),
+          },
+          select: {
+            outletId: true,
+            itemId: true,
+            akunPenyesuaian: true,
+            qtyBom: true,
+            qtyDeviasi: true,
+            qtyWaste: true,
+            qtySusut: true,
+            qtyTrial: true,
+            outlet: { select: { outletCode: true } },
+            item: { select: { name: true } },
+          },
+        }),
+        prevMonth && prevWeek
+          ? db.inventoryRecord.findMany({
+              where: {
+                monthLabel: prevMonth,
+                weekLabel: prevWeek,
+                OR: bomKeys.map(k => ({
+                  outletId: k.outletId,
+                  itemId: k.itemId,
+                  akunPenyesuaian: k.akunPenyesuaian,
+                })),
+              },
+              select: {
+                outletId: true,
+                itemId: true,
+                akunPenyesuaian: true,
+                qtyBom: true,
+                qtyDeviasi: true,
+                qtyWaste: true,
+                qtySusut: true,
+                qtyTrial: true,
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      // Build lookup maps keyed by "outletId|itemId|akun"
+      type BomRec = {
+        qtyBom: number | null;
+        qtyDeviasi: number | null;
+        qtyWaste: number | null;
+        qtySusut: number | null;
+        qtyTrial: number | null;
+      };
+      const prevBomMap = new Map<string, BomRec>();
+      for (const r of prevBomRecs) {
+        prevBomMap.set(bomKeyOf(r), {
+          qtyBom: r.qtyBom, qtyDeviasi: r.qtyDeviasi, qtyWaste: r.qtyWaste,
+          qtySusut: r.qtySusut, qtyTrial: r.qtyTrial,
+        });
+      }
+      const currBomMap = new Map<string, BomRec & { outletCode: string; itemName: string }>();
+      for (const r of currBomRecs) {
+        currBomMap.set(bomKeyOf(r), {
+          qtyBom: r.qtyBom, qtyDeviasi: r.qtyDeviasi, qtyWaste: r.qtyWaste,
+          qtySusut: r.qtySusut, qtyTrial: r.qtyTrial,
+          outletCode: r.outlet.outletCode, itemName: r.item.name,
+        });
+      }
+
+      // Growth helper — matches rule-evaluation.ts:174-192 ABS magnitude formula
+      const growthAbs = (curr: number | null | undefined, prev: number | null | undefined): number | null => {
+        if (curr == null || prev == null || prev === 0) return null;
+        return (Math.abs(curr) - Math.abs(prev)) / Math.abs(prev);
+      };
+
+      // Render the per-record table. For each finding, pick the relevant
+      // metric growth based on rule code:
+      //   BOM_DEVIATION_MISMATCH / BOM_DOWN_DEV_UP / BOM_DEVIATION_DISPROPORTIONATE → qtyDeviasi
+      //   WASTE_BOM_MISMATCH → qtyWaste
+      //   SUSUT_BOM_MISMATCH → qtySusut
+      //   TRIAL_BOM_MISMATCH → qtyTrial
+      // Ratio = metricGrowth / bomGrowth (only when bomGrowth > 0 — otherwise
+      // opposite-sign or negative-BOM cases produce meaningless ratios).
+      const bomRows: string[][] = bomFindings.map(f => {
+        const key = bomKeyOf(f);
+        const c = currBomMap.get(key);
+        const p = prevBomMap.get(key);
+        if (!c) {
+          return [String(f.outletId), String(f.itemId), f.ruleCode, '—', '—', '—'];
+        }
+        const bomGrowth = growthAbs(c.qtyBom, p?.qtyBom ?? null);
+        let metricGrowth: number | null = null;
+        switch (f.ruleCode) {
+          case 'BOM_DEVIATION_MISMATCH':
+          case 'BOM_DOWN_DEV_UP':
+          case 'BOM_DEVIATION_DISPROPORTIONATE':
+            metricGrowth = growthAbs(c.qtyDeviasi, p?.qtyDeviasi ?? null);
+            break;
+          case 'WASTE_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtyWaste, p?.qtyWaste ?? null);
+            break;
+          case 'SUSUT_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtySusut, p?.qtySusut ?? null);
+            break;
+          case 'TRIAL_BOM_MISMATCH':
+            metricGrowth = growthAbs(c.qtyTrial, p?.qtyTrial ?? null);
+            break;
+        }
+        // Ratio only meaningful when both growths are positive (same-direction
+        // disproportionate case). For sign-mismatch rules the ratio is negative
+        // or undefined — show '—'.
+        let ratio: number | null = null;
+        if (bomGrowth != null && metricGrowth != null && bomGrowth > 0 && metricGrowth > 0) {
+          ratio = metricGrowth / bomGrowth;
+        }
+        return [
+          c.outletCode,
+          c.itemName,
+          f.ruleCode,
+          bomGrowth != null ? fmtPct(bomGrowth, true) : '—',
+          metricGrowth != null ? fmtPct(metricGrowth, true) : '—',
+          ratio != null ? `${ratio.toFixed(2)}×` : '—',
+        ];
+      });
+
+      children.push(makeTable(
+        ['Outlet', 'Item', 'Rule', 'BOM Growth', 'Metric Growth', 'Ratio'],
+        bomRows,
+      ));
+      children.push(paragraph(
+        `Catatan: tabel menampilkan ${bomFindings.length} record teratas (diurutkan berdasarkan prioritas rule). ` +
+        `Ratio hanya ditampilkan ketika BOM growth dan metric growth keduanya positif (kasus disproportionate).`,
+      ));
+    }
+
+    children.push(divider());
 
     }
     if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
-    if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
-      children.push(heading('11. ANALISIS PERUBAHAN ITEM (Variance)'));
-    children.push(paragraph('Item yang memburuk (magnitude deviasi naik) dan membaik (magnitude deviasi turun) dibanding periode sebelumnya. Menampilkan Nominal Deviasi actual (bukan abs). Angka negatif = LOSS/rugi (merah).'));
-      if ((va.topWorsened || []).length > 0) {
-        children.push(paragraph('11.1 Item dengan Perubahan Terbesar (Selisih Terbesar)', true));
-        // Rev 6: Display actual signed nominalDeviasi (not abs), rename Delta → Selisih
-        // Use dynamic period labels (currLabel / prevLabel) instead of Current/Previous
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topWorsened.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
-        children.push(paragraph(''));
-      }
-      if ((va.topImproved || []).length > 0) {
-        children.push(paragraph('11.2 Item dengan Perubahan Terkecil (Selisih Terkecil)', true));
-        children.push(makeTable(['Item', 'Resto', `Nominal Deviasi ${currLabel}`, `Nominal Deviasi ${prevLabel}`, 'Selisih'], va.topImproved.map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
-      }
+    if ((va.topWorsened || []).length > 0) {
+      children.push(heading('6. Perubahan Item (Selisih Terbesar)'));
+      children.push(makeTable(['Item', 'Resto', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
+        va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
       children.push(divider());
     }
 
     }
-    if (hasSection('consistency')) {
-    // Section 13: Top Items by Deviasi Rank (national ranking — replaced Consistency)
-    const dr = data.topDeviasiRank || [];
-    if (dr.length > 0) {
-      children.push(heading('13. RANKING ITEM NASIONAL (Deviasi)'));
-      children.push(paragraph('Ranking item per resto. Rank Item Nasional = sort by abs(Nominal Deviasi). Rank BOM = sort by abs(Qty BOM). Semua nilai signed (negatif = LOSS/rugi, merah). %LS to BOM = Qty Loss/Surplus / Qty BOM (signed). AVG Deviasi By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.'));
-      children.push(makeTable([
-        'Item', 'Rank Nasional', 'Rank BOM', 'Resto', 'PIC', 'Satuan',
-        'QTY Deviasi', 'QTY Waste', 'QTY Loss/Surplus', '%LS to BOM', 'QTY BOM',
-        'AVG Deviasi By BOM', 'Nominal Deviasi'
-      ],
-        dr.map((it) => [
-          it.itemName,
-          String(it.rankNominal),
-          String(it.rankBom),
-          it.outletCode,
-          it.pic || '—',
-          it.satuan || '—',
-          fmtNum(it.qtyDeviasi),
-          fmtNum(it.qtyWaste),
-          fmtNum(it.qtyLossSurplus),
-          it.pctLossSurplusToBom != null ? fmtPct(it.pctLossSurplusToBom, false) : '—',
-          fmtNum(it.qtyBom),
-          it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—',
-          fmtIDR(it.nominalDeviasi),
-        ])));
-      children.push(divider());
-    }
-
-    }
+    // Section 13 (RANKING ITEM NASIONAL) removed per user request
     if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
-      children.push(heading('14. TREND ANTAR PERIODE'));
-    children.push(paragraph('Perbandingan periode yang sama di bulan-bulan sebelumnya.'));
-      children.push(makeTable(['Period', 'Penjualan', 'Nominal Deviasi', '% Deviasi To BOM'],
-        data.trend.map((t) => [t.weekLabel, fmtIDR(t.sales), fmtIDR(t.nominal), fmtPct(t.devBom, false)])));
+      children.push(heading('7. Trend Antar Periode'));
+      // Hapus Penjualan, tambah % Nominal Deviasi to Sales = |nominal| / sales * 100
+      children.push(makeTable(['Period', 'Nominal Deviasi', '% Deviasi To BOM', '% Nominal to Sales'],
+        data.trend.map((t) => [
+          t.weekLabel,
+          fmtIDR(t.nominal),
+          fmtPct(t.devBom, false),
+          t.sales && t.sales > 0 ? fmtPct(Math.abs(t.nominal) / t.sales, false) : '—',
+        ])));
       children.push(divider());
     }
 
@@ -792,114 +1035,29 @@ export async function GET(req: NextRequest) {
     // NEW SECTIONS — additional analyses
     // ============================================================
 
-    // 19. Historical Anomaly Analysis — items with z-score > threshold (already computed: historicalAnalysis)
-    if (hasSection('historical')) {
-      const ha = data.growthComparison?.historicalAnalysis;
-      if (ha && ha.criticalItems && ha.criticalItems.length > 0) {
-        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
-        children.push(paragraph('Item yang deviation-nya abnormal dibanding perilaku historical (z-score > 1.0). Z-score > 2.0 = sangat abnormal. Historical Avg = rata-rata Dev/BOM periode sama di bulan-bulan sebelumnya.'));
-        children.push(makeTable(['#', 'Item', 'Resto', 'Area', 'Current Dev/BOM', 'Historical Avg', 'Z-Score', 'Abs Nominal Deviasi'],
-          ha.criticalItems.slice(0, 15).map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtPct(it.currentDevBom, false), fmtPct(it.historicalAvg, false), it.zScore != null ? it.zScore.toFixed(2) : '—', fmtIDR(it.absNominal)])));
-        children.push(divider());
-      } else {
-        children.push(heading('19. HISTORICAL ANOMALY ANALYSIS'));
-        children.push(paragraph('✅ Tidak ada item dengan anomali historical signifikan pada periode ini (z-score semua ≤ 1.0).'));
-        children.push(divider());
-      }
-    }
+    // Sections 19 (HISTORICAL ANOMALY), 2 (RESTO PRIORITAS), 14 (ITEM CROSS-OUTLET) removed per user request
 
-    // ============================================================
-    // NEW SECTIONS — fitur terbaru
-    // ============================================================
-
-    // 2. Resto Prioritas Analisa — outlet health ranking by priority score
-    if (hasSection('restoPriority')) {
-      // PRE-EXISTING LATENT BUG: queryOutletHealthRanking returns OutletHealthRow
-      // which has raw SQL fields (outletCode, area, absNominal, etc.) but does NOT
-      // compute healthScore / abnormal / warning / normal / devBom. Those columns
-      // were previously rendered as `undefined`/`String(undefined)`/`—` at runtime
-      // because `(it: any)` hid the missing fields. We preserve that exact runtime
-      // behavior by widening the row type with optional phantom fields (better fix:
-      // wire up the post-processing — out of scope for this type-safety pass).
-      const hr: Array<typeof outletHealthRanking[number] & {
-        healthScore?: number;
-        abnormal?: number;
-        warning?: number;
-        normal?: number;
-        devBom?: number | null;
-      }> = outletHealthRanking || [];
-      if (hr.length > 0) {
-        children.push(heading('2. RESTO PRIORITAS ANALISA'));
-        children.push(paragraph('Top resto by priority score. Score = weighted combination of Dev/BOM, Residual, Loss/Sales, Abnormal rate. Level: TINGGI (≥55), SEDANG (≥30), RENDAH (<30).'));
-        children.push(makeTable(['#', 'Outlet', 'Area', 'Level', 'Health Score', 'Abnormal', 'Warning', 'Normal', 'Abs Nominal', 'Dev/BOM'],
-          hr.slice(0, 15).map((it, i) => [
-            String(i + 1),
-            `${it.outletCode} · ${it.outletName}`,
-            it.area,
-            it.healthScore != null && it.healthScore >= 55 ? 'TINGGI' : it.healthScore != null && it.healthScore >= 30 ? 'SEDANG' : 'RENDAH',
-            String(it.healthScore),
-            String(it.abnormal),
-            String(it.warning),
-            String(it.normal),
-            fmtIDR(it.absNominal),
-            fmtPct(it.devBom, false),
-          ])));
-        children.push(divider());
-      }
-    }
-
-    // 14. Item Cross-Outlet Analysis — top item across all outlets + z-score
-    if (hasSection('itemCrossOutlet')) {
-      const co = topItemForCrossOutlet || [];
-      if (co.length > 0) {
-        const itemName = topNominal[0]?.itemName || 'Item';
-        children.push(heading('14. ITEM CROSS-OUTLET ANALYSIS'));
-        children.push(paragraph(`Analisa "${itemName}" di ${co.length} outlet. Z-Score = (outlet Dev/BOM - peer mean) / stdDev. |Z|>2 = ABNORMAL (outlier), |Z|>1 = ELEVATED.`));
-
-        // Compute z-scores
-        const validRows = co.filter((r) => r.devBom != null);
-        const values = validRows.map((r) => (r.devBom as number));
-        const mean = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
-        const variance = values.length > 1 ? values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1) : 0;
-        const stdDev = Math.sqrt(variance);
-
-        children.push(makeTable(['#', 'Outlet', 'Area', 'Dev/BOM', 'Z-Score', 'Level', 'Nominal Deviasi', 'Direction'],
-          co.slice(0, 20).map((it, i) => {
-            const z = stdDev > 0 && it.devBom != null ? (it.devBom - mean) / stdDev : null;
-            const level = z != null ? (Math.abs(z) > 2 ? 'ABNORMAL' : Math.abs(z) > 1 ? 'ELEVATED' : 'NORMAL') : '—';
-            return [
-              String(i + 1),
-              `${it.outletCode} · ${it.outletName}`,
-              it.area,
-              it.devBom != null ? fmtPct(it.devBom, false) : '—',
-              z != null ? z.toFixed(2) : '—',
-              level,
-              fmtIDR(it.nominalDeviasi),
-              it.direction || '—',
-            ];
-          })));
-        children.push(divider());
-      }
-    }
-
-    // Footer — simple closing with date only (no technical metadata)
+    // Footer — simple closing (no date per user request)
     children.push(new Paragraph({ text: '', spacing: { before: 400 } }));
     children.push(new Paragraph({
       children: [new TextRun({ text: '', size: 8 })],
       spacing: { before: 60, after: 60 },
       border: { top: { style: BorderStyle.SINGLE, size: 12, color: COLOR.PRIMARY, space: 2 } },
     }));
-    children.push(new Paragraph({ children: [new TextRun({ text: `Dibuat: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, size: 16, color: COLOR.MUTED, italics: true })], alignment: AlignmentType.CENTER }));
 
     // Generate document — creator metadata neutral (no AI/platform mention)
     const doc = new Document({
       creator: 'Inventory Analyst',
-      title: `Laporan Analisis ${data.period.weekLabel} ${data.period.monthLabel}`,
+      title: `Ringkasan Laporan Deviasi ${currLabel}`,
       sections: [{ properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } }, children }],
     });
 
     const buffer = await Packer.toBuffer(doc);
-    const fileName = `Laporan_Analisis_${(data.period.monthLabel || 'unknown').replace(/\s+/g, '_')}_${data.period.weekLabel || ''}.docx`;
+    const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_')}.docx`;
+
+    // PERF: Cache the docx buffer for 5 min — next request with same params gets instant response
+    // awaitWrite=true because export buffer is large (91KB) — need to ensure write completes
+    await setCached(cacheKey, { buffer: Array.from(buffer), fileName }, true);
 
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,

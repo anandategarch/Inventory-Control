@@ -86,10 +86,10 @@ export function computeZScore(input: HistoricalInput): HistoricalResult {
     ? Math.sqrt(absValues.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1))
     : 0;
 
-  // Compute zScore
+  // Compute zScore — ZS-01 FIX: use Math.abs for non-negative magnitude per PRD §5.2
   let zScore: number | null = null;
   if (currentValue != null && stdDev > 0) {
-    zScore = (Math.abs(currentValue) - mean) / stdDev;
+    zScore = Math.abs((Math.abs(currentValue) - mean) / stdDev);
   }
 
   // Determine trend (current magnitude vs historical mean)
@@ -154,7 +154,8 @@ export function calcZScoreFromStats(
   stdDev: number,
 ): number | null {
   if (value == null || stdDev === 0) return null;
-  return (Math.abs(value) - mean) / stdDev;
+  // ZS-01 FIX: non-negative magnitude per PRD §5.2
+  return Math.abs((Math.abs(value) - mean) / stdDev);
 }
 
 /**

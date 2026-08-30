@@ -150,7 +150,7 @@ export async function GET(req: NextRequest) {
     );
 
     const result = { success: true, recommendations };
-    setCached(earlyCacheKey, result);
+    await setCached(earlyCacheKey, result, true);
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[recommendations] error", { error: e });
