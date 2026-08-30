@@ -9,7 +9,6 @@
 //  Now all routes call: const picOutletCodes = await resolvePICOutletCodes(pic);
 // ============================================================
 import { db } from '@/lib/db';
-import { withStatementTimeout } from '@/lib/queries/shared';
 
 /**
  * Resolve a PIC name to their outlet codes.
@@ -23,11 +22,11 @@ export async function resolvePICOutletCodes(
 ): Promise<string[] | null> {
   if (!pic) return null;
 
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
-  // so a hung query is killed at 30s rather than blocking the request.
-  const picRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string }>>`
+  // PERF-API-02: removed withStatementTimeout — OutletPIC table is 341 rows,
+  // query is sub-millisecond. Wrapper added 3 round-trips (BEGIN+SET+COMMIT).
+  const picRows = await db.$queryRaw<Array<{ outletCode: string }>>`
     SELECT "outletCode" FROM "OutletPIC" WHERE LOWER(pic) = LOWER(${pic})
-  `);
+  `;
   const codes = picRows.map((r) => r.outletCode);
 
   if (codes.length === 0) {

@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { buildCacheKey, getCached, getInflight, setInflight } from '@/lib/aggregation-cache';
+import { buildCacheKey, getCachedWithMeta, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 
@@ -201,12 +201,23 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
     }
   }
 
-  const cached = await getCached<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
-  if (cached && typeof cached === 'object' && 'success' in cached) {
-    // Cache hit — return immediately with cached flag
-    const cachedResult = cached as Record<string, unknown>;
+  // PERF-CACHE-01 (SWR): Use getCachedWithMeta instead of getCached.
+  // getCached deletes expired rows → first user after TTL pays full 21s recompute.
+  // getCachedWithMeta returns stale data → user gets response in <100ms.
+  // Background: delete the stale entry so next request recomputes fresh data.
+  const cachedWithMeta = await getCachedWithMeta<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
+  if (cachedWithMeta && cachedWithMeta.data && typeof cachedWithMeta.data === 'object' && 'success' in cachedWithMeta.data) {
+    // Cache hit (fresh or stale) — return immediately
+    const cachedResult = cachedWithMeta.data as Record<string, unknown>;
     cachedResult.cached = true;
     cachedResult.durationMs = Date.now() - startedAt;
+    if (cachedWithMeta.stale) {
+      // SWR: serve stale data + flag for client + background refresh
+      cachedResult.stale = true;
+      // Fire-and-forget: delete stale entry so next request recomputes fresh
+      // (can't run full pipeline in background due to multi-stage architecture)
+      void db.aggregationCache.delete({ where: { cacheKey } }).catch(() => {});
+    }
     return { kind: 'response', response: NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS }) };
   }
 
