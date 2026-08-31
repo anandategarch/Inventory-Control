@@ -59,6 +59,14 @@ function fmtCompactSigned(n: number): string {
   return `${sign}${abs.toFixed(0)}`;
 }
 
+// FIX (USER-REQ): full signed number with thousand separators — no abbreviation.
+// Used in cell content + flip tooltips to show complete QTY (e.g. +10,000 instead of +10K).
+function fmtFullSigned(n: number): string {
+  if (n === 0) return '0';
+  const sign = n < 0 ? '-' : '+';
+  return `${sign}${Math.abs(n).toLocaleString('id-ID', { maximumFractionDigits: 1 })}`;
+}
+
 // Numerical week from "WEEK N" label — used to sort rows W1 → W4 (ascending).
 function weekNum(weekLabel: string): number {
   const m = /\d+/.exec(weekLabel);
@@ -208,7 +216,7 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: F
                         ? pairs.map((f) => {
                             const otherLabel = f.period1Key === pk ? f.period2Label : f.period1Label;
                             const otherQty = f.period1Key === pk ? f.qtyP2 : f.qtyP1;
-                            return `🔀 Flip vs ${otherLabel}: ${fmtCompactSigned(otherQty)}${unitLabel ? ` ${unitLabel}` : ''} (${formatDisparity(f)} disparity, ${f.category})`;
+                            return `🔀 Flip vs ${otherLabel}: ${fmtFullSigned(otherQty)}${unitLabel ? ` ${unitLabel}` : ''} (${formatDisparity(f)} disparity, ${f.category})`;
                           }).join('\n')
                         : null;
                       return (
@@ -221,7 +229,7 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: F
                                   : ''
                               }`}
                             >
-                              {fmtCompactSigned(p.qtyDeviasiSigned)}
+                              {fmtFullSigned(p.qtyDeviasiSigned)}
                             </td>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="text-[11px] p-2.5 max-w-xs">

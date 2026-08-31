@@ -378,18 +378,18 @@ export const FlipRanking = memo(function FlipRanking() {
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">P1 (signed):</span>
                                   <span className={`font-medium tabular-nums ${topFlip.qtyP1 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                    {fmtNum(topFlip.qtyP1)}
+                                    {fmtNum(topFlip.qtyP1, '', false)}
                                   </span>
                                 </div>
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">P2 (signed):</span>
                                   <span className={`font-medium tabular-nums ${topFlip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                    {fmtNum(topFlip.qtyP2)}
+                                    {fmtNum(topFlip.qtyP2, '', false)}
                                   </span>
                                 </div>
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">Net (P1+P2):</span>
-                                  <span className="font-medium tabular-nums">{fmtNum(topFlip.net)}</span>
+                                  <span className="font-medium tabular-nums">{fmtNum(topFlip.net, '', false)}</span>
                                 </div>
                                 <div className="flex justify-between gap-4">
                                   <span className="text-muted-foreground">Disparity:</span>
