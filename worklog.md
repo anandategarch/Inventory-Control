@@ -38410,3 +38410,128 @@ Stage Summary:
 - Lint: 0 errors (385 warnings, same as baseline)
 - TypeScript: 0 errors
 - Tests: 9/9 top-items tests pass
+
+---
+Task ID: 3-a
+Agent: useAnalysis.ts Splitter
+Task: Split src/hooks/useAnalysis.ts (839 LOC) into folder with 4 hooks + barrel
+
+Work Log:
+- Read worklog.md (last ~250 lines) — prior splitters (1-a Charts.tsx, 1-b ParetoDashboard, 1-c pareto.ts, 1-d top-items.ts, 2-a evaluator.ts, 2-b rootCauseEngine.ts) all confirmed folder+index.ts barrel pattern with `export * from './sub'` re-exports. TypeScript moduleResolution "bundler" transparently resolves `@/hooks/useAnalysis` → `useAnalysis/index.ts`.
+- Read useAnalysis.ts IN FULL (839 LOC) — confirmed structure: ~330 LOC of types (L14-345) + fetchAnalysis helper (L363-408) + AnalysisParams type (L415-425) + buildAnalysisSearchParams/buildAnalysisQueryKey/ANALYSIS_STALE_TIME/ANALYSIS_GC_TIME + useAnalysis hook (L462-502) + prefetchAnalysis (L518-530) + usePrefetchAnalysis (L537-543) + prefetchHeatmap (L552-573) + SourceFileInfo/StatusData types (L578-602) + useStatus (L604-627) + DrilldownRecord/DrilldownData types (L632-686) + useDrilldown (L688-730) + ItemTrendPeriod/ItemTrendData/ItemTrendMetric/ItemTrendParams types (L748-798) + useItemTrend (L800-839).
+- Read pareto/index.ts barrel precedent (30 LOC) — confirmed `export * from './types'; './X'; './Y'` pattern + header comment block.
+- Identified exports: 4 hooks (useAnalysis, useStatus, useDrilldown, useItemTrend) + 2 imperative prefetch helpers (prefetchAnalysis, prefetchHeatmap) + 1 prefetch hook (usePrefetchAnalysis) + 2 query-key builders/constants (buildAnalysisQueryKey, ANALYSIS_STALE_TIME, ANALYSIS_GC_TIME) + 1 internal fetcher (fetchAnalysis) + 28 TypeScript types/interfaces (TopItemByNominal, TopItemByDevBom, TopOutlet, TopOutletBySales, TopItemByCategory, DeviasiRankItem, MultiPeriodComparisonRow, AreaAnalysis, VarianceItem, OutletHealthRanking, CostImpact, ItemConsistencyResult, NetCostTrendPoint, HistoricalAnalysisResult, BomCorrelationFinding, BomCorrelationCounts, AnalysisData, GrowthDriver, GrowthDriverMetric, DeviationDriver, DeviationDriverCategory, AnalysisParams, SourceFileInfo, StatusData, DrilldownRecord, DrilldownData, ItemTrendPeriod, ItemTrendData, ItemTrendMetric, ItemTrendParams).
+- Grep'd src/ for `from "@/hooks/useAnalysis"` — found 31 caller files (slightly more than the ~27 estimated). All preserve original import paths via the new barrel. Did NOT modify any caller file.
+- Grouped exports into 7 files (8 including barrel):
+    * types.ts (380 LOC) — All shared analysis-related interfaces + AnalysisParams. Imports ExecutiveSummary, TrendProjection, PatternDetection. No 'use client' (pure types, tree-shakeable).
+    * fetchAnalysis.ts (57 LOC) — fetchAnalysis(params: URLSearchParams) helper. 'use client'. Imports AnalysisData from './types'.
+    * prefetchHeatmap.ts (36 LOC) — prefetchHeatmap(queryClient, params) helper. 'use client'. Imports QueryClient type only.
+    * useAnalysis.ts (140 LOC) — main useAnalysis hook + buildAnalysisSearchParams (private) + buildAnalysisQueryKey (exported) + ANALYSIS_STALE_TIME/ANALYSIS_GC_TIME constants + prefetchAnalysis + usePrefetchAnalysis. 'use client'. Imports types from './types', fetchAnalysis from './fetchAnalysis', React useCallback, TanStack Query useQuery/keepPreviousData/useQueryClient/QueryClient.
+    * useStatus.ts (64 LOC) — SourceFileInfo + StatusData types + useStatus hook (self-contained, defines types next to hook per proposed structure). 'use client'. Imports TanStack useQuery only.
+    * useDrilldown.ts (113 LOC) — DrilldownRecord + DrilldownData types + useDrilldown hook. 'use client'. Imports TanStack useQuery + keepPreviousData.
+    * useItemTrend.ts (115 LOC) — ItemTrendPeriod + ItemTrendData + ItemTrendMetric + ItemTrendParams types + useItemTrend hook. 'use client'. Imports TanStack useQuery + keepPreviousData.
+    * index.ts (46 LOC) — barrel: `export * from './types'; './fetchAnalysis'; './prefetchHeatmap'; './useAnalysis'; './useStatus'; './useDrilldown'; './useItemTrend'`. Header comment documents source split provenance.
+- Each .ts file that uses React hooks or TanStack Query has its own `'use client'` directive (preserves client-only behavior). types.ts has no directive (pure types, server-safe).
+- All comments preserved verbatim (BUG-FE-6, BUG-EDGE-11, 504-RETRY, BUG6-POOL, AUDIT7-FE-4/5, AUDIT8-ROLLBACK-1, AUDIT-4, FIX-BOM-UI CONFIG-02, PERF-CACHE-09 SWR, PERF-FE, PERF-OPT, LOADING-TIMEOUT, FLOW3-4, FLOW3-5, etc.). All logic preserved exactly — pure file relocation, no behavior changes.
+- Deleted old src/hooks/useAnalysis.ts (839 LOC). TypeScript moduleResolution "bundler" resolves `@/hooks/useAnalysis` to `useAnalysis/index.ts` automatically — all 31 caller files unchanged.
+- Ran `bun run lint` — result: PASS. 0 errors, 389 warnings (all pre-existing in tests/, NONE in src/hooks/useAnalysis/ files — verified by `grep "src/hooks/useAnalysis" /tmp/lint_output.txt` returning empty).
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors). Confirms all 31 callers still resolve via barrel and all internal cross-file imports are valid.
+- Verified folder structure: 8 files in src/hooks/useAnalysis/ (fetchAnalysis.ts 57, index.ts 46, prefetchHeatmap.ts 36, types.ts 380, useAnalysis.ts 140, useDrilldown.ts 113, useItemTrend.ts 115, useStatus.ts 64 — total 951 LOC, +112 LOC vs original 839 due to per-file headers, import lists, and prop-type signatures).
+
+Stage Summary:
+- useAnalysis.ts (839 LOC) → 8 files (largest = types.ts at 380 LOC, down from 839 single file — 55% reduction in max-file-LOC for logic files; main useAnalysis hook file is only 140 LOC).
+- All imports backward-compatible via barrel — 31 caller files in src/ (FilterBar, page.tsx, DrillDownDrawer, SourceDataModal, ItemDeepDive, ItemTrendTab + sub-files, DashboardHeader/Footer, all 4 Charts/ components, BomCorrelationCard, InsightsPanel, TopItems, RestoAnalysis + resto-analysis/*, AdvancedAnalysis, AnalysisCards, ExecutiveSummary, HistoricalZScoreCard, 4 dashboard tabs, useDashboardEffects, useDashboardActions) UNCHANGED.
+- Lint: PASS (0 errors, 389 pre-existing warnings in tests/, 0 new warnings in src/hooks/useAnalysis/)
+- tsc: PASS (0 errors, exit code 0)
+- No caller files modified (zero-diff backward-compatibility verified)
+
+---
+Task ID: 3-b
+Agent: post-process.ts Splitter
+Task: Split src/app/api/analysis/services/post-process.ts (838 LOC) into sub-files
+
+Work Log:
+- Read worklog.md (last ~250 lines — Tasks 1-a/1-b/1-c/1-d, 2-a, 2-b established flat-sibling barrel pattern via `export * from './sub'`)
+- Read post-process.ts in full (838 LOC). File's own header comment (lines 1-21) already documented the intended split into 7 sub-functions.
+- Examined sibling services for naming convention: `trend-builder.ts`, `deviation-drivers.ts`, `fetch-records.ts`, `run-queries.ts`, `validate-and-resolve.ts`, `exec-summary.ts`, `assemble-response.ts` — all flat single-file modules with hyphenated names. Decided to mirror that pattern (flat siblings `post-process-<concern>.ts`) instead of the folder+barrel structure.
+- Identified 7 exported sub-functions + 1 main orchestrator + 4 interfaces (ProcessedData, BomCorrelationFinding, BomCorrelationCounts, SeverityMaps):
+    1. evaluateAndMergeFlags       (lines 346-432, ~87 LOC) — Sub-step 1: rule flag evaluation + merge
+    2. buildGrowthMetrics          (lines 437-488, ~52 LOC) — Sub-step 2: growth metrics + DQ counts + trend
+    3. buildOutletHealthRanking    (lines 498-556, ~59 LOC) — Sub-step 3: Metric Engine health score per outlet
+    4. buildHistoricalAnalysis     (lines 563-630, ~68 LOC) — Sub-step 4: zScore-ranked critical items (top 200)
+    5. buildTrendProjection        (lines 637-657, ~21 LOC) — Sub-step 5: linear projection of next period
+    6. buildPatterns               (lines 663-689, ~27 LOC) — Sub-step 6: systemic/area/network classification
+    7. mapTopOutlets               (lines 694-712, ~19 LOC) — Sub-step 7: top outlets (deviasi) + bySales
+    + BOM correlation helpers: fetchBomCorrelationDetails (lines 137-216, ~80 LOC) + buildBomCorrelationFindings (lines 226-289, ~64 LOC) + private getMetricGrowthForRule
+    + postProcess orchestrator (lines 719-838, ~120 LOC) — kept inline glue: growthComparisonWithHist, areaAnalysis mapping, costImpact construction, itemConsistencyAnalysis
+- Grep'd src/ for callers of `post-process` exports: 2 direct importers found
+    1. src/app/api/analysis/route.ts:27 — `import { postProcess } from './services/post-process'`
+    2. src/app/api/analysis/services/assemble-response.ts:16 — `import type { ProcessedData } from './post-process'`
+    (BomCorrelationFinding/BomCorrelationCounts interfaces in src/hooks/useAnalysis.ts are LOCAL DEFINITIONS that "mirror" the post-process.ts versions — they're NOT imports. BomCorrelationCard.tsx imports them via `@/hooks/useAnalysis`, not from post-process.)
+- Recorded lint baseline: 0 errors, 385 warnings.
+- Created 9 new flat-sibling files (all in src/app/api/analysis/services/):
+    * post-process-types.ts              (118 LOC) — ProcessedData, BomCorrelationFinding, BomCorrelationCounts, SeverityMaps (SeverityMaps previously private/internal — now shared between flags + health-ranking sub-files). BomDetailRow stays private to bom-correlation.ts (only used inside that file).
+    * post-process-bom-correlation.ts    (219 LOC) — getMetricGrowthForRule (private) + BomDetailRow (private interface) + fetchBomCorrelationDetails + buildBomCorrelationFindings. Contains the inline SQL template literal (~70 LOC) — actual JS logic ~149 LOC.
+    * post-process-flags.ts              (110 LOC) — evaluateAndMergeFlags
+    * post-process-growth.ts             (73 LOC)  — buildGrowthMetrics
+    * post-process-health-ranking.ts     (95 LOC)  — buildOutletHealthRanking
+    * post-process-historical.ts         (94 LOC)  — buildHistoricalAnalysis
+    * post-process-trend-projection.ts   (41 LOC)  — buildTrendProjection
+    * post-process-patterns.ts           (48 LOC)  — buildPatterns
+    * post-process-top-outlets.ts        (33 LOC)  — mapTopOutlets
+- Rewrote post-process.ts to 177 LOC: 9 `export * from './post-process-<X>'` barrel re-exports + imports of the 8 sub-functions + main `postProcess` orchestrator function (delegates to sub-functions in order, preserves the PERF-API-04 Promise.all parallelism for BOM correlation + historical analysis, preserves all inline glue logic verbatim).
+- Each new file has its own complete import list — no implicit cross-file reliance. Types-only imports use `import type` (e.g. `import type { buildTrend, buildNetCostTrend } from './trend-builder'` in types.ts works fine for `ReturnType<typeof buildTrend>` in type position; verbatimModuleSyntax is NOT enabled in tsconfig.json).
+- No circular dependencies: types.ts depends only on external types; sub-function files depend on types.ts + sibling services (fetch-records, run-queries, trend-builder, deviation-drivers) but NOT on each other; post-process.ts orchestrator depends on all 8 sub-files.
+- All TypeScript types preserved exactly — ProcessedData, BomCorrelationFinding, BomCorrelationCounts, SeverityMaps all retain the same field signatures; all sub-function param/return types identical.
+- All SQL preserved verbatim — fetchBomCorrelationDetails' LATERAL JOIN template literal copied byte-for-byte.
+- All comments preserved verbatim (BUG tags, PERF tags, FIX tags, phase markers like Phase B-1, Phase 3, FIX-BOM-UI, PERF-FASE2-BE03, PERF-API-04, etc.).
+- Ran `bun run lint` — result: PASS. 0 errors. 0 warnings in any post-process*.ts file (verified via `bunx eslint src/app/api/analysis/services/post-process*.ts` — empty output). Total project warnings went from 385 → 389; the +4 are in src/components/dashboard/tabs/ItemTrendTab/ItemTrendSearchBar.tsx (3 warnings) + ItemTrendTable.tsx (1 warning) — files created by a CONCURRENT parallel task (git status confirms ItemTrendTab/ folder is untracked, not from this split).
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors).
+- Verified both callers still resolve:
+    * `src/app/api/analysis/route.ts:27` `import { postProcess } from './services/post-process'` → resolves to `postProcess` exported from new orchestrator ✓
+    * `src/app/api/analysis/services/assemble-response.ts:16` `import type { ProcessedData } from './post-process'` → resolves to `ProcessedData` re-exported via `export * from './post-process-types'` ✓
+
+Stage Summary:
+- post-process.ts (838 LOC, single file) → 10 files (1008 LOC total — +170 LOC due to per-file header comments, complete import lists, and the barrel `export *` statements; expected overhead when splitting).
+- Largest single file: post-process-bom-correlation.ts (219 LOC — contains the inline 70-LOC SQL template literal; actual JS logic ~149 LOC, within the <150 LOC target stated in the file's header). Next largest: post-process.ts orchestrator (177 LOC — includes the ~110-LOC orchestrator function with inline glue for growthComparisonWithHist/areaAnalysis/costImpact/itemConsistencyAnalysis, plus 9 barrel `export *` statements + 9 import statements). All 7 named sub-functions are now under 150 LOC of actual logic.
+- ProcessedData interface still exported from post-process.ts (via `export * from './post-process-types'`) — assemble-response.ts caller unchanged.
+- postProcess function still exported from post-process.ts (defined inline in the orchestrator) — route.ts caller unchanged.
+- All other public exports (evaluateAndMergeFlags, buildGrowthMetrics, buildOutletHealthRanking, buildHistoricalAnalysis, buildTrendProjection, buildPatterns, mapTopOutlets, buildBomCorrelationFindings, fetchBomCorrelationDetails, BomCorrelationFinding, BomCorrelationCounts) also re-exported via the barrel — fully backward-compatible for any future direct callers.
+- SeverityMaps interface was previously private/internal (not exported) — now exported from post-process-types.ts because it's shared between evaluateAndMergeFlags (producer) and buildOutletHealthRanking (consumer). This is a necessary API expansion noted as part of the split (mirrors Task 1-c's similar expansion where 4 previously-private symbols became exported via the barrel). SeverityMaps is still re-exported through post-process.ts so it's accessible from the original path too — no caller impact.
+- Lint: 0 errors (0 new warnings introduced by this split; +4 in unrelated ItemTrendTab/ files from concurrent task).
+- TypeScript: 0 errors.
+- No caller files outside src/app/api/analysis/services/ were modified.
+
+---
+Task ID: 3-c
+Agent: ItemTrendTab.tsx Splitter
+Task: Split src/components/dashboard/tabs/ItemTrendTab.tsx (657 LOC) into folder with helpers + 2 sub-components + barrel
+
+Work Log:
+- Read worklog.md (last ~250 lines — Tasks 1-a/1-b/1-c/1-d/2-a/2-b established barrel pattern: folder + index.ts/tsx + per-file helpers + sub-components; ParetoDashboard barrel precedent uses `export { X } from './X'` + `export type { ... } from './types'` pattern)
+- Read ItemTrendTab.tsx in full (657 LOC) — identified 7 distinct sections: (1) header comment + imports, (2) zScoreColor/zScoreStatus helpers, (3) MetricOption interface + METRICS constant + AutocompleteResult interface, (4) SortKey/SortDir types + SortIcon component + periodSortKey/periodShortLabel helpers, (5) ItemTrendTabImpl main component with state hooks + 2 TanStack Queries + 4 useMemo + useCallback + summary IIFE, (6) inline JSX with header+FormulaInfo+3 badges / ItemTrendSearchBar autocomplete / metric toggle / selected item badge+summary / empty state / error state / loading state / no-data state / chart section / data table, (7) `export const ItemTrendTab = memo(ItemTrendTabImpl)` named export
+- Read ParetoDashboard/index.ts barrel (37 LOC) as precedent — uses `export { X } from './X'` + `export type { ... }` + named constants re-export pattern
+- Grep'd src/ for `from.*ItemTrendTab` — found 1 caller: src/app/page.tsx:39 `import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab'` (named import — barrel must preserve named export shape)
+- Recorded lint baseline: 0 errors, 385 warnings (none in original ItemTrendTab.tsx — file was warning-free)
+- Recorded tsc baseline: 0 errors
+- Created src/components/dashboard/tabs/ItemTrendTab/ folder with 6 files (820 LOC total, +163 LOC overhead from per-file headers + import lists + prop type signatures — matches ParetoDashboard's +167 LOC overhead precedent):
+  * types.ts (48 LOC) — MetricOption, AutocompleteResult, SortKey, SortDir + METRICS constant array. Pure types/constants — no 'use client', no React imports, fully tree-shakeable. Imports `type { ItemTrendMetric, ItemTrendPeriod }` from '@/hooks/useAnalysis' (resolves to useAnalysis/index.ts via parallel agent's barrel).
+  * zScoreHelpers.ts (32 LOC) — zScoreColor + zScoreStatus helpers verbatim from original. Pure functions, no 'use client'. Added header comment: `// TODO: deduplicate with HistoricalZScoreCard — extract to lib/zScoreHelpers.ts` (per task instructions — HistoricalZScoreCard.tsx NOT modified to avoid parallel-work conflict).
+  * periodHelpers.ts (24 LOC) — periodSortKey (chronological sort key) + periodShortLabel (X-axis "Jun W4" formatter). Pure functions. Imports `type { ItemTrendPeriod }` from '@/hooks/useAnalysis'.
+  * ItemTrendSearchBar.tsx (131 LOC) — autocomplete search input + dropdown extracted from original lines 346-422. Props: { query, setQuery, showDropdown, setShowDropdown, deferredQuery, selectedItem, setSelectedItem, acResults, acLoading, monthLabel, currentWeek, inputRef, dropdownRef }. Uses `type { RefObject }` from 'react' for ref prop types. Has 'use client' directive (presentational component receiving refs). Uses fmtIDR from '@/lib/format'.
+  * ItemTrendTable.tsx (184 LOC) — sortable data table extracted from original lines 516-649. Props: { sortedRows, sortKey, sortDir, toggleSort, metric }. Contains inline SortIcon component (used only here). Imports zScoreColor/zScoreStatus from './zScoreHelpers', periodShortLabel from './periodHelpers', METRICS+SortKey+SortDir from './types', fmtIDR/fmtNum from '@/lib/format'. Has 'use client' directive.
+  * index.tsx (401 LOC) — main orchestrator + barrel. Imports ItemTrendSearchBar + ItemTrendTable + types + periodHelpers. Re-exports sub-components, helpers, and types via `export { ... } from './X'` and `export type { ... } from './types'`. Lazy-loads ItemTrendLineChart via next/dynamic (path '../ItemTrendLineChart' — adjusted for new folder depth). Holds all state (useDashboard, useState × 6, useDeferredValue, useRef × 2, useEffect for outside-click, useQuery for autocomplete, useItemTrend, useMemo × 4, useCallback) and renders the full JSX tree including header+FormulaInfo+badges / search bar / metric toggle / selected item summary / empty+error+loading+no-data states / chart section / table via sub-component. Exports `ItemTrendTab = memo(ItemTrendTabImpl)` named export (preserves caller import shape).
+- Deleted old src/components/dashboard/tabs/ItemTrendTab.tsx (657 LOC). Folder replaces file — TypeScript moduleResolution "bundler" transparently resolves `@/components/dashboard/tabs/ItemTrendTab` to `ItemTrendTab/index.tsx`, so caller in src/app/page.tsx is UNCHANGED.
+- Ran `bun run lint` — result: PASS (0 errors, 389 warnings — 4 new warnings all of the same pattern as ParetoDashboard precedent: `'q'/'b'/'item'/'key' is defined but never used` in prop type function signatures like `setQuery: (q: string) => void`. These are pure type-signature documentation names; TypeScript requires parameter names in function type signatures but ESLint flags them as unused. ParetoDashboard's GeneralizedNested.tsx:32 + NestedItemToOutlet.tsx:24 have the IDENTICAL pattern (`toggleGen: (name: string) => void` etc.) and were accepted by Task 1-b. Could be silenced by prefixing with `_` but matching the established precedent is preferable for consistency.)
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors — confirms all imports resolve, all types check out, parallel useAnalysis split's barrel correctly re-exports ItemTrendPeriod/ItemTrendMetric)
+- Verified caller: src/app/page.tsx:39 `import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab'` still resolves to `ItemTrendTab/index.tsx` via folder barrel — NO caller file modifications needed.
+
+Stage Summary:
+- ItemTrendTab.tsx (657 LOC, single file) → 6 files in ItemTrendTab/ folder (820 LOC total — +163 LOC due to per-file headers, import lists, and prop type signatures; this is expected overhead when splitting and matches ParetoDashboard's +167 LOC precedent exactly)
+- Largest single file: index.tsx (401 LOC, down from 657 — 39% reduction). Sub-components well under target: ItemTrendTable.tsx (184 LOC), ItemTrendSearchBar.tsx (131 LOC). Helpers minimal: types.ts (48), zScoreHelpers.ts (32), periodHelpers.ts (24).
+- Cross-cutting DRY: zScoreColor + zScoreStatus extracted to ItemTrendTab/zScoreHelpers.ts with TODO comment to deduplicate with HistoricalZScoreCard.tsx via lib/zScoreHelpers.ts in future refactor (HistoricalZScoreCard.tsx intentionally NOT modified per task instructions — avoids conflict with parallel work).
+- All imports backward-compatible via folder barrel: `import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab'` still resolves (named export preserved). Barrel also exposes ItemTrendSearchBar, ItemTrendTable, zScoreColor, zScoreStatus, periodSortKey, periodShortLabel, METRICS + types MetricOption/AutocompleteResult/SortKey/SortDir for future reuse.
+- Each .tsx file has 'use client' directive (matches ParetoDashboard + shared/index.tsx precedent). Each .ts helper file is pure (no 'use client', no React imports — tree-shakeable).
+- Lint: 0 errors (389 warnings, +4 vs baseline of 385 — all 4 new warnings match ParetoDashboard's prop-type-signature pattern exactly; 0 new errors)
+- TypeScript: 0 errors
+- Caller impact: 0 files modified (src/app/page.tsx import path unchanged)
