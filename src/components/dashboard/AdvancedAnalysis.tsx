@@ -101,7 +101,7 @@ export const OutletHealthRanking = memo(function OutletHealthRanking({ data }: {
                 >
                   <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
                   <TableCell className="px-3 py-2">
-                    <div className="text-[11px] font-medium leading-tight whitespace-normal max-w-[180px]" title={o.outletName}>{o.outletName}</div>
+                    <div className="text-[11px] font-medium leading-tight whitespace-normal" title={o.outletName}>{o.outletName}</div>
                     <div className="text-[11px] text-muted-foreground">{o.outletCode} · {o.area}</div>
                   </TableCell>
                   <TableCell className="px-3 py-2">
@@ -251,7 +251,7 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
                   className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                   {...clickableRowProps(() => onClick(row))}
                 >
-                  <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal max-w-[200px]" title={row.itemName}>{row.itemName}</TableCell>
+                  <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal" title={row.itemName}>{row.itemName}</TableCell>
                   <TableCell className="px-3 py-2">
                     <Badge variant="outline" className={`text-[11px] px-1.5 py-0 font-medium ${consistencyBadge(row.type)}`}>{consistencyLabel(row.type)}</Badge>
                   </TableCell>
@@ -333,7 +333,7 @@ export const AreaComparison = memo(function AreaComparison({ data }: { data: Ana
                       <div className="flex items-center gap-1.5">
                         {isWorst && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" title="Terburuk" />}
                         {isBest && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title="Terbaik" />}
-                        <span className="truncate" title={a.area}>{a.area}</span>
+                        <span className="break-words leading-tight" title={a.area}>{a.area}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-[11px] px-3 py-2 text-right text-muted-foreground tabular-nums">{a.outletCount}</TableCell>

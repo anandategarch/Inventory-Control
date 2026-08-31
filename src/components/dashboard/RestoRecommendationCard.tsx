@@ -315,7 +315,7 @@ export function RestoRecommendationCard() {
                   {i + 1}
                 </span>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate leading-tight">{r.outletName}</p>
+                  <p className="text-sm font-semibold leading-tight" title={r.outletName}>{r.outletName}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{r.outletCode} · {r.area}</p>
                 </div>
               </div>
@@ -346,7 +346,7 @@ export function RestoRecommendationCard() {
               </div>
               <div className="rounded-md border bg-background/60 px-3 py-1.5 min-w-0">
                 <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Top Item</p>
-                <p className="font-medium truncate" title={r.metrics.topItem || ''}>{r.metrics.topItem || '—'}</p>
+                <p className="font-medium leading-tight" title={r.metrics.topItem || ''}>{r.metrics.topItem || '—'}</p>
               </div>
             </div>
 

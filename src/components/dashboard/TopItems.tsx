@@ -61,7 +61,7 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
                   {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                 >
                   <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                  <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                  <TableCell className="font-medium text-xs whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(it.nominalDeviasi)}</TableCell>
                   <TableCell className={`text-center text-xs font-bold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
@@ -124,7 +124,7 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
                     {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                   >
                     <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
+                    <TableCell className="font-medium text-xs whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                     <TableCell className={`text-right font-semibold text-xs tabular-nums ${breach ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
@@ -190,7 +190,7 @@ export const TopOutlets = memo(function TopOutlets({ data }: { data: AnalysisDat
                     {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
                   >
                     <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs max-w-[180px] whitespace-normal" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
+                    <TableCell className="font-medium text-xs whitespace-normal" title={o.outletName}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
                     <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
                     <TableCell className={`text-right font-semibold text-xs tabular-nums ${o.nominalDeviasi != null && o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(o.nominalDeviasi ?? o.absNominal)}</TableCell>
                     <TableCell className={`text-right text-xs font-semibold tabular-nums ${aboveArea ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
@@ -262,7 +262,7 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
                     <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
                       <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                       {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                      <span className="flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
                       <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} out</span>
                       <span className="w-16 text-right tabular-nums font-bold shrink-0 text-red-600 dark:text-red-400">{(item.devBomAbs * 100).toFixed(0)}%</span>
                       <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
@@ -282,7 +282,7 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
                         {item.outlets.map((o, j) => (
                           <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
                             <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
-                            <span className="min-w-[100px] flex-1 truncate" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
+                            <span className="flex-1 truncate" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
                             <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${numberColor(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</span>
                             <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
                             <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
@@ -369,7 +369,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
                     <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
                       <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                       {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                      <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                      <span className="flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
                       <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${isQtyDriven ? 'text-red-600 dark:text-red-400' : isPriceDriven ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{gap > 0 ? `+${gap}` : gap}</span>
                       <span className="w-10 text-right text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount}</span>
                     </button>
@@ -388,7 +388,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
                           return (
                             <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
                               <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
-                              <span className="min-w-[80px] flex-1 truncate" title={o.outletCode}>{o.outletCode}</span>
+                            <span className="flex-1 truncate" title={o.outletCode}>{o.outletCode}</span>
                               <span className="w-12 text-center tabular-nums shrink-0">{o.rankNominal}</span>
                               <span className="w-12 text-center tabular-nums shrink-0">{o.rankBom}</span>
                               <span className={`w-12 text-center tabular-nums font-bold shrink-0 ${oGap > 0 ? 'text-red-600 dark:text-red-400' : oGap < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{oGap > 0 ? `+${oGap}` : oGap}</span>

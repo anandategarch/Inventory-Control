@@ -224,7 +224,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                     <TableRow key={`${item.itemName}-${item.outletCode}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
                       <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2">
-                        <div className="font-medium leading-tight whitespace-normal max-w-[180px]" title={item.itemName}>{item.itemName}</div>
+                        <div className="font-medium leading-tight whitespace-normal" title={item.itemName}>{item.itemName}</div>
                         <div className="text-[11px] text-muted-foreground">{item.outletCode}</div>
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2 text-muted-foreground">{item.area}</TableCell>

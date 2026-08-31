@@ -273,10 +273,11 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
                       key={`${f.outletId}-${f.itemId}-${f.ruleCode}-${f.akunPenyesuaian ?? ''}`}
                       className="hover:bg-muted/40 transition-colors border-b"
                     >
-                      <TableCell className="text-[11px] px-3 py-2 font-medium max-w-[140px] truncate" title={f.outletName}>
-                        {f.outletName}
+                      <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal" title={f.outletName}>
+                        <div className="truncate">{f.outletName}</div>
+                        <div className="text-[10px] text-muted-foreground">ID: {f.outletId}</div>
                       </TableCell>
-                      <TableCell className="text-[11px] px-3 py-2 max-w-[140px] truncate" title={f.itemName}>
+                      <TableCell className="text-[11px] px-3 py-2 whitespace-normal" title={f.itemName}>
                         {f.itemName}
                       </TableCell>
                       <TableCell className="text-[11px] px-3 py-2">
