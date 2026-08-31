@@ -61,11 +61,12 @@ const FLIP_RANKING_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches item-trend-ra
 // Zod schema for /api/flip-ranking query params.
 // Defined inline (validation.ts not modified per task constraint).
 // `week` is OPTIONAL (when set, only that week across all months is scanned).
+// `month` is OPTIONAL (when set, only flip pairs involving that month are counted).
 // `area`, `kelompok`, `outlet`, `pic` are all OPTIONAL filters.
 // `limit` is OPTIONAL (default 20, max 50) — top N items to return.
-// Uses the same regex as weekLabelSchema in validation.ts.
 const flipRankingQuerySchema = z.object({
   week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional(),
   area: z.string().min(1).max(50).optional(),
   kelompok: z.string().min(1).max(50).optional(),
   outlet: z.string().min(1).max(50).optional(),
@@ -152,6 +153,7 @@ export async function GET(req: NextRequest) {
     const params = validation.data;
 
     const week = params.week ?? '';
+    const month = params.month ?? '';
     const area = params.area ?? null;
     const kelompok = params.kelompok ?? null;
     const outletCode = params.outlet ?? null;
@@ -160,15 +162,15 @@ export async function GET(req: NextRequest) {
     const limit = params.limit;
 
     // 3. DB cache check — cache key includes ALL response-affecting params.
-    // month is NOT in the cache key — flip detection covers ALL months for
-    // the selected week (same convention as item-trend-rank).
+    // FIX (USER-REQ): month IS now in the cache key — when set, only flip pairs
+    // involving that month are counted (different month = different result).
     // week IS in the cache key because it filters the result.
     // limit IS in the cache key (via extra) — different limits produce
     // different responses (top 5 vs top 20 vs top 50), so without it two
     // requests with different limits would share one entry (cache poisoning).
     const cacheKey = buildCacheKey({
       route: 'flip-ranking',
-      month: 'ALL',
+      month: month || 'ALL',
       week: week || 'ALL',
       itemName: 'ALL',
       area: area && area !== 'all' ? area : null,
@@ -212,7 +214,7 @@ export async function GET(req: NextRequest) {
         picOutletCodes: outletCodes,
       };
 
-      const result = await queryFlipRanking(filterOpts, week || null, limit);
+      const result = await queryFlipRanking(filterOpts, week || null, month || null, limit);
 
       return {
         items: result.items,

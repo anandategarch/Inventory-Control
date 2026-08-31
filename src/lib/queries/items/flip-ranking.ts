@@ -173,12 +173,17 @@ interface RawPeriodRow {
  *                   that week across all months is considered (W4 of
  *                   Januari, Februari, Maret, ...). When null, ALL weeks
  *                   are considered.
+ * @param monthLabel Optional month filter (e.g. "Juli 2026"). When set,
+ *                   only flip pairs where at least one period (P1 or P2)
+ *                   matches this month are counted. This scopes the ranking
+ *                   to flips involving the user's selected month.
  * @param limit      Max items to return (default 20). Caller is expected
  *                   to cap this (route enforces max 50).
  */
 export async function queryFlipRanking(
   filters: SqlFilterOpts,
   weekLabel?: string | null,
+  monthLabel?: string | null,
   limit: number = 20,
 ): Promise<FlipRankResult> {
   // itemName is NOT passed to buildSqlFilters — this query scans ALL items.
@@ -269,6 +274,14 @@ export async function queryFlipRanking(
       for (let i = 0; i + 1 < weekRows.length; i++) {
         const p1 = weekRows[i];
         const p2 = weekRows[i + 1];
+
+        // FIX (USER-REQ): if monthLabel filter is set, only count pairs where
+        // at least one period (P1 or P2) matches the selected month. This scopes
+        // the ranking to flips involving the user's filtered month.
+        if (monthLabel && p1.monthLabel !== monthLabel && p2.monthLabel !== monthLabel) {
+          continue;
+        }
+
         const v1 = p1.qtyDeviasiSigned;
         const v2 = p2.qtyDeviasiSigned;
 

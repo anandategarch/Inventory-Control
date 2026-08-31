@@ -416,8 +416,9 @@ function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTable
 }
 
 export const FlipRanking = memo(function FlipRanking() {
-  const { currentWeek, area, kelompok, outletCode, pic, trendSelectedItem, setTrendSelectedItem } = useDashboard(
+  const { monthLabel, currentWeek, area, kelompok, outletCode, pic, trendSelectedItem, setTrendSelectedItem } = useDashboard(
     useShallow((s) => ({
+      monthLabel: s.monthLabel,
       currentWeek: s.currentWeek,
       area: s.area,
       kelompok: s.kelompok,
@@ -435,9 +436,13 @@ export const FlipRanking = memo(function FlipRanking() {
   const [expandedFlip, setExpandedFlip] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<FlipRankingResponse>({
-    queryKey: ['flip-ranking', currentWeek, area, kelompok, outletCode, pic],
+    // FIX (USER-REQ): include monthLabel in queryKey so ranking respects
+    // dashboard month filter. When month is set, only flip pairs involving
+    // that month are counted (backend filters P1 or P2 monthLabel match).
+    queryKey: ['flip-ranking', monthLabel, currentWeek, area, kelompok, outletCode, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
+      if (monthLabel) p.set('month', monthLabel);
       if (currentWeek) p.set('week', currentWeek);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
@@ -673,7 +678,10 @@ export const FlipRanking = memo(function FlipRanking() {
                           </div>
                         </TableCell>
                         <TableCell className="text-xs py-2">
-                          {topFlip && cb && dKey ? (
+                          {/* FIX (USER-REQ): only show drill-down chevron for HIGH risk items.
+                              Moderate/Low items show the flip pair info without the chevron —
+                              drill-down is reserved for suspicious (sempurna flip) items only. */}
+                          {topFlip && cb && dKey && item.riskLevel === 'high' ? (
                             <div className="flex items-center gap-1">
                               {/* Chevron — toggles drill-down panel */}
                               <button
