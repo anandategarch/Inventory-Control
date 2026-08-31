@@ -1,40 +1,31 @@
 // ============================================================
-//  /api/item-search — Global item search (cross-outlet analysis)
-//  Query modes:
+//  /api/item-search — Item autocomplete for search bars
+//  Query mode:
 //    ?mode=autocomplete&q=cabai&month=...&week=...
 //      → returns up to 10 item names matching `q` (for the search bar dropdown)
-//    ?mode=cross-outlet&item=CABAI%20FROZEN&month=...&week=...&area=...&pic=...
-//      → returns that item's deviation across ALL outlets (cross-outlet view)
 //
-//  The cross-outlet mode intentionally does NOT filter by outletCode —
-//  the whole point is to see ONE item in ALL outlets to detect systemic
-//  patterns. Area + PIC filters are respected (narrow the outlet scope).
+//  NOTE: cross-outlet + trend modes were removed (GlobalItemSearchModal deleted).
+//  The autocomplete mode is still used by ItemTrendTab's search bar.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryGlobalItemSearch, queryItemAutocomplete, queryItemTrend } from '@/lib/queries/items/global-search';
-import { resolvePICOutletCodes } from '@/lib/pic-resolver';
+import { queryItemAutocomplete } from '@/lib/queries/items/global-search';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // FIX: 30→60 — cross-outlet + trend queries scan full table
+export const maxDuration = 30;
 
 const itemSearchQuerySchema = z.object({
-  mode: z.enum(['autocomplete', 'cross-outlet', 'trend']).default('autocomplete'),
-  q: z.string().min(1).max(200).optional(),
-  item: z.string().min(1).max(200).optional(),
+  mode: z.literal('autocomplete').default('autocomplete'),
+  q: z.string().min(1).max(200),
   month: monthLabelSchema,
   week: weekLabelSchema,
-  area: z.string().max(100).optional(),
-  kelompok: z.string().max(50).optional(),
-  pic: z.string().max(100).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -52,81 +43,22 @@ export async function GET(req: NextRequest) {
     if (!parse.success) {
       return NextResponse.json({ success: false, error: `Invalid params: ${parse.error.message}` }, { status: 400 });
     }
-    const { mode, q, item, month: monthRaw, week, area, kelompok, pic } = parse.data;
+    const { q, month: monthRaw, week } = parse.data;
+
+    // month + week are required for autocomplete (schema allows optional, enforce here)
+    if (!monthRaw || !week) {
+      return NextResponse.json({ success: false, error: 'month and week are required' }, { status: 400 });
+    }
 
     // Resolve month label case (DB may have "AGUSTUS 2026" vs "Agustus 2026")
-    // Only resolve if monthRaw is provided (trend mode doesn't need month)
     const monthResolver = await getMonthResolver();
-    const month = monthRaw ? (resolveMonthLabel(monthRaw, monthResolver) || monthRaw) : undefined;
+    const month = resolveMonthLabel(monthRaw, monthResolver) || monthRaw;
 
-    if (mode === 'autocomplete') {
-      if (!q) {
-        return NextResponse.json({ success: false, error: 'q is required for autocomplete mode' }, { status: 400 });
-      }
-      if (!month || !week) {
-        return NextResponse.json({ success: false, error: 'month and week required for autocomplete mode' }, { status: 400 });
-      }
-      const results = await queryItemAutocomplete(week, month, q, 10);
-      return NextResponse.json({
-        success: true,
-        mode: 'autocomplete',
-        q,
-        results,
-        durationMs: Date.now() - startedAt,
-      }, { headers: CACHE_INTERACTIVE });
-    }
-
-    // mode === 'cross-outlet' OR 'trend' — both need `item` param
-    if (!item) {
-      return NextResponse.json({ success: false, error: 'item is required for cross-outlet/trend mode' }, { status: 400 });
-    }
-
-    // Resolve PIC → outletCodes (shared logic) — used by cross-outlet + trend
-    const picOutletCodes = await resolvePICOutletCodes(pic);
-    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({
-        success: true,
-        mode,
-        item,
-        results: [],
-        durationMs: Date.now() - startedAt,
-      }, { headers: CACHE_INTERACTIVE });
-    }
-
-    // mode === 'trend' — return per-(period, outlet) data across ALL periods
-    if (mode === 'trend') {
-      const results = await queryItemTrend(item, {
-        area: area || null,
-        kelompok: kelompok || null,
-        picOutletCodes,
-      }, 500);
-      return NextResponse.json({
-        success: true,
-        mode: 'trend',
-        item,
-        filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
-        results,
-        durationMs: Date.now() - startedAt,
-      }, { headers: CACHE_INTERACTIVE });
-    }
-
-    // mode === 'cross-outlet' — needs month + week (already resolved above)
-    if (!month || !week) {
-      return NextResponse.json({ success: false, error: 'month and week required for cross-outlet mode' }, { status: 400 });
-    }
-
-    const results = await queryGlobalItemSearch(week, month, item, {
-      area: area || null,
-      kelompok: kelompok || null,
-      picOutletCodes,
-    }, 100);
-
+    const results = await queryItemAutocomplete(week, month, q, 10);
     return NextResponse.json({
       success: true,
-      mode: 'cross-outlet',
-      item,
-      period: { month, week },
-      filters: { area: area || null, kelompok: kelompok || null, pic: pic || null },
+      mode: 'autocomplete',
+      q,
       results,
       durationMs: Date.now() - startedAt,
     }, { headers: CACHE_INTERACTIVE });

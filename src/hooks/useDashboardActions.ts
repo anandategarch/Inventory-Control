@@ -39,7 +39,6 @@ export interface UseDashboardActionsParams {
   queryClient: QueryClient;
   setActiveTab: (tab: string) => void;
   setExportDialogOpen: (open: boolean) => void;
-  setItemSearchOpen: (open: boolean) => void;
   setDrilldown: (d: { outletCode: string | null; itemName: string | null }) => void;
   setSourceModal: (b: boolean) => void;
   setDeepDiveItem: (d: { itemName: string | null; outletCode: string | null }) => void;
@@ -66,7 +65,6 @@ export function useDashboardActions({
   queryClient,
   setActiveTab,
   setExportDialogOpen,
-  setItemSearchOpen,
   setDrilldown,
   setSourceModal,
   setDeepDiveItem,
@@ -140,7 +138,6 @@ export function useDashboardActions({
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
-  // Cmd/Ctrl+K → open global item search (cross-outlet analysis)
   // 1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)
   // Escape → close any open dialog/drawer
   useEffect(() => {
@@ -162,12 +159,6 @@ export function useDashboardActions({
         handleRefresh();
         return;
       }
-      // Cmd/Ctrl+K → open global item search
-      if (mod && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault();
-        setItemSearchOpen(true);
-        return;
-      }
       // 1 / 2 / 3 / 4 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
@@ -185,7 +176,6 @@ export function useDashboardActions({
       // search box only closes that dropdown (Radix bubbles Escape to window).
       if (e.key === 'Escape' && !isTyping) {
         setExportDialogOpen(false);
-        setItemSearchOpen(false);
         setDrilldown({ outletCode: null, itemName: null });
         setSourceModal(false);
         setDeepDiveItem({ itemName: null, outletCode: null });
@@ -194,7 +184,7 @@ export function useDashboardActions({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [analysisData, handleRefresh, setActiveTab, setExportDialogOpen, setItemSearchOpen, setDrilldown, setSourceModal, setDeepDiveItem]);
+  }, [analysisData, handleRefresh, setActiveTab, setExportDialogOpen, setDrilldown, setSourceModal, setDeepDiveItem]);
 
   return { handleExport, handleRefresh, isExporting };
 }

@@ -37,7 +37,6 @@ import { RestoTab } from '@/components/dashboard/tabs/RestoTab';
 import { PeerTab } from '@/components/dashboard/tabs/PeerTab';
 import { ParetoTab } from '@/components/dashboard/tabs/ParetoTab';
 import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';
-import { GlobalItemSearchModal } from '@/components/dashboard/GlobalItemSearchModal';
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -111,7 +110,6 @@ export default function DashboardPage() {
   // hook can reach the setters AND so the modals can render here.
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [auditLogOpen, setAuditLogOpen] = useState(false);
-  const [itemSearchOpen, setItemSearchOpen] = useState(false);
 
   const { handleExport, isExporting } = useDashboardActions({
     analysisData: analysis.data,
@@ -128,7 +126,6 @@ export default function DashboardPage() {
     queryClient,
     setActiveTab,
     setExportDialogOpen,
-    setItemSearchOpen,
     setDrilldown,
     setSourceModal,
     setDeepDiveItem,
@@ -151,7 +148,6 @@ export default function DashboardPage() {
         analysisFetching={analysis.isFetching}
         analysisData={analysis.data}
         onExportClick={() => setExportDialogOpen(true)}
-        onItemSearchClick={() => setItemSearchOpen(true)}
         onAuditLogClick={() => setAuditLogOpen(true)}
       />
 
@@ -227,8 +223,6 @@ export default function DashboardPage() {
         onExport={handleExport}
         isExporting={isExporting}
       />
-      {/* GLOBAL-ITEM-SEARCH: cross-outlet item analysis modal (Cmd+K) */}
-      <GlobalItemSearchModal open={itemSearchOpen} onOpenChange={setItemSearchOpen} />
 
       {/* Audit Log dialog — zombie revival (11 writes, 0 reads → now surfaced) */}
       <AuditLogDialog open={auditLogOpen} onOpenChange={setAuditLogOpen} />

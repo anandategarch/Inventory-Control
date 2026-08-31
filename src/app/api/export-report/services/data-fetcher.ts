@@ -48,7 +48,6 @@ import {
   queryDeviationBreakdown,
   queryAreaAnalysis,
   queryOutletHealthRanking,
-  queryGlobalItemSearch,
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
 import { evaluateRulesSql, evaluateHistoricalRulesJs } from '@/lib/queries/rule-evaluation';
@@ -420,23 +419,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 200) };
   const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
-  // FIX: fetch additional data for new export sections (restoPriority + itemCrossOutlet)
-  const [outletHealthRanking, topItemForCrossOutlet] = await Promise.all([
-    queryOutletHealthRanking(week, month, filterOpts),
-    // For itemCrossOutlet: find the top item by total abs nominal, then query its cross-outlet data
-    (async () => {
-      const topNom = topNominal[0];
-      if (!topNom) return [];
-      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok to cross-outlet query in export
-      return queryGlobalItemSearch(week, month, topNom.itemName, {
-        area: filterOpts.area,
-        kelompok: filterOpts.kelompok,
-        picOutletCodes: filterOpts.picOutletCodes,
-      }, 50);
-    })(),
-  ]);
-
-  // Build data object for document
+  // FIX: fetch outlet health ranking for the report (restoPriority section).
+  // topItemForCrossOutlet + queryGlobalItemSearch were removed along with
+  // the GlobalItemSearchModal — the cross-outlet section was already removed
+  // from the report per earlier user request.
+  const outletHealthRanking = await queryOutletHealthRanking(week, month, filterOpts);
   const data: ReportData = {
     period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
     // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
@@ -469,14 +456,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     prevMonth,
   };
 
-  // Silence "declared but never used" for the two orphan queries above —
-  // their sections were removed per user request (route.ts:1070 comment
-  // "Sections 19 (HISTORICAL ANOMALY), 2 (RESTO PRIORITAS), 14 (ITEM
-  // CROSS-OUTLET) removed per user request") but the queries are preserved
-  // for byte-for-byte parity with the pre-split route. Removing them is a
-  // behavior change that's out of scope for this pure-relocation refactor.
+  // outletHealthRanking is used in the report's restoPriority section.
+  // (topItemForCrossOutlet + queryGlobalItemSearch were removed — the
+  // cross-outlet section was already removed from the report per earlier
+  // user request.)
   void outletHealthRanking;
-  void topItemForCrossOutlet;
 
   return { data, ctx };
 }

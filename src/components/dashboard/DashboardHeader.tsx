@@ -15,7 +15,7 @@ import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity, Boxes, FileDown, History, Keyboard, Loader2, Search,
+  Activity, Boxes, FileDown, History, Keyboard, Loader2,
 } from 'lucide-react';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 
@@ -26,7 +26,6 @@ export interface DashboardHeaderProps {
   analysisFetching: boolean;
   analysisData: AnalysisData | undefined;
   onExportClick: () => void;
-  onItemSearchClick: () => void;
   onAuditLogClick: () => void;
 }
 
@@ -37,7 +36,6 @@ export function DashboardHeader({
   analysisFetching,
   analysisData,
   onExportClick,
-  onItemSearchClick,
   onAuditLogClick,
 }: DashboardHeaderProps) {
   return (
@@ -61,20 +59,6 @@ export function DashboardHeader({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap justify-end">
-          {/* GLOBAL-ITEM-SEARCH: Cmd+K trigger button (always available when data exists) */}
-          {hasData && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 text-xs font-medium transition-all active:scale-95"
-              onClick={onItemSearchClick}
-              aria-label="Cari item di semua outlet (Cmd+K)"
-            >
-              <Search className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Cari Item</span>
-              <kbd className="hidden md:inline ml-0.5 px-1 py-0.5 text-[10px] font-mono rounded border bg-muted/60 text-muted-foreground">⌘K</kbd>
-            </Button>
-          )}
           {analysisFetching && analysisData && (
             <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -133,7 +117,6 @@ export function DashboardHeader({
               <ul className="space-y-1 text-[11px]">
                 <li className="flex items-center justify-between gap-3"><span>Export Word</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Refresh data</span><kbd className="font-mono">⌘/Ctrl + R</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Cari item (cross-outlet)</span><kbd className="font-mono">⌘/Ctrl + K</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Dashboard</span><kbd className="font-mono">1</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>

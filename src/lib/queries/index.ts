@@ -6,7 +6,6 @@
 export * from './shared';
 export * from './dashboard';
 export * from './items/top-items';
-export * from './items/network-risk';
 export * from './items/global-search';
 export * from './outlets/top-outlets';
 export * from './outlets/peer-comparison';
