@@ -38963,3 +38963,136 @@ Stage Summary:
 - Reuses buildSqlFilters + withStatementTimeout + resolveKelompokOutletCodes + resolvePICOutletCodes from shared libs
 - Lint: PASS (0 errors / 0 warnings in my files; 374 pre-existing warnings in other files)
 - tsc: PASS (0 errors, exit code 0)
+
+---
+Task ID: BUG-3
+Agent: Phase 3 Bug Hunter
+Task: Audit Phase 3 features (Rank Trend chart + API)
+
+Work Log:
+- Read ItemTrendRankChart.tsx + item-trend-rank route + query function
+- Checked inverted Y-axis + per-dot coloring + ReferenceLines
+- Checked RANK() window function + week filter
+- Checked useQuery integration + drillPeriod sync
+- Checked edge cases (0/1 periods, null rank, varying totalItems)
+- Cross-compared with ItemTrendLineChart.tsx + item-trend.ts + main /api/item-trend route
+- Verified `item-trend-rank` IS in invalidateAnalysisCache routes array (NOT a bug)
+- Verified Prisma schema: `absNominalDeviasi` IS a real column on InventoryRecord (nullable Float)
+
+Stage Summary:
+- Found 6 bugs: P0=0, P1=0, P2=4, P3=2
+- BUG-3-01 (P2): Chart dot colors (red/amber/emerald) diverge from rankBadgeClass (red/amber/muted-gray) for rank 21-50, despite chart comment claiming they "match"
+- BUG-3-02 (P2): Rank chart X-axis misaligned with main chart — rank query filters `absNominalDeviasi > 0` while main query has no such filter, so periods with 0/NULL deviasi appear in main chart but are omitted from rank chart
+- BUG-3-03 (P2): Parent pre-filters `rankPeriods.length > 1` before rendering chart, so the chart's own 1-period message ("Hanya 1 periode...") is dead code; user sees nothing when item has 0 or 1 rank periods (no fallback message)
+- BUG-3-04 (P3): Unnecessary `JOIN "Outlet" o` in rank query (line 131) — `o` alias never referenced (buildSqlFilters uses subqueries); main item-trend.ts query doesn't have this JOIN
+- BUG-3-05 (P3): `ChartRow.rank: number | null` is dead-typed — data source `RankPeriod.rankNominal` is `number` (never null), so null-handling branches in rankColor/CustomTooltip/connectNulls are unreachable
+- BUG-3-06 (P2): Cache key + client queryKey include `month`/`monthLabel` even though rank query ignores month — causes duplicate cache entries + unnecessary refetches when user changes month (inconsistent with main /api/item-trend route which omits month from cache key)
+
+
+---
+Task ID: BUG-1
+Agent: Phase 1 Bug Hunter
+Task: Audit Phase 1 features (Rank Badge + Navigation Bridge + Pattern column)
+
+Work Log:
+- Read useDashboard.ts + ItemTrendTab/index.tsx + ItemTrendTable.tsx + ranking-nasional.tsx (in full)
+- Read context files: useAnalysis/types.ts + lib/queries/items/top-items/by-deviasi-rank.ts + shared-cte.ts + useItemTrend.ts + ItemTrendSearchBar.tsx + app/page.tsx (Tabs wiring)
+- Checked Rank Badge logic (lookup in topDeviasiRank via itemName filter, Math.min for best rank, fallback "Rank > 50" when matches is empty)
+- Checked rankBom null handling — SQL returns NULL for qtyBom=0 items (shared-cte.ts:114-116 CASE WHEN qtyBom != 0 THEN ROW_NUMBER() ... ELSE NULL END). Coercion Number(null)→0 in by-deviasi-rank.ts:150,267. Frontend defensively filters r != null && r > 0 — runtime OK but type contract is broken.
+- Checked Pattern column classification (Massal ≥10 / Regional ≥5 / Lokal ≥2 / Tunggal <2) — thresholds correct, but Tunggal bucket also catches outletCount=0 (semantically wrong)
+- Checked Navigation bridge (setTrendSelectedItem + setActiveTab('trend') flow) — Zustand set() is synchronous, tab switches immediately, ItemTrendTab reads trendSelectedItem from store on mount
+- Checked state persistence — trendSelectedItem in Zustand persists across tab switches (Radix Tabs unmounts inactive tab but store survives); local UI state (metric/query/sortKey/sortDir/drillPeriod) resets on remount by design
+- Checked search bar — setSelectedItem is bound to setTrendSelectedItem (Zustand), so selecting an item updates both store AND local view (query cleared)
+- Verified no `as any` casts in any of the 4 audited files
+- Verified p.zScore `as number` casts (index.tsx:418,420,423) are guarded by `p.zScore != null` filter — safe
+
+VERIFIED OK (no bug, works as designed):
+- Rank Badge lookup: correctly filters analysisData.topDeviasiRank by itemName, handles undefined analysisData + empty topDeviasiRank (returns [] → null rank → "Rank > 50" badge)
+- Rank Badge fallback for rank > 50: shows muted "Rank > 50 Nasional" + "Rank BOM > 50" badges when item not in top-50
+- Pattern thresholds: Massal ≥10 ✓, Regional 5-9 ✓, Lokal 2-4 ✓ (Tunggal also catches 0 — see BUG-1-02)
+- Navigation bridge: setTrendSelectedItem + setActiveTab work correctly; Trend Item Tab picks up item via useDashboard(useShallow(...)) on mount
+- trendSelectedItem persistence: survives tab switches (Zustand store, not local state)
+- Same item multiple times in topDeviasiRank: Math.min across all matches gives best rank; matches.length shows outlet count
+- Click RankingNasionalCard row while Trend Item Tab open with different item: store updates → refetch triggers (metric is in query key)
+- drillPeriod row highlight: strict === equality on monthLabel+weekLabel (both from same DB column → consistent)
+- Row click responsiveness: synchronous Zustand updates → immediate tab switch + item selected
+- Visual feedback for clickable rows: hover:cursor-pointer + hover:bg-amber-50/60 + hint badge + title attribute
+- Rank Badge updates on dashboard filter change: useMemo([analysisData, itemName]) recomputes when parent passes new analysisData
+- analysisData undefined: RankBadgeRow hidden (graceful degradation, intentional per comment)
+
+Bugs Found:
+
+## BUG-1-01: Type mismatch — DeviasiRankItem.rankBom declared non-nullable but SQL returns NULL (coerced to 0)
+- Severity: P2 (latent type-safety bug — runtime OK today, brittle for future maintenance)
+- File + lines:
+  - src/hooks/useAnalysis/types.ts:91 — `rankBom: number;` (declared non-nullable)
+  - src/lib/queries/items/top-items/shared-cte.ts:114-116 — SQL `CASE WHEN ipo."qtyBom" != 0 THEN ROW_NUMBER() ... ELSE NULL END` returns NULL for qtyBom=0 items
+  - src/lib/queries/items/top-items/by-deviasi-rank.ts:150 + 267 — `rankBom: Number(r.rankBom)` converts null→0 (Number(null) === 0)
+  - src/components/dashboard/tabs/ItemTrendTab/index.tsx:147 — `rankBomCandidates.filter(r => r != null && r > 0)` (the `!= null` is a TS tautology since type is `number`; `> 0` is what actually catches the null→0 case)
+  - src/components/dashboard/resto-analysis/ranking-nasional.tsx:114 — same `it.rankBom != null && it.rankBom > 0` defensive pattern
+- Description: When an item has qtyBom=0 (item has deviation records but no BOM set), the SQL returns rankBom=NULL. Prisma $queryRaw types this as `number | null`, but the coercion `Number(r.rankBom)` silently converts null→0. The DeviasiRankItem interface then claims `rankBom: number` (non-nullable). The frontend defensively filters `r != null && r > 0` — the `!= null` is a TS-tautology (type is `number`), but `> 0` correctly catches the null→0 case. Runtime behavior is CORRECT today (qtyBom=0 items show "Rank BOM > 50" muted badge), but the type contract lies: a future developer who removes the `> 0` filter (believing rankBom is always a valid rank ≥1 per the type) would introduce a bug where qtyBom=0 items display "Rank #0 (BOM)" in red (severe) — because rankBadgeClass(0) hits the `rank <= 5` branch and returns the red "severe" style.
+- Repro: Find an item with qtyBom=0 in any period (item with deviation records but no BOM). Inspect analysisData.topDeviasiRank — items with qtyBom=0 will have rankBom: 0 (not null). Then temporarily remove the `> 0` filter in RankBadgeRow — the badge will show "Rank #0 (BOM)" in red.
+- Fix: Either (a) change DeviasiRankItem.rankBom to `number | null` and preserve null in the SQL coercion: `rankBom: r.rankBom != null ? Number(r.rankBom) : null` (then the frontend `!= null` check becomes meaningful); or (b) keep the current type but add a JSDoc comment on the interface: `/** rankBom: national rank by |qtyBom| (≥1). 0 = not ranked (item has qtyBom=0). */`.
+
+## BUG-1-02: patternBadge returns "Tunggal" for outletCount=0 (semantically wrong)
+- Severity: P3 (edge case — shouldn't happen per spec, but not handled)
+- File + line: src/components/dashboard/tabs/ItemTrendTab/ItemTrendTable.tsx:79-83 (the final `return` after the `>= 2` check)
+- Description: The patternBadge function classifies any outletCount < 2 as "Tunggal" (Indonesian for "single" = exactly 1). The spec says "Tunggal =1" but the code treats 0 and 1 identically. If outletCount=0 (which the spec says shouldn't happen but asks to check), the badge shows "Tunggal" with tooltip "Tunggal — 0 outlet terdampak" — contradictory (Tunggal means 1, but tooltip says 0). The current fallthrough doesn't distinguish 0 from 1.
+- Repro: Hard to trigger naturally (would require a period with 0 outlets, which shouldn't exist in the trend data since periods are per-item). If it did happen, the Pola column would show "⚪ Tunggal" with "0 outlet terdampak" tooltip.
+- Fix: Add an explicit guard before the final return: `if (outletCount === 1) return { emoji: '⚪', label: 'Tunggal', ... }; return { emoji: '·', label: 'No Data', className: 'text-muted-foreground/50 ...' };`. Or simpler: change the final return condition to `if (outletCount === 1)` and add a fallback for 0/negative.
+
+## BUG-1-03: Same emoji (⚪) used for both "Lokal" and "Tunggal" patterns — visually indistinguishable
+- Severity: P3 (cosmetic)
+- File + line: src/components/dashboard/tabs/ItemTrendTab/ItemTrendTable.tsx:74 + 80
+- Description: The patternBadge function uses the same white circle emoji (⚪) for both "Lokal" (2-4 outlets) and "Tunggal" (1 outlet). The other patterns use distinct emojis (🔴 Massal, 🟡 Regional), but Lokal and Tunggal share ⚪ — users must read the text label to tell them apart. Both also share the same className (`text-muted-foreground border-border bg-muted/40`), so there's no color distinction either.
+- Repro: Open the Trend Item Tab with any item that has periods spanning 1 outlet and 2-4 outlets. Both period rows will show ⚪ in the Pola column — only the text label ("Lokal" vs "Tunggal") differs.
+- Fix: Use a different emoji for Tunggal, e.g., `📍` (single point) or `🔵` (blue circle) or `1️⃣`. Alternatively, give Lokal a distinct color (e.g., blue tint) to differentiate from Tunggal's muted gray.
+
+Stage Summary:
+- Found 3 bugs: P0=0, P1=0, P2=1, P3=2
+- BUG-1-01 (P2): rankBom type mismatch — DeviasiRankItem.rankBom declared non-nullable but SQL returns NULL for qtyBom=0 items, coerced to 0 via Number(null). Runtime OK (defensive `> 0` filter), but type contract is broken and brittle.
+- BUG-1-02 (P3): patternBadge returns "Tunggal" for outletCount=0 (shouldn't happen but not handled — semantically wrong since Tunggal means 1).
+- BUG-1-03 (P3): Same emoji (⚪) + className for Lokal and Tunggal — visually indistinguishable in the Pola column.
+- No P0/P1 bugs found — Phase 1 features (Rank Badge + Navigation Bridge + Pattern column) are functionally correct at runtime. All critical paths (lookup, fallback, navigation, state persistence, edge cases) verified OK.
+
+---
+Task ID: BUG-2
+Agent: Phase 2 Bug Hunter
+Task: Audit Phase 2 features (ItemPeerComparison + drill-down + API)
+
+Work Log:
+- Read ItemPeerComparison.tsx (757 LOC) + item-peer-comparison route.ts (261 LOC) + query function (423 LOC) + index.tsx drill-down integration (655 LOC)
+- Read context files: shared-cte.ts (buildDeviasiRankBaseCte pattern), by-deviasi-rank.ts (bucket_avg ±50% peer selection pattern), aggregation-cache.ts (cache invalidation list)
+- Verified peer selection logic (BOM ±50% via ABS(c.qtyBom) BETWEEN ABS(t.qtyBom)*0.5 AND *1.5) — correctly excludes BOM=0 targets via `ABS(t.qtyBom) > 0` guard
+- Verified auto-select worst outlet (ORDER BY ABS(nominalDeviasi) DESC LIMIT 1) — correct
+- Verified peerAverages computed from peers ONLY (excludes target) — correct
+- Verified DIRECTION_FROM_SUM_SQL usage — correct (uses nominalLossSurplus with qtyDeviasi fallback)
+- Verified `item-peer-comparison` IS in the invalidateAnalysisCache routes array (line 421)
+- Verified __NO_MATCH__ sentinel handling in resolveOutletCodeFilters — correct
+- Verified cache key distinguishes outletCode vs AUTO (outletCode || 'AUTO')
+- Verified drillPeriod sync uses "adjust state during render" pattern — no infinite loop (prevPeriodKey guard)
+- Verified onOutletClick → setFocusOutlet → switches to Resto tab (correct)
+- Verified enabled flag: Boolean(itemName && month && week) — correct
+- Checked 4 analysis cards (Efficiency, Gap, Scatter, Ranking) — found multiple bugs
+- Checked peer table + anomaly flags + row click navigation
+- Checked edge cases (0 peers, qtyBom=0, peerAvg.devBom=0, drillPeriod changes)
+- Compared item-peer-comparison API shape to existing outlet-level peer-comparison API — found INCONSISTENCY: item-level EXCLUDES target from peers array, but outlet-level INCLUDES target. Frontend assumes target is in peers (for ranking + scatter highlight).
+
+Stage Summary:
+- Found 11 bugs: P0=0, P1=2, P2=5, P3=4
+- BUG-2-01 (P1): RankingSummaryCard shows rank "#0/N" + "p100" because API excludes target from peers — findIndex returns -1, rank=0. Frontend assumes target is in peers (same pattern as outlet-level peer-comparison which DOES include target). Inconsistent API contract.
+- BUG-2-02 (P1): ScatterPlotCard does NOT render the target dot — `peers.map()` only iterates peers (excludes target), so no data point has isTarget=true. The amber "TARGET" highlight (ring + larger r) never appears. User can't see where the target falls on the scatter plot.
+- BUG-2-03 (P2): EfficiencyScoreCard devBomPenalty uses SIGNED devBom difference. When peerAvg.devBom <= 0 (peers in LOSS), safeDiv returns 0 → no penalty. When peerAvg.devBom > 0 (peers in SURPLUS), a SURPLUS target gets penalized (wrong direction). Should use Math.abs(target.devBom) - Math.abs(peerAvg.devBom) for "deviation magnitude above peer avg".
+- BUG-2-04 (P2): GapAnalysisCard "Dev/BOM" row mixes signed peerAvg.devBom with absolute target/bestVal. fmtPctAbs masks the sign (always positive), but the displayed avg is inconsistent with the absolute target/best values. Misleading when peers are in LOSS.
+- BUG-2-05 (P2): anomalyFlags "Normal" check uses `peerAvg.devBom * 0.2` (signed). When peerAvg.devBom < 0 (LOSS), `Math.abs(row.devBom) - peerAvg.devBom` becomes a large positive number → "near" check fails → "Normal" flag suppressed even for typical rows.
+- BUG-2-06 (P2): When peers have mixed LOSS+SURPLUS that cancel out (peerAvg.devBom = 0) OR all peers have BOM=0, all devBom anomaly flags are suppressed (checkRatio returns 0, Normal check fails). Row shows "—" instead of "Normal".
+- BUG-2-07 (P2): 0-peers edge case — when target has no peers (qtyBom=0 or no other outlets in BOM ±50% range), the empty state is NOT triggered (because data.target is not null). Cards render with degenerate values: EfficiencyScore=100 (misleadingly perfect), GapAnalysis shows target vs 0, ScatterPlot is empty, Ranking shows "#0/0" + "p100".
+- BUG-2-08 (P3): Backend docstring in item-peer-comparison.ts line 56 is WRONG — says "SIGNED SUM(qtyDeviasi) — negative = SURPLUS, positive = LOSS" but the actual SQL convention (DIRECTION_FROM_SUM_SQL in shared.ts) is "negative = LOSS, positive = SURPLUS". Frontend docstring is correct. Runtime behavior is consistent (frontend uses nominalDeviasi < 0 for isLoss, matching SQL convention). Documentation-only bug.
+- BUG-2-09 (P3): Frontend ItemPeerComparisonResponse type missing `cached?: boolean` and `stale?: boolean` fields that backend includes conditionally. Not a runtime bug, just incomplete type contract.
+- BUG-2-10 (P3): Empty state message hardcodes "tidak memiliki peer (BOM ±50%)" but the actual reason data.target is null could be different (item not found in any outlet, outletCode mismatched, sentinel noMatch). Misleading message.
+- BUG-2-11 (P3): Potential direction/sign mismatch — PeerTableRow uses `isLoss = row.nominalDeviasi < 0` (from SUM(nominalDeviasi)) for row color, but direction badge uses `row.direction` (from SUM(nominalLossSurplus) via DIRECTION_FROM_SUM_SQL). nominalDeviasi is GROSS signed, nominalLossSurplus is NET signed — they CAN have different signs (e.g., gross negative but net positive when surplus items outweigh loss items in the same bucket). If they differ, row color contradicts direction badge.
+
+Top recommendations:
+1. FIX BUG-2-01 + BUG-2-02 together: either (a) include target in peers array server-side (matching outlet-level peer-comparison pattern), or (b) frontend: prepend target to peers array before passing to ScatterPlotCard + RankingSummaryCard. Option (a) is cleaner — aligns the two peer-comparison APIs.
+2. FIX BUG-2-03: change devBomPenalty to use Math.abs(target.devBom) - Math.abs(peerAvg.devBom) (or peerAvg.absDevBom if added to averages). Same for nominalPenalty consistency (already uses abs — OK).
+3. FIX BUG-2-07: add `peers.length === 0` to the empty-state condition (`!data.target || data.peers.length === 0`) so users see a clear "no peers" message instead of degenerate cards.

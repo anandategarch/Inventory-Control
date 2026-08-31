@@ -140,11 +140,14 @@ function RankBadgeRow({ itemName, analysisData }: RankBadgeRowProps) {
   }, [analysisData, itemName]);
 
   // Best (lowest) rank for the item across all its outlets in top-50.
-  // rankBom may be 0 (not ranked) — filter those out.
+  // FIX (BUG-1-01): rankBom is now `number | null` — use type predicate to
+  // filter nulls so Math.min gets a clean number[].
   const rankNominal = matches.length > 0
     ? Math.min(...matches.map(m => m.rankNominal))
     : null;
-  const rankBomCandidates = matches.map(m => m.rankBom).filter(r => r != null && r > 0);
+  const rankBomCandidates = matches
+    .map(m => m.rankBom)
+    .filter((r): r is number => r != null && r > 0);
   const rankBom = rankBomCandidates.length > 0
     ? Math.min(...rankBomCandidates)
     : null;
@@ -297,7 +300,11 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   // + area/kelompok/outlet/pic scoping) so the rank data matches the
   // user's current filter selection.
   const { data: rankData, isFetching: rankFetching } = useQuery({
-    queryKey: ['item-trend-rank', selectedItem, monthLabel, currentWeek, area, kelompok, outletCode, pic],
+    // FIX (BUG-3-06): month is NOT included in queryKey — the rank query
+    // ignores month (returns ALL months for the selected week). Including
+    // month would cause unnecessary refetch + duplicate cache entries
+    // when the user changes month.
+    queryKey: ['item-trend-rank', selectedItem, currentWeek, area, kelompok, outletCode, pic],
     queryFn: async () => {
       // Guard: enabled=Boolean(selectedItem) guarantees selectedItem is
       // non-null here, but TypeScript can't infer that across the closure.
@@ -305,7 +312,6 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
       // while still being type-safe.
       if (!selectedItem) throw new Error('No item selected');
       const p = new URLSearchParams({ item: selectedItem });
-      if (monthLabel) p.set('month', monthLabel);
       if (currentWeek) p.set('week', currentWeek);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
@@ -607,7 +613,10 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                   per period with an INVERTED Y-axis (rank #1 at top =
                   worst). Only rendered when there are ≥2 rank periods
                   (the chart can't draw a trend line from a single point). */}
-              {rankPeriods.length > 1 && (
+              {/* FIX (BUG-3-03): render when >= 1 period so the chart's own
+                  1-period message shows (was > 1 which caused silent failure
+                  — no chart AND no message for 1-period items). */}
+              {rankPeriods.length >= 1 && (
                 <div className="mt-2 pt-2 border-t">
                   <ItemTrendRankChart
                     periods={rankPeriods}

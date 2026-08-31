@@ -88,7 +88,11 @@ export interface DeviasiRankItem {
   avgDeviasiByBom: number | null;
   nominalDeviasi: number;
   rankNominal: number;
-  rankBom: number;
+  /** FIX (BUG-1-01): rankBom is NULLABLE — SQL returns NULL for items with
+   *  qtyBom=0 (BOM ranking doesn't apply). Was `number` (non-nullable) which
+   *  masked null→0 coercion in the query layer. Frontend defends with `> 0`
+   *  check but the type contract is now accurate. */
+  rankBom: number | null;
 }
 
 /** Multi-period comparison row (injected into growthComparison.multiPeriodComparison). */

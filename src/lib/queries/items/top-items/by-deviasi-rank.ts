@@ -58,7 +58,7 @@ export async function queryTopItemsByDeviasiRank(
   avgDeviasiByBom: number | null;
   nominalDeviasi: number;
   rankNominal: number;
-  rankBom: number;
+  rankBom: number | null;
 }>> {
   // OPTIMIZE-ENGINE: replaced 2 correlated subqueries (EXISTS + AVG, each
   // per-row) with a single CTE + LEFT JOIN. The CTE computes per-(item,outlet)
@@ -147,7 +147,9 @@ export async function queryTopItemsByDeviasiRank(
     avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
     nominalDeviasi: Number(r.nominalDeviasi),
     rankNominal: Number(r.rankNominal),
-    rankBom: Number(r.rankBom),
+    // FIX (BUG-1-01): preserve null — SQL returns NULL for qtyBom=0 items.
+    // Was `Number(r.rankBom)` which coerced null→0 (misleading "rank 0").
+    rankBom: r.rankBom != null ? Number(r.rankBom) : null,
   }));
 }
 
@@ -185,7 +187,7 @@ export async function queryTopItemsByDeviasiRankForOutlet(
   avgDeviasiByBom: number | null;
   nominalDeviasi: number;
   rankNominal: number;
-  rankBom: number;
+  rankBom: number | null;
 }>> {
   // Compute per-(item,outlet) aggregates for ALL outlets (needed for national
   // rank + peer benchmark), then filter to the target outlet's top-N.
@@ -264,6 +266,7 @@ export async function queryTopItemsByDeviasiRankForOutlet(
     avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
     nominalDeviasi: Number(r.nominalDeviasi),
     rankNominal: Number(r.rankNominal),
-    rankBom: Number(r.rankBom),
+    // FIX (BUG-1-01): preserve null — SQL returns NULL for qtyBom=0 items.
+    rankBom: r.rankBom != null ? Number(r.rankBom) : null,
   }));
 }

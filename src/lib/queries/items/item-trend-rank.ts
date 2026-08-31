@@ -40,6 +40,7 @@
 //    BigInt for COUNT and Decimal for SUM; JSON serialization would
 //    throw on BigInt without coercion).
 // ============================================================
+import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ------------------------------------------------------------
@@ -80,10 +81,15 @@ export interface ItemTrendRankResult {
  * @param filters    Dashboard filters (area, kelompok, outletCode,
  *                   picOutletCodes). itemName in filters is IGNORED (the
  *                   explicit `itemName` arg takes precedence).
+ * @param weekLabel  Optional week filter (e.g. "WEEK 4"). When set, only
+ *                   that weekLabel across all months is returned (e.g. W4
+ *                   of Januari, Februari, Maret...). When null, ALL weeks
+ *                   are returned. Same convention as item-trend.ts.
  */
 export async function queryItemTrendRank(
   itemName: string,
   filters: SqlFilterOpts,
+  weekLabel?: string | null,
 ): Promise<ItemTrendRankResult> {
   // NOTE: buildSqlFilters applies `itemName` as a LIKE filter (substring match),
   // which would over-match the rank query (e.g. "CABAI" matches both
@@ -97,6 +103,13 @@ export async function queryItemTrendRank(
     itemName: null,
     picOutletCodes: filters.picOutletCodes ?? null,
   });
+
+  // Build week filter — if weekLabel provided, only show that week across all months
+  // (e.g. WEEK 4 → show W4 of Januari, Februari, Maret, etc.)
+  // Same pattern as item-trend.ts.
+  const weekFilter = weekLabel
+    ? Prisma.sql`AND ir."weekLabel" = ${weekLabel}`
+    : Prisma.empty;
 
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
     monthLabel: string;
@@ -119,6 +132,7 @@ export async function queryItemTrendRank(
       LEFT JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
       WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         ${f}
+        ${weekFilter}
       GROUP BY ir."monthLabel", ir."weekLabel", i.name
     ),
     ranked AS (

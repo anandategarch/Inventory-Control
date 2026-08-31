@@ -132,12 +132,18 @@ export interface ItemPeerComparisonProps {
 // ------------------------------------------------------------
 
 /** Efficiency score — composite 0-100 based on target vs peer avg.
- *  Penalty: devBom above peer avg (50pts), nominalDeviasi above peer
- *  avg (50pts). Higher = better. */
+ *  Penalty: |devBom| above peer avg (50pts), |nominalDeviasi| above peer
+ *  avg (50pts). Higher = better.
+ *  FIX (BUG-2-03): use ABS values for comparison — devBom is SIGNED (neg=LOSS,
+ *  pos=SURPLUS); comparing signed values would penalize SURPLUS targets (wrong
+ *  direction — SURPLUS is good, not bad). */
 function computeEfficiencyScore(target: ItemPeerRow, peerAvg: ItemPeerAverages): number {
   const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+  // FIX (BUG-2-03): compare ABSOLUTE magnitudes, not signed values.
+  const targetAbsDevBom = target.devBom != null ? Math.abs(target.devBom) : 0;
+  const peerAbsDevBom = Math.abs(peerAvg.devBom);
   const devBomPenalty = target.devBom != null
-    ? Math.min(50, Math.max(0, safeDiv(target.devBom - peerAvg.devBom, peerAvg.devBom) * 25))
+    ? Math.min(50, Math.max(0, safeDiv(targetAbsDevBom - peerAbsDevBom, peerAbsDevBom) * 25))
     : 0;
   const nominalPenalty = Math.min(
     50,
@@ -199,9 +205,13 @@ function GapAnalysisCard({ target, peers, peerAvg }: {
   peerAvg: ItemPeerAverages;
 }) {
   // Peer BEST = lowest absolute nominal deviation (closest to zero = best).
-  const absValues = peers.map(p => p.absNominalDeviasi);
+  // FIX (BUG-2-04): exclude target from peer BEST search — target is now
+  // included in peers[] (server-side change), but "peer best" should be
+  // the best NON-target outlet.
+  const nonTargetPeers = peers.filter(p => !p.isTarget);
+  const absValues = nonTargetPeers.map(p => p.absNominalDeviasi);
   const bestAbsNominal = absValues.length > 0 ? Math.min(...absValues) : 0;
-  const bestPeer = peers.find(p => p.absNominalDeviasi === bestAbsNominal);
+  const bestPeer = nonTargetPeers.find(p => p.absNominalDeviasi === bestAbsNominal);
 
   const rows: Array<{ label: string; targetVal: number; bestVal: number; avgVal: number; format: (_v: number) => string; higherBetter: boolean }> = [
     {
@@ -224,7 +234,9 @@ function GapAnalysisCard({ target, peers, peerAvg }: {
       label: 'Dev/BOM',
       targetVal: target.devBom != null ? Math.abs(target.devBom) : 0,
       bestVal: bestPeer && bestPeer.devBom != null ? Math.abs(bestPeer.devBom) : 0,
-      avgVal: peerAvg.devBom,
+      // FIX (BUG-2-04): use ABS peer avg — devBom is signed, but we compare
+      // magnitudes (all targetVal/bestVal are already ABS).
+      avgVal: Math.abs(peerAvg.devBom),
       format: fmtPctAbs,
       higherBetter: false,
     },
@@ -470,8 +482,13 @@ function anomalyFlags(row: ItemPeerRow, peerAvg: ItemPeerAverages): Array<{ emoj
   const flags: Array<{ emoji: string; text: string; color: string }> = [];
   const checkRatio = (targetVal: number, avg: number) => (avg > 0 ? targetVal / avg : 0);
 
+  // FIX (BUG-2-05/06): use ABS(peerAvg.devBom) for threshold — devBom is
+  // SIGNED (neg=LOSS, pos=SURPLUS). Using signed peerAvg would suppress
+  // flags when peers are in LOSS (peerAvg < 0 → checkRatio returns 0).
+  const peerAbsDevBom = Math.abs(peerAvg.devBom);
+
   // 🔴 Dev/BOM tinggi — abs dev/bom > 1.5× peer avg.
-  if (row.devBom != null && checkRatio(Math.abs(row.devBom), peerAvg.devBom) > 1.5) {
+  if (row.devBom != null && checkRatio(Math.abs(row.devBom), peerAbsDevBom) > 1.5) {
     flags.push({ emoji: '🔴', text: 'Dev/BOM tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
   }
   // 🔴 LOSS tinggi — nominal < 0 AND abs > 1.5× peer avg.
@@ -480,7 +497,8 @@ function anomalyFlags(row: ItemPeerRow, peerAvg: ItemPeerAverages): Array<{ emoj
   }
   // 🟢 Normal — no flags + within ±20% of peer avg on both metrics.
   if (flags.length === 0) {
-    const devBomNear = row.devBom == null || Math.abs(Math.abs(row.devBom) - peerAvg.devBom) <= peerAvg.devBom * 0.2;
+    // FIX (BUG-2-05): use ABS(peerAvg.devBom) for the ±20% threshold.
+    const devBomNear = row.devBom == null || Math.abs(Math.abs(row.devBom) - peerAbsDevBom) <= peerAbsDevBom * 0.2;
     const nominalNear = Math.abs(row.absNominalDeviasi - peerAvg.absNominalDeviasi) <= peerAvg.absNominalDeviasi * 0.2;
     if (devBomNear && nominalNear) {
       flags.push({ emoji: '🟢', text: 'Normal', color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30' });
@@ -556,7 +574,11 @@ function ItemPeerComparisonImpl({
     );
   }
 
-  if (!data || !data.success || !data.target) {
+  // FIX (BUG-2-07): also check for 0 peers (target exists but no other
+  // outlets in BOM ±50% range). Without this, cards render degenerate
+  // values (EfficiencyScore=100, GapAnalysis vs 0, empty ScatterPlot,
+  // #1/1 ranking).
+  if (!data || !data.success || !data.target || data.peers.filter(p => !p.isTarget).length === 0) {
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -600,7 +622,8 @@ function ItemPeerComparisonImpl({
           Target: <span className="font-medium text-foreground">{target.outletName}</span> ({target.outletCode})
           {target.pic && <> · PIC: {target.pic}</>}
           {' · '}
-          {peers.length} peer outlet (QTY BOM ±50%)
+          {/* FIX: peers[] includes target (server-side); show non-target count */}
+          {peers.filter(p => !p.isTarget).length} peer outlet (QTY BOM ±50%)
         </p>
       </CardHeader>
 

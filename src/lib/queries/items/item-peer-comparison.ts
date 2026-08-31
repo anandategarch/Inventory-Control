@@ -53,7 +53,8 @@ export interface ItemPeerRow {
   pic: string | null;
   /** SUM(ABS(qtyBom)) — always non-negative. */
   qtyBom: number;
-  /** SIGNED SUM(qtyDeviasi) — negative = SURPLUS, positive = LOSS. */
+  /** SIGNED SUM(qtyDeviasi) — negative = LOSS, positive = SURPLUS.
+   *  FIX (BUG-2-08): was backwards (said "negative = SURPLUS, positive = LOSS"). */
   qtyDeviasi: number;
   qtyWaste: number;
   qtySusut: number;
@@ -338,9 +339,15 @@ export async function queryItemPeerComparison(
   // First row is the target (ORDER BY guarantees target first).
   // Empty array → item not found → target=null, peers=[].
   const targetRow = mapped.find((r) => r.isTarget) ?? null;
-  const peerRows = mapped.filter((r) => !r.isTarget);
 
-  const peerAverages = computePeerAverages(peerRows);
+  // FIX (BUG-2-01 + BUG-2-02): INCLUDE target in peers[] so the frontend
+  // can rank the target among peers + render the target dot in the scatter
+  // plot. This aligns with the outlet-level /api/peer-comparison API pattern
+  // (which includes target in peers). peerAverages is still computed from
+  // NON-target peers only (excludes target) so the benchmark isn't skewed.
+  const peerRows = mapped; // includes target (isTarget=true)
+
+  const peerAverages = computePeerAverages(mapped.filter((r) => !r.isTarget));
 
   return {
     target: targetRow,

@@ -76,10 +76,20 @@ function patternBadge(outletCount: number): { emoji: string; label: string; clas
       className: 'text-muted-foreground border-border bg-muted/40',
     };
   }
+  // FIX (BUG-1-02): outletCount=0 is semantically "no data", not "Tunggal" (single).
+  // FIX (BUG-1-03): use distinct emoji for Tunggal (was same ⚪ as Lokal).
+  if (outletCount === 1) {
+    return {
+      emoji: '📍',
+      label: 'Tunggal',
+      className: 'text-muted-foreground border-border bg-muted/40',
+    };
+  }
+  // outletCount === 0 (shouldn't happen — item has records but no outlets?)
   return {
-    emoji: '⚪',
-    label: 'Tunggal',
-    className: 'text-muted-foreground border-border bg-muted/40',
+    emoji: '—',
+    label: 'N/A',
+    className: 'text-muted-foreground/50 border-border bg-muted/20',
   };
 }
 

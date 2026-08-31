@@ -13,13 +13,15 @@
 //  periods (e.g. rank 5 → rank 1 → rank 12).
 //
 //  NOTE on month + week params:
-//    The rank query itself returns ALL periods for the item (rank is
-//    computed per-period, not per-(period, month, week) selection).
-//    `month` + `week` are accepted for cache-key context only — same
-//    convention as /api/item-trend — so two requests with different
-//    dashboard month/week selections DON'T share a cache entry (the
-//    filters area/kelompok/outlet/pic might differ between selections,
-//    even though the rank query covers all periods).
+//    The rank query returns periods for the item (rank is computed
+//    per-period across ALL items).
+//    - `week` is RESPECTED as a filter: when set (e.g. "WEEK 4"), only
+//      that weekLabel across all months is returned (W4 of Januari,
+//      Februari, Maret...). When null, ALL weeks are returned.
+//    - `month` is for cache-key context only (rank covers ALL months
+//      for the selected week — month selection doesn't filter the rank
+//      timeline, it just distinguishes dashboard selections that might
+//      carry different filter combinations).
 //
 //  Pattern (per CONVENTIONS.md §1 + §3.1 + item-peer-comparison precedent):
 //    - `force-dynamic` + maxDuration=30 (single SQL query — light route)
@@ -165,13 +167,14 @@ export async function GET(req: NextRequest) {
     const week = rawWeek;
 
     // 3. DB cache check — cache key includes ALL response-affecting params.
-    // month + week are for cache-key context only (rank covers ALL periods,
-    // same as /api/item-trend) — they distinguish dashboard selections that
-    // might carry different filter combinations even though the rank query
-    // itself ignores them.
+    // FIX (BUG-3-06): month is NOT in the cache key — the rank query ignores
+    // month (returns ALL months for the selected week). Including month would
+    // cause duplicate cache entries for the same data.
+    // week IS in the cache key because it filters the result (when set, only
+    // that weekLabel across all months is returned).
     const cacheKey = buildCacheKey({
       route: 'item-trend-rank',
-      month: month || 'ALL',
+      month: 'ALL',
       week: week || 'ALL',
       itemName: item,
       area: area && area !== 'all' ? area : null,
@@ -213,7 +216,7 @@ export async function GET(req: NextRequest) {
         picOutletCodes: outletCodes,
       };
 
-      const result = await queryItemTrendRank(item, filterOpts);
+      const result = await queryItemTrendRank(item, filterOpts, week || null);
 
       return {
         periods: result.periods,
