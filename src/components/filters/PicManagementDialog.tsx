@@ -192,14 +192,39 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     },
   });
 
-  function invalidateAll() {
-    queryClient.invalidateQueries({ queryKey: ['status'] });
-    // FIX: Invalidate ALL data-dependent queries — PIC change affects filters
+  // FIX (BUG-PIC-STALE): /api/status GET response has Cache-Control: s-maxage=60
+  // (CDN caches for 60s). statusCache.clear() in /api/pic POST only clears the
+  // server-side in-memory cache — it does NOT clear the CDN edge cache.
+  // So invalidateQueries(['status']) triggers a refetch that hits the CDN →
+  // returns STALE data for up to 60s → UI doesn't reflect the PIC update.
+  //
+  // Fix: after mutation, manually fetch fresh /api/status with:
+  //   1. ?_t=<timestamp> — cache-buster (different URL = different CDN entry)
+  //   2. cache: 'no-store' — bypass browser HTTP cache too
+  // Then setQueryData to update TanStack Query cache immediately.
+  async function invalidateAll() {
+    // 1. Force-refresh status — bypass CDN s-maxage=60 + browser cache
+    try {
+      const freshRes = await fetch(`/api/status?_t=${Date.now()}`, { cache: 'no-store' });
+      if (freshRes.ok) {
+        const freshData = await freshRes.json();
+        queryClient.setQueryData(['status'], freshData);
+      } else {
+        // Fallback: invalidate (might serve stale CDN cache)
+        queryClient.invalidateQueries({ queryKey: ['status'] });
+      }
+    } catch {
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+    }
+
+    // 2. Invalidate ALL data-dependent queries — PIC change affects filters.
+    //    These use DB-level AggregationCache (properly cleared by /api/pic POST
+    //    via invalidateAnalysisCache), so invalidateQueries triggers a real refetch.
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX INT-2
+    queryClient.invalidateQueries({ queryKey: ['item-history'] });
+    queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
+    queryClient.invalidateQueries({ queryKey: ['recommendations'] });
   }
 
   // ---------- Handlers ----------

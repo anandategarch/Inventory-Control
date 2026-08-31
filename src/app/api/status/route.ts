@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { validateQuery, statusQuerySchema } from '@/lib/validation';
-import { CACHE_METADATA } from '@/lib/cache-headers';
+import { NO_STORE } from '@/lib/cache-headers';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 // PERF-CACHE-07: opportunistic cleanup of expired AggregationCache rows.
@@ -60,7 +60,15 @@ export async function GET(req: NextRequest) {
     // Phase 1c: check cache first
     const cached = statusCache.get('status');
     if (cached) {
-      return NextResponse.json({ ...(cached as object), cached: true }, { headers: CACHE_METADATA });
+      // FIX (BUG-PIC-STALE): cached response also gets NO_STORE headers. The CDN
+    // (s-maxage=60) would serve stale status data for up to 60s after a PIC
+    // mutation — statusCache.clear() in /api/pic POST only clears server memory,
+    // not the CDN edge. The server-side statusCache (5-min TTL) is sufficient
+    // for performance; CDN caching is redundant and causes stale-data bugs.
+    return NextResponse.json(
+      { ...(cached as object), cached: true },
+      { headers: NO_STORE },
+    );
     }
 
     // DP-07 FIX: Parallelize all 6 independent DB queries via Promise.all
@@ -158,7 +166,12 @@ export async function GET(req: NextRequest) {
     // Phase 1c: cache the result for 5 minutes
     statusCache.set('status', result);
 
-    return NextResponse.json(result, { headers: CACHE_METADATA });
+    // FIX (BUG-PIC-STALE): use NO_STORE instead of CACHE_METADATA. The CDN
+    // (s-maxage=60) caused stale status data after mutations (PIC update,
+    // file upload, data delete) — the edge cache wasn't cleared by
+    // statusCache.clear() or invalidateAnalysisCache(). The server-side
+    // statusCache (5-min TTL, properly invalidated by mutations) is sufficient.
+    return NextResponse.json(result, { headers: NO_STORE });
   } catch (e: unknown) {
     const errMsg = (e instanceof Error ? e.message : String(e));
     // If tables don't exist, return empty state (not error 500)
