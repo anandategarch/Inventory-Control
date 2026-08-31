@@ -415,10 +415,13 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // P3-BE: added `item-trend-rank` (per-item national rank per period —
   // reads from InventoryRecord across ALL periods for ALL items via RANK()
   // window function, so mutations affect the ranking distribution).
+  // FLIP-BE: added `flip-ranking` (cross-period flip pattern risk ranking —
+  // reads SIGNED SUM(qtyDeviasi) per (period, item) across ALL items + ALL
+  // periods, so mutations affect the per-item pair analysis + risk score).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
-    'item-trend', 'item-peer-comparison', 'item-trend-rank',
+    'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

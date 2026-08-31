@@ -3,9 +3,9 @@
 // ============================================================
 //  ItemTrendTable — Sortable Data Table
 //  --------------------------------------------------------
-//  Per-period data table with 8 sortable columns:
+//  Per-period data table with 9 sortable columns:
 //    Period | QTY BOM | QTY Deviasi signed | Z-Score | Status |
-//    Outlets | Pola (Pattern) | Records
+//    Outlets | Pola (Pattern) | Flip | Records
 //
 //  Phase 1 additions:
 //    - "Pola" (Pattern) column — classifies the period's blast radius
@@ -14,6 +14,16 @@
 //      powering the Phase 2 drill-down into ItemPeerComparison.
 //    - `drillPeriod` prop — when set, the matching row gets a highlighted
 //      background (visual indicator of the currently drilled period).
+//
+//  Phase A+B (FLIP-FE) additions:
+//    - "Flip" column — shows whether the period's signed qtyDeviasi
+//      flipped direction vs its same-week predecessor (W4 Jul → W4 Agu).
+//      Categories: sempurna / dominan / parsial / konsisten-naik /
+//      konsisten-turun / stagnan / first.
+//    - `flips` prop — array of FlipAnalysis from computeFlipAnalyses()
+//      (passed down from the parent who memoizes it once per item).
+//    - 'flip' sort key — sorts rows by disparityPct (null/non-flip
+//      rows sort to the bottom on desc).
 //
 //  Parent owns sort state (sortKey/sortDir/toggleSort) and the
 //  already-sorted rows array. Z-Score cells get a tooltip with
@@ -32,6 +42,13 @@ import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import { zScoreColor, zScoreStatus } from './zScoreHelpers';
 import { periodShortLabel } from './periodHelpers';
+import {
+  getFlipForPeriod,
+  flipBadge,
+  formatDisparity,
+  periodKey as flipPeriodKey,
+  type FlipAnalysis,
+} from './flipHelpers';
 import { METRICS, type SortKey, type SortDir } from './types';
 
 export interface ItemTrendTableProps {
@@ -47,6 +64,10 @@ export interface ItemTrendTableProps {
    *  gets a highlighted background indicating it is the currently
    *  drilled period. */
   drillPeriod?: { month: string; week: string } | null;
+  /** Flip analyses for the item (Phase A+B / FLIP-FE). Each row looks
+   *  up its flip pair (vs same-week predecessor) via getFlipForPeriod.
+   *  Optional — when omitted, the Flip column renders muted "—" cells. */
+  flips?: FlipAnalysis[];
 }
 
 // ------------------------------------------------------------
@@ -106,10 +127,11 @@ export function ItemTrendTable({
   metric,
   onRowClick,
   drillPeriod,
+  flips,
 }: ItemTrendTableProps) {
   return (
     <div className="max-h-96 overflow-auto border-t">
-      <Table className="min-w-[940px]">
+      <Table className="min-w-[1040px]">
         <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
           <TableRow className="border-b hover:bg-transparent">
             <TableHead
@@ -150,6 +172,14 @@ export function ItemTrendTable({
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center">
               Pola
             </TableHead>
+            {/* Phase A+B (FLIP-FE) — Flip column. Sortable by disparityPct
+                (rows with no flip pair, i.e. `first`, sort to bottom on desc). */}
+            <TableHead
+              className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center cursor-pointer hover:bg-muted/40"
+              onClick={() => toggleSort('flip')}
+            >
+              Flip <SortIcon col="flip" sortKey={sortKey} sortDir={sortDir} />
+            </TableHead>
             <TableHead
               className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40"
               onClick={() => toggleSort('recordCount')}
@@ -164,6 +194,12 @@ export function ItemTrendTable({
             const status = zScoreStatus(z);
             const isLoss = p.qtyDeviasiSigned < 0;
             const pattern = patternBadge(p.outletCount);
+            // Phase A+B (FLIP-FE) — look up the flip pair (vs same-week
+            // predecessor). Null when this period has no predecessor
+            // (first same-week period → category 'first').
+            const flip = flips ? getFlipForPeriod(flips, flipPeriodKey(p)) : null;
+            const flipCat = flip?.category ?? 'first';
+            const flipCfg = flipBadge(flipCat);
             const isDrillRow = Boolean(
               drillPeriod &&
               drillPeriod.month === p.monthLabel &&
@@ -265,6 +301,69 @@ export function ItemTrendTable({
                     <span aria-hidden>{pattern.emoji}</span>
                     <span>{pattern.label}</span>
                   </Badge>
+                </TableCell>
+                {/* Phase A+B (FLIP-FE) — Flip column. Shows whether the
+                    period's signed qtyDeviasi flipped direction vs its
+                    same-week predecessor (W4 Jul → W4 Agu). */}
+                <TableCell className="text-xs px-3 py-2 text-center">
+                  {flip == null ? (
+                    <span className="text-muted-foreground/60">—</span>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] h-5 px-1.5 font-medium gap-0.5 cursor-help ${flipCfg.className}`}
+                        >
+                          <span aria-hidden>{flipCfg.emoji}</span>
+                          <span>
+                            {flip.isFlip
+                              ? `Flip ${formatDisparity(flip)}`
+                              : flipCat === 'konsisten-naik'
+                                ? '↑ Konsisten'
+                                : flipCat === 'konsisten-turun'
+                                  ? '↓ Konsisten'
+                                  : 'Stagnan'}
+                          </span>
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="text-xs p-3 max-w-xs">
+                        <div className="space-y-1">
+                          <p className="font-semibold">🔀 Flip Analysis</p>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">vs Predecessor:</span>
+                            <span className="font-medium">{flip.period1Label}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">P1 (signed):</span>
+                            <span className={`font-medium tabular-nums ${flip.qtyP1 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {flip.qtyP1.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">P2 (signed):</span>
+                            <span className={`font-medium tabular-nums ${flip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {flip.qtyP2.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">Net (P1+P2):</span>
+                            <span className="font-medium tabular-nums">
+                              {flip.net.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">Disparity:</span>
+                            <span className="font-bold tabular-nums">{formatDisparity(flip)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span className="text-muted-foreground">Category:</span>
+                            <span className="font-medium">{flipCfg.label || '—'} {flip.isFlip ? `(risk: ${flip.riskLevel})` : ''}</span>
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </TableCell>
                 <TableCell className="text-xs px-3 py-2 text-right tabular-nums text-muted-foreground">{p.recordCount}</TableCell>
               </TableRow>

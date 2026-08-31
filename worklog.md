@@ -39226,3 +39226,89 @@ Stage Summary:
 - CALC-04 (P2): shared-cte.ts rankBom nullability uses `qtyBom != 0` (signed sum) instead of `SUM(ABS(qtyBom)) > 0` (magnitude) — items with canceled +/- BOM values get NULL rankBom even with non-zero BOM activity.
 - 6 categories VERIFIED OK (Z-Score, Residual, Growth, Pareto, Efficiency Score, Peer Selection).
 - No files modified — audit only.
+
+---
+Task ID: FLIP-BE
+Agent: Flip Ranking API Builder
+Task: Create /api/flip-ranking route + queryFlipRanking function
+
+Work Log:
+- Read worklog.md (last ~130 lines — Tasks DOC-2, DOC-1, AUDIT-CALC for Phase 1+2+3 context + 12 cached routes baseline)
+- Read item-trend-rank.ts IN FULL (RANK() OVER PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC + COUNT(*) OVER for totalItems + withStatementTimeout + buildSqlFilters with itemName=null bypass + Prisma.sql tagged templates + BigInt/Decimal coercion via Number())
+- Read /api/item-trend-rank/route.ts IN FULL (force-dynamic + maxDuration=30 + 30 req/min rate limit + inline Zod schema + withCacheAndDedup 5-min TTL + parallel resolveOutletCodeFilters with __NO_MATCH__ sentinel handling + kelompok/PIC intersection + CACHE_ANALYSIS headers + errorResponse)
+- Read shared.ts IN FULL (withStatementTimeout wraps $transaction with SET LOCAL statement_timeout + SET LOCAL work_mem='64MB'; buildSqlFilters generates area/kelompok/outletCode/picOutletCodes/itemName LIKE fragments with Prisma.raw alias; SqlFilterOpts type; DIRECTION_FROM_SUM_SQL + computePareto8020 shared helpers)
+- Read aggregation-cache.ts IN FULL (buildCacheKey with \x1f ASCII Unit Separator delimiter + extra route-specific params; withCacheAndDedup SWR flow with in-flight Promise dedup + stale-while-revalidate on expired entries; invalidateAnalysisCache maps invalidateCache(prefix+\x1f) across 12 cached routes)
+- Read validation.ts IN FULL (weekLabelSchema regex /^WEEK\s+[0-9]+$/i + limitSchema z.coerce.number().int().min(1).max(500) + validateQuery helper)
+- Read pic-resolver.ts + kelompok-resolver.ts IN FULL (resolvePICOutletCodes returns ['__NO_MATCH__'] sentinel for 0-match; resolveKelompokOutletCodes uses DB-level LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${kelompok}) filter; both normalizers)
+- Read cache-headers.ts + error-response.ts + month-resolver.ts IN FULL
+- Read /api/item-trend/route.ts IN FULL (cache key with extra={metric} pattern — modeled my cache key extra={limit} after this)
+- Read item-trend.ts IN FULL (mirrored SIGNED SUM(qtyDeviasi) aggregate pattern + COALESCE wrapper + MAX(sf."monthKey") for chronological sort)
+- Created src/lib/queries/items/flip-ranking.ts (348 LOC) — queryFlipRanking function:
+  * SQL CTE: SELECT monthLabel, weekLabel, MAX(sf.monthKey), i.name, SUM(ir.qtyDeviasi) signed FROM InventoryRecord JOIN Item LEFT JOIN SourceFile WHERE qtyDeviasi IS NOT NULL + buildSqlFilters + optional weekLabel filter, GROUP BY monthLabel, weekLabel, i.name
+  * itemName NOT passed to buildSqlFilters (LIKE would over-match; we want ALL items ranked)
+  * Coerces Decimal → Number (defensive)
+  * JS computation: group byItem → byWeek → sort by monthKey ASC (nulls last) → consecutive pairs (i, i+1) → isFlip check (sign1 !== 0 && sign2 !== 0 && sign1 !== sign2) → disparity = |net| / maxMagnitude → categorizeFlip (< 0.10 sempurna / < 0.40 dominan / else parsial)
+  * Aggregate per item: totalPairs, flipCount, sempurnaCount, dominanCount, parsialCount, konsistenCount, avgDisparity (mean of flip-only disparities), riskScore = min(100, sempurnaCount*30 + flipCount*10), riskLevel = high/moderate/low
+  * Top 3 most balanced flips per item (sorted by disparityPct ASC, slice 0..3)
+  * Sort items by riskScore DESC, sempurnaCount DESC, flipCount DESC, slice to top N (limit)
+  * totalItemsScanned returned BEFORE the slice
+  * periodShortLabel helper mirrors frontend convention (monthLabel.slice(0,3) + ' ' + weekLabel.replace('WEEK ', 'W') → "Jul W4")
+- Created src/app/api/flip-ranking/route.ts (243 LOC) — GET handler:
+  * export const dynamic = 'force-dynamic' + maxDuration = 30
+  * Rate limit: 30 req/min per IP via rateLimit(`flip-ranking:${ip}`, 30, 60_000)
+  * Inline Zod schema (validation.ts NOT modified per task constraint): week (regex), area/kelompok/outlet/pic (string optional), limit (z.coerce.number().int().min(1).max(50).default(20)), strict mode
+  * Cache key via buildCacheKey: route='flip-ranking', month='ALL' (flip covers ALL months), week=week||'ALL', itemName='ALL' (scans all items), area/kelompok/outletCode/pic filters, extra={limit} (different limits produce different responses — without this, cache poisoning)
+  * withCacheAndDedup 5-min TTL + SWR (stale-while-revalidate)
+  * resolveOutletCodeFilters (parallel resolveKelompokOutletCodes + resolvePICOutletCodes → intersect when both present → __NO_MATCH__ sentinel + empty-intersection early-return)
+  * filterOpts: area set, kelompok=null (already resolved to outletCodes), outletCode set, itemName=null (scans ALL items), picOutletCodes=resolved
+  * Response: { success, items, totalItemsScanned, durationMs, cached?, stale? } with CACHE_ANALYSIS headers
+  * errorResponse on failure (no DB schema/SQL leakage)
+- Added 'flip-ranking' to invalidateAnalysisCache routes array in src/lib/aggregation-cache.ts (12 → 13 cached routes) + added FLIP-BE comment explaining why mutations affect flip-ranking (reads SIGNED SUM(qtyDeviasi) per (period, item) across ALL items + ALL periods, so mutations affect the per-item pair analysis + risk score)
+- Ran `bun run lint` — 0 errors, 376 warnings (all pre-existing in tests/ + 3 pre-existing in aggregation-cache.ts/db.ts — NONE in new files; initially had 2 no-non-null-assertion warnings in flip-ranking.ts lines 270-271 (`weekRows[i]!` + `weekRows[i+1]!`) — removed the `!` since noUncheckedIndexedAccess is NOT enabled in tsconfig, so indexed access already returns T without needing assertion; final lint count went from 380 → 376 warnings)
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT 0 (0 errors)
+
+Stage Summary:
+- API: GET /api/flip-ranking?week=&area=&kelompok=&outlet=&pic=&limit= — scans ALL items, returns top N (default 20, max 50) by flip risk score
+- Flip detection: per-item, per-weekLabel group → sort by monthKey → consecutive pairs (P1=earlier, P2=later) → isFlip (signs differ + both non-zero) → disparity = |net| / maxMagnitude → categories (sempurna <10%, dominan 10-40%, parsial >=40%)
+- Item riskScore = min(100, sempurnaCount*30 + flipCount*10); riskLevel = high/moderate/low
+- Each item's topFlips array contains top 3 most balanced flips (lowest disparityPct first) with period1Label/period2Label (e.g. "Jul W4" / "Agu W4"), weekLabel, qtyP1, qtyP2, net, disparityPct, category
+- 5-min DB cache via withCacheAndDedup + SWR (stale-while-revalidate); cache key includes week + filters + limit (via extra) to prevent cache poisoning
+- Cached routes count: 12 → 13 (added 'flip-ranking' to invalidateAnalysisCache routes array)
+- Lint: 0 errors, 376 warnings (all pre-existing — 0 in new files)
+- tsc: EXIT 0 (0 errors)
+
+---
+Task ID: FLIP-FE
+Agent: Flip Detection Frontend (Phase A+B)
+Task: Add flip pattern detection to Trend Item Tab
+
+Work Log:
+- Read worklog.md (last ~150 lines — DOC-2 PRD/ARCHITECTURE update + DOC-1 MASTER_CONTEXT update + AUDIT-CALC audit) for full Phase 1+2+3 context + 4 calc discrepancies (CALC-01..04).
+- Read ItemTrendTab/index.tsx (826 LOC after edits) — main orchestrator with rank badge, search, chart, table, peer comparison. Identified: dynamic import of ItemTrendLineChart from '../ItemTrendLineChart' (NOT in ItemTrendTab/ folder), RankBadgeRow component pattern, sortedRows useMemo with sort switch (added 'flip' case), barrel re-exports at top of file.
+- Read ItemTrendTable.tsx (376 LOC after edits) — sortable data table with 8 columns + patternBadge function pattern (model for flipBadge).
+- Read ItemTrendLineChart.tsx (434 LOC after edits) — Recharts LineChart with renderZDot custom dot renderer + CustomTooltip function component pattern.
+- Read types.ts (57 LOC after edits) — SortKey type, MetricOption, AutocompleteResult.
+- Read zScoreHelpers.ts (32 LOC) — pattern for pure helper module (no 'use client', no React).
+- Read periodHelpers.ts (24 LOC) — pattern for periodSortKey + periodShortLabel (reused by flipHelpers for period1Label/period2Label).
+- Read lib/queries/item-trend.ts (120 LOC of 243) — verified ItemTrendPeriod type (qtyDeviasiSigned: SIGNED, negative=LOSS, positive=SURPLUS).
+- Verified ItemTrendPeriod re-exported via @/hooks/useAnalysis barrel (useAnalysis/index.ts → useAnalysis/useItemTrend.ts).
+- Created src/components/dashboard/tabs/ItemTrendTab/flipHelpers.ts (375 LOC) — pure helper module (no 'use client', no React). Contains: FlipAnalysis + ItemFlipScore interfaces; periodKey() stable key builder; groupPeriodsByWeek() (Map<weekLabel, ItemTrendPeriod[]> sorted by monthKey ASC); computeFlipAnalyses() (iterates consecutive same-week pairs, computes isFlip + net + disparity + disparityPct + category + riskLevel per spec: sempurna<10%/high, dominan<40%/moderate, parsial≥40%/moderate, konsisten-naik/turun/stagnan/low); computeItemFlipScore() (aggregate: flipCount + flipRate + avgDisparity + sempurna/dominan/parsial/konsisten counts + weighted riskScore 0-100 [sempurna=100, dominan=60, parsial=30, others=0, averaged by totalPairs] + riskLevel thresholds [≥50=high, ≥20=moderate, else low]); getFlipForPeriod() (lookup pair where period2Key === periodKey, returns null for first same-week period); getFlipsForPeriod() (lookup ALL pairs a period is involved in as P1 OR P2 — used by chart annotation); formatDisparity(); flipBadge() (emoji + label + Tailwind className per category).
+- Added Flip column to ItemTrendTable.tsx — new `flips?: FlipAnalysis[]` prop; new column "Flip" after "Pola" column; per-row lookup via getFlipForPeriod(flips, flipPeriodKey(p)); renders "—" for `first`, badge with emoji + "Flip {X}%" for flips (green/amber/red by category), "↑ Konsisten" / "↓ Konsisten" / "Stagnan" for non-flips; tooltip shows P1/P2 signed QTY + net + disparity + category + risk; min-width 940 → 1040px.
+- Added Flip Summary Card to ItemTrendTab/index.tsx — FlipSummaryCard component (defined after RankBadgeRow); renders when selectedItem + periods.length > 1; layout: 🔀 Flip Pattern Analysis header + N same-week pairs + per-category counts (🟢 Sempurna / 🟡 Dominan / 🔴 Parsial / ⚪ Konsisten, hidden when count=0) + Avg Disparity % + Risk badge (HIGH=red, MODERATE=amber, LOW=emerald); risk-score (X/100) shown when > 0. Card border colored by risk level. Memoized via `flips = useMemo(() => computeFlipAnalyses(periods), [periods])` + `flipScore = useMemo(() => computeItemFlipScore(flips), [flips])`.
+- Added 'flip' case to sortedRows sort switch — sorts by disparityPct (null/first-period rows map to -1 so they sort to bottom on desc); added `flips` to sortedRows useMemo deps array.
+- Added flip annotations to ItemTrendLineChart.tsx — new `flips?: FlipAnalysis[]` prop; ChartRow extended with periodKey + hasFlip + flipInfo[] fields; buildRow() now takes optional flips[] arg + looks up pairs via getFlipsForPeriod() + builds human-readable flipInfo lines ("🔀 Flip detected vs {other period label} ({X}% disparity)"); renderZDot now renders an outer amber dashed ring (r=7, stroke #f59e0b, strokeDasharray "2 2") when payload.hasFlip is true, while the inner Z-Score dot keeps its r=4 fill; CustomTooltip shows flipInfo lines in an amber-bordered section at the bottom; legend caption shows "⬤ Flip detected (amber dashed ring)" when any dot hasFlip.
+- Created src/components/dashboard/tabs/ItemTrendTab/FlipMatrix.tsx (260 LOC) — week × month signed-QTY grid. Rows = weekLabel (sorted W1→W4 by weekNum), columns = monthLabel (sorted chronologically by monthKey). Cell content = compact signed QTY ("+10K" / "-1.2M" / "+42") via fmtCompactSigned(). Cell color = emerald shades for SURPLUS, red shades for LOSS, muted for zero/missing — 4 intensity bands (≥75%/50%/25%/<25% of rowMax). Amber ring (ring-2 ring-amber-500) on cells whose period is in any flip pair (period1Key OR period2Key). Tooltip shows full period label + signed QTY + QTY BOM + outlet/record counts + flip pair info (other period label + signed QTY + disparity + category). Header row = month short labels (3-char), header col = week short labels (W1-W4). Only renders when periods.length >= 2. Memoized grid construction (weekSet + monthSet + cellMap + rowMax) so it doesn't recompute on parent keystrokes. Sticky left column (Week labels) for horizontal scroll.
+- Wired up FlipMatrix in ItemTrendTab/index.tsx — imported FlipMatrix; renders below ItemTrendTable + above ItemPeerComparison drill panel; only when selectedItem + periods.length >= 2; passes `periods={chronological}` (sorted) + `flips={flips}` (memoized).
+- Updated types.ts — added `'flip'` to SortKey union type; re-exported FlipAnalysis + ItemFlipScore from './flipHelpers' for convenience (so callers importing from '@/components/dashboard/tabs/ItemTrendTab' can access types via the types.ts barrel).
+- Updated barrel exports in index.tsx — added `export { FlipMatrix } from './FlipMatrix'`; added named re-exports for computeFlipAnalyses, computeItemFlipScore, getFlipForPeriod, getFlipsForPeriod, groupPeriodsByWeek, formatDisparity, flipBadge, periodKey (aliased as flipPeriodKey); added type re-exports for FlipAnalysis + ItemFlipScore (via types.ts barrel); added `export type { FlipMatrixProps } from './FlipMatrix'`.
+- Ran `bun run lint` — 0 errors (376 pre-existing warnings, NONE in new files: flipHelpers.ts, FlipMatrix.tsx, ItemTrendTable.tsx, ItemTrendLineChart.tsx, types.ts, index.tsx).
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT_CODE=0 (0 errors).
+
+Stage Summary:
+- Phase A: Flip column (ItemTrendTable) + Summary card (ItemTrendTab header) + Chart annotation (ItemTrendLineChart amber dashed ring + tooltip) ✓
+- Phase B: Flip Matrix (week × month signed-QTY grid with amber ring on flip cells) ✓
+- flipHelpers.ts: 375 LOC pure module — groupPeriodsByWeek + computeFlipAnalyses + computeItemFlipScore + getFlipForPeriod + getFlipsForPeriod + formatDisparity + flipBadge
+- FlipMatrix.tsx: 260 LOC client component — sticky-left table with emerald/red intensity coloring + amber ring on flip cells
+- Lint: 0 errors (376 pre-existing warnings — none in new/modified files)
+- tsc: 0 errors (EXIT_CODE=0)
+- No caller files outside ItemTrendTab/ folder modified (only ItemTrendLineChart.tsx + ItemTrendTable.tsx + index.tsx + types.ts + new flipHelpers.ts + FlipMatrix.tsx).

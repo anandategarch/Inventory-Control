@@ -78,6 +78,17 @@ import { ItemTrendSearchBar } from './ItemTrendSearchBar';
 import { ItemTrendTable } from './ItemTrendTable';
 import { METRICS, type AutocompleteResult, type SortKey, type SortDir } from './types';
 import { periodSortKey } from './periodHelpers';
+// Phase A+B (FLIP-FE) — flip detection helpers + matrix.
+import {
+  computeFlipAnalyses,
+  computeItemFlipScore,
+  getFlipForPeriod,
+  periodKey as flipPeriodKey,
+  type FlipAnalysis,
+  type ItemFlipScore,
+} from './flipHelpers';
+import { FlipMatrix } from './FlipMatrix';
+import { FlipRanking } from './FlipRanking';
 // Phase 2 — peer comparison drill-down panel.
 import { ItemPeerComparison } from './ItemPeerComparison';
 // Phase 3 — compact rank trend chart (inverted Y-axis, sits below main chart).
@@ -89,11 +100,25 @@ export { ItemTrendSearchBar } from './ItemTrendSearchBar';
 export { ItemTrendTable } from './ItemTrendTable';
 export { ItemPeerComparison } from './ItemPeerComparison';
 export { ItemTrendRankChart } from './ItemTrendRankChart';
+export { FlipMatrix } from './FlipMatrix';
+export { FlipRanking } from './FlipRanking';
 export { zScoreColor, zScoreStatus } from './zScoreHelpers';
 export { periodSortKey, periodShortLabel } from './periodHelpers';
-export type { MetricOption, AutocompleteResult, SortKey, SortDir } from './types';
+// Phase A+B (FLIP-FE) — flip detection re-exports.
+export {
+  computeFlipAnalyses,
+  computeItemFlipScore,
+  getFlipForPeriod,
+  getFlipsForPeriod,
+  groupPeriodsByWeek,
+  formatDisparity,
+  flipBadge,
+  periodKey as flipPeriodKey,
+} from './flipHelpers';
+export type { MetricOption, AutocompleteResult, SortKey, SortDir, FlipAnalysis, ItemFlipScore } from './types';
 export type { ItemPeerComparisonProps, ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResponse } from './ItemPeerComparison';
 export type { ItemTrendRankChartProps } from './ItemTrendRankChart';
+export type { FlipMatrixProps } from './FlipMatrix';
 export { METRICS } from './types';
 
 // Recharts is 5.4MB — lazy-load the chart component so it stays out of
@@ -172,6 +197,107 @@ function RankBadgeRow({ itemName, analysisData }: RankBadgeRowProps) {
       <Badge variant="secondary" className="text-[11px] h-5 px-1.5 tabular-nums">
         {matches.length} outlet terdampak (top 50)
       </Badge>
+    </div>
+  );
+}
+
+// ============================================================
+//  Phase A+B (FLIP-FE) — Flip Summary Card
+//  --------------------------------------------------------
+//  Compact card summarizing the item's flip pattern across all
+//  same-week pairs (W4 Jul vs W4 Agu, W4 Agu vs W4 Sep, …).
+//
+//  Layout:
+//    ┌────────────────────────────────────────────────┐
+//    │ 🔀 Flip Pattern Analysis                       │
+//    │ {N} same-week pairs:                           │
+//    │ 🟢 {Sempurna} Sempurna · 🟡 {Dominan} Dominan │
+//    │ · ⚪ {Konsisten} Konsisten                     │
+//    │ Avg Disparity: {X}% · Risk: 🟡 {LEVEL}         │
+//    └────────────────────────────────────────────────┘
+//
+//  Color coding:
+//    risk=high     → red border + red "HIGH" badge
+//    risk=moderate → amber border + amber "MODERATE" badge
+//    risk=low      → emerald border + emerald "LOW" badge
+// ============================================================
+
+function flipRiskClass(level: ItemFlipScore['riskLevel']): string {
+  switch (level) {
+    case 'high':
+      return 'border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20 text-red-700 dark:text-red-300';
+    case 'moderate':
+      return 'border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300';
+    case 'low':
+    default:
+      return 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300';
+  }
+}
+
+function flipRiskBadgeClass(level: ItemFlipScore['riskLevel']): string {
+  switch (level) {
+    case 'high':
+      return 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-800 bg-red-100 dark:bg-red-950/40';
+    case 'moderate':
+      return 'text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800 bg-amber-100 dark:bg-amber-950/40';
+    case 'low':
+    default:
+      return 'text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 bg-emerald-100 dark:bg-emerald-950/40';
+  }
+}
+
+interface FlipSummaryCardProps {
+  score: ItemFlipScore;
+}
+
+function FlipSummaryCard({ score }: FlipSummaryCardProps) {
+  const avgPct = Math.round(score.avgDisparity * 100);
+  const riskClass = flipRiskClass(score.riskLevel);
+  const riskBadgeClass = flipRiskBadgeClass(score.riskLevel);
+  const riskLabel = score.riskLevel.toUpperCase();
+  // Hide parts that have zero counts to keep the summary tight.
+  const parts: Array<{ emoji: string; label: string; count: number; cls: string }> = [
+    { emoji: '🟢', label: 'Sempurna', count: score.sempurnaCount, cls: 'text-emerald-700 dark:text-emerald-400' },
+    { emoji: '🟡', label: 'Dominan', count: score.dominanCount, cls: 'text-amber-700 dark:text-amber-400' },
+    { emoji: '🔴', label: 'Parsial', count: score.parsialCount, cls: 'text-red-700 dark:text-red-400' },
+    { emoji: '⚪', label: 'Konsisten', count: score.konsistenCount, cls: 'text-muted-foreground' },
+  ].filter(p => p.count > 0);
+
+  return (
+    <div className={`mt-2 rounded-lg border px-3 py-2 ${riskClass}`} data-testid="flip-summary-card">
+      <div className="flex items-center gap-1.5 text-xs font-semibold">
+        <span aria-hidden>🔀</span>
+        <span>Flip Pattern Analysis</span>
+      </div>
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] leading-tight">
+        <span className="font-medium tabular-nums">{score.totalPairs}</span>
+        <span className="text-muted-foreground">same-week pairs:</span>
+        {parts.length === 0 ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          parts.map((p, i) => (
+            <span key={p.label} className="flex items-center gap-1">
+              {i > 0 && <span className="text-muted-foreground/60">·</span>}
+              <span aria-hidden>{p.emoji}</span>
+              <span className="tabular-nums">{p.count}</span>
+              <span className={p.cls}>{p.label}</span>
+            </span>
+          ))
+        )}
+      </div>
+      <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px]">
+        <span className="text-muted-foreground">
+          Avg Disparity: <span className="font-medium tabular-nums text-foreground">{avgPct}%</span>
+        </span>
+        <span className="text-muted-foreground/60">·</span>
+        <span className="text-muted-foreground">Risk:</span>
+        <Badge variant="outline" className={`text-[10px] h-5 px-1.5 font-semibold ${riskBadgeClass}`}>
+          {riskLabel}
+        </Badge>
+        {score.riskScore > 0 && (
+          <span className="text-muted-foreground/70 tabular-nums">({score.riskScore}/100)</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -362,6 +488,14 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     [periods],
   );
 
+  // Phase A+B (FLIP-FE) — flip analyses + aggregate score for the item.
+  // Memoized off `periods` (not `chronological`) because computeFlipAnalyses
+  // sorts internally per-week-group. Both `flips` + `flipScore` are passed
+  // down to ItemTrendTable (column), ItemTrendLineChart (annotations),
+  // and the Flip Summary Card below the rank badge row.
+  const flips: FlipAnalysis[] = useMemo(() => computeFlipAnalyses(periods), [periods]);
+  const flipScore: ItemFlipScore = useMemo(() => computeItemFlipScore(flips), [flips]);
+
   // Table rows (sorted by user-selected column).
   const sortedRows = useMemo(() => {
     const arr = [...chronological];
@@ -388,11 +522,23 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
         case 'recordCount':
           cmp = a.recordCount - b.recordCount;
           break;
+        case 'flip': {
+          // Phase A+B (FLIP-FE) — sort by flip disparity (null → bottom on desc).
+          // Rows with no flip pair (first same-week period) sort to the
+          // bottom when desc is on by mapping null to -1 (less than any
+          // real disparity which is in [0, 100]).
+          const fa = flips ? getFlipForPeriod(flips, flipPeriodKey(a)) : null;
+          const fb = flips ? getFlipForPeriod(flips, flipPeriodKey(b)) : null;
+          const va = fa ? fa.disparityPct : -1;
+          const vb = fb ? fb.disparityPct : -1;
+          cmp = va - vb;
+          break;
+        }
       }
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return arr;
-  }, [chronological, sortKey, sortDir]);
+  }, [chronological, sortKey, sortDir, flips]);
 
   const toggleSort = useCallback((key: SortKey) => {
     setSortKey((prev) => {
@@ -450,6 +596,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   // ----------------------------------------------------------
 
   return (
+    <div className="space-y-4">
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2.5 flex-wrap">
@@ -560,6 +707,13 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
         {selectedItem && analysisData && (
           <RankBadgeRow itemName={selectedItem} analysisData={analysisData} />
         )}
+
+        {/* Phase A+B (FLIP-FE) — Flip Summary Card. Only renders when an
+            item is selected AND there are > 1 periods (need ≥2 same-week
+            periods to form a pair — single period has no predecessor). */}
+        {selectedItem && periods.length > 1 && (
+          <FlipSummaryCard score={flipScore} />
+        )}
       </CardHeader>
 
       <CardContent className="p-0">
@@ -606,6 +760,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                 periods={chronological}
                 metric={metric}
                 onDotClick={handlePeriodDrill}
+                flips={flips}
               />
 
               {/* Phase 3 — Rank Trend chart (compact, below main chart).
@@ -635,7 +790,18 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               metric={metric}
               onRowClick={handlePeriodDrill}
               drillPeriod={drillPeriod}
+              flips={flips}
             />
+
+            {/* Phase B (FLIP-FE) — Flip Matrix (week × month grid).
+                Renders below the table + above the ItemPeerComparison
+                drill panel. Only renders when there are ≥2 periods
+                (a single period can't form a pair). */}
+            {selectedItem && periods.length >= 2 && (
+              <div className="px-4 pt-3 pb-2">
+                <FlipMatrix periods={chronological} flips={flips} />
+              </div>
+            )}
 
             {/* Phase 2 — ItemPeerComparison drill-down panel.
                 Renders when both selectedItem + drillPeriod are set. */}
@@ -657,6 +823,13 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
         )}
       </CardContent>
     </Card>
+
+    {/* Phase C — Flip Ranking cross-item widget.
+        Renders at the bottom of the Trend Item Tab.
+        Shows top items by flip risk score (sempurna flips = suspicious).
+        Clicking a row selects that item for trend analysis above. */}
+    <FlipRanking />
+    </div>
   );
 }
 

@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
+import { getFlipsForPeriod, periodKey as flipPeriodKey, type FlipAnalysis } from './ItemTrendTab/flipHelpers';
 
 interface ChartRow {
   period: string;
@@ -38,6 +39,15 @@ interface ChartRow {
   qtyBom: number;
   nominalDeviasi: number;
   sampleSize: number;
+  /** Phase A+B (FLIP-FE) — short period key (`${monthLabel}|${weekLabel}`)
+   *  used to look up flip analyses for this row's period. */
+  periodKey: string;
+  /** Phase A+B (FLIP-FE) — when true, this period is part of ANY flip pair
+   *  (either as P1 or P2). Used by renderZDot to draw an amber ring. */
+  hasFlip: boolean;
+  /** Phase A+B (FLIP-FE) — human-readable description of the flip pair(s)
+   *  this period is part of (one entry per pair). Shown in the tooltip. */
+  flipInfo: string[];
 }
 
 interface ItemTrendLineChartProps {
@@ -48,6 +58,11 @@ interface ItemTrendLineChartProps {
    *  Receives the underlying ItemTrendPeriod so the caller can build a
    *  `{ month, week }` drill key. */
   onDotClick?: (_period: ItemTrendPeriod) => void;
+  /** Phase A+B (FLIP-FE) — flip analyses for the item. Dots whose period
+   *  is part of ANY flip pair (as P1 or P2) get an amber dashed ring + a
+   *  tooltip line "🔀 Flip detected vs {other period} ({X}% disparity)".
+   *  Optional — when omitted, no flip annotations are rendered. */
+  flips?: FlipAnalysis[];
 }
 
 const METRIC_LABELS: Record<ItemTrendMetric, string> = {
@@ -72,7 +87,14 @@ function zDotFill(z: number | null): string {
 // deviasi (for default metric) so the chart shows direction (LOSS below
 // 0, SURPLUS above 0). For Waste/Susut/Trial we use the ABS magnitude
 // (those fields are always-positive aggregates from the API).
-function buildRow(p: ItemTrendPeriod, metric: ItemTrendMetric): ChartRow {
+//
+// Phase A+B (FLIP-FE): also attaches the period key + any matching flip
+// info from the `flips` array (passed down from ItemTrendTab).
+function buildRow(
+  p: ItemTrendPeriod,
+  metric: ItemTrendMetric,
+  flips?: FlipAnalysis[],
+): ChartRow {
   let qty: number;
   switch (metric) {
     case 'qtyDeviasi':
@@ -89,6 +111,12 @@ function buildRow(p: ItemTrendPeriod, metric: ItemTrendMetric): ChartRow {
       qty = p.qtyTrial;
       break;
   }
+  const pk = flipPeriodKey(p);
+  const pairs = flips ? getFlipsForPeriod(flips, pk) : [];
+  const flipInfo = pairs.map((f) => {
+    const otherLabel = f.period1Key === pk ? f.period2Label : f.period1Label;
+    return `🔀 Flip detected vs ${otherLabel} (${Math.round(f.disparityPct)}% disparity)`;
+  });
   return {
     period: `${p.monthLabel.slice(0, 3)} ${p.weekLabel.replace('WEEK ', 'W')}`,
     fullLabel: `${p.monthLabel} · ${p.weekLabel}`,
@@ -101,6 +129,9 @@ function buildRow(p: ItemTrendPeriod, metric: ItemTrendMetric): ChartRow {
     qtyBom: p.qtyBom,
     nominalDeviasi: p.nominalDeviasi,
     sampleSize: p.sampleSize,
+    periodKey: pk,
+    hasFlip: pairs.length > 0,
+    flipInfo,
   };
 }
 
@@ -167,12 +198,23 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
           <span className="font-medium tabular-nums">{row.sampleSize} weeks</span>
         </div>
       )}
+      {/* Phase A+B (FLIP-FE) — show flip annotations when this period is
+          part of any flip pair (either as P1 or P2). */}
+      {row.flipInfo.length > 0 && (
+        <div className="mt-1 pt-1 border-t border-amber-300/40 dark:border-amber-700/40 space-y-1">
+          {row.flipInfo.map((line, i) => (
+            <div key={i} className="text-amber-700 dark:text-amber-400 font-medium">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, metric, onDotClick }: ItemTrendLineChartProps) {
-  const data = useMemo(() => periods.map(p => buildRow(p, metric)), [periods, metric]);
+export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, metric, onDotClick, flips }: ItemTrendLineChartProps) {
+  const data = useMemo(() => periods.map(p => buildRow(p, metric, flips)), [periods, metric, flips]);
 
   // Phase 2 drill-down: Recharts passes the chart state to `onClick`,
   // including `activeTooltipIndex` (the index into `data` of the nearest
@@ -191,6 +233,10 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
   // NOTE: Recharts' LineDot type requires returning a ReactElement (not
   // null). When `cx`/`cy`/`payload` are missing (rare edge case during
   // animation), return an empty <g/> instead of null so the type matches.
+  //
+  // Phase A+B (FLIP-FE): if the period is part of any flip pair, draw
+  // an outer amber dashed ring around the dot (the inner dot keeps its
+  // Z-Score color so the flip annotation doesn't mask the Z-Score signal).
   const renderZDot = (props: { cx?: number; cy?: number; payload?: ChartRow }) => {
     const { cx, cy, payload } = props;
     if (cx == null || cy == null || !payload) {
@@ -198,14 +244,29 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
     }
     const fill = zDotFill(payload.zScore);
     return (
-      <circle
-        cx={cx}
-        cy={cy}
-        r={4}
-        fill={fill}
-        stroke="var(--background)"
-        strokeWidth={1.5}
-      />
+      <g>
+        {/* Phase A+B (FLIP-FE) — outer amber dashed ring for flip periods. */}
+        {payload.hasFlip && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={7}
+            fill="none"
+            stroke="#f59e0b"
+            strokeWidth={1.5}
+            strokeDasharray="2 2"
+            opacity={0.9}
+          />
+        )}
+        <circle
+          cx={cx}
+          cy={cy}
+          r={4}
+          fill={fill}
+          stroke="var(--background)"
+          strokeWidth={1.5}
+        />
+      </g>
     );
   };
 
@@ -253,6 +314,12 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
         <span className="text-muted-foreground">▮ Historical Mean (baseline)</span>
         {' · '}
         <span>Dots berwarna = Z-Score</span>
+        {data.some(d => d.hasFlip) && (
+          <>
+            {' · '}
+            <span className="text-amber-600 dark:text-amber-400">⬤ Flip detected (amber dashed ring)</span>
+          </>
+        )}
       </p>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">

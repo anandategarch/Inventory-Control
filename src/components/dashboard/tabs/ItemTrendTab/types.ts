@@ -44,5 +44,14 @@ export interface AutocompleteResult {
 //  Sort keys for the data table.
 // ----------------------------------------------------------------
 
-export type SortKey = 'period' | 'qtyBom' | 'qtyDeviasiSigned' | 'zScore' | 'outletCount' | 'recordCount';
+export type SortKey = 'period' | 'qtyBom' | 'qtyDeviasiSigned' | 'zScore' | 'outletCount' | 'recordCount' | 'flip';
 export type SortDir = 'asc' | 'desc';
+
+// ----------------------------------------------------------------
+//  Flip detection (Phase A+B / FLIP-FE) — re-export for convenience.
+//  The actual implementation lives in ./flipHelpers (pure module,
+//  no 'use client'). Callers importing from
+//  '@/components/dashboard/tabs/ItemTrendTab' can access these types
+//  without needing to know about the internal helper file layout.
+// ----------------------------------------------------------------
+export type { FlipAnalysis, ItemFlipScore } from './flipHelpers';
