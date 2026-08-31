@@ -34,6 +34,12 @@ interface DashboardStore {
   setFocusOutlet: (code: string | null) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  // Phase 1 — Navigation Bridge: external components (e.g. RankingNasionalCard)
+  // can pre-select an item in the Trend Item Tab by setting this. The Trend
+  // Item Tab reads it as its `selectedItem` (replaces local useState) so the
+  // selection survives tab switches + persists across page renders.
+  trendSelectedItem: string | null;
+  setTrendSelectedItem: (item: string | null) => void;
 }
 
 export const useDashboard = create<DashboardStore>((set) => ({
@@ -71,4 +77,6 @@ export const useDashboard = create<DashboardStore>((set) => ({
   ),
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
+  trendSelectedItem: null,
+  setTrendSelectedItem: (item) => set({ trendSelectedItem: item }),
 }));

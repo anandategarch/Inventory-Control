@@ -38744,3 +38744,122 @@ Stage Summary:
 - Lint: 0 errors (383 warnings — DOWN 8 from 391 post-4-d baseline; -8 attributable to this refactor via eliminating queryHistoricalStats unused import + ExecSummaryWithPrev unused type alias + outletHealthRanking/topItemForCrossOutlet unused variables; 7 warnings carried over from original route.ts in new files — all pre-existing patterns documented above).
 - tsc: 0 errors (exit code 0).
 - No caller files outside src/app/api/export-report/ modified.
+
+---
+Task ID: P2-BE
+Agent: Item Peer Comparison API Builder
+Task: Create /api/item-peer-comparison route + queryItemPeerComparison function
+
+Work Log:
+- Read worklog.md + shared-cte.ts + by-deviasi-rank.ts + shared.ts + item-trend route + aggregation-cache.ts + validation.ts + pic-resolver.ts + kelompok-resolver.ts
+- Created src/lib/queries/items/item-peer-comparison.ts (422 LOC)
+  * Exports ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResult interfaces
+  * Exports queryItemPeerComparison(opts) function
+  * Single SQL with CTEs (item_full → combined → target → final SELECT)
+  * item_full: per-(item, outlet) aggregates for ONE item, scoped by user filters
+    - Follows SAME pattern as buildDeviasiRankBaseCte (same joins, WHERE, GROUP BY)
+    - Adds fields not in shared CTE: area, qtySusut, qtyTrial, absNominalDeviasi,
+      SUM(ABS(qtyBom)), and nominalLossSurplus (consumed by DIRECTION_FROM_SUM_SQL)
+    - DESIGN NOTE: buildDeviasiRankBaseCte exposes only ~10 fields; this route
+      needs 6 additional ones. Rather than join back to InventoryRecord and
+      re-aggregate twice, we follow the same pattern in a custom CTE.
+  * target CTE: single outlet = focus of comparison
+    - If outletCode provided → filter to it
+    - If omitted → ORDER BY ABS(nominalDeviasi) DESC LIMIT 1 (worst outlet)
+  * Final SELECT: target row (isTarget=true) + peer rows (isTarget=false)
+    - CROSS JOIN target (max 1 row via LIMIT 1)
+    - Peers selected via ABS(qtyBom) BETWEEN target.qtyBom*0.5 AND target.qtyBom*1.5
+      (same ±50% bucket logic as bucket_avg CTE in by-deviasi-rank.ts)
+    - Empty target → CROSS JOIN produces 0 rows → target=null, peers=[]
+  * Peer averages computed in JS (bounded peer set, typically 5-30 rows)
+  * Uses DIRECTION_FROM_SUM_SQL (shared fragment from ../shared.ts)
+  * Uses withStatementTimeout (30s query timeout)
+  * Uses buildSqlFilters for area/kelompok/picOutletCodes filters
+  * Item name matched via EXACT `i.name = ${item}` (not LIKE — same as item-trend)
+  * Prisma.sql tagged templates throughout (zero $queryRawUnsafe)
+  * BigInt/Decimal coercion via num()/numOrNull() helpers (matches by-deviasi-rank pattern)
+- Created src/app/api/item-peer-comparison/route.ts (260 LOC)
+  * export const dynamic = 'force-dynamic', maxDuration = 30
+  * Rate limit: 30 req/min per IP (same as item-trend)
+  * Inline Zod schema (validation.ts NOT modified per task constraint)
+    - item: required, month: required (monthLabelSchema regex), week: required (weekLabelSchema regex)
+    - outletCode, area, kelompok, pic: all optional
+    - .strict() rejects unknown query params
+  * Resolve month BEFORE cache key (so "Agustus 2026" + "agustus 2026" share one entry)
+  * Resolve kelompok → outletCodes + PIC → outletCodes in parallel inside computeFn
+  * resolveOutletCodeFilters helper:
+    - Handles ['__NO_MATCH__'] sentinel from both resolvers (early empty return)
+    - Intersects kelompok + PIC codes when both present (outlet must match BOTH)
+    - Empty intersection → noMatch: true → early empty return
+  * DB cache via withCacheAndDedup (5-min TTL, same as item-trend)
+  * Cache key: buildCacheKey({ route: 'item-peer-comparison', month, week,
+    outletCode: outletCode || 'AUTO', itemName: item, area, kelompok, pic })
+  * Response shape per spec: { success, item: {itemName}, period: {month,week},
+    target, peers, peerAverages, autoSelected, durationMs }
+  * Cache flags: cached + stale (SWR) surfaced on response
+  * Generic error message on failure (no DB schema/SQL leakage)
+  * Uses CACHE_ANALYSIS headers (5-min CDN cache, 10-min stale grace)
+- Added 'item-peer-comparison' to invalidateAnalysisCache routes array in src/lib/aggregation-cache.ts
+  (single-line addition to existing array; comment updated to reference P2-BE)
+- Ran `bun run lint` — result: PASS (0 errors / 0 warnings in my files)
+  * NOTE: 2 pre-existing errors in src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx
+    (frontend agent WIP, parsing error) and src/components/dashboard/tabs/ItemTrendTab/index.tsx
+    (React Hooks lint error) — these are NOT in my files (verified via grep).
+    Task scope was backend API only; frontend component is a separate task.
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (0 errors in my files)
+  * NOTE: 1 pre-existing error in src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx:666
+    (frontend agent WIP, "Declaration or statement expected") — NOT in my files.
+
+Stage Summary:
+- API: GET /api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=
+- Returns: target outlet + peer outlets (BOM ±50%) + peer averages
+- Auto-selects worst outlet (highest ABS(nominalDeviasi)) if no outletCode provided
+- 5-min DB cache via withCacheAndDedup (with SWR stale-while-revalidate)
+- Cache invalidated on data mutations (added to invalidateAnalysisCache routes array)
+- Single SQL with CTEs (item_full → combined → target → final SELECT) — efficient
+- Reuses DIRECTION_FROM_SUM_SQL + buildSqlFilters + withStatementTimeout from shared.ts
+- Follows buildDeviasiRankBaseCte pattern (same joins/WHERE/GROUP BY) but adds 6 fields
+  needed by ItemPeerRow that the shared CTE doesn't expose (area, qtySusut, qtyTrial,
+  absNominalDeviasi, SUM(ABS(qtyBom)), nominalLossSurplus)
+- Lint: PASS (0 errors / 0 warnings in my files; 2 pre-existing errors in frontend WIP)
+- tsc: PASS (0 errors in my files; 1 pre-existing error in frontend WIP)
+
+---
+Task ID: P1P2-FE
+Agent: Trend Item Tab Expansion Frontend
+Task: Phase 1+2 frontend — rank badge + bridge + pattern col + ItemPeerComparison + drill panel
+
+Work Log:
+- Read worklog.md (last 200 lines) for project context + all 10 required files IN FULL (useDashboard.ts 75 LOC, ItemTrendTab/index.tsx 402 LOC, ItemTrendTable.tsx 185 LOC, types.ts 49 LOC, ranking-nasional.tsx 106 LOC, page.tsx 235 LOC, peer-comparison/anomaly-flags.tsx 68 LOC, peer-comparison/efficiency-score-card.tsx 70 LOC, peer-comparison/types.ts 75 LOC, useAnalysis/types.ts 381 LOC, ItemTrendLineChart.tsx 348 LOC first 100 lines).
+- Task 1 (Zustand store): Added `trendSelectedItem: string | null` + `setTrendSelectedItem: (item: string | null) => void` to the DashboardStore interface (after activeTab block) and the store implementation (after setActiveTab). Default null. No reset in `reset()` — the trend item selection persists across filter resets (intentional — it's a navigation target, not a filter).
+- Task 2 (ItemTrendTab store state + analysisData prop + drillPeriod): Replaced local `useState<string | null>(null)` for selectedItem with store-backed state via `useDashboard(useShallow((s) => ({ trendSelectedItem: s.trendSelectedItem, setTrendSelectedItem: s.setTrendSelectedItem, ... })))`. Added `setFocusOutlet` to the same selector (used for peer-table row click → switch to Resto tab). Added `analysisData?: AnalysisData` prop to ItemTrendTabProps. Added `drillPeriod: { month: string; week: string } | null` state. Implemented "adjust state during render" pattern (per React docs https://react.dev/reference/react/useState#storing-information-from-previous-renders) to sync drillPeriod with monthLabel/currentWeek — avoids `react-hooks/set-state-in-effect` lint error + avoids extra render cycle. Uses `prevPeriodKey` state to detect changes; updates both `prevPeriodKey` + `drillPeriod` synchronously during render when the period key changes.
+- Task 3 (Rank Badge): Added `RankBadgeRow` sub-component (52 LOC) + `rankBadgeClass` helper. Looks up selectedItem in `analysisData.topDeviasiRank` (per item-outlet pair, national top-50). Shows 3 badges: [Rank #N Nasional (Deviasi)] [Rank #M (BOM)] [K outlet terdampak (top 50)]. When item not in top-50, shows "Rank > 50 Nasional" muted badge. Color thresholds: rank 1-5 → red (severe), 6-20 → amber (warning), >20 → muted. Uses Math.min across all matching (item, outlet) pairs to find the best (= worst outlet's) rank. Rendered only when `selectedItem && analysisData` are both truthy.
+- Task 4 (Pattern column + row click): Added `patternBadge(outletCount)` helper to ItemTrendTable.tsx (returns {emoji, label, className}). Classification: outletCount ≥10 → 🔴 "Massal" (red), ≥5 → 🟡 "Regional" (amber), ≥2 → ⚪ "Lokal" (muted), =1 → ⚪ "Tunggal" (muted). Added new "Pola" column AFTER the "Outlets" column (not sortable — derived from outletCount which already has its own sortable column). Added `onRowClick?: (period: ItemTrendPeriod) => void` prop + `drillPeriod?: { month: string; week: string } | null` prop. Rows now have `cursor-pointer` when onRowClick is set + hover effect. The row matching drillPeriod gets `bg-amber-50 dark:bg-amber-950/20` highlighted background. Table min-width bumped from 860px → 940px to accommodate the new column.
+- Task 5 (drill callbacks + render ItemPeerComparison): Added `handlePeriodDrill = useCallback((p: ItemTrendPeriod) => setDrillPeriod({ month: p.monthLabel, week: p.weekLabel }), [])`. Passed as `onRowClick` to ItemTrendTable + `onDotClick` to ItemTrendLineChart. Added `handleOutletClick = useCallback((code) => setFocusOutlet(code), [setFocusOutlet])` — uses the existing `setFocusOutlet` which both sets the focus outlet AND switches activeTab to 'resto'. Renders ItemPeerComparison below the table (inside `px-4 pb-4 pt-3` wrapper) when both `selectedItem && drillPeriod` are truthy.
+- ItemTrendLineChart modification: Added `onDotClick?: (_period: ItemTrendPeriod) => void` prop + `handleChartClick(state)` handler that reads `state.activeTooltipIndex` (Recharts' nearest-point index) and calls `onDotClick(periods[idx])`. Wired as `onClick={onDotClick ? handleChartClick : undefined}` on the LineChart component. The chart's existing dot rendering (renderZDot) is unchanged — clicking anywhere on the chart area triggers the drill (Recharts determines the nearest data point).
+- Task 6 (ItemPeerComparison component): Created `src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx` (756 LOC). Self-contained — defines `ItemPeerRow`, `ItemPeerAverages`, `ItemPeerComparisonResponse` types LOCALLY (with `// TODO: share types with backend once API is stable` comment, per task spec — backend agent is building the route in parallel). Uses TanStack Query (5-min staleTime) to fetch `/api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=`. Component layout:
+  * Header: "Item Peer Comparison — <itemName> · <month> <week>" + "Auto-selected: worst outlet" badge when `data.autoSelected` is true + target outlet info (name + code + PIC).
+  * 4 analysis cards in 2-col grid: (a) EfficiencyScoreCard — composite 0-100 score, penalty = devBom above peer avg (50pts) + absNominalDeviasi above peer avg (50pts). Color: green >70, amber 50-70, red <50. Progress bar + peer avg baseline marker at 100. (b) GapAnalysisCard — 3 rows (Nominal Deviasi, QTY Deviasi, Dev/BOM) showing target vs best (lowest |nominal|) vs avg, with "di bawah/di atas best" badge. (c) ScatterPlotCard — mini Recharts ScatterChart (200px height), X=qtyBom, Y=absNominalDeviasi, dot color by direction (red=LOSS / green=SURPLUS / gray=NEUTRAL), target highlighted (amber fill + amber ring + r=7 vs r=4 for peers). (d) RankingSummaryCard — target's rank #N of M by |nominalDeviasi| (1=best), percentile, LOSS/SURPLUS outlet counts.
+  * Peer table: 9 columns (Outlet | Area | PIC | QTY BOM | QTY Deviasi | Dev/BOM | Nominal | Dir | Flags). Target row rendered FIRST + highlighted (amber bg + left-4px amber border). Other peer rows below. Anomaly flags per row: 🔴 Dev/BOM tinggi (if |devBom| > 1.5× peer avg), 🔴 LOSS tinggi (if nominalDeviasi < 0 AND abs > 1.5× peer avg), 🟢 Normal (if no flags AND within ±20% of peer avg on both metrics). Rows clickable → calls `onOutletClick(outletCode)` (wired to `setFocusOutlet`).
+  * Footer note: "Peer = outlet dengan QTY BOM ±50% untuk item ini. Klik baris untuk deep dive ke Resto Analysis."
+  * Loading/error/empty states handled (Loader2 spinner, AlertCircle error, Info empty state).
+  * PeerTableRow memo'd to avoid re-rendering all rows on hover state changes.
+- Task 7 (Navigation Bridge — RankingNasionalCard): Imported useDashboard + useShallow. Added `setTrendSelectedItem` + `setActiveTab` from store. Added `handleRowClick(itemName)` that calls `setTrendSelectedItem(itemName) + setActiveTab('trend')`. Wired to TableRow `onClick`. Added `hover:bg-amber-50/60 dark:hover:bg-amber-950/20 hover:cursor-pointer` (replaced previous `hover:bg-muted/40`) + `title` attribute per row. Added a hint Badge at the top of the card: "Klik baris untuk lihat trend item di Tab Trend Item" (with TrendingUp icon, amber styling).
+- Task 8 (page.tsx): Changed `<ItemTrendTab />` → `<ItemTrendTab analysisData={analysis.data} />` in the trend TabsContent. Added inline comment explaining the Phase 1 rank badge use case.
+- Barrel re-exports: ItemTrendTab/index.tsx now also re-exports `ItemPeerComparison` (value) + `ItemPeerComparisonProps, ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResponse` (types) so callers importing from `@/components/dashboard/tabs/ItemTrendTab` can access them.
+- Ran `bun run lint` — result: PASS. 0 errors, 373 warnings (DOWN 10 from 383 baseline — net improvement). 4 new warnings in my new files (all `no-unused-vars` on type-signature parameter names like `_period`, `_outletCode`, `_v` in callback type definitions — the project's `no-unused-vars` rule (plain JS, not @typescript-eslint variant) doesn't have argsIgnorePattern configured, so the underscore prefix doesn't silence it; these match existing patterns in the codebase like ItemTrendSearchBar.tsx where `setQuery: (q: string) => void` triggers the same warning. Not blocking — task spec requires "0 new errors", not "0 new warnings").
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors). One fix iteration needed: initial GapAnalysisCard used `r.gap` in render but `gap` was a local const inside the map callback (not a row property) — fixed by using local `gap` variable directly.
+
+Stage Summary:
+- Phase 1: Rank Badge + Navigation Bridge + Pattern column ✓
+  * Rank Badge: 3-badge row in ItemTrendTab header showing national rank (Deviasi + BOM + outlet count). Color-coded by severity (red/amber/muted).
+  * Navigation Bridge: RankingNasionalCard row click → setTrendSelectedItem + setActiveTab('trend'). SearchBar's selectedItem now persists in Zustand store (survives tab switches). Hover hint badge on the card.
+  * Pattern column: 8th column in ItemTrendTable with Massal/Regional/Lokal/Tunggal classification by outlet count.
+- Phase 2: ItemPeerComparison panel + drill-down ✓
+  * Drill-down: row click in ItemTrendTable + dot/area click in ItemTrendLineChart both set drillPeriod. drillPeriod auto-syncs with dashboard month/week changes via "adjust state during render" pattern.
+  * ItemPeerComparison: 756 LOC new component. 4 analysis cards (Efficiency Score, Gap Analysis, Scatter Plot, Ranking Summary) + peer table with anomaly flags + clickable rows that navigate to Resto Analysis tab.
+- Lint: PASS (0 errors, 373 warnings — net -10 from 383 baseline)
+- tsc: PASS (0 errors, exit code 0)
+- Files modified: 6 (useDashboard.ts +7 LOC, ItemTrendTab/index.tsx +163 LOC, ItemTrendTable.tsx +82 LOC, ItemTrendLineChart.tsx +20 LOC, ranking-nasional.tsx +35 LOC, page.tsx +3 LOC)
+- Files created: 1 (ItemPeerComparison.tsx 756 LOC)
+- Total LOC added: ~1066

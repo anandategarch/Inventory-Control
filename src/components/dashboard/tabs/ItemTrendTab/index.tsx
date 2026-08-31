@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-//  ItemTrendTab — NEW "Trend Item" tab (TREND-FRONTEND).
+//  ItemTrendTab — "Trend Item" tab (TREND-FRONTEND).
 //  --------------------------------------------------------
 //  Per-item QTY fluctuation timeline across ALL periods, with
 //  Z-Score (signed) + historical baseline overlay.
@@ -10,20 +10,42 @@
 //    1. Search bar (debounced autocomplete via /api/item-search)
 //       + 4-option metric selector (QTY Deviasi / Waste / Susut / Trial)
 //    2. Selected-item badge (with clear button) + cache/fetch badges
-//    3. Empty state if no item selected
-//    4. Line chart (Recharts, lazy-loaded):
+//    3. Rank badge row (Phase 1) — shows the item's national rank in
+//       topDeviasiRank (Rank #N Nasional Deviasi / Rank #M BOM /
+//       K outlet terdampak top-50). Only shown when an item is
+//       selected AND analysisData is available.
+//    4. Empty state if no item selected
+//    5. Line chart (Recharts, lazy-loaded):
 //         - X  = period (Jun W4, Jul W4, …)
 //         - Y1 = selected metric's QTY value (solid amber line)
 //         - Y2 = Z-Score (right axis; color-coded dots)
 //         - ReferenceLine (dashed, muted) per-period = historical mean
 //         - Dot color: red (z>2), amber (1<z≤2), yellow (0<z≤1),
 //                      green (z≤0), muted (z=null)
-//    5. Sortable data table (Period | QTY BOM | QTY Deviasi signed |
-//       Z-Score | Status | Outlets | Records)
+//         - Click dot/area → setDrillPeriod (Phase 2)
+//    6. Sortable data table (Period | QTY BOM | QTY Deviasi signed |
+//       Z-Score | Status | Outlets | Pola | Records)
+//         - Pola column (Phase 1): Massal ≥10 / Regional ≥5 / Lokal ≥2 / Tunggal =1
+//         - Row click → setDrillPeriod (Phase 2)
+//         - drillPeriod-matching row highlighted
+//    7. ItemPeerComparison panel (Phase 2) — renders below the table
+//       when both `selectedItem` AND `drillPeriod` are set. Fetches
+//       from /api/item-peer-comparison and shows 4 analysis cards +
+//       peer table. Rows in the peer table are clickable → switches
+//       to Resto Analysis tab with that outlet focused.
 //
 //  Data flow:
 //    useItemTrend (TanStack Query) → /api/item-trend
 //    ItemAutocomplete (TanStack Query) → /api/item-search?mode=autocomplete
+//    ItemPeerComparison (TanStack Query) → /api/item-peer-comparison
+//
+//  State ownership (Phase 1 — Navigation Bridge):
+//    `selectedItem` lives in the Zustand store (`trendSelectedItem`)
+//    so external components (e.g. RankingNasionalCard) can pre-select
+//    an item via `setTrendSelectedItem` + `setActiveTab('trend')`.
+//    This replaces the previous local useState, but the API is
+//    unchanged from the SearchBar's perspective (still receives
+//    `selectedItem` + `setSelectedItem` as props).
 //
 //  Patterns reused from existing dashboard:
 //    - React.memo + ErrorBoundary + FetchAware (RestoTab pattern)
@@ -44,10 +66,11 @@ import {
   Card, CardContent, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Info, Loader2, Package, TrendingUp } from 'lucide-react';
+import { Info, Loader2, Package, TrendingUp, Award } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useItemTrend, type ItemTrendMetric, type ItemTrendPeriod } from '@/hooks/useAnalysis';
+import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 
 // Sub-components + helpers extracted in this folder split (Task ID 3-c).
@@ -55,14 +78,18 @@ import { ItemTrendSearchBar } from './ItemTrendSearchBar';
 import { ItemTrendTable } from './ItemTrendTable';
 import { METRICS, type AutocompleteResult, type SortKey, type SortDir } from './types';
 import { periodSortKey } from './periodHelpers';
+// Phase 2 — peer comparison drill-down panel.
+import { ItemPeerComparison } from './ItemPeerComparison';
 
 // Re-export sub-components + types so callers importing from
 // '@/components/dashboard/tabs/ItemTrendTab' can access them.
 export { ItemTrendSearchBar } from './ItemTrendSearchBar';
 export { ItemTrendTable } from './ItemTrendTable';
+export { ItemPeerComparison } from './ItemPeerComparison';
 export { zScoreColor, zScoreStatus } from './zScoreHelpers';
 export { periodSortKey, periodShortLabel } from './periodHelpers';
 export type { MetricOption, AutocompleteResult, SortKey, SortDir } from './types';
+export type { ItemPeerComparisonProps, ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResponse } from './ItemPeerComparison';
 export { METRICS } from './types';
 
 // Recharts is 5.4MB — lazy-load the chart component so it stays out of
@@ -77,25 +104,109 @@ const ItemTrendLineChart = dynamic(() => import('../ItemTrendLineChart').then(m 
 });
 
 // ============================================================
+//  Phase 1 — Rank badge (national rank for selected item)
+//  --------------------------------------------------------
+//  Looks up the selected item in `analysisData.topDeviasiRank`
+//  (national top-50 per item-outlet pair). Shows:
+//    [Rank #N Nasional (Deviasi)] [Rank #M (BOM)] [K outlet terdampak]
+//  When the item is not in the top-50, shows a muted "Rank > 50 Nasional" badge.
+//
+//  Color thresholds:
+//    rank 1-5   → red (severe)
+//    rank 6-20  → amber (warning)
+//    rank > 20  → muted (elevated but not critical)
+// ============================================================
+
+function rankBadgeClass(rank: number | null): string {
+  if (rank == null || rank > 50) return 'text-muted-foreground border-border bg-muted/40';
+  if (rank <= 5) return 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30';
+  if (rank <= 20) return 'text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30';
+  return 'text-muted-foreground border-border bg-muted/40';
+}
+
+interface RankBadgeRowProps {
+  itemName: string;
+  analysisData?: AnalysisData;
+}
+
+function RankBadgeRow({ itemName, analysisData }: RankBadgeRowProps) {
+  const matches: DeviasiRankItem[] = useMemo(() => {
+    if (!analysisData?.topDeviasiRank) return [];
+    return analysisData.topDeviasiRank.filter(it => it.itemName === itemName);
+  }, [analysisData, itemName]);
+
+  // Best (lowest) rank for the item across all its outlets in top-50.
+  // rankBom may be 0 (not ranked) — filter those out.
+  const rankNominal = matches.length > 0
+    ? Math.min(...matches.map(m => m.rankNominal))
+    : null;
+  const rankBomCandidates = matches.map(m => m.rankBom).filter(r => r != null && r > 0);
+  const rankBom = rankBomCandidates.length > 0
+    ? Math.min(...rankBomCandidates)
+    : null;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-xs mt-1">
+      <Badge
+        variant="outline"
+        className={`text-[11px] h-5 px-1.5 gap-1 ${rankBadgeClass(rankNominal)}`}
+        title={`Rank nasional by |nominal deviasi| (top 50). Best rank across ${matches.length} outlet terdampak.`}
+      >
+        <Award className="h-3 w-3" />
+        {rankNominal != null ? `Rank #${rankNominal} Nasional (Deviasi)` : 'Rank > 50 Nasional'}
+      </Badge>
+      <Badge
+        variant="outline"
+        className={`text-[11px] h-5 px-1.5 ${rankBadgeClass(rankBom)}`}
+        title="Rank nasional by |QTY BOM| (top 50)"
+      >
+        {rankBom != null ? `Rank #${rankBom} (BOM)` : 'Rank BOM > 50'}
+      </Badge>
+      <Badge variant="secondary" className="text-[11px] h-5 px-1.5 tabular-nums">
+        {matches.length} outlet terdampak (top 50)
+      </Badge>
+    </div>
+  );
+}
+
+// ============================================================
 //  ItemTrendTab — main component (orchestrator)
 // ============================================================
 
-function ItemTrendTabImpl() {
+interface ItemTrendTabProps {
+  /** Phase 1 — Rank Badge: analysis data from /api/analysis (used to
+   *  look up the selected item's national rank in topDeviasiRank).
+   *  Optional — when omitted, the rank badge row is hidden. */
+  analysisData?: AnalysisData;
+}
+
+function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   // Pull dashboard filters (month/week + filter context) so the trend
   // respects the user's current selection. The trend API takes month+week
   // purely for cache-key context (the response covers ALL periods), and
   // area/kelompok/outlet/pic to scope the records.
-  const { monthLabel, currentWeek, area, kelompok, outletCode, pic } = useDashboard(useShallow((s) => ({
+  //
+  // Phase 1 — Navigation Bridge: also pull `trendSelectedItem` +
+  // `setTrendSelectedItem` + `setFocusOutlet` from the store so external
+  // components can pre-select an item (RankingNasionalCard) and so the
+  // peer table rows can navigate to the Resto Analysis tab.
+  const {
+    monthLabel, currentWeek, area, kelompok, outletCode, pic,
+    trendSelectedItem: selectedItem, setTrendSelectedItem: setSelectedItem,
+    setFocusOutlet,
+  } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     area: s.area,
     kelompok: s.kelompok,
     outletCode: s.outletCode,
     pic: s.pic,
+    trendSelectedItem: s.trendSelectedItem,
+    setTrendSelectedItem: s.setTrendSelectedItem,
+    setFocusOutlet: s.setFocusOutlet,
   })));
 
   // Local UI state (not in Zustand — only the Trend Item tab cares about these).
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [metric, setMetric] = useState<ItemTrendMetric>('qtyDeviasi');
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -106,6 +217,27 @@ function ItemTrendTabImpl() {
   // Sort state for the table — default period asc (chronological, matches chart).
   const [sortKey, setSortKey] = useState<SortKey>('period');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  // Phase 2 — drill period state. Tracks which period the user clicked
+  // (via row click or chart dot click) for the ItemPeerComparison drill-down.
+  // Defaults to the current dashboard month/week when both are set; auto-syncs
+  // when the user changes the dashboard period.
+  //
+  // Implementation: "adjust state during render" pattern (per React docs:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders).
+  // This avoids the `react-hooks/set-state-in-effect` lint error + avoids
+  // the extra render cycle that `useEffect + setState` would cause. The
+  // `prevPeriodKey` state stores the previous month+week combo so we can
+  // detect changes; when it differs from the current combo, we update both
+  // `prevPeriodKey` (so the next render doesn't loop) and `drillPeriod`
+  // (the actual drill target).
+  const [drillPeriod, setDrillPeriod] = useState<{ month: string; week: string } | null>(null);
+  const [prevPeriodKey, setPrevPeriodKey] = useState<string | null>(null);
+  const currentPeriodKey = monthLabel && currentWeek ? `${monthLabel}|${currentWeek}` : null;
+  if (currentPeriodKey !== prevPeriodKey) {
+    setPrevPeriodKey(currentPeriodKey);
+    setDrillPeriod(monthLabel && currentWeek ? { month: monthLabel, week: currentWeek } : null);
+  }
 
   // Close autocomplete dropdown when clicking outside.
   useEffect(() => {
@@ -209,6 +341,19 @@ function ItemTrendTabImpl() {
       return key;
     });
   }, []);
+
+  // Phase 2 — drill-down callbacks. Both row click + chart dot click set
+  // the same `drillPeriod` state, which triggers ItemPeerComparison to
+  // fetch + render.
+  const handlePeriodDrill = useCallback((p: ItemTrendPeriod) => {
+    setDrillPeriod({ month: p.monthLabel, week: p.weekLabel });
+  }, []);
+
+  // Phase 2 — peer table row click. Uses setFocusOutlet which both sets
+  // the focus outlet AND switches activeTab to 'resto' (see useDashboard).
+  const handleOutletClick = useCallback((outletCode: string) => {
+    setFocusOutlet(outletCode);
+  }, [setFocusOutlet]);
 
   // Summary stats (computed inline — small N, no useCallback needed).
   const summary = periods.length === 0 ? null : (() => {
@@ -335,6 +480,13 @@ function ItemTrendTabImpl() {
             )}
           </div>
         )}
+
+        {/* Phase 1 — Rank Badge row. Only shows when an item is selected AND
+            analysisData is available. Hidden for items not in topDeviasiRank
+            (shows a muted "Rank > 50" badge instead). */}
+        {selectedItem && analysisData && (
+          <RankBadgeRow itemName={selectedItem} analysisData={analysisData} />
+        )}
       </CardHeader>
 
       <CardContent className="p-0">
@@ -380,6 +532,7 @@ function ItemTrendTabImpl() {
               <ItemTrendLineChart
                 periods={chronological}
                 metric={metric}
+                onDotClick={handlePeriodDrill}
               />
             </div>
 
@@ -390,7 +543,26 @@ function ItemTrendTabImpl() {
               sortDir={sortDir}
               toggleSort={toggleSort}
               metric={metric}
+              onRowClick={handlePeriodDrill}
+              drillPeriod={drillPeriod}
             />
+
+            {/* Phase 2 — ItemPeerComparison drill-down panel.
+                Renders when both selectedItem + drillPeriod are set. */}
+            {selectedItem && drillPeriod && (
+              <div className="px-4 pb-4 pt-3">
+                <ItemPeerComparison
+                  itemName={selectedItem}
+                  month={drillPeriod.month}
+                  week={drillPeriod.week}
+                  targetOutletCode={outletCode}
+                  area={area}
+                  kelompok={kelompok}
+                  pic={pic}
+                  onOutletClick={handleOutletClick}
+                />
+              </div>
+            )}
           </div>
         )}
       </CardContent>

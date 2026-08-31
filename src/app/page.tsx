@@ -204,7 +204,9 @@ export default function DashboardPage() {
             {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
             <TabsContent value="trend" className="space-y-4 mt-2 animate-fade-in-up">
               <ErrorBoundary label="Trend Item">
-                <ItemTrendTab />
+                {/* Phase 1 — pass analysisData so the tab can render the
+                    Rank Badge row (item's national rank in topDeviasiRank). */}
+                <ItemTrendTab analysisData={analysis.data} />
               </ErrorBoundary>
             </TabsContent>
           </Tabs>

@@ -3,9 +3,17 @@
 // ============================================================
 //  ItemTrendTable — Sortable Data Table
 //  --------------------------------------------------------
-//  Per-period data table with 7 sortable columns:
+//  Per-period data table with 8 sortable columns:
 //    Period | QTY BOM | QTY Deviasi signed | Z-Score | Status |
-//    Outlets | Records
+//    Outlets | Pola (Pattern) | Records
+//
+//  Phase 1 additions:
+//    - "Pola" (Pattern) column — classifies the period's blast radius
+//      by outlet count (Massal ≥10 / Regional ≥5 / Lokal ≥2 / Tunggal =1).
+//    - `onRowClick` prop — row click invokes callback with the period,
+//      powering the Phase 2 drill-down into ItemPeerComparison.
+//    - `drillPeriod` prop — when set, the matching row gets a highlighted
+//      background (visual indicator of the currently drilled period).
 //
 //  Parent owns sort state (sortKey/sortDir/toggleSort) and the
 //  already-sorted rows array. Z-Score cells get a tooltip with
@@ -32,6 +40,47 @@ export interface ItemTrendTableProps {
   sortDir: SortDir;
   toggleSort: (key: SortKey) => void;
   metric: ItemTrendMetric;
+  /** Row click handler — invokes callback with the clicked period.
+   *  Powers the Phase 2 drill-down into ItemPeerComparison. */
+  onRowClick?: (period: ItemTrendPeriod) => void;
+  /** When set, the row matching this period (monthLabel + weekLabel)
+   *  gets a highlighted background indicating it is the currently
+   *  drilled period. */
+  drillPeriod?: { month: string; week: string } | null;
+}
+
+// ------------------------------------------------------------
+//  Pattern classification — classifies the blast radius of a
+//  period by outlet count. Used by the new "Pola" column.
+//  Thresholds: Massal ≥10 / Regional ≥5 / Lokal ≥2 / Tunggal =1.
+// ------------------------------------------------------------
+function patternBadge(outletCount: number): { emoji: string; label: string; className: string } {
+  if (outletCount >= 10) {
+    return {
+      emoji: '🔴',
+      label: 'Massal',
+      className: 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30',
+    };
+  }
+  if (outletCount >= 5) {
+    return {
+      emoji: '🟡',
+      label: 'Regional',
+      className: 'text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30',
+    };
+  }
+  if (outletCount >= 2) {
+    return {
+      emoji: '⚪',
+      label: 'Lokal',
+      className: 'text-muted-foreground border-border bg-muted/40',
+    };
+  }
+  return {
+    emoji: '⚪',
+    label: 'Tunggal',
+    className: 'text-muted-foreground border-border bg-muted/40',
+  };
 }
 
 function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
@@ -45,10 +94,12 @@ export function ItemTrendTable({
   sortDir,
   toggleSort,
   metric,
+  onRowClick,
+  drillPeriod,
 }: ItemTrendTableProps) {
   return (
     <div className="max-h-96 overflow-auto border-t">
-      <Table className="min-w-[860px]">
+      <Table className="min-w-[940px]">
         <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
           <TableRow className="border-b hover:bg-transparent">
             <TableHead
@@ -84,6 +135,11 @@ export function ItemTrendTable({
             >
               Outlets <SortIcon col="outletCount" sortKey={sortKey} sortDir={sortDir} />
             </TableHead>
+            {/* Phase 1 — Pattern column. Not sortable (classification derived
+                from outletCount which already has its own sortable column). */}
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center">
+              Pola
+            </TableHead>
             <TableHead
               className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40"
               onClick={() => toggleSort('recordCount')}
@@ -97,8 +153,24 @@ export function ItemTrendTable({
             const z = p.zScore;
             const status = zScoreStatus(z);
             const isLoss = p.qtyDeviasiSigned < 0;
+            const pattern = patternBadge(p.outletCount);
+            const isDrillRow = Boolean(
+              drillPeriod &&
+              drillPeriod.month === p.monthLabel &&
+              drillPeriod.week === p.weekLabel,
+            );
             return (
-              <TableRow key={`${p.monthKey}-${p.weekLabel}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
+              <TableRow
+                key={`${p.monthKey}-${p.weekLabel}-${i}`}
+                className={`transition-colors border-b ${
+                  onRowClick ? 'cursor-pointer' : ''
+                } ${
+                  isDrillRow
+                    ? 'bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30'
+                    : 'hover:bg-muted/40'
+                }`}
+                onClick={onRowClick ? () => onRowClick(p) : undefined}
+              >
                 <TableCell className="text-xs px-3 py-2">
                   <div className="font-medium leading-tight">{periodShortLabel(p)}</div>
                   <div className="text-[10px] text-muted-foreground">{p.monthLabel} · {p.weekLabel}</div>
@@ -173,6 +245,17 @@ export function ItemTrendTable({
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs px-3 py-2 text-right tabular-nums">{p.outletCount}</TableCell>
+                {/* Phase 1 — Pattern (Pola) column */}
+                <TableCell className="text-xs px-3 py-2 text-center">
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] h-5 px-1.5 font-medium gap-0.5 ${pattern.className}`}
+                    title={`${pattern.label} — ${p.outletCount} outlet terdampak`}
+                  >
+                    <span aria-hidden>{pattern.emoji}</span>
+                    <span>{pattern.label}</span>
+                  </Badge>
+                </TableCell>
                 <TableCell className="text-xs px-3 py-2 text-right tabular-nums text-muted-foreground">{p.recordCount}</TableCell>
               </TableRow>
             );

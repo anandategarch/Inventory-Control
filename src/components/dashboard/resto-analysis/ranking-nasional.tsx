@@ -6,15 +6,23 @@
 //  Data source: /api/outlet-items → topDeviasiRank (per-outlet query
 //  with national rank + peer benchmark).
 //  (split from RestoAnalysis.tsx — Phase 3)
+//
+//  Phase 1 — Navigation Bridge:
+//    Each table row is clickable. Clicking sets `trendSelectedItem`
+//    in the Zustand store + switches to the Trend Item tab, so the
+//    user can immediately see the per-period trend for that item.
+//    Hover hint shown at the top of the card body.
 // ============================================================
 
 import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Target } from 'lucide-react';
+import { Target, TrendingUp } from 'lucide-react';
 import { fmtIDR, fmtNum } from './helpers';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 
 export const RankingNasionalCard = memo(function RankingNasionalCard({
   focusOutlet,
@@ -25,6 +33,21 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
   analysisData?: AnalysisData;
   outletDeviasiRank?: DeviasiRankItem[];
 }) {
+  // Phase 1 — Navigation Bridge: row click sets the trend tab's
+  // `selectedItem` (via the shared Zustand store) + switches to
+  // the Trend Item tab. The Trend Item tab reads `trendSelectedItem`
+  // as its selected item (replacing local useState), so this
+  // transparently pre-selects the item without any prop drilling.
+  const { setTrendSelectedItem, setActiveTab } = useDashboard(useShallow((s) => ({
+    setTrendSelectedItem: s.setTrendSelectedItem,
+    setActiveTab: s.setActiveTab,
+  })));
+
+  const handleRowClick = (itemName: string) => {
+    setTrendSelectedItem(itemName);
+    setActiveTab('trend');
+  };
+
   // Primary source: per-outlet top 30 (from /api/outlet-items — fired when
   // resto is selected). Falls back to analysisData.topDeviasiRank (national
   // top-50) if outlet-items hasn't loaded yet.
@@ -48,6 +71,14 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
         </p>
         <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
           <Badge variant="secondary" className="text-xs tabular-nums font-medium">{items.length} item</Badge>
+          {/* Phase 1 — Navigation Bridge hint */}
+          <Badge
+            variant="outline"
+            className="text-[10px] font-normal text-amber-600 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5 gap-1"
+          >
+            <TrendingUp className="h-3 w-3" />
+            Klik baris untuk lihat trend item di Tab Trend Item
+          </Badge>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -73,7 +104,12 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
               {items.length === 0 ? (
                 <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-8">Tidak ada data deviasi untuk outlet ini pada periode terpilih</TableCell></TableRow>
               ) : items.map((it, i) => (
-                <TableRow key={`${it.itemName}-${it.outletCode}-${i}`} className={`hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}>
+                <TableRow
+                  key={`${it.itemName}-${it.outletCode}-${i}`}
+                  className={`hover:bg-amber-50/60 dark:hover:bg-amber-950/20 hover:cursor-pointer transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
+                  onClick={() => handleRowClick(it.itemName)}
+                  title={`Klik untuk lihat trend ${it.itemName} di Tab Trend Item`}
+                >
                   <TableCell className="text-center text-xs font-bold tabular-nums">{it.rankNominal}</TableCell>
                   <TableCell className="text-center text-xs text-muted-foreground tabular-nums">{it.rankBom != null && it.rankBom > 0 ? it.rankBom : '—'}</TableCell>
                   <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>

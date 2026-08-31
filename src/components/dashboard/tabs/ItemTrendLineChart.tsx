@@ -43,6 +43,11 @@ interface ChartRow {
 interface ItemTrendLineChartProps {
   periods: ItemTrendPeriod[];
   metric: ItemTrendMetric;
+  /** Optional callback invoked when the user clicks a chart point (dot
+   *  or active area). Powers the Phase 2 drill-down into ItemPeerComparison.
+   *  Receives the underlying ItemTrendPeriod so the caller can build a
+   *  `{ month, week }` drill key. */
+  onDotClick?: (_period: ItemTrendPeriod) => void;
 }
 
 const METRIC_LABELS: Record<ItemTrendMetric, string> = {
@@ -166,8 +171,19 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
   );
 }
 
-export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, metric }: ItemTrendLineChartProps) {
+export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, metric, onDotClick }: ItemTrendLineChartProps) {
   const data = useMemo(() => periods.map(p => buildRow(p, metric)), [periods, metric]);
+
+  // Phase 2 drill-down: Recharts passes the chart state to `onClick`,
+  // including `activeTooltipIndex` (the index into `data` of the nearest
+  // point to the click). Map that back to the underlying ItemTrendPeriod
+  // and invoke the parent's `onDotClick` callback.
+  const handleChartClick = (state: { activeTooltipIndex?: number }) => {
+    if (!onDotClick) return;
+    const idx = state?.activeTooltipIndex;
+    if (idx == null || idx < 0 || idx >= periods.length) return;
+    onDotClick(periods[idx]);
+  };
 
   // Per-dot fill color — Recharts allows a function for `fill` on Dot.
   // We render a custom <Line dot={...}> to color each dot individually
@@ -240,7 +256,11 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
       </p>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 5 }}>
+          <LineChart
+            data={data}
+            margin={{ left: 0, right: 16, top: 10, bottom: 5 }}
+            onClick={onDotClick ? handleChartClick : undefined}
+          >
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
             <XAxis
               dataKey="period"
