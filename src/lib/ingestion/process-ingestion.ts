@@ -34,7 +34,6 @@ import { computeOutletPeriodSales } from './outlet-period-sales';
 import type { IngestResult, IngestRequestBody } from './types';
 
 export async function processIngestion(body: IngestRequestBody, fastMode?: boolean): Promise<IngestResult[]> {
-  const startedAt = Date.now();
   let files: string[] = [];
 
   if (body.filePath) {
@@ -200,8 +199,8 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       // For /api/ingest (30s), Vercel will kill the function before the transaction
       // timeout — PostgreSQL will then roll back automatically when the connection drops.
       // For /api/import-drive (300s), the 240s timeout gives headroom for post-tx work
-      // (audit log + cache invalidation).
-      const { totalInserted, skippedErrors, dq } = await db.$transaction(
+      // (cache invalidation).
+      const { totalInserted, dq } = await db.$transaction(
         async (tx) => {
           // STEP 1 (deferred): Delete old SourceFiles for the same monthKey/monthLabel.
           // This runs INSIDE the transaction so it's rolled back if the insert fails.
@@ -431,18 +430,6 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
         },
         { timeout: 240_000, maxWait: 10_000 },
       );
-
-      // Audit log — outside the transaction so a failure here doesn't roll back the
-      // ingestion. AuditLog is non-critical: a missing audit entry is preferable to
-      // losing the ingested data.
-      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-      db.auditLog.create({
-        data: {
-          action: 'INGEST',
-          detail: `${fileName} → ${ext === '.xlsx' ? 'Excel direct' : 'CSV'}: ${totalInserted} rows (${skippedErrors} skipped due to ERROR)${fastMode ? ' [FAST MODE]' : ''}`,
-          duration: Date.now() - startedAt,
-        },
-      }).catch((e) => logger.error("[ingest] auditLog create failed", { error: e instanceof Error ? e.message : String(e) }));
 
       // Phase 3: invalidate analysis cache when new data is ingested
       // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.

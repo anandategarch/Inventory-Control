@@ -18,7 +18,6 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { db } from '@/lib/db';
 import { setCached } from '@/lib/aggregation-cache';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { validateAndResolve } from './services/validate-and-resolve';
@@ -77,22 +76,6 @@ export async function GET(req: NextRequest) {
 
     // FIX M3: Resolve the in-flight Promise so concurrent requests get the result.
     resolveComputation(result);
-
-    // ============================================================
-    //  P2 fix: Fire-and-forget audit log — don't block response on DB write.
-    //  Response is already assembled; audit log is non-critical telemetry.
-    //  Saves ~50-100ms (DB round-trip) per request.
-    // ============================================================
-    db.auditLog.create({
-      data: {
-        action: 'ANALYSIS',
-        // FIX (BUG-BE-10): include kelompok + pic in audit log for traceability
-        detail: `${params.month}/${params.week} vs ${params.prevWeek} | area=${params.area || 'ALL'} kelompok=${params.kelompok || 'ALL'} outlet=${params.outletCode || 'ALL'} pic=${params.pic || 'ALL'} | ${records.currSlim.length} records`,
-        duration: Date.now() - params.startedAt,
-      },
-    }).catch((e) => {
-      logger.error("Audit log write failed (non-blocking)", { error: e instanceof Error ? e.message : String(e) });
-    });
 
     return NextResponse.json(result, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {

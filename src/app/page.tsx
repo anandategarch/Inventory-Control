@@ -53,8 +53,6 @@ import {
 const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => (
   <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
 ) });
-// AuditLogDialog — lazy-loaded (filters module pulls Radix + form libs).
-const AuditLogDialog = dynamic(() => import('@/components/filters/AuditLogDialog').then(m => m.AuditLogDialog), { ssr: false, loading: () => null });
 
 export default function DashboardPage() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
@@ -109,7 +107,6 @@ export default function DashboardPage() {
   // Modal/drawer state lives at page level so the keyboard-shortcut
   // hook can reach the setters AND so the modals can render here.
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [auditLogOpen, setAuditLogOpen] = useState(false);
 
   const { handleExport, isExporting } = useDashboardActions({
     analysisData: analysis.data,
@@ -148,7 +145,6 @@ export default function DashboardPage() {
         analysisFetching={analysis.isFetching}
         analysisData={analysis.data}
         onExportClick={() => setExportDialogOpen(true)}
-        onAuditLogClick={() => setAuditLogOpen(true)}
       />
 
       {/* Main content */}
@@ -225,9 +221,6 @@ export default function DashboardPage() {
         onExport={handleExport}
         isExporting={isExporting}
       />
-
-      {/* Audit Log dialog — zombie revival (11 writes, 0 reads → now surfaced) */}
-      <AuditLogDialog open={auditLogOpen} onOpenChange={setAuditLogOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />

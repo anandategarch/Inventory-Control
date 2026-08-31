@@ -101,19 +101,6 @@ export async function POST(req: NextRequest) {
     await invalidateAnalysisCache();
     clearMonthResolverCache();
 
-    // FIX (AUDIT-SECURITY-PERF D5): add audit log — this mutates up to 100% of
-    // InventoryRecord rows but wrote no audit trail. Every other mutation route logs.
-    const totalUpdated = lossUpdated + surplusUpdated + neutralUpdated + lossFallback + surplusFallback;
-    db.auditLog.create({
-      data: {
-        action: 'MIGRATE_DIRECTION',
-        detail: `Migrated ${totalUpdated}/${total} records. Before: LOSS=${beforeLoss}, SURPLUS=${beforeSurplus}. After: LOSS=${afterLoss}, SURPLUS=${afterSurplus}.`,
-        duration: 0,
-      },
-    }).catch((e) => {
-      logger.error('Audit log write failed (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
-    });
-
     return NextResponse.json({
       success: true,
       message: 'Migration complete.',

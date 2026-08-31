@@ -4,7 +4,7 @@
 //  DashboardHeader — sticky 2-tier header extracted from page.tsx
 //  --------------------------------------------------------
 //  Tier 1: logo + title + action buttons (Export / Cari Item /
-//          Audit Log / Keyboard shortcuts tooltip) + status badges
+//          Keyboard shortcuts tooltip) + status badges
 //  Tier 2: FilterBar (bare, no Card wrapper) — only when hasData
 // ============================================================
 
@@ -15,7 +15,7 @@ import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity, Boxes, FileDown, History, Keyboard, Loader2,
+  Activity, Boxes, FileDown, Keyboard, Loader2,
 } from 'lucide-react';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 
@@ -26,7 +26,6 @@ export interface DashboardHeaderProps {
   analysisFetching: boolean;
   analysisData: AnalysisData | undefined;
   onExportClick: () => void;
-  onAuditLogClick: () => void;
 }
 
 export function DashboardHeader({
@@ -36,7 +35,6 @@ export function DashboardHeader({
   analysisFetching,
   analysisData,
   onExportClick,
-  onAuditLogClick,
 }: DashboardHeaderProps) {
   return (
     <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
@@ -87,20 +85,6 @@ export function DashboardHeader({
               )}
             </Button>
           )}
-          {/* Audit Log button — zombie revival (AuditLog model had 11 writes, 0 reads) */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="Audit Log"
-                onClick={onAuditLogClick}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
-              >
-                <History className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end">Audit Log</TooltipContent>
-          </Tooltip>
           {/* UX-ENHANCE: Keyboard shortcuts help tooltip */}
           <Tooltip>
             <TooltipTrigger asChild>

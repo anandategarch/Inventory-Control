@@ -177,15 +177,6 @@ export async function POST(req: NextRequest) {
 
     invalidateSettingsCache();
 
-    // Audit log
-    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-    db.auditLog.create({
-      data: {
-        action: 'SETTINGS_UPDATE',
-        detail: `Updated ${updates.length} settings: ${updates.map((u) => u.key).join(', ')}`,
-      },
-    }).catch(() => {});
-
     // Bug 4 fix: clear analysis cache when settings change (avoid stale data)
     // FIX Medium #1: invalidate DB-level AggregationCache too.
     // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
@@ -280,16 +271,6 @@ export async function DELETE(req: NextRequest) {
     // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
     // client's next read after the mutation returns sees fresh data.
     await invalidateAnalysisCache();
-
-    // FIX (BUG2-STATE-5): audit log is fire-and-forget (low priority) — don't await.
-    // The cache invalidation above IS awaited (PERF-CACHE-05) — correctness-critical
-    // so the client doesn't see stale thresholds on next read.
-    db.auditLog.create({
-      data: {
-        action: 'SETTINGS_RESET',
-        detail: key ? `Reset ${key} to default` : 'Reset all settings to defaults',
-      },
-    }).catch(() => {});
 
     return NextResponse.json({
       success: true,

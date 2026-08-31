@@ -418,10 +418,15 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // FLIP-BE: added `flip-ranking` (cross-period flip pattern risk ranking —
   // reads SIGNED SUM(qtyDeviasi) per (period, item) across ALL items + ALL
   // periods, so mutations affect the per-item pair analysis + risk score).
+  // FLIP-DRILL: added `flip-ranking-drilldown` (per-outlet breakdown for ONE
+  // flip pair — reads per-outlet SIGNED SUM(qtyDeviasi) for the (item, week,
+  // month) tuple in both P1 + P2, so mutations affect which outlets
+  // contributed to the balanced reversal).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
+    'flip-ranking-drilldown',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

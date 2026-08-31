@@ -39345,3 +39345,115 @@ Stage Summary:
 - BUG-FLIP-01 (P1): Amber ring + "Flip detected" tooltip shown on non-flip pairs in ItemTrendLineChart + FlipMatrix. getFlipsForPeriod returns ALL pairs (including konsisten/stagnan), and consumers don't filter by isFlip===true. Every period with a same-week predecessor/successor gets the amber ring, even when no actual flip occurred.
 - BUG-FLIP-02 (P2): ItemTrendTable 'flip' sort key sorts non-flip pairs (konsisten/stagnan) BY their disparity value, mixing them with actual flip pairs. A konsisten-naik pair with 90% disparity sorts ABOVE a sempurna flip with 0% disparity, misleading users who click "Flip" sort.
 - BUG-FLIP-03 (P3): Type discrepancy — ItemTrendPeriod.monthKey is `string` in useItemTrend.ts but `string | null` in item-trend.ts. Pre-existing issue, affects type safety of all flip code that imports from the hook.
+
+---
+Task ID: DEL-AUDIT
+Agent: Audit Log Remover
+Task: Remove audit log feature entirely (model, route, dialog, 14 write sites, UI)
+
+Work Log:
+- Read worklog.md (last 100 lines — FLIP-FE + BUG-FLIP context) for project state
+- Found all audit log references via rg — 14 write sites + 1 read route + 1 dialog + 1 button + state in page.tsx + 2 middleware.ts entries + 1 Prisma model
+- Deleted src/app/api/audit-log/route.ts + folder (was a GET endpoint with rate-limit + pagination that read AuditLog table — no consumer other than the now-deleted dialog)
+- Deleted src/components/filters/AuditLogDialog.tsx (207 LOC, lazy-loaded, used react-query to fetch /api/audit-log)
+- Removed auditLog.create({...}).catch(...) blocks from 10 API route/lib files (14 write sites total):
+  1. src/app/api/analysis/route.ts — ANALYSIS action (also removed now-unused `import { db }` since db was only used by the audit log write)
+  2. src/app/api/settings/route.ts — SETTINGS_UPDATE + SETTINGS_RESET
+  3. src/app/api/import-drive/route.ts — IMPORT_DRIVE (also removed now-unused `import { db }`)
+  4. src/app/api/data/route.ts — DATA_DELETE (also cleaned up now-orphaned `let detail = ''` declaration + 3 assignments in all/monthKey/fileId branches — detail was only consumed by the audit log write)
+  5. src/app/api/migrate-direction/route.ts — MIGRATE_DIRECTION (removed `const totalUpdated` declaration since it was only used in the audit log detail; surrounding before/after/lossUpdated/etc counts are still returned in the JSON response)
+  6. src/app/api/ingest-upload/route.ts — INGEST_UPLOAD (was inside `if (chunkIndex === totalChunks - 1)` block — removed entire conditional since body was audit-only)
+  7. src/app/api/pic/import/route.ts — PIC_IMPORT
+  8. src/app/api/pic/route.ts — PIC_UPDATE + PIC_DELETE
+  9. src/app/api/ingest-process/route.ts — INGEST_WEEK + INGEST_ALL_WEEKS (2 separate write sites, both with FAST MODE detail)
+  10. src/lib/ingestion/process-ingestion.ts — INGEST (also removed now-unused `const startedAt = Date.now()` declaration; removed `skippedErrors` from $transaction destructure — variable is still computed inside the callback and returned from it for type signature stability, just no longer destructured at the call site since its only post-tx consumer was the audit log detail; updated comment on line ~202 from "audit log + cache invalidation" → "cache invalidation" to reflect the new post-tx work scope)
+- Removed Audit Log button from src/components/dashboard/DashboardHeader.tsx:
+  * Removed `onAuditLogClick: () => void` from DashboardHeaderProps interface
+  * Removed `onAuditLogClick` from destructured params
+  * Removed the entire `<Tooltip>...<History/></Tooltip>` button block (lines ~90-103)
+  * Removed `History` from lucide-react import (became unused after button removal)
+  * Updated Tier-1 docstring to drop "Audit Log /" from the action buttons list
+- Removed AuditLogDialog dynamic import + state + JSX from src/app/page.tsx:
+  * Removed `const AuditLogDialog = dynamic(...)` line (lines 56-57)
+  * Removed `const [auditLogOpen, setAuditLogOpen] = useState(false)` (line 112)
+  * Removed `onAuditLogClick={() => setAuditLogOpen(true)}` prop on DashboardHeader (line 151)
+  * Removed `<AuditLogDialog open={auditLogOpen} onOpenChange={setAuditLogOpen} />` JSX + the "zombie revival" comment above it (lines 229-230)
+- Updated src/hooks/useDashboardActions.ts comment (lines 16-17): removed `+ \`auditLogOpen\`` from the list of state owned by parent (was inaccurate anyway — `auditLogOpen` lived in page.tsx, not in this hook's interface)
+- Removed `/api/audit-log` entries from src/middleware.ts:
+  * Removed `'/api/audit-log', // SEC-02: forensic trail must not be public` from PROTECTED_PATHS array (line 41)
+  * Removed `'/api/audit-log/:path*',` from matcher config (line 116)
+- Removed `model AuditLog { ... }` block (lines 226-235) from prisma/schema.prisma — including the section header comment "// Audit log (every ingest/calc/refresh)". Per task spec, did NOT run `db push` — the AuditLog table stays orphaned in the DB (harmless, just no longer exposed via Prisma Client). All other Prisma models untouched.
+- Verified `RATE_LIMITS.status` in rate-limit.ts is NOT removed (still used by /api/status route — unrelated to audit log).
+- Verified no keyboard shortcut for audit log existed in useDashboardActions.ts (Escape handler closes exportDialogOpen/drilldown/sourceModal/deepDiveItem only — no auditLogOpen reference in the keyboard handler).
+- Ran `bun run lint` — 0 errors, 379 warnings (baseline before changes: 380 warnings — my changes net REMOVED 1 warning by cleaning up the unused `startedAt` declaration in process-ingestion.ts; all remaining warnings are pre-existing in unrelated files: tests/, aggregation-cache.ts, db.ts, settings/route.ts getAllSettings unused import, etc.)
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT 0 (0 errors)
+
+Stage Summary:
+- Audit log feature fully removed
+- 14 write sites cleaned across 10 API route/lib files (analysis, settings ×2, import-drive, data, migrate-direction, ingest-upload, pic/import, pic ×2, ingest-process ×2, process-ingestion)
+- 2 files deleted: src/app/api/audit-log/route.ts + folder, src/components/filters/AuditLogDialog.tsx
+- UI button + dialog removed from DashboardHeader.tsx + page.tsx (incl. dynamic import, useState, prop wiring, JSX render)
+- middleware.ts: 2 audit-log entries removed from PROTECTED_PATHS + matcher
+- useDashboardActions.ts: stale comment about auditLogOpen updated
+- prisma/schema.prisma: AuditLog model removed (table stays orphaned in DB — harmless)
+- Side-effect cleanup: removed now-orphaned `let detail` var in data/route.ts (3 branches), `const totalUpdated` in migrate-direction/route.ts, `const startedAt` in process-ingestion.ts, `skippedErrors` from $transaction destructure (kept inside callback return for type stability), `import { db }` from analysis/route.ts + import-drive/route.ts (db was only used by the audit log write in those 2 files)
+- Lint: 0 errors, 379 warnings (baseline 380 → 379, net -1 warning, 0 new)
+- tsc: EXIT 0 (0 errors)
+
+---
+Task ID: FLIP-DRILL
+Agent: Flip Ranking Drill-down
+Task: Add per-outlet drill-down to Flip Ranking widget
+
+Work Log:
+- Read worklog.md (last ~130 lines — Tasks FLIP-BE + FLIP-FE + BUG-FLIP for flip detection context: query function pattern, route structure, widget rendering, audit findings).
+- Read FlipRanking.tsx IN FULL (430 LOC pre-edit) — sortable 7-column table (Rank|Item|Flips|Sempurna|AvgDisparity|RiskScore|TopFlipPair) + tooltip showing P1/P2 signed QTY + net + disparity + category. Clickable row → setTrendSelectedItem. Identified insertion point for drill-down (below each row's TableCell).
+- Read flip-ranking.ts IN FULL (348 LOC) — queryFlipRanking scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY monthLabel, weekLabel, i.name with buildSqlFilters(itemName=null bypass). Matches WHERE pattern: ir."qtyDeviasi" IS NOT NULL + i.name exact + ir."weekLabel" exact.
+- Read /api/flip-ranking/route.ts IN FULL (243 LOC) — force-dynamic + maxDuration=30 + 30 req/min rate limit + inline Zod schema + withCacheAndDedup 5-min TTL + SWR + resolveOutletCodeFilters (parallel kelompok + PIC resolvers with __NO_MATCH__ sentinel + intersection). Modeled drilldown route after this.
+- Read item-peer-comparison.ts IN FULL (436 LOC) — pattern for per-outlet query: DIRECTION_FROM_SUM_SQL shared fragment + withStatementTimeout + Prisma.sql tagged templates + LEFT JOIN OutletPIC for pic field + COALESCE(SUM(...), 0) for null-safe aggregation + GROUP BY o.code, o.name, pic.pic.
+- Read shared.ts IN FULL — buildSqlFilters generates area/kelompok/outletCode/picOutletCodes/itemName LIKE fragments; DIRECTION_FROM_SUM_SQL = CASE WHEN SUM(nominalLossSurplus) [IS NULL → fallback SUM(qtyDeviasi)] <0 LOSS />0 SURPLUS / ELSE NEUTRAL; withStatementTimeout wraps $transaction with SET LOCAL statement_timeout + work_mem='64MB'.
+- Read aggregation-cache.ts IN FULL — buildCacheKey uses \x1f ASCII Unit Separator delimiter + extra route-specific params; withCacheAndDedup SWR flow (in-flight Promise dedup + stale-while-revalidate on expired entries); invalidateAnalysisCache maps invalidateCache(prefix+\x1f) across cached routes. Verified 'flip-ranking' IS in the routes array (added by FLIP-BE).
+- Read ItemPeerComparison.tsx IN FULL (798 LOC) — pattern for per-outlet table UI with shadcn Table + TableHeader/TableBody + color-coded QTY/Nominal cells (red for LOSS/negative, emerald for SURPLUS/positive) + direction badge + sticky header + scrollable max-height body.
+- Created src/lib/queries/items/flip-drilldown.ts (232 LOC) — queryFlipDrilldown function:
+  * Runs TWO per-outlet aggregate queries in parallel via Promise.all (one for P1, one for P2).
+  * Each query: SELECT o.code, o.name, MAX(ir.area), pic.pic, MAX(ir."monthLabel"), COALESCE(SUM(ir."qtyDeviasi"), 0), COALESCE(SUM(ir."nominalDeviasi"), 0), COALESCE(SUM(ir."absNominalDeviasi"), 0), ${DIRECTION_FROM_SUM_SQL} FROM InventoryRecord JOIN Item JOIN Outlet LEFT JOIN OutletPIC WHERE i.name = ${item} AND ir."weekLabel" = ${week} AND (ir."monthLabel" = ${month} OR ir."monthLabel" ILIKE ${month + '%'}) AND ir."qtyDeviasi" IS NOT NULL + buildSqlFilters GROUP BY o.code, o.name, pic.pic ORDER BY ABS(SUM(ir."qtyDeviasi")) DESC NULLS LAST
+  * Month matching accepts EITHER full label ("Juli 2026") OR short 3-char prefix ("Jul") via ILIKE prefix match — frontend sends the prefix extracted from FlipPair.period1Label.
+  * Resolves full monthLabel from MAX(ir."monthLabel") in the first matched row (so frontend can render "Juli 2026" instead of just "Jul").
+  * itemName NOT passed to buildSqlFilters (exact `i.name = ${item}` match — LIKE would over-match).
+  * Coerces Decimal → Number (defensive).
+  * Sorts outlets by |qtyDeviasiSigned| DESC (biggest contributor first — surfaces the drivers of the flip).
+- Created src/app/api/flip-ranking/drilldown/route.ts (257 LOC) — GET handler:
+  * export const dynamic = 'force-dynamic' + maxDuration = 30 (two parallel single-SQL queries)
+  * Rate limit: 30 req/min per IP via rateLimit(`flip-ranking-drilldown:${ip}`, 30, 60_000)
+  * Inline Zod schema: item (1-200), week (WEEK N regex), month1/month2 (1-50, accepts short OR full), area/kelompok/outlet/pic optional, strict mode
+  * Cache key via buildCacheKey: route='flip-ranking-drilldown', month=`${month1Label}|${month2Label}` (concatenated since both periods affect response — without this, clicking P1 (Jul→Agu) then P2 (Agu→Sep) for the same item+week would share one entry → cache poisoning), week, itemName=item, area/kelompok/outletCode/pic filters
+  * withCacheAndDedup 5-min TTL + SWR (stale-while-revalidate)
+  * resolveOutletCodeFilters (parallel resolveKelompokOutletCodes + resolvePICOutletCodes → intersect when both present → __NO_MATCH__ sentinel + empty-intersection early-return with empty outlets[] for both periods)
+  * filterOpts: area set, kelompok=null (already resolved to outletCodes), outletCode set, itemName=null (exact match in query function), picOutletCodes=resolved
+  * Response: { success, item: { itemName }, weekLabel, period1: { monthLabel, outlets }, period2: { monthLabel, outlets }, durationMs, cached?, stale? } with CACHE_ANALYSIS headers
+  * errorResponse on failure (no DB schema/SQL leakage)
+- Added 'flip-ranking-drilldown' to invalidateAnalysisCache routes array in src/lib/aggregation-cache.ts (13 → 14 cached routes) + added FLIP-DRILL comment explaining why mutations affect drilldown (reads per-outlet SIGNED SUM(qtyDeviasi) for the (item, week, month) tuple in both P1 + P2, so mutations affect which outlets contributed to the balanced reversal).
+- Modified FlipRanking.tsx (430 → 784 LOC) — added drill-down expand/collapse + panel UI:
+  * Added `expandedFlip: string | null` state (key = `${itemName}|${weekLabel}|${period1Label}` via drillKey() helper). Only ONE drill-down can be open at a time — toggleDrill() closes previous when opening new.
+  * Added ChevronRight/ChevronDown icons + button next to "Top Flip Pair" cell. Button uses e.stopPropagation() to avoid triggering the row click (which would setTrendSelectedItem). aria-label + aria-expanded for a11y.
+  * When expanded, renders an additional <TableRow> with colSpan=7 containing <FlipDrillPanel>. Used React Fragment (with key) instead of <> shorthand to satisfy React's list key requirement on the top-level returned element from map().
+  * Added FlipDrillPanel component (inline) — uses useQuery to fetch /api/flip-ranking/drilldown?item=&week=&month1=&month2= with all dashboard filters, staleTime 5min. Renders header (🔀 Flip Drill-down: {item} · {weekLabel}) + subline ({P1 label} (signed) → {P2 label} (signed) · Disparity X% (category)) + loading/error states + two FlipDrillPeriodTable side-by-side (grid-cols-1 lg:grid-cols-2).
+  * Added FlipDrillPeriodTable component — per-outlet shadcn Table with 6 columns (Outlet|Area|PIC|QTY Dev|Nominal|Dir). Outlet cell shows code + name (truncated). QTY/Nominal color-coded (red=neg, emerald=pos, muted=0) using fmtNum(..., '', false) for FULL QTY display (user requested full numbers). Direction badge (LOSS=red, SURPLUS=emerald, NEUTRAL=muted). Period header shows outlet count summary "(N outlet berkontribusi)" + total QTY + total Nominal. Sticky header + max-height 280px scroll for outlets with many rows.
+  * Added cached/stale badges in drill panel header (same pattern as FlipRanking widget).
+  * Added 💡 hint in tooltip + footer: "Klik chevron di kolom Top Flip Pair untuk lihat resto mana saja yang berkontribusi."
+  * useQuery in FlipDrillPanel is enabled: true (parent only renders the panel when expanded — saves a conditional check).
+- Ran `bun run lint` — 0 errors, 383 warnings (3 new warnings vs baseline 380: 2 pre-existing in process-ingestion.ts from an unrelated change, 1 from AuditLogDialog.tsx deletion — NONE in new files flip-drilldown.ts / drilldown/route.ts. The 2 FlipRanking.tsx react-hooks/exhaustive-deps warnings on `items = data?.items ?? []` are PRE-EXISTING from FLIP-FE — just shifted line numbers due to my additions, same warning count).
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT 0 (0 errors).
+
+Stage Summary:
+- Drill-down API: GET /api/flip-ranking/drilldown?item=&week=&month1=&month2=&area?=&kelompok?=&outlet?=&pic?=
+- Returns per-outlet signed QTY + nominal + direction for both periods (sorted by |QTY| DESC — biggest contributor first)
+- UI: click chevron icon in "Top Flip Pair" cell → expand panel below row (colSpan=7) with two outlet tables side-by-side (P1 left, P2 right on desktop)
+- Only 1 drill-down open at a time (clicking another closes the previous)
+- Color-coded: red=LOSS/negative, emerald=SURPLUS/positive, muted=NEUTRAL/zero
+- Full QTY display via fmtNum(qty, '', false) — user-requested (no abbreviation)
+- Month matching via ILIKE prefix — accepts either full "Juli 2026" OR short "Jul"
+- Full monthLabel resolved from DB via MAX(ir."monthLabel") (so UI shows "Juli 2026" not just "Jul")
+- Cached routes count: 13 → 14 (added 'flip-ranking-drilldown' to invalidateAnalysisCache routes array)
+- Lint: 0 errors, 383 warnings (3 unrelated to this task; 0 in new files)
+- tsc: EXIT 0 (0 errors)

@@ -224,17 +224,6 @@ model DQIssue {
 }
 
 // ------------------------------------------------------------
-//  Audit log (every ingest/calc/refresh)
-// ------------------------------------------------------------
-model AuditLog {
-  id        Int      @id @default(autoincrement())
-  action    String   // INGEST | CALC | RULE_EVAL | NARRATIVE | REFRESH | DRILL
-  detail    String
-  duration  Int?     // ms
-  createdAt DateTime @default(now())
-}
-
-// ------------------------------------------------------------
 //  Materialized aggregation cache (pre-computed for performance)
 // ------------------------------------------------------------
 model AggregationCache {

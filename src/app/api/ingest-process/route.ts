@@ -516,17 +516,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Audit log — always created (even in fast mode) for traceability.
-      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-      // A DB hiccup here must NOT roll back the surrounding transaction or surface as 500.
-      db.auditLog.create({
-        data: {
-          action: 'INGEST_WEEK',
-          detail: `${fileName} [${weekLabel}]: ${inserted} rows imported [FAST MODE]`,
-          duration: Date.now() - startedAt,
-        },
-      }).catch(() => {});
-
       // FIX (DEEP-AUDIT-API-1, DEEP-AUDIT-FLOW-1): clear BOTH caches after import.
       // analysisCache was already cleared; statusCache must also be cleared because
       // /api/status returns month/file/row counts in its dropdown payload — without
@@ -760,16 +749,6 @@ export async function POST(req: NextRequest) {
 
       // Cleanup chunks
       await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-
-      // Audit log
-      // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-      db.auditLog.create({
-        data: {
-          action: 'INGEST_ALL_WEEKS',
-          detail: `${fileName}: ${totalInserted} rows across ${importedWeeks.length} weeks [FAST MODE]`,
-          duration: Date.now() - startedAt,
-        },
-      }).catch(() => {});
 
       return NextResponse.json({
         success: true,

@@ -14,7 +14,7 @@
 //      1/2/3/4, Escape).
 //
 //  Parent (DashboardPage) still owns `exportDialogOpen` +
-//  `itemSearchOpen` + `auditLogOpen` state because the modals
+//  `itemSearchOpen` state because the modals
 //  themselves are rendered at page level — we pass the setters
 //  in so the keyboard handler can close them on Escape.
 // ============================================================

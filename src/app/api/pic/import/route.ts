@@ -136,14 +136,6 @@ export async function POST(req: NextRequest) {
     // client's next read after the mutation returns sees fresh data.
     await invalidateAnalysisCache();
 
-    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-    db.auditLog.create({
-      data: {
-        action: 'PIC_IMPORT',
-        detail: `${imported} PIC entries imported (${errors.length} errors)`,
-      },
-    }).catch(() => {});
-
     return NextResponse.json({
       success: true,
       imported,

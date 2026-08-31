@@ -82,14 +82,6 @@ export async function POST(req: NextRequest) {
     // client's next read after the mutation returns sees fresh data.
     await invalidateAnalysisCache();
 
-    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-    db.auditLog.create({
-      data: {
-        action: 'PIC_UPDATE',
-        detail: `${outletCode} → ${pic}`,
-      },
-    }).catch(() => {});
-
     return NextResponse.json({ success: true, pic: result });
   } catch (e: unknown) {
     return errorResponse(e, "pic");
@@ -134,14 +126,6 @@ export async function DELETE(req: NextRequest) {
     // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
     // client's next read after the mutation returns sees fresh data.
     await invalidateAnalysisCache();
-
-    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-    db.auditLog.create({
-      data: {
-        action: 'PIC_DELETE',
-        detail: `Outlet ${outletCode}`,
-      },
-    }).catch(() => {});
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {

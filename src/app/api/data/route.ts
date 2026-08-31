@@ -129,7 +129,6 @@ export async function DELETE(req: NextRequest) {
     let deletedRecords = 0;
     let deletedFiles = 0;
     let deletedWeeks = 0;
-    let detail = '';
 
     if (data.all) {
       // Nuclear option — require confirm param
@@ -155,8 +154,6 @@ export async function DELETE(req: NextRequest) {
         db.week.deleteMany(),
         db.sourceFile.deleteMany(),
       ]);
-
-      detail = 'Reset SEMUA data (nuclear)';
     } else if (data.monthKey || data.month) {
       // Delete all SourceFiles for this month — cascade.
       // FIX (DEEP-AUDIT-API-3, DEEP-AUDIT-FLOW-7): query by monthKey, NOT monthLabel.
@@ -207,11 +204,6 @@ export async function DELETE(req: NextRequest) {
         db.sourceFile.deleteMany({ where: { id: { in: fileIds } } }),
       ]);
       deletedFiles = fileIds.length;
-
-      // Use the first file's monthLabel (canonical) for the audit detail; if multiple case variants
-      // existed, they are now all deleted — pick any one for display.
-      const displayLabel = files[0]?.monthLabel ?? monthKeyToDelete;
-      detail = `Hapus bulan ${displayLabel} [${monthKeyToDelete}] (${deletedFiles} file, ${deletedRecords} record, ${deletedWeeks} week)`;
     } else if (data.fileId) {
       // Delete a single SourceFile by ID — cascade
       const file = await db.sourceFile.findUnique({
@@ -235,8 +227,6 @@ export async function DELETE(req: NextRequest) {
         db.sourceFile.delete({ where: { id: file.id } }),
       ]);
       deletedFiles = 1;
-
-      detail = `Hapus file ID ${file.id} (${file.fileName}, ${file.monthLabel}) — ${deletedRecords} record, ${deletedWeeks} week`;
     } else {
       return NextResponse.json(
         { success: false, error: 'Parameter diperlukan: monthKey, month, fileId, atau all' },
@@ -256,14 +246,6 @@ export async function DELETE(req: NextRequest) {
     // resolveMonthLabel might map a future re-import of the same month to
     // the old (now-deleted) DB-case label.
     clearMonthResolverCache();
-
-    // FIX (AUDIT8-ROLLBACK-1, Item 11): fire-and-forget — never await audit log writes.
-    db.auditLog.create({
-      data: {
-        action: 'DATA_DELETE',
-        detail,
-      },
-    }).catch(() => {});
 
     return NextResponse.json({
       success: true,
