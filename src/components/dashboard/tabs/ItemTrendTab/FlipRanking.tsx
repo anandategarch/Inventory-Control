@@ -678,10 +678,10 @@ export const FlipRanking = memo(function FlipRanking() {
                           </div>
                         </TableCell>
                         <TableCell className="text-xs py-2">
-                          {/* FIX (USER-REQ): only show drill-down chevron for HIGH risk items.
-                              Moderate/Low items show the flip pair info without the chevron —
-                              drill-down is reserved for suspicious (sempurna flip) items only. */}
-                          {topFlip && cb && dKey && item.riskLevel === 'high' ? (
+                          {/* FIX (USER-REQ): show drill-down chevron for HIGH + MODERATE risk items.
+                              Only LOW risk items hide the chevron — drill-down is for investigating
+                              items with actual flips (HIGH = sempurna flip, MODERATE = other flips). */}
+                          {topFlip && cb && dKey && item.riskLevel !== 'low' ? (
                             <div className="flex items-center gap-1">
                               {/* Chevron — toggles drill-down panel */}
                               <button
