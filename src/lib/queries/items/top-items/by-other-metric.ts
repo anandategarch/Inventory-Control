@@ -1,16 +1,23 @@
 // ============================================================
-//  Top Items queries — by nominal, devBom, deviasiRank, category,
-//  historicalCategoryAvg, itemConsistency, deviasiRankForOutlet.
+//  Top Items — Other Metric Queries
+//  --------------------------------------------------------
+//  Six query functions covering all top-item aggregations EXCEPT
+//  the deviasi-rank pair (which lives in ./by-deviasi-rank.ts
+//  because it shares a CTE structure):
+//
+//    1. queryTopItemsByNominal     — top by ABS(nominalDeviasi)
+//    2. queryTopItemsByDevBom      — top by ABS(qtyDeviasi / qtyBom)
+//    3. queryTopItemsByCategory    — top by Waste/Susut/Trial/LossSurplus
+//    4. queryHistoricalCategoryAvg — historical avg per (item,outlet)
+//    5. queryItemConsistency       — per-item outlet-count + consistency tier
+//    6. queryParetoByDevBom        — Pareto 80/20 for items with |Dev/BOM| > threshold
+//
+//  Source: split out of src/lib/queries/items/top-items.ts (722 LOC,
+//  Task 1-d). All SQL + comments preserved verbatim — pure relocation.
 // ============================================================
 import { Prisma } from '@prisma/client';
-import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
-
-export interface TopItemRow {
-  itemName: string;
-  outletCode: string;
-  absNominal: number;
-  direction: string;
-}
+import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../../shared';
+import type { ParetoDevBomResult, ParetoDevBomRow, ParetoDevBomOutletRow } from './types';
 
 export async function queryTopItemsByNominal(
   week: string,
@@ -76,301 +83,6 @@ export async function queryTopItemsByDevBom(
     LIMIT ${limit}
   `);
   return rows;
-}
-
-// ============================================================
-//  Top Items by Deviasi Rank — national item ranking
-//  Returns per (item, resto) with:
-//  - Rank Item Nasional (by abs(nominalDeviasi) DESC)
-//  - Rank BOM (by abs(qtyBom) DESC)
-//  - qtyDeviasi, qtyWaste, qtyLossSurplus, qtyBom (all signed)
-//  - pctLossSurplusToBom = SUM(qtyLossSurplus) / SUM(qtyBom) (signed, tanpa ABS)
-//  - avgDeviasiByBom = AVG(ABS(pctQtyDeviasiToBom)) across ALL outlets for that item (network avg)
-//  - nominalDeviasi (signed)
-//  - PIC, Satuan
-// ============================================================
-export async function queryTopItemsByDeviasiRank(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-  limit: number = 20
-): Promise<Array<{
-  itemName: string;
-  outletCode: string;
-  outletName: string;
-  pic: string | null;
-  satuan: string | null;
-  qtyDeviasi: number;
-  qtyWaste: number;
-  qtyLossSurplus: number;
-  pctLossSurplusToBom: number | null;
-  qtyBom: number;
-  avgDeviasiByBom: number | null;
-  nominalDeviasi: number;
-  rankNominal: number;
-  rankBom: number;
-}>> {
-  const f = buildSqlFilters(filters);
-  // OPTIMIZE-ENGINE: replaced 2 correlated subqueries (EXISTS + AVG, each
-  // per-row) with a single CTE + LEFT JOIN. The CTE computes per-(item,outlet)
-  // bucket averages in ONE pass; the main SELECT just reads them via JOIN.
-  // Old query ran ~500 sub-executions per call; new query is 1 hash-join.
-  //
-  // FIX M-J (AUDIT-3): bucket_avg CTE was self-joining item_per_outlet × item_per_outlet
-  // (ALL ~36K pairs) but only top-50 were returned. Refactored to compute bucket_avg
-  // only for the top-50 (ranked CTE + top_items filter). Reduces self-join from
-  // N×N to 50×N — ~720× less work for the bucket_avg step.
-  //
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap in withStatementTimeout to enforce 30s query timeout
-  // (PgBouncer tx mode strips the URL-level statement_timeout param).
-  // Row shape matches the SELECT in the SQL below: 13 fields, with
-  // avgDeviasiByBom + pctLossSurplusToBom + rankBom being NULLABLE (CASE-NULL).
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
-    itemName: string;
-    outletCode: string;
-    outletName: string;
-    pic: string | null;
-    satuan: string | null;
-    qtyDeviasi: number | bigint;
-    qtyWaste: number | bigint;
-    qtyLossSurplus: number | bigint;
-    pctLossSurplusToBom: number | null;
-    qtyBom: number | bigint;
-    nominalDeviasi: number | bigint;
-    avgDeviasiByBom: number | null;
-    rankNominal: number | bigint;
-    rankBom: number | null;
-  }>>`
-    WITH item_per_outlet AS (
-      SELECT
-        i.name as "itemName",
-        o.code as "outletCode",
-        o.name as "outletName",
-        pic.pic,
-        MAX(ir."satuan") as "satuan",
-        SUM(ir."qtyDeviasi") as "qtyDeviasi",
-        SUM(ir."qtyWaste") as "qtyWaste",
-        SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
-        -- FIX Bug 3A: use ABS(qtyLossSurplus) so percentage is always positive (signed display handled by direction)
-        -- FIX CALC-11: use SUM(ABS(qtyBom)) > 0 (not SUM(qtyBom) != 0 — can be 0 with canceling +/- values)
-        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
-          ELSE NULL END as "pctLossSurplusToBom",
-        SUM(ir."qtyBom") as "qtyBom",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi",
-        -- Store ABS qtyDeviasi for dynamic bucket average
-        ABS(SUM(ir."qtyDeviasi")) as "absQtyDeviasi"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        ${f}
-      GROUP BY i.name, o.code, o.name, pic.pic
-    ),
-    -- Add rank to each row (rankNominal = by ABS(nominalDeviasi) DESC)
-    ranked AS (
-      SELECT ipo.*,
-        ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
-        CASE WHEN ipo."qtyBom" != 0
-          THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
-          ELSE NULL END as "rankBom"
-      FROM item_per_outlet ipo
-    ),
-    -- FIX M-J: only compute bucket_avg for top-N items (not all 36K pairs)
-    top_items AS (
-      SELECT * FROM ranked WHERE "rankNominal" <= ${limit}
-    ),
-    -- Bucket average: for each top-N item, average ABS(qtyDeviasi) of OTHER outlets
-    -- with same itemName AND qtyBom within ±50% range. Self-join is now top_items ×
-    -- item_per_outlet (50 × N) instead of N × N.
-    bucket_avg AS (
-      SELECT
-        ti."itemName",
-        ti."outletCode",
-        AVG(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
-        SUM(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN 1 ELSE 0 END) as "otherCount"
-      FROM top_items ti
-      JOIN item_per_outlet ipo2
-        ON ipo2."itemName" = ti."itemName"
-        AND ABS(ti."qtyBom") > 0  -- FIX CALC-7: skip BOM=0 items
-        AND ABS(ipo2."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
-      GROUP BY ti."itemName", ti."outletCode"
-    )
-    SELECT
-      ti."itemName", ti."outletCode", ti."outletName", ti.pic, ti."satuan",
-      ti."qtyDeviasi", ti."qtyWaste", ti."qtyLossSurplus", ti."pctLossSurplusToBom",
-      ti."qtyBom", ti."nominalDeviasi",
-      -- avgDeviasiByBom: only if at least 1 OTHER resto exists in the bucket
-      -- FIX CALC-7: BOM=0 items get NULL (bucket concept doesn't apply)
-      CASE WHEN ti."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
-      ti."rankNominal",
-      ti."rankBom"
-    FROM top_items ti
-    LEFT JOIN bucket_avg ba
-      ON ti."itemName" = ba."itemName"
-     AND ti."outletCode" = ba."outletCode"
-    ORDER BY ti."rankNominal"
-  `);
-  // Coerce BigInt/Decimal to Number
-  return rows.map((r) => ({
-    ...r,
-    qtyDeviasi: Number(r.qtyDeviasi),
-    qtyWaste: Number(r.qtyWaste),
-    qtyLossSurplus: Number(r.qtyLossSurplus),
-    pctLossSurplusToBom: r.pctLossSurplusToBom != null ? Number(r.pctLossSurplusToBom) : null,
-    qtyBom: Number(r.qtyBom),
-    avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
-    nominalDeviasi: Number(r.nominalDeviasi),
-    rankNominal: Number(r.rankNominal),
-    rankBom: Number(r.rankBom),
-  }));
-}
-
-// ============================================================
-//  Top Items by Deviasi Rank — PER OUTLET (top N for a specific outlet)
-//  Returns the selected outlet's top-N items (by ABS(nominalDeviasi)),
-//  enriched with:
-//  - rankNominal: NATIONAL rank (across ALL outlets) — so the user sees
-//    where this item ranks nationally, not just within the outlet
-//  - rankBom: NATIONAL rank by ABS(qtyBom)
-//  - avgDeviasiByBom: peer benchmark (other outlets with same item + BOM ±50%)
-//  - All signed qty/nominal fields for display
-//
-//  Used by RankingNasionalCard when a resto is selected for analysis.
-//  Differs from queryTopItemsByDeviasiRank (national top-50 across all
-//  outlets) — this returns the selected outlet's top-N items, with
-//  national rank + peer benchmark attached.
-// ============================================================
-export async function queryTopItemsByDeviasiRankForOutlet(
-  week: string,
-  month: string,
-  outletCode: string,
-  limit: number = 30
-): Promise<Array<{
-  itemName: string;
-  outletCode: string;
-  outletName: string;
-  pic: string | null;
-  satuan: string | null;
-  qtyDeviasi: number;
-  qtyWaste: number;
-  qtyLossSurplus: number;
-  pctLossSurplusToBom: number | null;
-  qtyBom: number;
-  avgDeviasiByBom: number | null;
-  nominalDeviasi: number;
-  rankNominal: number;
-  rankBom: number;
-}>> {
-  // Compute per-(item,outlet) aggregates for ALL outlets (needed for national
-  // rank + peer benchmark), then filter to the target outlet's top-N.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
-    itemName: string;
-    outletCode: string;
-    outletName: string;
-    pic: string | null;
-    satuan: string | null;
-    qtyDeviasi: number | bigint;
-    qtyWaste: number | bigint;
-    qtyLossSurplus: number | bigint;
-    pctLossSurplusToBom: number | null;
-    qtyBom: number | bigint;
-    nominalDeviasi: number | bigint;
-    avgDeviasiByBom: number | null;
-    rankNominal: number | bigint;
-    rankBom: number | null;
-  }>>`
-    WITH all_item_per_outlet AS (
-      SELECT
-        i.name as "itemName",
-        o.code as "outletCode",
-        o.name as "outletName",
-        pic.pic,
-        MAX(ir."satuan") as "satuan",
-        SUM(ir."qtyDeviasi") as "qtyDeviasi",
-        SUM(ir."qtyWaste") as "qtyWaste",
-        SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
-        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
-          ELSE NULL END as "pctLossSurplusToBom",
-        SUM(ir."qtyBom") as "qtyBom",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi",
-        ABS(SUM(ir."qtyDeviasi")) as "absQtyDeviasi"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      GROUP BY i.name, o.code, o.name, pic.pic
-    ),
-    -- National rank across ALL outlets
-    ranked_all AS (
-      SELECT ipo.*,
-        ROW_NUMBER() OVER (ORDER BY ABS(ipo."nominalDeviasi") DESC) as "rankNominal",
-        CASE WHEN ipo."qtyBom" != 0
-          THEN ROW_NUMBER() OVER (PARTITION BY CASE WHEN ipo."qtyBom" != 0 THEN 1 ELSE 0 END ORDER BY ABS(ipo."qtyBom") DESC)
-          ELSE NULL END as "rankBom"
-      FROM all_item_per_outlet ipo
-    ),
-    -- Target outlet's top-N items (ranked within outlet by ABS(nominalDeviasi))
-    outlet_top AS (
-      SELECT * FROM (
-        SELECT ra.*,
-          ROW_NUMBER() OVER (PARTITION BY ra."outletCode" ORDER BY ABS(ra."nominalDeviasi") DESC) as "outletRank"
-        FROM ranked_all ra
-        WHERE ra."outletCode" = ${outletCode}
-      ) t WHERE "outletRank" <= ${limit}
-    ),
-    -- Peer benchmark: for each outlet_top item, average ABS(qtyDeviasi) of OTHER
-    -- outlets with same itemName AND qtyBom within ±50% range.
-    bucket_avg AS (
-      SELECT
-        ti."itemName",
-        ti."outletCode",
-        AVG(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
-        SUM(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN 1 ELSE 0 END) as "otherCount"
-      FROM outlet_top ti
-      JOIN all_item_per_outlet ipo2
-        ON ipo2."itemName" = ti."itemName"
-        AND ABS(ti."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
-      GROUP BY ti."itemName", ti."outletCode"
-    )
-    SELECT
-      ti."itemName", ti."outletCode", ti."outletName", ti.pic, ti."satuan",
-      ti."qtyDeviasi", ti."qtyWaste", ti."qtyLossSurplus", ti."pctLossSurplusToBom",
-      ti."qtyBom", ti."nominalDeviasi",
-      CASE WHEN ti."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
-      ti."rankNominal",
-      ti."rankBom"
-    FROM outlet_top ti
-    LEFT JOIN bucket_avg ba
-      ON ti."itemName" = ba."itemName"
-     AND ti."outletCode" = ba."outletCode"
-    ORDER BY ti."outletRank"
-  `);
-  // Coerce BigInt/Decimal to Number (matches queryTopItemsByDeviasiRank coercion)
-  return rows.map((r) => ({
-    ...r,
-    qtyDeviasi: Number(r.qtyDeviasi),
-    qtyWaste: Number(r.qtyWaste),
-    qtyLossSurplus: Number(r.qtyLossSurplus),
-    pctLossSurplusToBom: r.pctLossSurplusToBom != null ? Number(r.pctLossSurplusToBom) : null,
-    qtyBom: Number(r.qtyBom),
-    avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
-    nominalDeviasi: Number(r.nominalDeviasi),
-    rankNominal: Number(r.rankNominal),
-    rankBom: Number(r.rankBom),
-  }));
 }
 
 // ============================================================
@@ -552,40 +264,6 @@ export async function queryItemConsistency(
 //  Pareto 80/20 untuk Item dengan |Dev/BOM| > 50%
 //  Group by item, drill-down ke outlet. Konsep seperti Nested Pareto.
 // ============================================================
-
-export interface ParetoDevBomOutletRow {
-  outletCode: string;
-  outletName: string;
-  area: string;
-  devBom: number;
-  devBomAbs: number;
-  nominalDeviasi: number;
-  absNominal: number;
-  sharePct: number;
-  cumPct: number;
-}
-
-export interface ParetoDevBomRow {
-  itemName: string;
-  outletCount: number;
-  devBom: number;
-  devBomAbs: number;
-  nominalDeviasi: number;
-  absNominal: number;
-  sharePct: number;
-  cumPct: number;
-  outlets: ParetoDevBomOutletRow[];
-}
-
-export interface ParetoDevBomResult {
-  drivers: ParetoDevBomRow[];
-  remainderCount: number;
-  remainderPct: number;
-  totalAbsNominal: number;
-  totalCount: number;
-  thresholdPct: number;
-}
-
 export async function queryParetoByDevBom(
   week: string,
   month: string,

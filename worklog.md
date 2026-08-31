@@ -37689,3 +37689,724 @@ Fix: Change to `b.zScore - a.zScore` (signed sort, highest first) for
 - All findings verified against source code (19 files read in full).
 - Cross-referenced against PRD §5.1-5.7 + MASTER_CONTEXT §6.
 - No runtime testing (would require live DB + edge-case data).
+
+---
+Task ID: 3
+Agent: UI Component Analyzer
+Task: Analyze 5 large UI component files for split recommendations
+
+Work Log:
+- Read worklog.md for context (37,691 lines — prior tasks: Sampel cleanup, deep DB audit)
+- Analyzed FileUploadDialog.tsx (841 lines)
+- Analyzed ItemTrendTab.tsx (657 lines)
+- Analyzed ParetoDashboard.tsx (604 lines)
+- Analyzed AreaItemHeatmap.tsx (595 lines)
+- Analyzed Charts.tsx (584 lines)
+
+Stage Summary:
+
+## 1. FileUploadDialog.tsx (841 lines) — SPLIT: YES (Risk: MEDIUM)
+
+**Responsibilities:** Single component orchestrating 3-phase file ingest flow
+(P1: chunked upload → P2: detect weeks → P3: import-all). 11 useState hooks,
+2 useRef, 3 long async handlers (handleUploadAndDetect ~165 LOC,
+handleRunImport ~120 LOC, handleFileSelect/handleDrop duplicated ~25 LOC each).
+
+**Distinct sub-sections (8):** dropzone, rename-mode selector (auto/manual
++ manual filename input + validation), number-locale selector, confirmation
+panel, error display, progress bar, status log, result summary, info text,
+conditional footer.
+
+**Proposed split:**
+- `FileUploadDialog.tsx` (~120 lines) — main shell, Dialog wrapper, composes children
+- `FileUploadDialog/types.ts` (~50 lines) — WeekResult, UploadResult, DetectResult, props
+- `FileUploadDialog/useFileUpload.ts` (~380 lines) — custom hook: state + 3 async handlers + reset + validateFile
+- `FileUploadDialog/UploadDropzone.tsx` (~80 lines) — dropzone UI + file input + file size check
+- `FileUploadDialog/RenameModeSelector.tsx` (~150 lines) — auto/manual toggle + manual filename + number locale select
+- `FileUploadDialog/ConfirmationPanel.tsx` (~70 lines) — post-detect confirmation panel + Edit Name + Lanjut Import buttons
+- `FileUploadDialog/ResultSummary.tsx` (~70 lines) — success banner + per-week breakdown grid + skipped weeks
+- `FileUploadDialog/StatusLog.tsx` (~25 lines) — scrollable status log display
+- `FileUploadDialog/UploadFooter.tsx` (~60 lines) — conditional footer buttons (3 states: result / showConfirm / default)
+
+**Blockers:** handleUploadAndDetect + handleRunImport share `fileMetaRef`
+(useRef) + `detectData` state — both must live in `useFileUpload`. Toast +
+queryClient invalidations are tightly coupled to import success. Workaround:
+hook returns `{ state, actions }`, sub-components receive both via props.
+
+## 2. ItemTrendTab.tsx (657 lines) — SPLIT: YES (Risk: LOW)
+
+**Responsibilities:** Per-item QTY trend tab with debounced autocomplete,
+metric selector, Recharts line chart (lazy-loaded — already extracted to
+`ItemTrendLineChart.tsx`), and sortable data table with Z-Score tooltips.
+
+**Distinct sub-sections (6):** header with FormulaInfo + cache/stale/fetch
+badges, search bar + autocomplete dropdown, metric selector toggle,
+selected-item badge + summary stats, empty/loading/error states, sortable
+data table with Z-Score tooltip.
+
+**Proposed split:**
+- `ItemTrendTab.tsx` (~120 lines) — main component, composes children + holds top-level state
+- `ItemTrendTab/types.ts` (~60 lines) — MetricOption, METRICS const, AutocompleteResult, SortKey/SortDir
+- `ItemTrendTab/zScoreHelpers.ts` (~30 lines) — zScoreColor, zScoreStatus (matches HistoricalZScoreCard pattern)
+- `ItemTrendTab/periodHelpers.ts` (~25 lines) — periodSortKey, periodShortLabel, SortIcon
+- `ItemTrendTab/ItemTrendSearchBar.tsx` (~170 lines) — Input + autocomplete dropdown + outside-click handler
+- `ItemTrendTab/ItemTrendTable.tsx` (~250 lines) — sortable data table + Z-Score tooltip cell
+
+**Blockers:** None significant. State (`selectedItem`, `metric`, `query`,
+`sortKey/dir`) lives in parent and is passed via props. The
+`useDeferredValue(query)` + `useEffect` outside-click pattern stays in main
+or moves to `ItemTrendSearchBar` with selectedItem + onSelectItem callbacks.
+
+## 3. ParetoDashboard.tsx (604 lines) — SPLIT: YES (Risk: LOW)
+
+**Responsibilities:** 80/20 Pareto analysis tab with 5-quadrant grid,
+nested Item→Outlet breakdown, generalized parentDim→childDim breakdown,
+ParetoDevBomCard + GapAnalysisCard imports, and Action Plan footer.
+Already imports 2 external components (ParetoDevBomCard, GapAnalysisCard).
+Contains 1 internal sub-component (`QuadrantCard`, ~75 LOC).
+
+**Distinct sub-sections (7):** constants/types (140 LOC), QuadrantCard,
+main header + dimension selectors, 5-quadrant grid, nested item→outlet
+card, generalized nested card, action plan footer.
+
+**Proposed split:**
+- `ParetoDashboard.tsx` (~180 lines) — main component, useQuery, composes sub-sections
+- `ParetoDashboard/types.ts` (~125 lines) — ParetoRow, ParetoResult, NestedItem, NestedOutlet, NestedGeneralizedItem, ParetoData, ParetoDimension
+- `ParetoDashboard/constants.ts` (~30 lines) — DIM_LABELS, QUADRANT_TOOLTIPS, countSuffix
+- `ParetoDashboard/QuadrantCard.tsx` (~80 lines) — single card rendering ParetoResult table
+- `ParetoDashboard/NestedItemOutletBreakdown.tsx` (~110 lines) — Item→Outlet breakdown + expand/collapse
+- `ParetoDashboard/GeneralizedNestedBreakdown.tsx` (~110 lines) — parentDim→childDim breakdown
+- `ParetoDashboard/ActionPlanFooter.tsx` (~55 lines) — gradient footer with 4 stats
+
+**Blockers:** None. Each card receives `paretoData` (or slice) as props.
+`expandedItems` + `expandedGen` state moves with its respective card. The
+filterKey-based reset (period changes) can stay in parent.
+
+## 4. AreaItemHeatmap.tsx (595 lines) — SPLIT: YES (Risk: MEDIUM)
+
+**Responsibilities:** Area×Item heatmap with HSL color scaling,
+single-shared Tooltip (PERF-FE: was 280 per-cell Tooltips), lazy-loaded
+drill-down Sheet (already extracted to `AreaItemHeatmapSheet.tsx`).
+Contains 1 memoized cell component (`HeatmapCellView`).
+
+**Distinct sub-sections (7):** types + metric config, color/format helpers,
+HeatmapCellView (memoized), main component header with 3 selectors
+(mode/metric/itemLimit), heatmap grid + Tooltip wrapper, color legend +
+numbered item legend, summary stats footer.
+
+**Proposed split:**
+- `AreaItemHeatmap.tsx` (~210 lines) — main component, useQuery, params memo, composes sub-sections
+- `AreaItemHeatmap/types.ts` (~45 lines) — HeatmapCell, HeatmapResponse, ParetoInfo, HeatmapMetric, ItemSelectMode, CellProps
+- `AreaItemHeatmap/metricConfig.ts` (~30 lines) — METRIC_CONFIG, AVG_ELIGIBLE_METRICS
+- `AreaItemHeatmap/heatmapHelpers.ts` (~50 lines) — getHeatColor, getTextColor, formatCellValue, computeAvgPerOutlet
+- `AreaItemHeatmap/HeatmapCellView.tsx` (~55 lines) — memoized cell button
+- `AreaItemHeatmap/HeatmapGrid.tsx` (~140 lines) — grid layout + single Tooltip Provider/Root/Portal + sticky headers
+- `AreaItemHeatmap/HeatmapControls.tsx` (~80 lines) — mode/metric/itemLimit Selects in header
+- `AreaItemHeatmap/HeatmapLegend.tsx` (~50 lines) — color gradient legend + numbered item details/summary
+
+**Blockers:** The single shared Tooltip renders content dynamically from
+`cellMap.get(hoveredCell)`. HeatmapGrid needs `cellMap`, `hoveredCell`,
+`metric`, `maxVal`, `items`, `areas` passed as props (5-6 levels deep —
+moderate prop drilling, but all are primitives/stable refs via useMemo).
+The memoization equality check on HeatmapCellView must remain unchanged.
+Workaround: pass `cellMap` + `metric` + `maxVal` to HeatmapGrid; heatmap
+grid calls HeatmapCellView per cell. The tooltip content renderer can be a
+prop function (`renderTooltipContent?: (cell) => ReactNode`) to keep
+HeatmapGrid generic.
+
+## 5. Charts.tsx (584 lines) — SPLIT: YES (Risk: LOW) — easiest win
+
+**Responsibilities:** 4 unrelated exported `memo` components sharing only
+common imports (Card, Recharts, fmtPct, FormulaInfo):
+- `GrowthComparison` (lines 18-270, ~252 LOC) — bar chart + Pareto expandable panel
+- `DeviationBreakdownChart` (lines 272-459, ~187 LOC) — Waste/Susut/Trial/Residual bar chart + Pareto panel
+- `LossVsSurplusChart` (lines 461-515, ~54 LOC) — LOSS vs SURPLUS bar chart
+- `TrendChart` (lines 517-584, ~67 LOC) — Dev/BOM + Nominal Deviasi composed line chart
+
+**Proposed split:**
+- `Charts/GrowthComparison.tsx` (~255 lines)
+- `Charts/DeviationBreakdownChart.tsx` (~190 lines)
+- `Charts/LossVsSurplusChart.tsx` (~55 lines)
+- `Charts/TrendChart.tsx` (~70 lines)
+- `Charts/index.ts` (~10 lines) — barrel re-export to preserve existing import paths:
+  ```ts
+  export { GrowthComparison } from './GrowthComparison';
+  export { DeviationBreakdownChart } from './DeviationBreakdownChart';
+  export { LossVsSurplusChart } from './LossVsSurplusChart';
+  export { TrendChart } from './TrendChart';
+  ```
+
+**Blockers:** None — already independent memo'd exports. Each new file is
+well under the 300-line threshold. The barrel index preserves all existing
+consumer imports like `import { GrowthComparison, TrendChart } from
+'@/components/dashboard/Charts'`.
+
+## Overall Recommendation Priority
+
+1. **Charts.tsx** (LOW risk, trivial) — do first. Pure relocation, no
+   logic changes. Easiest win, biggest readability gain.
+2. **ParetoDashboard.tsx** (LOW risk) — clean section boundaries. Types +
+   constants are clearly extractable.
+3. **ItemTrendTab.tsx** (LOW risk) — types/helpers + SearchBar + Table
+   extraction. Reuse zScoreColor/zScoreStatus via shared module.
+4. **AreaItemHeatmap.tsx** (MEDIUM risk) — extract helpers + cell view +
+   legend + controls. Keep HeatmapGrid's Tooltip logic intact or extract
+   carefully via render-prop.
+5. **FileUploadDialog.tsx** (MEDIUM risk) — biggest payoff (841 → ~120
+   main + 7 children). Extract `useFileUpload` hook first to encapsulate
+   shared `fileMetaRef` + `detectData` state, then carve out presentational
+   sub-components.
+
+## Cross-cutting Note
+
+Several files duplicate small helper patterns:
+- `zScoreColor` / `zScoreStatus` appear in both ItemTrendTab.tsx and
+  HistoricalZScoreCard (per the file comment). Should extract to a shared
+  `lib/zScoreHelpers.ts` so all Z-Score UI uses one definition.
+- `formatRp` / `formatQty` / `formatDelta` are similar number compact
+  formatters duplicated across Charts.tsx components — could be added to
+  `lib/format.ts`.
+- `periodSortKey` / `periodShortLabel` in ItemTrendTab.tsx are likely
+  reusable by other period-rendering tabs.
+
+---
+Task ID: 1
+Agent: API Route Analyzer
+Task: Analyze 4 large API route files for split recommendations
+
+Work Log:
+- Read worklog.md for context (inventory control intelligence platform, Next.js 16, Turso/Prisma, prior refactors include analysis/route.ts split into services/ and a partial ingest-process services/ folder)
+- Analyzed export-report/route.ts (1120 lines)
+- Analyzed ingest-process/route.ts (824 lines)
+- Analyzed outlet-items/route.ts (673 lines)
+- Analyzed item-history/route.ts (371 lines)
+- Cross-checked existing services/ subfolders under /api/analysis (8 service files, established pattern) and /api/ingest-process (2 service files — validate-input.ts + parse-excel.ts — that DUPLICATE logic still present in route.ts)
+
+Stage Summary:
+
+=== FILE 1: export-report/route.ts — 1120 lines — SPLIT: YES (HIGH priority) ===
+
+Responsibilities:
+- Rate-limit + Zod validation + URL param parsing
+- Cache wrapper (withCacheAndDedup, 5-min TTL, in-flight Promise dedup)
+- DB filters: PIC outlet codes, kelompok outlet codes, buildInventoryWhere
+- 4 parallel SQL queries: currSlim (5-col projection), historicalByOutletItem, evaluateRulesSql, queryVarianceAnalysis
+- Top-flag lookup map building + growth metrics + Z-scores
+- Additional fetches: restoPriority, itemCrossOutlet
+- **Word (.docx) document assembly (~410 lines, lines 670-1080)** — completely self-contained, depends only on the local `data` object + thresholds + sqlFlags + period labels
+- Packer.toBuffer + binary response
+
+Distinct logical sections: ~10
+
+Proposed structure (mirror the established /api/analysis/services/ pattern):
+- `route.ts` (handler only: rate-limit, validate, orchestrate, send) — ~80 lines
+- `services/validate-and-cache.ts` — Zod validation, URL param parsing, buildCacheKey, withCacheAndDedup wrapper (returns Outcome type) — ~150 lines
+- `services/fetch-data.ts` — PIC/kelompok/period resolution + 4 parallel SQL queries + EarlyHttpResponse 404 short-circuit — ~200 lines
+- `services/build-lookup-maps.ts` — topFlagByKey, prev/historical lookup maps, growth metrics, Z-scores, restoPriority + itemCrossOutlet fetches — ~200 lines
+- `services/exec-summary.ts` — buildExecSummaryFromSql + PrevMetrics type (lines 72-126) — ~55 lines
+- `docx/format-helpers.ts` — fmtIDR, fmtNum, fmtPct, fmtVsHist, COLOR constant — ~80 lines
+- `docx/table-helpers.ts` — heading, paragraph, divider, tableCell, makeTable, CellOpts interface — ~110 lines
+- `docx/build-document.ts` — the ~410-line Word assembly: title, sections 1-7, BOM correlation detail, footer, Document/Packer.toBuffer — ~420 lines
+
+Estimated line counts: route.ts ~80, validate-and-cache ~150, fetch-data ~200, build-lookup-maps ~200, exec-summary ~55, docx/format-helpers ~80, docx/table-helpers ~110, docx/build-document ~420 (total ≈ 1295 — slight growth due to interface/type re-exports, but each file <450 lines).
+
+Risk: MEDIUM
+- Touches DB heavily (5+ queries, some 35K-row slim projections).
+- Has side effects: DB AggregationCache write (awaitWrite=true), CDN Cache-Control headers.
+- Cache closure: the entire compute (lines 349-1094) runs inside `withCacheAndDedup`'s async computeFn. Extracted services must accept the validated params + return a plain payload (NOT NextResponse) so the cache wrapper can JSON-serialize it — same pattern as analysis/route.ts.
+
+Blockers:
+- Word builder block is INSIDE the cache closure but only depends on local `data` + a handful of params (month, week, prevMonth, prevWeek, outletCode, thresholds, sqlFlags, historicalPeriods). All can be passed as a single `BuildDocInput` arg → NO real blocker.
+- `EarlyHttpResponse` class is shared — move to `services/shared.ts` or `@/lib/early-response` (also used by outlet-items + item-history — DRY opportunity).
+
+---
+
+=== FILE 2: ingest-process/route.ts — 824 lines — SPLIT: YES (HIGHEST priority) ===
+
+Responsibilities:
+- **DUPLICATE code**: `validateFileMetadata`, `reassembleFile`, `extractMonthFromRows` exist BOTH in route.ts AND in `services/validate-input.ts` + `services/parse-excel.ts`. The services folder was created but route.ts was NEVER migrated to consume them.
+- POST handler with 3 modes:
+  - MODE 1 `detect`: reassemble + parse Excel + return weeks list
+  - MODE 2 `import`: reassemble + parse + import ONE week (transaction: deleteMany + processRowsForImport + DQ issues + cache invalidation + chunk cleanup + audit log)
+  - MODE 3 `import-all`: reassemble + parse ONCE + import ALL weeks in a loop (shares outletDbMap/itemDbMap/seenKeys across weeks)
+- DELETE handler: cleanup FileChunk rows for a fileHash
+
+Distinct logical sections: ~6
+
+Proposed structure:
+- `route.ts` (thin POST dispatcher: validateInput → parseExcel → switch on mode → delegate; DELETE inline) — ~80 lines
+- `services/validate-input.ts` — ALREADY EXISTS — just delete the duplicate from route.ts and import it — ~240 lines (no change)
+- `services/parse-excel.ts` — ALREADY EXISTS — just delete the duplicate `reassembleFile` + inline extractMonthFromRows from route.ts — ~215 lines (no change)
+- `services/detect-weeks.ts` — NEW: mode 1 logic (reassemble+parse via existing service, query DB for existing weeks, return list) — ~80 lines
+- `services/import-week.ts` — NEW: mode 2 logic (single-week import: SourceFile upsert, Week upsert, $transaction with deleteMany + processRowsForImport, DQ issues, cache invalidation, chunk cleanup, audit log) — ~200 lines
+- `services/import-all-weeks.ts` — NEW: mode 3 logic (loop over weeksToImport, share outletDbMap/itemDbMap/seenKeys, call import-week per iteration or inline the per-week block) — ~220 lines
+- `services/shared.ts` — NEW: types (ImportedWeekResult), shared cleanup helpers (cleanupChunks, clearCaches, writeAuditLog) — ~50 lines
+
+Estimated line counts: route.ts ~80, validate-input ~240 (existing), parse-excel ~215 (existing), detect-weeks ~80, import-week ~200, import-all-weeks ~220, shared ~50 (total ≈ 1085 — modest growth due to interface/type declarations, but each file <250 lines).
+
+Risk: HIGH
+- Heaviest write path in the codebase: writes InventoryRecord (35K+ rows), SourceFile, Week, FileChunk, AuditLog, DQIssue tables.
+- Filesystem side effects: writes /tmp/ingest-process/<hash>.xlsx, deletes after parse.
+- $transaction wrapping deleteMany + processRowsForImport — partial-failure rollback depends on the transaction boundary; refactoring must preserve the exact transaction scope.
+- Cache invalidation: statusCache.clear() + invalidateAnalysisCache() + clearMonthResolverCache() must run AFTER successful commit, not before.
+- Audit log writes are fire-and-forget (`.catch(() => {})`) — must preserve this in the extracted service.
+
+Blockers:
+- MODE 2 and MODE 3 share state via local closures (`outletDbMap`, `itemDbMap`, `seenKeys`, `fileName`, `monthInfo`, `manualMode`, `fileNameIsPlaceholder`). To extract, these must be threaded through as args (or a context object).
+- MODE 3 reuses MODE 2's per-week block — extract MODE 2 first as `importSingleWeek(ctx, weekLabel, weekRows)`, then MODE 3 becomes a loop calling it.
+- `monthInfo` is `let` (reassigned by extractMonthFromRows fallback) — TypeScript can't carry narrowing across closures. The existing `parse-excel.ts` service already handles this by returning a resolved `monthInfo` — just need to delete the inline duplicate.
+
+This file is the strongest candidate: existing services are already written but unused. Refactor is mostly mechanical deletion of duplicates + 2 new service files.
+
+---
+
+=== FILE 3: outlet-items/route.ts — 673 lines — SPLIT: YES (MEDIUM priority) ===
+
+Responsibilities:
+- Rate-limit + Zod validation + cache wrapper
+- Month/outlet resolution (parallel: getMonthResolver + getRuntimeThresholds + db.outlet.findFirst)
+- Previous-period resolution (same-weekLabel-in-previous-month search)
+- 5 parallel SQL queries (currentRecs GROUP BY itemId+akun, prevRecs, areaBench, networkBench, outletPIC)
+- RESTO PROFILE (6 sections): sales mode, aggregate metrics + severity counts, prev period aggregates, growth metrics (computeGrowthResult), area/network multiplier, historical trend flag
+- BAHAN ANALYSIS: per-item breakdown with prev lookup, over-explained check, Dev/BOM growth, area multiplier, priority computation, 3 rankings (Financial / Operational / Unexplained)
+- Return payload assembly + cached flag
+
+Distinct logical sections: ~5
+
+Proposed structure (mirror /api/analysis pattern):
+- `route.ts` (handler: validate + cache wrapper + orchestrate + send) — ~80 lines
+- `services/validate-and-cache.ts` — Zod validation, URL params, buildCacheKey, withCacheAndDedup wrapper, EarlyHttpResponse class — ~120 lines
+- `services/fetch-records.ts` — month/outlet/prev-period resolution + 5 parallel SQL queries + EarlyHttpResponse 404 short-circuit — ~200 lines
+- `services/resto-profile.ts` — RESTO PROFILE (6 sections): aggregate metrics, severity counts, growth metrics, area/network multiplier, historical trend — ~220 lines
+- `services/bahan-analysis.ts` — BAHAN ANALYSIS (3 rankings + per-item breakdown) — ~180 lines
+
+Estimated line counts: route.ts ~80, validate-and-cache ~120, fetch-records ~200, resto-profile ~220, bahan-analysis ~180 (total ≈ 800 — slight growth from interface declarations, each file <250 lines).
+
+Risk: MEDIUM
+- Touches DB (5 parallel queries) + DB AggregationCache (withCacheAndDedup, 5-min TTL).
+- READ-ONLY — no writes, no transactions, no cache invalidation triggered by this route (only consumers invalidate).
+- EarlyHttpResponse short-circuit throws inside the cache closure (same pattern as analysis/export-report).
+
+Blockers:
+- `currentRecs` is shared between RESTO PROFILE and BAHAN ANALYSIS — must be threaded as an arg (or a `RecordsContext` object).
+- `outlet`, `thresholds`, `month`, `week`, `prevMonth`, `prevWeek`, `outlet.area`, `areaBench`, `networkBench` are shared state — pass as a single `ProfileContext` object to avoid 8-arg function signatures.
+- `topDeviasiRankPromise` is fired early in parallel with the main Promise.all, then awaited later — preserve this firing order in the service split.
+
+---
+
+=== FILE 4: item-history/route.ts — 371 lines — SPLIT: NO ===
+
+Responsibilities:
+- Rate-limit + Zod validation + cache wrapper
+- Month/outlet resolution (parallel)
+- Single SQL query for all timeline records (allRecs)
+- Timeline building + current-period lookup + 404 short-circuit with availablePeriods list
+- Area/network benchmark SQL (2 parallel queries)
+- Z-Score + deterioration + trend + priority computation (all via Metric Engine)
+- Return payload assembly
+
+Distinct logical sections: ~5
+
+Split recommendation: NO
+- 371 lines — well below the 500-line threshold, close to the 300-line "do not split unless clearly separable" cutoff.
+- Logic is tightly coupled: every section uses the same 4-6 locals (`outlet`, `outletCode`, `itemName`, `currentMonth`, `currentWeek`, `currentDevBom`). Extracting to 3-4 services would require passing the same context object to each, adding more boilerplate (imports + interfaces + arg threading) than the readability gain.
+- The SQL queries are short (1 timeline query + 2 benchmark queries) — not worth a dedicated fetch-records service.
+- No large self-contained block (unlike export-report's 410-line Word builder).
+
+Risk: N/A (no split).
+Blockers: N/A.
+
+If a future cleanup is desired, the only worthwhile extraction is the `EarlyHttpResponse` class (currently duplicated across export-report, outlet-items, item-history) → move to `@/lib/early-response.ts`. This is a separate cross-cutting refactor, not a per-file split.
+
+---
+
+=== CROSS-CUTTING RECOMMENDATIONS ===
+
+1. **Extract `EarlyHttpResponse` to `src/lib/early-response.ts`** — currently duplicated in 3 routes (export-report:62, outlet-items:52, item-history:40). Small DRY win, unblocks future cache-wrapper refactors.
+
+2. **Follow the established `/api/analysis/services/` pattern** — service files export an `Outcome` type (`{ kind: 'response'; response: NextResponse } | { kind: 'continue'; data: T }`) for short-circuit returns. This keeps the route handler linear and avoids deeply nested try/catch.
+
+3. **Priority order for execution:**
+   - P0: ingest-process — services already exist but are unused (highest ROI: delete ~200 lines of duplicates + extract 3 mode handlers)
+   - P1: export-report — largest file (1120 lines), Word builder is cleanly separable
+   - P2: outlet-items — 673 lines, 5 cleanly separable sections
+   - Skip: item-history — 371 lines, no split needed
+
+4. **Test strategy:** Each split should preserve the exact response shape (status code, JSON body, headers including Cache-Control). Recommend snapshot tests on the GET response before/after refactor for export-report + outlet-items; for ingest-process, run an end-to-end upload+import on a test Excel file before/after.
+
+Total estimated refactor effort: ~2-3 sessions. ingest-process + export-report in session 1 (highest impact), outlet-items in session 2, item-history skipped.
+
+---
+Task ID: 2
+Agent: Lib File Analyzer
+Task: Analyze 5 large lib/query files for split recommendations
+
+Work Log:
+- Read worklog.md for context (prior DB cleanup + upload script + OOM tuning)
+- Verified all 5 target files exist with stated line counts (795/794/722/566/838)
+- Analyzed ingestion.ts (795 lines) — full read + 3 caller files (import-drive, ingest, ingest-process routes)
+- Analyzed queries/pareto.ts (794 lines) — full read + 1 caller (api/pareto/route.ts)
+- Analyzed queries/items/top-items.ts (722 lines) — full read + 1 caller (api/outlet-items/route.ts)
+- Analyzed settings.ts (566 lines) — full read + 11 callers (engine + many API routes)
+- Analyzed analysis/services/post-process.ts (838 lines) — full read + 2 callers (analysis/route.ts + assemble-response.ts)
+- Confirmed `src/lib/metrics/` already uses barrel+folder split pattern as precedent
+
+Stage Summary:
+- 4 of 5 files SHOULD be split (ingestion, pareto, top-items, post-process). settings.ts is borderline (mostly config data — light split optional).
+- post-process.ts is the HIGHEST-VALUE split: author already structured 7+ sub-functions with header comments explicitly saying "split into focused sub-functions so each is a testable unit (< 150 lines)". 838 → 9 files, largest ≤280 lines.
+- ingestion.ts has DRY opportunity: the OutletPeriodSales INSERT...SELECT raw SQL block (~30 lines) is DUPLICATED verbatim between processIngestion (L479-510) and processRowsForImport (L761-792). Extract to shared helper.
+- top-items.ts has DRY opportunity: queryTopItemsByDeviasiRank + queryTopItemsByDeviasiRankForOutlet share ~80% of CTE structure.
+- All splits should preserve backward-compat via barrel re-exports at the original path (callers don't change). Precedent: src/lib/metrics/index.ts already does this.
+- Risk profile: 3 LOW (pareto, top-items, settings), 2 MEDIUM (ingestion due to transaction/lock invariants, post-process due to ProcessedData interface contract with assemble-response).
+
+Detailed split proposals:
+
+1. ingestion.ts (795 lines) → MEDIUM risk → YES split
+   - ingestion.ts (barrel + orchestrator processIngestion) ~150 lines
+   - ingestion/types.ts ~30 lines (IngestResult, IngestRequestBody, ProcessRowsResult)
+   - ingestion/paths.ts ~60 lines (DATA_DIR, safePath, findExcelFiles)
+   - ingestion/locks.ts ~25 lines (ingestionLocks + acquire/release)
+   - ingestion/process-rows.ts ~200 lines (processRowsForImport shared helper)
+   - ingestion/outlet-period-sales.ts ~50 lines (NEW shared helper for the duplicated INSERT INTO OutletPeriodSales SQL — kills the L479-510/L761-792 duplication)
+   - Blockers: must preserve BUG2-INGEST-1 transaction wrapping (delete+insert atomic), BUG-5-5 race-safe upserts, BUG2-INGEST-3 tx client propagation.
+
+2. queries/pareto.ts (794 lines) → LOW risk → YES split
+   - queries/pareto.ts (barrel) ~30 lines
+   - queries/pareto/types.ts ~30 lines (ParetoRow, ParetoResult, ParetoDimension, DimensionExpr, NestedParetoItem, NestedParetoResultItem)
+   - queries/pareto/compute.ts ~30 lines (computePareto, mergeHistoricalIntoPareto)
+   - queries/pareto/by-dimension.ts ~200 lines (5 queryParetoBy<Item|Outlet|Area|Kelompok|PIC>)
+   - queries/pareto/nested.ts ~250 lines (queryParetoNestedItemOutlet, queryParetoNested, getDimensionExpr, getDimensionFilter)
+   - queries/pareto/historical.ts ~100 lines (queryParetoHistorical)
+   - Blockers: none — pure query functions, no shared state.
+
+3. queries/items/top-items.ts (722 lines) → LOW risk → YES split
+   - queries/items/top-items.ts (barrel) ~20 lines
+   - queries/items/top-items-simple.ts ~280 lines (byNominal + byDevBom + byCategory + historicalCategoryAvg + itemConsistency)
+   - queries/items/top-items-rank.ts ~300 lines (queryTopItemsByDeviasiRank + queryTopItemsByDeviasiRankForOutlet — DRY opportunity: shared CTE helper)
+   - queries/items/top-items-pareto.ts ~200 lines (queryParetoByDevBom + ParetoDevBom* interfaces)
+   - Blockers: none.
+
+4. settings.ts (566 lines) → LOW risk → LIGHT split (optional, low priority)
+   - The file is ~60% static SETTING_DEFINITIONS array (config data, L20-336). Logic is only ~230 lines.
+   - Option A (recommended): keep as-is. Navigation via "go to symbol" works fine; no real maintainability pain.
+   - Option B (if desired): split into settings/definitions.ts (~340 lines, pure data) + settings.ts (~230 lines, cache + getRuntimeThresholds + RuntimeThresholds interface).
+   - Blockers: none. 11 callers all import from '@/lib/settings' — barrel re-export preserves them.
+
+5. analysis/services/post-process.ts (838 lines) → MEDIUM risk → YES split (highest priority)
+   - services/post-process.ts (orchestrator + ProcessedData/SeverityMaps interfaces) ~120 lines
+   - services/post-process/bom-correlation.ts ~280 lines (BomCorrelation*, getMetricGrowthForRule, fetchBomCorrelationDetails, buildBomCorrelationFindings)
+   - services/post-process/flags.ts ~110 lines (evaluateAndMergeFlags)
+   - services/post-process/growth.ts ~70 lines (buildGrowthMetrics)
+   - services/post-process/health-ranking.ts ~75 lines (buildOutletHealthRanking)
+   - services/post-process/historical.ts ~80 lines (buildHistoricalAnalysis)
+   - services/post-process/trend-projection.ts ~35 lines (buildTrendProjection)
+   - services/post-process/patterns.ts ~45 lines (buildPatterns)
+   - services/post-process/top-outlets.ts ~30 lines (mapTopOutlets)
+   - Blockers: ProcessedData interface must remain exported from post-process.ts (assemble-response.ts imports it as type). Author's own module-header comment explicitly calls for this split ("split into focused sub-functions so each is a testable unit (< 150 lines)"). Follows existing precedent in services/ folder (trend-builder, deviation-drivers, fetch-records already extracted the same way).
+
+Net effect if all splits executed: 5 files / 3,715 lines → ~30 files / ~3,800 lines (slight increase from per-file boilerplate, but largest file drops from 838 → 280 lines).
+
+---
+Task ID: 4
+Agent: Hook/Engine Analyzer
+Task: Analyze 4 large hook/engine files for split recommendations
+
+Work Log:
+- Read worklog.md for context (Tasks 3-8: Supabase migration, ExtraCharts/InsightsPanel recreation, Indonesian formatting, advanced dashboard components)
+- Analyzed src/hooks/useAnalysis.ts (839 lines) — found 4 separate React hooks (useAnalysis, useStatus, useDrilldown, useItemTrend) + ~250 lines of type defs + prefetch helpers all in one file
+- Analyzed src/engine/rules/evaluator.ts (498 lines) — found 6 tightly-coupled internal functions (evalOp, resolveExpr, canOpFire, canConditionFire, evalCondition, evaluateRules) + narrative formatter + types
+- Analyzed src/engine/analysis/rootCauseEngine.ts (469 lines) — found ~396 lines are pure static data (ROOT_CAUSE_MAPPINGS for ~20 rule codes), only ~30 lines of actual logic
+- Analyzed src/engine/analysis/patternEngine.ts (432 lines) — found 4 cohesive detectors + types + helpers, well-organized, single responsibility
+- Checked import graph: useAnalysis has ~27 importers (all via '@/hooks/useAnalysis'), evaluator has 2 importers (no barrel), rootCauseEngine & patternEngine are re-exported via '@/engine/analysis' barrel
+
+Stage Summary:
+
+=== FILE 1: src/hooks/useAnalysis.ts (839 lines) — SPLIT: YES ===
+Responsibilities: 4 unrelated React hooks + ~15 type definitions + 2 prefetch helpers all crammed together. Clear SRP violation.
+Distinct sections: 13 (types for items, types for analysis, types for BOM, AnalysisData mega-interface, growth/deviation drivers, fetchAnalysis, params+queryKey+cache constants, useAnalysis hook, prefetch helpers, useStatus + StatusData, useDrilldown + DrilldownRecord, useItemTrend + ItemTrend types, prefetchHeatmap)
+Split recommendation: YES (highest priority — 839 lines, 4 hooks, 27 importers)
+Proposed new structure (folder-based, barrel-re-export preserves all existing '@/hooks/useAnalysis' imports):
+- src/hooks/useAnalysis/index.ts (~250 lines) — main useAnalysis() hook + AnalysisParams + buildAnalysisSearchParams + buildAnalysisQueryKey + ANALYSIS_STALE_TIME/GC_TIME + prefetchAnalysis + usePrefetchAnalysis
+- src/hooks/useAnalysis/types.ts (~250 lines) — AnalysisData, TopItem*, TopOutlet, VarianceItem, AreaAnalysis, OutletHealthRanking, CostImpact, ItemConsistencyResult, NetCostTrendPoint, HistoricalAnalysisResult, BomCorrelationFinding/Counts, GrowthDriver*, DeviationDriver*, ParetoDevBom
+- src/hooks/useAnalysis/fetchAnalysis.ts (~50 lines) — fetchAnalysis helper (AbortController + content-type guard + 404/timeout error handling)
+- src/hooks/useAnalysis/prefetchHeatmap.ts (~30 lines) — prefetchHeatmap helper (independent of analysis query)
+- src/hooks/useStatus.ts (~55 lines) — SourceFileInfo, StatusData, useStatus hook (self-contained status query)
+- src/hooks/useDrilldown.ts (~110 lines) — DrilldownRecord, DrilldownData, useDrilldown hook (self-contained drilldown query)
+- src/hooks/useItemTrend.ts (~140 lines) — ItemTrendPeriod, ItemTrendData, ItemTrendMetric, ItemTrendParams, useItemTrend hook
+Risk: MEDIUM — 27 importers; mitigated by keeping `useAnalysis/index.ts` re-exporting all types + hooks via barrel (callers don't change). Alternative: simpler flat split without folder — but folder is cleaner given the type volume.
+Blockers: NONE. Types are already exported; just need re-export from index.ts. Hooks are independent (no shared state).
+
+=== FILE 2: src/engine/rules/evaluator.ts (498 lines) — SPLIT: YES (LIGHT) ===
+Responsibilities: YAML rule loader + AST evaluator (evalOp/evalCondition/resolveExpr) + fast-path pre-check (canOpFire/canConditionFire) + narrative template renderer + types.
+Distinct sections: 6 (loader+types, evalOp, resolveExpr, canOpFire/canConditionFire, evalCondition, formatEvidenceValue+renderTemplate, evaluateRules orchestrator)
+Split recommendation: YES (LIGHT) — file is just under 500-line threshold but has clear separable concerns (narrative formatting is completely decoupled from evaluation; types can be extracted)
+Proposed new structure:
+- src/engine/rules/evaluator.ts (~110 lines) — loadRules, getRuleByCode, evaluateRules (orchestrator only)
+- src/engine/rules/types.ts (~70 lines) — RuleCondition, Rule, RuleContext interfaces + RuleEvidence (if not already in @/types/inventory)
+- src/engine/rules/operators.ts (~110 lines) — evalOp + resolveExpr (operator & arithmetic-expression evaluation; tightly coupled, keep together)
+- src/engine/rules/condition.ts (~110 lines) — canOpFire, canConditionFire, evalCondition (condition tree walking)
+- src/engine/rules/narrative.ts (~70 lines) — PERCENT_KEYS, formatEvidenceValue, renderTemplate (Indonesian IDR/% formatting + template substitution)
+Risk: LOW — only 2 importers (ruleService.ts + evaluator.test.ts). Internal functions are currently private (not exported) — splitting requires either (a) exporting them or (b) keeping a private internal module imported by the orchestrator. Option (b) is cleaner.
+Blockers: NONE. evaluator.test.ts may need import path updates if it tests internal functions directly — verify test file scope before split.
+
+=== FILE 3: src/engine/analysis/rootCauseEngine.ts (469 lines) — SPLIT: YES (LIGHT) ===
+Responsibilities: Rule-code → root-causes/recommended-actions lookup table + 3 thin helper functions. ~85% of the file is static data (ROOT_CAUSE_MAPPINGS).
+Distinct sections: 5 (types, ROOT_CAUSE_MAPPINGS data by group: TOLERANCE/OVER_EXPLAINED/RESIDUAL/HIGH_LOSS/SALES_BOM/HISTORICAL/DIRECTION/EXCESSIVE/aliases/BOM_CORRELATION, getRootCauses, getRootCause, listKnownRuleCodes)
+Split recommendation: YES (LIGHT) — extract the giant data constant to its own file. Logic stays put.
+Proposed new structure:
+- src/engine/analysis/rootCauseEngine.ts (~80 lines) — types (RootCauseMapping/Severity/Category) + getRootCauses + getRootCause + listKnownRuleCodes (logic only)
+- src/engine/analysis/rootCauseMappings.ts (~400 lines) — ROOT_CAUSE_MAPPINGS constant only (pure declarative data)
+Risk: LOW — barrel re-export in src/engine/analysis/index.ts already exports getRootCauses/getRootCause/listKnownRuleCodes/ROOT_CAUSE_MAPPINGS. The split is transparent to all external callers.
+Blockers: NONE. Pure mechanical extraction; no logic changes. Optional further split by rule group (tolerance.ts, fraud.ts, historical.ts, bom.ts) is OVERKILL — the single data file is browsable via go-to-symbol.
+
+=== FILE 4: src/engine/analysis/patternEngine.ts (432 lines) — SPLIT: NO ===
+Responsibilities: Single responsibility — cross-outlet pattern detection. 4 cohesive detectors (SYSTEMIC_ITEM, ISOLATED_OUTLET, AREA_LEVEL, NETWORK_WIDE) + types + helpers + 1 main entry point.
+Distinct sections: 6 (types, thresholds, helpers, 4 detectors, formatNominal, detectPatterns entry)
+Split recommendation: NO — file is under 500 lines, well-organized with clear section headers, single responsibility. Splitting would create many small files for marginal benefit.
+Risk: N/A
+Blockers: N/A — no split recommended. If forced, only extraction would be types into patternEngine/types.ts (~96 lines), reducing main file to ~336 lines. Not worth the additional file.
+
+=== NET SUMMARY ===
+- 3 of 4 files need splitting (useAnalysis.ts, evaluator.ts, rootCauseEngine.ts)
+- 1 file (patternEngine.ts) is well-sized and well-organized — no split needed
+- Total current: 2,238 lines across 4 files
+- After split: ~2,300 lines across ~13 files (largest file drops from 839 → 250 lines)
+- Highest priority: useAnalysis.ts (839 lines, 4 hooks, 27 importers) — clear SRP violation
+- Lowest priority: rootCauseEngine.ts (mechanical data extraction, no logic risk)
+- All splits can preserve backward-compat via barrel re-exports at original paths
+- No blockers identified — all internal functions are either already exported or can be moved to private internal modules
+
+---
+Task ID: 2-b
+Agent: rootCauseEngine.ts Splitter
+Task: Split src/engine/analysis/rootCauseEngine.ts (469 LOC) into 2 files (data + logic)
+
+Work Log:
+- Read worklog.md (last ~200 lines of context — Tasks 3-8 + Task 2 file analyzers)
+- Read rootCauseEngine.ts in full (469 LOC: 16 LOC header, 32 LOC types, 397 LOC data, 24 LOC logic)
+- Read analysis/index.ts barrel — confirms it re-exports getRootCauses, getRootCause, listKnownRuleCodes, ROOT_CAUSE_MAPPINGS (value) + RootCauseMapping/Severity/Category (type) from './rootCauseEngine'
+- Grep'd src/ for direct importers of '@/engine/analysis/rootCauseEngine' — NONE found. All external usage flows through '@/engine/analysis' barrel. Split is transparent as long as rootCauseEngine.ts re-exports the data + types.
+- Identified static data: ROOT_CAUSE_MAPPINGS (~397 LOC) + 3 types (RootCauseSeverity, RootCauseCategory, RootCauseMapping ~15 LOC)
+- Identified runtime logic: getRootCauses, getRootCause, listKnownRuleCodes (~24 LOC of actual logic)
+- Created rootCauseMappings.ts (440 LOC) — contains the 3 types + the full ROOT_CAUSE_MAPPINGS constant, verbatim from the original file. No data changes. Added a header comment documenting the split provenance (Task ID 2-b) and that the file is browsable via go-to-symbol.
+- Modified rootCauseEngine.ts to 61 LOC:
+  * Imports ROOT_CAUSE_MAPPINGS + RootCauseMapping type from ./rootCauseMappings
+  * Re-exports ROOT_CAUSE_MAPPINGS (value) and RootCauseSeverity/RootCauseCategory/RootCauseMapping (types) so the barrel's `from './rootCauseEngine'` clauses keep resolving
+  * Keeps the 3 helper functions verbatim: getRootCauses, getRootCause, listKnownRuleCodes (no logic changes)
+- Verified analysis/index.ts barrel still works — no edits needed; it imports exactly the symbols that rootCauseEngine.ts now re-exports.
+- Ran `bun run lint` — result: PASS. 0 errors, 385 pre-existing warnings (all in tests/, none in src/engine/analysis/). 0 new issues introduced by the split.
+- Ran `bunx tsc --noEmit` — result: PASS. 0 type errors (would have failed if the barrel's re-exports from './rootCauseEngine' broke).
+
+Stage Summary:
+- rootCauseEngine.ts (469 LOC) → 2 files (61 LOC logic + 440 LOC data)
+- All imports backward-compatible: both `import { ... } from "@/engine/analysis"` (via barrel) and `import { ... } from "@/engine/analysis/rootCauseEngine"` (direct) continue to resolve. ROOT_CAUSE_MAPPINGS, getRootCauses, getRootCause, listKnownRuleCodes, RootCauseMapping, RootCauseSeverity, RootCauseCategory all still exported from rootCauseEngine.ts (re-exported from rootCauseMappings.ts).
+- Lint: PASS (0 errors, 0 new warnings)
+- Type check: PASS (0 errors)
+- No caller files outside src/engine/analysis/ were modified.
+
+---
+Task ID: 2-a
+Agent: evaluator.ts Splitter
+Task: Split src/engine/rules/evaluator.ts (498 LOC) into 5 files with barrel re-export
+
+Work Log:
+- Read worklog.md (last 200 lines — Tasks 2-4 prior analysis confirmed LIGHT split recommendation for evaluator.ts)
+- Read evaluator.ts in full (499 LOC including final closing brace)
+- Read evaluator.test.ts in full (455 LOC, 36 tests) — confirmed tests only import { evaluateRules, loadRules, type RuleContext } from '@/engine/rules/evaluator'
+- Identified sections:
+    1. Types (RuleCondition, Rule, RuleContext) — lines 10-22 + 397-452
+    2. YAML loader (loadRules, getRuleByCode) — lines 24-74 (orchestrator, kept in evaluator.ts)
+    3. Operators (evalOp, resolveExpr) — lines 76-215
+    4. Fast-path + condition eval (canOpFire, canConditionFire, evalCondition) — lines 217-345
+    5. Narrative (PERCENT_KEYS, formatEvidenceValue, renderTemplate) — lines 347-395
+    6. Orchestrator (evaluateRules) — lines 454-498 (kept in evaluator.ts)
+- Found 2 callers (grep for `from '@/engine/rules/evaluator'`):
+    1. src/engine/rules/evaluator.test.ts (imports evaluateRules, loadRules, type RuleContext)
+    2. src/engine/analysis/ruleService.ts (imports evaluateRules, type RuleContext)
+  Both consumers are covered by the barrel re-export in the new evaluator.ts — NO caller changes required.
+- Chose Option A (flat sibling files) over Option B (folder+index.ts) per task instructions — preserves exact '@/engine/rules/evaluator' path resolution and avoids touching evaluator.test.ts (which lives next to the module).
+- Created evaluator-types.ts (78 LOC) — RuleCondition, Rule, RuleContext interfaces; imports Severity from '@/types/inventory'.
+- Created evaluator-operators.ts (149 LOC) — evalOp + resolveExpr; no external imports (pure functions on Record<string, unknown>).
+- Created evaluator-condition.ts (140 LOC) — canOpFire + canConditionFire + evalCondition; imports evalOp from './evaluator-operators'.
+- Created evaluator-narrative.ts (59 LOC) — PERCENT_KEYS + formatEvidenceValue + renderTemplate; imports type RuleEvidence from '@/types/inventory'.
+- Modified evaluator.ts (126 LOC) — orchestrator (loadRules, getRuleByCode, evaluateRules) + barrel `export * from './evaluator-types'` and `export * from './evaluator-narrative'`; imports { canConditionFire, evalCondition } from './evaluator-condition' and { renderTemplate } from './evaluator-narrative'. All other imports preserved verbatim (logger, fs, path, yaml, types/inventory).
+- Ran `bun run lint` — result: PASS (0 errors; only pre-existing warnings — 1 non-null-assertion warning in evaluator.ts:79 `_rulesByCode!.get(code)` was present in the original file at line 73; 0 new warnings introduced in the 4 new files).
+- Ran `bun test src/engine/rules/evaluator.test.ts` — result: PASS (36 pass / 0 fail / 177 expect() calls; ran in 691ms).
+- Ran `bunx tsc --noEmit` — result: PASS (no errors mentioning engine/rules or evaluator).
+
+Stage Summary:
+- evaluator.ts (498 LOC) → 5 files:
+    * evaluator.ts            (126 LOC) — orchestrator + barrel re-export
+    * evaluator-types.ts      (78 LOC)  — RuleCondition, Rule, RuleContext
+    * evaluator-operators.ts  (149 LOC) — evalOp, resolveExpr (largest file)
+    * evaluator-condition.ts  (140 LOC) — canOpFire, canConditionFire, evalCondition
+    * evaluator-narrative.ts  (59 LOC)  — PERCENT_KEYS, formatEvidenceValue, renderTemplate
+- Largest file: 149 LOC (operators) — well under the 200-LOC target.
+- All imports backward-compatible via `export * from './evaluator-types'` + `export * from './evaluator-narrative'` at top of evaluator.ts. No caller file was modified.
+- Tests: PASS (36/36 — all original evaluator.test.ts behavior preserved)
+- Lint: 0 errors, 0 new warnings (1 pre-existing non-null-assertion warning in evaluator.ts:79 carried over from original line 73).
+- Typescript: clean compile (tsc --noEmit).
+
+---
+Task ID: 1-a
+Agent: Charts.tsx Splitter
+Task: Split src/components/dashboard/Charts.tsx (584 LOC) into folder with 4 chart files + barrel index
+
+Work Log:
+- Read worklog.md (last ~200 lines of 38177) for context: prior Task 2 Lib File Analyzer established `src/lib/metrics/index.ts` as the barrel-split precedent
+- Read Charts.tsx in full (584 LOC) — 4 memo'd exports + 3 inline helpers (formatDelta, formatQty, formatRp), all scoped to single components
+- Read src/lib/metrics/index.ts (77 LOC) as barrel precedent — uses `export * from './definitions'` + named `export { X } from './file'` pattern
+- Identified 4 exported components: GrowthComparison (L18-270, 253 LOC), DeviationBreakdownChart (L272-459, 188 LOC), LossVsSurplusChart (L461-515, 55 LOC), TrendChart (L517-584, 68 LOC)
+- Found 1 caller file: src/components/dashboard/tabs/DashboardTab.tsx (3 dynamic imports via `import('@/components/dashboard/Charts').then(m => m.X)` pattern). TrendChart is exported but unused (DashboardTab L179: "TrendChart removed per user request") — still preserved in barrel for backward-compat
+- Helpers analysis: formatDelta used only by GrowthComparison; formatQty + formatRp used only by DeviationBreakdownChart → NO shared `format.ts` needed (all 3 kept in their respective component files per task instructions)
+- Recorded lint baseline: 0 errors, 385 warnings (Charts.tsx contributed 1 warning at L124:98 non-null assertion `d.growth!`)
+- Created src/components/dashboard/Charts/ folder
+- Created Charts/GrowthComparison.tsx (269 LOC including imports + 'use client' directive) — includes formatDelta helper inline
+- Created Charts/DeviationBreakdownChart.tsx (202 LOC including imports + 'use client') — includes formatQty + formatRp helpers inline
+- Created Charts/LossVsSurplusChart.tsx (67 LOC including imports + 'use client')
+- Created Charts/TrendChart.tsx (81 LOC including imports + 'use client')
+- Created Charts/index.ts barrel (19 LOC) re-exporting all 4 components — mirrors metrics/index.ts style
+- Deleted old Charts.tsx — TypeScript moduleResolution "bundler" resolves `@/components/dashboard/Charts` → `Charts/index.ts` automatically, so all dynamic imports in DashboardTab.tsx keep working unchanged
+- Ran `bun run lint` after split — result: 0 errors, 385 warnings (identical to baseline). The single non-null-assertion warning preserved at GrowthComparison.tsx L123:98 (was L124:98 in original — 1-line shift from new import header)
+- Ran `bunx tsc --noEmit` — 0 errors related to Charts (the only 1 TS error in repo is unrelated: `ParetoDashboard` module missing — from another parallel task that deleted ParetoDashboard.tsx)
+- Verified DashboardTab.tsx callers still resolve via folder barrel (no caller file changes needed)
+
+Stage Summary:
+- Charts.tsx (584 LOC) → 5 files: GrowthComparison.tsx (269), DeviationBreakdownChart.tsx (202), LossVsSurplusChart.tsx (67), TrendChart.tsx (81), index.ts barrel (19). Largest file drops from 584 → 269 LOC (54% reduction)
+- All imports backward-compatible via barrel: `import { X } from '@/components/dashboard/Charts'` and `import('@/components/dashboard/Charts').then(m => m.X)` both resolve to `Charts/index.ts`
+- Each chart file has complete standalone imports + 'use client' directive (preserves client-only Recharts usage)
+- Inline helpers (formatDelta/formatQty/formatRp) preserved in their original component scope — no shared format.ts needed since each helper is used by exactly one component
+- Lint: 0 errors, 385 warnings (unchanged from baseline — pure file relocation, no logic changes)
+- TypeScript: 0 new errors
+- Caller impact: 0 files modified (DashboardTab.tsx dynamic imports unchanged)
+
+---
+Task ID: 1-c
+Agent: pareto.ts Splitter
+Task: Split src/lib/queries/pareto.ts (794 LOC) into folder with 6 files + barrel
+
+Work Log:
+- Read worklog.md (last ~200 lines) for prior context (Task 2 analysis recommended this exact split)
+- Read pareto.ts in full (794 LOC)
+- Identified 12 originally-public exports (5 queryParetoBy*, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, ParetoDimension type, NestedParetoItem + NestedParetoResultItem interfaces) + 4 previously-private symbols (ParetoRow, ParetoResult, DimensionExpr interfaces + computePareto function) that needed cross-file sharing
+- Found 1 caller in src/ (src/app/api/pareto/route.ts — imports 10 named exports including type ParetoDimension); also 1 test file tests/queries/pareto.test.ts (imports 3 queryParetoBy*); also 1 comment reference in src/components/dashboard/ParetoDashboard.tsx (mirrors types locally — no import)
+- Confirmed precedent: src/lib/metrics/index.ts uses barrel pattern; src/lib/queries/items/ + outlets/ subfolders also exist
+- Created src/lib/queries/pareto/ folder with 6 files:
+  - types.ts (78 LOC) — ParetoRow, ParetoResult, ParetoDimension, DimensionExpr, NestedParetoItem, NestedParetoResultItem
+  - compute.ts (58 LOC) — computePareto + mergeHistoricalIntoPareto (delegates to shared computePareto8020)
+  - by-dimension.ts (186 LOC) — queryParetoByItem / Outlet / Area / Kelompok / PIC
+  - nested.ts (419 LOC) — queryParetoNestedItemOutlet + queryParetoNested + private helpers getDimensionExpr / getDimensionFilter
+  - historical.ts (99 LOC) — queryParetoHistorical
+  - index.ts (30 LOC) — barrel: `export * from './types'; './compute'; './by-dimension'; './nested'; './historical'`
+- Imports rewritten: `./shared` → `../shared`; types imported from `./types`; computePareto imported from `./compute`; dropped unused `import { db } from '@/lib/db'` (was unused in original pareto.ts — withStatementTimeout uses db internally via shared.ts)
+- All SQL, comments (BUG2-PARETO-1, BUG2-PARETO-2, BUG2-PARETO-14, BUG-KELOMPOK-EMPTY, BUG4-DATA-2, FEAT-PARETO-NEST-BUG, RESTORE-SHARED-1, RESTORE-BACKEND-2, PERF-DB-03 etc.) and logic preserved verbatim — pure relocation
+- Deleted old src/lib/queries/pareto.ts
+- TypeScript resolves `@/lib/queries/pareto` to `./pareto/index.ts` automatically — caller in api/pareto/route.ts is UNCHANGED
+- Ran `bun run lint` — result: PASS (0 errors, 378 warnings — DOWN from baseline of 385 warnings due to dropped unused `db` import; no new warnings in any pareto/*.ts file)
+- Ran `bunx tsc --noEmit` — result: PASS (0 errors)
+- Ran `bun run test tests/queries/pareto.test.ts` — result: PASS (8/8 tests green)
+
+Stage Summary:
+- pareto.ts (794 LOC) → 6 files (largest = nested.ts at 419 LOC; total 870 LOC including header comments + barrel)
+- All imports backward-compatible via barrel — caller api/pareto/route.ts + tests/queries/pareto.test.ts unchanged
+- Slight public API expansion: 4 previously-private symbols (ParetoRow, ParetoResult, DimensionExpr, computePareto) are now exported from the barrel via `export *`. getDimensionExpr + getDimensionFilter remain private to nested.ts. No name collisions with other modules (verified: ParetoDashboard.tsx + growth-drivers.ts declare their own local ParetoRow/ParetoResult/computePareto that shadow but do not conflict).
+- Lint: 0 errors (378 warnings, -7 vs baseline)
+- TypeScript: 0 errors
+- Tests: 8/8 pareto tests pass
+
+---
+Task ID: 1-b
+Agent: ParetoDashboard Splitter
+Task: Split src/components/dashboard/ParetoDashboard.tsx (604 LOC) into folder with sub-components + barrel
+
+Work Log:
+- Read worklog.md (Tasks 3-8 context: Supabase migration, ExtraCharts/InsightsPanel recreation, Indonesian formatting, PIC filter, 6 advanced components, ParetoDashboard inline tab)
+- Read ParetoDashboard.tsx in full (604 LOC) — confirmed structure: imports + ParetoDimension type + DIM_LABELS + countSuffix helper + QUADRANT_TOOLTIPS + 6 interfaces (NestedChild, NestedGeneralizedItem, ParetoRow, ParetoResult, NestedOutlet, NestedItem, ParetoData) + QuadrantCard sub-component + ParetoDashboard main component (the main component itself contained the NestedItemToOutlet, GeneralizedNested, and ActionPlanFooter JSX inline)
+- Read src/lib/metrics/index.ts + src/lib/queries/index.ts as barrel precedents (pattern: `export * from './sub'` + named re-exports + `export type { ... }`)
+- Read src/components/dashboard/shared/index.tsx as `'use client'` barrel precedent for client component folders
+- Found 1 caller via Grep: src/components/dashboard/tabs/ParetoTab.tsx — uses NAMED import `import { ParetoDashboard } from '@/components/dashboard/ParetoDashboard'`. (src/lib/format.ts only mentions ParetoDashboard in a code comment, not as an import.) The original file had `export function ParetoDashboard` (named, not default) — barrel must preserve named export shape.
+- Identified 4 distinct extractable sections in the original 604-LOC file:
+  1. Types (lines 22-133): ParetoDimension + 6 interfaces (NestedChild, NestedGeneralizedItem, ParetoRow, ParetoResult, NestedOutlet, NestedItem, ParetoData)
+  2. Constants/helpers (lines 25-51): DIM_LABELS, countSuffix, QUADRANT_TOOLTIPS
+  3. QuadrantCard sub-component (lines 135-211): single quadrant card with table of drivers
+  4. Three inline JSX blocks in main component that are self-contained presentational sections:
+     - Nested Item→Outlet Breakdown (lines 394-472)
+     - Generalized nested breakdown parentDim→childDim (lines 474-550)
+     - Action Plan Footer (lines 558-601)
+- Created src/components/dashboard/ParetoDashboard/ folder (8 files, 771 LOC total):
+  * types.ts (91 LOC) — all 8 type exports (ParetoDimension, NestedChild, NestedGeneralizedItem, ParetoRow, ParetoResult, NestedOutlet, NestedItem, ParetoData). Pure types, no 'use client'.
+  * constants.ts (35 LOC) — DIM_LABELS, countSuffix, QUADRANT_TOOLTIPS. Pure data, no 'use client'.
+  * QuadrantCard.tsx (93 LOC) — extracted from lines 135-211. Props: { title, icon, data: ParetoResult, color, barColor, tooltip }. Preserves the unused `barColor` prop (caller passes it; sub-component ignores it — same lint warning as original line 135).
+  * NestedItemToOutlet.tsx (106 LOC) — extracted from lines 394-472. Props: { nestedItems, expandedItems, toggleItem }. Returns null when nestedItems is empty (preserves the `{nestedItems.length > 0 && (...)}` conditional rendering).
+  * GeneralizedNested.tsx (112 LOC) — extracted from lines 474-550. Props: { nestedGen, parentDim, childDim, expandedGen, toggleGen }. Returns null when nestedGen is missing/empty OR when combo is default (item→outlet) — preserves the original conditional.
+  * ActionPlanFooter.tsx (61 LOC) — extracted from lines 558-601. Props: { paretoData }. Pure presentational, no conditional rendering.
+  * ParetoDashboard.tsx (236 LOC, main) — orchestrator with useQuery/useDashboard hooks, loading/error/empty states, header with parent/child dimension selectors, 5-quadrant grid using QuadrantCard, calls to NestedItemToOutlet/GeneralizedNested/ActionPlanFooter, plus ParetoDevBomCard + GapAnalysisCard from external TopItems module.
+  * index.ts (37 LOC) — barrel: `export { ParetoDashboard } from './ParetoDashboard'` (named, preserves caller import shape) + re-exports QuadrantCard, NestedItemToOutlet, GeneralizedNested, ActionPlanFooter + `export type { ... }` from types + named exports from constants. No 'use client' (pure re-export).
+- Each .tsx file has 'use client' directive (matches shared/index.tsx precedent) and its own complete import list (no implicit cross-file reliance).
+- All TypeScript types preserved exactly (ParetoDimension, all 7 interfaces, all prop signatures).
+- All logic preserved exactly — no behavior changes:
+  * useQuery queryKey/staleTime/queryFn preserved
+  * filterKey-based expanded state reset preserved
+  * URLSearchParams construction preserved (including the `monthLabel!` / `currentWeek!` non-null assertions — kept as-is to preserve original warning profile)
+  * `analysisData?: any` prop type preserved (kept `any` to avoid changing the public API)
+- Deleted old src/components/dashboard/ParetoDashboard.tsx (604 LOC). Folder replaces file — Next.js/TypeScript module resolution transparently resolves `@/components/dashboard/ParetoDashboard` to `ParetoDashboard/index.ts`.
+- Ran `bun run lint` — result: PASS (0 errors, 385 warnings — same baseline as before split; no new errors introduced)
+- Ran `npx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors)
+- Verified caller import path: ParetoTab.tsx line 15 still resolves via the barrel's named `export { ParetoDashboard } from './ParetoDashboard'`.
+
+Stage Summary:
+- ParetoDashboard.tsx (604 LOC, single file) → 8 files in ParetoDashboard/ folder (771 LOC total — +167 LOC due to per-file headers, import lists, and prop type signatures; this is expected overhead when splitting)
+- Largest single file: ParetoDashboard.tsx (236 LOC, down from 604 — 61% reduction)
+- All sub-components < 120 LOC each (QuadrantCard 93, NestedItemToOutlet 106, GeneralizedNested 112, ActionPlanFooter 61)
+- Types and constants extracted to pure modules (no 'use client', no React imports — tree-shakeable)
+- All imports backward-compatible via barrel: `import { ParetoDashboard } from '@/components/dashboard/ParetoDashboard'` still works (named export preserved)
+- Barrel also exposes sub-components + types + constants for future reuse without breaking existing callers
+- Lint: 0 errors (385 warnings, same baseline)
+- TypeScript: 0 errors
+- No caller files modified (only the ParetoDashboard.tsx → ParetoDashboard/ folder transformation)
+
+---
+Task ID: 1-d
+Agent: top-items.ts Splitter
+Task: Split src/lib/queries/items/top-items.ts (722 LOC) into folder with 4 files + barrel
+
+Work Log:
+- Read worklog.md (last ~200 lines) for context — prior splitters (2-a evaluator, 2-b rootCauseEngine, 1-a Charts.tsx, 1-b ParetoDashboard, 1-c pareto.ts) established barrel pattern: `export * from './types'; './by-X'; './by-Y'`
+- Read top-items.ts in full (722 LOC) — 12 exports: 1 interface (TopItemRow) + 3 ParetoDevBom* interfaces + 8 async query functions
+- Identified all exports + grouped by concern:
+    * types (4 interfaces): TopItemRow, ParetoDevBomOutletRow, ParetoDevBomRow, ParetoDevBomResult
+    * by-deviasi-rank (2 queries): queryTopItemsByDeviasiRank, queryTopItemsByDeviasiRankForOutlet
+    * by-other-metric (6 queries): queryTopItemsByNominal, queryTopItemsByDevBom, queryTopItemsByCategory, queryHistoricalCategoryAvg, queryItemConsistency, queryParetoByDevBom
+- Found 1 direct caller in src/: src/app/api/outlet-items/route.ts (imports queryTopItemsByDeviasiRankForOutlet); also 1 barrel re-export in src/lib/queries/index.ts (line 8: `export * from './items/top-items'`) and 1 test file at tests/queries/top-items.test.ts (imports queryTopItemsByNominal + queryTopItemsByDevBom)
+- Read pareto/index.ts barrel precedent — confirmed `export * from './types'; './X'; './Y'` pattern + header comment block describing split provenance
+- DRY analysis of byDeviasiRank vs byDeviasiRankForOutlet CTEs:
+    * First CTE (per-(item,outlet) aggregates, 12 SUM/CASE columns): ~90% similar — only differs in CTE name (`item_per_outlet` vs `all_item_per_outlet`) and presence of `${f}` filter fragment
+    * Ranked CTE (ROW_NUMBER OVER ABS(nominalDeviasi) DESC + qtyBom-rank CASE): ~95% similar — only differs in CTE name + source CTE name
+    * Top-N filter CTE: STRUCTURALLY DIFFERENT (national top-N by rankNominal vs per-outlet top-N by outletRank with extra ROW_NUMBER PARTITION BY) — CANNOT be unified
+    * bucket_avg CTE: ~85% similar — differs in top-CTE + first-CTE references; left inline because it's short and follows the divergent top-N CTE
+    * VERDICT: shared CTE builder extracted for first CTE + ranked CTE only — ~32 LOC DRY-ed per call site
+- Created src/lib/queries/items/top-items/ folder with 5 files (870 LOC total, +148 LOC due to per-file headers/import lists/interface split):
+    * types.ts (55 LOC) — TopItemRow, ParetoDevBomOutletRow, ParetoDevBomRow, ParetoDevBomResult
+    * shared-cte.ts (120 LOC) — buildDeviasiRankBaseCte(opts) + DeviasiRankBaseCteOpts interface. INTERNAL — not re-exported from barrel. Returns Prisma.sql fragment containing `<firstCteName> AS (...), <rankedCteName> AS (...)`. Uses Prisma.raw() for the 2 CTE name identifiers (safe — constrained string-literal union, not user input, mirrors buildSqlFilters alias handling). When `filters` is null, an empty Prisma.sql fragment is interpolated — renders to nothing in assembled SQL, producing byte-identical output to original ForOutlet query which had no ${f} at all.
+    * by-deviasi-rank.ts (269 LOC) — queryTopItemsByDeviasiRank + queryTopItemsByDeviasiRankForOutlet. Both call buildDeviasiRankBaseCte and interpolate the result via `WITH ${baseCte}, top_items/outlet_top AS (...), bucket_avg AS (...) SELECT ...`. All SQL body preserved verbatim — only the first two CTEs were hoisted into the shared builder.
+    * by-other-metric.ts (400 LOC) — 6 query functions, byte-for-byte identical SQL to the original (largest file due to queryParetoByDevBom which is 134 LOC + 5 other queries)
+    * index.ts (26 LOC) — barrel: `export * from './types'; './by-deviasi-rank'; './by-other-metric'`. Does NOT re-export shared-cte (kept internal).
+- Imports rewritten for new folder depth: `../shared` → `../../shared` (top-items/ is 2 levels deep under src/lib/queries/). All other imports preserved verbatim.
+- Deleted old src/lib/queries/items/top-items.ts
+- TypeScript moduleResolution "bundler" resolves `@/lib/queries/items/top-items` to `top-items/index.ts` automatically — caller in api/outlet-items/route.ts + barrel in queries/index.ts + test file all unchanged
+- Ran `bun run lint` — result: PASS (0 errors, 385 warnings — IDENTICAL to pre-split baseline of 385; no new warnings in any top-items/*.ts file)
+- Ran `bunx tsc --noEmit` — result: PASS (0 errors)
+- Ran `bun run test tests/queries/top-items.test.ts` — result: PASS (9/9 tests green, 6ms; tests queryTopItemsByNominal + queryTopItemsByDevBom — both unaffected by the deviasi-rank CTE extraction)
+- Verified all 3 import paths still resolve:
+    * `@/lib/queries/items/top-items` (used by api/outlet-items/route.ts + test file) → top-items/index.ts ✓
+    * `./items/top-items` (used by src/lib/queries/index.ts barrel) → top-items/index.ts ✓
+    * No relative `./top-items` imports from sibling files in items/ folder (other items/*.ts files don't import top-items)
+
+Stage Summary:
+- top-items.ts (722 LOC, single file) → 5 files in top-items/ folder (870 LOC total — +148 LOC due to per-file headers, import lists, interface split, and shared-cte.ts's builder function + interface)
+- Largest single file: by-other-metric.ts (400 LOC, down from 722 — 45% reduction). by-deviasi-rank.ts (269 LOC), shared-cte.ts (120 LOC), types.ts (55 LOC), index.ts (26 LOC)
+- DRY: YES — extracted buildDeviasiRankBaseCte() into shared-cte.ts. Replaces ~32 LOC of duplicated CTE construction (per-(item,outlet) aggregate CTE + ranked CTE) in queryTopItemsByDeviasiRank + queryTopItemsByDeviasiRankForOutlet. Behaviorally identical: empty Prisma.sql fragment used when `filters` is null (renders to nothing — PostgreSQL treats as whitespace, identical to original ForOutlet SQL which had no ${f} interpolation). The top-N filter CTE was NOT unified because it's structurally different (national top-N by rankNominal vs per-outlet top-N by outletRank with extra ROW_NUMBER PARTITION BY clause). The bucket_avg CTE was left inline because it's short (~15 LOC) and follows the divergent top-N CTE.
+- All imports backward-compatible via barrel — 1 caller in src/ + 1 test file + 1 re-export barrel all unchanged
+- Lint: 0 errors (385 warnings, same as baseline)
+- TypeScript: 0 errors
+- Tests: 9/9 top-items tests pass

@@ -1,251 +1,28 @@
 // ============================================================
-//  Pareto Analysis Queries — 80/20 rule analysis
-//  Returns top contributors that account for 80% of total deviation.
-//  Dimensions: Item, Outlet, Area, PIC, and nested Item→Outlet.
+//  Pareto Nested — Item → Outlet breakdown + generalized parent → child
+//  --------------------------------------------------------
+//  Two exported queries + two private helpers (getDimensionExpr /
+//  getDimensionFilter) used only inside this file.
+//
+//  - queryParetoNestedItemOutlet: top items (Pareto 80%) → per-item
+//    outlet breakdown (Pareto 80% within each item).
+//  - queryParetoNested: generalized version with pluggable parent
+//    and child dimensions (any combination of item/outlet/area/
+//    kelompok/pic).
+//
+//  Both follow the 2-step query pattern:
+//    1. Top parents (Pareto 80% via `maxItems` cap)
+//    2. Per-parent child breakdown (parallelized via Promise.all)
 // ============================================================
-import { db } from '@/lib/db';
-import { buildSqlFilters, computePareto8020, withStatementTimeout, type SqlFilterOpts } from './shared';
 import { Prisma } from '@prisma/client';
-
-interface ParetoRow {
-  name: string;
-  code?: string;
-  totalAbsNominal: number;
-  nominalDeviasi: number;
-  qtyDeviasi: number; // SIGNED sum — for display (negative=LOSS, positive=SURPLUS)
-  outletCount?: number;
-  sharePct: number;
-  cumPct: number;
-}
-
-interface ParetoResult {
-  drivers: ParetoRow[];
-  remainderCount: number;
-  remainderPct: number;
-  totalAbsNominal: number;
-  totalCount: number;
-}
-
-function computePareto<T extends { totalAbsNominal: number; name: string; nominalDeviasi: number; qtyDeviasi: number }>(
-  rows: T[],
-  threshold: number = 0.80,
-  maxDrivers: number = 20,
-): ParetoResult {
-  // FIX (RESTORE-SHARED-1): delegate to shared computePareto8020 in ./shared.
-  // The shared function uses |getValue(row)| for sorting + share% — pass
-  // r.totalAbsNominal (already non-negative) so behaviour matches the
-  // previous inline implementation. Map totalMagnitude → totalAbsNominal
-  // to preserve the ParetoResult shape consumed by mergeHistoricalIntoPareto.
-  const r = computePareto8020(rows, (row) => row.totalAbsNominal, threshold, maxDrivers);
-  return {
-    drivers: r.drivers as ParetoRow[],
-    remainderCount: r.remainderCount,
-    remainderPct: r.remainderPct,
-    totalAbsNominal: r.totalMagnitude,
-    totalCount: r.totalCount,
-  };
-}
-
-// ============================================================
-//  Pareto by Item — top items accounting for 80% of total deviation
-// ============================================================
-export async function queryParetoByItem(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-): Promise<ParetoResult> {
-  const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT i.name as "itemName",
-      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY i.name
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-  `);
-  const typed = rows.map((r) => ({
-    name: r.itemName,
-    outletCount: Number(r.outletCount),
-    totalAbsNominal: Number(r.totalAbsNominal),
-    nominalDeviasi: Number(r.nominalDeviasi),
-    qtyDeviasi: Number(r.qtyDeviasi),
-  }));
-  return computePareto(typed);
-}
-
-// ============================================================
-//  Pareto by Outlet — top outlets accounting for 80% of total deviation
-// ============================================================
-export async function queryParetoByOutlet(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-): Promise<ParetoResult> {
-  const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT o.code as "outletCode", o.name as "outletName", o.area,
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi"
-    FROM "InventoryRecord" ir
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY o.code, o.name, o.area
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-  `);
-  const typed = rows.map((r) => ({
-    name: r.outletName,
-    code: r.outletCode,
-    totalAbsNominal: Number(r.totalAbsNominal),
-    nominalDeviasi: Number(r.nominalDeviasi),
-    qtyDeviasi: Number(r.qtyDeviasi),
-  }));
-  return computePareto(typed);
-}
-
-// ============================================================
-//  Pareto by Area — top areas accounting for 80% of total deviation
-// ============================================================
-export async function queryParetoByArea(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-): Promise<ParetoResult> {
-  const f = buildSqlFilters({ ...filters, area: null });
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ area: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT o.area,
-      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi"
-    FROM "InventoryRecord" ir
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY o.area
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-  `);
-  const typed = rows.map((r) => ({
-    name: r.area,
-    outletCount: Number(r.outletCount),
-    totalAbsNominal: Number(r.totalAbsNominal),
-    nominalDeviasi: Number(r.nominalDeviasi),
-    qtyDeviasi: Number(r.qtyDeviasi),
-  }));
-  return computePareto(typed);
-}
-
-// ============================================================
-//  Pareto by Kelompok — top outlet prefixes (3-char) accounting for 80%
-//  Kelompok = 3-char prefix from outlet code (e.g. "MLG" from "1016.MLGJAK")
-// ============================================================
-export async function queryParetoByKelompok(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-): Promise<ParetoResult> {
-  const f = buildSqlFilters(filters);
-  // FIX (BUG-KELOMPOK-EMPTY): Use LEFT(SUBSTRING(code FROM '[^.]+$'), 3) to extract
-  // the kelompok from the LAST dot-segment (the name prefix), consistent with
-  // buildSqlFilters + /api/status. POSITION('.' IN code)+1 returns the position
-  // after the FIRST dot — wrong for format 2 ("B.1001.MLGPAR" → "100", not "MLG").
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ kelompok: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) as "kelompok",
-      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi"
-    FROM "InventoryRecord" ir
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-  `);
-  const typed = rows.map((r) => ({
-    name: r.kelompok,
-    outletCount: Number(r.outletCount),
-    totalAbsNominal: Number(r.totalAbsNominal),
-    nominalDeviasi: Number(r.nominalDeviasi),
-    qtyDeviasi: Number(r.qtyDeviasi),
-  }));
-  return computePareto(typed);
-}
-
-// ============================================================
-//  Pareto by PIC — top PICs accounting for 80% of total deviation (#8)
-// ============================================================
-export async function queryParetoByPIC(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-): Promise<ParetoResult> {
-  const f = buildSqlFilters(filters);
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ pic: string; outletCount: number; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-    SELECT COALESCE(pic.pic, 'Unassigned') as "pic",
-      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi"
-    FROM "InventoryRecord" ir
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY pic.pic
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-  `);
-  const typed = rows.map((r) => ({
-    name: r.pic,
-    outletCount: Number(r.outletCount),
-    totalAbsNominal: Number(r.totalAbsNominal),
-    nominalDeviasi: Number(r.nominalDeviasi),
-    qtyDeviasi: Number(r.qtyDeviasi),
-  }));
-  return computePareto(typed);
-}
+import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import type { NestedParetoItem, NestedParetoResultItem, ParetoDimension, DimensionExpr } from './types';
 
 // ============================================================
 //  Pareto Nested: Item → Outlet breakdown (#3)
 //  For each top item (80% Pareto), returns the outlets that contribute
 //  80% of that item's total deviation.
 // ============================================================
-export interface NestedParetoItem {
-  itemName: string;
-  totalAbsNominal: number;
-  nominalDeviasi: number;
-  qtyDeviasi: number;
-  outletCount: number;
-  sharePct: number;
-  cumPct: number;
-  outlets: Array<{
-    outletCode: string;
-    outletName: string;
-    area: string;
-    totalAbsNominal: number;
-    nominalDeviasi: number;
-    qtyDeviasi: number;
-    sharePct: number;
-    cumPct: number;
-  }>;
-}
-
 export async function queryParetoNestedItemOutlet(
   week: string,
   month: string,
@@ -361,127 +138,6 @@ export async function queryParetoNestedItemOutlet(
 }
 
 // ============================================================
-//  Pareto Historical — fetch historical stats for Pareto dimensions
-//  For each dimension (item/outlet/area/pic), computes the average +
-//  stddev of totalAbsNominal across same weekLabel in previous months.
-//  Returns a Map<name, { histAvg, histStdDev, histN }> for z-score computation.
-//
-//  z-score = (current - histAvg) / histStdDev
-//  |z| > 2 = ABNORMAL, |z| > 1 = ELEVATED
-// ============================================================
-export async function queryParetoHistorical(
-  week: string,
-  month: string,
-  dimension: 'item' | 'outlet' | 'area' | 'kelompok' | 'pic',
-  filters: SqlFilterOpts,
-  // FIX (BUG2-PARETO-1): pass currentMonthKey to filter out FUTURE months.
-  // The old code only excluded `monthLabel != ${month}` — included future months
-  // if they exist in DB, inflating/shifting the historical mean+stddev.
-  currentMonthKey?: string,
-): Promise<Map<string, { histAvg: number; histStdDev: number; histN: number }>> {
-  const f = buildSqlFilters(filters);
-
-  // Different GROUP BY expression per dimension
-  // FIX (BUG-KELOMPOK-EMPTY): kelompok extraction uses LEFT(SUBSTRING(code FROM '[^.]+$'), 3)
-  // to get the 3-char prefix of the LAST dot-segment (the name prefix). The old
-  // SUBSTRING(... POSITION('.' IN code)+1 FOR 3) grabbed chars after the FIRST dot
-  // — wrong for format 2 ("B.1001.MLGPAR" → "100", not "MLG"). Now consistent with
-  // buildSqlFilters + queryParetoByKelompok.
-  const groupExpr = dimension === 'item'
-    ? Prisma.sql`i.name`
-    : dimension === 'outlet'
-      ? Prisma.sql`o.code`
-      : dimension === 'area'
-        ? Prisma.sql`o.area`
-        : dimension === 'kelompok'
-          ? Prisma.sql`LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3)`
-          : Prisma.sql`COALESCE(pic.pic, 'Unassigned')`;
-
-  const joinItem = dimension === 'item'
-    ? Prisma.sql`JOIN "Item" i ON ir."itemId" = i.id`
-    : Prisma.empty;
-  const joinOutlet = dimension !== 'item'
-    ? Prisma.sql`JOIN "Outlet" o ON ir."outletId" = o.id`
-    : Prisma.empty;
-  const joinPIC = dimension === 'pic'
-    ? Prisma.sql`LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"`
-    : Prisma.empty;
-
-  // Two-level aggregation:
-  // 1. weekly_dev: per (dimension, month, week) → 1 observation = SUM(absNominalDeviasi)
-  // 2. final: per dimension → AVG + STDDEV across weekly observations
-  // Filter: same weekLabel, different monthLabel (historical comparison)
-  // FIX (BUG2-PARETO-1): JOIN SourceFile + filter sf."monthKey" < currentMonthKey
-  // to exclude FUTURE months. The old code only excluded `monthLabel != ${month}`,
-  // which included future months if they exist in DB.
-  const futureFilter = currentMonthKey
-    ? Prisma.sql`AND sf."monthKey" < ${currentMonthKey}`
-    : Prisma.sql`AND ir."monthLabel" != ${month}`;
-  const joinSourceFile = Prisma.sql`JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`;
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ name: string; histAvg: number; histStdDev: number; histN: number }>>`
-    WITH weekly_dev AS (
-      SELECT ${groupExpr} as "name",
-        ir."monthLabel", ir."weekLabel",
-        ABS(SUM(ir."nominalDeviasi")) as "weeklyTotal"
-      FROM "InventoryRecord" ir
-      ${joinItem}
-      ${joinOutlet}
-      ${joinPIC}
-      ${joinSourceFile}
-      WHERE ir."weekLabel" = ${week}
-        ${futureFilter}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        ${f}
-      GROUP BY ${groupExpr}, ir."monthLabel", ir."weekLabel"
-    )
-    SELECT "name",
-      AVG("weeklyTotal") as "histAvg",
-      STDDEV_SAMP("weeklyTotal") as "histStdDev",
-      CAST(COUNT(*) AS INTEGER) as "histN"
-    FROM weekly_dev
-    WHERE "weeklyTotal" IS NOT NULL
-    GROUP BY "name"
-  `);
-
-  const map = new Map<string, { histAvg: number; histStdDev: number; histN: number }>();
-  for (const r of rows) {
-    const n = Number(r.histN);
-    const mean = Number(r.histAvg) || 0;
-    const stdDev = Number(r.histStdDev) || 0;
-    if (n >= 2) {
-      map.set(r.name, { histAvg: mean, histStdDev: stdDev, histN: n });
-    }
-  }
-  return map;
-}
-
-// ============================================================
-//  Merge historical stats into Pareto results
-//  Adds histAvg, zScore, histN to each driver row
-// ============================================================
-export function mergeHistoricalIntoPareto(
-  pareto: ParetoResult,
-  historical: Map<string, { histAvg: number; histStdDev: number; histN: number }>,
-): ParetoResult {
-  return {
-    ...pareto,
-    drivers: pareto.drivers.map(d => {
-      const hist = historical.get(d.name) || historical.get(d.code || '');
-      if (!hist || hist.histStdDev <= 0) {
-        return { ...d, histAvg: hist?.histAvg ?? null, zScore: null, histN: hist?.histN ?? 0 };
-      }
-      const zScore = (d.totalAbsNominal - hist.histAvg) / hist.histStdDev;
-      return {
-        ...d,
-        histAvg: hist.histAvg,
-        zScore: Number(zScore.toFixed(2)),
-        histN: hist.histN,
-      };
-    }),
-  };
-}
-
-// ============================================================
 //  Generalized Nested Pareto — any parent × child dimension
 //  --------------------------------------------------------
 //  FIX (RESTORE-BACKEND-2): the generalized multi-nesting function was
@@ -501,19 +157,6 @@ export function mergeHistoricalIntoPareto(
 //  Plain-string JOINs via Prisma.raw() are deterministic + safe
 //  because the JOIN fragments are static literals (no user input).
 // ============================================================
-
-export type ParetoDimension = 'item' | 'outlet' | 'area' | 'kelompok' | 'pic';
-
-interface DimensionExpr {
-  /** SQL fragment for GROUP BY + SELECT alias. Bare identifier or expression. */
-  groupExpr: string;
-  /** JOIN "Item" ... clause, or '' if not needed for this dimension. */
-  joinItem: string;
-  /** JOIN "Outlet" ... clause, or '' if not needed. */
-  joinOutlet: string;
-  /** LEFT JOIN "OutletPIC" ... clause, or '' if not needed. */
-  joinPIC: string;
-}
 
 /**
  * Build the SQL fragments (groupExpr + 3 JOIN clauses) for a Pareto dimension.
@@ -600,24 +243,6 @@ function getDimensionFilter(dim: ParetoDimension, value: string): Prisma.Sql {
       }
       return Prisma.sql`AND pic.pic = ${value}`;
   }
-}
-
-export interface NestedParetoResultItem {
-  name: string;
-  totalAbsNominal: number;
-  nominalDeviasi: number;
-  qtyDeviasi: number;
-  outletCount: number;
-  sharePct: number;
-  cumPct: number;
-  children: Array<{
-    name: string;
-    totalAbsNominal: number;
-    nominalDeviasi: number;
-    qtyDeviasi: number;
-    sharePct: number;
-    cumPct: number;
-  }>;
 }
 
 /**
