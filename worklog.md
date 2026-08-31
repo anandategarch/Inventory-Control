@@ -38863,3 +38863,103 @@ Stage Summary:
 - Files modified: 6 (useDashboard.ts +7 LOC, ItemTrendTab/index.tsx +163 LOC, ItemTrendTable.tsx +82 LOC, ItemTrendLineChart.tsx +20 LOC, ranking-nasional.tsx +35 LOC, page.tsx +3 LOC)
 - Files created: 1 (ItemPeerComparison.tsx 756 LOC)
 - Total LOC added: ~1066
+
+---
+Task ID: P3-FE
+Agent: Rank Trend Chart Frontend
+Task: Create ItemTrendRankChart compact chart + integrate into ItemTrendTab
+
+Work Log:
+- Read worklog.md (last 100 lines) + ItemTrendLineChart.tsx (368 LOC, full) + ItemTrendTab/index.tsx (574 LOC, full) + useItemTrend.ts (116 LOC, full) + format.ts (130 LOC, full) + periodHelpers.ts (25 LOC, full).
+- Baseline verified BEFORE changes: tsc 0 errors; lint 0 errors / 373 warnings.
+- Created ItemTrendRankChart.tsx (260 LOC) — compact inverted-axis rank chart:
+  * Recharts LineChart, 100px height, no Legend (header text explains the line), no Z-Score axis.
+  * Y-axis INVERTED via `reversed` prop on YAxis. Domain `[1, maxRank]` (floored at 2 so single-rank charts have a visible Y range). `allowDataOverflow` guards against stray values.
+  * X-axis: period short label "Jun W4" (same format as main chart via `monthLabel.slice(0,3) + weekLabel.replace('WEEK ','W')`), rotated -30°.
+  * Single Line (stroke=var(--muted-foreground), monotone, connectNulls, isAnimationActive=false) with custom `renderDot` coloring each dot per severity (red ≤5, amber 6-20, emerald >20). White stroke for contrast.
+  * Custom Tooltip: period full label, "Rank #N dari M item" (colored to match dot severity), |Nominal Deviasi| formatted via fmtIDR.
+  * ReferenceLine at y=5 (red dashed) + y=20 (amber dashed) — only rendered when maxRank ≥ threshold (avoids lines outside visible domain).
+  * Click handler: same pattern as ItemTrendLineChart — `handleChartClick(state)` reads `state.activeTooltipIndex` and calls `onDotClick({monthLabel, weekLabel})`.
+  * Edge cases: 0 periods → render null; 1 period → render message "Hanya 1 periode — butuh minimal 2 periode"; null rankNominal → connectNulls bridges the gap.
+  * Exported `ItemTrendRankChartProps` type for barrel re-export.
+- Modified ItemTrendTab/index.tsx (+80 LOC):
+  * Added `import { ItemTrendRankChart } from './ItemTrendRankChart'` + barrel re-exports for value + type.
+  * Added Phase 3 useQuery hook for `/api/item-trend-rank` (after existing `trend` useItemTrend hook). Query key: `['item-trend-rank', selectedItem, monthLabel, currentWeek, area, kelompok, outletCode, pic]`. Same filter shape as main trend query (item + month/week context + area/kelompok/outlet/pic). enabled=Boolean(selectedItem), staleTime=5min, gcTime=10min, refetchOnWindowFocus=false. Used local `if (!selectedItem) throw` guard inside queryFn instead of `selectedItem!` non-null assertion (avoids the @typescript-eslint/no-non-null-assertion warning).
+  * Added `rankPeriods` useMemo (stable ref, same pattern as `periods`).
+  * Added "Memuat Rank" badge (blue) in header next to existing "Memuat" badge — only shows when rankFetching AND rankPeriods.length === 0 (SWR pattern — hidden on background revalidation once data is loaded).
+  * Rendered ItemTrendRankChart below ItemTrendLineChart inside the same `px-4 pt-2` div, wrapped in `mt-2 pt-2 border-t`. Only rendered when `rankPeriods.length > 1` (chart can't draw a trend line from a single point).
+  * onDotClick wired to `(p) => setDrillPeriod({ month: p.monthLabel, week: p.weekLabel })` — syncs with the same drillPeriod state used by the main chart + table row clicks, so clicking a rank dot drills into ItemPeerComparison for that period.
+- Ran `bun run lint` — result: PASS (0 errors, 374 warnings = 373 baseline + 1 new).
+  * The 1 new warning is `_period` unused param in the `onDotClick?` callback type signature (line 59). This matches the existing ItemTrendLineChart.tsx:50 pattern (`_period: ItemTrendPeriod`) — the project's `no-unused-vars` rule (plain JS, not @typescript-eslint variant) has no `argsIgnorePattern` configured, so the underscore prefix doesn't silence it. Accepted as a known codebase pattern (documented in P1P2-FE worklog entry).
+  * Avoided the `@typescript-eslint/no-non-null-assertion` warning by using a local guard `if (!selectedItem) throw new Error('No item selected')` inside the queryFn instead of `selectedItem!`.
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors).
+
+Stage Summary:
+- Compact rank trend chart (100px height) with INVERTED Y-axis — rank #1 at top (worst), rank #N at bottom (best). Visual convention: "higher on chart = worse" matches rank intuition.
+- Line color: red ≤5, amber 6-20, emerald >20 (per-period via custom Dot renderer). Single muted stroke connects all dots to show the trend.
+- ReferenceLines at rank=5 (red) + rank=20 (amber) — severity thresholds, conditionally rendered.
+- Click handler syncs with drillPeriod (same as main chart + table row clicks) → drills into ItemPeerComparison for that period.
+- Rank query fires in parallel with main trend query (independent query key + endpoint). 5-min staleTime + 10-min gcTime matches useItemTrend config.
+- "Memuat Rank" badge in header (blue, SWR-gated — hidden once data is loaded).
+- Edge cases handled: 0 periods (no render), 1 period (message), null rankNominal (connectNulls).
+- Files created: 1 (ItemTrendRankChart.tsx, 260 LOC).
+- Files modified: 1 (ItemTrendTab/index.tsx, +80 LOC).
+- Total LOC added: ~340.
+- Lint: PASS (0 errors, 374 warnings — net +1 from 373 baseline; 1 new warning is the known `_period` callback-param pattern).
+- tsc: PASS (0 errors, exit code 0).
+
+---
+Task ID: P3-BE
+Agent: Item Trend Rank API Builder
+Task: Create /api/item-trend-rank route + queryItemTrendRank function
+
+Work Log:
+- Read worklog.md + item-trend.ts + item-trend route + shared.ts + aggregation-cache.ts + validation.ts + pic-resolver.ts + kelompok-resolver.ts + cache-headers.ts + error-response.ts + month-resolver.ts + item-peer-comparison.ts + item-peer-comparison route (for resolveOutletCodeFilters precedent)
+- Created src/lib/queries/items/item-trend-rank.ts (159 LOC)
+  * Exports ItemTrendRankPeriod + ItemTrendRankResult interfaces
+  * Exports queryItemTrendRank(itemName, filters) function
+  * Two-CTE SQL: item_per_period (per-(period, item) ABS(nominalDeviasi) aggregates for ALL items) → ranked (RANK() + COUNT(*) window functions per (monthLabel, weekLabel) partition) → final SELECT filters to itemName = exact match
+  * RANK() OVER (PARTITION BY "monthLabel", "weekLabel" ORDER BY "absNominal" DESC) — 1 = highest deviasi
+  * COUNT(*) OVER (PARTITION BY "monthLabel", "weekLabel") — totalItems so UI can show "rank 5 of 153"
+  * Item name matched via EXACT `i.name = ${itemName}` in WHERE (not LIKE — same as item-trend.ts)
+  * buildSqlFilters applies area/kelompok/outletCode/picOutletCodes (itemName stripped, applied directly in WHERE)
+  * Uses withStatementTimeout (30s query timeout, 64MB work_mem)
+  * Prisma.sql tagged templates throughout (zero $queryRawUnsafe)
+  * BigInt/Decimal → Number coercion in row mapping (Prisma raw returns BigInt for COUNT/RANK + Decimal for SUM; JSON.stringify throws on BigInt without coercion)
+  * ORDER BY "monthKey" ASC NULLS LAST, "weekLabel" ASC (chronological, same as item-trend.ts)
+  * Efficiency: CTE computes ~153 items × ~8 periods = ~1224 rows, then window functions O(N log N) per partition, then final WHERE filters to 1 item
+- Created src/app/api/item-trend-rank/route.ts (243 LOC)
+  * export const dynamic = 'force-dynamic', maxDuration = 30
+  * Rate limit: 30 req/min per IP (same as item-trend)
+  * Inline Zod schema (validation.ts NOT modified per task constraint)
+    - item: required, month + week: optional (cache-key context only — rank covers ALL periods, same as item-trend)
+    - Uses same regexes as monthLabelSchema + weekLabelSchema in validation.ts
+    - area, kelompok, outlet, pic: all optional
+    - .strict() rejects unknown query params
+  * Resolve month BEFORE cache key (so "Agustus 2026" + "agustus 2026" share one entry) — only when month provided
+  * resolveOutletCodeFilters helper (same pattern as item-peer-comparison route):
+    - Resolves kelompok + PIC in parallel via resolveKelompokOutletCodes + resolvePICOutletCodes
+    - Handles ['__NO_MATCH__'] sentinel from both resolvers (early empty return)
+    - Intersects kelompok + PIC codes when both present (outlet must match BOTH)
+    - Empty intersection → noMatch: true → early empty return
+  * DB cache via withCacheAndDedup (5-min TTL, same as item-trend)
+  * Cache key: buildCacheKey({ route: 'item-trend-rank', month: month || 'ALL', week: week || 'ALL', itemName: item, area, kelompok, outletCode: outlet, pic })
+  * Response shape per spec: { success, item: {itemName}, periods, durationMs, cached?, stale? }
+  * Cache flags: cached + stale (SWR) surfaced on response
+  * Uses CACHE_ANALYSIS headers (5-min CDN cache, 10-min stale grace)
+  * Uses errorResponse helper for 500 errors (no DB schema/SQL leakage)
+- Added 'item-trend-rank' to invalidateAnalysisCache routes array in src/lib/aggregation-cache.ts
+  (single-line addition to existing array; comment block updated to reference P3-BE + explain why mutations affect it)
+- Ran `bun run lint` — result: PASS (0 errors, 374 warnings; 0 warnings in my new files)
+  * Initial run flagged 2 warnings in item-trend-rank.ts (Prisma imported but unused — fixed by removing the unused import; the query uses withStatementTimeout which handles Prisma internally, so the Prisma namespace import was not needed)
+- Ran `bunx tsc --noEmit --skipLibCheck` — result: PASS (exit code 0, 0 errors)
+
+Stage Summary:
+- API: GET /api/item-trend-rank?item=&month=&week=&area=&kelompok=&outlet=&pic=
+- Returns: per-period rank (by ABS(nominalDeviasi) DESC) + totalItems + absNominal for tooltip
+- 5-min DB cache via withCacheAndDedup + SWR (stale-while-revalidate)
+- Cache invalidated on data mutations (added to invalidateAnalysisCache routes array)
+- Single SQL with 2 CTEs (item_per_period → ranked → final WHERE) — efficient window function usage
+- Reuses buildSqlFilters + withStatementTimeout + resolveKelompokOutletCodes + resolvePICOutletCodes from shared libs
+- Lint: PASS (0 errors / 0 warnings in my files; 374 pre-existing warnings in other files)
+- tsc: PASS (0 errors, exit code 0)

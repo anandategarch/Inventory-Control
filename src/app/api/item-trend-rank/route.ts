@@ -1,0 +1,243 @@
+// ============================================================
+//  /api/item-trend-rank — per-item national rank timeline (ALL periods)
+//  GET: ?item=&month?=&week?=&area?=&kelompok?=&outlet?=&pic?=
+//
+//  Returns the national rank of a specific item for EACH period
+//  (monthLabel × weekLabel). Rank is computed by ABS(nominalDeviasi)
+//  DESC across ALL items in the same period (1 = highest deviasi
+//  magnitude). Also returns totalItems so the UI can show
+//  "rank 5 of 153".
+//
+//  This powers the "Rank Trend" compact chart in the Trend Item Tab —
+//  visualizes how an item's national standing fluctuates across
+//  periods (e.g. rank 5 → rank 1 → rank 12).
+//
+//  NOTE on month + week params:
+//    The rank query itself returns ALL periods for the item (rank is
+//    computed per-period, not per-(period, month, week) selection).
+//    `month` + `week` are accepted for cache-key context only — same
+//    convention as /api/item-trend — so two requests with different
+//    dashboard month/week selections DON'T share a cache entry (the
+//    filters area/kelompok/outlet/pic might differ between selections,
+//    even though the rank query covers all periods).
+//
+//  Pattern (per CONVENTIONS.md §1 + §3.1 + item-peer-comparison precedent):
+//    - `force-dynamic` + maxDuration=30 (single SQL query — light route)
+//    - Rate limiting (30 req/min per IP — interactive UI control)
+//    - Zod validation (inline schema — validation.ts not modified)
+//    - DB cache via withCacheAndDedup (5-min TTL, same as item-trend)
+//    - Cache key includes month + week + itemName + filters
+//    - Resolve month BEFORE cache key (so "Agustus 2026" + "agustus 2026"
+//      share one entry)
+//    - Parallel resolve kelompok + PIC inside computeFn (saves 50-100ms
+//      on cold path) + intersect when both present
+//    - `startedAt` timing + `durationMs` in response
+//    - Generic error message on failure (no DB schema/SQL leakage)
+// ============================================================
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { logger } from '@/lib/logger';
+import { rateLimit, getClientIP } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { resolvePICOutletCodes } from '@/lib/pic-resolver';
+import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
+import {
+  queryItemTrendRank,
+  type ItemTrendRankPeriod,
+} from '@/lib/queries/items/item-trend-rank';
+import { validateQuery } from '@/lib/validation';
+import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+import { errorResponse } from '@/lib/error-response';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+const ITEM_TREND_RANK_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches item-trend
+
+// Zod schema for /api/item-trend-rank query params.
+// Defined inline (validation.ts not modified per task constraint).
+// `item` is REQUIRED; `month` + `week` are OPTIONAL (used for cache-key
+// context only — rank covers ALL periods, same as /api/item-trend).
+// Uses the same regexes as monthLabelSchema + weekLabelSchema in validation.ts.
+const itemTrendRankQuerySchema = z.object({
+  item: z.string().min(1).max(200),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional(),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
+  area: z.string().min(1).max(50).optional(),
+  kelompok: z.string().min(1).max(50).optional(),
+  outlet: z.string().min(1).max(50).optional(),
+  pic: z.string().min(1).max(100).optional(),
+}).strict();
+
+/**
+ * Resolve kelompok + PIC filters into a single combined outletCodes array.
+ * Returns:
+ *   - { codes: null, noMatch: false } when no filter is applied.
+ *   - { codes: string[], noMatch: false } when one or both filters resolve.
+ *   - { codes: null, noMatch: true } when a filter matches no outlets OR
+ *     the intersection of kelompok + PIC is empty.
+ *
+ * Sentinel handling: both resolvers use ['__NO_MATCH__'] to signal that
+ * the requested filter exists in the DB but maps to zero outlets. We treat
+ * that as "noMatch: true" so the route returns an empty result early
+ * instead of running a query that returns 0 rows.
+ *
+ * Same pattern as /api/item-peer-comparison (resolveOutletCodeFilters).
+ */
+async function resolveOutletCodeFilters(
+  kelompok: string | null,
+  pic: string | null,
+): Promise<{ codes: string[] | null; noMatch: boolean }> {
+  const [kelompokCodes, picCodes] = await Promise.all([
+    kelompok ? resolveKelompokOutletCodes(kelompok) : Promise.resolve<string[]>([]),
+    resolvePICOutletCodes(pic),
+  ]);
+
+  // Normalize: empty array → null (no filter)
+  const k = kelompokCodes && kelompokCodes.length > 0 ? kelompokCodes : null;
+  const p = picCodes && picCodes.length > 0 ? picCodes : null;
+
+  // Sentinel: __NO_MATCH__ means the filter exists but matches 0 outlets.
+  if (k && k.length === 1 && k[0] === '__NO_MATCH__') {
+    return { codes: null, noMatch: true };
+  }
+  if (p && p.length === 1 && p[0] === '__NO_MATCH__') {
+    return { codes: null, noMatch: true };
+  }
+
+  // Both present → intersect (an outlet must match BOTH filters)
+  if (k && p) {
+    const pSet = new Set(p);
+    const intersection = k.filter((c) => pSet.has(c));
+    if (intersection.length === 0) {
+      return { codes: null, noMatch: true };
+    }
+    return { codes: intersection, noMatch: false };
+  }
+
+  // Only one present — use it directly
+  if (k) return { codes: k, noMatch: false };
+  if (p) return { codes: p, noMatch: false };
+
+  return { codes: null, noMatch: false };
+}
+
+export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
+  try {
+    // 1. Rate limit (per-IP + per-route namespace) — 30 req/min, same as item-trend
+    const ip = getClientIP(req);
+    const rl = rateLimit(`item-trend-rank:${ip}`, 30, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded.' },
+        { status: 429 },
+      );
+    }
+
+    const url = new URL(req.url);
+
+    // 2. Zod validation (strict — rejects unknown query params)
+    const validation = validateQuery(itemTrendRankQuerySchema, url.searchParams);
+    if (!validation.success) {
+      return NextResponse.json(
+        { success: false, error: validation.error },
+        { status: 400 },
+      );
+    }
+    const params = validation.data;
+
+    const item = params.item;
+    const rawMonth = params.month ?? '';
+    const rawWeek = params.week ?? '';
+    const area = params.area ?? null;
+    const kelompok = params.kelompok ?? null;
+    const outletCode = params.outlet ?? null;
+    const pic = params.pic ?? null;
+
+    // PERF-HEATMAP pattern (same as item-trend): resolve month BEFORE cache
+    // key so "Agustus 2026" and "agustus 2026" share one cache entry.
+    // month is OPTIONAL here (rank covers ALL periods); only resolve when
+    // a value was provided.
+    const resolver = await getMonthResolver();
+    const month = rawMonth ? (resolveMonthLabel(rawMonth, resolver) || rawMonth) : '';
+    const week = rawWeek;
+
+    // 3. DB cache check — cache key includes ALL response-affecting params.
+    // month + week are for cache-key context only (rank covers ALL periods,
+    // same as /api/item-trend) — they distinguish dashboard selections that
+    // might carry different filter combinations even though the rank query
+    // itself ignores them.
+    const cacheKey = buildCacheKey({
+      route: 'item-trend-rank',
+      month: month || 'ALL',
+      week: week || 'ALL',
+      itemName: item,
+      area: area && area !== 'all' ? area : null,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+      pic,
+    });
+
+    // 4. Compute (or return cached/stale)
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<{
+      periods: ItemTrendRankPeriod[];
+    }>(cacheKey, ITEM_TREND_RANK_CACHE_TTL, async () => {
+      // Parallel resolve kelompok + PIC → combined outletCodes
+      const { codes: outletCodes, noMatch } = await resolveOutletCodeFilters(
+        kelompok && kelompok !== 'all' ? kelompok : null,
+        pic,
+      );
+
+      // Sentinel / empty-intersection: return empty periods early.
+      // Same shape as a successful query with no periods — frontend
+      // renders "no rank data" without distinguishing causes.
+      if (noMatch) {
+        return {
+          periods: [],
+        };
+      }
+
+      // Build filter opts (same pattern as item-peer-comparison route).
+      // NOTE: itemName is NOT passed through filters — queryItemTrendRank
+      // applies an EXACT match (`i.name = ${itemName}`) in its WHERE clause
+      // instead of buildSqlFilters' LIKE (which would over-match).
+      // kelompok is set to null because it's already been resolved to
+      // outletCodes above (avoiding double-filtering).
+      const filterOpts = {
+        area: area && area !== 'all' ? area : null,
+        kelompok: null,
+        outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+        itemName: null,
+        picOutletCodes: outletCodes,
+      };
+
+      const result = await queryItemTrendRank(item, filterOpts);
+
+      return {
+        periods: result.periods,
+      };
+    });
+
+    // 5. Response with cache flags (CONVENTIONS §2).
+    // PERF-CACHE-09 (SWR): surface `stale: true` when the cache entry was
+    // expired (client gets stale data immediately + background recompute runs).
+    const responsePayload = {
+      success: true,
+      item: { itemName: item },
+      periods: cachedOrFresh.periods,
+      durationMs: Date.now() - startedAt,
+      ...(cached ? { cached: true } : {}),
+      ...(stale ? { stale: true } : {}),
+    };
+
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
+  } catch (e: unknown) {
+    // BUG-A-07 pattern: Don't leak internal error details to client.
+    logger.error('[item-trend-rank] error:', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return errorResponse(e, 'item-trend-rank', 500);
+  }
+}

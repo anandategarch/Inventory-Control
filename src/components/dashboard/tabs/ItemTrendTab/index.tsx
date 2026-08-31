@@ -80,16 +80,20 @@ import { METRICS, type AutocompleteResult, type SortKey, type SortDir } from './
 import { periodSortKey } from './periodHelpers';
 // Phase 2 — peer comparison drill-down panel.
 import { ItemPeerComparison } from './ItemPeerComparison';
+// Phase 3 — compact rank trend chart (inverted Y-axis, sits below main chart).
+import { ItemTrendRankChart } from './ItemTrendRankChart';
 
 // Re-export sub-components + types so callers importing from
 // '@/components/dashboard/tabs/ItemTrendTab' can access them.
 export { ItemTrendSearchBar } from './ItemTrendSearchBar';
 export { ItemTrendTable } from './ItemTrendTable';
 export { ItemPeerComparison } from './ItemPeerComparison';
+export { ItemTrendRankChart } from './ItemTrendRankChart';
 export { zScoreColor, zScoreStatus } from './zScoreHelpers';
 export { periodSortKey, periodShortLabel } from './periodHelpers';
 export type { MetricOption, AutocompleteResult, SortKey, SortDir } from './types';
 export type { ItemPeerComparisonProps, ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResponse } from './ItemPeerComparison';
+export type { ItemTrendRankChartProps } from './ItemTrendRankChart';
 export { METRICS } from './types';
 
 // Recharts is 5.4MB — lazy-load the chart component so it stays out of
@@ -284,6 +288,52 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     pic,
   });
 
+  // Stage 3 (Phase 3) — rank trend data. Fires in parallel with the main
+  // trend data (independent query key + endpoint). Returns the item's
+  // national rank (by ABS(nominalDeviasi)) for each period, used by the
+  // compact ItemTrendRankChart below the main chart.
+  //
+  // Same filter shape as the main trend query (item + month/week context
+  // + area/kelompok/outlet/pic scoping) so the rank data matches the
+  // user's current filter selection.
+  const { data: rankData, isFetching: rankFetching } = useQuery({
+    queryKey: ['item-trend-rank', selectedItem, monthLabel, currentWeek, area, kelompok, outletCode, pic],
+    queryFn: async () => {
+      // Guard: enabled=Boolean(selectedItem) guarantees selectedItem is
+      // non-null here, but TypeScript can't infer that across the closure.
+      // Using a local guard avoids the non-null assertion (`selectedItem!`)
+      // while still being type-safe.
+      if (!selectedItem) throw new Error('No item selected');
+      const p = new URLSearchParams({ item: selectedItem });
+      if (monthLabel) p.set('month', monthLabel);
+      if (currentWeek) p.set('week', currentWeek);
+      if (area && area !== 'all') p.set('area', area);
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      if (outletCode) p.set('outlet', outletCode);
+      if (pic) p.set('pic', pic);
+      const res = await fetch(`/api/item-trend-rank?${p.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{
+        success: boolean;
+        periods: Array<{
+          monthLabel: string;
+          weekLabel: string;
+          monthKey: string | null;
+          rankNominal: number;
+          totalItems: number;
+          absNominal: number;
+        }>;
+      }>;
+    },
+    // Only fire when an item is selected — avoids burning a request on tab mount.
+    enabled: Boolean(selectedItem),
+    // 5-min staleTime matches the server DB cache TTL (same as useItemTrend).
+    staleTime: 5 * 60 * 1000,
+    // 10-min gcTime — keep the data in memory across tab switches.
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+
   // Memoize the periods array — `trend.data?.periods ?? []` would create
   // a new array reference every render when periods is undefined, causing
   // downstream useMemo hooks to recompute needlessly. Wrapping it here
@@ -291,6 +341,13 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   const periods: ItemTrendPeriod[] = useMemo(
     () => trend.data?.periods ?? [],
     [trend.data?.periods],
+  );
+
+  // Phase 3 — rank periods (memoized for the same reason as `periods`
+  // above: stable ref avoids downstream re-renders).
+  const rankPeriods = useMemo(
+    () => rankData?.periods ?? [],
+    [rankData?.periods],
   );
 
   // Chronologically sorted periods for the chart + table.
@@ -416,6 +473,16 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               Memuat
             </Badge>
           )}
+          {/* Phase 3 — rank fetching badge. Only shown when rank data is
+              being fetched AND no rank periods are available yet (SWR
+              pattern — once data is loaded, the badge is hidden even on
+              background revalidation to avoid flicker). */}
+          {rankFetching && rankPeriods.length === 0 && (
+            <Badge variant="outline" className="text-[10px] font-normal text-blue-600 dark:text-blue-400 border-blue-300/70 dark:border-blue-800/70 bg-blue-50/60 dark:bg-blue-950/30 h-5">
+              <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
+              Memuat Rank
+            </Badge>
+          )}
         </CardTitle>
 
         {/* Search row + metric selector */}
@@ -534,6 +601,20 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                 metric={metric}
                 onDotClick={handlePeriodDrill}
               />
+
+              {/* Phase 3 — Rank Trend chart (compact, below main chart).
+                  Shows the item's national rank (by |nominalDeviasi|)
+                  per period with an INVERTED Y-axis (rank #1 at top =
+                  worst). Only rendered when there are ≥2 rank periods
+                  (the chart can't draw a trend line from a single point). */}
+              {rankPeriods.length > 1 && (
+                <div className="mt-2 pt-2 border-t">
+                  <ItemTrendRankChart
+                    periods={rankPeriods}
+                    onDotClick={(p) => setDrillPeriod({ month: p.monthLabel, week: p.weekLabel })}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Data table */}

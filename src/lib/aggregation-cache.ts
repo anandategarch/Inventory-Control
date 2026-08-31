@@ -412,10 +412,13 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // reads from InventoryRecord across ALL periods, so mutations affect it).
   // P2-BE: added `item-peer-comparison` (per-item peer outlets scoped to one
   // period — reads from InventoryRecord, so mutations affect it).
+  // P3-BE: added `item-trend-rank` (per-item national rank per period —
+  // reads from InventoryRecord across ALL periods for ALL items via RANK()
+  // window function, so mutations affect the ranking distribution).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
-    'item-trend', 'item-peer-comparison',
+    'item-trend', 'item-peer-comparison', 'item-trend-rank',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }
