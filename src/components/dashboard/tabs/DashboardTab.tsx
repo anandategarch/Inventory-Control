@@ -70,7 +70,7 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
 
       {/* Section: Health + Growth */}
       <FetchAware isFetching={isFetching}>
-        <section className="grid lg:grid-cols-3 gap-4">
+        <section className="grid lg:grid-cols-3 gap-4 min-w-0">
           <ErrorBoundary label="Health Alert">
             <HealthAlert data={data} />
           </ErrorBoundary>
@@ -105,7 +105,9 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
           isFetching={isFetching}
         />
         <FetchAware isFetching={isFetching}>
-          <div className="grid sm:grid-cols-1 lg:grid-cols-3 gap-4 min-w-0">
+          {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
+              FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
+          <div className="grid lg:grid-cols-3 gap-4 min-w-0">
             <ErrorBoundary label="Top Items & Outlets">
               <TopItemsByNominal data={data} />
               <TopItemsByDevBom data={data} />
@@ -116,7 +118,8 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
       </section>
 
       {/* Section: Area Comparison + Outlet Health Ranking */}
-      <section className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4 min-w-0">
+      {/* FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
+      <section className="grid lg:grid-cols-2 gap-4 min-w-0">
         <div>
           <SectionHeader
             icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
@@ -178,7 +181,8 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
 
       {/* Section: Loss/Surplus (TrendChart removed per user request) */}
       <FetchAware isFetching={isFetching}>
-        <section className="grid lg:grid-cols-1 gap-4">
+        {/* FIX (UI-05): added min-w-0 to grid wrapper. */}
+        <section className="grid lg:grid-cols-1 gap-4 min-w-0">
           <ErrorBoundary label="Loss vs Surplus">
             <LossVsSurplusChart data={data} />
           </ErrorBoundary>

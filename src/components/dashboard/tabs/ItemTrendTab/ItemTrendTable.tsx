@@ -40,6 +40,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import { zScoreColor, zScoreStatus } from './zScoreHelpers';
 import { periodShortLabel } from './periodHelpers';
 import {
@@ -242,7 +243,11 @@ export function ItemTrendTable({
                     ? 'bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30'
                     : 'hover:bg-muted/40'
                 }`}
-                onClick={onRowClick ? () => onRowClick(p) : undefined}
+                // FIX (UI2-03): use clickableRowProps from lib/a11y.ts so the
+                // clickable row is keyboard-accessible (Tab focus + Enter/Space
+                // activates the click handler). Was previously onClick-only,
+                // which locked out keyboard + screen reader users.
+                {...(onRowClick ? clickableRowProps(() => onRowClick(p)) : {})}
               >
                 <TableCell className="text-xs px-3 py-2">
                   <div className="font-medium leading-tight">{periodShortLabel(p)}</div>

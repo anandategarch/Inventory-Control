@@ -159,7 +159,7 @@ export default function DashboardPage() {
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-md shadow-black/5 dark:shadow-black/20">
+            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20">
               <TabsTrigger value="dashboard" className={tabTriggerClass}>
                 <BarChart3 className="h-3.5 w-3.5" /> Dashboard
               </TabsTrigger>
@@ -178,27 +178,27 @@ export default function DashboardPage() {
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
-            <TabsContent value="dashboard" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="dashboard" aria-label="Dashboard tab" className="space-y-4 mt-2 animate-fade-in-up">
               <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
-            <TabsContent value="resto" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="resto" aria-label="Resto Analysis tab" className="space-y-4 mt-2 animate-fade-in-up">
               <RestoTab data={analysis.data} isFetching={analysis.isFetching} />
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
-            <TabsContent value="peer" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="peer" aria-label="Peer Comparison tab" className="space-y-4 mt-2 animate-fade-in-up">
               <PeerTab isFetching={analysis.isFetching} />
             </TabsContent>
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
-            <TabsContent value="pareto" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="pareto" aria-label="Pareto tab" className="space-y-4 mt-2 animate-fade-in-up">
               <ParetoTab data={analysis.data} isFetching={analysis.isFetching} />
             </TabsContent>
 
             {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
-            <TabsContent value="trend" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="trend" aria-label="Trend Item tab" className="space-y-4 mt-2 animate-fade-in-up">
               <ErrorBoundary label="Trend Item">
                 {/* Phase 1 — pass analysisData so the tab can render the
                     Rank Badge row (item's national rank in topDeviasiRank). */}

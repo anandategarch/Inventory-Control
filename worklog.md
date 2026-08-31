@@ -39721,3 +39721,124 @@ Stage Summary:
 - Found 22 issues: P1=0, P2=13, P3=9
 - P2 (UI-01..UI-13): chart wrapper missing pb, inconsistent empty/loading py, text-[10px] in FlipMatrix (a11y), nested Card shadow mix, missing min-w-0 on grids, PeerTableRow truncate without max-w, mixed text-[10px]/text-[11px] in FlipDrillPanel, header badge size mismatch (h-5/h-7), FlipMatrix native <table> not UI <Table>, FlipSummaryCard clutter in CardHeader, space-y-1 too tight in trend tab, blue tips box in amber tab, peer-comparison grid missing sm: breakpoint
 - P3 (UI-14..UI-22): DashboardTab section wrap pattern inconsistent, redundant sm:grid-cols-1, duplicate flex in DashboardHeader, hardcoded ml-9 in FlipRanking summary, mixed badge variants in rankItems, FlipRanking footer bg matches stripe color, footer/header text size mismatch, ItemPeerComparison header vs body row height mismatch, TabsList shadow-md adds to busy shadow hierarchy
+
+---
+Task ID: UI-FIX-ALL
+Agent: UI Polish Fixer (PC focus)
+Task: Fix all remaining UI polish issues for PC
+
+Work Log:
+- Fixed header badge heights (UI-08): standardized all 3 header badges to h-6 text-[11px] (outlet badge h-5 text-[10px] → h-6 text-[11px]; "Memperbarui" badge h-7 → h-6; "cache/langsung" badge h-7 → h-6) in DashboardHeader.tsx
+- Fixed empty/loading padding (UI-02): ItemTrendTab/index.tsx — empty state py-16 → py-12; loading state py-16 → py-12; no-data state already py-12 (kept)
+- Moved FlipSummaryCard to content (UI-10): ItemTrendTab/index.tsx — moved from CardHeader (already 4 stacked rows) to CardContent inside the <div className="space-y-3"> wrapper, wrapped with px-4 pt-2 padding, placed above the chart section
+- Fixed Tips box palette (UI-12): ItemTrendTab/index.tsx — blue-50/blue-950/30/blue-200/blue-900/blue-500/blue-400/blue-700/blue-300 → amber-* equivalents to match tab theme
+- Added min-w-0 to grid sections (UI-05): DashboardTab.tsx — added min-w-0 to Health+Growth section (lg:grid-cols-3) and Loss/Surplus section (lg:grid-cols-1); Top Items + Area Comparison already had min-w-0
+- Added max-w to truncate (UI-06): ItemPeerComparison.tsx PeerTableRow — added max-w-[180px] to the outletName truncate div (parent already has min-w-0)
+- Fixed grid breakpoints (UI-13): ItemPeerComparison.tsx — 4-card analysis grid md:grid-cols-2 → sm:grid-cols-2 (pairs up earlier on tablet/small desktop)
+- Fixed keyboard rows (UI2-03): ItemTrendTable.tsx — imported clickableRowProps from @/lib/a11y.ts (which already provides tabIndex/role/onKeyDown for Enter+Space) and spread it onto the clickable TableRow; replaced raw onClick with spread clickableRowProps conditional on onRowClick
+- Skipped UI2-12 (FlipMatrix sticky-left min-width) — ALREADY FIXED per task description (min-w-[64px] added in previous step)
+- Skipped UI-19 (Footer bg) — ALREADY CLEAN; footer uses bg-background/95 backdrop-blur with no bg-muted/20 (no stripe-matching bg issue)
+- Removed redundant grid-cols-1 (UI-15): DashboardTab.tsx — removed sm:grid-cols-1 from Top Items grid (kept lg:grid-cols-3) and Area Comparison grid (kept lg:grid-cols-2)
+- Skipped UI-16 (Duplicate flex items-center) — N/A; grepped DashboardHeader.tsx for `flex items-center.*flex items-center` on same element → 0 matches. All `flex items-center` declarations are on distinct elements (logo wrapper, h1+badge wrapper, action buttons wrapper). No duplicates found.
+- Changed TabsList shadow (UI-22): page.tsx — shadow-md → shadow-sm (matches header, less busy shadow hierarchy)
+- Added aria-label to TabsContent (UI2-13): page.tsx — added aria-label="Dashboard tab" / "Resto Analysis tab" / "Peer Comparison tab" / "Pareto tab" / "Trend Item tab" to all 5 TabsContent wrappers
+- Standardized rankItems variants (UI-18): ItemPeerComparison.tsx — Rank |Nominal| item variant 'secondary' → 'outline' (now all 4 rank items use 'outline' for cleaner look)
+- Fixed header height (UI-21): ItemPeerComparison.tsx — all 9 TableHead cells h-9 → h-8 (32px header better matches body row px-3 py-2 ≈28px)
+
+Stage Summary:
+- Fixed 14 issues: UI-08, UI-02, UI-10, UI-12, UI-05, UI-06, UI-13, UI2-03, UI-15, UI-22, UI2-13, UI-18, UI-21 (13 from list) + UI2-12 was already-fixed verification (no-op)
+- Skipped 2 (UI-16 N/A: no duplicate flex found; UI-19 ALREADY FIXED: footer bg clean)
+- Verified 1 already-fixed (UI2-12 FlipMatrix min-w-[64px])
+- Lint: 0 errors, 378 warnings (unchanged from prior baseline — all pre-existing in test files)
+- tsc: 0 errors (clean compile via bunx tsc --noEmit --skipLibCheck)
+
+---
+Task ID: DOC-UPDATE
+Agent: MASTER_CONTEXT Final Update
+Task: Update MASTER_CONTEXT with flip detection + audit log removal + consolidation + UI fixes
+
+Work Log:
+- Read MASTER_CONTEXT.md IN FULL (482 lines) + worklog.md (last ~400 lines) for all recent work
+- Verified current LOC via `find src -name "*.ts" -o -name "*.tsx" | xargs wc -l | tail -1` = 51,313 LOC (was 48,373)
+- Verified file system state:
+  * 11 Prisma models (AuditLog REMOVED — confirmed via `rg "^model " prisma/schema.prisma`)
+  * 27 API routes (26 in prev table incl. audit-log — audit-log REMOVED -1, flip-ranking + drilldown ADDED +2 = net +1 → 27)
+  * 14 cached routes (verified via `rg "routes =" src/lib/aggregation-cache.ts` — includes flip-ranking + flip-ranking-drilldown)
+  * 11 modules in tabs/ItemTrendTab/ (8 original + 3 NEW: FlipMatrix + FlipRanking + flipHelpers)
+  * 7 files in shared/peer-comparison-cards/ (verified via ls)
+  * flipHelpers.ts + FlipMatrix.tsx + FlipRanking.tsx all exist at expected paths
+- Updated §0 header "Last updated" line → Session FLIP-DETECT (full summary of recent work)
+- Updated §3 Database Schema: 12 → 11 Prisma models (AuditLog row removed + renumbered; added REMOVED note)
+- Updated §4 API Routes:
+  * Heading: "24 routes" → "27 routes"
+  * Removed `/api/audit-log` row
+  * Added `/api/flip-ranking` + `/api/flip-ranking/drilldown` rows (cached, NEW Phase C)
+  * Updated totals: "12 routes use DB cache" → "14 routes use DB cache"
+  * Added 2 new route specs (flip-ranking + drilldown) with formula + risk score + month filter details
+  * Updated "12 cached routes" list → "14 cached routes" list (added entries #13 + #14)
+  * Added REMOVED note for audit-log
+- Updated §5 Components:
+  * ItemTrendTab folder heading: "8 modules" → "11 modules" + added Phase A+B+C tag
+  * Added 3 new module entries: FlipMatrix.tsx, FlipRanking.tsx, flipHelpers.ts (with descriptions)
+  * Updated ItemTrendTable.tsx entry: added Flip column mention
+  * Updated ItemTrendLineChart.tsx entry: added amber dashed ring on flip dots mention
+  * Updated ItemPeerComparison.tsx entry: noted shared/peer-comparison-cards/ import post-Batch-2
+  * Updated zScoreHelpers.ts entry: noted re-export barrel to @/lib/zScoreHelpers post-Batch-1
+  * Added NEW shared/peer-comparison-cards/ section (7 files: index + types + 5 cards)
+  * Added Removed (Batch 2 consolidation) note — 5 peer-comparison/*.tsx deleted
+  * Added Removed (DEL-AUDIT) note — AuditLogDialog.tsx + 14 write sites + middleware
+  * Filters section: "10 components" → "9 components" + AuditLogDialog removed
+- Updated §6 Key Features:
+  * Updated Trend Item Tab Expansion #4 ItemPeerComparison: noted shared/peer-comparison-cards/ import
+  * Added NEW "Flip Pattern Detection (NEW Phase A+B+C)" section with:
+    - Formula details (isFlip, disparity, categorizeFlip)
+    - Risk level + risk score formula
+    - Phase A (Flip column + Summary card + Chart annotations)
+    - Phase B (FlipMatrix grid)
+    - Phase C (Flip Ranking API + Widget + Drill-down API + Unified table)
+    - Bug fixes list (BUG2-FLIP-01..06)
+    - Satuan-aware note (SATUAN-BUG fix)
+  * Removed "Audit Log (11 write sites...)" line from Data Operations section
+  * Added REMOVED (DEL-AUDIT) note explaining what was removed + why
+  * Updated Caching: "12 cached routes" → "14 cached routes" + flip-ranking + flip-ranking-drilldown added
+  * Updated SWR: "10 JSON routes" → "12 JSON routes" (incl. flip-ranking + flip-ranking-drilldown)
+  * invalidateAnalysisCache: clears ALL 14 prefixes (was 12)
+  * Added NEW "UI Design Principles" subsection documenting:
+    - PC-focused design (with "ini untuk PC ya bukan mobile" quote)
+    - File Consolidation Batch 1 (helpers → lib/) + Batch 2 (shared peer-comparison-cards/)
+- Updated §8 Security Model Input Validation: "22/24 routes" → "25/27 routes" + clarified only /api/status + /api/route.ts skip Zod
+- Updated §9 Stats:
+  * LOC: 48,373 → 51,313 (verified via find)
+  * API routes: 24 → 27 (with explanation: 26 prev - 1 audit-log + 2 flip = 27)
+  * Cached routes: 12 → 14 (added flip-ranking + flip-ranking-drilldown Phase C)
+  * Dashboard components: 8 modules → 11 modules + shared/peer-comparison-cards/ (7 files)
+  * Bug fixes: 20 → 64 cumulative (20 Phase 1+2+3 + 5 audit v2 + 4 calc + 35 UI)
+  * Added Bug fixes (Phase A+B+C flip): 6 BUG2-FLIP-01..06
+  * Added File consolidation row (2 batches, ~766 LOC duplication eliminated)
+  * Added Removed features row (Audit Log: model + route + dialog + 14 write sites, ~565 LOC removed)
+- Updated §10 File Structure:
+  * api/ folder: "24 API routes" → "27 API routes + sub-routes" + explanation
+  * Added flip-ranking/ sub-folder entry (route.ts + drilldown/route.ts)
+  * Updated item-peer-comparison comment: removed "NEW Phase 2" → "Phase 2"
+  * Updated item-trend-rank comment: removed "NEW Phase 3" → "Phase 3"
+  * Updated "11 other routes (audit-log, ...)" → "10 other routes (... ) — /api/audit-log REMOVED"
+  * tabs/ItemTrendTab/: "8 modules" → "11 modules" + listed 3 NEW flip modules in comment
+  * Added shared/peer-comparison-cards/ entry (7 files, 675 LOC)
+  * Updated "16 other dashboard components" → "15 other dashboard components" (AuditLogDialog.tsx removed)
+  * filters/: "10 components" → "9 components" + AuditLogDialog.tsx REMOVED note
+  * lib/queries/: added flip-ranking.ts + flip-drilldown.ts [NEW P-C] to comment
+  * aggregation-cache.ts comment: "14 routes invalidated" (was implicit)
+  * Added zScoreHelpers.ts + format.ts entries (NEW Batch 1 consolidated helpers)
+- Verified §5 Hooks already documents `trendSelectedItem` + `setTrendSelectedItem` (line 217 — no change needed)
+- Verified §11 Agent Collaboration: no agent-ctx entries to add (skipped per task instructions — only update sections that are outdated)
+- Final sanity check: rg "audit" in MASTER_CONTEXT.md → all remaining mentions are intentional REMOVED notes (no stale positive references to audit-log as a feature)
+
+Stage Summary:
+- MASTER_CONTEXT.md updated in-place (482 → 560 lines, +78 LOC for new sections)
+- LOC verified: 51,313 (was 48,373 — +2,940 LOC from flip detection + consolidation + UI fixes - audit log removal)
+- API routes count verified: 27 (matches actual route.ts file count)
+- Cached routes count verified: 14 (matches invalidateAnalysisCache routes array)
+- All recent features documented: flip detection Phase A+B+C, audit log removal, file consolidation Batch 1+2, UI fixes 35 issues
+- PC-focused design note added with user's direct quote
+- File consolidation note added with Batch 1 + Batch 2 details
+- 0 dangling references to audit-log as a current feature (only REMOVED notes remain)

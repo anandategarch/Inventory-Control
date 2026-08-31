@@ -343,7 +343,8 @@ function ItemPeerComparisonImpl({
       label: 'Rank |Nominal|',
       badgeContent: `#${rank}/${total}`,
       badgeClass: rankColor(rank, total),
-      variant: 'secondary',
+      // FIX (UI-18): standardized to 'outline' for cleaner look.
+      variant: 'outline',
       star: best,
       warn: worst,
     },
@@ -398,8 +399,10 @@ function ItemPeerComparisonImpl({
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {/* 4 analysis cards — 2x2 grid on desktop */}
-        <div className="grid gap-3 md:grid-cols-2">
+        {/* 4 analysis cards — 2x2 grid on desktop
+            FIX (UI-13): changed md:grid-cols-2 → sm:grid-cols-2 so cards
+            pair up earlier on tablet / small desktop. */}
+        <div className="grid gap-3 sm:grid-cols-2">
           <EfficiencyScoreCard
             score={score}
             footnote="Komposit dari Dev/BOM (50%) + Nominal Deviasi (50%). Higher = better."
@@ -444,15 +447,16 @@ function ItemPeerComparisonImpl({
             <Table className="min-w-[1100px]">
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-9">Outlet</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-9">Area</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-9">PIC</TableHead>
-                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-9">QTY BOM</TableHead>
-                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-9">QTY Deviasi</TableHead>
-                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-9">Dev/BOM</TableHead>
-                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-9">Nominal</TableHead>
-                  <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-9">Dir</TableHead>
-                  <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-9">Flags</TableHead>
+                  {/* FIX (UI-21): h-9 → h-8 so header matches body row height better. */}
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Outlet</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Area</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">PIC</TableHead>
+                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
+                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY Deviasi</TableHead>
+                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Dev/BOM</TableHead>
+                  <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Nominal</TableHead>
+                  <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Dir</TableHead>
+                  <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Flags</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -539,7 +543,9 @@ const PeerTableRow = memo(function PeerTableRow({
         <div className="flex items-center gap-1.5">
           {onOutletClick && <Store className="h-3 w-3 text-muted-foreground shrink-0" />}
           <div className="min-w-0">
-            <div className="font-medium leading-tight truncate" title={row.outletName}>{row.outletName}</div>
+            {/* FIX (UI-06): added max-w-[180px] so truncate has an explicit
+                max-width — without it, truncate never kicks in on flex children. */}
+            <div className="font-medium leading-tight truncate max-w-[180px]" title={row.outletName}>{row.outletName}</div>
             <div className="text-[10px] text-muted-foreground">{row.outletCode}</div>
           </div>
         </div>

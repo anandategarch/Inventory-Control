@@ -155,10 +155,11 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: F
       </CardHeader>
       <CardContent className="px-3 pb-3 pt-0">
         <div className="overflow-x-auto">
-          <table className="border-separate border-spacing-1 text-[10px] tabular-nums">
+          {/* FIX (UI-03): text-[11px] — was text-[10px], below readability threshold */}
+          <table className="border-separate border-spacing-1 text-[11px] tabular-nums">
             <thead>
               <tr>
-                <th className="text-left text-muted-foreground font-medium uppercase tracking-wider px-1 py-0.5 sticky left-0 bg-background">
+                <th className="text-left text-muted-foreground font-medium uppercase tracking-wider px-1 py-0.5 sticky left-0 bg-background min-w-[64px]">
                   Week
                 </th>
                 {months.map(([mk, ml]) => (

@@ -50,7 +50,7 @@ export function DashboardHeader({
               Inventory Control
             </h1>
             {status?.stats && (
-              <Badge variant="outline" className="text-[10px] h-5 hidden sm:inline-flex gap-1 px-1.5 tabular-nums text-muted-foreground shrink-0">
+              <Badge variant="outline" className="text-[11px] h-6 hidden sm:inline-flex gap-1 px-1.5 tabular-nums text-muted-foreground shrink-0">
                 {status.stats.totalOutlets} outlet
               </Badge>
             )}
@@ -58,13 +58,13 @@ export function DashboardHeader({
         </div>
         <div className="flex items-center gap-1.5 flex-wrap justify-end">
           {analysisFetching && analysisData && (
-            <Badge variant="outline" className="text-[11px] h-7 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
+            <Badge variant="outline" className="text-[11px] h-6 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
               <Loader2 className="h-3 w-3 animate-spin" />
               <span className="hidden sm:inline">Memperbarui...</span>
             </Badge>
           )}
           {analysisData && (
-            <Badge variant="outline" className="text-[11px] h-7 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground">
+            <Badge variant="outline" className="text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground">
               <Activity className="h-3 w-3" />
               <span className="tabular-nums">{analysisData.cached ? 'cache' : 'langsung'} · {analysisData.durationMs}ms</span>
             </Badge>

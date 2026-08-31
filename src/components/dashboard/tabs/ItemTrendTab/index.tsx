@@ -720,18 +720,14 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           <RankBadgeRow itemName={selectedItem} analysisData={analysisData} />
         )}
 
-        {/* Phase A+B (FLIP-FE) — Flip Summary Card. Only renders when an
-            item is selected AND there are > 1 periods (need ≥2 same-week
-            periods to form a pair — single period has no predecessor). */}
-        {selectedItem && periods.length > 1 && (
-          <FlipSummaryCard score={flipScore} />
-        )}
+        {/* Phase A+B (FLIP-FE) — Flip Summary Card moved to CardContent (UI-10). */}
       </CardHeader>
 
       <CardContent className="p-0">
         {!selectedItem ? (
           // Empty state — prompt user to pick an item.
-          <div className="flex flex-col items-center justify-center py-16 text-center px-6">
+          // FIX (UI-02): standardized empty/loading/no-data padding to py-12.
+          <div className="flex flex-col items-center justify-center py-12 text-center px-6">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 mb-3">
               <TrendingUp className="h-7 w-7" />
             </div>
@@ -739,9 +735,10 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
               Cari item di kotak pencarian di atas. Tren menampilkan QTY lintas semua periode dengan Z-Score historis (baseline same-week).
             </p>
-            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
-              <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
+            {/* FIX (UI-12): changed blue palette → amber to match tab theme */}
+            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 max-w-md text-left">
+              <Info className="h-4 w-4 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-amber-700 dark:text-amber-300 space-y-1">
                 <p className="font-medium">Tips: Z-Score butuh minimal 4 periode</p>
                 <p>Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).</p>
               </div>
@@ -752,7 +749,8 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             Gagal memuat trend: {trend.error.message}
           </div>
         ) : trend.isLoading && periods.length === 0 ? (
-          <div className="flex items-center justify-center py-16">
+          // FIX (UI-02): standardized loading state padding to py-12.
+          <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
             <span className="ml-2 text-xs text-muted-foreground">Memuat trend...</span>
           </div>
@@ -766,6 +764,16 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           </div>
         ) : (
           <div className="space-y-3">
+            {/* FIX (UI-10): Flip Summary Card moved here from CardHeader so
+                the header stays compact (header already has 4 stacked rows:
+                title+badges, search+metric, selected-item summary, rank badge).
+                Padding px-4 pt-2 aligns it with the chart + table grid below. */}
+            {selectedItem && periods.length > 1 && (
+              <div className="px-4 pt-2">
+                <FlipSummaryCard score={flipScore} />
+              </div>
+            )}
+
             {/* Chart section */}
             {/* FIX (UI-01): added pb-3 so chart bottom doesn't touch table border-t */}
             <div className="px-4 pt-2 pb-3">

@@ -444,13 +444,13 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
                         <TableCell className="py-1.5">
                           <div className="flex flex-col leading-tight">
                             <span className="text-[11px] font-medium tabular-nums">{r.outletCode}</span>
-                            <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={r.outletName}>
+                            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]" title={r.outletName}>
                               {r.outletName}
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-[10px] text-muted-foreground py-1.5 tabular-nums">{r.area || '—'}</TableCell>
-                        <TableCell className="text-[10px] text-muted-foreground py-1.5">{r.pic || '—'}</TableCell>
+                        <TableCell className="text-[11px] text-muted-foreground py-1.5 tabular-nums">{r.area || '—'}</TableCell>
+                        <TableCell className="text-[11px] text-muted-foreground py-1.5">{r.pic || '—'}</TableCell>
                         {/* P1 QTY — signed, color-coded */}
                         <TableCell
                           className={`text-right text-[11px] py-1.5 tabular-nums font-medium ${
