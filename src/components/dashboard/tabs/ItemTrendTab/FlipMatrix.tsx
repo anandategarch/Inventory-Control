@@ -50,17 +50,9 @@ export interface FlipMatrixProps {
 }
 
 // Compact QTY formatter — "+10K" / "-1.2M" / "+42".
-function fmtCompactSigned(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? '-' : '+';
-  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(0)}K`;
-  if (abs === 0) return '0';
-  return `${sign}${abs.toFixed(0)}`;
-}
-
 // FIX (USER-REQ): full signed number with thousand separators — no abbreviation.
 // Used in cell content + flip tooltips to show complete QTY (e.g. +10,000 instead of +10K).
+// FIX (BUG2-FLIP-01): removed dead fmtCompactSigned (was unused after full-QTY fix).
 function fmtFullSigned(n: number): string {
   if (n === 0) return '0';
   const sign = n < 0 ? '-' : '+';

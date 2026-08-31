@@ -40,7 +40,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
-import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import {
@@ -151,19 +150,17 @@ export async function GET(req: NextRequest) {
     const params = validation.data;
 
     const item = params.item;
-    const rawMonth = params.month ?? '';
+    // FIX (BUG2-RANK-01): rawMonth removed — month is accepted by Zod but
+    // ignored by the rank query (rank covers ALL months for selected week).
     const rawWeek = params.week ?? '';
     const area = params.area ?? null;
     const kelompok = params.kelompok ?? null;
     const outletCode = params.outlet ?? null;
     const pic = params.pic ?? null;
 
-    // PERF-HEATMAP pattern (same as item-trend): resolve month BEFORE cache
-    // key so "Agustus 2026" and "agustus 2026" share one cache entry.
-    // month is OPTIONAL here (rank covers ALL periods); only resolve when
-    // a value was provided.
-    const resolver = await getMonthResolver();
-    const month = rawMonth ? (resolveMonthLabel(rawMonth, resolver) || rawMonth) : '';
+    // FIX (BUG2-RANK-01): removed dead month resolver — month is NOT in the
+    // cache key (BUG-3-06 fix) nor passed to queryItemTrendRank. The
+    // getMonthResolver + resolveMonthLabel calls were wasted work.
     const week = rawWeek;
 
     // 3. DB cache check — cache key includes ALL response-affecting params.

@@ -532,15 +532,18 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           // Phase A+B (FLIP-FE) — sort by flip disparity.
           // FIX (BUG-FLIP-02): only sort by disparity for ACTUAL flips
           // (isFlip=true). Non-flip pairs (konsisten-naik/turun/stagnan)
-          // and `first` periods (no predecessor) sort to the bottom on
-          // desc by mapping to -1 (less than any real disparity [0, 100]).
-          // Was sorting konsisten pairs by their disparity, which could
-          // place a 90%-disparity konsisten pair above a 0% sempurna flip.
+          // and `first` periods (no predecessor) sort to the bottom.
+          // FIX (BUG2-FLIP-04): use null + custom comparator so non-flip
+          // rows ALWAYS sort to bottom regardless of ASC/DESC direction.
+          // (was -1 which put non-flips at TOP on ASC — confusing UX).
           const fa = flips ? getFlipForPeriod(flips, flipPeriodKey(a)) : null;
           const fb = flips ? getFlipForPeriod(flips, flipPeriodKey(b)) : null;
-          const va = fa && fa.isFlip ? fa.disparityPct : -1;
-          const vb = fb && fb.isFlip ? fb.disparityPct : -1;
-          cmp = va - vb;
+          const va = fa && fa.isFlip ? fa.disparityPct : null;
+          const vb = fb && fb.isFlip ? fb.disparityPct : null;
+          if (va == null && vb == null) cmp = 0;
+          else if (va == null) cmp = 1;  // a (non-flip) goes below b
+          else if (vb == null) cmp = -1; // b (non-flip) goes below a
+          else cmp = va - vb;
           break;
         }
       }

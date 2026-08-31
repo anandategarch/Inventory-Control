@@ -8,7 +8,7 @@
 //  assignment can exist for outlets not yet in Outlet table.
 //
 //  After mutation: clear statusCache (PIC affects /api/status)
-//  + invalidateCache (analysis filters may change) + audit log
+//  + invalidateAnalysisCache (analysis filters may change)
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';

@@ -64,8 +64,10 @@ export interface ItemPeerRow {
   nominalDeviasi: number;
   absNominalDeviasi: number;
   /**
-   * SIGNED ratio = SUM(qtyDeviasi) / SUM(ABS(qtyBom)).
-   * Null when BOM = 0 (bucket concept doesn't apply).
+   * FIX (BUG2-RANK-02 / CALC-01): MAGNITUDE ratio = SUM(ABS(qtyDeviasi)) /
+   * SUM(ABS(qtyBom)). Always >= 0. Null when BOM = 0 (bucket concept doesn't
+   * apply). Was documented as SIGNED — stale after CALC-01 fix changed the
+   * SQL to use absQtyDeviasi (magnitude) instead of signed qtyDeviasi.
    */
   devBom: number | null;
   /** LOSS / SURPLUS / NEUTRAL — derived via DIRECTION_FROM_SUM_SQL. */

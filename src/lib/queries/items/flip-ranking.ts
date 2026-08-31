@@ -347,15 +347,20 @@ export async function queryFlipRanking(
     });
   }
 
+  // FIX (BUG2-FLIP-06): filter out items with 0 pairs (can happen when
+  // monthLabel filter is set + item has no pairs involving that month).
+  // These would show as "0/0, —, —, LOW 0" junk rows at the bottom.
+  const filteredItems = items.filter((i) => i.totalPairs > 0);
+
   // Sort items by riskScore DESC, sempurnaCount DESC, flipCount DESC.
-  items.sort((a, b) => {
+  filteredItems.sort((a, b) => {
     if (b.riskScore !== a.riskScore) return b.riskScore - a.riskScore;
     if (b.sempurnaCount !== a.sempurnaCount) return b.sempurnaCount - a.sempurnaCount;
     return b.flipCount - a.flipCount;
   });
 
-  const totalItemsScanned = items.length;
-  const top = items.slice(0, Math.max(0, limit));
+  const totalItemsScanned = filteredItems.length;
+  const top = filteredItems.slice(0, Math.max(0, limit));
 
   return { items: top, totalItemsScanned };
 }

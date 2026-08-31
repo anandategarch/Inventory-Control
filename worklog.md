@@ -39457,3 +39457,134 @@ Stage Summary:
 - Cached routes count: 13 → 14 (added 'flip-ranking-drilldown' to invalidateAnalysisCache routes array)
 - Lint: 0 errors, 383 warnings (3 unrelated to this task; 0 in new files)
 - tsc: EXIT 0 (0 errors)
+
+---
+Task ID: BUG-AUDIT-REMOVAL
+Agent: Audit Log Removal Verifier
+Task: Verify audit log removal didn't break anything
+
+Work Log:
+- Ran `rg "auditLog|AuditLog|audit-log|auditLogOpen|setAuditLogOpen|onAuditLogClick|AuditLogDialog" src/` — 0 matches (VERIFIED OK)
+- Ran `rg "auditLog|AuditLog" prisma/` — 0 matches (VERIFIED OK)
+- Read page.tsx — no auditLogOpen state, no AuditLogDialog import, no onAuditLogClick prop passed to DashboardHeader (VERIFIED OK)
+- Read DashboardHeader.tsx — no onAuditLogClick prop, no Audit Log button, no `History` icon import (icon set: Activity, Boxes, FileDown, Keyboard, Loader2) (VERIFIED OK)
+- Read useDashboardActions.ts — no audit log references in code or comments; keyboard shortcuts (Cmd+E/R, 1-5, Esc) intact; Escape handler closes 4 dashboard modals (VERIFIED OK)
+- Read middleware.ts — `/api/audit-log` absent from PROTECTED_PATHS array and absent from `matcher` config (9 entries remain); other protected paths intact (VERIFIED OK)
+- Read prisma/schema.prisma — no `model AuditLog` block; no FK references to AuditLog from any other model (8 models: SourceFile, Week, Outlet, Item, InventoryRecord, OutletPeriodSales, DQIssue, AggregationCache, Setting, OutletPIC, FileChunk) (VERIFIED OK)
+- Checked all 10 API routes:
+  • /api/analysis/route.ts — no audit log; db not imported (delegates to services) — VERIFIED OK
+  • /api/settings/route.ts — no audit log; db import still used (db.setting.upsert, findMany, $transaction) — VERIFIED OK
+  • /api/import-drive/route.ts — no audit log; db not imported (delegates to processIngestion); `startedAt` var still used for `durationMs` response field — VERIFIED OK
+  • /api/data/route.ts — no audit log code; db still used; STALE COMMENT on line 9 says "audit log entry" → AUDIT-01
+  • /api/migrate-direction/route.ts — no audit log; db still used (db.inventoryRecord.count, $transaction, $executeRaw, $queryRaw) — VERIFIED OK
+  • /api/ingest-upload/route.ts — no audit log; db still used (db.fileChunk.upsert/findMany/deleteMany) — VERIFIED OK
+  • /api/pic/import/route.ts — no audit log; db still used (db.outletPIC.findMany/createMany/create/update, $transaction) — VERIFIED OK
+  • /api/pic/route.ts — no audit log code; db still used; STALE COMMENT on line 11 says "+ audit log" → AUDIT-02
+  • /api/ingest-process/route.ts — no audit log; db still used (db.fileChunk, db.sourceFile.upsert/update, db.week.upsert, db.dQIssue.createMany, db.$transaction); `startedAt` var still used for `durationMs` — VERIFIED OK
+  • src/lib/ingestion/process-ingestion.ts — no audit log; db still used (db.sourceFile.findUnique/findMany/create/update, db.$transaction, db.outlet.findMany, db.item.findMany, db.dQIssue.createMany) — VERIFIED OK
+- Confirmed no orphaned variables (`detail`, `totalUpdated`, `startedAt` all still purposefully used)
+- Ran `npx tsc --noEmit` — 0 TypeScript errors (clean compile)
+- Confirmed no AuditLogDialog component file remains (Glob src/**/AuditLog* = empty)
+- Confirmed no /api/audit-log route folder remains
+
+Stage Summary:
+- Found 2 issues: P0=0, P1=0, P2=0, P3=2
+- AUDIT-01: /api/data/route.ts:9 stale "audit log entry" comment
+- AUDIT-02: /api/pic/route.ts:11 stale "+ audit log" comment
+
+---
+Task ID: BUG-RANK2
+Agent: Rank Badge + Pattern + Drill Bug Hunter v2
+Task: Audit Phase 1+2+3 features for regressions after recent changes
+
+Work Log:
+- Read all 9 Phase 1+2+3 files (4329 LOC total) + 3 context files
+- Verified Rank Badge (RankBadgeRow in index.tsx:161-202):
+  • Correctly filters analysisData.topDeviasiRank by itemName (exact match) (VERIFIED OK)
+  • rankBom null handling (BUG-1-01): type predicate `(r): r is number => r != null && r > 0` correctly filters null + 0 values (VERIFIED OK)
+  • rankBomCandidates Math.min() safe — empty array → null (VERIFIED OK)
+  • rankBadgeClass thresholds: red ≤5, amber 6-20, muted 21-50, muted+">50" fallback when null/>50 (VERIFIED OK)
+  • "Rank > 50 Nasional" fallback shown when matches.length === 0 (item not in topDeviasiRank) (VERIFIED OK)
+- Verified Pattern column (ItemTrendTable.tsx:82-119):
+  • Classifications: Massal ≥10, Regional 5-9, Lokal 2-4, Tunggal =1, N/A =0 — exact threshold cascade (VERIFIED OK)
+  • Emojis distinct: 🔴 Massal, 🟡 Regional, ⚪ Lokal, 📍 Tunggal, — N/A (BUG-1-03 fix preserved) (VERIFIED OK)
+  • Row click handler: `onClick={onRowClick ? () => onRowClick(p) : undefined}` sets drillPeriod via handlePeriodDrill (VERIFIED OK)
+  • drillPeriod highlight: `isDrillRow` matches BOTH month + week (VERIFIED OK)
+- Verified Navigation Bridge (ranking-nasional.tsx:46-49):
+  • Row click → setTrendSelectedItem(itemName) + setActiveTab('trend') (VERIFIED OK)
+  • Trend Item Tab picks up selectedItem from useDashboard store via trendSelectedItem (VERIFIED OK)
+  • Cursor pointer + hover:bg-amber-50/60 + title attribute present (VERIFIED OK)
+- Verified ItemPeerComparison (BUG-2-01 through BUG-2-11 fixes):
+  • BUG-2-01: target included in peers[] (peerRows = mapped; SQL uses CROSS JOIN target) (VERIFIED OK)
+  • BUG-2-03: EfficiencyScore uses Math.abs(target.devBom) + Math.abs(peerAvg.devBom). Note: post-CALC-01, per-row devBom is already magnitude (absQtyDeviasi/qtyBom ≥0), so Math.abs is a defensive no-op (VERIFIED OK with note)
+  • BUG-2-04: GapAnalysisCard filters peers.filter(p => !p.isTarget) for peer BEST search (VERIFIED OK)
+  • BUG-2-05/06: anomalyFlags uses Math.abs(peerAvg.devBom) for threshold + ±20% check (VERIFIED OK)
+  • BUG-2-07: empty state checks data.peers.filter(p => !p.isTarget).length === 0 (VERIFIED OK)
+  • BUG-2-09: ItemPeerComparisonResponse has cached?: boolean + stale?: boolean; API returns them conditionally (VERIFIED OK)
+  • BUG-2-10: empty state message is context-aware (item not found vs no peers in BOM ±50% range) (VERIFIED OK)
+  • BUG-2-11: PeerTableRow uses `row.direction === 'LOSS'` for isLoss (not nominalDeviasi sign) (VERIFIED OK)
+- Verified Rank Trend Chart (ItemTrendRankChart.tsx):
+  • BUG-3-01: rankColor thresholds red ≤5 / amber 6-20 / muted >20 — matches rankBadgeClass (VERIFIED OK)
+  • BUG-3-03: parent guard `rankPeriods.length >= 1` lets 1-period message render; chart's own `data.length === 1` shows message (VERIFIED OK)
+  • BUG-3-05: ChartRow.rank is `number` (not number | null); query coerces via `Number(r.rankNominal) || 0` (VERIFIED OK)
+  • BUG-3-06: cache key uses `month: 'ALL'` literal — not user's month (VERIFIED OK)
+  • Inverted Y-axis: `reversed` + `domain={[1, maxRank]}` + `allowDataOverflow` (VERIFIED OK)
+  • Week filter respected in query: `AND ir."weekLabel" = ${weekLabel}` (VERIFIED OK)
+- Verified item-trend-rank query (item-trend-rank.ts):
+  • BUG-3-02: filter is `ir."nominalDeviasi" IS NOT NULL` (not absNominalDeviasi > 0) — aligns rank chart X-axis with main trend chart (VERIFIED OK)
+  • BUG-3-04: no JOIN Outlet — only JOIN Item + LEFT JOIN SourceFile (VERIFIED OK)
+- Verified satuan propagation:
+  • Query: `MAX(ir."satuan") as "satuan"` in /src/lib/queries/item-trend.ts (VERIFIED OK)
+  • Hook type: ItemTrendPeriod.satuan: string | null (VERIFIED OK)
+  • index.tsx: `const satuan = useMemo(() => periods[0]?.satuan ?? null, [periods])` (VERIFIED OK)
+  • Passed to ItemTrendTable + FlipMatrix (VERIFIED OK)
+  • ItemTrendTable: `const unitLabel = satuan || ''` — no hardcoded "kg" (VERIFIED OK)
+- Verified no audit log regressions:
+  • rg "audit|AuditLog" in src/components/dashboard/tabs/ItemTrendTab → 0 matches (VERIFIED OK)
+  • rg "audit" in src/app/api/item-peer-comparison + src/app/api/item-trend-rank → 0 matches (VERIFIED OK)
+  • rg "audit_log|auditLog|AuditLog" in src/ → 0 matches (VERIFIED OK)
+- Verified no flip detection layout regressions:
+  • index.tsx render order: Search → RankBadge (P1) → FlipSummary (P-A+B) → Chart → RankChart (P3) → Table (P1 Pola + P-A+B Flip) → FlipMatrix → ItemPeerComparison (P2) → FlipRanking (P-C) (VERIFIED OK)
+- Verified cache invalidation (src/lib/aggregation-cache.ts:399-432):
+  • invalidateAnalysisCache invalidates 14 routes including: item-peer-comparison (P2), item-trend-rank (P3), flip-ranking (P-C), flip-ranking-drilldown (P-D) (VERIFIED OK)
+- Verified type safety:
+  • rg "as any" in all 9 audited files → 0 matches (VERIFIED OK)
+  • npx tsc --noEmit → 0 errors (clean compile) (VERIFIED OK)
+  • npx eslint on 9 audited files → 0 errors, 8 warnings (all underscore-prefixed unused vars, pre-existing pattern) (VERIFIED OK)
+
+Stage Summary:
+- Found 2 bugs: P0=0, P1=0, P2=0, P3=2
+- BUG2-RANK-01: /home/z/my-project/src/app/api/item-trend-rank/route.ts:165-166 — Dead `month` variable after BUG-3-06 fix (getMonthResolver + resolveMonthLabel called but result never used; ~1-5ms wasted per request). ESLint warns: "'month' is assigned a value but never used".
+- BUG2-RANK-02: /home/z/my-project/src/lib/queries/items/item-peer-comparison.ts:66-70 — Stale JSDoc on ItemPeerRow.devBom says "SIGNED ratio = SUM(qtyDeviasi) / SUM(ABS(qtyBom))" but the SQL (after CALC-01 fix at lines 257-266) computes `absQtyDeviasi / qtyBom` (both magnitudes) → devBom is always ≥0 (magnitude, not signed). Misleading JSDoc; downstream BUG-2-03 + BUG-2-05 Math.abs() calls are defensive no-ops (harmless but redundant).
+
+
+---
+Task ID: BUG-FLIP2
+Agent: Flip Detection Bug Hunter v2
+Task: Audit flip detection features (post-unified-table + month filter + satuan fix)
+
+Work Log:
+- Read all 10 flip-related files (flipHelpers, ItemTrendTable, ItemTrendLineChart, FlipMatrix, index.tsx, flip-ranking query + route, FlipRanking widget, flip-drilldown query + route)
+- Read context: item-trend.ts (ItemTrendPeriod type with satuan), useItemTrend.ts hook, aggregation-cache.ts (invalidateAnalysisCache list)
+- Verified unified table logic (delta = P2-P1, net = P1+P2, disparityPct = |net|/MAX(|P1|,|P2|)*100, sort ASC by disparityPct)
+- Verified totals computed from ALL outlets (not just flip outlets) — line 293-295 in FlipRanking.tsx
+- Verified month filter in flip-ranking API: queryKey includes monthLabel, Zod schema accepts "Juli 2026", query function skips pairs where neither P1 nor P2 monthLabel matches
+- Verified HIGH+MODERATE chevron condition (item.riskLevel !== 'low') — defensive but correct since LOW risk items have empty topFlips
+- Verified satuan fix: no remaining hardcoded "kg" (all occurrences are in fix comments only), satuan field present in ItemTrendPeriod type + query + hook, extracted via periods[0]?.satuan in index.tsx, passed to ItemTrendTable + FlipMatrix
+- Verified flip formula + categories: isFlip = sign(P1) !== sign(P2) && both non-zero, disparity < 10% sempurna / < 40% dominan / >= 40% parsial, edge cases (P1=0, P2=0, both zero, same sign) correctly classified
+- Verified flip matrix uses fmtFullSigned (not fmtCompactSigned) for full QTY display
+- Verified chart annotations: amber dashed ring on dots that are part of any flip pair (filtered to isFlip=true)
+- Verified BUG-FLIP-01/02/03 fixes are in place: isFlip filter in FlipMatrix + chart, sort fix in ItemTrendTable, monthKey type null-correct
+- Verified cache invalidation: both 'flip-ranking' and 'flip-ranking-drilldown' in invalidateAnalysisCache list
+- Verified OutletPIC.outletCode is @unique (no double-counting via LEFT JOIN)
+- Verified drilldown month matching via ILIKE prefix (handles both "Jul" and "Juli 2026")
+
+Stage Summary:
+- Found 7 bugs: P0=0, P1=0, P2=2, P3=5
+- BUG2-FLIP-01 (P3): Dead code - fmtCompactSigned defined but never called in FlipMatrix.tsx
+- BUG2-FLIP-02 (P3): Dead fields - p1Direction/p2Direction on UnifiedFlipRow set but never rendered
+- BUG2-FLIP-03 (P3): Color inconsistency - Totals use < 0 ? red : emerald (colors zero as emerald), per-row Net correctly mutes zero
+- BUG2-FLIP-04 (P2): Flip column ASC sort puts non-flip rows at TOP (should be bottom) - BUG-FLIP-02 fix only handled DESC direction
+- BUG2-FLIP-05 (P2): Inconsistent riskLevel - frontend flipHelpers uses riskScore thresholds (>=50 high, >=20 moderate), backend flip-ranking uses count thresholds (sempurnaCount>0 high, flipCount>0 moderate) - same item can show MODERATE in FlipSummaryCard but HIGH in Flip Ranking
+- BUG2-FLIP-06 (P3): Items with 0 flip pairs after month filter still appear in ranking with empty metrics, should filter out before slicing to limit
+- BUG2-FLIP-07 (P3): Redundant item.riskLevel !== 'low' check in chevron condition (topFlip undefined for LOW already)

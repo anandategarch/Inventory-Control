@@ -259,11 +259,16 @@ export function computeItemFlipScore(flips: FlipAnalysis[]): ItemFlipScore {
     }
   }
 
-  // Weighted risk: sempurna=100, dominan=60, parsial=30, others=0.
-  const weighted = sempurnaCount * 100 + dominanCount * 60 + parsialCount * 30;
-  const riskScore = Math.round(weighted / totalPairs);
+  // FIX (BUG2-FLIP-05): align riskLevel with backend (flip-ranking.ts) so
+  // the FlipSummaryCard + Flip Ranking widget show the SAME risk level for
+  // the same item. Was using weighted/totalPairs (normalized 0-100) which
+  // could classify an item with 1 sempurna + 3 konsisten as MODERATE,
+  // while backend classifies it as HIGH (sempurnaCount > 0).
+  // Now: riskLevel = sempurnaCount>0 ? high : flipCount>0 ? moderate : low
+  // (matches backend exactly). riskScore still computed for display.
+  const riskScore = Math.min(100, sempurnaCount * 30 + flipCount * 10);
   const riskLevel: ItemFlipScore['riskLevel'] =
-    riskScore >= 50 ? 'high' : riskScore >= 20 ? 'moderate' : 'low';
+    sempurnaCount > 0 ? 'high' : flipCount > 0 ? 'moderate' : 'low';
 
   return {
     totalPairs,
