@@ -128,9 +128,13 @@ export async function queryItemTrendRank(
         COALESCE(SUM(ABS(ir."nominalDeviasi")), 0) as "absNominal"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
       LEFT JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+      -- FIX (BUG-3-02): filter is nominalDeviasi IS NOT NULL (not
+      -- absNominalDeviasi > 0) so the rank query returns the SAME periods
+      -- as the main trend query. Previously, periods where the item had 0
+      -- absNominalDeviasi were omitted, causing X-axis misalignment.
+      -- FIX (BUG-3-04): removed unnecessary JOIN Outlet (alias never used).
+      WHERE ir."nominalDeviasi" IS NOT NULL
         ${f}
         ${weekFilter}
       GROUP BY ir."monthLabel", ir."weekLabel", i.name

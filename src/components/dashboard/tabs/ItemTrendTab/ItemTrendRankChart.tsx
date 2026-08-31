@@ -64,24 +64,27 @@ interface ChartRow {
   period: string;
   /** Full label for tooltip, e.g. "JUNI · WEEK 4". */
   fullLabel: string;
-  /** National rank (1 = worst). Null when the item had no deviasi that period. */
-  rank: number | null;
+  /** National rank (1 = worst). FIX (BUG-3-05): always number — query coerces
+   *  null→0 via `Number(r.rankNominal) || 0`. The `| null` in the type was
+   *  dead (unreachable) since the source RankPeriod.rankNominal is `number`. */
+  rank: number;
   /** Total items ranked in that period (denominator for "Rank #N of M"). */
   totalItems: number;
   /** This item's |nominalDeviasi| for that period (IDR-formatted in tooltip). */
   absNominal: number;
 }
 
-// Color thresholds — matches the rank badge in ItemTrendTab header
-// (rankBadgeClass) so the chart + badge use the same severity palette:
+// Color thresholds — FIX (BUG-3-01): aligned with the rank badge in
+// ItemTrendTab header (rankBadgeClass). Was using emerald for rank > 20,
+// but the badge uses muted-gray for rank > 20 (not in top 20 = normal/not
+// severe). Now both chart + badge use the same palette:
 //   rank ≤ 5    → red (severe)
 //   rank 6-20   → amber (warning)
-//   rank > 20   → emerald (normal)
-function rankColor(rank: number | null): string {
-  if (rank == null) return 'var(--muted-foreground)';
+//   rank > 20   → muted-gray (normal — not in top 20)
+function rankColor(rank: number): string {
   if (rank <= 5) return '#dc2626'; // red-600
   if (rank <= 20) return '#f59e0b'; // amber-500
-  return '#10b981'; // emerald-500
+  return 'var(--muted-foreground)'; // muted — matches badge's "Rank > 20" style
 }
 
 // Build per-period row for Recharts. Short X-axis label matches the
@@ -112,8 +115,9 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
       <p className="font-semibold text-foreground">{row.fullLabel}</p>
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">Rank Nasional:</span>
+        {/* FIX (BUG-3-05): rank is always number now (dead null branch removed) */}
         <span className="font-bold tabular-nums" style={{ color }}>
-          {row.rank != null ? `#${row.rank} dari ${row.totalItems} item` : '— (tidak ada deviasi)'}
+          #{row.rank} dari {row.totalItems} item
         </span>
       </div>
       <div className="flex justify-between gap-4">
@@ -131,10 +135,10 @@ export const ItemTrendRankChart = memo(function ItemTrendRankChart({ periods, on
   // chart auto-scales. Domain [1, maxRank] with `reversed` puts rank #1
   // at the TOP (worst) and #maxRank at the BOTTOM (best).
   // Floor at 2 so a single-rank chart still has a visible Y range.
+  // FIX (BUG-3-05): rank is always number now — no null filter needed.
   const maxRank = useMemo(() => {
-    const ranks = data.map(d => d.rank).filter((r): r is number => r != null);
-    if (ranks.length === 0) return 2;
-    return Math.max(2, ...ranks);
+    if (data.length === 0) return 2;
+    return Math.max(2, ...data.map(d => d.rank));
   }, [data]);
 
   // Phase 2 drill-down — same pattern as ItemTrendLineChart. Recharts

@@ -97,7 +97,9 @@ export interface ItemPeerAverages {
   surplusOutlets: number;
 }
 
-/** Response shape of `/api/item-peer-comparison`. */
+/** Response shape of `/api/item-peer-comparison`.
+ *  FIX (BUG-2-09): added optional `cached` + `stale` fields that the backend
+ *  adds conditionally (SWR pattern from withCacheAndDedup). */
 export interface ItemPeerComparisonResponse {
   success: boolean;
   item: { itemName: string };
@@ -107,6 +109,9 @@ export interface ItemPeerComparisonResponse {
   peerAverages: ItemPeerAverages;
   autoSelected: boolean;
   durationMs: number;
+  /** Backend adds these when the response came from cache (SWR pattern). */
+  cached?: boolean;
+  stale?: boolean;
 }
 
 export interface ItemPeerComparisonProps {
@@ -578,15 +583,24 @@ function ItemPeerComparisonImpl({
   // outlets in BOM ±50% range). Without this, cards render degenerate
   // values (EfficiencyScore=100, GapAnalysis vs 0, empty ScatterPlot,
   // #1/1 ranking).
+  // FIX (BUG-2-10): improved empty state message — covers all "no data"
+  // cases (item not found, no peers, kelompok/PIC mismatch), not just
+  // the "no peer (BOM ±50%)" case.
   if (!data || !data.success || !data.target || data.peers.filter(p => !p.isTarget).length === 0) {
+    const reason = !data?.target
+      ? `Item "${itemName}" tidak ditemukan di periode ${month} · ${week}.`
+      : `Tidak ada peer outlet dengan QTY BOM ±50% di periode ${month} · ${week}.`;
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
           <Info className="h-6 w-6 text-muted-foreground mb-2" />
           <p className="text-sm text-muted-foreground">Tidak ada data peer comparison</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">
-            Item <span className="font-medium">{itemName}</span> di {month} · {week} tidak memiliki peer (BOM ±50%).
-          </p>
+          <p className="text-xs text-muted-foreground/70 mt-1">{reason}</p>
+          {!data?.target && (
+            <p className="text-[11px] text-muted-foreground/60 mt-1">
+              Kemungkinan: item tidak memiliki deviasi di periode ini, atau filter area/kelompok/PIC tidak cocok.
+            </p>
+          )}
         </CardContent>
       </Card>
     );
@@ -706,7 +720,11 @@ const PeerTableRow = memo(function PeerTableRow({
   isTargetRow,
   onOutletClick,
 }: PeerTableRowProps) {
-  const isLoss = row.nominalDeviasi < 0;
+  // FIX (BUG-2-11): use `direction` field (NET from SUM(nominalLossSurplus))
+  // instead of `nominalDeviasi` sign (GROSS from SUM(nominalDeviasi)). These
+  // two can differ when surplus items outweigh loss items in the same bucket
+  // — the row color should match the direction badge, not the gross sign.
+  const isLoss = row.direction === 'LOSS';
   const flags = anomalyFlags(row, peerAvg);
   return (
     <TableRow
