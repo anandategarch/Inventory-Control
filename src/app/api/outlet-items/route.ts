@@ -9,54 +9,29 @@
 //  1. Resto Profile (6 sections: Performance, Behavior, Historical, Benchmark, TopRisk, Investigation)
 //  2. Bahan Analysis (3 rankings: Financial, Operational, Unexplained)
 //  3. Per-item breakdown: BOM, Deviasi, Dev/BOM, Nominal, Direction, W/S/T, Residual
+//
+//  REFACTOR (Task 4-d): the original 673-line god function has been split
+//  into 5 named service functions under ./services/. The GET handler below
+//  is now a thin coordinator (~90 lines) — see each service file for the
+//  per-section rationale and inline "FIX (XXX)" comments preserved from
+//  the original monolith.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { validateQuery, outletItemsQuerySchema } from '@/lib/validation';
-import { db } from '@/lib/db';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { getRuntimeThresholds, type RuntimeThresholds } from '@/lib/settings';
-import {
-  computeSalesModePerOutlet,
-  computeDevBomAggregate,
-  computeResidualPctAggregate,
-  computeExplainedPctAggregate,
-  computeLossToSales,
-  computeHealthScore,
-  computePriority,
-  type AggregateInput,
-  type PriorityInput,
-} from '@/lib/metrics';
-import {
-  calcGrowth,
-  calcGrowthAbs,
-  computeGrowthResult,
-  computeNominalDeviationGrowth,
-} from '@/lib/metrics';
-import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { toNum } from '@/lib/format';
-import { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-items';
-import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+import { EarlyHttpResponse } from './services/types';
+import { resolveOutletAndPeriod } from './services/resolve-period';
+import { fetchRecords } from './services/fetch-records';
+import { buildRestoProfile } from './services/build-resto-profile';
+import { buildItemBreakdown } from './services/build-item-breakdown';
+import { buildRankings } from './services/build-rankings';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
-
-// PERF-API-01 (Task PERF-API): EarlyHttpResponse pattern (same as export-report)
-// — lets the cache-wrapped computeFn signal "abort compute + return this response"
-// for early-return paths (404 outlet not found). Throwing propagates through
-// withCacheAndDedup's rejectComputation so concurrent in-flight awaiters also
-// see the 404 (cache is NOT populated for 404s).
-class EarlyHttpResponse extends Error {
-  constructor(public response: NextResponse) {
-    super('EarlyHttpResponse');
-    this.name = 'EarlyHttpResponse';
-  }
-}
-
-// toNum imported from @/lib/format (deduplicated)
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -76,8 +51,7 @@ export async function GET(req: NextRequest) {
     }
 
     const outletCode = url.searchParams.get('outletCode');
-    // FIX-DEEP-1: `let` so resolveMonthLabel can reassign to actual DB case.
-    let month = url.searchParams.get('month');
+    const month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
     const compareWeek = url.searchParams.get('compareWeek');
     const compareMonthRaw = url.searchParams.get('compareMonth');
@@ -106,553 +80,62 @@ export async function GET(req: NextRequest) {
       cacheKey,
       OUTLET_ITEMS_CACHE_TTL,
       async () => {
+        // Stage 1 — resolve month label + lookup outlet + determine prev period.
+        // Throws EarlyHttpResponse on 404 (propagates via withCacheAndDedup).
+        const resolved = await resolveOutletAndPeriod({
+          outletCode,
+          month,
+          week,
+          compareWeek,
+          compareMonthRaw,
+        });
+        const { month: resolvedMonth, thresholds, outlet, prevWeek, prevMonth } = resolved;
 
-    // FIX-DEEP-1 (DEEP-AUDIT-API-2): Resolve monthLabel case to actual DB case.
-    // DB may have "AGUSTUS 2026" (upload-data.ts) or "Agustus 2026" (dashboard import).
-    // Without this, raw SQL `WHERE ir."monthLabel" = ${month}` returns 0 rows on
-    // case mismatch → empty Resto Profile + empty item breakdown.
-    // PERF-API-01: `month!` — TypeScript can't carry the non-null narrowing
-    // from the outer `if (!month) return` guard into this closure (same pattern
-    // as recommendations route line 71-72). Safe — outer guard already rejected null.
-    const monthResolver = await getMonthResolver();
-    month = resolveMonthLabel(month!, monthResolver) || month;
-    const compareMonth = compareMonthRaw ? (resolveMonthLabel(compareMonthRaw, monthResolver) || compareMonthRaw) : null;
+        // Stage 2 — parallel SQL queries (currentRecs + prevRecs + area/network
+        // benchmark + outletPIC + topDeviasiRank promise).
+        const records = await fetchRecords({
+          outlet, outletCode, month: resolvedMonth, week, prevWeek, prevMonth, thresholds,
+        });
+        const { currentRecs, prevRecs, areaBench, networkBench, outletPIC, topDeviasiRankPromise } = records;
 
-    // ============================================================
-    //  Load runtime thresholds (Settings-driven, no hardcoding)
-    // ============================================================
-    // PERF-04: Parallelize thresholds + outlet lookup (independent)
-    const [thresholds, outlet] = await Promise.all([
-      getRuntimeThresholds(),
-      db.outlet.findFirst({
-        where: { code: outletCode },
-        select: { id: true, code: true, name: true, area: true },
-      }),
-    ]);
-    if (!outlet) {
-      // PERF-API-01: throw EarlyHttpResponse so the outer catch returns the
-      // 404 response (matches the export-report pattern). Cache is NOT populated.
-      throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `Outlet ${outletCode} not found` }, { status: 404 }));
-    }
+        // Stage 3 — build restoProfile (6 sections) + prevByItemId map.
+        const { restoProfile, prevByItemId } = buildRestoProfile({
+          outlet, currentRecs, prevRecs, areaBench, networkBench, thresholds,
+        });
 
-    // Determine previous period
-    // FIX (BUG 3): Same-weekLabel in previous month (cumulative weeks).
-    // Was: chronological previous (W4→W2 same month = false positive growth).
-    let prevWeek = compareWeek;
-    let prevMonth = compareMonth || null;
-    if (!prevWeek) {
-      // PERF-04: Parallelize weeksRaw + fileMonthKeys (independent)
-      const [weeksRaw, fileMonthKeys] = await Promise.all([
-        db.week.findMany({
-          select: { weekLabel: true, monthKey: true },
-          distinct: ['monthKey', 'weekLabel'],
-        }),
-        db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
-      ]);
-      const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
-      const allPeriods = weeksRaw.map(w => ({
-        monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
-        weekLabel: w.weekLabel,
-        sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-      })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+        // Stage 4 — per-item breakdown (priority + historical growth + benchmark).
+        const itemBreakdown = buildItemBreakdown({
+          currentRecs, prevByItemId, areaBench, networkBench, thresholds,
+        });
 
-      const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
-      // Search backwards for same weekLabel in a DIFFERENT month
-      prevWeek = week;
-      let foundMonth: string | null = null;
-      const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
-      for (let i = startIdx; i >= 0; i--) {
-        if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== month) {
-          foundMonth = allPeriods[i].monthLabel;
-          break;
-        }
-      }
-      prevMonth = foundMonth;
-      if (!prevMonth && currentIdx > 0) {
-        // Fallback: chronological previous
-        prevWeek = allPeriods[currentIdx - 1].weekLabel;
-        prevMonth = allPeriods[currentIdx - 1].monthLabel;
-      }
-    }
+        // Stage 5 — 3 ranked slices (financial / operational / unexplained).
+        const rankings = buildRankings(itemBreakdown);
 
-    // ============================================================
-    //  PARALLEL: current records + prev records + area/network benchmarks
-    //  Phase 3: area/network benchmark uses SUM(ABS)/SUM(ABS) — same
-    //  formula as computeDevBomAggregate, matching outletDevBom.
-    //  (was: AVG(ABS(pctQtyDeviasiToBom)) — mathematically different)
-    //
-    //  FIX (audit issue #8): This is a POOLED area/network Dev/BOM
-    //  (volume-weighted aggregate). Alternative would be average of
-    //  per-outlet Dev/BOM ratios (unweighted). Pooled is the standard
-    //  approach for financial ratios — weights by volume, so large
-    //  outlets aren't dominated by small ones. This is a design choice,
-    //  documented here for clarity.
-    // ============================================================
-    // Fire top deviasi rank for this outlet in PARALLEL with the main queries
-    // (powers RankingNasionalCard — top N items for this outlet with national rank).
-    // FIX (AUDIT8-ROLLBACK-1, Item 15): read TOP_N_DEVIASI_RANK from Settings
-    // (was hardcoded 30). thresholds is fetched above (line ~85) so this is a
-    // synchronous read — no extra DB round-trip.
-    const topDeviasiRankN = thresholds.TOP_N_DEVIASI_RANK || 30;
-    // PERF-API-01: `month!` — outer guard rejected null; TS can't carry narrowing into closure.
-    const topDeviasiRankPromise = queryTopItemsByDeviasiRankForOutlet(week, month!, outletCode, topDeviasiRankN);
+        // Await the top deviasi rank (fired in parallel with the main
+        // Promise.all inside fetchRecords — powers RankingNasionalCard).
+        const topDeviasiRank = await topDeviasiRankPromise;
 
-    // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout
-    // so a hung query in one Promise.all branch is killed at 30s rather than
-    // blocking the whole batch indefinitely.
-    const [currentRecs, prevRecs, areaBench, networkBench, outletPIC] = await Promise.all([
-      withStatementTimeout((tx) => tx.$queryRaw<Array<{
-        itemId: number; itemName: string; satuan: string | null;
-        akunPenyesuaian: string | null;
-        qtyBom: number | null; qtyCom: number | null; qtyDeviasi: number | null;
-        qtyWaste: number | null; qtySusut: number | null; qtyTrial: number | null;
-        qtyLossSurplus: number | null;
-        nominalDeviasi: number | null; nominalWaste: number | null; nominalSusut: number | null;
-        nominalTrial: number | null; nominalLossSurplus: number | null; nominalSales: number | null;
-        avgPrice: number | null; tolerancePct: number | null;
-        pctQtyDeviasiToBom: number | null;
-        direction: string | null;
-        residualQty: number | null; residualNominal: number | null; residualRatio: number | null;
-        absQtyDeviasi: number | null; absNominalDeviasi: number | null;
-        absQtyLossSurplus: number | null; absNominalLossSurplus: number | null;
-      }>>`
-        SELECT ir."itemId", i.name as "itemName", i.satuan, ir."akunPenyesuaian",
-          SUM(ir."qtyBom") as "qtyBom", SUM(ir."qtyCom") as "qtyCom", SUM(ir."qtyDeviasi") as "qtyDeviasi",
-          SUM(ir."qtyWaste") as "qtyWaste", SUM(ir."qtySusut") as "qtySusut", SUM(ir."qtyTrial") as "qtyTrial", SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
-          SUM(ir."nominalDeviasi") as "nominalDeviasi", SUM(ir."nominalWaste") as "nominalWaste", SUM(ir."nominalSusut") as "nominalSusut",
-          SUM(ir."nominalTrial") as "nominalTrial", SUM(ir."nominalLossSurplus") as "nominalLossSurplus", SUM(ir."nominalSales") as "nominalSales",
-          AVG(ir."avgPrice") as "avgPrice",
-          -- FIX SQL-6: was MAX(tolerancePct) which picks least-negative for LOSS items (false breach positives)
-          -- Use MIN (most negative = strictest tolerance) for LOSS, MAX for SURPLUS
-          CASE
-            WHEN SUM(ir."nominalLossSurplus") < 0 THEN MIN(ir."tolerancePct")
-            ELSE MAX(ir."tolerancePct")
-          END as "tolerancePct",
-          -- FIX FLOW3-3: was MAX(pctQtyDeviasiToBom) which understates LOSS magnitude
-          -- (MAX picks least-negative for LOSS items). Use SUM(qtyDeviasi)/SUM(ABS(qtyBom)) instead.
-          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-            THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
-            ELSE NULL END as "pctQtyDeviasiToBom",
-          -- FIX SIGN-3: compute direction on-the-fly from nominalLossSurplus sign (not MAX(ir.direction) which depends on migration)
-          -- FIX VERIFY3-7: add qtyDeviasi NULL fallback for rows where nominalLossSurplus is null
-          CASE
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NOT NULL AND SUM(ir."nominalLossSurplus") > 0 THEN 'SURPLUS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") < 0 THEN 'LOSS'
-            WHEN SUM(ir."nominalLossSurplus") IS NULL AND SUM(ir."qtyDeviasi") > 0 THEN 'SURPLUS'
-            ELSE 'NEUTRAL'
-          END as "direction",
-          SUM(ir."residualQty") as "residualQty", SUM(ir."residualNominal") as "residualNominal",
-          -- FIX SQL-6: was MAX(residualRatio) which overstates — use SUM(ABS(residualQty))/SUM(ABS(qtyDeviasi))
-          CASE WHEN SUM(ABS(ir."qtyDeviasi")) > 0
-            THEN SUM(ABS(ir."residualQty")) / SUM(ABS(ir."qtyDeviasi"))
-            ELSE 0 END as "residualRatio",
-          SUM(ir."absQtyDeviasi") as "absQtyDeviasi", SUM(ir."absNominalDeviasi") as "absNominalDeviasi",
-          SUM(ir."absQtyLossSurplus") as "absQtyLossSurplus", SUM(ir."absNominalLossSurplus") as "absNominalLossSurplus"
-        FROM "InventoryRecord" ir
-        JOIN "Item" i ON ir."itemId" = i.id
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.code = ${outletCode}
-          AND ir."monthLabel" = ${month}
-          AND ir."weekLabel" = ${week}
-        GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian", i.name, i.satuan
-      `),
-      prevWeek && prevMonth ? withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemId: number; akunPenyesuaian: string | null; qtyDeviasi: number | null; nominalDeviasi: number | null; qtyBom: number | null; pctQtyDeviasiToBom: number | null; nominalSales: number | null }>>`
-        SELECT ir."itemId", ir."akunPenyesuaian",
-          SUM(ir."qtyDeviasi") as "qtyDeviasi",
-          SUM(ir."nominalDeviasi") as "nominalDeviasi",
-          SUM(ir."qtyBom") as "qtyBom",
-          -- FIX API-CALC-2: was MAX(pctQtyDeviasiToBom) — use SUM/SUM aggregate (matches FLOW3-3 fix)
-          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-            THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
-            ELSE NULL END as "pctQtyDeviasiToBom",
-          SUM(ir."nominalSales") as "nominalSales"
-        FROM "InventoryRecord" ir
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.code = ${outletCode}
-          AND ir."monthLabel" = ${prevMonth}
-          AND ir."weekLabel" = ${prevWeek}
-        GROUP BY ir."outletId", ir."itemId", ir."akunPenyesuaian"
-      `) : Promise.resolve([]),
-      // Area benchmark — Phase 3: SUM(ABS)/SUM(ABS) matching computeDevBomAggregate
-      // FIX H1 (AUDIT-3): was `WHERE ir.area = ${outlet.area}` — silently returned 0
-      // when denormalized ir.area diverged from Outlet.area (e.g. MLGPAR: outlet="JAWA
-      // TIMUR 1" vs ir="BAKSO"). JOIN Outlet and filter by o.area for correctness.
-      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number; lossToSales: number | null }>>`
-        SELECT
-          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-            ELSE 0 END as "avgDevBom",
-          NULL as "lossToSales"
-        FROM "InventoryRecord" ir
-        JOIN "Outlet" o ON ir."outletId" = o.id
-        WHERE o.area = ${outlet.area}
-          AND ir."monthLabel" = ${month}
-          AND ir."weekLabel" = ${week}
-      `),
-      // Network benchmark — Phase 3: SUM(ABS)/SUM(ABS)
-      withStatementTimeout((tx) => tx.$queryRaw<Array<{ avgDevBom: number }>>`
-        SELECT
-          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-            ELSE 0 END as "avgDevBom"
-        FROM "InventoryRecord" ir
-        WHERE ir."monthLabel" = ${month}
-          AND ir."weekLabel" = ${week}
-      `),
-      // PIC
-      db.outletPIC.findUnique({ where: { outletCode: outlet.code } }).catch(() => null),
-    ]);
-
-    // ============================================================
-    //  RESTO PROFILE — 6 sections
-    //  Phase 3: All metrics via Metric Engine
-    // ============================================================
-
-    // Sales via MODE (Metric Engine: computeSalesModePerOutlet)
-    // Tie-break: smaller value wins (consistent SQL + JS)
-    const currentSalesMap = computeSalesModePerOutlet(
-      currentRecs.map(r => ({ outletId: outlet.id, nominalSales: toNum(r.nominalSales) }))
-    );
-    const bestSales = currentSalesMap.get(outlet.id) ?? 0;
-
-    // Aggregate metrics — build AggregateInput for Metric Engine
-    let totalQtyBom = 0, totalQtyDeviasi = 0, totalNominalDeviasi = 0;
-    let totalQtyWaste = 0, totalQtySusut = 0, totalQtyTrial = 0;
-    let totalQtyLossSurplus = 0, totalNominalLossSurplus = 0;
-    let totalResidualQty = 0, totalAbsNominalLossSurplus = 0;
-    let totalLossNominal = 0, totalSurplusNominal = 0;
-    let normalCount = 0, warningCount = 0, abnormalCount = 0;
-
-    for (const r of currentRecs) {
-      const qb = toNum(r.qtyBom) ?? 0;
-      const qd = toNum(r.qtyDeviasi) ?? 0;
-      const nd = toNum(r.nominalDeviasi) ?? 0;
-      const qls = toNum(r.qtyLossSurplus) ?? 0;
-      const nls = toNum(r.nominalLossSurplus) ?? 0;
-      const anls = toNum(r.absNominalLossSurplus) ?? 0;
-
-      totalQtyBom += Math.abs(qb);
-      totalQtyDeviasi += Math.abs(qd);
-      totalNominalDeviasi += Math.abs(nd);
-      totalQtyWaste += Math.abs(toNum(r.qtyWaste) ?? 0);
-      totalQtySusut += Math.abs(toNum(r.qtySusut) ?? 0);
-      totalQtyTrial += Math.abs(toNum(r.qtyTrial) ?? 0);
-      totalQtyLossSurplus += Math.abs(qls);
-      totalNominalLossSurplus += nls;
-      totalAbsNominalLossSurplus += anls;
-      totalResidualQty += Math.abs(toNum(r.residualQty) ?? 0);
-
-      // FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
-      if (nls < 0) totalLossNominal += Math.abs(nls);
-      else if (nls > 0) totalSurplusNominal += nls;
-
-      // Count severity
-      // FIX (BUG 5): Use AND-zero criterion (qtyDeviasi AND absNominalDeviasi both ~0)
-      // — matches analysis route. Previously: single-field |qd|<0.01 → price-only
-      // variance items (qty=0 but nominal>0) were wrongly counted as normal.
-      const isZeroDev = (qd === 0 || Math.abs(qd) < 0.01) && (nd === 0 || Math.abs(nd) < 0.01);
-      if (isZeroDev) normalCount++;
-      // FIX CALC-2: ABS() on BOTH sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
-      // (both negative for LOSS items). Without ABS, any positive > any negative → always abnormal.
-      else if (Math.abs(toNum(r.pctQtyDeviasiToBom) ?? 0) > Math.abs(toNum(r.tolerancePct) ?? thresholds.FALLBACK_TOLERANCE_PCT)) abnormalCount++;
-      else warningCount++;
-    }
-
-    const aggregateInput: AggregateInput = {
-      totalQtyDeviasi,
-      totalQtyBom,
-      totalQtyWaste,
-      totalQtySusut,
-      totalQtyTrial,
-      totalResidualQty,
-      totalLossNominal,
-      totalSales: bestSales,
-      normalCount,
-      warningCount,
-      abnormalCount,
-    };
-
-    // Previous period aggregates
-    let prevQtyBom = 0, prevQtyDeviasi = 0, prevNominalDeviasi = 0;
-    // FIX (BUG-1-4): Key prevByItemId by `${itemId}|${akunPenyesuaian ?? ''}` so
-    //   multi-akun items get the matching-akun prev record instead of the LAST
-    //   row's prev data. Matches the pattern used in outlet-focus/route.ts:495
-    //   (`${r.itemId}|${r.akunPenyesuaian ?? ''}`) and analysis/route.ts:321.
-    const prevByItemId = new Map<string, { qtyDeviasi: number; nominalDeviasi: number; qtyBom: number; pctDevBom: number | null }>();
-    for (const r of prevRecs) {
-      const qd = toNum(r.qtyDeviasi) ?? 0;
-      const nd = toNum(r.nominalDeviasi) ?? 0;
-      const qb = toNum(r.qtyBom) ?? 0;
-      const pdb = toNum(r.pctQtyDeviasiToBom);
-      prevQtyBom += Math.abs(qb);
-      prevQtyDeviasi += Math.abs(qd);
-      prevNominalDeviasi += Math.abs(nd);
-      prevByItemId.set(`${r.itemId}|${r.akunPenyesuaian ?? ''}`, { qtyDeviasi: qd, nominalDeviasi: nd, qtyBom: qb, pctDevBom: pdb });
-    }
-    // Previous sales via Metric Engine MODE
-    const prevSalesMap = computeSalesModePerOutlet(
-      prevRecs
-        .filter((r): r is typeof r & { nominalSales: number | null } => true)
-        .map(r => ({ outletId: outlet.id, nominalSales: toNum(r.nominalSales) }))
-    );
-    const prevBestSales = prevSalesMap.get(outlet.id) ?? 0;
-
-    // Metric Engine: aggregate metrics
-    const devBomAggregate = computeDevBomAggregate(aggregateInput);
-    const residualPctAggregate = computeResidualPctAggregate(aggregateInput);
-    const explainedPctAggregate = computeExplainedPctAggregate(aggregateInput);
-    const lossToSales = computeLossToSales(aggregateInput);
-    const healthScore = computeHealthScore(aggregateInput);
-
-    // Metric Engine: growth
-    const salesGrowth = calcGrowth(bestSales, prevBestSales);
-    const qtyBomGrowth = calcGrowthAbs(totalQtyBom, prevQtyBom); // BOM is consumption, use abs growth
-    const qtyDeviasiGrowth = calcGrowth(totalQtyDeviasi, prevQtyDeviasi);
-    const nominalDeviasiGrowth = computeNominalDeviationGrowth(totalNominalDeviasi, prevNominalDeviasi);
-
-    // Metric Engine: growth result (with direction flip + trend)
-    const devGrowthResult = computeGrowthResult(totalQtyDeviasi, prevQtyDeviasi, 0.1);
-
-    const restoProfile = {
-      // 1. Performance
-      performance: {
-        sales: bestSales,
-        salesGrowth,
-        qtyBom: totalQtyBom,
-        qtyBomGrowth,
-        qtyDeviasi: totalQtyDeviasi,
-        qtyDeviasiGrowth,
-        nominalDeviasi: totalNominalDeviasi,
-        nominalDeviasiGrowth,
-        nominalLossSurplus: totalNominalLossSurplus,
-        devBom: devBomAggregate,
-        lossToSales,
-      },
-      // 2. Behavior
-      behavior: {
-        lossNominal: totalLossNominal,
-        surplusNominal: totalSurplusNominal,
-        lossPct: totalAbsNominalLossSurplus > 0 ? totalLossNominal / totalAbsNominalLossSurplus : null,
-        surplusPct: totalAbsNominalLossSurplus > 0 ? totalSurplusNominal / totalAbsNominalLossSurplus : null,
-        qtyWaste: totalQtyWaste,
-        qtySusut: totalQtySusut,
-        qtyTrial: totalQtyTrial,
-        qtyLossSurplus: totalQtyLossSurplus,
-        residualQty: totalResidualQty,
-        residualPct: residualPctAggregate,
-        explainedPct: explainedPctAggregate,
-      },
-      // 3. Historical (current vs previous)
-      historical: {
-        prevQtyBom: prevQtyBom,
-        prevQtyDeviasi: prevQtyDeviasi,
-        prevNominalDeviasi: prevNominalDeviasi,
-        bomGrowth: qtyBomGrowth,
-        deviasiGrowth: qtyDeviasiGrowth,
-        nominalGrowth: nominalDeviasiGrowth,
-        // FIX H3 (AUDIT-3): when prevRecs is empty, devGrowthResult.trend='NEW' (computed
-        // from zero base) was mapped to 'DETERIORATING' — a false alarm with no baseline.
-        // Guard: if no prev period data, return 'INSUFFICIENT_DATA' instead.
-        trend: prevRecs.length === 0 ? 'INSUFFICIENT_DATA'
-          : devGrowthResult.trend === 'INCREASING' ? 'DETERIORATING'
-          : devGrowthResult.trend === 'DECREASING' ? 'IMPROVING'
-          : devGrowthResult.trend === 'NEW' ? 'DETERIORATING'  // onset from zero base
-          : devGrowthResult.trend === 'RESOLVED' ? 'IMPROVING'
-          : 'STABLE',
-      },
-      // 4. Benchmark — Metric Engine: computeBenchmark
-      //  Phase 3: outletDevBom and areaAvgDevBom both use SUM(ABS)/SUM(ABS)
-      //  (was: outletDevBom = SUM/SUM, areaAvgDevBom = AVG(ABS) — mismatch)
-      benchmark: (() => {
-        const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
-        const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
-        // Map trend to "ABOVE_NETWORK" / "ABOVE_AREA" / "NORMAL" using Settings factors
-        const areaMultiplier = areaAvgDevBom > 0 ? devBomAggregate / areaAvgDevBom : null;
-        const networkMultiplier = networkAvgDevBom > 0 ? devBomAggregate / networkAvgDevBom : null;
-        const isAboveNetwork = networkMultiplier != null && networkMultiplier > thresholds.BENCHMARK_NETWORK_FACTOR;
-        const isAboveArea = !isAboveNetwork && areaMultiplier != null && areaMultiplier > thresholds.BENCHMARK_AREA_FACTOR;
-        const status = isAboveNetwork ? 'ABOVE_NETWORK' : isAboveArea ? 'ABOVE_AREA' : 'NORMAL';
+        // PERF-API-01: return a plain object (NOT NextResponse) so
+        // withCacheAndDedup can JSON-serialize + store it. The outer code
+        // wraps it with NextResponse.json + adds the `cached: true` flag on
+        // cache hits (CONVENTIONS §2).
         return {
-          areaAvgDevBom,
-          networkAvgDevBom, // backward compat
-          allRestoAvgDevBom: networkAvgDevBom, // FIX: clearer name
-          outletDevBom: devBomAggregate,
-          areaMultiplier,
-          networkMultiplier, // backward compat
-          allRestoMultiplier: networkMultiplier, // FIX: clearer name
-          isAboveArea,
-          isAboveNetwork,
-          status,
-        };
-      })(),
-      // 5. Top Risk (top 5 per category)
-      topRisk: {
-        byNominal: [...currentRecs]
-          .sort((a, b) => (toNum(b.absNominalLossSurplus) ?? 0) - (toNum(a.absNominalLossSurplus) ?? 0))
-          .slice(0, 5)
-          .map(r => ({ itemName: r.itemName, value: toNum(r.absNominalLossSurplus) ?? 0, direction: r.direction || 'NEUTRAL' })),
-        byDevBom: [...currentRecs]
-          .sort((a, b) => Math.abs(toNum(b.pctQtyDeviasiToBom) ?? 0) - Math.abs(toNum(a.pctQtyDeviasiToBom) ?? 0))
-          .slice(0, 5)
-          .map(r => ({ itemName: r.itemName, value: toNum(r.pctQtyDeviasiToBom) ?? 0 })),
-        byResidual: [...currentRecs]
-          .sort((a, b) => (toNum(b.residualRatio) ?? 0) - (toNum(a.residualRatio) ?? 0))
-          .slice(0, 5)
-          .map(r => ({ itemName: r.itemName, value: toNum(r.residualRatio) ?? 0 })),
-      },
-      // 6. Investigation counts + health score (Metric Engine)
-      investigation: {
-        normal: normalCount,
-        warning: warningCount,
-        abnormal: abnormalCount,
-        total: normalCount + warningCount + abnormalCount,
-        healthScore,
-      },
-    };
-
-    // ============================================================
-    //  BAHAN ANALYSIS — 3 rankings + per-item breakdown
-    //  Phase 3: Priority via Metric Engine (Settings-driven thresholds)
-    // ============================================================
-    const priorityThresholds: PriorityInput['thresholds'] = {
-      HIGH_LOSS_NOMINAL_THRESHOLD: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-      P2_NOMINAL_THRESHOLD: thresholds.P2_NOMINAL_THRESHOLD,
-      STD_DEVIASI_BOM_PCT: thresholds.STD_DEVIASI_BOM_PCT,
-      RESIDUAL_LOSS_WARN_PCT: thresholds.RESIDUAL_LOSS_WARN_PCT,
-      RESIDUAL_LOSS_HIGH_PCT: thresholds.RESIDUAL_LOSS_HIGH_PCT,
-      HISTORICAL_ZSCORE_HIGH: thresholds.HISTORICAL_ZSCORE_HIGH,
-    };
-
-    const itemBreakdown = currentRecs.map(r => {
-      const itemId = r.itemId;
-      // FIX (BUG-1-4): Lookup prev record by (itemId, akunPenyesuaian) so
-      //   multi-akun items get the matching-akun prev data.
-      const prev = prevByItemId.get(`${itemId}|${r.akunPenyesuaian ?? ''}`);
-      const qtyBom = toNum(r.qtyBom);
-      const qtyDeviasi = toNum(r.qtyDeviasi);
-      const pctDevBom = toNum(r.pctQtyDeviasiToBom);
-      const nominalLS = toNum(r.nominalLossSurplus);
-      const absNominalLS = toNum(r.absNominalLossSurplus) ?? 0;
-      const residualRatio = toNum(r.residualRatio);
-      const areaAvgDevBom = toNum(areaBench[0]?.avgDevBom) ?? 0;
-      const networkAvgDevBom = toNum(networkBench[0]?.avgDevBom) ?? 0;
-
-      // Over-explained check (inline; same logic as computeResidual)
-      // FIX (FIX-DEEP-3C / DEEP-AUDIT-ENGINE-5): use abs-each-then-sum so the
-      // explained magnitude is correct for mixed-sign inputs. Was
-      // `Math.abs((w) + (s) + (t))` which undercounts explained magnitude when
-      // components have mixed signs (e.g. w=+5, s=-3, t=-2 → wrong = |0| = 0,
-      // correct = 5+3+2 = 10), suppressing valid isOverExplained flags. Mirrors
-      // the fix applied to computeResidual (transform.ts).
-      const isOverExplained = (() => {
-        const explained = Math.abs(toNum(r.qtyWaste) ?? 0) + Math.abs(toNum(r.qtySusut) ?? 0) + Math.abs(toNum(r.qtyTrial) ?? 0);
-        const absDev = Math.abs(toNum(r.qtyDeviasi) ?? 0);
-        return absDev > 0 && explained > absDev;
-      })();
-
-      // Dev/BOM growth vs previous (Magnitude — use calcGrowthAbs)
-      const prevPctDevBom = prev?.pctDevBom ?? null;
-      const devBomGrowth = calcGrowthAbs(pctDevBom, prevPctDevBom);
-
-      // Historical trend indicator
-      const historicalTrend = devBomGrowth != null
-        ? devBomGrowth > 0.1 ? '↑' : devBomGrowth < -0.1 ? '↓' : '→'
-        : '?';
-
-      // Area multiplier for this item (item-level: simple ratio of per-row devBom vs area avg)
-      const areaMultiplier = areaAvgDevBom > 0 && pctDevBom != null
-        ? Math.abs(pctDevBom) / areaAvgDevBom
-        : null;
-
-      // Metric Engine: priority (Settings-driven thresholds, no hardcoding)
-      const priority = computePriority({
-        absNominalLossSurplus: absNominalLS,
-        devBom: pctDevBom,
-        residualRatio,
-        zScore: null, // zScore not computed at item level here (item-history route handles that)
-        isOverExplained,
-        thresholds: priorityThresholds,
-      });
-
-      return {
-        itemId,
-        itemName: r.itemName,
-        satuan: r.satuan,
-        qtyBom: Math.abs(qtyBom ?? 0),
-        qtyCom: toNum(r.qtyCom),
-        qtyDeviasi: qtyDeviasi,
-        qtyWaste: Math.abs(toNum(r.qtyWaste) ?? 0),
-        qtySusut: Math.abs(toNum(r.qtySusut) ?? 0),
-        qtyTrial: Math.abs(toNum(r.qtyTrial) ?? 0),
-        qtyLossSurplus: toNum(r.qtyLossSurplus),
-        nominalDeviasi: toNum(r.nominalDeviasi),
-        nominalLossSurplus: nominalLS,
-        absNominalLossSurplus: absNominalLS,
-        avgPrice: toNum(r.avgPrice),
-        tolerancePct: toNum(r.tolerancePct),
-        devBom: pctDevBom,
-        direction: r.direction || 'NEUTRAL',
-        residualQty: toNum(r.residualQty),
-        residualRatio: residualRatio,
-        isOverExplained,
-        // Historical
-        prevQtyDeviasi: prev?.qtyDeviasi ?? null,
-        prevPctDevBom: prevPctDevBom,
-        devBomGrowth: devBomGrowth,
-        historicalTrend: historicalTrend as '↑' | '↓' | '→' | '?',
-        // Benchmark — FIX: renamed network → allResto for clarity (both returned for compat)
-        areaAvgDevBom: areaAvgDevBom,
-        networkAvgDevBom: networkAvgDevBom, // backward compat
-        allRestoAvgDevBom: networkAvgDevBom, // FIX: clearer name
-        areaMultiplier: areaMultiplier,
-        // Priority
-        priority,
-      };
-    });
-
-    // 3 Rankings
-    const rankings = {
-      // A. Financial Impact
-      financial: [...itemBreakdown]
-        .sort((a, b) => b.absNominalLossSurplus - a.absNominalLossSurplus)
-        .slice(0, 20)
-        .map((r, i) => ({ rank: i + 1, ...r })),
-      // B. Operational (Dev/BOM)
-      operational: [...itemBreakdown]
-        .sort((a, b) => Math.abs(b.devBom ?? 0) - Math.abs(a.devBom ?? 0))
-        .slice(0, 20)
-        .map((r, i) => ({ rank: i + 1, ...r })),
-      // C. Unexplained (Residual Ratio)
-      unexplained: [...itemBreakdown]
-        .sort((a, b) => (b.residualRatio ?? 0) - (a.residualRatio ?? 0))
-        .slice(0, 20)
-        .map((r, i) => ({ rank: i + 1, ...r })),
-    };
-
-    // Await the top deviasi rank (fired in parallel with the main Promise.all above).
-    const topDeviasiRank = await topDeviasiRankPromise;
-
-    // PERF-API-01: return a plain object (NOT NextResponse) so withCacheAndDedup
-    // can JSON-serialize + store it. The outer code wraps it with NextResponse.json
-    // + adds the `cached: true` flag on cache hits (CONVENTIONS §2).
-    return {
-      success: true,
-      outlet: {
-        code: outlet.code,
-        name: outlet.name,
-        area: outlet.area,
-        pic: outletPIC?.pic ?? null,
-      },
-      period: { month, week, prevWeek, prevMonth },
-      restoProfile,
-      rankings,
-      allItems: itemBreakdown,
-      topDeviasiRank,
-      itemCount: currentRecs.length,
-      durationMs: Date.now() - startedAt,
-    } as Record<string, unknown>;
-    }, // end withCacheAndDedup computeFn
+          success: true,
+          outlet: {
+            code: outlet.code,
+            name: outlet.name,
+            area: outlet.area,
+            pic: outletPIC?.pic ?? null,
+          },
+          period: { month: resolvedMonth, week, prevWeek, prevMonth },
+          restoProfile,
+          rankings,
+          allItems: itemBreakdown,
+          topDeviasiRank,
+          itemCount: currentRecs.length,
+          durationMs: Date.now() - startedAt,
+        } as Record<string, unknown>;
+      }, // end withCacheAndDedup computeFn
     );
 
     // PERF-API-01: rebuild NextResponse from cached/fresh payload + add cached flag.
