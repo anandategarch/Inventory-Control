@@ -19,7 +19,8 @@ export interface DashboardFooterProps {
 export function DashboardFooter({ status, analysisData }: DashboardFooterProps) {
   return (
     <footer className="sticky bottom-0 mt-auto border-t border-border/60 bg-background/95 backdrop-blur z-30">
-      <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
+      {/* FIX (UI2-05): text-xs on mobile (12px min readable), sm:text-[11px] on desktop */}
+      <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 font-medium text-foreground/80">
             <ShieldAlert className="h-3 w-3 text-amber-500" />

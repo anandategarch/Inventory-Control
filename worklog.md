@@ -39655,3 +39655,69 @@ Stage Summary:
 - Both consumers render IDENTICAL output (same Tailwind classes, same Recharts config, same Badge variants) — verified by reading all 7 shared card files + both consumer files line-by-line
 - Lint: 0 errors, 378 warnings (baseline unchanged from BATCH1)
 - tsc: 0 errors (clean compile)
+
+---
+Task ID: UI-REVIEW-2
+Agent: Responsive + Accessibility Auditor
+Task: Audit responsive + accessibility + footer sticky
+
+Work Log:
+- Read 9 files (layout, page, footer, header, tabs, flip components, FilterBar)
+- Verified sticky footer (min-h-screen flex flex-col + mt-auto)
+- Checked responsive breakpoints (sm/md/lg usage in header, filter bar, tabs)
+- Checked accessibility (semantic HTML, ARIA, keyboard, sr-only skip link)
+- Checked mobile overflow on tables + grids (min-w values + overflow wrappers)
+- Read ItemTrendTab index, FlipRanking, FlipMatrix, ItemTrendTable, ItemTrendLineChart, ItemTrendRankChart to inspect wrappers + chart heights
+- Verified root wrapper div in page.tsx uses min-h-screen flex flex-col
+- Verified DashboardFooter uses mt-auto (footer correctly sticks to bottom)
+- Verified header uses sticky top-0 z-40
+- Checked touch target sizes (h-8 = 32px; many icon buttons = h-8 w-8 = 32px, below 44px minimum)
+- Checked TabsList horizontal scroll on mobile (overflow-x-auto + flex-nowrap present)
+- Checked tables: all have overflow-x-auto wrapper via max-h-NNN overflow-auto + min-w-[Npx] Table
+- Checked Skip-to-content link in layout.tsx (#main-content) — good WCAG 2.4.1
+- Verified main landmark with id="main-content" aria-label exists in page.tsx
+
+Stage Summary:
+- Found 13 issues: P1=1, P2=7, P3=5
+- UI2-01 (P1): Sortable table headers use onClick on <th> without role/button/keyboard — inaccessible to screen readers + keyboard users (ItemTrendTable.tsx L146-200, FlipRanking.tsx L683-715)
+- UI2-02 (P2): Touch targets too small — header buttons + filter bar icon buttons are h-8 (32px), below WCAG 2.5.5 (44px min)
+- UI2-03 (P2): ItemTrendTable rows clickable via onClick on <tr> without role/keyboard handler — not keyboard accessible (ItemTrendTable.tsx L218-227)
+- UI2-04 (P2): DashboardHeader tier-2 FilterBar wrapper has overflow-x-auto but lacks -webkit-overflow-scrolling + scroll-snap; on mobile, sticky backdrop-blur header may stutter (DashboardHeader.tsx L117)
+- UI2-05 (P2): DashboardFooter text-[11px] below 12px readable minimum on mobile (DashboardFooter.tsx L22, 25)
+- UI2-06 (P2): FlipMatrix cells use cursor-help + tooltip-only info (no visible text in cell other than QTY); tooltip is hover-only — touch users cannot access "outlets/records" context (FlipMatrix.tsx L208-246)
+- UI2-07 (P2): ItemTrendLineChart has fixed height h-72 (288px) — too tall on small mobile landscape viewport; consider h-56 sm:h-72 (ItemTrendLineChart.tsx L327)
+- UI2-08 (P2): FlipRanking drill-down expand button h-5 w-5 (20px) — way below 44px touch target minimum (FlipRanking.tsx L782)
+- UI2-09 (P3): page.tsx TabsList uses overflow-x-auto + flex-nowrap — correct, but TabsTrigger text labels don't truncate, 5 triggers may overflow on very narrow (<360px) screens; consider icon-only below xs (page.tsx L162-178)
+- UI2-10 (P3): DashboardHeader Tier-1 actions div uses flex-wrap justify-end — on mobile may wrap to multiple rows when badges present; acceptable but causes header height jump (DashboardHeader.tsx L59)
+- UI2-11 (P3): FilterBar reset button only shows text "Reset" on sm+ — on mobile is icon-only; aria-label present so OK, but the trigger Button has nested Tooltip + Button which may cause nested interactive elements warning (FilterBar.tsx L370-386)
+- UI2-12 (P3): FlipMatrix sticky left-0 column header uses bg-background — sticky header row also bg-background/95 backdrop-blur, but sticky left column has no backdrop-blur; minor visual inconsistency (FlipMatrix.tsx L161, L180)
+- UI2-13 (P3): layout.tsx body lacks role/landmark wrapping — skip link target #main-content exists in page.tsx; OK. But html lang="id" good for Indonesian content; no other issues.
+
+Verified Pass:
+- Sticky footer: min-h-screen flex flex-col (page.tsx L140) + mt-auto (DashboardFooter.tsx L21) ✓
+- No position: fixed / absolute on footer that would break flow ✓
+- Header sticky top-0 z-40 ✓
+- Skip-to-content link (WCAG 2.4.1) ✓
+- All wide tables wrapped in overflow-auto container with min-w on Table ✓
+- main landmark with aria-label ✓
+- html lang attribute present ✓
+
+---
+Task ID: UI-REVIEW-1
+Agent: UI Layout Auditor
+Task: Audit UI layout + visual issues across all tabs
+
+Work Log:
+- Read 12 layout files (page.tsx, DashboardHeader/Footer, DashboardTab, RestoTab, PeerTab, ParetoTab, ItemTrendTab/index+FlipRanking+ItemPeerComparison+FlipMatrix, efficiency-score-card)
+- Cross-read ItemTrendTable.tsx + ItemTrendSearchBar.tsx to verify table overflow + search bar flex behavior
+- Checked padding consistency across Card / CardHeader / CardContent
+- Checked table overflow + horizontal scroll (all wide tables have overflow-auto wrapper + min-w)
+- Checked grid stacking on mobile (sm:grid-cols-1 redundant in places, min-w-0 inconsistently applied)
+- Checked Trend Item Tab deeply (chart→table→matrix→peer-comparison→flip-ranking vertical rhythm)
+- Checked empty/loading/error states (py-16 vs py-12 mismatch; blue tips box in amber tab)
+- Verified sticky footer + header; verified previous audit (UI2-XX) findings to avoid duplication
+
+Stage Summary:
+- Found 22 issues: P1=0, P2=13, P3=9
+- P2 (UI-01..UI-13): chart wrapper missing pb, inconsistent empty/loading py, text-[10px] in FlipMatrix (a11y), nested Card shadow mix, missing min-w-0 on grids, PeerTableRow truncate without max-w, mixed text-[10px]/text-[11px] in FlipDrillPanel, header badge size mismatch (h-5/h-7), FlipMatrix native <table> not UI <Table>, FlipSummaryCard clutter in CardHeader, space-y-1 too tight in trend tab, blue tips box in amber tab, peer-comparison grid missing sm: breakpoint
+- P3 (UI-14..UI-22): DashboardTab section wrap pattern inconsistent, redundant sm:grid-cols-1, duplicate flex in DashboardHeader, hardcoded ml-9 in FlipRanking summary, mixed badge variants in rankItems, FlipRanking footer bg matches stripe color, footer/header text size mismatch, ItemPeerComparison header vs body row height mismatch, TabsList shadow-md adds to busy shadow hierarchy

@@ -765,9 +765,10 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             </p>
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-3">
             {/* Chart section */}
-            <div className="px-4 pt-2">
+            {/* FIX (UI-01): added pb-3 so chart bottom doesn't touch table border-t */}
+            <div className="px-4 pt-2 pb-3">
               <ItemTrendLineChart
                 periods={chronological}
                 metric={metric}

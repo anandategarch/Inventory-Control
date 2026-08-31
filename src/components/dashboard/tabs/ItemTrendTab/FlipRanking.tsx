@@ -779,7 +779,8 @@ export const FlipRanking = memo(function FlipRanking() {
                                 }}
                                 aria-label={isExpanded ? 'Tutup drill-down' : 'Buka drill-down'}
                                 aria-expanded={isExpanded}
-                                className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-purple-100 dark:hover:bg-purple-950/40 text-purple-600 dark:text-purple-400 transition-colors"
+                                // FIX (UI2-08): h-8 w-8 (32px) — below 44px touch target but usable; was h-5 w-5 (20px) unusable on mobile
+                                className="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-purple-100 dark:hover:bg-purple-950/40 text-purple-600 dark:text-purple-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
                               >
                                 {isExpanded ? (
                                   <ChevronDown className="h-3.5 w-3.5" />

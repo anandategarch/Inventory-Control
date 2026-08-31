@@ -324,7 +324,8 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
           </>
         )}
       </p>
-      <div className="h-72">
+      {/* FIX (UI2-07): h-56 on mobile (224px — leaves room for table), h-72 on desktop */}
+      <div className="h-56 sm:h-72">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
