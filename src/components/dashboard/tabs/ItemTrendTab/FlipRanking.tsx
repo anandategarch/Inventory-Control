@@ -234,6 +234,40 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
     staleTime: 5 * 60 * 1000, // 5 min — matches API cache
   });
 
+  // FIX (USER-REQ): compute per-outlet flip analysis + sort by disparityPct ASC.
+  // Only outlets present in BOTH periods can flip. We compute flip per outlet:
+  //   isFlip = sign(P1) !== sign(P2) AND both non-zero
+  //   disparity = |P1 + P2| / MAX(|P1|, |P2|)   (0 = perfectly balanced)
+  // Then:
+  //   - Filter: only show outlets where isFlip === true (hide konsisten outlets)
+  //   - Sort: by disparityPct ASC (most balanced flip first — 0% at top)
+  // The SAME sorted outlet order is used for both P1 + P2 tables so rows align.
+  const { sortedOutletCodes, flipMap } = useMemo(() => {
+    if (!data) return { sortedOutletCodes: [] as string[], flipMap: new Map<string, { disparityPct: number; net: number }>() };
+    const p1Outlets = new Map(data.period1.outlets.map((o) => [o.outletCode, o]));
+    const p2Outlets = new Map(data.period2.outlets.map((o) => [o.outletCode, o]));
+    const flipEntries: Array<{ outletCode: string; disparityPct: number; net: number }> = [];
+    const fm = new Map<string, { disparityPct: number; net: number }>();
+    for (const [code, o1] of p1Outlets) {
+      const o2 = p2Outlets.get(code);
+      if (!o2) continue; // outlet only in P1 — can't flip
+      const v1 = o1.qtyDeviasiSigned;
+      const v2 = o2.qtyDeviasiSigned;
+      const sign1 = Math.sign(v1);
+      const sign2 = Math.sign(v2);
+      const isFlip = sign1 !== 0 && sign2 !== 0 && sign1 !== sign2;
+      if (!isFlip) continue; // USER-REQ: hide konsisten outlets
+      const net = v1 + v2;
+      const maxMag = Math.max(Math.abs(v1), Math.abs(v2));
+      const disparityPct = maxMag > 0 ? (Math.abs(net) / maxMag) * 100 : 0;
+      flipEntries.push({ outletCode: code, disparityPct, net });
+      fm.set(code, { disparityPct, net });
+    }
+    // Sort ASC by disparityPct (0% = most balanced at top)
+    flipEntries.sort((a, b) => a.disparityPct - b.disparityPct);
+    return { sortedOutletCodes: flipEntries.map((e) => e.outletCode), flipMap: fm };
+  }, [data]);
+
   // Category display name for the subline (e.g. "Dominan").
   const categoryDisplay = flip.category.charAt(0).toUpperCase() + flip.category.slice(1);
   const cb = categoryBadge(flip.category);
@@ -291,18 +325,49 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
         <div className="text-center text-red-600 dark:text-red-400 text-xs py-4">
           Gagal memuat drill-down: {error.message}
         </div>
-      ) : !data ? null : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <FlipDrillPeriodTable
-            label="Period 1"
-            period={data.period1}
-            weekLabel={flip.weekLabel}
-          />
-          <FlipDrillPeriodTable
-            label="Period 2"
-            period={data.period2}
-            weekLabel={flip.weekLabel}
-          />
+      ) : !data ? null : sortedOutletCodes.length === 0 ? (
+        // USER-REQ: only show flip outlets. If no outlet flipped between P1 + P2,
+        // show empty state (no konsisten outlets displayed).
+        <div className="text-center text-muted-foreground text-xs py-4">
+          <Shuffle className="h-5 w-5 text-muted-foreground/40 mx-auto mb-1.5" />
+          Tidak ada outlet yang flip antara {flip.period1Label} → {flip.period2Label}.
+          <p className="text-[10px] text-muted-foreground/70 mt-1">
+            Semua outlet konsisten arah (tidak flip) atau hanya muncul di 1 periode.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Sort info banner — shows the sort criteria */}
+          <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 px-1">
+            <span aria-hidden>🔀</span>
+            <span>
+              Diurutkan by <span className="font-medium text-foreground">Flip Disparity %</span> ascending
+              (terkecil = paling balanced di atas).
+              {' '}
+              <span className="text-purple-600 dark:text-purple-400 font-medium tabular-nums">
+                {sortedOutletCodes.length} outlet flip
+              </span>{' '}
+              dari total{' '}
+              <span className="tabular-nums">{data.period1.outlets.length}</span> outlet P1 /{' '}
+              <span className="tabular-nums">{data.period2.outlets.length}</span> outlet P2.
+            </span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <FlipDrillPeriodTable
+              label="Period 1"
+              period={data.period1}
+              weekLabel={flip.weekLabel}
+              sortedOutletCodes={sortedOutletCodes}
+              flipMap={flipMap}
+            />
+            <FlipDrillPeriodTable
+              label="Period 2"
+              period={data.period2}
+              weekLabel={flip.weekLabel}
+              sortedOutletCodes={sortedOutletCodes}
+              flipMap={flipMap}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -317,9 +382,29 @@ interface FlipDrillPeriodTableProps {
   label: string;
   period: FlipDrillPeriod;
   weekLabel: string;
+  /** FIX (USER-REQ): ordered list of outlet codes that FLIPPED (isFlip=true).
+   *  Sorted by flip disparityPct ASC (most balanced at top).
+   *  The table filters outlets to ONLY these codes + renders in this order.
+   *  Konsisten outlets (no flip) are hidden. */
+  sortedOutletCodes: string[];
+  /** Per-outlet flip disparity (0-100) + net — keyed by outletCode.
+   *  Used to render the "Flip %" badge column. */
+  flipMap: Map<string, { disparityPct: number; net: number }>;
 }
 
-function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTableProps) {
+function FlipDrillPeriodTable({ label, period, weekLabel, sortedOutletCodes, flipMap }: FlipDrillPeriodTableProps) {
+  // Build a lookup map for fast access, then iterate sortedOutletCodes
+  // (flip-only, ASC by disparity) to render rows in the SAME order for both tables.
+  const outletMap = useMemo(() => new Map(period.outlets.map((o) => [o.outletCode, o])), [period.outlets]);
+  const visibleOutlets = useMemo(
+    () => sortedOutletCodes.map((code) => outletMap.get(code)).filter((o): o is FlipDrillOutlet => o != null),
+    [sortedOutletCodes, outletMap],
+  );
+
+  // FIX (USER-REQ): totals are computed from ALL outlets in this period (including
+  // konsisten), not just flip outlets — so the total reflects the actual period
+  // aggregate. The visible rows are flip-only, but the total header shows the
+  // true period total.
   const totalQty = period.outlets.reduce((s, o) => s + o.qtyDeviasiSigned, 0);
   const totalNominal = period.outlets.reduce((s, o) => s + o.nominalDeviasi, 0);
 
@@ -332,7 +417,7 @@ function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTable
           <span className="text-muted-foreground tabular-nums">{weekLabel}</span>
         </span>
         <span className="text-[10px] text-muted-foreground tabular-nums">
-          ({period.outlets.length} outlet berkontribusi)
+          ({visibleOutlets.length} outlet flip / {period.outlets.length} total)
         </span>
       </div>
       <div className="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-purple-200/40 dark:border-purple-900/30 flex items-center gap-3 flex-wrap tabular-nums">
@@ -349,13 +434,13 @@ function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTable
           </span>
         </span>
       </div>
-      {period.outlets.length === 0 ? (
+      {visibleOutlets.length === 0 ? (
         <div className="text-center text-muted-foreground text-xs py-4 px-3">
-          Tidak ada outlet dengan deviasi untuk periode ini.
+          Tidak ada outlet yang flip untuk periode ini.
         </div>
       ) : (
         <div className="max-h-[280px] overflow-auto">
-          <Table className="min-w-[480px]">
+          <Table className="min-w-[560px]">
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
                 <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-8">Outlet</TableHead>
@@ -364,12 +449,22 @@ function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTable
                 <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">QTY Dev</TableHead>
                 <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">Nominal</TableHead>
                 <TableHead className="text-center text-[10px] font-semibold uppercase tracking-wider h-8">Dir</TableHead>
+                {/* FIX (USER-REQ): new column — Flip Disparity % (shared across both tables) */}
+                <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-8">🔀 Flip %</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {period.outlets.map((o, i) => {
+              {visibleOutlets.map((o, i) => {
                 const isLoss = o.qtyDeviasiSigned < 0;
                 const isSurplus = o.qtyDeviasiSigned > 0;
+                // FIX (USER-REQ): look up flip disparity for this outlet.
+                const flipInfo = flipMap.get(o.outletCode);
+                const flipPct = flipInfo?.disparityPct ?? null;
+                // Color the Flip % badge: <10% = emerald (sempurna), <40% = amber, >=40% = red.
+                const flipBadgeClass = flipPct == null ? '' :
+                  flipPct < 10 ? 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:bg-emerald-950/60 dark:border-emerald-800 dark:text-emerald-400' :
+                  flipPct < 40 ? 'text-amber-700 bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-800 dark:text-amber-400' :
+                  'text-red-700 bg-red-100 border-red-300 dark:bg-red-950/60 dark:border-red-800 dark:text-red-400';
                 return (
                   <TableRow
                     key={`${o.outletCode}-${i}`}
@@ -403,6 +498,17 @@ function FlipDrillPeriodTable({ label, period, weekLabel }: FlipDrillPeriodTable
                       <Badge variant="outline" className={`text-[9px] h-4 px-1 font-medium ${directionBadgeClass(o.direction)}`}>
                         {o.direction}
                       </Badge>
+                    </TableCell>
+                    {/* FIX (USER-REQ): Flip % column — disparity of this outlet's P1 vs P2.
+                        Same value in both P1 + P2 tables (shared flip analysis). */}
+                    <TableCell className="text-right py-1.5">
+                      {flipPct != null ? (
+                        <Badge variant="outline" className={`text-[9px] h-4 px-1 font-medium tabular-nums ${flipBadgeClass}`}>
+                          {flipPct.toFixed(1)}%
+                        </Badge>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
