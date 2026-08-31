@@ -2,26 +2,23 @@
 //  RestoAnalysis — shared UI helpers + tiny presentational
 //  components (Row, SummaryCard)
 //  (split from RestoAnalysis.tsx — Phase 3)
+//
+//  FIX (BATCH1): fmtGrowth + growthColor moved to @/lib/format —
+//  re-exported here so existing imports from './helpers' still work.
 // ============================================================
 
 import { memo } from 'react';
-import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, fmtGrowth, growthColor } from '@/lib/format';
 
 // ------------------------------------------------------------
-//  Formatting helpers
+//  Formatting helpers (re-export from @/lib/format for backward compat)
 // ------------------------------------------------------------
 
-export function fmtGrowth(v: number | null | undefined): string {
-  if (v == null) return '—';
-  const pct = (v * 100).toFixed(1);
-  return v > 0 ? `+${pct}%` : `${pct}%`;
-}
-
-export function growthColor(v: number | null | undefined, inverse = false): string {
-  if (v == null) return 'text-muted-foreground';
-  if (inverse) return v > 0 ? 'text-red-600 dark:text-red-400' : v < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
-  return v > 0 ? 'text-emerald-600 dark:text-emerald-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground';
-}
+// FIX (BATCH1): fmtGrowth + growthColor moved to @/lib/format.
+// Imported above (used by the Row component below) + re-exported here so
+// existing './helpers' imports (RestoAnalysis.tsx, item-detail-modal.tsx)
+// keep working without churn.
+export { fmtGrowth, growthColor } from '@/lib/format';
 
 // FIX M-L (AUDIT-3): P2/P3 badge colors failed WCAG AA (amber-600/emerald-600 on
 // 100 bg ≈ 3.5:1, need 4.5:1 for 12px text). Use 700 variants for contrast.

@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/table';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData, BomCorrelationFinding, BomCorrelationCounts } from '@/hooks/useAnalysis';
-import { fmtNum, fmtPct } from '@/lib/format';
+import { fmtNum, fmtPct, growthColorClass } from '@/lib/format';
 import { GitCompare, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 // ============================================================
@@ -69,12 +69,8 @@ function severityBadgeClass(severity: string): string {
   return 'border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:bg-amber-950/30';
 }
 
-function growthColorClass(growth: number | null): string {
-  if (growth == null || growth === 0) return 'text-muted-foreground';
-  return growth > 0
-    ? 'text-red-600 dark:text-red-400'
-    : 'text-emerald-600 dark:text-emerald-400';
-}
+// FIX (BATCH1): growthColorClass moved to @/lib/format — imported above.
+// Removed local duplicate definition (~6 lines).
 
 function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
   const s = data.executiveSummary;

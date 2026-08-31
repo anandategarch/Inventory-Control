@@ -31,6 +31,7 @@ import { memo, useMemo } from 'react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { ItemTrendPeriod } from '@/hooks/useAnalysis';
+import { fmtFullSigned } from '@/lib/format';
 import {
   getFlipsForPeriod,
   periodKey as flipPeriodKey,
@@ -49,15 +50,8 @@ export interface FlipMatrixProps {
   satuan?: string | null;
 }
 
-// Compact QTY formatter — "+10K" / "-1.2M" / "+42".
-// FIX (USER-REQ): full signed number with thousand separators — no abbreviation.
-// Used in cell content + flip tooltips to show complete QTY (e.g. +10,000 instead of +10K).
-// FIX (BUG2-FLIP-01): removed dead fmtCompactSigned (was unused after full-QTY fix).
-function fmtFullSigned(n: number): string {
-  if (n === 0) return '0';
-  const sign = n < 0 ? '-' : '+';
-  return `${sign}${Math.abs(n).toLocaleString('id-ID', { maximumFractionDigits: 1 })}`;
-}
+// FIX (BATCH1): fmtFullSigned moved to @/lib/format — imported above.
+// Removed local duplicate definition (~5 lines).
 
 // Numerical week from "WEEK N" label — used to sort rows W1 → W4 (ascending).
 function weekNum(weekLabel: string): number {

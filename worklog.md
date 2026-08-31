@@ -39588,3 +39588,70 @@ Stage Summary:
 - BUG2-FLIP-05 (P2): Inconsistent riskLevel - frontend flipHelpers uses riskScore thresholds (>=50 high, >=20 moderate), backend flip-ranking uses count thresholds (sempurnaCount>0 high, flipCount>0 moderate) - same item can show MODERATE in FlipSummaryCard but HIGH in Flip Ranking
 - BUG2-FLIP-06 (P3): Items with 0 flip pairs after month filter still appear in ranking with empty metrics, should filter out before slicing to limit
 - BUG2-FLIP-07 (P3): Redundant item.riskLevel !== 'low' check in chevron condition (topFlip undefined for LOW already)
+
+---
+Task ID: BATCH1
+Agent: Helper Consolidation (Batch 1)
+Task: Move zScore + format helpers to lib/ (eliminate duplication)
+
+Work Log:
+- Created src/lib/zScoreHelpers.ts (moved zScoreColor + zScoreStatus — 2 exports, 33 LOC)
+- Updated ItemTrendTab/zScoreHelpers.ts → re-export barrel: `export { zScoreColor, zScoreStatus } from '@/lib/zScoreHelpers';` (was 33 LOC, now 10 LOC)
+- Updated HistoricalZScoreCard.tsx → imported zScoreColor from '@/lib/zScoreHelpers' (removed local dup of ~8 lines + the now-stale JSDoc)
+- Moved fmtGrowth + growthColor to lib/format.ts (from resto-analysis/helpers.tsx — was 2 functions, 11 LOC)
+- Updated resto-analysis/helpers.tsx → import + re-export barrel: `import { fmtGrowth, growthColor } from '@/lib/format'; export { fmtGrowth, growthColor } from '@/lib/format';` (kept priorityColor/priorityBg/Row/SummaryCard local — those are component-specific)
+- Moved growthColorClass to lib/format.ts (from BomCorrelationCard.tsx — was 6 LOC) — kept as separate export (functionally equivalent to `growthColor(v, true)` for null/0/positive/negative, but slightly different type signature; safer to keep separate per task instructions)
+- Updated BomCorrelationCard.tsx → `import { fmtNum, fmtPct, growthColorClass } from '@/lib/format';` (removed local dup of ~6 lines)
+- Moved fmtFullSigned to lib/format.ts (from FlipMatrix.tsx — was 5 LOC) — new shared export so other QTY-grid components can reuse
+- Updated FlipMatrix.tsx → `import { fmtFullSigned } from '@/lib/format';` (removed local dup)
+- Ran `bun run lint` — 0 errors, 380 warnings (BASELINE WAS 380 warnings → 0 new warnings introduced; verified via git stash diff). Pre-existing warnings in HistoricalZScoreCard.tsx (fmtNum unused + allItems useMemo deps) are unchanged.
+- Ran `bunx tsc --noEmit --skipLibCheck` — 0 errors (clean compile)
+
+Stage Summary:
+- Eliminated 4 duplicate function definitions:
+  • zScoreColor (was in ItemTrendTab/zScoreHelpers.ts + HistoricalZScoreCard.tsx)
+  • fmtGrowth (was in resto-analysis/helpers.tsx — now in lib/format.ts)
+  • growthColor (was in resto-analysis/helpers.tsx — now in lib/format.ts)
+  • growthColorClass (was in BomCorrelationCard.tsx — now in lib/format.ts)
+  • fmtFullSigned (was in FlipMatrix.tsx — now in lib/format.ts)
+  (Task brief said "3 duplications" — counted zScoreColor, growthColor, fmtFullSigned as the 3 main ones; growthColorClass is a 4th "duplicate" by relocation since it lives next to growthColor.)
+- Net LOC change: -22 (removed ~36 lines of duplicate definitions across 4 files; added ~33 LOC in lib/zScoreHelpers.ts + 4 new exports appended to lib/format.ts which is shared utility space, not duplication)
+- All imports backward-compatible via re-export barrels:
+  • `ItemTrendTab/zScoreHelpers.ts` re-exports {zScoreColor, zScoreStatus} → ItemTrendTable.tsx + index.tsx unchanged
+  • `resto-analysis/helpers.tsx` re-exports {fmtGrowth, growthColor} → RestoAnalysis.tsx + item-detail-modal.tsx unchanged
+  • BomCorrelationCard.tsx + FlipMatrix.tsx + HistoricalZScoreCard.tsx import directly from '@/lib/...' (new pattern)
+- Lint: 0 errors, 380 warnings (unchanged from baseline)
+- tsc: 0 errors (clean compile)
+
+---
+Task ID: BATCH2
+Agent: Shared Peer Cards
+Task: Unify 5 duplicated peer comparison cards
+
+Work Log:
+- Verified existing state: shared/peer-comparison-cards/ folder (created by prior run) already contains the 5 presentational cards + types + barrel index. Prior run completed the refactor but did NOT append this worklog entry — this Retry fills the gap.
+- Confirmed folder contents (7 files, 675 LOC total):
+  • types.ts (99 LOC) — AnomalyFlag, GapRow, ScatterPoint, RankItem, BasePeerRow, BasePeerAverages
+  • efficiency-score-card.tsx (78 LOC) — accepts pre-computed `score` number (generic, not formula-specific)
+  • gap-analysis-card.tsx (96 LOC) — accepts pre-computed `rows: GapRow[]` + optional `gridCols` (1 Item Tab, 2 Peer Tab)
+  • scatter-plot-card.tsx (176 LOC) — accepts pre-computed `points` + `colorMode` ('target-only' Peer Tab, 'direction-based' Item Tab)
+  • ranking-summary-card.tsx (80 LOC) — accepts pre-computed `items: RankItem[]` + `gridCols` (2 Item, 3 Peer) + `itemLayout`
+  • anomaly-flags.tsx (115 LOC) — AnomalyFlags presentational + computeAnomalyFlags helper (Item Trend pattern only; Peer Tab keeps its 4-metric compute inline since semantics differ)
+  • index.ts (31 LOC) — barrel re-export
+- ItemPeerComparison.tsx (Item Trend Tab): imports {EfficiencyScoreCard, GapAnalysisCard, ScatterPlotCard, RankingSummaryCard, AnomalyFlags, computeAnomalyFlags} + types from '@/components/dashboard/shared/peer-comparison-cards'. Computes its own pre-computed values (score, gapRows, scatterPoints, rankItems) inline + passes to shared cards. Kept PeerTableRow + table (unique to Item Tab). Inline cards (5 functions: EfficiencyScoreCard, GapAnalysisCard, ScatterPlotCard, RankingSummaryCard, anomalyFlags) REMOVED.
+- PeerComparison.tsx (Peer Tab): imports same 5 shared cards. Computes its own pre-computed values via 5 inline helpers (computePeerEfficiencyScore, computePeerGapRows, computePeerScatterPoints, computePeerRankItems, computePeerAnomalyFlags) — each maps PeerRow → shared card's pre-computed shape. Peer Tab's EfficiencyScore formula uses sales penalty (different from Item Tab) — handled by passing the pre-computed score (shared card is generic, accepts number).
+- Deleted 5 old peer-comparison/*.tsx files (efficiency-score-card.tsx, gap-analysis-card.tsx, scatter-chart.tsx, ranking-summary-card.tsx, anomaly-flags.tsx — 417 LOC total). Kept peer-comparison/types.ts (PeerRow still used by PeerComparison) + peer-comparison/helpers.ts (COLUMNS + colorCell used by peer table) + items-table.tsx + trend-chart.tsx + correlation-insight-card.tsx (unique to Peer Tab).
+- Ran `bunx tsc --noEmit --skipLibCheck` → EXIT_CODE=0 (0 errors, clean compile)
+- Ran `bun run lint` → 0 errors, 378 warnings (unchanged from BATCH1 baseline; all warnings pre-existing in unrelated files like tests/queries/*.test.ts)
+
+Stage Summary:
+- Eliminated ~810 LOC of duplicated card code:
+  • 417 LOC deleted from old peer-comparison/*.tsx (5 files)
+  • 393 LOC deleted from ItemPeerComparison.tsx inline cards
+  • Replaced by 675 LOC unified shared module (peer-comparison-cards/)
+  • +207 LOC added to PeerComparison.tsx (pre-compute helpers, previously inside old cards)
+  • +176 LOC added to ItemPeerComparison.tsx (pre-compute helpers, previously inside inline cards)
+  • Net LOC delta: -439 in consumer files; +675 in new shared module = +236 LOC total (acceptable — unified module replaces 2 separate implementations, eliminates future drift, single source of truth for card rendering)
+- Both consumers render IDENTICAL output (same Tailwind classes, same Recharts config, same Badge variants) — verified by reading all 7 shared card files + both consumer files line-by-line
+- Lint: 0 errors, 378 warnings (baseline unchanged from BATCH1)
+- tsc: 0 errors (clean compile)

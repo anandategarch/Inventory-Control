@@ -8,21 +8,15 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import { zScoreColor } from '@/lib/zScoreHelpers';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
 
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
 type SortDir = 'asc' | 'desc';
 
-// SIGNED Z-Score coloring: positive = worse (red), negative = better (green)
-function zScoreColor(z: number): string {
-  if (z > 3) return 'text-red-600 dark:text-red-400 font-bold';
-  if (z > 2) return 'text-amber-600 dark:text-amber-400 font-semibold';
-  if (z > 1) return 'text-yellow-600 dark:text-yellow-400';
-  if (z < -2) return 'text-emerald-600 dark:text-emerald-400 font-medium';
-  if (z < -1) return 'text-emerald-500 dark:text-emerald-500';
-  return 'text-muted-foreground';
-}
+// FIX (BATCH1): zScoreColor moved to @/lib/zScoreHelpers (shared with
+// ItemTrendTable). Removed local duplicate — import above.
 
 // Badge only for POSITIVE zScore (worse than historical). Negative = NORMAL (better).
 function zScoreBadge(z: number): { label: string; variant: 'destructive' | 'default' | 'secondary' | 'outline' } {

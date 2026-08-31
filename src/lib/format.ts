@@ -127,3 +127,68 @@ export function priorityColor(p: string): string {
     default: return 'text-muted-foreground bg-muted/50 border-border';
   }
 }
+
+// ============================================================
+//  Growth helpers — moved from resto-analysis/helpers.tsx + BomCorrelationCard
+//  FIX (BATCH1): consolidated into lib/format.ts so all growth coloring +
+//  formatting lives in ONE place (eliminates 2 duplicate definitions).
+// ============================================================
+
+/**
+ * Format a growth ratio (e.g. 0.123 → "+12,3%" / -0.05 → "-5,0%").
+ * Returns '—' for null/undefined. Uses Indonesian decimal comma.
+ *
+ * FIX (BATCH1): moved from src/components/dashboard/resto-analysis/helpers.tsx
+ * (was duplicated visually-equivalent copy in BomCorrelationCard for growth
+ * display — now both share this single source).
+ */
+export function fmtGrowth(v: number | null | undefined): string {
+  if (v == null) return '—';
+  const pct = (v * 100).toFixed(1);
+  return v > 0 ? `+${pct}%` : `${pct}%`;
+}
+
+/**
+ * Tailwind color class for a growth value.
+ * - Positive → emerald (or red if `inverse=true`).
+ * - Negative → red (or emerald if `inverse=true`).
+ * - Null/undefined/zero → muted-foreground.
+ *
+ * FIX (BATCH1): moved from src/components/dashboard/resto-analysis/helpers.tsx.
+ */
+export function growthColor(v: number | null | undefined, inverse = false): string {
+  if (v == null) return 'text-muted-foreground';
+  if (inverse) return v > 0 ? 'text-red-600 dark:text-red-400' : v < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
+  return v > 0 ? 'text-emerald-600 dark:text-emerald-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground';
+}
+
+/**
+ * Inverse growth color class — for metrics where UP is BAD (e.g. deviasi, waste).
+ * Differs from `growthColor(v, true)` only by type signature (no undefined) +
+ * an explicit `=== 0` early return (functionally equivalent — both return
+ * muted for 0/null). Kept as a separate export so BomCorrelationCard can keep
+ * its current call sites (`growthColorClass(x)`) without semantic change.
+ *
+ * FIX (BATCH1): moved from src/components/dashboard/BomCorrelationCard.tsx
+ * (was a local duplicate of the inverse-mode coloring pattern).
+ */
+export function growthColorClass(growth: number | null): string {
+  if (growth == null || growth === 0) return 'text-muted-foreground';
+  return growth > 0
+    ? 'text-red-600 dark:text-red-400'
+    : 'text-emerald-600 dark:text-emerald-400';
+}
+
+// ============================================================
+//  fmtFullSigned — full signed integer with thousand separators
+//  FIX (BATCH1): moved from src/components/dashboard/tabs/ItemTrendTab/FlipMatrix.tsx
+//  so it can be reused by other QTY-grid components without copy-paste.
+//  Returns '0' for zero, otherwise '+N' or '-N' using id-ID locale
+//  (Indonesian thousand separators, up to 1 decimal).
+// ============================================================
+export function fmtFullSigned(n: number): string {
+  if (n === 0) return '0';
+  const sign = n < 0 ? '-' : '+';
+  return `${sign}${Math.abs(n).toLocaleString('id-ID', { maximumFractionDigits: 1 })}`;
+}
+

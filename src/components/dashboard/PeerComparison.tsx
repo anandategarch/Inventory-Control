@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Users, Loader2, BarChart3, RotateCcw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 
@@ -28,11 +28,14 @@ import type {
   PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
 } from './peer-comparison/types';
 import { COLUMNS, colorCell } from './peer-comparison/helpers';
-import { EfficiencyScoreCard } from './peer-comparison/efficiency-score-card';
-import { GapAnalysisCard } from './peer-comparison/gap-analysis-card';
-import { RankingSummaryCard } from './peer-comparison/ranking-summary-card';
-import { ScatterPlotCard } from './peer-comparison/scatter-chart';
-import { AnomalyFlags } from './peer-comparison/anomaly-flags';
+import {
+  EfficiencyScoreCard,
+  GapAnalysisCard,
+  ScatterPlotCard,
+  RankingSummaryCard,
+  AnomalyFlags,
+} from '@/components/dashboard/shared/peer-comparison-cards';
+import type { GapRow, RankItem, ScatterPoint, AnomalyFlag } from '@/components/dashboard/shared/peer-comparison-cards';
 import { ItemLevelComparison } from './peer-comparison/items-table';
 import { TrendChartCard } from './peer-comparison/trend-chart';
 import { CorrelationInsightCard } from './peer-comparison/correlation-insight-card';
@@ -41,6 +44,141 @@ import { CorrelationInsightCard } from './peer-comparison/correlation-insight-ca
 export type {
   PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
 };
+
+// ------------------------------------------------------------
+//  Pre-compute helpers — Peer Tab-specific card value computation.
+//  Each caller (Peer Tab + Item Trend Tab) computes its own values
+//  from its own row type, then passes them to the shared
+//  presentational cards (see shared/peer-comparison-cards).
+// ------------------------------------------------------------
+
+/** Peer Tab efficiency score — composite 0-100 based on target vs peer avg.
+ *  Penalty: devBom (50pts) + totalLoss (25pts) + residualQty (15pts) + sales (10pts). */
+function computePeerEfficiencyScore(target: PeerRow, peerAvg: PeerAverages): number {
+  const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+  const avg = (k: string) => peerAvg[k] as number;
+  const devBomPenalty = Math.min(50, safeDiv(target.devBom - avg('devBom'), avg('devBom')) * 25);
+  const lossPenalty = Math.min(25, safeDiv(target.totalLoss - avg('totalLoss'), avg('totalLoss')) * 12.5);
+  const residualPenalty = Math.min(15, safeDiv(target.residualQty - avg('residualQty'), avg('residualQty')) * 7.5);
+  const salesPenalty = Math.min(10, Math.max(0, safeDiv(avg('sales') - target.sales, avg('sales')) * 10));
+  const raw = 100 - (devBomPenalty + lossPenalty + residualPenalty + salesPenalty);
+  return Math.max(0, Math.min(100, raw));
+}
+
+/** Peer Tab gap rows — Dev/BOM, Total LOSS, Residual, Sales.
+ *  Best = min for bad metrics, max for Sales. */
+function computePeerGapRows(target: PeerRow, peers: PeerRow[]): GapRow[] {
+  const gapMetrics: Array<{ key: keyof PeerRow; label: string; format: (v: number) => string; higherBetter: boolean }> = [
+    { key: 'devBom',      label: 'Dev/BOM',     format: (v) => fmtPctAbs(v), higherBetter: false },
+    { key: 'totalLoss',   label: 'Total LOSS',  format: fmtIDR,              higherBetter: false },
+    { key: 'residualQty', label: 'Residual',    format: fmtNum,              higherBetter: false },
+    { key: 'sales',       label: 'Sales',       format: fmtIDR,              higherBetter: true  },
+  ];
+  return gapMetrics.map(m => {
+    const targetVal = target[m.key] as number;
+    const values = peers.map(p => p[m.key] as number);
+    const bestVal = m.higherBetter ? Math.max(...values) : Math.min(...values);
+    const gap = targetVal - bestVal;
+    const pctAboveBest = bestVal !== 0 ? (gap / Math.abs(bestVal)) * 100 : 0;
+    return {
+      label: m.label,
+      targetVal,
+      bestVal,
+      pctAboveBest,
+      format: m.format,
+      higherBetter: m.higherBetter,
+    };
+  });
+}
+
+/** Peer Tab scatter points — X=sales, Y=devBom*100. */
+function computePeerScatterPoints(peers: PeerRow[], targetCode?: string): ScatterPoint[] {
+  return peers.map(p => ({
+    x: p.sales,
+    y: p.devBom * 100, // convert ratio → %
+    label: p.outletName,
+    isTarget: p.outletCode === targetCode,
+    tooltipLines: [
+      { label: 'Sales', value: fmtIDR(p.sales) },
+      { label: 'Dev/BOM', value: `${(p.devBom * 100).toFixed(1)}%` },
+    ],
+  }));
+}
+
+/** Peer Tab ranking items — ranks for sales, devBom, totalLoss, residualQty,
+ *  nominalDeviasi, qtyWaste. Rank 1 = best, N = worst. */
+function computePeerRankItems(target: PeerRow, peers: PeerRow[]): { items: RankItem[]; total: number } {
+  const total = peers.length;
+  const keyMetrics: Array<{ key: keyof PeerRow; label: string; higherBetter: boolean }> = [
+    { key: 'sales',          label: 'Sales',          higherBetter: true  },
+    { key: 'devBom',         label: 'Dev/BOM',        higherBetter: false },
+    { key: 'totalLoss',      label: 'Total LOSS',     higherBetter: false },
+    { key: 'residualQty',    label: 'Residual',       higherBetter: false },
+    { key: 'nominalDeviasi', label: 'Nominal Deviasi', higherBetter: false },
+    { key: 'qtyWaste',       label: 'QTY Waste',      higherBetter: false },
+  ];
+  const rankColor = (rank: number, t: number) => {
+    if (rank === 1) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400';
+    if (rank === t) return 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400';
+    if (rank <= t / 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400';
+    return 'bg-muted text-muted-foreground';
+  };
+  const items: RankItem[] = keyMetrics.map(m => {
+    const sorted = [...peers].sort((a, b) => {
+      const av = a[m.key] as number;
+      const bv = b[m.key] as number;
+      // For higherBetter: highest = best = rank 1 → sort descending.
+      // For bad metrics (lower better): lowest = best = rank 1 → sort ascending.
+      return m.higherBetter ? bv - av : av - bv;
+    });
+    const rank = sorted.findIndex(p => p.outletCode === target.outletCode) + 1;
+    const best = rank === 1;
+    const worst = rank === total;
+    return {
+      label: m.label,
+      badgeContent: `#${rank}/${total}`,
+      badgeClass: rankColor(rank, total),
+      variant: 'secondary',
+      star: best,
+      warn: worst,
+    };
+  });
+  return { items, total };
+}
+
+/** Peer Tab anomaly flags per row — checks devBom, totalLoss, residualQty, sales.
+ *  Returns the pre-computed AnomalyFlag[] for the shared AnomalyFlags component. */
+function computePeerAnomalyFlags(row: PeerRow, peerAvg: PeerAverages): AnomalyFlag[] {
+  const flags: AnomalyFlag[] = [];
+  const avgVal = (k: keyof PeerRow) => peerAvg[k as string] as number;
+  const checkRatio = (targetVal: number, avg: number) => (avg > 0 ? targetVal / avg : 0);
+
+  if (checkRatio(row.devBom, avgVal('devBom')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'Dev/BOM tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.totalLoss, avgVal('totalLoss')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'LOSS tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.residualQty, avgVal('residualQty')) > 1.5) {
+    flags.push({ emoji: '🔴', text: 'Residual tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
+  }
+  if (checkRatio(row.sales, avgVal('sales')) < 0.8 && avgVal('sales') > 0) {
+    flags.push({ emoji: '🟡', text: 'Sales rendah', color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/30' });
+  }
+
+  const allNormal =
+    flags.length === 0 &&
+    Math.abs(row.devBom - avgVal('devBom')) <= avgVal('devBom') * 0.2 &&
+    Math.abs(row.totalLoss - avgVal('totalLoss')) <= avgVal('totalLoss') * 0.2 &&
+    Math.abs(row.residualQty - avgVal('residualQty')) <= avgVal('residualQty') * 0.2 &&
+    Math.abs(row.sales - avgVal('sales')) <= avgVal('sales') * 0.2;
+
+  if (allNormal) {
+    flags.push({ emoji: '🟢', text: 'Normal', color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30' });
+  }
+
+  return flags;
+}
 
 export function PeerComparison() {
   const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard(useShallow((s) => ({
@@ -168,6 +306,30 @@ export function PeerComparison() {
     };
   }, [otherPeers]);
 
+  // Pre-computed card values — memoized to preserve original performance
+  // characteristics (the old EfficiencyScoreCard memoized internally).
+  // Hooks are unconditional — safe to compute even when targetRow is null
+  // (the JSX guards against rendering with null target).
+  const efficiencyScore = useMemo(
+    () => targetRow ? computePeerEfficiencyScore(targetRow, peerAverages) : 0,
+    [targetRow, peerAverages],
+  );
+  const gapRows = useMemo(
+    () => targetRow ? computePeerGapRows(targetRow, otherPeers) : [],
+    [targetRow, otherPeers],
+  );
+  // scatterPoints + rankData use `peers` directly (the JSX guards the render
+  // with `otherPeers.length > 0`, so we don't need to gate inside useMemo —
+  // when peers is empty, the result is just an empty array / null).
+  const scatterPoints = useMemo(
+    () => computePeerScatterPoints(peers, targetRow?.outletCode),
+    [peers, targetRow],
+  );
+  const rankData = useMemo(
+    () => targetRow ? computePeerRankItems(targetRow, peers) : null,
+    [targetRow, peers],
+  );
+
   if (!activeOutlet) {
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -216,16 +378,49 @@ export function PeerComparison() {
       {/* ============ 2-5. ANALYSIS CARDS (grid 2 cols on desktop) ============ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {targetRow && otherPeers.length > 0 && (
-          <EfficiencyScoreCard target={targetRow} peerAvg={peerAverages} />
+          <EfficiencyScoreCard
+            score={efficiencyScore}
+            footnote="Komposit dari Dev/BOM (50%), LOSS (25%), Residual (15%), Sales (10%). Higher = better."
+          />
         )}
         {targetRow && otherPeers.length > 0 && (
-          <GapAnalysisCard target={targetRow} peers={otherPeers} columns={columns} />
+          <GapAnalysisCard
+            rows={gapRows}
+            footerText='Untuk metrik "buruk" (Dev/BOM, LOSS, Residual), peer best = nilai terendah. Untuk Sales, peer best = nilai tertinggi.'
+            gridCols={2}
+          />
         )}
-        {targetRow && otherPeers.length > 0 && (
-          <RankingSummaryCard target={targetRow} peers={peers} columns={columns} />
+        {targetRow && otherPeers.length > 0 && rankData && (
+          <RankingSummaryCard
+            items={rankData.items}
+            subtitle={
+              <>
+                <span className="font-medium text-foreground">{targetRow.outletName}</span> ranked di antara{' '}
+                <span className="font-medium tabular-nums">{rankData.total}</span> resto (1 = terbaik,{' '}
+                <span className="tabular-nums">{rankData.total}</span> = terburuk).
+              </>
+            }
+            gridCols={3}
+            itemLayout="horizontal"
+          />
         )}
         {otherPeers.length > 0 && (
-          <ScatterPlotCard peers={peers} targetCode={targetRow?.outletCode} />
+          <ScatterPlotCard
+            points={scatterPoints}
+            title="Sales vs Dev/BOM"
+            subtitle="Setiap titik = 1 resto. Target ditandai merah. Posisi kanan-bawah = sales tinggi & deviasi rendah (ideal)."
+            height={280}
+            xLabel="Sales"
+            yLabel="Dev/BOM"
+            yUnit="%"
+            formatX={fmtIDR}
+            formatY={(v: number) => String(v)}
+            colorMode="target-only"
+            legend={[
+              { label: 'Target', color: 'bg-red-600' },
+              { label: 'Peer', color: 'bg-zinc-500' },
+            ]}
+          />
         )}
       </div>
 
@@ -332,7 +527,7 @@ export function PeerComparison() {
                         {p.direction?.[0] || '—'}
                       </TableCell>
                       <TableCell className="text-[11px] text-center">
-                        <AnomalyFlags row={p} peerAvg={peerAverages} />
+                        <AnomalyFlags flags={computePeerAnomalyFlags(p, peerAverages)} textSize="11px" />
                       </TableCell>
                     </TableRow>
                   ))}

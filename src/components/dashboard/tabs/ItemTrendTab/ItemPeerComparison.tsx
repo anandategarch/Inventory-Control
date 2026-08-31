@@ -31,12 +31,11 @@
 //    useQuery → /api/item-peer-comparison?item=&month=&week=&outletCode=&...
 //    Stale time: 5 min (matches server DB cache).
 //
-//  Patterns reused from peer-comparison/*:
-//    - EfficiencyScoreCard scoring formula (deviation-based penalty)
-//    - GapAnalysisCard layout (target vs best vs avg)
-//    - ScatterPlotCard dot rendering (Cell + per-point fill)
-//    - RankingSummaryCard rank computation
-//    - AnomalyFlags per-row badge composition
+//  Cards are SHARED with PeerComparison.tsx (Peer Tab) via
+//  @/components/dashboard/shared/peer-comparison-cards. Each
+//  caller computes its own pre-computed values (different
+//  formulas per consumer) and passes them to the presentational
+//  cards.
 // ============================================================
 
 import { memo, useMemo } from 'react';
@@ -46,12 +45,17 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
-  Tooltip as RTooltip, ResponsiveContainer, Cell,
-} from 'recharts';
-import { Gauge, Target, Sparkles, Award, Info, Loader2, AlertCircle, Store } from 'lucide-react';
+import { Target, Info, Loader2, AlertCircle, Store } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import {
+  EfficiencyScoreCard,
+  GapAnalysisCard,
+  ScatterPlotCard,
+  RankingSummaryCard,
+  AnomalyFlags,
+  computeAnomalyFlags,
+} from '@/components/dashboard/shared/peer-comparison-cards';
+import type { GapRow, RankItem, ScatterPoint } from '@/components/dashboard/shared/peer-comparison-cards';
 
 // ------------------------------------------------------------
 //  Types — defined LOCALLY (do NOT import from the backend API
@@ -131,17 +135,14 @@ export interface ItemPeerComparisonProps {
 }
 
 // ------------------------------------------------------------
-//  Small inline sub-components (kept in this file — not large
-//  enough to warrant a separate file, and ItemPeerComparison
-//  is the only consumer).
+//  Efficiency score — composite 0-100 based on target vs peer avg.
+//  Penalty: |devBom| above peer avg (50pts), |nominalDeviasi| above peer
+//  avg (50pts). Higher = better.
+//  FIX (BUG-2-03): use ABS values for comparison — devBom is SIGNED (neg=LOSS,
+//  pos=SURPLUS); comparing signed values would penalize SURPLUS targets (wrong
+//  direction — SURPLUS is good, not bad).
 // ------------------------------------------------------------
 
-/** Efficiency score — composite 0-100 based on target vs peer avg.
- *  Penalty: |devBom| above peer avg (50pts), |nominalDeviasi| above peer
- *  avg (50pts). Higher = better.
- *  FIX (BUG-2-03): use ABS values for comparison — devBom is SIGNED (neg=LOSS,
- *  pos=SURPLUS); comparing signed values would penalize SURPLUS targets (wrong
- *  direction — SURPLUS is good, not bad). */
 function computeEfficiencyScore(target: ItemPeerRow, peerAvg: ItemPeerAverages): number {
   const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
   // FIX (BUG-2-03): compare ABSOLUTE magnitudes, not signed values.
@@ -158,359 +159,16 @@ function computeEfficiencyScore(target: ItemPeerRow, peerAvg: ItemPeerAverages):
   return Math.max(0, Math.min(100, raw));
 }
 
-function EfficiencyScoreCard({ target, peerAvg }: { target: ItemPeerRow; peerAvg: ItemPeerAverages }) {
-  const score = useMemo(() => computeEfficiencyScore(target, peerAvg), [target, peerAvg]);
-  const color = score > 70 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-500' : 'bg-red-500';
-  const textColor = score > 70 ? 'text-emerald-600' : score >= 50 ? 'text-amber-600' : 'text-red-600';
-  const label = score > 70 ? 'Di atas peer average' : score >= 50 ? 'Sekitar peer average' : 'Di bawah peer average';
+// ------------------------------------------------------------
+//  Rank color helper (matches Peer Tab style + the worst!=1 guard
+//  for the Item Tab's small peer sets).
+// ------------------------------------------------------------
 
-  return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
-            <Gauge className="h-3.5 w-3.5" />
-          </span>
-          Efficiency Score
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        <div className="flex items-end justify-between">
-          <div>
-            <span className={`text-3xl font-bold tabular-nums ${textColor}`}>{score.toFixed(0)}</span>
-            <span className="text-sm text-muted-foreground ml-0.5">/100</span>
-          </div>
-          <div className="text-right text-xs">
-            <div className="text-muted-foreground tabular-nums">Peer Avg: 100/100 (baseline)</div>
-            <div className={`font-medium ${textColor}`}>{label}</div>
-          </div>
-        </div>
-        <div
-          className="relative h-3 w-full rounded-full bg-muted overflow-hidden"
-          role="progressbar"
-          aria-valuenow={score}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${score}%` }} />
-          <div className="absolute top-0 h-full w-0.5 bg-foreground/40" style={{ right: '0%' }} title="Peer avg baseline (100)" />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Komposit dari Dev/BOM (50%) + Nominal Deviasi (50%). Higher = better.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Gap Analysis — target vs peer avg vs peer BEST (lowest |nominalDeviasi|). */
-function GapAnalysisCard({ target, peers, peerAvg }: {
-  target: ItemPeerRow;
-  peers: ItemPeerRow[];
-  peerAvg: ItemPeerAverages;
-}) {
-  // Peer BEST = lowest absolute nominal deviation (closest to zero = best).
-  // FIX (BUG-2-04): exclude target from peer BEST search — target is now
-  // included in peers[] (server-side change), but "peer best" should be
-  // the best NON-target outlet.
-  const nonTargetPeers = peers.filter(p => !p.isTarget);
-  const absValues = nonTargetPeers.map(p => p.absNominalDeviasi);
-  const bestAbsNominal = absValues.length > 0 ? Math.min(...absValues) : 0;
-  const bestPeer = nonTargetPeers.find(p => p.absNominalDeviasi === bestAbsNominal);
-
-  const rows: Array<{ label: string; targetVal: number; bestVal: number; avgVal: number; format: (_v: number) => string; higherBetter: boolean }> = [
-    {
-      label: 'Nominal Deviasi',
-      targetVal: target.absNominalDeviasi,
-      bestVal: bestAbsNominal,
-      avgVal: peerAvg.absNominalDeviasi,
-      format: fmtIDR,
-      higherBetter: false,
-    },
-    {
-      label: 'QTY Deviasi',
-      targetVal: Math.abs(target.qtyDeviasi),
-      bestVal: bestPeer ? Math.abs(bestPeer.qtyDeviasi) : 0,
-      avgVal: peerAvg.absQtyDeviasi,
-      format: fmtNum,
-      higherBetter: false,
-    },
-    {
-      label: 'Dev/BOM',
-      targetVal: target.devBom != null ? Math.abs(target.devBom) : 0,
-      bestVal: bestPeer && bestPeer.devBom != null ? Math.abs(bestPeer.devBom) : 0,
-      // FIX (BUG-2-04): use ABS peer avg — devBom is signed, but we compare
-      // magnitudes (all targetVal/bestVal are already ABS).
-      avgVal: Math.abs(peerAvg.devBom),
-      format: fmtPctAbs,
-      higherBetter: false,
-    },
-  ];
-
-  return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0">
-            <Target className="h-3.5 w-3.5" />
-          </span>
-          Gap Analysis (vs Peer Best)
-        </CardTitle>
-        <p className="text-[11px] text-muted-foreground ml-9">
-          Membandingkan target dengan peer TERBAIK (|nominal| terendah) + rata-rata.
-        </p>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-2">
-          {rows.map(r => {
-            const gap = r.targetVal - r.bestVal;
-            const isWorse = r.higherBetter ? gap < 0 : gap > 0;
-            return (
-              <div key={r.label} className="rounded-lg border bg-muted/20 p-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
-                  <Badge
-                    variant="outline"
-                    className={`text-[11px] h-4 font-medium ${
-                      isWorse
-                        ? 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30'
-                        : 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'
-                    }`}
-                  >
-                    {isWorse ? 'di bawah best' : 'di atas best'}
-                  </Badge>
-                </div>
-                <div className="mt-1 text-xs font-mono tabular-nums">
-                  <span className="font-semibold">{r.format(r.targetVal)}</span>
-                  <span className="text-muted-foreground"> vs best </span>
-                  <span className="text-emerald-600 dark:text-emerald-400">{r.format(r.bestVal)}</span>
-                  <span className="text-muted-foreground"> · avg </span>
-                  <span className="text-muted-foreground">{r.format(r.avgVal)}</span>
-                </div>
-                <div className={`text-[11px] font-semibold tabular-nums ${isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                  {gap >= 0 ? '+' : ''}{r.format(gap)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-interface ScatterPoint {
-  qtyBom: number;
-  absNominalDeviasi: number;
-  outletName: string;
-  outletCode: string;
-  direction: string;
-  isTarget: boolean;
-}
-
-/** Scatter Plot — X=qtyBom, Y=absNominalDeviasi. Dot color by direction.
- *  Target outlet highlighted (larger dot + amber ring). */
-function ScatterPlotCard({ peers, targetCode }: { peers: ItemPeerRow[]; targetCode?: string | null }) {
-  const data: ScatterPoint[] = peers.map(p => ({
-    qtyBom: p.qtyBom,
-    absNominalDeviasi: p.absNominalDeviasi,
-    outletName: p.outletName,
-    outletCode: p.outletCode,
-    direction: p.direction,
-    isTarget: p.outletCode === targetCode,
-  }));
-
-  return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-zinc-100 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300 shrink-0">
-            <Sparkles className="h-3.5 w-3.5" />
-          </span>
-          QTY BOM vs |Nominal Deviasi|
-        </CardTitle>
-        <p className="text-[11px] text-muted-foreground ml-9">
-          Setiap titik = 1 outlet. Target ditandai amber + ring. Merah = LOSS, hijau = SURPLUS.
-        </p>
-      </CardHeader>
-      <CardContent>
-        <div className="h-[200px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 16, bottom: 24, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
-              <XAxis
-                type="number"
-                dataKey="qtyBom"
-                name="QTY BOM"
-                tickFormatter={(v: number) => fmtNum(v)}
-                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
-                stroke="var(--border)"
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                type="number"
-                dataKey="absNominalDeviasi"
-                name="|Nominal|"
-                tickFormatter={(v: number) => fmtIDR(v)}
-                tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
-                stroke="var(--border)"
-                tickLine={false}
-                axisLine={false}
-                width={48}
-              />
-              <RTooltip
-                cursor={{ strokeDasharray: '3 3' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const d = payload[0].payload as ScatterPoint;
-                  return (
-                    <div className="rounded-lg border bg-popover p-2.5 text-[11px] shadow-lg">
-                      <div className="font-semibold border-b pb-1 mb-1">{d.outletName}</div>
-                      <div className="text-muted-foreground tabular-nums">QTY BOM: {fmtNum(d.qtyBom)}</div>
-                      <div className="text-muted-foreground tabular-nums">|Nominal|: {fmtIDR(d.absNominalDeviasi)}</div>
-                      <div className="text-muted-foreground">Direction: {d.direction}</div>
-                      {d.isTarget && <div className="text-amber-600 dark:text-amber-400 font-semibold mt-1">TARGET</div>}
-                    </div>
-                  );
-                }}
-              />
-              <Scatter data={data}>
-                {data.map((entry, i) => {
-                  // Direction-based fill: red = LOSS, green = SURPLUS, gray = NEUTRAL.
-                  // Target gets amber ring (handled by separate Scatter? Simpler: larger r + amber fill override).
-                  let fill = '#71717a'; // gray-500 (NEUTRAL)
-                  if (entry.direction === 'LOSS') fill = '#dc2626'; // red-600
-                  else if (entry.direction === 'SURPLUS') fill = '#10b981'; // emerald-500
-                  if (entry.isTarget) fill = '#f59e0b'; // amber-500 — target highlighted
-                  return (
-                    <Cell
-                      key={`cell-${i}`}
-                      fill={fill}
-                      stroke={entry.isTarget ? '#fbbf24' : 'var(--background)'}
-                      strokeWidth={entry.isTarget ? 2 : 1}
-                      r={entry.isTarget ? 7 : 4}
-                    />
-                  );
-                })}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground mt-2 flex-wrap">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Target
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> LOSS
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> SURPLUS
-          </span>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Ranking Summary — target's rank by |nominalDeviasi| among peers. */
-function RankingSummaryCard({ target, peers }: { target: ItemPeerRow; peers: ItemPeerRow[] }) {
-  const total = peers.length;
-  // Rank by |nominalDeviasi| ascending (lowest = best = rank 1).
-  const sorted = useMemo(
-    () => [...peers].sort((a, b) => a.absNominalDeviasi - b.absNominalDeviasi),
-    [peers],
-  );
-  const rank = sorted.findIndex(p => p.outletCode === target.outletCode) + 1;
-  const worst = rank === total && total > 1;
-  const best = rank === 1;
-  const percentile = total > 0 ? (rank / total) * 100 : 100;
-
-  const rankColor = (r: number, t: number) => {
-    if (r === 1) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400';
-    if (r === t && t > 1) return 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400';
-    if (r <= t / 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400';
-    return 'bg-muted text-muted-foreground';
-  };
-
-  return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 shrink-0">
-            <Award className="h-3.5 w-3.5" />
-          </span>
-          Ranking Summary
-        </CardTitle>
-        <p className="text-[11px] text-muted-foreground ml-9">
-          <span className="font-medium text-foreground">{target.outletName}</span> ranked di antara{' '}
-          <span className="font-medium tabular-nums">{total}</span> peer (by |nominal deviasi|).
-        </p>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="flex flex-col items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
-            <span className="text-[11px] text-muted-foreground">Rank |Nominal|</span>
-            <Badge className={`text-xs h-5 font-medium tabular-nums ${rankColor(rank, total)}`} variant="secondary">
-              #{rank}/{total}
-              {best && ' ★'}
-              {worst && ' ⚠'}
-            </Badge>
-          </div>
-          <div className="flex flex-col items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
-            <span className="text-[11px] text-muted-foreground">Percentile</span>
-            <Badge className="text-xs h-5 font-medium tabular-nums" variant="outline">
-              p{percentile.toFixed(0)}
-            </Badge>
-          </div>
-          <div className="flex flex-col items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
-            <span className="text-[11px] text-muted-foreground">LOSS outlets</span>
-            <Badge className="text-xs h-5 font-medium tabular-nums text-red-700 dark:text-red-400" variant="outline">
-              {peers.filter(p => p.direction === 'LOSS').length}
-            </Badge>
-          </div>
-          <div className="flex flex-col items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2">
-            <span className="text-[11px] text-muted-foreground">SURPLUS outlets</span>
-            <Badge className="text-xs h-5 font-medium tabular-nums text-emerald-700 dark:text-emerald-400" variant="outline">
-              {peers.filter(p => p.direction === 'SURPLUS').length}
-            </Badge>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Anomaly flag per row — 🔴 Dev/BOM tinggi / 🔴 LOSS tinggi / 🟢 Normal.
- *  Pattern reused from peer-comparison/anomaly-flags.tsx. */
-function anomalyFlags(row: ItemPeerRow, peerAvg: ItemPeerAverages): Array<{ emoji: string; text: string; color: string }> {
-  const flags: Array<{ emoji: string; text: string; color: string }> = [];
-  const checkRatio = (targetVal: number, avg: number) => (avg > 0 ? targetVal / avg : 0);
-
-  // FIX (BUG-2-05/06): use ABS(peerAvg.devBom) for threshold — devBom is
-  // SIGNED (neg=LOSS, pos=SURPLUS). Using signed peerAvg would suppress
-  // flags when peers are in LOSS (peerAvg < 0 → checkRatio returns 0).
-  const peerAbsDevBom = Math.abs(peerAvg.devBom);
-
-  // 🔴 Dev/BOM tinggi — abs dev/bom > 1.5× peer avg.
-  if (row.devBom != null && checkRatio(Math.abs(row.devBom), peerAbsDevBom) > 1.5) {
-    flags.push({ emoji: '🔴', text: 'Dev/BOM tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
-  }
-  // 🔴 LOSS tinggi — nominal < 0 AND abs > 1.5× peer avg.
-  if (row.nominalDeviasi < 0 && checkRatio(row.absNominalDeviasi, peerAvg.absNominalDeviasi) > 1.5) {
-    flags.push({ emoji: '🔴', text: 'LOSS tinggi', color: 'text-red-600 bg-red-50 dark:bg-red-950/30' });
-  }
-  // 🟢 Normal — no flags + within ±20% of peer avg on both metrics.
-  if (flags.length === 0) {
-    // FIX (BUG-2-05): use ABS(peerAvg.devBom) for the ±20% threshold.
-    const devBomNear = row.devBom == null || Math.abs(Math.abs(row.devBom) - peerAbsDevBom) <= peerAbsDevBom * 0.2;
-    const nominalNear = Math.abs(row.absNominalDeviasi - peerAvg.absNominalDeviasi) <= peerAvg.absNominalDeviasi * 0.2;
-    if (devBomNear && nominalNear) {
-      flags.push({ emoji: '🟢', text: 'Normal', color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30' });
-    }
-  }
-
-  return flags;
+function rankColor(r: number, t: number): string {
+  if (r === 1) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400';
+  if (r === t && t > 1) return 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400';
+  if (r <= t / 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400';
+  return 'bg-muted text-muted-foreground';
 }
 
 // ------------------------------------------------------------
@@ -611,6 +269,104 @@ function ItemPeerComparisonImpl({
   const peerAvg = data.peerAverages;
 
   // ----------------------------------------------------------
+  //  Pre-compute values for the 4 analysis cards
+  //  (each caller computes its own — Item Tab vs Peer Tab have
+  //  different metrics + formulas).
+  // ----------------------------------------------------------
+
+  // --- Efficiency Score ---
+  const score = computeEfficiencyScore(target, peerAvg);
+
+  // --- Gap Analysis rows ---
+  // Peer BEST = lowest absolute nominal deviation (closest to zero = best).
+  // FIX (BUG-2-04): exclude target from peer BEST search — target is now
+  // included in peers[] (server-side change), but "peer best" should be
+  // the best NON-target outlet.
+  const nonTargetPeers = peers.filter(p => !p.isTarget);
+  const absValues = nonTargetPeers.map(p => p.absNominalDeviasi);
+  const bestAbsNominal = absValues.length > 0 ? Math.min(...absValues) : 0;
+  const bestPeer = nonTargetPeers.find(p => p.absNominalDeviasi === bestAbsNominal);
+
+  const gapRows: GapRow[] = [
+    {
+      label: 'Nominal Deviasi',
+      targetVal: target.absNominalDeviasi,
+      bestVal: bestAbsNominal,
+      avgVal: peerAvg.absNominalDeviasi,
+      format: fmtIDR,
+      higherBetter: false,
+    },
+    {
+      label: 'QTY Deviasi',
+      targetVal: Math.abs(target.qtyDeviasi),
+      bestVal: bestPeer ? Math.abs(bestPeer.qtyDeviasi) : 0,
+      avgVal: peerAvg.absQtyDeviasi,
+      format: fmtNum,
+      higherBetter: false,
+    },
+    {
+      label: 'Dev/BOM',
+      targetVal: target.devBom != null ? Math.abs(target.devBom) : 0,
+      bestVal: bestPeer && bestPeer.devBom != null ? Math.abs(bestPeer.devBom) : 0,
+      // FIX (BUG-2-04): use ABS peer avg — devBom is signed, but we compare
+      // magnitudes (all targetVal/bestVal are already ABS).
+      avgVal: Math.abs(peerAvg.devBom),
+      format: fmtPctAbs,
+      higherBetter: false,
+    },
+  ];
+
+  // --- Scatter Plot points ---
+  const scatterPoints: ScatterPoint[] = peers.map(p => ({
+    x: p.qtyBom,
+    y: p.absNominalDeviasi,
+    label: p.outletName,
+    direction: p.direction,
+    isTarget: p.outletCode === target.outletCode,
+    tooltipLines: [
+      { label: 'QTY BOM', value: fmtNum(p.qtyBom) },
+      { label: '|Nominal|', value: fmtIDR(p.absNominalDeviasi) },
+    ],
+  }));
+
+  // --- Ranking Summary items ---
+  const total = peers.length;
+  // Rank by |nominalDeviasi| ascending (lowest = best = rank 1).
+  const sorted = [...peers].sort((a, b) => a.absNominalDeviasi - b.absNominalDeviasi);
+  const rank = sorted.findIndex(p => p.outletCode === target.outletCode) + 1;
+  const worst = rank === total && total > 1;
+  const best = rank === 1;
+  const percentile = total > 0 ? (rank / total) * 100 : 100;
+
+  const rankItems: RankItem[] = [
+    {
+      label: 'Rank |Nominal|',
+      badgeContent: `#${rank}/${total}`,
+      badgeClass: rankColor(rank, total),
+      variant: 'secondary',
+      star: best,
+      warn: worst,
+    },
+    {
+      label: 'Percentile',
+      badgeContent: `p${percentile.toFixed(0)}`,
+      variant: 'outline',
+    },
+    {
+      label: 'LOSS outlets',
+      badgeContent: String(peers.filter(p => p.direction === 'LOSS').length),
+      badgeClass: 'text-red-700 dark:text-red-400',
+      variant: 'outline',
+    },
+    {
+      label: 'SURPLUS outlets',
+      badgeContent: String(peers.filter(p => p.direction === 'SURPLUS').length),
+      badgeClass: 'text-emerald-700 dark:text-emerald-400',
+      variant: 'outline',
+    },
+  ];
+
+  // ----------------------------------------------------------
   //  Render
   // ----------------------------------------------------------
 
@@ -644,10 +400,42 @@ function ItemPeerComparisonImpl({
       <CardContent className="space-y-3">
         {/* 4 analysis cards — 2x2 grid on desktop */}
         <div className="grid gap-3 md:grid-cols-2">
-          <EfficiencyScoreCard target={target} peerAvg={peerAvg} />
-          <GapAnalysisCard target={target} peers={peers} peerAvg={peerAvg} />
-          <ScatterPlotCard peers={peers} targetCode={target.outletCode} />
-          <RankingSummaryCard target={target} peers={peers} />
+          <EfficiencyScoreCard
+            score={score}
+            footnote="Komposit dari Dev/BOM (50%) + Nominal Deviasi (50%). Higher = better."
+          />
+          <GapAnalysisCard
+            rows={gapRows}
+            subtitle="Membandingkan target dengan peer TERBAIK (|nominal| terendah) + rata-rata."
+            gridCols={1}
+          />
+          <ScatterPlotCard
+            points={scatterPoints}
+            title="QTY BOM vs |Nominal Deviasi|"
+            subtitle="Setiap titik = 1 outlet. Target ditandai amber + ring. Merah = LOSS, hijau = SURPLUS."
+            height={200}
+            xLabel="QTY BOM"
+            yLabel="|Nominal|"
+            formatX={fmtNum}
+            formatY={fmtIDR}
+            colorMode="direction-based"
+            legend={[
+              { label: 'Target', color: 'bg-amber-500' },
+              { label: 'LOSS', color: 'bg-red-600' },
+              { label: 'SURPLUS', color: 'bg-emerald-500' },
+            ]}
+          />
+          <RankingSummaryCard
+            items={rankItems}
+            subtitle={
+              <>
+                <span className="font-medium text-foreground">{target.outletName}</span> ranked di antara{' '}
+                <span className="font-medium tabular-nums">{total}</span> peer (by |nominal deviasi|).
+              </>
+            }
+            gridCols={2}
+            itemLayout="vertical"
+          />
         </div>
 
         {/* Peer table */}
@@ -725,7 +513,17 @@ const PeerTableRow = memo(function PeerTableRow({
   // two can differ when surplus items outweigh loss items in the same bucket
   // — the row color should match the direction badge, not the gross sign.
   const isLoss = row.direction === 'LOSS';
-  const flags = anomalyFlags(row, peerAvg);
+  const flags = useMemo(
+    () => computeAnomalyFlags({
+      devBom: row.devBom,
+      peerAvgDevBom: peerAvg.devBom,
+      absNominal: row.absNominalDeviasi,
+      peerAvgNominal: peerAvg.absNominalDeviasi,
+      direction: row.direction,
+      signedNominal: row.nominalDeviasi,
+    }),
+    [row, peerAvg],
+  );
   return (
     <TableRow
       className={`transition-colors border-b ${
@@ -773,22 +571,7 @@ const PeerTableRow = memo(function PeerTableRow({
         </Badge>
       </TableCell>
       <TableCell className="text-xs px-3 py-2 text-center">
-        <div className="flex flex-col items-center gap-0.5">
-          {flags.length === 0 ? (
-            <span className="text-muted-foreground text-xs">—</span>
-          ) : (
-            flags.map((f, i) => (
-              <span
-                key={i}
-                className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium ${f.color}`}
-                title={f.text}
-              >
-                <span aria-hidden>{f.emoji}</span>
-                <span className="sr-only">{f.text}</span>
-              </span>
-            ))
-          )}
-        </div>
+        <AnomalyFlags flags={flags} textSize="10px" />
       </TableCell>
     </TableRow>
   );
