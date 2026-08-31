@@ -95,7 +95,11 @@ export function buildDeviasiRankBaseCte(opts: DeviasiRankBaseCteOpts): Prisma.Sq
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
           ELSE NULL END as "pctLossSurplusToBom",
-        SUM(ir."qtyBom") as "qtyBom",
+        -- FIX (CALC-04): qtyBom uses ABS magnitude — was SUM(ir."qtyBom")
+        -- (signed) which could cancel to 0 when +/- BOM values cancel out,
+        -- incorrectly producing NULL rankBom. All other queries use
+        -- SUM(ABS(qtyBom)) — this aligns shared-cte with the convention.
+        SUM(ABS(ir."qtyBom")) as "qtyBom",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
         -- Store ABS qtyDeviasi for dynamic bucket average
         ABS(SUM(ir."qtyDeviasi")) as "absQtyDeviasi"

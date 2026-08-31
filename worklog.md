@@ -39096,3 +39096,133 @@ Top recommendations:
 1. FIX BUG-2-01 + BUG-2-02 together: either (a) include target in peers array server-side (matching outlet-level peer-comparison pattern), or (b) frontend: prepend target to peers array before passing to ScatterPlotCard + RankingSummaryCard. Option (a) is cleaner — aligns the two peer-comparison APIs.
 2. FIX BUG-2-03: change devBomPenalty to use Math.abs(target.devBom) - Math.abs(peerAvg.devBom) (or peerAvg.absDevBom if added to averages). Same for nominalPenalty consistency (already uses abs — OK).
 3. FIX BUG-2-07: add `peers.length === 0` to the empty-state condition (`!data.target || data.peers.length === 0`) so users see a clear "no peers" message instead of degenerate cards.
+
+---
+Task ID: DOC-2
+Agent: PRD + ARCHITECTURE Updater
+Task: Update PRD_RETROAKTIF.md + ARCHITECTURE.md
+
+Work Log:
+- Read worklog.md (last ~600 lines — Tasks 3, 4, 1-a/1-b/1-c/1-d, 2-a/2-b, 3-a/3-b/3-c, 4-a/4-b/4-c/4-d, P2-BE, P1P2-FE, P3-FE, P3-BE, BUG-1, BUG-2, BUG-3) for full Phase 1+2+3 + split context
+- Read PRD_RETROAKTIF.md IN FULL (736 LOC) — identified existing §1-§10 structure with §5 Business Rules containing formulas (Z-Score, Dev/BOM, Priority Score, Direction, etc.) and §6 Known Limitations (with sub-§6.5 Performance)
+- Read ARCHITECTURE.md IN FULL (697 LOC) — identified §4 Cache Strategy (with §4.1 9 cached routes, §4.3 HTTP Cache-Control, §4.6 SWR with 7 JSON routes surface area), §6 Performance Architecture (with §6.6 Frontend Split, §6.7 Heatmap Optimization), Appendix File Map
+- Read ItemPeerComparison.tsx IN FULL (key sections — verified Efficiency Score formula = 100 - (devBomPenalty + nominalPenalty) with min/max bounds [0,50] per penalty and ABS magnitude comparison per BUG-2-03 fix)
+- Read item-trend-rank.ts IN FULL (verified RANK() OVER (PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC) + COUNT(*) OVER for totalItems)
+- Read item-peer-comparison.ts (verified peer selection: ABS(c.qtyBom) BETWEEN ABS(t.qtyBom) * 0.5 AND * 1.5, target included in peers[] per BUG-2-01/02 fix)
+- Read /api/status/route.ts + cache-headers.ts (verified NO_STORE replaces CACHE_METADATA per BUG-PIC-STALE fix)
+- Read /api/item-search/route.ts (verified Zod schema with z.literal('autocomplete') — cross-outlet + trend modes removed)
+- Read ItemTrendTable.tsx (verified patternBadge classification: Massal ≥10 / Regional ≥5 / Lokal ≥2 / Tunggal =1 / N/A =0)
+- Read ItemTrendRankChart.tsx (verified inverted Y-axis via `reversed` prop, 100px height, per-dot coloring red ≤5 / amber 6-20 / muted >20, ReferenceLines at y=5 + y=20)
+- Read useDashboard.ts (verified trendSelectedItem + setTrendSelectedItem + setFocusOutlet additions)
+- Read ranking-nasional.tsx (verified Navigation Bridge: handleRowClick → setTrendSelectedItem + setActiveTab('trend'))
+
+PRD_RETROAKTIF.md updates:
+- Added new §6 "Trend Item Tab Expansion" section right before existing §6 Known Limitations
+  * §6.1 Rank Badge — 3-badge row (Deviasi + BOM + outlet count) with red/amber/muted color rules; rankBom nullable for qtyBom=0 items (BUG-1-01 fix)
+  * §6.2 Pattern Classification — Massal/Regional/Lokal/Tunggal classification by outletCount with emoji + color (BUG-1-02/03 fixes documented)
+  * §6.3 Rank Trend Chart — compact 100px inverted-axis chart with per-dot coloring + ReferenceLines + click handler sync with drillPeriod
+  * §6.4 Item Peer Comparison — full panel spec: target outlet (explicit or auto-selected worst), peer outlets (BOM ±50%), 4 analysis cards (Efficiency Score / Gap Analysis / Scatter Plot / Ranking Summary), peer table with anomaly flags + row color uses direction (NET) not nominalDeviasi sign (GROSS) per BUG-2-11
+  * §6.5 Period Drill-Down — row click + chart dot click + auto-sync with dashboard month/week via "adjust state during render" pattern
+  * §6.6 Navigation Bridge — RankingNasionalCard row click → setTrendSelectedItem + setActiveTab('trend'); persistence via Zustand
+  * §6.7 Formulas — Efficiency Score (100 - (devBomPenalty + nominalPenalty), each bounded [0,50], ABS magnitude comparison per BUG-2-03, safeDiv guard); National Rank (RANK() OVER PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC); Peer selection (ABS(c.qtyBom) BETWEEN ABS(t.qtyBom) * 0.5 AND * 1.5)
+- Renumbered existing sections: §6 Known Limitations → §7, §7 Feature Roadmap → §8, §8 Non-Goals → §9, §9 Success Metrics → §10, §10 Related Documents → §11
+- Renumbered sub-section §6.5 Performance → §7.5 Performance (under renumbered §7)
+- Updated all cross-references: "(see §7)" → "(see §8)" (line 740); "See §6.5" → "See §7.5" (lines 752, 879)
+- Added "Trend Item Tab" row to §4.1 Analytics feature table (after Item Deep Dive)
+- Added "Removed (GlobalItemSearchModal)" note after existing "Removed (FIX-DOCS)" note — documents Cmd+K modal removal + cross-outlet + trend modes removal from /api/item-search; autocomplete mode retained
+- Updated footer "Last updated by..." attribution to mention Agent DOC-2 + Phase 1+2+3 + new formulas
+
+ARCHITECTURE.md updates:
+- Updated §4.1 DB-Level Aggregation Cache: changed "9 cached routes" → "11 cached routes" + added entries #10 (/api/item-peer-comparison Phase 2 P2-BE) + #11 (/api/item-trend-rank Phase 3 P3-BE) with cache key details + auto-select worst outlet + RANK() window function notes
+- Updated §4.5 Cache Coherence: changed "ALL 9 cached route prefixes" → "ALL 11 cached route prefixes"
+- Updated §4.6 SWR section: changed "7 JSON routes surface stale: true" → "9 JSON routes" + added item-peer-comparison + item-trend-rank to surface area list; changed "the 7 routes return stale data" → "the 9 routes"
+- Added new note under §4.3 HTTP Cache-Control Headers: BUG-PIC-STALE fix — /api/status switched from CACHE_METADATA (s-maxage=60) → NO_STORE because CDN edge wasn't cleared by statusCache.clear() or invalidateAnalysisCache(); both cached + freshly-computed branches now return NO_STORE headers; other metadata routes (/api/data, /api/pic) still use CACHE_METADATA (narrower mutation triggers)
+- Added new §6.8 "Component Architecture (Trend Item Tab — NEW Phase 1+2+3)" subsection:
+  * Component tree diagram showing ItemTrendTab/ folder structure (8 files: index.tsx + types + zScoreHelpers + periodHelpers + ItemTrendSearchBar + ItemTrendTable + ItemTrendRankChart + ItemPeerComparison)
+  * Rendering hierarchy tree (ItemTrendTab → RankBadgeRow + ItemTrendSearchBar + ItemTrendLineChart + ItemTrendRankChart + ItemTrendTable + ItemPeerComparison with 4 sub-cards + PeerTable)
+  * 3 TanStack Query hooks (useItemTrend + autocomplete + item-trend-rank — parallel with main trend)
+  * Zustand store additions (trendSelectedItem + setTrendSelectedItem + setFocusOutlet)
+  * Cross-component drillPeriod state (set by row click + 2 chart dot clicks; auto-syncs with dashboard month/week via "adjust state during render" pattern)
+- Added new §6.9 "Barrel Re-Export Pattern (File Splits Batch 1-4)" subsection:
+  * Documents the folder + index.ts/tsx barrel pattern used across 11 splits (Tasks 1-a/1-b/1-c/1-d, 2-a/2-b, 3-a/3-b/3-c, 4-a/4-d)
+  * Table listing all 11 splits with original LOC + target folder + largest split file LOC (e.g. Charts.tsx 584 → 5 files largest 269; useAnalysis.ts 839 → 8 files largest 380; post-process.ts 838 → 10 files largest 219)
+  * Barrel pattern details: export * from './types', named re-exports, type-only re-exports, 'use client' directive placement, public API surface expansion (ParetoRow/SeverityMaps etc.)
+  * Verification per split: bun run lint (0 errors) + bunx tsc --noEmit (0 errors) + bun run test (where applicable — pareto 8/8, top-items 9/9) + 0 caller files modified
+- Updated Appendix File Map:
+  * app/api/: added item-peer-comparison/route.ts + item-trend-rank/route.ts + item-search/route.ts (autocomplete-only note); updated status/route.ts comment to mention NO_STORE + see §4.3; updated analysis/services/ to list post-process-*.ts flat siblings
+  * components/dashboard/: added Charts/ folder + ParetoDashboard/ folder + AreaItemHeatmap/ folder + tabs/ItemTrendTab/ folder; updated AreaItemHeatmap.tsx comment to mention backwards-compat re-export; updated "..." entry to mention GlobalItemSearchModal deleted
+  * hooks/: added useAnalysis/ folder with 8-file breakdown (index.ts barrel + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts); updated useDashboard.ts comment to mention trendSelectedItem + setFocusOutlet Phase 1+2 additions
+  * lib/queries/: added pareto/ folder + items/top-items/ folder + items/item-peer-comparison.ts + items/item-trend-rank.ts + items/item-trend.ts + items/global-search.ts (autocomplete-only note)
+- Updated §9.1 God Functions: added ItemPeerComparison.tsx (~756 LOC) as new entry; added "Recently split" note listing all 11 splits with original LOC → folder structure; updated recommended refactor note
+- Updated §9.3 Missing Validation: marked /api/item-search as FIXED (Zod schema added with z.literal('autocomplete').default('autocomplete') + shared monthLabelSchema + weekLabelSchema; cross-outlet + trend modes removed)
+- Updated §7.3 Input Validation: changed "20 of 22 API routes" → "21 of 22 API routes"; updated Gap entry to mention /api/item-search fix
+- Updated top-of-file "Last updated:" header to mention Agent DOC-2 + Phase 1+2+3 + new cached API routes + barrel splits + /api/status NO_STORE fix
+
+Stage Summary:
+- PRD_RETROAKTIF.md updated from 736 to 960 LOC (+224 LOC — primarily the new §6 Trend Item Tab Expansion section with 7 sub-sections)
+- ARCHITECTURE.md updated from 697 to 854 LOC (+157 LOC — primarily new §6.8 Component Architecture + §6.9 Barrel Re-Export Pattern subsections + /api/status NO_STORE note + 11 cached routes update + Appendix File Map additions)
+- All new features documented: rank badge (§6.1), pattern classification (§6.2), rank trend chart (§6.3), item peer comparison (§6.4), period drill-down (§6.5), navigation bridge (§6.6), formulas (§6.7 — Efficiency Score + RANK() + Peer selection SQL)
+- All removed features documented: GlobalItemSearchModal + cross-outlet + trend modes from /api/item-search (autocomplete retained)
+- All cache architecture changes documented: 9 → 11 cached routes, /api/status NO_STORE fix
+- All file structure changes documented: barrel re-export pattern across 11 splits (~75 files total), useAnalysis/ folder split into 8 files
+- All component architecture changes documented: ItemTrendTab/ folder structure + ItemPeerComparison + ItemTrendRankChart added to component tree
+- Z-Score (§5.2 in PRD) verified SIGNED (positive=worse, negative=better) — no changes needed
+- Lint: 0 errors (markdown files — no linting applied)
+- No caller files modified outside the two docs
+
+---
+Task ID: DOC-1
+Agent: MASTER_CONTEXT Updater
+Task: Update MASTER_CONTEXT.md with Phase 1+2+3 features + bug fixes + splits
+
+Work Log:
+- Read worklog.md (last ~300 lines: P3-BE item-trend-rank, BUG-1/BUG-2/BUG-3 audits, DOC-2 PRD/ARCHITECTURE update) + MASTER_CONTEXT.md IN FULL (442 LOC)
+- Verified LOC count via `find src -name "*.ts" -o -name "*.tsx" | xargs wc -l | tail -1` → 48,373 (was 44,572)
+- Verified filesystem: src/app/api/item-peer-comparison/route.ts + src/app/api/item-trend-rank/route.ts exist; src/hooks/useAnalysis/ folder has 8 files; src/components/dashboard/tabs/ItemTrendTab/ folder has 8 files; src/app/api/item-search/route.ts uses z.literal('autocomplete').default('autocomplete'); src/app/api/status/route.ts uses NO_STORE; src/hooks/useDashboard.ts has trendSelectedItem + setTrendSelectedItem + setFocusOutlet
+- Updated header "Last updated:" line to mention PHASE-1-2-3 session (Rank Badge + ItemPeerComparison + Rank Trend chart + Pattern column + Period Drill-Down + Navigation Bridge; 20 audit bug fixes; File Splits Batch 1-4 via barrel re-exports; /api/status NO_STORE fix; /api/item-search autocomplete-only; 12 cached routes)
+- Updated §4 API Routes: header 23 → 24 routes; added rows for /api/item-peer-comparison (Phase 2, cached, SWR) + /api/item-trend-rank (Phase 3, cached, SWR); updated /api/item-search Zod ❌→✅ with autocomplete-only note; updated totals (Zod 21→22 of 23→24; cached 10→12); added "New route specs" subsection with query params + BOM ±50% peer selection SQL + RANK() window function details
+- Updated §4 Cached Routes: numbered list 10 → 12 (added item-peer-comparison Phase 2 + item-trend-rank Phase 3)
+- Updated §5 Components: added tabs/ItemTrendTab/ folder subsection (8 modules + barrel: index.tsx + ItemTrendSearchBar + ItemTrendTable + ItemTrendLineChart + ItemTrendRankChart + ItemPeerComparison + types + zScoreHelpers + periodHelpers); added "Removed (Phase 1+2+3 cleanup)" note for GlobalItemSearchModal.tsx + ItemTrendChart.tsx + lib/queries/items/network-risk.ts deletions + /api/item-search autocomplete-only reduction
+- Updated §5 Hooks: useAnalysis.ts → useAnalysis/ folder (8-file barrel split from 839 LOC monolith); useDashboard.ts updated to mention trendSelectedItem + setTrendSelectedItem (NEW Phase 1) + setFocusOutlet (NEW Phase 2) cross-tab navigation bridge
+- Updated §6 Key Features: added "Trend Item Tab Expansion (NEW Phase 1+2+3)" subsection documenting all 6 new modules: (1) Rank Badge — RankBadgeRow from topDeviasiRank with 3 badges + BUG-1-01 nullable rankBom fix; (2) Pattern column — patternBadge Massal/Regional/Lokal/Tunggal classification; (3) Rank Trend chart — ItemTrendRankChart 100px inverted Y-axis + per-dot coloring + ReferenceLines + click sync; (4) Item Peer Comparison — 4 cards (EfficiencyScore with bounded [0,50] penalties + ABS magnitude comparison per BUG-2-03 fix; GapAnalysis; ScatterPlot with target highlight per BUG-2-01/02 fix; RankingSummary with percentile) + peer table with anomaly flags; (5) Period drill-down — row click + chart dot click + drillPeriod sync via "adjust state during render" pattern; (6) Navigation Bridge — RankingNasionalCard → setTrendSelectedItem + setActiveTab('trend') flow via Zustand
+- Updated §6 Caching: DB-level cached routes 10 → 12; SWR JSON routes surface stale flag 8 → 10; added BUG-PIC-STALE fix note (/api/status switched from CACHE_METADATA s-maxage=60 → NO_STORE because CDN edge wasn't cleared by statusCache.clear() or invalidateAnalysisCache(); other metadata routes /api/data + /api/pic still use CACHE_METADATA)
+- Updated §7 Performance Benchmarks: /api/status row note updated to mention NO_STORE HTTP headers + BUG-PIC-STALE fix
+- Updated §8 Input Validation: Zod coverage 20/22 → 22/24 (incl. /api/item-search with z.literal('autocomplete').default('autocomplete') schema; cross-outlet + trend modes removed)
+- Updated §9 Stats: LOC 44,572 → 48,373 (verified); API routes 23 → 24 (added item-peer-comparison + item-trend-rank); Cached routes 10 → 12; Dashboard components entry updated to mention tabs/ItemTrendTab/ folder (8 modules + barrel); Hooks entry updated to mention useAnalysis/ folder split; added "Bug fixes (Phase 1+2+3 audit)" row: 20 found + fixed (BUG-1: 3, BUG-2: 11, BUG-3: 6)
+- Updated §10 File Structure: API routes count 23 → 24; added entries for item-peer-comparison/route.ts + item-search/route.ts (autocomplete-only) + item-trend-rank/route.ts + status/route.ts (NO_STORE note); replaced flat tabs/ entry with tabs/ItemTrendTab/ folder entry (8 modules + barrel); replaced useAnalysis.ts entry with useAnalysis/ folder entry; updated useDashboard.ts comment to mention trendSelectedItem + setFocusOutlet
+
+Stage Summary:
+- MASTER_CONTEXT.md updated from 442 to 481 LOC (+39 LOC)
+- All new features documented: 2 new API routes (item-peer-comparison + item-trend-rank), 2 new cached routes (10 → 12), 6 Trend Item Tab modules (Rank Badge + Pattern column + Rank Trend chart + Item Peer Comparison + Period drill-down + Navigation Bridge), useAnalysis folder split (8 files), useDashboard Zustand additions, /api/status NO_STORE fix, /api/item-search autocomplete-only reduction
+- All removed features documented: GlobalItemSearchModal.tsx + ItemTrendChart.tsx + lib/queries/items/network-risk.ts deletions; /api/item-search cross-outlet + trend modes removed
+- LOC count verified via shell command: 48,373 lines in src/
+- 20 audit bug fixes (BUG-1: 3, BUG-2: 11, BUG-3: 6) documented in Stats + cross-referenced inline where applicable (BUG-1-01 rankBom nullable, BUG-1-02/03 patternBadge cosmetic, BUG-2-01/02 target in peers array, BUG-2-03 devBomPenalty ABS magnitude, BUG-PIC-STALE /api/status NO_STORE)
+- No caller files modified outside MASTER_CONTEXT.md
+
+---
+Task ID: AUDIT-CALC
+Agent: Calculation Auditor
+Task: Audit calculations vs MASTER_CONTEXT + PRD
+
+Work Log:
+- Read MASTER_CONTEXT.md in full (481 LOC, focus §5/§6/§7/§9) + PRD_RETROAKTIF.md in full (960 LOC, focus §5.1-5.7 rules + §6 Trend Item Tab + §7 formulas)
+- Audited 10 calculation categories against actual code:
+  1. Z-Score (PRD §5.2): VERIFIED OK — SIGNED result (no outer Math.abs), same-week baseline, min 4 periods (HISTORICAL_MIN_WEEKS), sample variance N-1, excludes current period. Confirmed in src/lib/queries/item-trend.ts (lines 222-239), src/lib/metrics/historical.ts (calcZScoreFromStats line 174, computeZScore line 100), src/lib/queries/historical.ts (weekly_dev CTE), src/app/api/analysis/services/fetch-records.ts (historicalPeriods filter lines 232-237).
+  2. Dev/BOM Ratio (PRD §5.6): DISCREPANCIES FOUND (CALC-01, CALC-02). VERIFIED OK in dashboard.ts (line 95), peer-comparison.ts (lines 135, 347, 426), by-deviasi-rank.ts (shared-cte.ts line 95).
+  3. Direction (PRD §5.5/§6.4): DISCREPANCY FOUND (CALC-03). VERIFIED OK in shared.ts DIRECTION_FROM_SUM_SQL + item-peer-comparison.ts (line 225) + ItemPeerComparison.tsx row color (line 727).
+  4. Residual (PRD §5.4/§5.7): VERIFIED OK — transform.ts computeResidual (lines 255-282) uses abs-each-then-sum + Math.max(0, absDev - explained). deviation.ts computeResidual (lines 64-79) same correct formula. Note: definitions.ts comment (line 82) says `ABS(waste + susut + trial)` (misleading — sum-inside-ABS) but actual implementation uses `ABS(waste) + ABS(susut) + ABS(trial)` (abs-each-then-sum, BUG-2-9 fix).
+  5. Growth (PRD §5.5/§5.1.1): VERIFIED OK — growth-drivers.ts (lines 199-200) uses Math.abs(delta)/Math.abs(prev) with guard; growth.ts calcGrowthAbs uses ABS magnitude; rule-evaluation.ts CTE (lines 157-181) uses ABS magnitude for BOM/Deviasi/Waste/Susut/Trial growth + div-by-zero guards.
+  6. Pareto 80/20 (PRD §5.6): VERIFIED OK — shared.ts computePareto8020 (lines 122-143) sorts by |value| DESC, cumulative share >= 80%, maxDrivers cap. pareto/compute.ts delegates.
+  7. Heatmap (PRD §5.7): DISCREPANCY FOUND (CALC-02). outletCount uses COUNT(DISTINCT outletId) ✅.
+  8. Efficiency Score (PRD §6.7): VERIFIED OK — ItemPeerComparison.tsx computeEfficiencyScore (lines 145-159) uses 100 - (devBomPenalty + nominalPenalty), bounded [0,50] per penalty, ABS magnitude (BUG-2-03 fix applied), safeDiv guard.
+  9. Rank (PRD §6.7): VERIFIED OK for item-trend-rank.ts RANK() OVER (PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC) (line 149) + totalItems COUNT(*) OVER. Minor issue CALC-04 in shared-cte.ts rankBom nullability check.
+  10. Peer Selection (PRD §6.7): VERIFIED OK — item-peer-comparison.ts (lines 305-313) + by-deviasi-rank.ts (lines 117-121) both use ABS(c.qtyBom) BETWEEN ABS(t.qtyBom)*0.5 AND *1.5 with ABS > 0 guard for qtyBom=0 items.
+
+Stage Summary:
+- Found 4 discrepancies: P0=0, P1=2, P2=2
+- CALC-01 (P1): item-peer-comparison.ts devBom uses SIGNED numerator (SUM(qtyDeviasi)) instead of SUM(ABS(qtyDeviasi)) — contradicts PRD §5.6 "applied consistently at every level".
+- CALC-02 (P1): heatmap.ts pctQtyDeviasiToBom uses AVG(ABS(pctQtyDeviasiToBom)) per-row average instead of SUM(ABS(qtyDeviasi))/SUM(ABS(qtyBom)) — BUG-DEEP-DB-01 documented as fixed but NOT actually fixed in code (heatmap.ts line 71 + cell-detail line 258).
+- CALC-03 (P2): peer-comparison.ts direction uses totalLoss vs totalSurplus comparison instead of shared DIRECTION_FROM_SUM_SQL — missing qtyDeviasi NULL fallback chain (PRD §5.5).
+- CALC-04 (P2): shared-cte.ts rankBom nullability uses `qtyBom != 0` (signed sum) instead of `SUM(ABS(qtyBom)) > 0` (magnitude) — items with canceled +/- BOM values get NULL rankBom even with non-zero BOM activity.
+- 6 categories VERIFIED OK (Z-Score, Residual, Growth, Pareto, Efficiency Score, Peer Selection).
+- No files modified — audit only.

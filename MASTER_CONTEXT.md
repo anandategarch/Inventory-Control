@@ -6,7 +6,7 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session TREND+ZSCORE-FIX (Trend Item tab, signed Z-Score, QTY Deviasi metric, Pola Item terms, covering indexes, SWR for analysis, heatmap tooltip optimization, drilldown filter, 10 cached routes)
+> **Last updated:** Session PHASE-1-2-3 (Trend Item Tab expansion: Rank Badge + ItemPeerComparison + Rank Trend chart + Pattern column + Period Drill-Down + Navigation Bridge; 20 audit bug fixes; File Splits Batch 1-4 via barrel re-exports; /api/status NO_STORE fix; /api/item-search autocomplete-only; 12 cached routes)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -86,7 +86,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ---
 
-## 4. API Routes (23 routes)
+## 4. API Routes (24 routes)
 
 | Route | Cache | Zod | Rate Limit | Auth |
 |-------|-------|------|------------|------|
@@ -102,8 +102,10 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/ingest-process` | ❌ | ✅ | ✅ | Protected |
 | `/api/ingest-upload` | ❌ | ✅ | ✅ | Protected POST |
 | `/api/item-history` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
-| `/api/item-search` | ❌ | ❌ | ✅ | Public GET |
-| `/api/item-trend` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW) |
+| `/api/item-peer-comparison` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Phase 2) |
+| `/api/item-search` | ❌ | ✅ | ✅ | Public GET (autocomplete-only — cross-outlet + trend modes REMOVED) |
+| `/api/item-trend` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/item-trend-rank` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Phase 3) |
 | `/api/migrate-direction` | ❌ | ✅ | ✅ | Protected |
 | `/api/outlet-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/pareto` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
@@ -115,9 +117,13 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 21/23 main routes use Zod validation · **10 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend) · All protected routes use `ADMIN_TOKEN` middleware.
+**Totals:** 22/24 main routes use Zod validation (incl. `/api/item-search` — Zod added in AUDIT-NEWFEATURES C4) · **12 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank) · All protected routes use `ADMIN_TOKEN` middleware.
 
-**10 cached routes** (all use `withCacheAndDedup` SWR — including `/api/analysis` which was migrated from legacy `getCached` to `getCachedWithMeta` SWR):
+**New route specs:**
+- `GET /api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=` — Target outlet + peer outlets (BOM ±50% via `ABS(c.qtyBom) BETWEEN ABS(t.qtyBom)*0.5 AND *1.5`) + peer averages. Auto-selects worst outlet (ORDER BY ABS(nominalDeviasi) DESC LIMIT 1) when `outletCode` omitted. 5-min DB cache + SWR. Phase 2.
+- `GET /api/item-trend-rank?item=&week=&area=&kelompok=&outlet=&pic=` — Per-period national rank by `ABS(nominalDeviasi)` via `RANK() OVER (PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC)`. Week filter respected. 5-min DB cache + SWR. Phase 3.
+
+**12 cached routes** (all use `withCacheAndDedup` SWR — including `/api/analysis` which was migrated from legacy `getCached` to `getCachedWithMeta` SWR):
 1. `/api/analysis` (SWR via `getCachedWithMeta` — stale data served immediately + background refresh)
 2. `/api/pareto`
 3. `/api/recommendations`
@@ -127,7 +133,9 @@ Deviation is decomposed into 4 categories for root cause identification:
 7. `/api/item-history`
 8. `/api/drilldown`
 9. `/api/area-item-heatmap`
-10. `/api/item-trend` (NEW — per-item QTY fluctuation across periods)
+10. `/api/item-trend` (per-item QTY fluctuation across periods)
+11. `/api/item-peer-comparison` (NEW Phase 2 — target + peers BOM ±50% + averages; auto-selects worst outlet)
+12. `/api/item-trend-rank` (NEW Phase 3 — per-period national rank by ABS(nominalDeviasi); RANK() window function)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query — small result set, low latency, user-initiated drill-down).
 
@@ -159,19 +167,30 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `RestoTab.tsx` — Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary`
 - `PeerTab.tsx` — Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary`
 - `ParetoTab.tsx` — Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary`
-- `ItemTrendTab.tsx` — NEW: Trend Item tab (5th tab) — item search autocomplete + metric selector (QTY Deviasi/Waste/Susut/Trial) + sortable table + Z-Score coloring (signed: positive=red/worse, negative=green/better)
-- `ItemTrendLineChart.tsx` — NEW: Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3
+- `ItemTrendTab.tsx` — Trend Item tab (5th tab) — item search autocomplete + metric selector (QTY Deviasi/Waste/Susut/Trial) + sortable table + Z-Score coloring (signed: positive=red/worse, negative=green/better) + Rank Badge header + Period drill-down + Rank Trend chart + Peer Comparison panel. See `tabs/ItemTrendTab/` folder above for the 8-module breakdown.
+- `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3
+
+#### `tabs/ItemTrendTab/` folder (NEW Phase 1+2+3 — 8 modules + barrel index, split from monolithic `ItemTrendTab.tsx`)
+- `index.tsx` — Trend Item tab orchestrator (663 LOC): `RankBadgeRow` (national rank from `topDeviasiRank`) + search bar + table + LineChart + RankChart + PeerComparison; owns `drillPeriod` state synced with dashboard month/week via "adjust state during render" pattern.
+- `ItemTrendSearchBar.tsx` — Debounced autocomplete (≥2 chars) backed by `/api/item-search?mode=autocomplete`.
+- `ItemTrendTable.tsx` — Sortable period table (277 LOC) with Z-Score coloring (signed) + **Pattern column** (`patternBadge`: Massal ≥10 / Regional 5-9 / Lokal 2-4 / Tunggal =1).
+- `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3.
+- `ItemTrendRankChart.tsx` — NEW Phase 3: Compact rank trend chart (264 LOC, 100px height) — Y-axis INVERTED via `reversed` prop (rank #1 at top), per-dot coloring (red ≤5 / amber 6-20 / muted >20), ReferenceLines at y=5 + y=20, click handler syncs with `drillPeriod`.
+- `ItemPeerComparison.tsx` — NEW Phase 2: Peer comparison panel (797 LOC) — 4 analysis cards (EfficiencyScoreCard / GapAnalysisCard / ScatterPlotCard / RankingSummaryCard) + peer table with anomaly flags + row click → Resto tab.
+- `types.ts` + `zScoreHelpers.ts` + `periodHelpers.ts` — Shared types + Z-Score color helpers + period short-label helpers.
 
 #### `shared/index.tsx` (7 shared utilities)
 `EmptyState`, `LoadingState`, `ErrorState`, `SectionHeader`, `ScrollToTop`, `FetchAware`, `LoadingChart` (last 2 added in `page.tsx` split).
 
 > **Removed (FIX-DOCS dead-code cleanup):** `AreaTrendChart.tsx`, `CardDrillDown.tsx` files deleted. `cardDrillDown` Zustand state removed from `useDashboard`. ExecutiveSummary KPI cards are now static display (no click-through drilldown). `RestoAnalisa` priority-score drilldown is also a static card display.
 >
+> **Removed (Phase 1+2+3 cleanup):** `GlobalItemSearchModal.tsx` (Cmd+K cross-outlet modal) + `ItemTrendChart.tsx` (legacy chart, replaced by `ItemTrendLineChart.tsx` + `ItemTrendRankChart.tsx`) + `lib/queries/items/network-risk.ts` (unused cross-outlet analysis) — all deleted. `/api/item-search` reduced to `autocomplete` mode only (cross-outlet + trend modes removed).
+>
 > **`page.tsx` split (SPLIT-PAGE task):** `page.tsx` reduced from 735 → 227 lines (69% reduction). 9 new modules created: 4 tab components + 2 layout components (`DashboardHeader`/`DashboardFooter`) + 2 hooks (`useDashboardEffects`/`useDashboardActions`) + `shared/index.tsx` extension (`FetchAware` + `LoadingChart`).
 
 ### Hooks (`src/hooks/` — 6 hooks)
-- `useAnalysis.ts` — TanStack Query hooks (`useAnalysis`, `useStatus`, `useDrilldown`, `useItemTrend` [NEW]) + `prefetchAnalysis` + `prefetchHeatmap`
-- `useDashboard.ts` — Zustand store (filters + UI state)
+- `useAnalysis/` — NEW (SPLIT Batch 2): 8-file folder (barrel `index.ts` + `types.ts` + `fetchAnalysis.ts` + `prefetchHeatmap.ts` + `useAnalysis.ts` + `useStatus.ts` + `useDrilldown.ts` + `useItemTrend.ts`) — TanStack Query hooks (`useAnalysis`, `useStatus`, `useDrilldown`, `useItemTrend`) + `prefetchAnalysis` + `prefetchHeatmap`. Split from monolithic `useAnalysis.ts` (839 LOC) — barrel re-export preserves public API for all callers.
+- `useDashboard.ts` — Zustand store (filters + UI state + `trendSelectedItem` + `setTrendSelectedItem` [NEW Phase 1] + `setFocusOutlet` [NEW Phase 2] — cross-tab navigation bridge from RankingNasionalCard → Trend Item Tab)
 - `useDashboardEffects.ts` — NEW (SPLIT-PAGE): bundles 5 `useEffect` hooks (auto-select month, auto-select week, cache warming via `prefetchAnalysis` + `prefetchHeatmap`, auto-set compare period with BUG-1 fix, week validation BUG-8 fix). Side-effect-only — no return value.
 - `useDashboardActions.ts` — NEW (SPLIT-PAGE): export/refresh handlers (`handleExport` + `handleRefresh` + `isExporting` state) + global keyboard shortcuts (`Cmd+E/R/K`, `1/2/3/4/5` tab switch [5=Trend Item], `Escape` close-all).
 - `use-mobile.ts` — Responsive viewport hook (shadcn)
@@ -251,6 +270,20 @@ Deviation is decomposed into 4 categories for root cause identification:
 - **Peer comparison** (outlet vs ±10% sales peers)
 - **Outlet health ranking** (3D: Financial + Operational + Unexplained)
 
+### Trend Item Tab Expansion (NEW Phase 1+2+3)
+6 new modules in the Trend Item Tab (`/components/dashboard/tabs/ItemTrendTab/`):
+1. **Rank Badge** (Phase 1): `RankBadgeRow` in `index.tsx` — looks up national rank from `analysisData.topDeviasiRank` (filtered by `itemName`, `Math.min` across all matching outlet rows for best rank). Renders 3 badges: Deviasi rank (red ≤5 / amber 6-20 / muted >20), BOM rank (nullable for `qtyBom=0` items — BUG-1-01 fix), and outlet count. Fallback: "Rank > 50 Nasional" muted badge when item not in top-50.
+2. **Pattern column** (Phase 1): `patternBadge()` in `ItemTrendTable.tsx` — classifies period by `outletCount`: Massal ≥10 (🔴) / Regional 5-9 (🟡) / Lokal 2-4 (⚪) / Tunggal =1 (⚪, with BUG-1-02/03 cosmetic fix documented).
+3. **Rank Trend chart** (Phase 3): `ItemTrendRankChart.tsx` (264 LOC, 100px height) — Recharts LineChart with Y-axis INVERTED via `reversed` prop (rank #1 at top, worst rank at bottom). Per-dot coloring: red ≤5 / amber 6-20 / muted >20. ReferenceLines at y=5 (red dashed) + y=20 (amber dashed) — only rendered when `maxRank ≥ threshold`. Click handler syncs with `drillPeriod` (same pattern as `ItemTrendLineChart`). Backed by `/api/item-trend-rank`.
+4. **Item Peer Comparison** (Phase 2): `ItemPeerComparison.tsx` (797 LOC) — full panel with 4 analysis cards:
+   - **EfficiencyScoreCard**: `100 - (devBomPenalty + nominalPenalty)`, each penalty bounded `[0,50]`, ABS magnitude comparison (BUG-2-03 fix).
+   - **GapAnalysisCard**: Target vs peerAvg vs peerBest, with `Dev/BOM` row.
+   - **ScatterPlotCard**: Peer outlets plotted on (BOM, Deviasi) — target highlighted with amber ring + larger radius (BUG-2-01/02 fix: target prepended to peers array).
+   - **RankingSummaryCard**: Target's rank among peers (with `p` percentile).
+   Peer table with anomaly flags (Normal / Near Peer Avg / Anomali) + row click → Resto tab via `setFocusOutlet`. Backed by `/api/item-peer-comparison`.
+5. **Period drill-down** (Phase 2): Row click in `ItemTrendTable` OR dot click in `ItemTrendRankChart` OR dot click in `ItemTrendLineChart` → sets `drillPeriod` → `ItemPeerComparison` re-fetches for the selected period. Auto-syncs with dashboard month/week via "adjust state during render" pattern (`prevPeriodKey` guard prevents infinite loops).
+6. **Navigation Bridge** (Phase 1): `RankingNasionalCard` row click on Dashboard tab → `setTrendSelectedItem(itemName)` (Zustand) + `setActiveTab('trend')` → Trend Item Tab mounts + `useDashboard(useShallow(...))` reads `trendSelectedItem` → search bar auto-populated + analysis re-fetched for the selected item. State persists across tab switches (Zustand store survives Radix Tabs unmount).
+
 ### Data Operations
 - Export laporan Word (`.docx`)
 - Import Excel + Google Drive
@@ -260,15 +293,16 @@ Deviation is decomposed into 4 categories for root cause identification:
 ### Caching
 - **DB-level `AggregationCache`** (5-min TTL, `awaitWrite` pattern)
   - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (NEW — returns `{ data, stale }` without deleting expired row, for SWR pattern)
-  - **10 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`
-  - `invalidateAnalysisCache()` clears ALL 10 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
+  - **12 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison` (Phase 2), `item-trend-rank` (Phase 3)
+  - `invalidateAnalysisCache()` clears ALL 12 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
 - **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01): `withCacheAndDup()` implements SWR on top of `getCachedWithMeta`:
   - Fresh hit → return immediately
   - Stale hit → return stale data in <50ms + fire-and-forget background recompute (writes fresh cache via `setCached(awaitWrite=true)`, resolves in-flight Promise so concurrent requests get fresh data)
   - No entry → compute synchronously + write cache
-  - ALL 10 cached routes use SWR (including `/api/analysis` — migrated from legacy `getCached` to `getCachedWithMeta` SWR in CACHE-01 fix). 8 JSON routes surface `stale: true` flag. `/api/export-report` binary + `/api/analysis` bespoke pipeline serve stale internally.
+  - ALL 12 cached routes use SWR (including `/api/analysis` — migrated from legacy `getCached` to `getCachedWithMeta` SWR in CACHE-01 fix). 10 JSON routes surface `stale: true` flag (incl. `item-peer-comparison` + `item-trend-rank`). `/api/export-report` binary + `/api/analysis` bespoke pipeline serve stale internally.
 - **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (NEW — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it.
-- **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes)
+- **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes; `NO_STORE` for `/api/status` — BUG-PIC-STALE fix below)
+- **BUG-PIC-STALE fix:** `/api/status` switched from `CACHE_METADATA` (s-maxage=60) → `NO_STORE` because CDN edge wasn't cleared by `statusCache.clear()` or `invalidateAnalysisCache()` — caused stale data after PIC mutation. Both cached + freshly-computed branches now return `NO_STORE` headers. Other metadata routes (`/api/data`, `/api/pic`) still use `CACHE_METADATA` (narrower mutation triggers).
 - **Performance:** Prisma query log disabled by default (`PRISMA_LOG_QUERIES=true` to enable); export-report route uses DB cache (5-min TTL) to skip recomputation on repeat exports.
 
 ---
@@ -289,7 +323,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 | `/api/drilldown` | 1.01s | 0.023s | NEW cached (PERF-API-03) + slim `select` (PERF-API-06) |
 | `/api/area-item-heatmap` | 0.21s | 0.21s | NEW cached (PERF-CACHE-08); warm ≈ cold (already fast) |
 | `/api/area-item-heatmap/cell-detail` | 0.05s | n/a | NOT cached (direct query, LIMIT 1000) |
-| `/api/status` | 0.01s | 0.007s | In-memory LRU cache + cleanupExpiredCache |
+| `/api/status` | 0.01s | 0.007s | In-memory LRU cache + cleanupExpiredCache (NO_STORE HTTP headers — BUG-PIC-STALE fix) |
 
 ---
 
@@ -310,7 +344,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 - Implementation: `src/lib/rate-limit.ts`
 
 ### Input Validation
-- **Zod** validation on 20/22 routes
+- **Zod** validation on 22/24 routes (incl. `/api/item-search` — Zod added in AUDIT-NEWFEATURES C4 with `z.literal('autocomplete').default('autocomplete')` schema; cross-outlet + trend modes removed)
 - All raw SQL parameterized (zero `$queryRawUnsafe`)
 
 ### Error Sanitization
@@ -324,18 +358,19 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 44,572 |
+| Lines of code in `src/` | 48,373 |
 | Test files | 22 |
 | Test cases | 435 |
 | Git commits | 400+ |
 | npm dependencies | 23 |
-| API routes (main) | 23 (incl. `area-item-heatmap` + `cell-detail` sub-route + `item-trend` NEW) |
-| Cached routes | 10 (was 9 — added `item-trend`) |
-| Dashboard components | 24 + `tabs/` folder (6 files — was 4, added ItemTrendTab + ItemTrendLineChart) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` |
-| Hooks | 6 |
+| API routes (main) | 24 (incl. `area-item-heatmap` + `cell-detail` sub-route + `item-trend` + `item-peer-comparison` NEW Phase 2 + `item-trend-rank` NEW Phase 3) |
+| Cached routes | 12 (was 10 — added `item-peer-comparison` Phase 2 + `item-trend-rank` Phase 3) |
+| Dashboard components | 24 + `tabs/ItemTrendTab/` folder (8 modules + barrel) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` |
+| Hooks | 6 (incl. `useAnalysis/` folder split into 8 files via barrel re-export) |
 | DB host | `proosjqivxadwgftofry` |
 | DB indexes | 14 on InventoryRecord (incl. 2 covering indexes for heatmap + trend) |
 | Z-Score | SIGNED (positive=worse/red, negative=better/green) — was non-negative |
+| Bug fixes (Phase 1+2+3 audit) | 20 found + fixed (BUG-1: 3, BUG-2: 11, BUG-3: 6) |
 
 ---
 
@@ -346,20 +381,24 @@ src/
 ├── app/
 │   ├── page.tsx                    # Thin orchestrator (227 lines — 5 tabs: Dashboard/Resto/Peer/Pareto/Trend Item)
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
-│   └── api/                        # 23 API routes + sub-routes
+│   └── api/                        # 24 API routes + sub-routes
 │       ├── area-item-heatmap/
 │       │   ├── route.ts            # Heatmap matrix (cached, SWR)
 │       │   └── cell-detail/route.ts # Per-outlet drill-down (NOT cached)
 │       ├── analysis/services/      # 8-stage pipeline (validate/fetch/run-queries/post-process/exec-summary/assemble/trend-builder/deviation-drivers)
-│       ├── item-trend/route.ts     # NEW: per-item QTY fluctuation across periods (cached, SWR, week filter)
+│       ├── item-peer-comparison/route.ts # NEW Phase 2: target + peers BOM ±50% + averages (cached, SWR)
+│       ├── item-search/route.ts    # Autocomplete-only (cross-outlet + trend modes removed; Zod added)
+│       ├── item-trend/route.ts     # Per-item QTY fluctuation across periods (cached, SWR, week filter)
+│       ├── item-trend-rank/route.ts # NEW Phase 3: per-period national rank by ABS(nominalDeviasi) (cached, SWR)
 │       ├── outlet-items/route.ts   # Cached
 │       ├── item-history/route.ts   # Cached
 │       ├── drilldown/route.ts      # Cached (slim select, respects dashboard filters)
 │       ├── pareto|recommendations|resto-bahan-matrix|export-report|analysis  # Original 5 cached routes
-│       └── ...                     # 13 other routes (audit-log, data, ingest-*, etc.)
+│       ├── status/route.ts         # NO_STORE HTTP headers (BUG-PIC-STALE fix)
+│       └── ...                     # 11 other routes (audit-log, data, ingest-*, peer-comparison, pic, settings, setup, etc.)
 ├── components/
 │   ├── dashboard/
-│   │   ├── tabs/                   # 6 tab modules: DashboardTab + RestoTab + PeerTab + ParetoTab + ItemTrendTab + ItemTrendLineChart
+│   │   ├── tabs/ItemTrendTab/      # NEW Phase 1+2+3: 8 modules + barrel index (split from monolithic ItemTrendTab.tsx) — index.tsx + ItemTrendSearchBar + ItemTrendTable + ItemTrendLineChart + ItemTrendRankChart + ItemPeerComparison + types + zScoreHelpers + periodHelpers
 │   │   ├── AreaItemHeatmap.tsx     # Heatmap matrix component (549 lines)
 │   │   ├── AreaItemHeatmapSheet.tsx # NEW: drill-down Sheet (lazy-loaded via next/dynamic)
 │   │   ├── BomCorrelationCard.tsx  # Per-record BOM findings table
@@ -371,8 +410,8 @@ src/
 │   ├── drilldown/                  # 2 components
 │   └── ui/                         # 29 shadcn components
 ├── hooks/
-│   ├── useAnalysis.ts              # TanStack Query hooks + prefetchAnalysis + prefetchHeatmap (NEW)
-│   ├── useDashboard.ts             # Zustand store (filters + UI state)
+│   ├── useAnalysis/               # NEW (SPLIT Batch 2): 8-file folder + barrel — index.ts + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts
+│   ├── useDashboard.ts             # Zustand store (filters + UI state + trendSelectedItem + setFocusOutlet [NEW Phase 1+2])
 │   ├── useDashboardEffects.ts      # NEW (SPLIT-PAGE): 5 useEffects (auto-select + cache warm + validate)
 │   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts
 │   ├── use-mobile.ts               # shadcn responsive viewport hook

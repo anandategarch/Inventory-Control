@@ -68,7 +68,12 @@ const METRIC_SQL: Record<HeatmapMetric, Prisma.Sql> = {
   absNominalDeviasi: Prisma.sql`COALESCE(SUM(ir."absNominalDeviasi"), 0)`,
   nominalWaste: Prisma.sql`COALESCE(SUM(ABS(ir."nominalWaste")), 0)`,
   nominalSusut: Prisma.sql`COALESCE(SUM(ABS(ir."nominalSusut")), 0)`,
-  pctQtyDeviasiToBom: Prisma.sql`COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")), 0)`,
+  // FIX (CALC-02 / BUG-DEEP-DB-01): Dev/BOM must be SUM(ABS(qtyDeviasi)) /
+  // SUM(ABS(qtyBom)) — volume-weighted magnitude ratio (per PRD §5.6).
+  // Was AVG(ABS(pctQtyDeviasiToBom)) — per-row average that let low-BOM items
+  // with high deviation skew the ratio. Now computes the aggregate ratio
+  // directly from SUM aggregates.
+  pctQtyDeviasiToBom: Prisma.sql`CASE WHEN SUM(ABS(ir."qtyBom")) > 0 THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom")) ELSE 0 END`,
   recordCount: Prisma.sql`CAST(COUNT(*) AS FLOAT)`,
 };
 
@@ -255,7 +260,10 @@ export async function queryHeatmapCellDetail(
       COALESCE(SUM(ABS(ir."nominalDeviasi")), 0) as "nominalDeviasi",
       COALESCE(SUM(ABS(ir."nominalLossSurplus")), 0) as "nominalLossSurplus",
       COALESCE(SUM(ir."nominalLossSurplus"), 0) as "nominalLossSurplusSigned",
-      COALESCE(AVG(ABS(ir."pctQtyDeviasiToBom")), 0) as "pctQtyDeviasiToBom",
+      -- FIX (CALC-02 / BUG-DEEP-DB-01): Dev/BOM = SUM(ABS(qtyDeviasi)) /
+      -- SUM(ABS(qtyBom)) — volume-weighted magnitude ratio (per PRD §5.6).
+      -- Was AVG(ABS(pctQtyDeviasiToBom)) — per-row average that skewed the ratio.
+      CASE WHEN SUM(ABS(ir."qtyBom")) > 0 THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom")) ELSE 0 END as "pctQtyDeviasiToBom",
       CAST(COUNT(*) AS INTEGER) as "recordCount"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id

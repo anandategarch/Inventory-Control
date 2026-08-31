@@ -214,6 +214,7 @@ export async function queryItemPeerComparison(
         pic.pic,
         SUM(ABS(ir."qtyBom")) as "qtyBom",
         SUM(ir."qtyDeviasi") as "qtyDeviasi",
+        SUM(ABS(ir."qtyDeviasi")) as "absQtyDeviasi",
         SUM(ir."qtyWaste") as "qtyWaste",
         SUM(ir."qtySusut") as "qtySusut",
         SUM(ir."qtyTrial") as "qtyTrial",
@@ -253,10 +254,15 @@ export async function queryItemPeerComparison(
         iff."qtyLossSurplus",
         iff."nominalDeviasi",
         iff."absNominalDeviasi",
-        -- devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) — SIGNED ratio.
+        -- FIX (CALC-01): devBom = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) —
+        -- volume-weighted MAGNITUDE ratio (per PRD §5.6). Was using SIGNED
+        -- qtyDeviasi (SUM(qtyDeviasi)) which caused peerAvg.devBom to cancel
+        -- out when peers had mixed LOSS/SURPLUS, breaking the EfficiencyScore
+        -- threshold. Now uses absQtyDeviasi (magnitude) for the ratio.
+        -- qtyDeviasi (signed) is still available for direction display.
         -- Null when BOM = 0 (bucket concept doesn't apply).
         CASE WHEN iff."qtyBom" > 0
-          THEN iff."qtyDeviasi" / iff."qtyBom"
+          THEN iff."absQtyDeviasi" / iff."qtyBom"
           ELSE NULL END as "devBom",
         iff."direction"
       FROM item_full iff

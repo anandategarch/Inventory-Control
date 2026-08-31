@@ -144,6 +144,10 @@ export async function queryPeerComparison(
         -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalLoss",
         SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalSurplus",
+        -- FIX (CALC-03): expose SUM(nominalLossSurplus) for direction fallback
+        -- chain. Was only available via totalLoss/totalSurplus (always >=0),
+        -- which made it impossible to distinguish "all NULL" from "net zero".
+        SUM(ir."nominalLossSurplus") as "nominalLossSurplusSigned",
         -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
         COUNT(DISTINCT ir."itemId") as "itemCount",
@@ -187,9 +191,18 @@ export async function queryPeerComparison(
       COALESCE(oa."itemCount", 0) as "itemCount",
       ti."topItem",
       COALESCE(ti."topItemNominal", 0) as "topItemNominal",
-      CASE WHEN oa."totalLoss" > oa."totalSurplus" THEN 'LOSS'
-           WHEN oa."totalSurplus" > oa."totalLoss" THEN 'SURPLUS'
-           ELSE 'NEUTRAL' END as "direction",
+      -- FIX (CALC-03): direction fallback chain matching DIRECTION_FROM_SUM_SQL.
+      -- 1. SUM(nominalLossSurplus) sign (primary — NET direction)
+      -- 2. SUM(qtyDeviasi) sign (fallback when nominalLossSurplus is NULL)
+      -- 3. NEUTRAL
+      -- Was: CASE WHEN totalLoss > totalSurplus — missing the NULL fallback.
+      CASE
+        WHEN oa."nominalLossSurplusSigned" IS NOT NULL AND oa."nominalLossSurplusSigned" < 0 THEN 'LOSS'
+        WHEN oa."nominalLossSurplusSigned" IS NOT NULL AND oa."nominalLossSurplusSigned" > 0 THEN 'SURPLUS'
+        WHEN oa."nominalLossSurplusSigned" IS NULL AND oa."qtyDeviasi" < 0 THEN 'LOSS'
+        WHEN oa."nominalLossSurplusSigned" IS NULL AND oa."qtyDeviasi" > 0 THEN 'SURPLUS'
+        ELSE 'NEUTRAL'
+      END as "direction",
       CASE WHEN o.code = ${outletCode} THEN true ELSE false END as "isTarget"
     FROM outlet_aggs oa
     JOIN "Outlet" o ON oa."outletId" = o.id

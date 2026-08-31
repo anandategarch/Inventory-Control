@@ -2,7 +2,7 @@
 
 > **Technical Architecture** — Read when fixing bugs or optimizing performance.
 >
-> **Last updated:** Session DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, 9 cached routes, prefetchHeatmap, perf optimizations)
+> **Last updated:** Session DOC-2 (Phase 1+2+3 Trend Item Tab expansion: rank badge + ItemPeerComparison + ItemTrendRankChart + 2 new cached API routes + barrel re-export splits + /api/status NO_STORE fix). Prior session: DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, prefetchHeatmap, perf optimizations).
 
 This document describes **HOW** the Inventory Control Intelligence application is built. It covers the runtime topology, data ingestion pipeline, query architecture, caching layers, auth model, performance optimizations, security controls, test coverage, known tech debt, and deployment pipeline.
 
@@ -193,9 +193,9 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | Value           | JSON-serialized payload (text column, no size limit)                                 |
 | TTL             | 5 minutes (`expiresAt` column)                                                       |
 | Write mode      | `awaitWrite=true` — readers wait for in-flight writers (prevents cache stampede)     |
-| Invalidation    | `invalidateAnalysisCache()` clears ALL 9 route prefixes on any mutation              |
+| Invalidation    | `invalidateAnalysisCache()` clears ALL 11 route prefixes on any mutation              |
 
-**9 cached routes** (`/api/analysis` uses direct `getCached` / `await setCached` with bespoke in-flight dedup; the other 8 use `withCacheAndDedup` which bundles cache lookup + in-flight dedup + SWR — see §4.6. Note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
+**11 cached routes** (`/api/analysis` uses direct `getCached` / `await setCached` with bespoke in-flight dedup; the other 10 use `withCacheAndDedup` which bundles cache lookup + in-flight dedup + SWR — see §4.6. Note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
 
 1. `/api/analysis` (direct `setCached`; bespoke 8-stage pipeline makes SWR complex — has in-flight dedup + TanStack `keepPreviousData` instead)
 2. `/api/pareto`
@@ -206,10 +206,12 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 7. `/api/item-history` (NEW — PERF-API-02; cache key includes outletCode+itemName+month+week)
 8. `/api/drilldown` (NEW — PERF-API-03; cache key includes outletCode+itemName+weekLabel+monthLabel+limit+cursor)
 9. `/api/area-item-heatmap` (NEW — PERF-CACHE-08; cache key includes metric+itemLimit+mode + standard filter set)
+10. `/api/item-peer-comparison` (NEW — Phase 2 P2-BE; cache key includes route+month+week+outletCode-or-AUTO+itemName+area+kelompok+pic; 5-min TTL + SWR; auto-selects worst outlet when outletCode omitted; `peers[]` INCLUDES target for ranking + scatter highlight)
+11. `/api/item-trend-rank` (NEW — Phase 3 P3-BE; cache key includes route+month-or-ALL+week-or-ALL+itemName+area+kelompok+outlet+pic; 5-min TTL + SWR; covers ALL periods — month/week are cache-key context only)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query, LIMIT 1000, user-initiated drill-down — small payload, low latency).
 
-**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the 9 routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts:397-413`).
+**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the 11 routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts:397-413`). Both new routes (`item-peer-comparison`, `item-trend-rank`) are added to the invalidation array — mutations (ingest, settings change, PIC update, etc.) clear their cache so no stale entry survives a write.
 
 **Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts` (used by `ingest` + `import-drive`), `DriveImportDialog`.
 
@@ -233,6 +235,21 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | `/api/metadata`   | `Cache-Control: s-maxage=60`        | Outlets/PIC list changes rarely.                |
 | Mutation routes   | `Cache-Control: no-store`           | Never cache writes.                             |
 
+> **`/api/status` NO_STORE fix (BUG-PIC-STALE):** `/api/status` previously used
+> `CACHE_METADATA` (`s-maxage=60`). This caused stale status data for up to 60s
+> after mutations (PIC update, file upload, data delete) — the edge cache wasn't
+> cleared by `statusCache.clear()` or `invalidateAnalysisCache()` (those only
+> clear server memory, not the CDN edge). The server-side `statusCache` (5-min TTL,
+> properly invalidated by mutations via `statusCache.clear()` in `/api/pic` POST +
+> similar mutation routes) is sufficient for performance; CDN caching was redundant
+> and caused stale-data bugs. Both the cached response branch and the freshly-computed
+> branch now return `NextResponse.json(..., { headers: NO_STORE })` where
+> `NO_STORE = { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' }`.
+> Other metadata routes (`/api/data`, `/api/pic`) still use `CACHE_METADATA` — they
+> have narrower mutation triggers (only `/api/data` + `/api/pic` mutate them) and
+> `statusCache.clear()` propagates immediately; `status` aggregates data from many
+> sources and was the most stale-prone.
+
 ### 4.4 Client-Side (TanStack Query)
 
 ```ts
@@ -245,7 +262,7 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
 ### 4.5 Cache Coherence Guarantees
 
 - **Write-through**: Mutations write to DB first, then invalidate cache. No write-behind.
-- **No stale reads** (post-mutation): `invalidateAnalysisCache()` deletes ALL 9 cached route prefixes on any mutation, so no stale entry survives a write. (Between mutations, SWR may serve stale-but-not-yet-recomputed data — see §4.6.)
+- **No stale reads** (post-mutation): `invalidateAnalysisCache()` deletes ALL 11 cached route prefixes on any mutation, so no stale entry survives a write. (Between mutations, SWR may serve stale-but-not-yet-recomputed data — see §4.6.)
 - **Stampede protection**: In-flight Promise dedup + `awaitWrite=true` ensures a single cold-miss request triggers exactly one DB query, even under 100 concurrent identical requests.
 - **Cache cleanup**: `cleanupExpiredCache()` (called fire-and-forget from `/api/status`, rate-limited to once per 10 min) removes entries older than 30 min — bounds table growth.
 
@@ -263,9 +280,9 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
    - **No entry** → compute synchronously + write cache + resolve in-flight.
 4. **On error** → reject in-flight + re-throw.
 
-**Surface area:** 7 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap). `/api/analysis` was NOT migrated to SWR (bespoke 8-stage pipeline makes fire-and-forget recompute complex — left as future P3 improvement; analysis already has in-flight dedup + TanStack `keepPreviousData` + HTTP SWR for marginal benefit). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
+**Surface area:** 9 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap, item-peer-comparison [NEW Phase 2], item-trend-rank [NEW Phase 3]). `/api/analysis` was NOT migrated to SWR (bespoke 8-stage pipeline makes fire-and-forget recompute complex — left as future P3 improvement; analysis already has in-flight dedup + TanStack `keepPreviousData` + HTTP SWR for marginal benefit). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
 
-**Impact:** On the first request after 5-min TTL expiry, the 7 routes return stale data in <50ms instead of waiting 0.3–3.9s for a recompute. Background recompute refreshes the cache so the next request gets fresh data. **No stale data risk after mutations** — `invalidateAnalysisCache()` deletes entries, so there's no stale entry to serve post-mutation.
+**Impact:** On the first request after 5-min TTL expiry, the 9 routes return stale data in <50ms instead of waiting 0.3–3.9s for a recompute. Background recompute refreshes the cache so the next request gets fresh data. **No stale data risk after mutations** — `invalidateAnalysisCache()` deletes entries, so there's no stale entry to serve post-mutation.
 
 ### 4.7 Cache Warming
 
@@ -388,6 +405,109 @@ The `/api/area-item-heatmap` route + `AreaItemHeatmap` component received 3 opti
 
 **Heatmap query shape** (`src/lib/queries/heatmap.ts`): 3-step pipeline — (1) fetch all items with total metric value, (2) select items via Pareto 80% or top-N, (3) fetch area × item matrix for selected items with full qty + nominal aggregates. `outletCount` (from `COUNT(DISTINCT outletId)`) powers the dual display (Total + Ø per resto). Smart fallback: `pctQtyDeviasiToBom` + `recordCount` metrics auto-use "Top N" mode (Pareto not meaningful for averages/counts).
 
+### 6.8 Component Architecture (Trend Item Tab — NEW Phase 1+2+3)
+
+The Trend Item Tab (`src/components/dashboard/tabs/ItemTrendTab/`) was expanded from a
+single 657-LOC file into a folder with 8 files via the barrel re-export pattern (see §11
+File Structure). The new component tree under `ItemTrendTab/index.tsx`:
+
+```
+ItemTrendTab/                                  (folder replaces ItemTrendTab.tsx — barrel via index.tsx)
+├── index.tsx                                  (~401 LOC — orchestrator + barrel; holds state, 3 TanStack Queries: trend + autocomplete + item-trend-rank; renders header + chart + table + peer comparison)
+├── types.ts                                    (SortKey, SortDir, MetricOption, AutocompleteResult + METRICS constant)
+├── zScoreHelpers.ts                            (zScoreColor + zScoreStatus — TODO: deduplicate with HistoricalZScoreCard)
+├── periodHelpers.ts                            (periodSortKey + periodShortLabel — "Jun W4" formatter)
+├── ItemTrendSearchBar.tsx                     (autocomplete search input + dropdown — uses retained /api/item-search?mode=autocomplete)
+├── ItemTrendTable.tsx                          (sortable table — 8 columns incl. Phase 1 "Pola" pattern column + drillPeriod row highlight)
+├── ItemTrendRankChart.tsx                     (NEW Phase 3 — compact 100px-tall inverted-axis rank chart; renders below ItemTrendLineChart)
+└── ItemPeerComparison.tsx                      (NEW Phase 2 — 756 LOC drill-down panel: 4 analysis cards + peer table; fetched when selectedItem && drillPeriod are both set)
+```
+
+**Component tree** (rendering hierarchy):
+
+```
+ItemTrendTab (memo'd) — index.tsx
+├── RankBadgeRow (inline) — 3-badge row in header (national rank Deviasi + BOM + outlet count)
+├── ItemTrendSearchBar (memo'd) — autocomplete dropdown
+├── ItemTrendLineChart (next/dynamic, parent folder) — main QTY chart, click sets drillPeriod
+├── ItemTrendRankChart (NEW Phase 3 — memo'd) — compact inverted-axis rank chart, click sets drillPeriod
+│   └── CustomTooltip + renderDot (per-period severity color)
+├── ItemTrendTable (memo'd) — sortable table with "Pola" column + drillPeriod highlight, row click sets drillPeriod
+└── ItemPeerComparison (NEW Phase 2 — memo'd, rendered when selectedItem && drillPeriod)
+    ├── EfficiencyScoreCard   (composite 0-100 — see PRD §6.7 for formula)
+    ├── GapAnalysisCard       (target vs peer best vs peer avg — 3 rows)
+    ├── ScatterPlotCard       (Recharts ScatterChart — qtyBom × absNominalDeviasi, target highlighted)
+    ├── RankingSummaryCard    (target rank #N of M + percentile)
+    └── PeerTable             (9 cols + anomaly flags, target row highlighted, row click → setFocusOutlet → Resto tab)
+        └── PeerTableRow (memo'd — avoids re-render on hover state changes)
+```
+
+**3 TanStack Query hooks** in `index.tsx`:
+1. `useItemTrend` (existing) — main QTY trend data.
+2. `useQuery` for `/api/item-search?mode=autocomplete` — search bar dropdown (5-min staleTime).
+3. `useQuery` for `/api/item-trend-rank` (NEW Phase 3) — rank trend chart data (5-min staleTime, 10-min gcTime, parallel with main trend query).
+
+**Zustand store additions** (`useDashboard.ts`):
+- `trendSelectedItem: string | null` + `setTrendSelectedItem(item)` — pre-selected item (Phase 1 navigation bridge from RankingNasionalCard).
+- `setFocusOutlet(code)` — peer table row click → switches to Resto tab with focused outlet.
+
+**Cross-component state** (`drillPeriod: {month, week} | null`):
+- Set by: ItemTrendTable row click, ItemTrendLineChart dot click, ItemTrendRankChart dot click.
+- Auto-syncs with dashboard month/week via "adjust state during render" pattern (per React docs — avoids `set-state-in-effect` lint error).
+- Triggers: ItemPeerComparison renders below table when `selectedItem && drillPeriod` are both truthy.
+
+### 6.9 Barrel Re-Export Pattern (File Splits Batch 1-4)
+
+13 large files (>500 LOC each) were split into ~75 smaller files via the **barrel
+re-export pattern**. Each split follows the same shape:
+
+```
+# Before (single file)
+src/lib/queries/items/top-items.ts  (722 LOC)
+
+# After (folder + barrel)
+src/lib/queries/items/top-items/
+├── types.ts              (pure types — no 'use client', no React imports, tree-shakeable)
+├── shared-cte.ts         (internal — NOT re-exported from barrel)
+├── by-deviasi-rank.ts    (queries)
+├── by-other-metric.ts    (queries)
+└── index.ts              (barrel — re-exports public API via `export * from './X'`)
+```
+
+TypeScript `moduleResolution: "bundler"` transparently resolves
+`@/lib/queries/items/top-items` to `top-items/index.ts` — **zero caller file changes**
+required (backward-compatible by construction).
+
+**Splits completed** (Tasks 1-a/1-b/1-c/1-d, 2-a/2-b, 3-a/3-b/3-c, 4-a/4-d):
+
+| Task | Original file | LOC | Split into | Largest split file |
+|------|---------------|-----|------------|---------------------|
+| 1-a | `src/components/dashboard/Charts.tsx` | 584 | `Charts/` folder (5 files) | GrowthComparison.tsx (269) |
+| 1-b | `src/components/dashboard/ParetoDashboard.tsx` | 604 | `ParetoDashboard/` folder (8 files) | ParetoDashboard.tsx (236) |
+| 1-c | `src/lib/queries/pareto.ts` | 794 | `lib/queries/pareto/` folder (6 files) | nested.ts (419) |
+| 1-d | `src/lib/queries/items/top-items.ts` | 722 | `lib/queries/items/top-items/` folder (5 files) | by-other-metric.ts (400) |
+| 2-a | `src/engine/rules/evaluator.ts` | 498 | `evaluator/` folder (5 files) | (kept under 150 LOC each) |
+| 2-b | `src/engine/analysis/rootCauseEngine.ts` | 469 | `rootCauseMappings.ts` + slim `rootCauseEngine.ts` | rootCauseMappings.ts (440) |
+| 3-a | `src/hooks/useAnalysis.ts` | 839 | `useAnalysis/` folder (8 files) | types.ts (380) |
+| 3-b | `src/app/api/analysis/services/post-process.ts` | 838 | flat siblings `post-process-*.ts` (10 files, barrel via `export *`) | post-process-bom-correlation.ts (219) |
+| 3-c | `src/components/dashboard/tabs/ItemTrendTab.tsx` | 657 | `tabs/ItemTrendTab/` folder (8 files) | index.tsx (401) |
+| 4-a | `src/components/dashboard/AreaItemHeatmap.tsx` | 595 | `AreaItemHeatmap/` folder (10 files) | index.tsx |
+| 4-d | `src/app/api/outlet-items/route.ts` | 560 | `route.ts` slim coordinator + `services/` flat siblings (6 files) | route.ts (~156) |
+
+**Barrel pattern details**:
+- `export * from './types'` — re-exports all type + value exports.
+- Named `export { X } from './file'` — preserves the original named export shape (callers using `import { X } from 'path'` keep working unchanged).
+- `export type { ... } from './types'` — type-only re-export (preserves `import type`).
+- `'use client'` directive added to each `.tsx` client component file (matches `shared/index.tsx` precedent).
+- Pure `.ts` helper files (types, constants, pure functions) have NO `'use client'` directive (server-safe + tree-shakeable).
+- Some splits expanded public API surface (e.g. `ParetoRow`, `ParetoResult`, `computePareto`, `SeverityMaps` were previously private but became shared across sub-files). Re-exported through the barrel so original import paths still resolve.
+
+**Verification per split** (uniform across all 11 splits):
+- `bun run lint` — 0 errors. Pre-existing warnings unchanged.
+- `bunx tsc --noEmit` — 0 errors. Confirms barrel re-exports resolve + all internal cross-file imports are valid.
+- `bun run test` — green where applicable (pareto 8/8, top-items 9/9).
+- Caller files: 0 modified (zero-diff backward compatibility).
+
 ---
 
 ## 7. Security Architecture
@@ -419,8 +539,8 @@ function errorResponse(message: string, status: number, details?: unknown) {
 
 ### 7.3 Input Validation
 
-- **Zod schemas**: 20 of 22 API routes have a Zod schema validating `searchParams` / body.
-- **Gap**: `/api/resto-bahan-matrix` and `/api/item-search` use manual param parsing (see §9).
+- **Zod schemas**: 21 of 22 API routes have a Zod schema validating `searchParams` / body.
+- **Gap**: `/api/resto-bahan-matrix` still uses manual `searchParams.get()` parsing (see §9). `/api/item-search` was fixed — schema with `mode: z.literal('autocomplete')` re-uses shared `monthLabelSchema` + `weekLabelSchema`; cross-outlet + trend modes removed with `GlobalItemSearchModal` (schema hard-rejects unknown modes).
 
 ### 7.4 Rate Limiting
 
@@ -498,9 +618,24 @@ Documented here so future agents don't re-discover them. **Fix priority is conte
 | --------------------------------------- | --- | --------------------------------------------------------------------- |
 | `src/app/api/ingest-process/route.ts`   | ~700| Single handler: chunk reassembly + parse + transform + validate + DB. |
 | `src/app/api/export-report/route.ts`    | ~650| Single handler: query + format + sheet build + respond.               |
-| `src/app/api/outlet-items/route.ts`     | ~560| Single handler: multi-dim aggregation + nested grouping.              |
+| `src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx` | ~756 | NEW Phase 2 — single component renders 4 analysis cards + peer table. Could be split into EfficiencyScoreCard.tsx + GapAnalysisCard.tsx + ScatterPlotCard.tsx + RankingSummaryCard.tsx + PeerTable.tsx + PeerTableRow.tsx (mirrors `peer-comparison/` folder pattern from outlet-level). |
 
-**Recommended refactor**: Extract to service modules (`ingest-process.service.ts`, etc.) with pure, testable functions. Route handler should be <100 LOC.
+> **Recently split (Tasks 1-a/1-b/1-c/1-d, 2-a/2-b, 3-a/3-b/3-c, 4-a/4-d):** 11 god
+> files were split into ~75 smaller files via the barrel re-export pattern (see §6.9).
+> `Charts.tsx` (584 LOC) → `Charts/` folder; `ParetoDashboard.tsx` (604 LOC) →
+> `ParetoDashboard/` folder; `pareto.ts` (794 LOC) → `lib/queries/pareto/` folder;
+> `top-items.ts` (722 LOC) → `lib/queries/items/top-items/` folder;
+> `evaluator.ts` (498 LOC) → `evaluator/` folder;
+> `rootCauseEngine.ts` (469 LOC) → `rootCauseMappings.ts` + slim `rootCauseEngine.ts`;
+> `useAnalysis.ts` (839 LOC) → `useAnalysis/` folder (8 files);
+> `post-process.ts` (838 LOC) → flat siblings `post-process-*.ts` (10 files);
+> `ItemTrendTab.tsx` (657 LOC) → `tabs/ItemTrendTab/` folder (8 files);
+> `AreaItemHeatmap.tsx` (595 LOC) → `AreaItemHeatmap/` folder (10 files);
+> `outlet-items/route.ts` (560 LOC) → slim `route.ts` + `services/` flat siblings (6 files).
+> All splits verified backward-compatible (0 caller files modified; `bun run lint` +
+> `bunx tsc --noEmit` pass).
+
+**Recommended refactor** (remaining god files): Extract to service modules (`ingest-process.service.ts`, etc.) with pure, testable functions. Route handler should be <100 LOC. The Trend Item Tab ItemPeerComparison.tsx could similarly follow the `peer-comparison/` folder pattern when it grows beyond ~800 LOC.
 
 ### 9.2 Test Coverage Gaps
 
@@ -514,7 +649,7 @@ Documented here so future agents don't re-discover them. **Fix priority is conte
 | Route                        | Issue                                                        |
 | ---------------------------- | ------------------------------------------------------------ |
 | `/api/resto-bahan-matrix`    | No Zod schema — manual `searchParams.get()` parsing.        |
-| `/api/item-search`           | No Zod schema — manual param parsing.                        |
+| ~~`/api/item-search`~~       | ~~No Zod schema — manual param parsing.~~ **FIXED:** Zod schema added (`itemSearchQuerySchema`) with `mode: z.literal('autocomplete').default('autocomplete')` + `monthLabelSchema` + `weekLabelSchema` re-used from shared `validation.ts`. Schema hard-rejects unknown `mode` values (was previously tolerant — `cross-outlet` + `trend` modes were removed with `GlobalItemSearchModal`). |
 | `/api/status`                | No rate limiting (intentional: cheap endpoint, but inconsistent with §7.4). |
 
 ### 9.4 Cache Key Gaps (Historical — Fixed)
@@ -625,10 +760,13 @@ src/
 ├── app/
 │   ├── api/
 │   │   ├── analysis/route.ts              # Main analytics endpoint (cached, bespoke 8-stage pipeline)
-│   │   │   └── services/                  # Pipeline stages (validate-and-resolve, fetch-records, run-queries, post-process, exec-summary, assemble-response, trend-builder, deviation-drivers)
+│   │   │   └── services/                  # Pipeline stages — flat siblings (post-process.ts orchestrator + post-process-{types,bom-correlation,flags,growth,health-ranking,historical,trend-projection,patterns,top-outlets}.ts barrel re-exports via `export *`; validate-and-resolve, fetch-records, run-queries, exec-summary, assemble-response, trend-builder, deviation-drivers)
 │   │   ├── area-item-heatmap/             # NEW (heatmap drill-down)
 │   │   │   ├── route.ts                   # Heatmap matrix (cached, SWR)
 │   │   │   └── cell-detail/route.ts       # Per-outlet drill-down (NOT cached)
+│   │   ├── item-peer-comparison/route.ts # NEW Phase 2 (item-level peer comparison; cached 5-min + SWR; auto-selects worst outlet when outletCode omitted)
+│   │   ├── item-trend-rank/route.ts      # NEW Phase 3 (per-item national rank timeline; cached 5-min + SWR; RANK() OVER PARTITION BY period)
+│   │   ├── item-search/route.ts          # Autocomplete only (cross-outlet + trend modes removed with GlobalItemSearchModal — Zod schema hard-rejects other modes)
 │   │   ├── pareto/route.ts                # Pareto 80/20 (cached, SWR)
 │   │   ├── recommendations/route.ts       # AI recommendations (cached, SWR)
 │   │   ├── resto-bahan-matrix/route.ts    # Restaurant × ingredient matrix (cached, SWR)
@@ -638,23 +776,35 @@ src/
 │   │   ├── drilldown/route.ts             # NEW cached (PERF-API-03, slim select PERF-API-06, SWR)
 │   │   ├── ingest-upload/route.ts         # Chunked upload receiver
 │   │   ├── ingest-process/route.ts        # Reassemble + parse + persist
-│   │   └── status/route.ts                # Health check (in-memory cached + cleanupExpiredCache)
+│   │   └── status/route.ts                # Health check (in-memory cached + cleanupExpiredCache; NO_STORE HTTP headers — see §4.3)
 │   └── page.tsx                           # Thin orchestrator (227 lines — was 735; split in SPLIT-PAGE)
 ├── components/
 │   ├── ui/                                # shadcn/ui primitives (29 components)
 │   └── dashboard/                         # Chart + KPI components (memoized, 24 top-level + tabs/ + shared/)
-│       ├── tabs/                          # NEW folder (SPLIT-PAGE): DashboardTab + RestoTab + PeerTab + ParetoTab
-│       ├── AreaItemHeatmap.tsx            # Heatmap matrix (Pareto 80/20 + dual display + drill-down Sheet trigger)
+│       ├── Charts/                        # NEW (split 1-a): GrowthComparison + DeviationBreakdownChart + LossVsSurplusChart + TrendChart + index.ts barrel
+│       ├── ParetoDashboard/               # NEW (split 1-b): types + constants + QuadrantCard + NestedItemToOutlet + GeneralizedNested + ActionPlanFooter + ParetoDashboard + index.ts barrel
+│       ├── AreaItemHeatmap/               # NEW (split 4-a): types + metricConfig + heatmapHelpers + HeatmapControls + HeatmapCellView + HeatmapGrid + HeatmapTooltip + HeatmapLegend + index.tsx barrel
+│       ├── tabs/                          # NEW folder (SPLIT-PAGE): DashboardTab + RestoTab + PeerTab + ParetoTab + ItemTrendLineChart + ItemTrendTab/
+│       │   └── ItemTrendTab/              # NEW (split 3-c): folder replaces ItemTrendTab.tsx — index.tsx + types + zScoreHelpers + periodHelpers + ItemTrendSearchBar + ItemTrendTable + ItemTrendRankChart (NEW Phase 3) + ItemPeerComparison (NEW Phase 2)
+│       ├── AreaItemHeatmap.tsx            # (kept as backwards-compat entry — re-exports from AreaItemHeatmap/index.tsx)
 │       ├── AreaItemHeatmapSheet.tsx       # NEW: drill-down Sheet (lazy-loaded via next/dynamic)
 │       ├── BomCorrelationCard.tsx         # Per-record BOM findings table + count badges + aggregate alignment table + narrative
 │       ├── DashboardHeader.tsx            # NEW: sticky header (extracted from page.tsx)
 │       ├── DashboardFooter.tsx            # NEW: sticky footer (extracted from page.tsx)
 │       ├── HistoricalZScoreCard.tsx       # Multi-metric Z-Score (Dev/BOM + Waste + Susut + Trial)
 │       ├── shared/index.tsx               # EmptyState/LoadingState/ErrorState/SectionHeader/ScrollToTop/FetchAware/LoadingChart
-│       └── ...                            # Other dashboard components (AreaTrendChart + CardDrillDown deleted in FIX-DOCS)
+│       └── ...                            # Other dashboard components (AreaTrendChart + CardDrillDown + GlobalItemSearchModal deleted — see §11 Removed Features)
 ├── hooks/
-│   ├── useAnalysis.ts                     # TanStack Query wrapper (AnalysisData type) + prefetchAnalysis + prefetchHeatmap (NEW)
-│   ├── useDashboard.ts                    # Zustand filter store
+│   ├── useAnalysis/                       # NEW (split 3-a): folder replaces useAnalysis.ts — 8 files via index.ts barrel
+│   │   ├── index.ts                       # Barrel: re-exports all types + 4 hooks + 2 prefetch helpers + 2 query-key builders
+│   │   ├── types.ts                       # All shared AnalysisData + DrilldownData + ItemTrendData + 28 type exports (380 LOC)
+│   │   ├── fetchAnalysis.ts               # fetchAnalysis(params) helper
+│   │   ├── prefetchHeatmap.ts             # prefetchHeatmap(queryClient, params) helper
+│   │   ├── useAnalysis.ts                 # Main useAnalysis hook + buildAnalysisQueryKey + ANALYSIS_STALE_TIME/GC_TIME + prefetchAnalysis + usePrefetchAnalysis (140 LOC)
+│   │   ├── useStatus.ts                   # useStatus hook + SourceFileInfo/StatusData types
+│   │   ├── useDrilldown.ts                # useDrilldown hook + DrilldownRecord/DrilldownData types
+│   │   └── useItemTrend.ts                # useItemTrend hook + ItemTrend* types
+│   ├── useDashboard.ts                    # Zustand filter store (+ trendSelectedItem + setFocusOutlet — Phase 1+2 additions)
 │   ├── useDashboardEffects.ts             # NEW: 5 useEffects (auto-select + cache warm + validate)
 │   ├── useDashboardActions.ts             # NEW: export/refresh handlers + keyboard shortcuts
 │   ├── use-mobile.ts                      # shadcn responsive viewport hook
@@ -675,7 +825,14 @@ src/
 │   │   ├── rule-evaluation.ts             # 19-rule SQL push-down + 3-rule JS post-process
 │   │   ├── heatmap.ts                     # NEW: queryAreaItemHeatmap + queryHeatmapCellDetail (Pareto 80/20 + dual display)
 │   │   ├── z-score.ts                     # Z-score query
-│   │   └── month.ts                       # resolveMonthLabel()
+│   │   ├── month.ts                       # resolveMonthLabel()
+│   │   ├── pareto/                        # NEW (split 1-c): folder replaces pareto.ts — types + compute + by-dimension + nested + historical + index.ts barrel
+│   │   └── items/
+│   │       ├── top-items/                 # NEW (split 1-d): folder replaces top-items.ts — types + shared-cte (buildDeviasiRankBaseCte) + by-deviasi-rank + by-other-metric + index.ts barrel
+│   │       ├── item-peer-comparison.ts    # NEW Phase 2: queryItemPeerComparison — single SQL with CTEs (item_full → combined → target → final SELECT)
+│   │       ├── item-trend-rank.ts         # NEW Phase 3: queryItemTrendRank — 2-CTE SQL (item_per_period → ranked → final WHERE itemName = exact match)
+│   │       ├── item-trend.ts             # Per-item multi-period QTY trend (existing — powers main ItemTrendLineChart)
+│   │       └── global-search.ts          # queryItemAutocomplete (cross-outlet + trend functions removed with GlobalItemSearchModal)
 │   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs / fmtHeatmapCompact
 ├── config/
 │   └── rules.yaml                         # 19 anomaly rules (sole source of truth; rules.ts deleted as dead code)

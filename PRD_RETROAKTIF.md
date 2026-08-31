@@ -231,8 +231,11 @@ Open Pengaturan dialog (gear icon)
 | Peer Items Table | Peer Comparison | Item-level comparison with peer outlets |
 | Peer Trend | Peer Comparison | Multi-week trend comparison vs peers |
 | Item Deep Dive | Modal | Direction pie, top 5 outlets, multi-period trend, Total Kemunculan |
+| Trend Item Tab | Tab | Per-item investigation: QTY trend chart + sortable table + (Phase 1) rank badge + pattern classification + navigation bridge from RankingNasionalCard; (Phase 2) ItemPeerComparison drill-down panel with 4 analysis cards + peer table; (Phase 3) compact inverted-axis rank trend chart. See §6 for full feature spec. |
 
 > **Removed (FIX-DOCS):** "Weekly Trend" (dual-axis Dev/BOM % + Nominal Deviasi chart) and "Trend Dev/BOM per Area" (`AreaTrendChart`) were removed from the Dashboard tab to make room for BOM Correlation — the `AreaTrendChart.tsx` file has since been deleted as dead code. `CardDrillDown.tsx` was also deleted; ExecutiveSummary KPI cards are now static display (no click-through drilldown). The RestoAnalisa priority-score drilldown is also a static card display.
+
+> **Removed (GlobalItemSearchModal):** The Cmd+K `GlobalItemSearchModal` component + the `cross-outlet` and `trend` modes on `/api/item-search` were removed (the modal's surface area duplicated the Trend Item Tab's per-item investigation flow). The `autocomplete` mode is RETAINED — `ItemTrendSearchBar` still calls `/api/item-search?mode=autocomplete&q=&month=&week=` to populate its dropdown. The Zod schema now hard-rejects any other `mode` value (was previously tolerant). See §6 Trend Item Tab Expansion for the replacement flow.
 
 ### 4.2 Data Management
 
@@ -516,10 +519,228 @@ outlet, area, network, trend.
 
 ---
 
-## 6. Known Limitations
+## 6. Trend Item Tab Expansion
+
+The Trend Item Tab (originally a single-item QTY trend chart + table) was expanded
+across three phases (Phase 1: rank badge + navigation bridge + pattern column;
+Phase 2: Item Peer Comparison drill-down; Phase 3: rank trend chart) to give the
+analyst a richer per-item investigation surface. The expansion is entirely client-driven
+(TanStack Query → 2 new cached API routes); the underlying `/api/analysis` payload
+was extended in Phase 1 with `topDeviasiRank[]` (already used by the Resto Tab).
+
+### 6.1 Rank Badge
+
+When an item is selected in the Trend Item Tab, a 3-badge row renders in the header
+(below the item name) showing the item's national standing:
+
+| Badge | Source | Color rule |
+|-------|--------|------------|
+| `Rank #N Nasional (Deviasi)` | `analysisData.topDeviasiRank[].rankNominal` (best = `Math.min` across matching item-outlet pairs) | red ≤5, amber 6-20, muted-gray >20 (or item not in top-50) |
+| `Rank #M (BOM)` | `analysisData.topDeviasiRank[].rankBom` (nullable — see below) | red ≤5, amber 6-20, muted-gray >20 (or null) |
+| `K outlet terdampak (top 50)` | `matches.length` (count of item-outlet pairs in topDeviasiRank) | secondary (no color coding) |
+
+**`rankBom` is nullable.** `topDeviasiRank` is computed by the SQL CTE `buildDeviasiRankBaseCte`
+in `src/lib/queries/items/top-items/shared-cte.ts`. Items whose `qtyBom = 0` (deviation
+records but no BOM set) get `rankBom = NULL` via `CASE WHEN qtyBom != 0 THEN ROW_NUMBER() ...
+ELSE NULL END`. The `DeviasiRankItem.rankBom` type contract is `number | null`. The
+frontend filters `rankBom != null && rankBom > 0` and falls back to the muted
+"Rank BOM > 50" badge when null (BUG-1-01 fix).
+
+### 6.2 Pattern Classification
+
+The ItemTrendTable has a "Pola" column (added in Phase 1) that classifies each
+period by **blast radius** — the number of distinct outlets carrying the item in
+that period:
+
+| Pattern | Condition (outletCount) | Emoji | Badge color |
+|---------|-------------------------|-------|-------------|
+| **Massal** | ≥ 10 outlets | 🔴 | red |
+| **Regional** | 5-9 outlets | 🟡 | amber |
+| **Lokal** | 2-4 outlets | ⚪ | muted |
+| **Tunggal** | = 1 outlet | 📍 | muted |
+| N/A | = 0 outlets (shouldn't happen — item has records but no outlets) | — | muted-faded |
+
+Classification helper: `patternBadge(outletCount)` in `ItemTrendTable.tsx`. The
+column is NOT sortable (classification is derived from the existing sortable
+`outletCount` column — sorting by Pola would be redundant). The Tunggal bucket
+explicitly excludes outletCount=0 (BUG-1-02 fix); Tunggal uses a distinct 📍
+emoji so it's visually distinguishable from Lokal's ⚪ (BUG-1-03 fix).
+
+### 6.3 Rank Trend Chart
+
+Below the main QTY trend chart, a **compact 100px-tall Recharts `LineChart`** renders
+the item's national rank across all periods. The chart sits inside the same `px-4 pt-2`
+container as the main chart, separated by a `mt-2 pt-2 border-t` divider. Only renders
+when `rankPeriods.length > 1` (a single period can't draw a trend line).
+
+| Property | Value |
+|----------|-------|
+| **Y-axis** | INVERTED via `reversed` prop — rank #1 at TOP (worst = highest deviasi), rank #N at BOTTOM (best). Visual convention: "higher on chart = worse" matches rank intuition. |
+| **Y domain** | `[1, maxRank]` (floored at 2 so single-rank charts have a visible Y range). `allowDataOverflow` guards against stray values. |
+| **X-axis** | Short period label `"Jun W4"` (same format as main chart), rotated -30°. |
+| **Line** | Single stroke (`var(--muted-foreground)`, monotone, `connectNulls`, `isAnimationActive=false`). |
+| **Per-dot coloring** | Custom `renderDot` — red ≤5, amber 6-20, muted-gray >20 (matches RankBadge color rule). White stroke for contrast. |
+| **ReferenceLines** | At `y=5` (red dashed) and `y=20` (amber dashed), only rendered when `maxRank ≥ threshold` (avoids lines outside visible domain). |
+| **Tooltip** | Custom: period full label, "Rank #N dari M item" (colored to match dot severity), `|Nominal Deviasi|` formatted via `fmtIDR`. |
+| **Click handler** | Recharts passes `activeTooltipIndex` (nearest-point index) on click → mapped to underlying period → `onDotClick({monthLabel, weekLabel})`. Wired to `setDrillPeriod(...)` — same `drillPeriod` state used by the main chart + table row clicks. |
+| **Week filter** | Respected (when set, only that `weekLabel` across all months is returned — e.g. WEEK 4 → W4 of Januari, Februari, Maret...). Same convention as main trend query. |
+| **Edge cases** | 0 periods → render null; 1 period → parent pre-filters and hides chart (chart can't draw a trend line from a single point); null `rankNominal` → `connectNulls` bridges the gap. |
+| **API** | `/api/item-trend-rank?item=&month=&week=&area=&kelompok=&outlet=&pic=` (5-min DB cache + SWR). |
+
+**Data source**: `ItemTrendRankPeriod[]` from `/api/item-trend-rank`, fetched in
+parallel with the main trend query (independent queryKey + endpoint, 5-min
+`staleTime` + 10-min `gcTime`).
+
+### 6.4 Item Peer Comparison
+
+When the user has selected 1 item AND clicked a period (via row click in the
+ItemTrendTable or a dot in either chart), `drillPeriod` state is set and the
+`ItemPeerComparison` panel renders below the table. It fetches per-outlet peer
+data for the (item, month, week) tuple and renders 4 analysis cards + a peer table.
+
+**Peer definition.** Peers = OTHER outlets that carry the same item AND have
+`ABS(qtyBom)` within ±50% of the target outlet's `ABS(qtyBom)` (same "bucket
+average" peer selection logic as the `bucket_avg` CTE in `queryTopItemsByDeviasiRank`).
+
+**Target outlet selection**:
+- If `outletCode` is provided via FilterBar → that outlet is the target.
+- If omitted → backend auto-selects the worst outlet (highest `ABS(nominalDeviasi)`
+  via `ORDER BY ABS(nominalDeviasi) DESC LIMIT 1`). The panel shows an "Auto-selected:
+  worst outlet" badge when this happens.
+
+**API contract** (`/api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=`):
+returns `{ target, peers, peerAverages, autoSelected }`.
+- `peers[]` INCLUDES the target (`isTarget=true`) so the frontend can rank it
+  among peers + render the target dot in the scatter plot (BUG-2-01 + BUG-2-02
+  fix — aligns with the outlet-level `/api/peer-comparison` pattern).
+- `peerAverages` is computed from NON-target peers only (excludes target so the
+  benchmark isn't skewed).
+
+**4 analysis cards** (2-col grid on desktop):
+
+| Card | What it shows |
+|------|---------------|
+| **Efficiency Score** | Composite 0-100 score (higher = better). Penalty = `|devBom|` above peer avg (50pts) + `|nominalDeviasi|` above peer avg (50pts). Color: green >70, amber 50-70, red <50. Progress bar + peer avg baseline marker at 100. See §6.7 for formula. |
+| **Gap Analysis** | 3 rows (Nominal Deviasi, QTY Deviasi, Dev/BOM) showing target vs peer BEST (lowest `|nominal|` non-target outlet) vs peer avg, with "di bawah/di atas best" badge. |
+| **Scatter Plot** | Mini Recharts `ScatterChart` (200px height). X=`qtyBom`, Y=`absNominalDeviasi`. Dot color by `direction` (red=LOSS / green=SURPLUS / gray=NEUTRAL). Target highlighted (amber fill + amber ring + `r=7` vs `r=4` for peers). |
+| **Ranking Summary** | Target's rank `#N of M` by `|nominalDeviasi|` (1=worst, computed via `findIndex` in `peers[]`), percentile, LOSS/SURPLUS outlet counts. |
+
+**Peer table** (9 columns: Outlet | Area | PIC | QTY BOM | QTY Deviasi | Dev/BOM | Nominal | Dir | Flags):
+- Target row rendered FIRST + highlighted (amber bg + left-4px amber border).
+- Anomaly flags per row:
+  - 🔴 **Dev/BOM tinggi** — when `|devBom| > 1.5× peerAvg.devBom` (BUG-2-05 fix: uses signed peerAvg.devBom × 0.2 for the "near" check).
+  - 🔴 **LOSS tinggi** — when `nominalDeviasi < 0` AND `|nominalDeviasi| > 1.5× peerAvg.absNominalDeviasi`.
+  - 🟢 **Normal** — when no anomaly flags AND within ±20% of peer avg on both metrics.
+- Rows clickable → `onOutletClick(outletCode)` → parent calls `setFocusOutlet(code)`
+  which switches to the Resto Analysis tab with the clicked outlet focused.
+
+**Row color rule** (BUG-2-11): Row color uses the `direction` field (derived from
+`SUM(nominalLossSurplus)` via `DIRECTION_FROM_SUM_SQL` — NET signed), NOT the
+sign of `nominalDeviasi` (GROSS signed). Rationale: a peer bucket can have gross
+negative but net positive (surplus items outweigh loss items in the same bucket);
+the NET direction is the economically meaningful signal.
+
+### 6.5 Period Drill-Down
+
+Click any of the following to set `drillPeriod = { month, week }`:
+- A row in the `ItemTrendTable` (row hover shows `cursor-pointer` + amber hover bg;
+  the row matching `drillPeriod` gets a persistent `bg-amber-50 dark:bg-amber-950/20`
+  highlight).
+- A dot in the main `ItemTrendLineChart` (Recharts nearest-point click).
+- A dot in the `ItemTrendRankChart` (Phase 3, Recharts nearest-point click).
+
+When `selectedItem && drillPeriod` are both truthy, `ItemPeerComparison` renders
+below the table. `drillPeriod` auto-syncs with dashboard month/week changes via
+the "adjust state during render" pattern (per React docs) — avoids the
+`react-hooks/set-state-in-effect` lint error + avoids extra render cycle. Uses
+`prevPeriodKey` state to detect changes; updates both `prevPeriodKey` + `drillPeriod`
+synchronously during render when the period key changes.
+
+### 6.6 Navigation Bridge (Resto Tab → Trend Item Tab)
+
+`RankingNasionalCard` (Resto Analysis tab — top 50 item-outlet pairs by deviation
+rank) is now clickable. Row click triggers:
+1. `setTrendSelectedItem(itemName)` — Zustand store update.
+2. `setActiveTab('trend')` — switches the dashboard tab to Trend Item.
+
+The Trend Item Tab reads `trendSelectedItem` from the store on mount via
+`useDashboard(useShallow(...))`. The selected item persists across tab switches
+(Zustand store survives Radix Tabs unmount — local UI state like metric/query/
+sortKey/sortDir/drillPeriod resets on remount by design).
+
+Visual feedback: `RankingNasionalCard` rows have `hover:bg-amber-50/60 dark:hover:bg-amber-950/20`
++ `hover:cursor-pointer` + a hint Badge at the top: "Klik baris untuk lihat trend
+item di Tab Trend Item" (with `TrendingUp` icon, amber styling).
+
+### 6.7 Formulas
+
+The new Trend Item Tab features rely on three core formulas:
+
+**Efficiency Score** (composite 0-100; higher = better):
+
+```
+Efficiency Score = 100 - (devBomPenalty + nominalPenalty)
+
+where:
+  devBomPenalty  = min(50, max(0,
+                    (|target.devBom| - |peerAvg.devBom|) / |peerAvg.devBom| × 25
+                  ))
+  nominalPenalty = min(50, max(0,
+                    (target.absNominalDeviasi - peerAvg.absNominalDeviasi)
+                      / peerAvg.absNominalDeviasi × 25
+                  ))
+```
+
+- Each penalty is bounded to [0, 50] so total score is bounded to [0, 100].
+- Uses ABSOLUTE magnitudes, not signed values (BUG-2-03 fix). `devBom` is SIGNED
+  (neg=LOSS, pos=SURPLUS); comparing signed values would penalize SURPLUS targets
+  (wrong direction — SURPLUS is good, not bad).
+- `safeDiv(a, b) = b > 0 ? a / b : 0` — div-by-zero guard (returns 0 penalty when
+  peerAvg is 0, e.g. all peers have BOM=0).
+- 25 multiplier + 50 cap means: target at 2× peer avg → 25pts penalty (out of 50);
+  target at 3×+ peer avg → 50pts (capped). Composite is `100 - (penalty1 + penalty2)`.
+- Color: green >70 (above peer avg), amber 50-70 (around peer avg), red <50 (below peer avg).
+
+**National Rank** (per period, by ABS(nominalDeviasi) DESC):
+
+```sql
+RANK() OVER (
+  PARTITION BY "monthLabel", "weekLabel"
+  ORDER BY "absNominal" DESC
+)
+```
+
+- `1 = highest |nominalDeviasi|` (worst = most-anomalous item in that period).
+- `totalItems = COUNT(*) OVER (PARTITION BY "monthLabel", "weekLabel")` — denominator
+  for "Rank #N of M items" display.
+- Computed in the `ranked` CTE of `queryItemTrendRank` (`src/lib/queries/items/item-trend-rank.ts`).
+- The `item_per_period` CTE aggregates per-(period, item) `ABS(nominalDeviasi)` for ALL
+  items (typically ~153 items × ~8 periods = ~1224 rows) before window functions apply
+  per-period — O(N log N) per partition.
+
+**Peer selection** (BOM ±50% bucket):
+
+```sql
+ABS(c."qtyBom") > 0
+  AND ABS(t."qtyBom") > 0
+  AND ABS(c."qtyBom") BETWEEN ABS(t."qtyBom") * 0.5
+                          AND ABS(t."qtyBom") * 1.5
+```
+
+- `c` = candidate peer outlet, `t` = target outlet.
+- Same "bucket average" peer selection logic as `bucket_avg` CTE in
+  `queryTopItemsByDeviasiRank` (`src/lib/queries/items/top-items/by-deviasi-rank.ts`).
+- Excludes BOM=0 targets via `ABS(t."qtyBom") > 0` guard (BOM=0 items have no
+  meaningful bucket concept).
+- Target is INCLUDED in `peers[]` (via `c."outletCode" = t."outletCode"` OR-clause) so
+  the frontend can rank it among peers + render the target dot in the scatter plot.
+
+---
+
+## 7. Known Limitations
 
 These are **current** limitations, not bugs. Each is tracked for a future phase
-(see §7).
+(see §8).
 
 | # | Limitation | Impact | Workaround |
 |---|------------|--------|------------|
@@ -531,11 +752,11 @@ These are **current** limitations, not bugs. Each is tracked for a future phase
 | L6 | **No mobile app** — responsive web only | Outlet Managers cannot self-serve on the floor | Use desktop / tablet browser; (Phase D will add PWA) |
 | L7 | **Single-tenant** — one F&B chain per deployment | Cannot sell to multiple chains on same instance | Separate deploy per chain |
 | L8 | **Weeks are 1, 2, 4 only** (no WEEK 3 in source data) | Analyst must confirm with business whether intentional | Treat as a data-quality quirk; document in monthly report |
-| L9 | **`/api/analysis` route is 12.6s cold** | Dashboard first-paint is slow on cold cache | 5-min DB cache (`AggregationCache`) + in-flight dedup + SWR for 7 sibling routes → warm cache hit returns in <50ms. See §6.5. |
+| L9 | **`/api/analysis` route is 12.6s cold** | Dashboard first-paint is slow on cold cache | 5-min DB cache (`AggregationCache`) + in-flight dedup + SWR for 7 sibling routes → warm cache hit returns in <50ms. See §7.5. |
 | L10 | **AI narrative disabled** | Insights are rule-based, not LLM-generated | Re-enable with caching in Phase D |
 | L11 | **No alerting** — analyst must poll the dashboard | Anomaly could sit unnoticed between Monday check-ins | (Phase C will add email/Slack alerts) |
 
-### 6.5 Performance (as-shipped benchmarks)
+### 7.5 Performance (as-shipped benchmarks)
 
 After the PERF-API / PERF-DB / PERF-FE / PERF-CACHE passes (Tasks PERF-*, see
 `worklog.md`), the dashboard's hot paths are:
@@ -597,7 +818,7 @@ Turbopack dev mode uses stable module-ID hashes (not content hashes), so
 
 ---
 
-## 7. Feature Roadmap
+## 8. Feature Roadmap
 
 ### Phase A — Quick wins (DONE)
 
@@ -658,7 +879,7 @@ Multi-quarter effort, prerequisites for enterprise readiness:
 3. **Alerting** — Email / Slack / WhatsApp push when a P1 anomaly fires.
 4. **PDF export** — In addition to `.docx` (likely via Playwright headless render).
 5. **DB-level caching** — `AggregationCache` table now enabled across 9 routes
-   (see §6.5); Phase C work is to surface `stale: true` flag in the UI + add
+   (see §7.5); Phase C work is to surface `stale: true` flag in the UI + add
    SWR to `/api/analysis` (currently uses bespoke pipeline + in-flight dedup
    only).
 6. **Statement timeout** on DB pool — single hung query no longer blocks the pool.
@@ -678,7 +899,7 @@ Tentative, depends on Phase C adoption:
 
 ---
 
-## 8. Non-Goals (explicitly NOT doing)
+## 9. Non-Goals (explicitly NOT doing)
 
 To prevent scope creep, the following adjacent features are **explicitly excluded**
 from this product. They belong to other systems (POS, ERP, recipe management, HACCP).
@@ -701,7 +922,7 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 
 ---
 
-## 9. Success Metrics (how we know the product works)
+## 10. Success Metrics (how we know the product works)
 
 | Metric | Target | Source |
 |--------|--------|--------|
@@ -714,7 +935,7 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 
 ---
 
-## 10. Related Documents
+## 11. Related Documents
 
 | Document | Purpose |
 |----------|---------|
@@ -732,5 +953,8 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 *Authored retroactively by Agent DOC-PRD. Last updated by Agent DOC-UPDATE-2
 (Heatmap drill-down + Pareto 80/20 + dual display, page.tsx split, DB migration
 to `proosjqivxadwgftofry`, SWR cache, 9 cached routes, prefetchHeatmap, 20
-perf fixes, Cache-Control dev/prod fix, pre-push hook). Update this document
+perf fixes, Cache-Control dev/prod fix, pre-push hook). Section §6 Trend Item
+Tab Expansion added by Agent DOC-2 (Phase 1+2+3: rank badge, navigation bridge,
+pattern classification, ItemPeerComparison drill-down, rank trend chart,
+Efficiency Score + Rank + Peer selection formulas). Update this document
 whenever a Phase C+ feature ships or a Non-Goal is reconsidered.*
