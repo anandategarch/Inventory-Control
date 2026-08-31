@@ -112,7 +112,10 @@ function buildRow(
       break;
   }
   const pk = flipPeriodKey(p);
-  const pairs = flips ? getFlipsForPeriod(flips, pk) : [];
+  // FIX (BUG-FLIP-01): only show flip annotation for ACTUAL flips (isFlip=true).
+  // Was showing amber ring + tooltip for ALL pairs including konsisten-naik/turun
+  // (same-direction pairs) — misleading. Now filters to actual sign-change flips.
+  const pairs = flips ? getFlipsForPeriod(flips, pk).filter((f) => f.isFlip) : [];
   const flipInfo = pairs.map((f) => {
     const otherLabel = f.period1Key === pk ? f.period2Label : f.period1Label;
     return `🔀 Flip detected vs ${otherLabel} (${Math.round(f.disparityPct)}% disparity)`;

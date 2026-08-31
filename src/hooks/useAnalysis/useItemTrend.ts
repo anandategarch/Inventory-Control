@@ -24,7 +24,14 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 export interface ItemTrendPeriod {
   monthLabel: string;
   weekLabel: string;
-  monthKey: string;
+  /** FIX (BUG-FLIP-03): aligned with query interface — monthKey can be null
+   *  when SourceFile is missing (LEFT JOIN returns null). Was declared as
+   *  non-null `string` in the hook, masking potential null access. */
+  monthKey: string | null;
+  /** FIX (SATUAN-BUG): item's unit of measure (e.g. "KG", "PCS", "LTR").
+   *  Used by Flip column/matrix tooltips to display the correct unit instead
+   *  of hardcoded "kg" (which was wrong for non-KG items). */
+  satuan: string | null;
   qtyBom: number;
   /** ABS magnitude — for sort/comparison (always positive). */
   qtyDeviasi: number;

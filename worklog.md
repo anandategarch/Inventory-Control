@@ -39312,3 +39312,36 @@ Stage Summary:
 - Lint: 0 errors (376 pre-existing warnings — none in new/modified files)
 - tsc: 0 errors (EXIT_CODE=0)
 - No caller files outside ItemTrendTab/ folder modified (only ItemTrendLineChart.tsx + ItemTrendTable.tsx + index.tsx + types.ts + new flipHelpers.ts + FlipMatrix.tsx).
+
+---
+Task ID: BUG-FLIP
+Agent: Flip Detection Bug Hunter
+Task: Audit flip detection features (Phase A+B+C)
+
+Work Log:
+- Read flipHelpers.ts + ItemTrendTable + ItemTrendLineChart + FlipMatrix + index.tsx
+- Read flip-ranking.ts + route.ts + FlipRanking.tsx
+- Read context: item-trend.ts + useItemTrend.ts + shared.ts + types.ts + periodHelpers.ts
+- Verified satuan bug fix in: item-trend.ts (query + interface), useItemTrend.ts (hook interface), ItemTrendTable.tsx (3 tooltip places), FlipMatrix.tsx (3 tooltip places), index.tsx (extraction from periods[0]?.satuan)
+- Checked flip formula: sign(P1) !== sign(P2) AND both non-zero — CORRECT in both FE (flipHelpers.ts) and BE (flip-ranking.ts)
+- Checked disparity formula: |net| / MAX(|P1|, |P2|) — CORRECT (Math.min clamp in FE is redundant but harmless)
+- Checked category thresholds: sempurna <10%, dominan [10%,40%), parsial >=40% — CORRECT in both FE + BE
+- Checked edge cases: P1=0/P2=0/both=0/same sign — handled correctly (not flips)
+- Checked groupPeriodsByWeek + computeFlipAnalyses iteration — CORRECT
+- Checked computeItemFlipScore aggregation — CORRECT (flipCount/sempurnaCount/dominanCount/parsialCount from flip pairs only, konsistenCount from non-flip, avgDisparity from flips only)
+- Checked API query (per-(period,item) SIGNED SUM aggregates for ALL items) + JS flip computation (group by item → group by week → sort by monthKey → consecutive pairs) — CORRECT
+- Checked BE risk score formula: min(100, sempurnaCount*30 + flipCount*10) — CORRECT per spec
+- Checked BE sort: riskScore DESC, sempurnaCount DESC, flipCount DESC — CORRECT
+- Checked BE top-3 selection: lowest disparityPct ASC (most balanced first) — CORRECT (only includes actual flips due to `continue` on non-flip)
+- Checked cache key includes week + area + kelompok + outlet + pic + limit — CORRECT
+- Verified 'flip-ranking' IS in invalidateAnalysisCache list (aggregation-cache.ts line 424)
+- Checked widget data flow (independent query, no item dependency) + click handling (setTrendSelectedItem) — CORRECT
+- Verified no `as any` casts in any flip-related file
+- Verified monthKey type discrepancy: hook says `string` but query says `string | null` (pre-existing, not flip-introduced)
+- Verified no other hardcoded "kg" anywhere in src/ (only test files + comments reference it)
+
+Stage Summary:
+- Found 3 bugs: P0=0, P1=1, P2=1, P3=1
+- BUG-FLIP-01 (P1): Amber ring + "Flip detected" tooltip shown on non-flip pairs in ItemTrendLineChart + FlipMatrix. getFlipsForPeriod returns ALL pairs (including konsisten/stagnan), and consumers don't filter by isFlip===true. Every period with a same-week predecessor/successor gets the amber ring, even when no actual flip occurred.
+- BUG-FLIP-02 (P2): ItemTrendTable 'flip' sort key sorts non-flip pairs (konsisten/stagnan) BY their disparity value, mixing them with actual flip pairs. A konsisten-naik pair with 90% disparity sorts ABOVE a sempurna flip with 0% disparity, misleading users who click "Flip" sort.
+- BUG-FLIP-03 (P3): Type discrepancy — ItemTrendPeriod.monthKey is `string` in useItemTrend.ts but `string | null` in item-trend.ts. Pre-existing issue, affects type safety of all flip code that imports from the hook.

@@ -475,6 +475,12 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     [trend.data?.periods],
   );
 
+  // FIX (SATUAN-BUG): extract item's unit of measure from the first period.
+  // All periods for 1 item share the same satuan (it's an item-level attribute).
+  // Used by Flip column/matrix tooltips to display the correct unit instead of
+  // hardcoded "kg" (which was wrong for non-KG items like PCS, LTR, etc.).
+  const satuan = useMemo(() => periods[0]?.satuan ?? null, [periods]);
+
   // Phase 3 — rank periods (memoized for the same reason as `periods`
   // above: stable ref avoids downstream re-renders).
   const rankPeriods = useMemo(
@@ -523,14 +529,17 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           cmp = a.recordCount - b.recordCount;
           break;
         case 'flip': {
-          // Phase A+B (FLIP-FE) — sort by flip disparity (null → bottom on desc).
-          // Rows with no flip pair (first same-week period) sort to the
-          // bottom when desc is on by mapping null to -1 (less than any
-          // real disparity which is in [0, 100]).
+          // Phase A+B (FLIP-FE) — sort by flip disparity.
+          // FIX (BUG-FLIP-02): only sort by disparity for ACTUAL flips
+          // (isFlip=true). Non-flip pairs (konsisten-naik/turun/stagnan)
+          // and `first` periods (no predecessor) sort to the bottom on
+          // desc by mapping to -1 (less than any real disparity [0, 100]).
+          // Was sorting konsisten pairs by their disparity, which could
+          // place a 90%-disparity konsisten pair above a 0% sempurna flip.
           const fa = flips ? getFlipForPeriod(flips, flipPeriodKey(a)) : null;
           const fb = flips ? getFlipForPeriod(flips, flipPeriodKey(b)) : null;
-          const va = fa ? fa.disparityPct : -1;
-          const vb = fb ? fb.disparityPct : -1;
+          const va = fa && fa.isFlip ? fa.disparityPct : -1;
+          const vb = fb && fb.isFlip ? fb.disparityPct : -1;
           cmp = va - vb;
           break;
         }
@@ -791,6 +800,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               onRowClick={handlePeriodDrill}
               drillPeriod={drillPeriod}
               flips={flips}
+              satuan={satuan}
             />
 
             {/* Phase B (FLIP-FE) — Flip Matrix (week × month grid).
@@ -799,7 +809,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                 (a single period can't form a pair). */}
             {selectedItem && periods.length >= 2 && (
               <div className="px-4 pt-3 pb-2">
-                <FlipMatrix periods={chronological} flips={flips} />
+                <FlipMatrix periods={chronological} flips={flips} satuan={satuan} />
               </div>
             )}
 

@@ -51,6 +51,11 @@ export interface ItemTrendPeriod {
   weekLabel: string;
   /** Sortable month key (e.g. "2026-07") from SourceFile — null if no SourceFile. */
   monthKey: string | null;
+  /** FIX (SATUAN-BUG): item's unit of measure (e.g. "KG", "PCS", "LTR").
+   *  Extracted via MAX(ir."satuan") — same unit across all records for 1 item.
+   *  Used by Flip column/matrix tooltips to display the correct unit instead
+   *  of hardcoded "kg" (which was wrong for non-KG items). */
+  satuan: string | null;
   // ABS magnitude aggregates (for Z-Score + chart display)
   /** SUM(ABS(qtyBom)) — expected usage magnitude */
   qtyBom: number;
@@ -153,6 +158,7 @@ export async function queryItemTrendTimeline(
     monthLabel: string;
     weekLabel: string;
     monthKey: string | null;
+    satuan: string | null;
     qtyBom: number;
     qtyDeviasi: number;
     qtyDeviasiSigned: number;
@@ -167,6 +173,7 @@ export async function queryItemTrendTimeline(
       ir."monthLabel",
       ir."weekLabel",
       MAX(sf."monthKey") as "monthKey",
+      MAX(ir."satuan") as "satuan",
       COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
       COALESCE(SUM(ABS(ir."qtyDeviasi")), 0) as "qtyDeviasi",
       COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasiSigned",
@@ -191,6 +198,7 @@ export async function queryItemTrendTimeline(
     monthLabel: r.monthLabel,
     weekLabel: r.weekLabel,
     monthKey: r.monthKey ?? null,
+    satuan: r.satuan ?? null,
     qtyBom: Number(r.qtyBom) || 0,
     qtyDeviasi: Number(r.qtyDeviasi) || 0,
     qtyDeviasiSigned: Number(r.qtyDeviasiSigned) || 0,

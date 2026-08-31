@@ -43,6 +43,10 @@ export interface FlipMatrixProps {
   /** Flip analyses for the item — used to apply the amber border on cells
    *  that are part of any flip pair. */
   flips: FlipAnalysis[];
+  /** FIX (SATUAN-BUG): item's unit of measure (e.g. "KG", "PCS", "LTR").
+   *  Used in cell tooltips + footer note to display the correct unit.
+   *  Was hardcoded "kg" which was wrong for non-KG items. */
+  satuan?: string | null;
 }
 
 // Compact QTY formatter — "+10K" / "-1.2M" / "+42".
@@ -87,7 +91,9 @@ function cellColorClass(signed: number, maxAbs: number): string {
   return 'bg-red-200/30 text-red-900 dark:text-red-200';
 }
 
-export const FlipMatrix = memo(function FlipMatrix({ periods, flips }: FlipMatrixProps) {
+export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: FlipMatrixProps) {
+  // FIX (SATUAN-BUG): use item's actual satuan, fallback to empty (no suffix).
+  const unitLabel = satuan || '';
   // Build the grid:
   //   - rows: sorted weeks (W1 → W4)
   //   - cols: sorted months (chronological)
@@ -130,11 +136,14 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips }: FlipMatri
 
   const { weeks, months, cellMap, rowMax } = grid;
 
-  // Build a Set of period keys involved in any flip pair (either side).
-  // Used to apply the amber border on cells.
+  // Build a Set of period keys involved in any ACTUAL flip pair (isFlip=true).
+  // FIX (BUG-FLIP-01): was adding all pairs including konsisten-naik/turun
+  // (same-direction), causing amber ring on non-flip cells. Now only actual
+  // sign-change flips get the ring.
   const flipPeriodKeys = useMemo(() => {
     const s = new Set<string>();
     for (const f of flips) {
+      if (!f.isFlip) continue;
       s.add(f.period1Key);
       s.add(f.period2Key);
     }
@@ -193,12 +202,13 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips }: FlipMatri
                       const pk = flipPeriodKey(p);
                       const isFlipCell = flipPeriodKeys.has(pk);
                       const cls = cellColorClass(p.qtyDeviasiSigned, maxAbs);
-                      const pairs = getFlipsForPeriod(flips, pk);
+                      // FIX (BUG-FLIP-01): filter to actual flips only for tooltip.
+                      const pairs = getFlipsForPeriod(flips, pk).filter((f) => f.isFlip);
                       const flipTooltip = pairs.length > 0
                         ? pairs.map((f) => {
                             const otherLabel = f.period1Key === pk ? f.period2Label : f.period1Label;
                             const otherQty = f.period1Key === pk ? f.qtyP2 : f.qtyP1;
-                            return `🔀 Flip vs ${otherLabel}: ${fmtCompactSigned(otherQty)} kg (${formatDisparity(f)} disparity, ${f.category})`;
+                            return `🔀 Flip vs ${otherLabel}: ${fmtCompactSigned(otherQty)}${unitLabel ? ` ${unitLabel}` : ''} (${formatDisparity(f)} disparity, ${f.category})`;
                           }).join('\n')
                         : null;
                       return (
@@ -220,7 +230,7 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips }: FlipMatri
                               <div className="flex justify-between gap-4">
                                 <span className="text-muted-foreground">Signed QTY:</span>
                                 <span className={`font-medium tabular-nums ${p.qtyDeviasiSigned < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                  {p.qtyDeviasiSigned.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                                  {p.qtyDeviasiSigned.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                                 </span>
                               </div>
                               <div className="flex justify-between gap-4">
@@ -248,7 +258,7 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips }: FlipMatri
           </table>
         </div>
         <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
-          Cells = signed QTY Deviasi (kg).{' '}
+          Cells = signed QTY Deviasi{unitLabel ? ` (${unitLabel})` : ''}.{' '}
           <span className="text-emerald-700 dark:text-emerald-400">Emerald = SURPLUS</span>{' '}
           · <span className="text-red-700 dark:text-red-400">red = LOSS</span>{' '}
           · <span className="text-muted-foreground">— = no data</span>.{' '}

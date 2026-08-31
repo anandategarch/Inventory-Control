@@ -68,6 +68,10 @@ export interface ItemTrendTableProps {
    *  up its flip pair (vs same-week predecessor) via getFlipForPeriod.
    *  Optional — when omitted, the Flip column renders muted "—" cells. */
   flips?: FlipAnalysis[];
+  /** FIX (SATUAN-BUG): item's unit of measure (e.g. "KG", "PCS", "LTR").
+   *  Used in Flip column tooltips to display the correct unit. Was hardcoded
+   *  "kg" which was wrong for non-KG items. */
+  satuan?: string | null;
 }
 
 // ------------------------------------------------------------
@@ -128,7 +132,12 @@ export function ItemTrendTable({
   onRowClick,
   drillPeriod,
   flips,
+  satuan,
 }: ItemTrendTableProps) {
+  // FIX (SATUAN-BUG): use item's actual satuan, fallback to empty string
+  // (no unit suffix) when null/unknown. Was hardcoded "kg" which was wrong
+  // for non-KG items like PCS, LTR, etc.
+  const unitLabel = satuan || '';
   return (
     <div className="max-h-96 overflow-auto border-t">
       <Table className="min-w-[1040px]">
@@ -337,19 +346,19 @@ export function ItemTrendTable({
                           <div className="flex justify-between gap-4">
                             <span className="text-muted-foreground">P1 (signed):</span>
                             <span className={`font-medium tabular-nums ${flip.qtyP1 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {flip.qtyP1.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                              {flip.qtyP1.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                             </span>
                           </div>
                           <div className="flex justify-between gap-4">
                             <span className="text-muted-foreground">P2 (signed):</span>
                             <span className={`font-medium tabular-nums ${flip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {flip.qtyP2.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                              {flip.qtyP2.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                             </span>
                           </div>
                           <div className="flex justify-between gap-4">
                             <span className="text-muted-foreground">Net (P1+P2):</span>
                             <span className="font-medium tabular-nums">
-                              {flip.net.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                              {flip.net.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                             </span>
                           </div>
                           <div className="flex justify-between gap-4">
