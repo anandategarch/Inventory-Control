@@ -39910,3 +39910,24 @@ Stage Summary:
 - All 3 evidence-dev patterns documented (Format Presets 33 presets + TargetComparison + Diverging Color Scale)
 - 0 dangling references — all entries verified against actual file system (component files, format.ts, colorScale.ts all confirmed)
 - File structure preserved (all 12 top-level sections intact + 1 new subsection added to §6)
+
+---
+Task ID: APPLY-TREMOR
+Agent: Tremor Components Integration
+Task: Apply Tracker, BarList, SparkLine, DeltaType to existing components
+
+Work Log:
+- Applied Tracker to ItemTrendTab (period status blocks) — imported Tracker from shared/, added a Tracker row between FlipSummaryCard and the chart section. Each block colored by Z-Score (emerald=z<-1, amber=-1..1, red=z>1, zinc=null) with tooltip showing monthLabel + weekLabel + Z-Score. Only renders when selectedItem && periods.length > 1.
+- Applied BarList to TopItemsByNominal (replaced Table) — imported BarList + formatByPreset, replaced ScrollArea+Table with a single BarList. Each bar encodes |nominalDeviasi| (length), direction (red=LOSS, emerald=SURPLUS, color), and direction label (metadata). onValueChange triggers setDrilldown. Added 💡 note below: "Bar length = |Nominal|. Klik untuk drill-down." Removed now-unused `directionColor` from imports.
+- Applied SparkLine to RankingNasionalCard (trend column) — imported SparkLine, added a new "Trend" TableHead (w-20) after "Nominal Deviasi" + matching TableCell per row. SparkLine renders a 3-point mini chart [0, avgDeviasiByBom, |qtyDeviasi|] showing how the item deviates from peer benchmark. Color = red (#dc2626) for losses (qtyDeviasi<0), emerald (#10b981) for surpluses. Falls back to "—" when avgDeviasiByBom is null. Updated empty-state colSpan from 12 to 13.
+- Applied DeltaType 5-level to KPICard (upgraded pill from 3-level) — imported classifyDelta + deltaTypeColor from shared/TargetComparison. Replaced 3-level (good/bad/neutral) pill logic with 5-level: classifyDelta normalizes delta by previous value, deltaTypeColor maps to color class respecting downIsGood flag. Pill strength: strong (increase/decrease) = full saturation (100/80), moderate (moderateIncrease/moderateDecrease) = lighter (50/60), unchanged = muted. Added amber fallback for the moderate-bad edge case (deltaTypeColor returns amber when downIsGood mismatches moderate direction) — keeps visual signal consistent with project palette (amber=warning). Preserved existing Icon + DeltaBar logic.
+- Ran `bun run lint` — 0 errors, 384 warnings (delta of +4 from previous 380 baseline; the +4 are pre-existing warnings in shared/BarList.tsx [2: type-decl param names] + shared/SparkLine.tsx [2: unused `curve` prop] created in the prior TREMOR-COMPONENTS session, not from this task's changes)
+- Ran `bunx tsc --noEmit --skipLibCheck` — 0 errors (clean exit)
+
+Stage Summary:
+- Tracker: period status in Trend Item Tab header (between FlipSummaryCard and chart)
+- BarList: TopItemsByNominal now visual bar list (replaced Table)
+- SparkLine: RankingNasionalCard has trend mini-chart (13th column)
+- DeltaType: KPICard pill uses 5-level classification (increase/moderateIncrease/unchanged/moderateDecrease/decrease)
+- Lint: 0 errors, 384 warnings (4 pre-existing in BarList/SparkLine from prior session)
+- tsc: 0 errors

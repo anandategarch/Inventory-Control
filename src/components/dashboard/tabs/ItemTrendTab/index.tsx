@@ -73,6 +73,7 @@ import { useItemTrend, type ItemTrendMetric, type ItemTrendPeriod } from '@/hook
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { Callout } from '@/components/ui/callout';
+import { Tracker } from '@/components/dashboard/shared/Tracker';
 
 // Sub-components + helpers extracted in this folder split (Task ID 3-c).
 import { ItemTrendSearchBar } from './ItemTrendSearchBar';
@@ -784,6 +785,28 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             {selectedItem && periods.length > 1 && (
               <div className="px-4 pt-2">
                 <FlipSummaryCard score={flipScore} />
+              </div>
+            )}
+
+            {/* TREMOR Pattern 3 — Tracker: per-period status blocks.
+                Each block colored by Z-Score: emerald (z<-1, baik),
+                amber (-1..1, normal), red (z>1, abnormal), zinc (null,
+                no baseline). Tooltip shows monthLabel + weekLabel + Z. */}
+            {selectedItem && periods.length > 1 && (
+              <div className="px-4 pt-3 pb-1">
+                <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <span aria-hidden>📊</span> Period Status Tracker
+                  <span className="text-muted-foreground/60">(green=baik, amber=normal, red=abnormal, gray=no data)</span>
+                </p>
+                <Tracker
+                  blocks={chronological.map((p) => {
+                    const z = p.zScore;
+                    return {
+                      color: z == null ? 'zinc' : z < -1 ? 'emerald' : z > 1 ? 'red' : 'amber',
+                      tooltip: `${p.monthLabel} ${p.weekLabel}: Z-Score ${z != null ? z.toFixed(2) : '—'}`,
+                    };
+                  })}
+                />
               </div>
             )}
 

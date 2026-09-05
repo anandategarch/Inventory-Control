@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, numberColor, formatByPreset } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -13,6 +13,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+import { BarList } from '@/components/dashboard/shared/BarList';
 
 export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
@@ -39,37 +40,29 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">Financial impact ranking (absolute)</p>
       </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-72">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
-              <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 h-8 text-xs font-semibold uppercase tracking-wider">#</TableHead>
-                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Item</TableHead>
-                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Outlet</TableHead>
-                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal</TableHead>
-                <TableHead className="text-center h-8 text-xs font-semibold uppercase tracking-wider w-12">Dir</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
-              ) : items.map((it, i) => (
-                <TableRow
-                  key={`${it.itemName}-${it.outletCode}`}
-                  className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
-                  {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
-                >
-                  <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                  <TableCell className="font-medium text-xs whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
-                  <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(it.nominalDeviasi)}</TableCell>
-                  <TableCell className={`text-center text-xs font-bold ${directionColor(it.direction)}`}>{it.direction?.[0]}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </ScrollArea>
+      <CardContent className="p-4">
+        {/* TREMOR Pattern 2 — BarList: replaces the previous Table layout
+            with a compact ranked bar list. Each bar's length encodes
+            |Nominal Deviasi| (absolute financial impact), color encodes
+            direction (red=LOSS, emerald=SURPLUS), metadata shows direction
+            label. Click triggers drill-down via onValueChange. */}
+        <BarList
+          data={items.map((it) => ({
+            key: `${it.itemName}-${it.outletCode}`,
+            name: it.itemName,
+            value: Math.abs(it.nominalDeviasi),
+            color: it.nominalDeviasi < 0 ? 'red' : 'emerald',
+            metadata: it.direction,
+          }))}
+          valueFormatter={(v) => formatByPreset(v, 'idr0m')}
+          sortOrder="descending"
+          showAnimation
+          onValueChange={(item) => setDrilldown({
+            outletCode: items.find(it => `${it.itemName}-${it.outletCode}` === item.key)?.outletCode ?? '',
+            itemName: item.name,
+          })}
+        />
+        <p className="text-[10px] text-muted-foreground mt-2">💡 Bar length = |Nominal|. Klik untuk drill-down.</p>
       </CardContent>
     </Card>
   );

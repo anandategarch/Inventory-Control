@@ -23,6 +23,7 @@ import { fmtIDR, fmtNum } from './helpers';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
+import { SparkLine } from '@/components/dashboard/shared/SparkLine';
 
 export const RankingNasionalCard = memo(function RankingNasionalCard({
   focusOutlet,
@@ -98,11 +99,16 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                 <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">QTY BOM</TableHead>
                 <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">AVG Dev By BOM</TableHead>
                 <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Nominal Deviasi</TableHead>
+                {/* TREMOR Pattern 5 — SparkLine: 3-point mini chart visualizing
+                    the item's deviation from BOM benchmark. Line goes from 0 →
+                    avgDeviasiByBom (peer baseline) → |qtyDeviasi| (this item).
+                    Red when qtyDeviasi<0 (loss), emerald when qtyDeviasi>=0. */}
+                <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8 w-20">Trend</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.length === 0 ? (
-                <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground text-xs py-8">Tidak ada data deviasi untuk outlet ini pada periode terpilih</TableCell></TableRow>
+                <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground text-xs py-8">Tidak ada data deviasi untuk outlet ini pada periode terpilih</TableCell></TableRow>
               ) : items.map((it, i) => (
                 <TableRow
                   key={`${it.itemName}-${it.outletCode}-${i}`}
@@ -129,6 +135,25 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                   </TableCell>
                   <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {fmtIDR(it.nominalDeviasi)}
+                  </TableCell>
+                  {/* TREMOR Pattern 5 — SparkLine cell. Renders a 3-point
+                      mini chart [0, avgDeviasiByBom, |qtyDeviasi|] so users
+                      can see at a glance how the item compares to the peer
+                      benchmark. Red for losses (qtyDeviasi<0), emerald for
+                      surpluses. Falls back to "—" when there's no peer
+                      baseline (avgDeviasiByBom is null). */}
+                  <TableCell className="text-center py-1.5">
+                    {it.avgDeviasiByBom != null ? (
+                      <SparkLine
+                        data={[0, it.avgDeviasiByBom, Math.abs(it.qtyDeviasi)]}
+                        width={60}
+                        height={20}
+                        color={it.qtyDeviasi < 0 ? '#dc2626' : '#10b981'}
+                        showDot
+                      />
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

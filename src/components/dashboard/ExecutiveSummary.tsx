@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/tooltip';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { DeltaBar } from '@/components/dashboard/shared/DeltaBar';
+import { classifyDelta, deltaTypeColor } from '@/components/dashboard/shared/TargetComparison';
 
 // FIX #8: per-KPI tooltip text (mirrors spec from AUDIT8-FE-2 #8)
 const KPI_TOOLTIPS = {
@@ -89,15 +90,34 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
   // use the same color + arrow logic as TargetComparison for consistency.
   const downIsGood = Boolean(inverse);
   const delta = (value ?? 0) - (previous ?? 0);
-  const isGood = delta === 0 ? 'neutral' : delta > 0 ? (downIsGood ? 'bad' : 'good') : (downIsGood ? 'good' : 'bad');
-  // Pill color based on direction (respects inverse flag for "bad when up" metrics)
+  // FIX (TREMOR Pattern 6): upgrade from 3-level (good/bad/neutral) to 5-level
+  // classification via classifyDelta + deltaTypeColor.
+  //   classifyDelta: increase / moderateIncrease / unchanged / moderateDecrease / decrease
+  //   deltaTypeColor: maps to Tailwind text color classes respecting downIsGood
+  // Pill strength: strong (increase/decrease) = full saturation (100/80),
+  // moderate (moderateIncrease/moderateDecrease) = lighter (50/60),
+  // unchanged = muted. delta is normalized by `previous` so the 10% moderate
+  // threshold in classifyDelta applies regardless of absolute KPI magnitude.
+  const deltaType = classifyDelta(delta / ((previous ?? 1) || 1));
+  const deltaColorClass = deltaTypeColor(deltaType, downIsGood);
   const pillCls =
     growth == null ? 'bg-muted text-muted-foreground'
-    : isGood === 'good'
-      ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
-      : isGood === 'bad'
-        ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
-        : 'bg-muted text-muted-foreground';
+    : deltaColorClass.includes('emerald')
+      ? deltaType === 'increase' || deltaType === 'decrease'
+        ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+        : 'bg-emerald-50/60 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-500'
+      : deltaColorClass.includes('red')
+        ? deltaType === 'increase' || deltaType === 'decrease'
+          ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+          : 'bg-red-50/60 text-red-600 dark:bg-red-950/30 dark:text-red-500'
+        : deltaColorClass.includes('amber')
+          // ADAPTATION: deltaTypeColor returns amber for "moderate bad" cases
+          // (e.g. moderateIncrease with downIsGood=true on inverse metrics like
+          // Nominal Deviasi). The spec prose says moderate = lighter shade, so
+          // we render amber-tinted (project palette: amber = warning) instead of
+          // falling through to muted — keeps visual signal for moderate bad.
+          ? 'bg-amber-50/60 text-amber-700 dark:bg-amber-950/30 dark:text-amber-500'
+          : 'bg-muted text-muted-foreground';
   // Left border accent based on metric type
   const accentCls = accent === 'emerald'
     ? 'bg-emerald-500/70'
