@@ -241,7 +241,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0"><TrendingUp className="h-3 w-3" /></span>Performance</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
             <Row label="Sales" value={fmtIDR(profile.performance.sales)} />
-            <Row label="QTY BOM" value={fmtNum(profile.performance.qtyBom)} growth={profile.performance.qtyBomGrowth} />
+            {/* FIX (BUG-INT-03): QTY BOM is volume metric (up=good, more sales), not inverse.
+                Pass explicit growthColor without inverse=true (was using Row default which assumes inverse). */}
+            <Row label="QTY BOM" value={fmtNum(profile.performance.qtyBom)} growth={profile.performance.qtyBomGrowth} growthColor={growthColor(profile.performance.qtyBomGrowth)} />
             <Row label="QTY Deviasi" value={fmtNum(profile.performance.qtyDeviasi)} growth={profile.performance.qtyDeviasiGrowth} growthColor={growthColor(profile.performance.qtyDeviasiGrowth, true)} />
             <Row label="Nominal Deviasi" value={fmtIDR(profile.performance.nominalDeviasi)} growth={profile.performance.nominalDeviasiGrowth} growthColor={growthColor(profile.performance.nominalDeviasiGrowth, true)} />
             <Row label="Net Loss/Surplus" value={fmtIDR(profile.performance.nominalLossSurplus)} />

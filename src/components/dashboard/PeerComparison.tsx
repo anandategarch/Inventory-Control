@@ -69,7 +69,9 @@ function computePeerEfficiencyScore(target: PeerRow, peerAvg: PeerAverages): num
  *  Best = min for bad metrics, max for Sales. */
 function computePeerGapRows(target: PeerRow, peers: PeerRow[]): GapRow[] {
   const gapMetrics: Array<{ key: keyof PeerRow; label: string; format: (v: number) => string; higherBetter: boolean }> = [
-    { key: 'devBom',      label: 'Dev/BOM',     format: (v) => fmtPctAbs(v), higherBetter: false },
+    // FIX (BUG-INT-01): use direct ref fmtPctAbs (not wrapper) so GapAnalysisCard
+    // can match it via identity check (r.format === fmtPctAbsRef) for preset mapping.
+    { key: 'devBom',      label: 'Dev/BOM',     format: fmtPctAbs,           higherBetter: false },
     { key: 'totalLoss',   label: 'Total LOSS',  format: fmtIDR,              higherBetter: false },
     { key: 'residualQty', label: 'Residual',    format: fmtNum,              higherBetter: false },
     { key: 'sales',       label: 'Sales',       format: fmtIDR,              higherBetter: true  },

@@ -88,7 +88,9 @@ export interface ColorScaleResult {
  *   even when data doesn't cross it.
  */
 export function createDivergingScale(opts: DivergingScaleOptions): ColorScaleResult {
-  const { midpoint = 0, palette } = opts;
+  const { midpoint = 0 } = opts;
+  // FIX: use let so we can duplicate the neutral color for even-length palettes.
+  let palette = opts.palette;
   if (palette.length < 2) {
     throw new Error('Diverging scale requires at least 2 colors');
   }
@@ -109,7 +111,11 @@ export function createDivergingScale(opts: DivergingScaleOptions): ColorScaleRes
 
   // Diverging: split domain at midpoint.
   const n = palette.length;
-  const midIdx = (n - 1) / 2;
+  // FIX (BUG-LIB-04): use Math.floor for even-length palettes. Was (n-1)/2
+  // which gives non-integer (e.g. 2.5 for 6-color Z_SCORE_DIVERGING), so
+  // the neutral color never landed at midpoint. Now floor ensures the
+  // middle-left color is the neutral anchor.
+  const midIdx = Math.floor((n - 1) / 2);
 
   // Build domain: interpolate from min→mid→max.
   const domain: number[] = [];
@@ -124,6 +130,16 @@ export function createDivergingScale(opts: DivergingScaleOptions): ColorScaleRes
       // Middle: exactly at midpoint
       domain.push(midpoint);
     }
+  }
+  // FIX (BUG-LIB-04): for even-length palettes, also add the midpoint to
+  // the next position (i = midIdx + 0.5 conceptually). We duplicate the
+  // midpoint value at the boundary so the neutral color spans both
+  // midIdx and midIdx+1 positions, keeping the neutral centered.
+  if (n % 2 === 0) {
+    // Even palette: insert a duplicate midpoint after midIdx
+    domain.splice(midIdx + 1, 0, midpoint);
+    // Also duplicate the palette color at midIdx position
+    palette = [...palette.slice(0, midIdx + 1), palette[midIdx], ...palette.slice(midIdx + 1)];
   }
 
   // Create interpolation function.
@@ -212,13 +228,19 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
  * Determine whether to use black or white text on a given background color.
  * Uses relative luminance for WCAG contrast.
  */
-export function autoTextColor(bgHex: string): 'text-white' | 'text-foreground' {
+export function autoTextColor(bgHex: string): 'text-white' | 'text-black' | 'text-foreground' {
+  // FIX (BUG-LIB-08): use 'text-black' instead of 'text-foreground' for
+  // dark backgrounds. In dark mode, text-foreground is LIGHT, which would
+  // be invisible on light-colored backgrounds (e.g. emerald-400). Using
+  // static 'text-black' ensures the text is always dark on light bgs.
+  // For dark bgs, 'text-white' is returned (already correct).
   const rgb = hexToRgb(bgHex);
   if (!rgb) return 'text-foreground';
 
-  // Relative luminance (WCAG formula).
+  // FIX (BUG-LIB-08): use static black/white instead of theme-dependent.
+  // This ensures the text color is visible regardless of dark/light mode.
   const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-  return luminance < 0.55 ? 'text-white' : 'text-foreground';
+  return luminance < 0.55 ? 'text-white' : 'text-black';
 }
 
 // ============================================================
@@ -252,7 +274,8 @@ export function getZScoreColorScale(): ColorScaleResult {
  * Smooth gradient — replaces step-based zScoreColor().
  */
 export function zScoreColorHex(z: number | null): string {
-  if (z == null) return '#9ca3af'; // gray-400 (muted)
+  // FIX (BUG-LIB-06): guard NaN + Infinity (was only checking null).
+  if (z == null || isNaN(z) || !isFinite(z)) return '#9ca3af'; // gray-400 (muted)
   return getZScoreColorScale().scale(z);
 }
 
@@ -304,5 +327,7 @@ export function getFlipColorScale(): ColorScaleResult {
  * 0% = emerald (balanced), 100% = red (one-sided).
  */
 export function flipColorHex(disparityPct: number): string {
+  // FIX (BUG-LIB-07): guard NaN + Infinity to prevent crash in linear scale.
+  if (isNaN(disparityPct) || !isFinite(disparityPct)) return '#9ca3af'; // gray-400
   return getFlipColorScale().scale(disparityPct);
 }

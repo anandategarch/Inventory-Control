@@ -54,7 +54,7 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
             color: it.nominalDeviasi < 0 ? 'red' : 'emerald',
             metadata: it.direction,
           }))}
-          valueFormatter={(v) => formatByPreset(v, 'idr0m')}
+          valueFormatter={fmtIDR}
           sortOrder="descending"
           showAnimation
           onValueChange={(item) => setDrilldown({

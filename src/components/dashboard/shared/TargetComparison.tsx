@@ -140,9 +140,15 @@ export const TargetComparison = memo(function TargetComparison({
     const sign = pct > 0 ? '+' : '';
     deltaDisplay = `${sign}${pct.toFixed(1).replace('.', ',')}%`;
   } else if (displayType === 'abs') {
-    // Absolute change
-    const sign = delta > 0 ? '+' : '';
-    deltaDisplay = `${sign}${formatByPreset(delta, preset)}`;
+    // Absolute change. FIX (BUG-SHARED-01): don't prepend '+' when using qtyN
+    // presets (they already include the sign: "+3.000" / "-3.000").
+    const isQtyPreset = preset.startsWith('qty');
+    if (isQtyPreset) {
+      deltaDisplay = formatByPreset(delta, preset);
+    } else {
+      const sign = delta > 0 ? '+' : '';
+      deltaDisplay = `${sign}${formatByPreset(delta, preset)}`;
+    }
   } else {
     // compared_value — just show current formatted
     deltaDisplay = formatByPreset(current, preset);

@@ -58,11 +58,17 @@ export const DeltaBar = memo(function DeltaBar({
   // Clamp to [-100, 100]
   const clamped = Math.max(-100, Math.min(100, value));
   const absValue = Math.abs(clamped);
-  const isPositive = clamped >= 0;
+  const isPositive = clamped > 0;
+  // FIX (BUG-SHARED-04): value=0 should be neutral (muted), not good/bad.
+  const isNeutral = clamped === 0;
 
   // Determine color: increase (positive) when isIncreasePositive → green, else red
   const isGood = isPositive ? isIncreasePositive : !isIncreasePositive;
-  const barColor = isGood ? 'bg-emerald-500' : 'bg-red-500';
+  // FIX (BUG-SHARED-04): neutral → muted color, not emerald/red.
+  const barColor = isNeutral ? 'bg-muted-foreground/40' : isGood ? 'bg-emerald-500' : 'bg-red-500';
+  const labelColor = isNeutral
+    ? 'text-muted-foreground'
+    : isGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400';
 
   return (
     <div className={`flex items-center gap-2 ${className ?? ''}`}>
@@ -99,12 +105,8 @@ export const DeltaBar = memo(function DeltaBar({
           )}
         </div>
       </div>
-      {/* Value label */}
-      <span
-        className={`text-xs font-medium tabular-nums shrink-0 ${
-          isGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
-        }`}
-      >
+      {/* Value label — FIX (BUG-SHARED-04): use labelColor for neutral handling */}
+      <span className={`text-xs font-medium tabular-nums shrink-0 ${labelColor}`}>
         {value > 0 ? '+' : ''}
         {value.toFixed(1).replace('.', ',')}%
       </span>

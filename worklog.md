@@ -39931,3 +39931,126 @@ Stage Summary:
 - DeltaType: KPICard pill uses 5-level classification (increase/moderateIncrease/unchanged/moderateDecrease/decrease)
 - Lint: 0 errors, 384 warnings (4 pre-existing in BarList/SparkLine from prior session)
 - tsc: 0 errors
+
+---
+Task ID: BUG-LIB
+Agent: Lib Module Bug Hunter
+Task: Audit format.ts, colorScale.ts, zScoreHelpers.ts (new since f886080)
+
+Work Log:
+- Read all 3 lib files in full (format.ts 326 LOC, colorScale.ts 308 LOC, zScoreHelpers.ts 33 LOC)
+- Checked format presets (33 handlers counted: 12 num + 11 idr + 7 pct + 3 qty = 33 ✓)
+- Checked diverging/linear scale logic — found even-length palette midpoint bug (BUG-LIB-04)
+- Checked hex interpolation + autoTextColor — found dark-mode + NaN propagation bugs
+- Checked zScore re-export barrel (src/components/.../ItemTrendTab/zScoreHelpers.ts re-exports from @/lib/zScoreHelpers) — verified both functions exported ✓
+- Checked edge cases via Node REPL: scale(0) for n=6, flipColorHex(NaN), autoTextColor dark mode, getPresetsByCategory('pct')
+- Verified docstring examples for formatByPreset (all 5 examples reproduce correctly ✓)
+
+Stage Summary:
+- Found 13 bugs: P0=0, P1=2, P2=4, P3=7
+- BUG-LIB-01 (P3): format.ts num0k/idr0k produce misleading output for sub-thousand values (num0k(500)→"1Rb")
+- BUG-LIB-02 (P3): format.ts getPresetsByCategory('pct') returns 7 (includes pctNabs), not 4 — naming/filter mismatch
+- BUG-LIB-03 (P3): format.ts formatByPreset silently falls back to num0 for unknown preset
+- BUG-LIB-04 (P1): colorScale.ts createDivergingScale for even-length palettes (n=6 Z_SCORE_DIVERGING) — midIdx=2.5 non-integer, no color placed at midpoint; scale(0) returns #c3ab5c not documented #9ca3af
+- BUG-LIB-05 (P2): colorScale.ts docstring promises "one-sided uses half palette + neutral at midpoint" but impl falls back to full-palette linear scale
+- BUG-LIB-06 (P2): colorScale.ts zScoreColorHex(NaN) returns red #dc2626 instead of muted gray — null check misses NaN
+- BUG-LIB-07 (P1): colorScale.ts flipColorHex(NaN) THROWS TypeError (palette[NaN]=undefined → hexToRgb(undefined).replace crashes) — uncaught crash risk
+- BUG-LIB-08 (P2): colorScale.ts autoTextColor returns text-foreground (mode-dependent) — invisible on light backgrounds in dark mode; docstring says "black or white" but returns neither
+- BUG-LIB-09 (P3): colorScale.ts interpolateColor doesn't clamp r/g/b to [0,255] — out-of-bounds t produces invalid hex like #-5ff
+- BUG-LIB-10 (P3): colorScale.ts hexToRgb rejects 3-char hex shorthand (#fff) and 8-char alpha hex
+- BUG-LIB-11 (P3): colorScale.ts autoTextColor docstring claims "WCAG formula" but uses YIQ approximation (0.299r+0.587g+0.114b)/255
+- BUG-LIB-12 (P2): zScoreHelpers.ts zScoreStatus gap — z in [-2,-1) returns "NORMAL" but zScoreColor returns emerald-500 ("better than normal"); mirror asymmetry (z=+2→WARNING, z=-2→NORMAL)
+- BUG-LIB-13 (P3): zScoreColor (zScoreHelpers.ts) and zScoreColorClass (colorScale.ts) duplicate identical step logic with different null signatures
+
+---
+Task ID: BUG-SHARED
+Agent: Shared Components Bug Hunter
+Task: Audit 6 new shared components (TargetComparison, DeltaBar, Tracker, BarList, SparkLine, Callout)
+
+Work Log:
+- Read all 6 component files in full (TargetComparison 296 LOC, DeltaBar 113 LOC, Tracker 70 LOC, BarList 122 LOC, SparkLine 128 LOC, Callout 63 LOC)
+- Read lib/format.ts (326 LOC) to verify formatByPreset + qtyN signed presets behavior
+- Read ui/tooltip.tsx (62 LOC) to verify Radix Tooltip asChild behavior (no DOM wrapper)
+- Checked TargetComparison (3 display types + DeltaType 5-level) — found BUG-SHARED-01 (double sign), BUG-SHARED-02 (baseline=0 misleading), BUG-SHARED-03 (doc mismatch)
+- Checked DeltaBar (bidirectional + isIncreasePositive) — found BUG-SHARED-04 (value=0 not neutral)
+- Checked Tracker (blocks + tooltip) — found BUG-SHARED-05 (empty aria-label), BUG-SHARED-06 (cursor-help without tooltip)
+- Checked BarList (sort + bar width + click) — found BUG-SHARED-07 (zero-value 2% bar), BUG-SHARED-08 (button without type=button)
+- Checked SparkLine (SVG path + area + dot) — found BUG-SHARED-09 (curve='monotone' not implemented), BUG-SHARED-10 (3-digit hex invalid alpha)
+- Checked Callout (colors + border + icon) — VERIFIED OK (only cosmetic zinc-900 vs zinc-950 shade inconsistency, not a bug)
+- Verified DeltaType logic via concrete traces: classifyDelta(0.10)='moderateIncrease', classifyDelta(-0.10)='moderateDecrease' (boundary inclusive), deltaTypeColor flips correctly with downIsGood for all 5 levels (10 case traces)
+- Verified real-world usage: TopItems.tsx provides unique keys (BUG-SHARED-07 only triggers when keys missing), ExecutiveSummary passes value=growth*100 (BUG-SHARED-04 triggers when growth=0), ranking-nasional.tsx uses 6-digit hex (BUG-SHARED-10 only triggers with 3-digit hex), Tracker usage always provides tooltip (BUG-SHARED-05/06 don't trigger in current usage but are real bugs)
+
+Stage Summary:
+- Found 10 bugs: P0=0, P1=0, P2=3, P3=7
+- BUG-SHARED-01 (P2): TargetComparison.tsx L142-145 — double '+' sign when using qtyN preset with displayType='abs' and positive delta (qty0 already includes sign)
+- BUG-SHARED-02 (P2): TargetComparison.tsx L137-141 — baseline=0 with current≠0 and displayType='pct' shows misleading "↑ 0,0%" (arrow says up, value says 0%, color says good) — div-by-zero fallback returns 0 instead of "N/A" or "∞"
+- BUG-SHARED-03 (P3): TargetComparison.tsx L56 JSDoc vs L147-148 code — JSDoc says compared_value shows "baseline value" but code computes `formatByPreset(current, preset)` (current, not baseline). Behavior matches inline comment (show current); JSDoc is wrong
+- BUG-SHARED-04 (P3): DeltaBar.tsx L61,64,105 — value=0 is treated as isPositive (clamped>=0 includes 0), so label colored as "good" (emerald) or "bad" (red) instead of neutral muted. "0,0%" should be neutral
+- BUG-SHARED-05 (P3): Tracker.tsx L58 — `aria-label={block.tooltip ?? \`Period ${idx + 1}\`` uses ?? which only triggers for null/undefined; empty string '' produces empty aria-label (accessibility bug). Should use `||` for fallback
+- BUG-SHARED-06 (P3): Tracker.tsx L56 — `cursor-help` always applied even when block.tooltip is undefined/empty; misleading UX (cursor suggests tooltip but none exists). Should conditionally apply `block.tooltip ? 'cursor-help' : ''`
+- BUG-SHARED-07 (P3): BarList.tsx L82-84 — Math.max((|val|/max)*100, 2) applies min 2% bar even to zero-value items, producing misleading 2% bar with "0" text. Should skip min for value===0
+- BUG-SHARED-08 (P3): BarList.tsx L86 — clickable button lacks `type="button"` attribute; defaults to `type="submit"` in HTML, would submit parent form if nested. Best practice: add type="button"
+- BUG-SHARED-09 (P2): SparkLine.tsx L42,55,69-76 — `curve='monotone'` prop is declared (default value) but never used in useMemo; polyline always generates linear segments (straight lines between points). Default 'monotone' is misleading — should implement Catmull-Rom/Bezier OR change default to 'linear' and document gap
+- BUG-SHARED-10 (P3): SparkLine.tsx L101-103 — 3-digit hex colors (e.g., '#fff') produce invalid 5-digit hex when alpha appended ('#fff' + '26' = '#fff26' invalid); non-hex colors (rgb/currentColor/var) get no alpha at all. Should expand 3-digit hex to 6-digit before appending alpha
+
+Verified OK (no bugs):
+- TargetComparison isGoodChange logic: 5 case traces confirm correct good/bad/neutral mapping with downIsGood flip
+- TargetComparison classifyDelta: boundary inclusive at +moderate (delta=0.10 → 'moderateIncrease') and -moderate (delta=-0.10 → 'moderateDecrease'); symmetric and matches docstring
+- TargetComparison deltaTypeColor: 10 case traces (5 levels × 2 downIsGood states) confirm correct color flip; moderate variants correctly use amber/emerald-500
+- TargetComparison null/NaN guard: correct (handles null/undefined/NaN/Infinity with fallback to '—')
+- DeltaBar bidirectional bar: left=negative, right=positive, correct; clamps to [-100, 100]
+- DeltaBar isIncreasePositive color mapping: correct (4 case traces)
+- DeltaBar center separator: correctly positioned at left-1/2 with z-10
+- DeltaBar label width w-20 + truncate: correct
+- DeltaBar animation: transition-all duration-300 correct
+- Tracker blocks flex-1 equal width: correct (Radix Tooltip Root/Provider don't render DOM, so block divs are direct flex children)
+- Tracker colors emerald/amber/red/zinc: correct (zinc has dark: variant)
+- Tracker role="img" + aria-label: correct (modulo empty-string edge case BUG-SHARED-05)
+- BarList sort descending/ascending/none: correct (stable in modern JS)
+- BarList valueFormatter default + custom: correct
+- BarList color mapping 5 colors (amber/emerald/red/zinc/purple): correct (purple is allowed — not in project's no-indigo/blue rule)
+- BarList metadata column: optional, truncates with hover title
+- SparkLine pure SVG (no Recharts): correct
+- SparkLine polyline points string: correct format "x1,y1 x2,y2 ..."
+- SparkLine areaPath: correct M-L-L-Z path under line
+- SparkLine showDot: last point correct
+- SparkLine empty data, single point, all-same-value: handled (range=0 falls back to 1, line at y=height-1)
+- SparkLine viewBox + preserveAspectRatio="none": 1:1 scale because viewBox matches width/height
+- SparkLine non-scaling-stroke: correct (stroke stays at strokeWidth px regardless of scaling)
+- Callout colors amber/emerald/red/zinc: correct (zinc uses 900 instead of 950 shade, minor cosmetic but not a bug)
+- Callout border-l-4: correct (Tailwind preflight sets border-style: solid by default)
+- Callout icon + title (optional both): correct (3 cases: both/title-only/icon-only all work)
+- Callout children rendered: correct (with text-xs leading-relaxed wrapper)
+- Callout dark mode: correct (all 4 variants have dark: classes)
+- Callout memo: applied
+
+Stage Summary:
+- 10 bugs found: P0=0, P1=0, P2=3, P3=7
+- Bug IDs: BUG-SHARED-01 through BUG-SHARED-10
+- Real-world impact (current usage): BUG-SHARED-04 (DeltaBar value=0) and BUG-SHARED-09 (SparkLine default curve='monotone' ignored) are the most user-visible — ExecutiveSummary passes growth*100 (can be 0), and ranking-nasional.tsx relies on default 'monotone' which renders linear
+- BUG-SHARED-01 (double '+' sign) would trigger if any caller uses TargetComparison with formatPreset='qtyN' + displayType='abs' + positive delta (gap-analysis-card.tsx uses pct, not abs, so doesn't trigger today)
+- BUG-SHARED-02 (baseline=0) triggers if any KPI's bestVal is 0 (would show "↑ 0,0%" misleadingly)
+
+---
+Task ID: BUG-INTEGRATION
+Agent: Integration Bug Hunter
+Task: Audit 9 integration points (KPICard, GapAnalysis, ItemTrendTab, scatter, TopItems, RankingNasional, heatmap, Row)
+
+Work Log:
+- Read all 9 integration files
+- Checked KPICard (DeltaBar + DeltaType)
+- Checked GapAnalysisCard (TargetComparison)
+- Checked ItemTrendTab (Callout + Tracker)
+- Checked scatter tooltips (both Item Trend + Peer Tab)
+- Checked TopItems (BarList)
+- Checked RankingNasional (SparkLine)
+- Checked Row component (growthColor)
+- Checked heatmap (colorScale)
+
+Stage Summary:
+- Found 5 bugs: P0=0, P1=1, P2=1, P3=3
+- BUG-INT-01 (P1): PeerComparison.tsx:72 Dev/BOM gap row format wrapper breaks GapAnalysisCard preset mapping → displays "0" instead of "15,0%"
+- BUG-INT-02 (P3): PeerComparison.tsx:104,109 Dev/BOM + vs-peer-avg tooltip values use dot decimal not Indonesian comma
+- BUG-INT-03 (P2): RestoAnalysis.tsx:244 QTY BOM Row default growthColor(growth, true) treats BOM-up as bad, inconsistent with ExecutiveSummary non-inverse QTY BOM
+- BUG-INT-04 (P3): TopItems.tsx:57 BarList valueFormatter 'idr0m' wrong for sub-million/billion values (shows Rp 0Jt or Rp 1000Jt)
+- BUG-INT-05 (P3): heatmapHelpers via colorScale.ts:215 autoTextColor uses YIQ formula not WCAG sRGB luminance; emerald-500+white fails AA contrast

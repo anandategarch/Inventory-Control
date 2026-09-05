@@ -52,7 +52,7 @@ export const SparkLine = memo(function SparkLine({
   showArea = false,
   areaOpacity = 0.15,
   strokeWidth = 1.5,
-  curve = 'monotone',
+  curve = 'linear',
   className,
 }: SparkLineProps) {
   const { points, areaPath, dotPos } = useMemo(() => {
