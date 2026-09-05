@@ -40054,3 +40054,36 @@ Stage Summary:
 - BUG-INT-03 (P2): RestoAnalysis.tsx:244 QTY BOM Row default growthColor(growth, true) treats BOM-up as bad, inconsistent with ExecutiveSummary non-inverse QTY BOM
 - BUG-INT-04 (P3): TopItems.tsx:57 BarList valueFormatter 'idr0m' wrong for sub-million/billion values (shows Rp 0Jt or Rp 1000Jt)
 - BUG-INT-05 (P3): heatmapHelpers via colorScale.ts:215 autoTextColor uses YIQ formula not WCAG sRGB luminance; emerald-500+white fails AA contrast
+
+---
+Task ID: ANOMALI-OUTLETS
+Agent: Anomali Outlets Inline Expansion
+Task: Build /api/item-anomali-outlets + inline row expansion in ItemConsistencyAnalysis
+
+Work Log:
+- Created src/lib/queries/items/item-anomali-outlets.ts (queryItemAnomaliOutlets — per-outlet SQL with direction filter via Prisma.raw + buildSqlFilters + DIRECTION_FROM_SUM_SQL + withStatementTimeout)
+- Created src/app/api/item-anomali-outlets/route.ts (API endpoint — force-dynamic, maxDuration=30, 30 req/min rate-limit, Zod (item+month+week+direction enum + optional area/kelompok/outlet/pic), month resolver, kelompok+PIC resolver with intersection, 5-min TTL cache via withCacheAndDedup, SWR + cached flags)
+- Added 'item-anomali-outlets' to invalidateAnalysisCache routes array in src/lib/aggregation-cache.ts
+- Modified AdvancedAnalysis.tsx ItemConsistencyAnalysis:
+  * Added imports: useState, useMemo, Fragment, useQuery (react-query), useShallow, fmtNum, ChevronRight/Down, AlertTriangle, Loader2
+  * Replaced setDrilldown with useShallow multi-prop extract (monthLabel, currentWeek, area, kelompok, outletCode, pic, setFocusOutlet)
+  * Added expand/collapse state (expandedItem, expandedDirection)
+  * Wrapped rows builder in useMemo
+  * Per-row: compute minorityDirection (LOSS if surplusOutlets > lossOutlets, else SURPLUS) + anomaliCount (min of loss/surplus)
+  * Replaced onClick handler with onRowClick that toggles inline expansion (no-op when anomaliCount === 0)
+  * Added 6th column header "⚠️ Anomali" (colSpan bumped from 7 to 8 in empty-state row)
+  * Per-row Anomali cell: amber badge with ChevronRight/Down + count + L/S suffix, or "—" when 0
+  * Wrapped each TableRow + conditional AnomaliOutletExpansion in a Fragment keyed by itemName+index
+  * Expanded row gets bg-amber-50/40 highlight
+  * Created AnomaliOutletExpansion sub-component: useQuery → fetch /api/item-anomali-outlets, renders nested table (Outlet/Area/PIC/QTY Dev/Nominal/Dir) sorted by |nominalDeviasi| DESC, outlet row click → setFocusOutlet (auto-switches to Resto Analysis tab)
+  * Loading state: Loader2 spinner; error state: red text; empty: muted text; success: max-h-48 overflow-auto mini table
+  * Removed setDrilldown import + usage (component no longer pops DrillDownDrawer)
+- Ran `bun run lint` — 0 errors, 387 warnings (1 NEW warning in AdvancedAnalysis.tsx:199 — `'code' is defined but never used` for the `setFocusOutlet: (code: string | null) => void` type signature; consistent with existing pattern in src/hooks/useDashboard.ts:34 which has the same warning)
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT=0 (0 errors)
+
+Stage Summary:
+- API: GET /api/item-anomali-outlets?item=&month=&week=&direction=<LOSS|SURPLUS>&area=&kelompok=&outlet=&pic= returns per-outlet rows whose aggregate direction matches the MINORITY direction; 5-min SWR cache + 30 req/min rate-limit; cache key includes direction to prevent LOSS/SURPLUS cache poisoning
+- UI: inline row expansion replaces DrillDownDrawer popup — row click toggles an amber-bordered panel below the row showing the anomali outlet list (mini-table); only rows with anomaliCount > 0 are expandable
+- Navigation: click outlet row inside expansion → setFocusOutlet → auto-switches to 'resto' tab (Resto Analysis) with that outlet pre-selected
+- Lint: 0 errors, 1 new warning (matches codebase pattern for unused parameter name in function type signature)
+- tsc: 0 errors

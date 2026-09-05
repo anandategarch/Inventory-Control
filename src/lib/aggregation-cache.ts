@@ -422,11 +422,15 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // flip pair — reads per-outlet SIGNED SUM(qtyDeviasi) for the (item, week,
   // month) tuple in both P1 + P2, so mutations affect which outlets
   // contributed to the balanced reversal).
+  // ANOMALI-OUTLETS: added `item-anomali-outlets` (per-outlet drill-down
+  // for the MINORITY direction of an item — reads per-outlet SIGNED
+  // SUM(qtyDeviasi/nominalDeviasi) for the (item, month, week, direction)
+  // tuple, so mutations affect which outlets are surfaced as anomali).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
-    'flip-ranking-drilldown',
+    'flip-ranking-drilldown', 'item-anomali-outlets',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }
