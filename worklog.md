@@ -39865,3 +39865,48 @@ Stage Summary:
 - Lint: 0 errors, 380 warnings (unchanged from baseline)
 - tsc: 0 errors (clean)
 
+---
+Task ID: DOC-TREMOR
+Agent: MASTER_CONTEXT Tremor Update
+Task: Update MASTER_CONTEXT with 6 tremor components + evidence-dev patterns
+
+Work Log:
+- Read MASTER_CONTEXT.md IN FULL (560 lines) + worklog.md (last ~150 lines — found TREMOR-COMPONENTS entry at line 39847 documenting 4 components: Callout, DeltaType, DeltaBar, Tracker; BarList + SparkLine created after that entry)
+- Verified file system state:
+  * 6 new component files all exist: ui/callout.tsx (63 LOC), shared/DeltaBar.tsx (113 LOC), shared/Tracker.tsx (70 LOC), shared/BarList.tsx (122 LOC), shared/SparkLine.tsx (128 LOC), shared/TargetComparison.tsx (296 LOC) — 792 LOC total
+  * lib/format.ts (326 LOC) — FORMAT_PRESETS verified: 33 preset codes (4 num + 8 compact num + 3 idr + 8 compact idr + 4 pct + 3 pct-abs + 3 signed-qty = 33) + formatByPreset/isValidPreset/getPresetsByCategory
+  * lib/colorScale.ts (308 LOC) — createDivergingScale + createLinearScale + RED_GREEN_DIVERGING palette verified
+- Verified LOC: `find src -name "*.ts" -o -name "*.tsx" | xargs wc -l | tail -1` = 52,661 (was 51,313 — +1,348 LOC)
+- Updated §0 header "Last updated" line → Session TREMOR (full summary of recent work + previously FLIP-DETECT)
+- Updated §5 Components:
+  * Added NEW "shared/ dashboard components (NEW TREMOR — 5 files, 729 LOC)" subsection (between shared/index.tsx entry and Removed notes) listing:
+    - TargetComparison.tsx (Pattern 2 evidence-dev + Pattern 6 tremor DeltaType — 5-level classification)
+    - DeltaBar.tsx (Pattern 1 tremor — bidirectional bar)
+    - Tracker.tsx (Pattern 3 tremor — status blocks)
+    - BarList.tsx (Pattern 2 tremor — ranked bar list)
+    - SparkLine.tsx (Pattern 5 tremor — mini inline line chart)
+  * Updated UI section: "29 shadcn components" → "30 components (29 shadcn + Callout [NEW TREMOR])" + added callout.tsx entry (Pattern 4 tremor — highlighted info box, 4 colors, border-l-4)
+- Updated §6 Key Features:
+  * Added NEW "Dashboard Component Patterns (NEW TREMOR + evidence-dev)" subsection (after UI Design Principles, before §7 Performance Benchmarks) documenting 9 patterns:
+    - 3 evidence-dev patterns: Format Presets System (lib/format.ts — 33 presets, 5 categories), TargetComparison component (shared/TargetComparison.tsx), Diverging Color Scale (lib/colorScale.ts — createDivergingScale + createLinearScale)
+    - 6 tremor patterns: Callout (APPLIED to ItemTrendTab empty + error), DeltaBar (APPLIED to KPICard), Tracker (READY), BarList (READY), SparkLine (READY), DeltaType (READY)
+    - Integration status note: 2 applied, 4 ready; lint 0 errors / 380 warnings (unchanged baseline), tsc 0 errors
+- Updated §9 Stats:
+  * LOC: 51,313 → 52,661 (+1,348 LOC from TREMOR session)
+  * Dashboard components row: added "+ shared/ dashboard components (5 NEW TREMOR: TargetComparison + DeltaBar + Tracker + BarList + SparkLine)"
+  * Added NEW row "UI components | 30 (was 29 shadcn — +1 Callout)"
+  * Added NEW row "Dashboard component patterns | 9 total (3 evidence-dev + 6 tremor)"
+  * Added NEW row "Format presets | 33 (in lib/format.ts — num/idr/pct/qty categories)"
+- Updated §10 File Structure:
+  * Added 5 new shared/ entries (TargetComparison.tsx, DeltaBar.tsx, Tracker.tsx, BarList.tsx, SparkLine.tsx) with NEW TREMOR + pattern annotations
+  * Updated ui/ count: "29 shadcn components" → "30 components (29 shadcn + Callout [NEW TREMOR Pattern 4])"
+  * Updated format.ts comment: added "+ NEW TREMOR: FORMAT_PRESETS (33 presets) + formatByPreset + isValidPreset + getPresetsByCategory (Pattern 3 evidence-dev)"
+  * Added NEW lib/colorScale.ts entry with createDivergingScale + createLinearScale + RED_GREEN_DIVERGING palette (Pattern 1 evidence-dev)
+
+Stage Summary:
+- MASTER_CONTEXT.md updated in-place (560 → 594 lines, +34 LOC for new sections)
+- LOC verified: 52,661 (was 51,313 — +1,348 LOC from TREMOR session)
+- All 6 new tremor components documented (Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine)
+- All 3 evidence-dev patterns documented (Format Presets 33 presets + TargetComparison + Diverging Color Scale)
+- 0 dangling references — all entries verified against actual file system (component files, format.ts, colorScale.ts all confirmed)
+- File structure preserved (all 12 top-level sections intact + 1 new subsection added to §6)

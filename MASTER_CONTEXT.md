@@ -6,7 +6,7 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1 (zScore/format helpers → lib/) + Batch 2 (shared peer-comparison-cards/ — 5 cards unified); UI review + fixes 35 issues; PC-focused design; 14 cached routes)
+> **Last updated:** Session TREMOR (Dashboard Component Patterns: 6 new tremor components — Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine + 3 evidence-dev patterns documented — Format Presets System (33 presets in lib/format.ts), TargetComparison component, Diverging Color Scale (lib/colorScale.ts); KPICard + Callout applied; LOC 51,313 → 52,661); previously Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1 (zScore/format helpers → lib/) + Batch 2 (shared peer-comparison-cards/ — 5 cards unified); UI review + fixes 35 issues; PC-focused design; 14 cached routes)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -202,6 +202,13 @@ Deviation is decomposed into 4 categories for root cause identification:
 #### `shared/index.tsx` (7 shared utilities)
 `EmptyState`, `LoadingState`, `ErrorState`, `SectionHeader`, `ScrollToTop`, `FetchAware`, `LoadingChart` (last 2 added in `page.tsx` split).
 
+#### `shared/` dashboard components (NEW TREMOR — 5 files, 729 LOC total — 4 tremor patterns + 1 evidence-dev pattern)
+- `TargetComparison.tsx` (296 LOC) — **Pattern 2 evidence-dev** — generic target vs actual vs benchmark visualization with computed delta. ALSO exports `DeltaType` union + `classifyDelta(delta, thresholds?)` + `deltaTypeColor(deltaType, downIsGood)` (**Pattern 6 tremor** — 5-level classification: `increase` / `moderateIncrease` / `unchanged` / `moderateDecrease` / `decrease`; default moderate threshold = 10%; `downIsGood` flag flips good/bad for inverse metrics like deviasi/waste/loss).
+- `DeltaBar.tsx` (113 LOC) — **Pattern 1 tremor** — bidirectional progress bar. `value` clamped to `[-100, 100]`, `isIncreasePositive` flag (default true; false for inverse metrics → positive=red). Center separator at 50%, emerald vs red bar color, optional `label` (20-char truncate) + native tooltip, Indonesian comma decimal in value label, `tabular-nums`, dark mode, `transition-all duration-300` animation toggle, memo-wrapped.
+- `Tracker.tsx` (70 LOC) — **Pattern 3 tremor** — horizontal status blocks row. `blocks: TrackerBlock[]` with per-block `color` (emerald/amber/red/zinc) + optional `tooltip`. Equal-width `flex-1` blocks, `h-8` compact, uses shadcn Tooltip (`@/components/ui/tooltip`), `role="img"` + `aria-label` fallback ("Period N"), dark mode (zinc → zinc-300/zinc-700), memo-wrapped.
+- `BarList.tsx` (122 LOC) — **Pattern 2 tremor** — ranked horizontal bar list. Each item: inline proportional bar + name + `valueFormatter`-formatted value. `sortOrder` ('descending' default / 'ascending' / 'none'), `onValueChange` for clickable rows (drill-down), optional `metadata` column, color map (amber/emerald/red/zinc/purple), animation toggle, `aria-sort`, memo-wrapped.
+- `SparkLine.tsx` (128 LOC) — **Pattern 5 tremor** — mini inline line chart. Pure SVG (no chart lib), default `80×24` px, no axes/grid. Props: `data: number[]`, `width`/`height`, `color` (hex or CSS var, default amber `#f59e0b`), `showDot` (last point), `showArea` (filled area with adjustable `areaOpacity`), `strokeWidth`, `curve` ('monotone' default / 'linear'), memo-wrapped.
+
 > **Removed (FIX-DOCS dead-code cleanup):** `AreaTrendChart.tsx`, `CardDrillDown.tsx` files deleted. `cardDrillDown` Zustand state removed from `useDashboard`. ExecutiveSummary KPI cards are now static display (no click-through drilldown). `RestoAnalisa` priority-score drilldown is also a static card display.
 >
 > **Removed (Phase 1+2+3 cleanup):** `GlobalItemSearchModal.tsx` (Cmd+K cross-outlet modal) + `ItemTrendChart.tsx` (legacy chart, replaced by `ItemTrendLineChart.tsx` + `ItemTrendRankChart.tsx`) + `lib/queries/items/network-risk.ts` (unused cross-outlet analysis) — all deleted. `/api/item-search` reduced to `autocomplete` mode only (cross-outlet + trend modes removed).
@@ -233,8 +240,9 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `DrillDownDrawer` — Slide-out drill-down panel
 - `SourceDataModal` — Source data modal viewer
 
-### UI (`src/components/ui/` — 29 shadcn components)
+### UI (`src/components/ui/` — 30 components — 29 shadcn + Callout [NEW TREMOR])
 - Complete shadcn/ui (New York) component set
+- `callout.tsx` (63 LOC, NEW) — **Pattern 4 tremor** — highlighted info box. 4 colors (amber/emerald/red/zinc), `border-l-4` + `bg-{color}-50/60`, dark mode (`bg-{color}-950/40` + `text-{color}-200`), icon + title + children, memo-wrapped, `'use client'`. Applied to `ItemTrendTab/index.tsx` empty state (amber Tips box) + error state (red failure message).
 
 ### Optimizations
 - All dashboard components wrapped in `React.memo` + `ErrorBoundary`
@@ -374,6 +382,24 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
   - **Batch 1**: `zScoreColor` + `zScoreStatus` moved to `src/lib/zScoreHelpers.ts`; `fmtGrowth` + `growthColor` + `growthColorClass` + `fmtFullSigned` moved to `src/lib/format.ts`. Old `ItemTrendTab/zScoreHelpers.ts` + `resto-analysis/helpers.tsx` + `BomCorrelationCard.tsx` + `FlipMatrix.tsx` re-export barrels for backward compat.
   - **Batch 2**: 5 shared peer-comparison cards unified into `src/components/dashboard/shared/peer-comparison-cards/` (675 LOC). 5 old `peer-comparison/*.tsx` files deleted (417 LOC). Eliminated ~766 LOC duplication. Presentational only — each caller (ItemPeerComparison + PeerComparison) computes its own pre-computed values inline.
 
+### Dashboard Component Patterns (NEW TREMOR + evidence-dev)
+Two pattern families power the dashboard's reusable components — **9 patterns total (3 evidence-dev + 6 tremor)**.
+
+**Evidence-dev patterns (3 — already applied to `lib/` + `shared/`):**
+- **Format Presets System** (Pattern 3): `lib/format.ts` exports `FORMAT_PRESETS` (33 preset codes) + `formatByPreset(value, preset)` + `isValidPreset(preset)` + `getPresetsByCategory(prefix?)`. 5 categories: `num{0,1,2,3}` (full numbers, Indonesian thousand separator + comma decimal), `num{0k,1k,0m,1m,2m,0M,1M,2M}` (compact with Indonesian suffixes Rb/Jt/M), `idr{0,1,2}` (full Rp), `idr{0k,1k,0m,1m,2m,0M,1M,2M}` (compact Rp), `pct{0,1,2,3}` + `pct{0,1,2}abs` (percent), `qty{0,1,2}` (signed QTY for deviasi display). Single source of truth for all numeric display formatting — eliminates scattered `toLocaleString('id-ID')` calls across the dashboard.
+- **TargetComparison component** (Pattern 2): `src/components/dashboard/shared/TargetComparison.tsx` (296 LOC) — generic target vs actual vs benchmark visualization with computed delta + color-coded display. Also exports `DeltaType` 5-level classification (Pattern 6 tremor — see below).
+- **Diverging Color Scale** (Pattern 1): `src/lib/colorScale.ts` (308 LOC) — `createDivergingScale(opts)` (symmetric/asymmetric diverging color ramps centered on a midpoint, default midpoint=0) + `createLinearScale(opts)` (sequential color ramp). Built-in palettes (`RED_GREEN_DIVERGING`, etc.). Used by heatmap + delta visualizations to map signed QTY deviations to a perceptually-correct red ↔ zinc ↔ emerald color ramp.
+
+**Tremor patterns (6 — built; 2 applied, 4 ready for use):**
+- **Callout** (Pattern 4) — `src/components/ui/callout.tsx` (63 LOC) — highlighted info box, 4 colors (amber/emerald/red/zinc), `border-l-4`. **APPLIED** to `ItemTrendTab/index.tsx` empty state (amber Tips box — replaced inline div) + error state (red failure message — replaced flat `text-red-600` div).
+- **DeltaBar** (Pattern 1) — `src/components/dashboard/shared/DeltaBar.tsx` (113 LOC) — bidirectional progress bar with `isIncreasePositive` flag. **APPLIED** to `KPICard` in `ExecutiveSummary.tsx` — visual bidirectional bar below each KPI value. Renders when both `growth != null && previous != null`. For inverse KPIs (Nominal Deviasi, QTY Deviasi, Net Loss/Surplus), `isIncreasePositive=false` so positive growth = red (up = bad); for Sales + QTY BOM, `isIncreasePositive=true` so positive growth = emerald (up = good).
+- **Tracker** (Pattern 3) — `src/components/dashboard/shared/Tracker.tsx` (70 LOC) — horizontal status blocks per period. **READY for use** (not yet integrated).
+- **BarList** (Pattern 2) — `src/components/dashboard/shared/BarList.tsx` (122 LOC) — ranked bar list with inline bars + `sortOrder` + `onValueChange`. **READY for use**.
+- **SparkLine** (Pattern 5) — `src/components/dashboard/shared/SparkLine.tsx` (128 LOC) — mini inline line chart (80×24px, pure SVG). **READY for use**.
+- **DeltaType** (Pattern 6) — 5-level classification (`increase` / `moderateIncrease` / `unchanged` / `moderateDecrease` / `decrease`) added to `shared/TargetComparison.tsx` via `classifyDelta()` + `deltaTypeColor()`. **READY for use** in any component that needs to colorize deltas.
+
+> **Integration status:** All 6 tremor components built and verified (lint 0 errors / 380 warnings — unchanged from baseline; tsc 0 errors). Currently applied: Callout (ItemTrendTab empty + error states) + DeltaBar (KPICard in ExecutiveSummary). The other 4 components (Tracker, BarList, SparkLine, TargetComparison) are ready for use in future integrations.
+
 ---
 
 ## 7. Performance Benchmarks
@@ -427,14 +453,17 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 51,313 |
+| Lines of code in `src/` | 52,661 (was 51,313 — +1,348 LOC from TREMOR session: 6 new shared/ui components + colorScale.ts + format presets expansion) |
 | Test files | 22 |
 | Test cases | 435 |
 | Git commits | 400+ |
 | npm dependencies | 23 |
 | API routes (main) | 27 (was 26 incl. audit-log — REMOVED -1, ADDED flip-ranking + flip-ranking/drilldown = net +1) |
 | Cached routes | 14 (was 12 — added `flip-ranking` + `flip-ranking-drilldown` Phase C) |
-| Dashboard components | 24 + `tabs/ItemTrendTab/` folder (11 modules + barrel — incl. 3 NEW flip modules) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files, NEW Batch 2) |
+| Dashboard components | 24 + `tabs/ItemTrendTab/` folder (11 modules + barrel — incl. 3 NEW flip modules) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files, NEW Batch 2) + `shared/` dashboard components (5 NEW TREMOR: TargetComparison + DeltaBar + Tracker + BarList + SparkLine) |
+| UI components | 30 (was 29 shadcn — +1 Callout [NEW TREMOR Pattern 4]) |
+| Dashboard component patterns | 9 total (3 evidence-dev: Format Presets 33 presets + TargetComparison + Diverging Color Scale; 6 tremor: Callout + DeltaBar + Tracker + BarList + SparkLine + DeltaType) |
+| Format presets | 33 (in `lib/format.ts` — num/idr/pct/qty categories, accessible via `formatByPreset(value, preset)`) |
 | Hooks | 6 (incl. `useAnalysis/` folder split into 8 files via barrel re-export) |
 | DB host | `proosjqivxadwgftofry` |
 | DB indexes | 14 on InventoryRecord (incl. 2 covering indexes for heatmap + trend) |
@@ -481,10 +510,15 @@ src/
 │   │   ├── DashboardFooter.tsx     # NEW: sticky footer (extracted from page.tsx)
 │   │   ├── shared/peer-comparison-cards/ # NEW Batch 2: 7 files (675 LOC) — presentational peer cards (efficiency-score + gap-analysis + scatter-plot + ranking-summary + anomaly-flags + types + index)
 │   │   ├── shared/index.tsx        # EmptyState/LoadingState/ErrorState/SectionHeader/ScrollToTop/FetchAware/LoadingChart
+│   │   ├── shared/TargetComparison.tsx # NEW TREMOR: Pattern 2 evidence-dev — target vs actual vs benchmark + DeltaType 5-level classification (Pattern 6 tremor)
+│   │   ├── shared/DeltaBar.tsx     # NEW TREMOR: Pattern 1 — bidirectional progress bar with isIncreasePositive flag (applied to KPICard)
+│   │   ├── shared/Tracker.tsx      # NEW TREMOR: Pattern 3 — horizontal status blocks per period
+│   │   ├── shared/BarList.tsx      # NEW TREMOR: Pattern 2 — ranked bar list with inline bars + sortOrder + onValueChange
+│   │   ├── shared/SparkLine.tsx    # NEW TREMOR: Pattern 5 — mini inline line chart (80×24px, pure SVG)
 │   │   └── ...                     # 15 other dashboard components
 │   ├── filters/                    # 9 components (FilterBar + 5 dialogs + SearchableComboBox — AuditLogDialog.tsx REMOVED)
 │   ├── drilldown/                  # 2 components
-│   └── ui/                         # 29 shadcn components
+│   └── ui/                         # 30 components (29 shadcn + Callout [NEW TREMOR Pattern 4])
 ├── hooks/
 │   ├── useAnalysis/               # NEW (SPLIT Batch 2): 8-file folder + barrel — index.ts + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts
 │   ├── useDashboard.ts             # Zustand store (filters + UI state + trendSelectedItem + setFocusOutlet [NEW Phase 1+2])
@@ -499,7 +533,8 @@ src/
 │   ├── error-response.ts           # Sanitized error helper
 │   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/getCachedWithMeta/withCacheAndDedup/invalidateAnalysisCache — 14 routes invalidated)
 │   ├── zScoreHelpers.ts            # NEW Batch 1: zScoreColor + zScoreStatus (moved from ItemTrendTab/zScoreHelpers.ts; old file re-exports)
-│   ├── format.ts                   # NEW Batch 1: fmtGrowth + growthColor + growthColorClass + fmtFullSigned (consolidated from resto-analysis/helpers.tsx + BomCorrelationCard.tsx + FlipMatrix.tsx)
+│   ├── format.ts                   # NEW Batch 1: fmtGrowth + growthColor + growthColorClass + fmtFullSigned (consolidated from resto-analysis/helpers.tsx + BomCorrelationCard.tsx + FlipMatrix.tsx) + NEW TREMOR: FORMAT_PRESETS (33 presets) + formatByPreset + isValidPreset + getPresetsByCategory (Pattern 3 evidence-dev)
+│   ├── colorScale.ts               # NEW TREMOR: createDivergingScale + createLinearScale + RED_GREEN_DIVERGING palette (Pattern 1 evidence-dev — symmetric/asymmetric diverging color ramps for heatmap + delta visualizations)
 │   ├── db.ts                       # Prisma client (connection_limit=30, pool_timeout=60)
 │   ├── rate-limit.ts               # In-memory rate limiter
 │   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)
