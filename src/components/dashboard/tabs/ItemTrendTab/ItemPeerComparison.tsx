@@ -317,6 +317,9 @@ function ItemPeerComparisonImpl({
   ];
 
   // --- Scatter Plot points ---
+  // FIX (PATTERN-2): add "vs peer avg" comparison to tooltip using TargetComparison.
+  // Shows how each outlet's |Nominal| compares to peer average — context for
+  // interpreting the scatter plot (above/below avg).
   const scatterPoints: ScatterPoint[] = peers.map(p => ({
     x: p.qtyBom,
     y: p.absNominalDeviasi,
@@ -326,6 +329,14 @@ function ItemPeerComparisonImpl({
     tooltipLines: [
       { label: 'QTY BOM', value: fmtNum(p.qtyBom) },
       { label: '|Nominal|', value: fmtIDR(p.absNominalDeviasi) },
+      // FIX (PATTERN-2): add vs peer avg comparison line.
+      // downIsGood=true (higher |Nominal| = worse → up = bad).
+      {
+        label: 'vs peer avg',
+        value: peerAvg.absNominalDeviasi > 0
+          ? `${p.absNominalDeviasi > peerAvg.absNominalDeviasi ? '+' : ''}${((p.absNominalDeviasi - peerAvg.absNominalDeviasi) / peerAvg.absNominalDeviasi * 100).toFixed(1).replace('.', ',')}%`
+          : '—',
+      },
     ],
   }));
 

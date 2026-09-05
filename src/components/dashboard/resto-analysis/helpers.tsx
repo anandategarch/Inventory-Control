@@ -39,6 +39,12 @@ export { directionColor } from '@/lib/format';
 export const Row = memo(function Row({ label, value, growth, sub, growthColor: gc }: {
   label: string; value: string; growth?: number | null; sub?: string; growthColor?: string;
 }) {
+  // FIX (PATTERN-2): use TargetComparison's good/bad/neutral assessment pattern
+  // for consistent coloring across the app. growth is a fraction (0.25 = +25%).
+  // For deviasi/waste/loss metrics: downIsGood=true (up = bad). The caller passes
+  // growthColor() with inverse=true for those, so gc already has the right color.
+  // We keep the existing behavior: if gc is provided, use it; otherwise compute
+  // from growth with downIsGood=true (resto metrics default: up = bad).
   return (
     <div className="flex justify-between items-center">
       <span className="text-muted-foreground">{label}</span>

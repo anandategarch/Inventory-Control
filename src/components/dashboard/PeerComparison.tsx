@@ -91,8 +91,9 @@ function computePeerGapRows(target: PeerRow, peers: PeerRow[]): GapRow[] {
   });
 }
 
-/** Peer Tab scatter points — X=sales, Y=devBom*100. */
-function computePeerScatterPoints(peers: PeerRow[], targetCode?: string): ScatterPoint[] {
+/** Peer Tab scatter points — X=sales, Y=devBom*100.
+ *  FIX (PATTERN-2): add "vs peer avg" Dev/BOM comparison to tooltip. */
+function computePeerScatterPoints(peers: PeerRow[], targetCode: string | undefined, peerAvg: PeerAverages): ScatterPoint[] {
   return peers.map(p => ({
     x: p.sales,
     y: p.devBom * 100, // convert ratio → %
@@ -101,6 +102,13 @@ function computePeerScatterPoints(peers: PeerRow[], targetCode?: string): Scatte
     tooltipLines: [
       { label: 'Sales', value: fmtIDR(p.sales) },
       { label: 'Dev/BOM', value: `${(p.devBom * 100).toFixed(1)}%` },
+      // FIX (PATTERN-2): add vs peer avg comparison (downIsGood for Dev/BOM).
+      {
+        label: 'vs peer avg',
+        value: peerAvg.devBom !== 0
+          ? `${p.devBom > peerAvg.devBom ? '+' : ''}${((p.devBom - peerAvg.devBom) / Math.abs(peerAvg.devBom) * 100).toFixed(1)}%`
+          : '—',
+      },
     ],
   }));
 }
@@ -322,8 +330,8 @@ export function PeerComparison() {
   // with `otherPeers.length > 0`, so we don't need to gate inside useMemo —
   // when peers is empty, the result is just an empty array / null).
   const scatterPoints = useMemo(
-    () => computePeerScatterPoints(peers, targetRow?.outletCode),
-    [peers, targetRow],
+    () => computePeerScatterPoints(peers, targetRow?.outletCode, peerAverages),
+    [peers, targetRow, peerAverages],
   );
   const rankData = useMemo(
     () => targetRow ? computePeerRankItems(targetRow, peers) : null,
