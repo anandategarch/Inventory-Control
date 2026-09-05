@@ -81,13 +81,21 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
   const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
+  // FIX (PATTERN-2): delegate pill color to TargetComparison's color logic.
+  // downIsGood = inverse (for deviasi/waste/loss: up = bad, down = good).
+  // TargetComparison computes: delta = current - baseline, assessment = good/bad.
+  // We still render the pill manually (KPICard has custom pill styling) but
+  // use the same color + arrow logic as TargetComparison for consistency.
+  const downIsGood = Boolean(inverse);
+  const delta = (value ?? 0) - (previous ?? 0);
+  const isGood = delta === 0 ? 'neutral' : delta > 0 ? (downIsGood ? 'bad' : 'good') : (downIsGood ? 'good' : 'bad');
   // Pill color based on direction (respects inverse flag for "bad when up" metrics)
   const pillCls =
     growth == null ? 'bg-muted text-muted-foreground'
-    : growth > 0
-      ? (inverse ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400' : 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400')
-      : growth < 0
-        ? (inverse ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400')
+    : isGood === 'good'
+      ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+      : isGood === 'bad'
+        ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
         : 'bg-muted text-muted-foreground';
   // Left border accent based on metric type
   const accentCls = accent === 'emerald'

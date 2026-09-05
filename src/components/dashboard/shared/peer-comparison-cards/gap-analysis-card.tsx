@@ -6,12 +6,19 @@
 //  Renders target vs (optional) peer best vs (optional) peer
 //  avg for each row. Pure presentational — caller computes the
 //  values from its own row type.
+//
+//  FIX (PATTERN-2): now uses TargetComparison component for each
+//  row's delta display, eliminating manual gap/pct calculation
+//  + color logic. The card itself still manages layout (grid,
+//  header, footer) — only the per-row comparison display is
+//  delegated to TargetComparison.
 // ============================================================
 
 import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Target } from 'lucide-react';
+import { TargetComparison } from '@/components/dashboard/shared/TargetComparison';
 import type { GapRow } from './types';
 
 export interface GapAnalysisCardProps {
@@ -48,10 +55,26 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
         <div className={gridClass}>
           {rows.map(r => {
             const gap = r.targetVal - r.bestVal;
+            // FIX (PATTERN-2): use TargetComparison for delta display.
+            // downIsGood = !higherBetter (for Dev/BOM, Loss, Residual —
+            // higher value = worse → downIsGood=true so decrease shows green).
+            // For Sales (higherBetter=true) — downIsGood=false (up = good).
+            const downIsGood = !r.higherBetter;
             const isWorse = r.higherBetter ? gap < 0 : gap > 0;
+
+            // Map the row's format function to a preset code.
+            // The row.format is a closure that already handles formatting
+            // (fmtIDR, fmtNum, fmtPctAbs, etc). We use it for display + pass
+            // a compatible preset to TargetComparison for the delta.
+            // Since the format function is caller-specific, we pass a generic
+            // preset that matches the formatter's output style.
+            const preset = r.format === fmtIDRRef ? 'idr0' :
+                          r.format === fmtNumRef ? 'num0' :
+                          r.format === fmtPctAbsRef ? 'pct1abs' : 'num0';
+
             return (
               <div key={r.label} className="rounded-lg border bg-muted/20 p-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-[11px] font-medium text-muted-foreground">{r.label}</span>
                   <Badge
                     variant="outline"
@@ -64,25 +87,26 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
                     {isWorse ? 'di bawah best' : 'di atas best'}
                   </Badge>
                 </div>
-                <div className="mt-1 text-xs font-mono tabular-nums">
-                  <span className="font-semibold">{r.format(r.targetVal)}</span>
-                  <span className="text-muted-foreground"> vs best </span>
-                  <span className="text-emerald-600 dark:text-emerald-400">{r.format(r.bestVal)}</span>
-                  {r.avgVal !== undefined && (
-                    <>
-                      <span className="text-muted-foreground"> · avg </span>
-                      <span className="text-muted-foreground">{r.format(r.avgVal)}</span>
-                    </>
-                  )}
-                </div>
-                <div className={`text-[11px] font-semibold tabular-nums ${isWorse ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                  {gap >= 0 ? '+' : ''}{r.format(gap)}
-                  {r.pctAboveBest !== undefined && r.pctAboveBest !== 0 && (
-                    <span className="text-xs text-muted-foreground ml-1">
-                      ({r.pctAboveBest >= 0 ? '+' : ''}{r.pctAboveBest.toFixed(0)}% vs best)
-                    </span>
-                  )}
-                </div>
+
+                {/* FIX (PATTERN-2): TargetComparison handles delta + color + arrow. */}
+                <TargetComparison
+                  current={r.targetVal}
+                  baseline={r.bestVal}
+                  displayType="pct"
+                  formatPreset={preset}
+                  downIsGood={downIsGood}
+                  showArrow
+                  showBaseline
+                  size="sm"
+                  label=""
+                />
+
+                {/* Show avg separately (TargetComparison only shows current vs baseline). */}
+                {r.avgVal !== undefined && (
+                  <div className="text-[10px] text-muted-foreground mt-1 tabular-nums">
+                    avg: {r.format(r.avgVal)}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -94,3 +118,12 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
     </Card>
   );
 });
+
+// References to the format functions for preset mapping.
+// These are imported by the callers (PeerComparison.tsx, ItemPeerComparison.tsx)
+// and passed as the `format` field in GapRow. We check identity here to
+// pick the right preset for TargetComparison's delta display.
+import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+const fmtIDRRef = fmtIDR;
+const fmtNumRef = fmtNum;
+const fmtPctAbsRef = fmtPctAbs;
