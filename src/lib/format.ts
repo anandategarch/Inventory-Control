@@ -192,3 +192,135 @@ export function fmtFullSigned(n: number): string {
   return `${sign}${Math.abs(n).toLocaleString('id-ID', { maximumFractionDigits: 1 })}`;
 }
 
+// ============================================================
+//  Format Presets System — inspired by evidence-dev/evidence
+//  --------------------------------------------------------
+//  Preset codes for consistent formatting across the dashboard.
+//  Usage: formatByPreset(value, 'idr1m') → "Rp 1,2M"
+//         formatByPreset(value, 'num2')  → "1.234,56"
+//         formatByPreset(value, 'pct1')  → "12,3%"
+//
+//  Categories:
+//    numN    — full number with N decimals (Indonesian comma)
+//    numNk   — compact: thousand suffix "Rb"
+//    numNm   — compact: million suffix "Jt"
+//    numNM   — compact: billion suffix "M"
+//    idrN    — full IDR with N decimals (Rp prefix)
+//    idrNk   — compact IDR: "Rp 500Rb"
+//    idrNm   — compact IDR: "Rp 1,2Jt"
+//    idrNM   — compact IDR: "Rp 3,4M"
+//    pctN    — percent with N decimals
+//    qtyN    — signed QTY with N decimals (for deviasi display)
+// ============================================================
+
+/**
+ * Format preset codes → their handler functions.
+ * Each handler receives a number + returns a formatted string.
+ * Null/undefined/NaN → '—'.
+ */
+export const FORMAT_PRESETS: Record<string, (v: number) => string> = {
+  // Full numbers (Indonesian thousand separator + comma decimal)
+  num0: (v) => Math.round(v).toLocaleString('id-ID'),
+  num1: (v) => v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+  num2: (v) => v.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  num3: (v) => v.toLocaleString('id-ID', { minimumFractionDigits: 3, maximumFractionDigits: 3 }),
+
+  // Compact numbers (Indonesian suffixes: Rb=ribu, Jt=juta, M=miliar)
+  num0k: (v) => fmtCompact(v, 0, 'Rb', 1_000),
+  num1k: (v) => fmtCompact(v, 1, 'Rb', 1_000),
+  num0m: (v) => fmtCompact(v, 0, 'Jt', 1_000_000),
+  num1m: (v) => fmtCompact(v, 1, 'Jt', 1_000_000),
+  num2m: (v) => fmtCompact(v, 2, 'Jt', 1_000_000),
+  num0M: (v) => fmtCompact(v, 0, 'M', 1_000_000_000),
+  num1M: (v) => fmtCompact(v, 1, 'M', 1_000_000_000),
+  num2M: (v) => fmtCompact(v, 2, 'M', 1_000_000_000),
+
+  // Full IDR (Rp prefix, Indonesian formatting)
+  idr0: (v) => `Rp ${Math.round(v).toLocaleString('id-ID')}`,
+  idr1: (v) => `Rp ${v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`,
+  idr2: (v) => `Rp ${v.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+
+  // Compact IDR
+  idr0k: (v) => `Rp ${fmtCompact(v, 0, 'Rb', 1_000)}`,
+  idr1k: (v) => `Rp ${fmtCompact(v, 1, 'Rb', 1_000)}`,
+  idr0m: (v) => `Rp ${fmtCompact(v, 0, 'Jt', 1_000_000)}`,
+  idr1m: (v) => `Rp ${fmtCompact(v, 1, 'Jt', 1_000_000)}`,
+  idr2m: (v) => `Rp ${fmtCompact(v, 2, 'Jt', 1_000_000)}`,
+  idr0M: (v) => `Rp ${fmtCompact(v, 0, 'M', 1_000_000_000)}`,
+  idr1M: (v) => `Rp ${fmtCompact(v, 1, 'M', 1_000_000_000)}`,
+  idr2M: (v) => `Rp ${fmtCompact(v, 2, 'M', 1_000_000_000)}`,
+
+  // Percent (input is fraction 0-1, displayed as 0-100%)
+  pct0: (v) => `${Math.round(v * 100)}%`,
+  pct1: (v) => `${(v * 100).toFixed(1).replace('.', ',')}%`,
+  pct2: (v) => `${(v * 100).toFixed(2).replace('.', ',')}%`,
+  pct3: (v) => `${(v * 100).toFixed(3).replace('.', ',')}%`,
+
+  // Percent absolute (|value|, for Dev/BOM ratio display)
+  pct0abs: (v) => `${Math.round(Math.abs(v) * 100)}%`,
+  pct1abs: (v) => `${(Math.abs(v) * 100).toFixed(1).replace('.', ',')}%`,
+  pct2abs: (v) => `${(Math.abs(v) * 100).toFixed(2).replace('.', ',')}%`,
+
+  // Signed QTY (for deviasi: +1.234 / -567 / 0)
+  qty0: (v) => v === 0 ? '0' : `${v < 0 ? '-' : '+'}${Math.abs(v).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`,
+  qty1: (v) => v === 0 ? '0' : `${v < 0 ? '-' : '+'}${Math.abs(v).toLocaleString('id-ID', { maximumFractionDigits: 1 })}`,
+  qty2: (v) => v === 0 ? '0' : `${v < 0 ? '-' : '+'}${Math.abs(v).toLocaleString('id-ID', { maximumFractionDigits: 2 })}`,
+};
+
+/**
+ * Compact number formatter helper for presets.
+ * Divides by `divisor`, formats with `digits` decimals, appends `suffix`.
+ * Handles sign for negative values.
+ */
+function fmtCompact(v: number, digits: number, suffix: string, divisor: number): string {
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  return `${sign}${fmtDecimal(abs / divisor, digits)}${suffix}`;
+}
+
+/**
+ * Format a value using a preset code.
+ *
+ * @param value  Number to format (null/undefined/NaN → '—')
+ * @param preset Preset code from FORMAT_PRESETS (e.g. 'idr1m', 'num2', 'pct1')
+ * @returns Formatted string, or '—' for invalid input
+ *
+ * @example
+ * formatByPreset(1234567, 'idr1m')   → "Rp 1,2Jt"
+ * formatByPreset(0.125, 'pct1')       → "12,5%"
+ * formatByPreset(1234.56, 'num2')     → "1.234,56"
+ * formatByPreset(-50, 'qty0')         → "-50"
+ * formatByPreset(null, 'num0')        → "—"
+ */
+export function formatByPreset(value: number | null | undefined, preset: string): string {
+  if (value == null || isNaN(value) || !isFinite(value)) return '—';
+  const handler = FORMAT_PRESETS[preset];
+  if (!handler) {
+    // Unknown preset — fall back to num0 (safe default)
+    return FORMAT_PRESETS.num0(value);
+  }
+  return handler(value);
+}
+
+/**
+ * Check if a preset code is valid (exists in FORMAT_PRESETS).
+ * Useful for runtime validation or UI dropdowns.
+ */
+export function isValidPreset(preset: string): boolean {
+  return preset in FORMAT_PRESETS;
+}
+
+/**
+ * Get all available preset codes, optionally filtered by category prefix.
+ * @param prefix Category prefix: 'num', 'idr', 'pct', 'qty'
+ * @returns Array of preset codes
+ *
+ * @example
+ * getPresetsByCategory('idr') → ['idr0', 'idr1', 'idr2', 'idr0k', ...]
+ */
+export function getPresetsByCategory(prefix?: string): string[] {
+  const all = Object.keys(FORMAT_PRESETS);
+  if (!prefix) return all;
+  return all.filter((p) => p.startsWith(prefix));
+}
+
