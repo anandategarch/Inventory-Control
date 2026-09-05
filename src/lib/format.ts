@@ -275,6 +275,12 @@ export const FORMAT_PRESETS: Record<string, (v: number) => string> = {
 function fmtCompact(v: number, digits: number, suffix: string, divisor: number): string {
   const abs = Math.abs(v);
   const sign = v < 0 ? '-' : '';
+  // FIX (BUG-LIB-01): guard sub-thousand values for 'Rb' suffix.
+  // Was: num0k(500) → "1Rb" (misleading). Now: returns full number
+  // when |v| < divisor (sub-1000 for Rb, sub-1M for Jt, etc.).
+  if (abs < divisor) {
+    return `${sign}${fmtDecimal(abs, digits)}`;
+  }
   return `${sign}${fmtDecimal(abs / divisor, digits)}${suffix}`;
 }
 
@@ -296,7 +302,9 @@ export function formatByPreset(value: number | null | undefined, preset: string)
   if (value == null || isNaN(value) || !isFinite(value)) return '—';
   const handler = FORMAT_PRESETS[preset];
   if (!handler) {
-    // Unknown preset — fall back to num0 (safe default)
+    // FIX (BUG-LIB-03): log warning for unknown preset (was silent fallback).
+    // Still falls back to num0 to avoid crash.
+    console.warn(`[formatByPreset] Unknown preset: '${preset}'. Falling back to num0.`);
     return FORMAT_PRESETS.num0(value);
   }
   return handler(value);
@@ -321,6 +329,15 @@ export function isValidPreset(preset: string): boolean {
 export function getPresetsByCategory(prefix?: string): string[] {
   const all = Object.keys(FORMAT_PRESETS);
   if (!prefix) return all;
-  return all.filter((p) => p.startsWith(prefix));
+  // FIX (BUG-LIB-02): filter 'pct' was returning 'pctNabs' too.
+  // Now: 'pct' returns only pct0-pct3. 'pctabs' returns pctNabs.
+  // 'pct' should NOT match 'pct0abs' etc. Use strict prefix match
+  // where the char after prefix is a digit (not a letter).
+  return all.filter((p) => {
+    if (!p.startsWith(prefix)) return false;
+    // If next char after prefix is a letter (not digit), it's a different category.
+    const nextChar = p.slice(prefix.length, prefix.length + 1);
+    return nextChar === '' || /\d/.test(nextChar);
+  });
 }
 

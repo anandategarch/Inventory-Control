@@ -206,16 +206,26 @@ function interpolateColor(hex1: string, hex2: string, t: number): string {
   const rgb2 = hexToRgb(hex2);
   if (!rgb1 || !rgb2) return hex2; // fallback
 
-  const r = Math.round(rgb1.r + (rgb2.r - rgb1.r) * t);
-  const g = Math.round(rgb1.g + (rgb2.g - rgb1.g) * t);
-  const b = Math.round(rgb1.b + (rgb2.b - rgb1.b) * t);
+  // FIX (BUG-LIB-09): clamp r/g/b to [0, 255] to prevent invalid hex
+  // when t is outside [0, 1] (shouldn't happen due to clamping upstream,
+  // but defensive — prevents '#-5ff' etc.).
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  const r = clamp(rgb1.r + (rgb2.r - rgb1.r) * t);
+  const g = clamp(rgb1.g + (rgb2.g - rgb1.g) * t);
+  const b = clamp(rgb1.b + (rgb2.b - rgb1.b) * t);
 
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
-/** Convert hex string to RGB. Returns null for invalid input. */
+/** Convert hex string to RGB. Supports 3-digit shorthand (#fff) and 6-digit (#ffffff).
+ * FIX (BUG-LIB-10): was rejecting 3-char hex. Now expands #fff → #ffffff before parsing.
+ * Returns null for invalid input. */
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const cleaned = hex.replace('#', '');
+  let cleaned = hex.replace('#', '');
+  // FIX (BUG-LIB-10): expand 3-digit hex to 6-digit.
+  if (cleaned.length === 3) {
+    cleaned = cleaned.split('').map((c) => c + c).join('');
+  }
   if (cleaned.length !== 6) return null;
   const r = parseInt(cleaned.slice(0, 2), 16);
   const g = parseInt(cleaned.slice(2, 4), 16);
@@ -226,7 +236,10 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 
 /**
  * Determine whether to use black or white text on a given background color.
- * Uses relative luminance for WCAG contrast.
+ * FIX (BUG-LIB-11): updated docstring — uses YIQ luminance approximation
+ * (0.299r + 0.587g + 0.114b), not true WCAG sRGB luminance. YIQ is simpler
+ * and sufficient for this use case (heatmap cells + chart backgrounds).
+ * For strict WCAG AA compliance, use proper sRGB gamma decode.
  */
 export function autoTextColor(bgHex: string): 'text-white' | 'text-black' | 'text-foreground' {
   // FIX (BUG-LIB-08): use 'text-black' instead of 'text-foreground' for
@@ -237,10 +250,18 @@ export function autoTextColor(bgHex: string): 'text-white' | 'text-black' | 'tex
   const rgb = hexToRgb(bgHex);
   if (!rgb) return 'text-foreground';
 
-  // FIX (BUG-LIB-08): use static black/white instead of theme-dependent.
-  // This ensures the text color is visible regardless of dark/light mode.
-  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-  return luminance < 0.55 ? 'text-white' : 'text-black';
+  // FIX (BUG-INT-05): use true WCAG sRGB luminance (gamma-decode + 0.2126/0.7152/0.0722 weights)
+  // instead of YIQ approximation. This fixes contrast for emerald-500 (#10b981)
+  // which YIQ returned 0.502 (just under 0.55 → white text) but actual WCAG
+  // contrast with white is ~2.6:1 (fails AA 4.5:1 for normal text).
+  const decode = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const luminance = 0.2126 * decode(rgb.r) + 0.7152 * decode(rgb.g) + 0.0722 * decode(rgb.b);
+  // Threshold: luminance > 0.18 → dark text (light bg), else white text (dark bg).
+  // 0.18 corresponds to WCAG AA 4.5:1 contrast with both black and white.
+  return luminance > 0.18 ? 'text-black' : 'text-white';
 }
 
 // ============================================================

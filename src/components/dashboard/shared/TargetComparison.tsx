@@ -135,10 +135,15 @@ export const TargetComparison = memo(function TargetComparison({
   let deltaDisplay: string;
   if (displayType === 'pct') {
     // Percentage change: (current - baseline) / |baseline| × 100
-    // Guard div-by-zero
-    const pct = baseline !== 0 ? (delta / Math.abs(baseline)) * 100 : 0;
-    const sign = pct > 0 ? '+' : '';
-    deltaDisplay = `${sign}${pct.toFixed(1).replace('.', ',')}%`;
+    // FIX (BUG-SHARED-02): when baseline=0 and current≠0, show 'N/A'
+    // (was: div-by-zero fallback returned 0% — misleading "↑ 0,0%").
+    if (baseline === 0 && current !== 0) {
+      deltaDisplay = 'N/A';
+    } else {
+      const pct = baseline !== 0 ? (delta / Math.abs(baseline)) * 100 : 0;
+      const sign = pct > 0 ? '+' : '';
+      deltaDisplay = `${sign}${pct.toFixed(1).replace('.', ',')}%`;
+    }
   } else if (displayType === 'abs') {
     // Absolute change. FIX (BUG-SHARED-01): don't prepend '+' when using qtyN
     // presets (they already include the sign: "+3.000" / "-3.000").

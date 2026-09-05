@@ -53,9 +53,9 @@ export const Tracker = memo(function Tracker({ blocks, className }: TrackerProps
         <Tooltip key={idx}>
           <TooltipTrigger asChild>
             <div
-              className={`flex-1 h-full rounded-sm cursor-help ${TRACKER_COLORS[block.color]}`}
+              className={`flex-1 h-full rounded-sm ${block.tooltip ? 'cursor-help' : ''} ${TRACKER_COLORS[block.color]}`}
               role="img"
-              aria-label={block.tooltip ?? `Period ${idx + 1}`}
+              aria-label={block.tooltip || `Period ${idx + 1}`}
             />
           </TooltipTrigger>
           {block.tooltip && (

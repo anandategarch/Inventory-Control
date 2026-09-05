@@ -79,16 +79,18 @@ export const BarList = memo(function BarList({
   return (
     <div className={`space-y-1.5 ${className ?? ''}`} aria-sort={sortOrder === 'none' ? undefined : sortOrder}>
       {sortedData.map((item, index) => {
+        // FIX (BUG-SHARED-07): skip min 2% for zero-value items (was showing misleading 2% bar).
         const barWidth = maxValue > 0
-          ? Math.max((Math.abs(item.value) / maxValue) * 100, 2)
+          ? (item.value === 0 ? 0 : Math.max((Math.abs(item.value) / maxValue) * 100, 2))
           : 0;
         const itemColor = item.color ?? color;
         const Component = isClickable ? 'button' : 'div';
-
         return (
           <Component
             key={item.key ?? index}
             onClick={isClickable ? () => onValueChange?.(item) : undefined}
+            // FIX (BUG-SHARED-08): add type='button' to prevent accidental form submit.
+            type={isClickable ? 'button' : undefined}
             className={`group flex items-center w-full rounded-md ${isClickable ? 'cursor-pointer hover:bg-muted/40 transition-colors' : ''}`}
           >
             {/* Name (left, fixed width) */}

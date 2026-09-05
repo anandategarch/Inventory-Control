@@ -97,9 +97,19 @@ export const SparkLine = memo(function SparkLine({
     return <div style={{ width, height }} className={`inline-block ${className ?? ''}`} />;
   }
 
-  // Convert hex color to rgba for area fill
+  // Convert hex color to rgba for area fill.
+  // FIX (BUG-SHARED-10): expand 3-digit hex to 6-digit before appending alpha.
+  // Was: '#fff' + '26' = '#fff26' (invalid 5-char hex).
+  // Now: '#ffffff' + '26' = '#ffffff26' (valid 8-char alpha hex).
+  const expandHex = (hex: string): string => {
+    const cleaned = hex.replace('#', '');
+    if (cleaned.length === 3) {
+      return '#' + cleaned.split('').map((c) => c + c).join('');
+    }
+    return hex;
+  };
   const areaColor = color.startsWith('#')
-    ? `${color}${Math.round(areaOpacity * 255).toString(16).padStart(2, '0')}`
+    ? `${expandHex(color)}${Math.round(areaOpacity * 255).toString(16).padStart(2, '0')}`
     : color;
 
   return (

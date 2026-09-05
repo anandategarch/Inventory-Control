@@ -103,12 +103,13 @@ function computePeerScatterPoints(peers: PeerRow[], targetCode: string | undefin
     isTarget: p.outletCode === targetCode,
     tooltipLines: [
       { label: 'Sales', value: fmtIDR(p.sales) },
-      { label: 'Dev/BOM', value: `${(p.devBom * 100).toFixed(1)}%` },
+      { label: 'Dev/BOM', value: `${(p.devBom * 100).toFixed(1).replace('.', ',')}%` },
       // FIX (PATTERN-2): add vs peer avg comparison (downIsGood for Dev/BOM).
+      // FIX (BUG-INT-02): use Indonesian comma (was dot decimal).
       {
         label: 'vs peer avg',
         value: peerAvg.devBom !== 0
-          ? `${p.devBom > peerAvg.devBom ? '+' : ''}${((p.devBom - peerAvg.devBom) / Math.abs(peerAvg.devBom) * 100).toFixed(1)}%`
+          ? `${p.devBom > peerAvg.devBom ? '+' : ''}${((p.devBom - peerAvg.devBom) / Math.abs(peerAvg.devBom) * 100).toFixed(1).replace('.', ',')}%`
           : '—',
       },
     ],
