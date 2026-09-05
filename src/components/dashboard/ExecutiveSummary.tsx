@@ -11,6 +11,7 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+import { DeltaBar } from '@/components/dashboard/shared/DeltaBar';
 
 // FIX #8: per-KPI tooltip text (mirrors spec from AUDIT8-FE-2 #8)
 const KPI_TOOLTIPS = {
@@ -145,6 +146,24 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
           <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
+        )}
+        {/* TREMOR-COMPONENTS: bidirectional DeltaBar under each KPI
+            value (Pattern 1) — visualizes growth as a centered bar
+            with center=0 anchor. Positive extends right (emerald when
+            isIncreasePositive), negative extends left (red when
+            isIncreasePositive). For inverse metrics (deviasi, waste,
+            loss) isIncreasePositive=false so positive=red. Renders
+            only when BOTH growth + previous are present (otherwise
+            there's nothing to compare). */}
+        {growth != null && previous != null && (
+          <div className="mt-2">
+            <DeltaBar
+              value={growth * 100}
+              isIncreasePositive={!inverse}
+              label=""
+              showAnimation
+            />
+          </div>
         )}
         {hint && <p className="mt-1 text-xs text-muted-foreground/70 line-clamp-1" title={hint}>{hint}</p>}
       </CardContent>

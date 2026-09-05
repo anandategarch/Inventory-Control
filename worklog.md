@@ -39842,3 +39842,26 @@ Stage Summary:
 - PC-focused design note added with user's direct quote
 - File consolidation note added with Batch 1 + Batch 2 details
 - 0 dangling references to audit-log as a current feature (only REMOVED notes remain)
+
+---
+Task ID: TREMOR-COMPONENTS
+Agent: Tremor Components Builder (4 patterns)
+Task: Build Callout + DeltaType + DeltaBar + Tracker + apply to KPICard + empty states
+
+Work Log:
+- Read context: worklog tail (last 100 lines), MASTER_CONTEXT §6 + §5 + §9 + UI Design Principles, TargetComparison.tsx (full — Pattern 2 source), format.ts (presets), colorScale.ts (diverging scales), ExecutiveSummary.tsx (lines 68-140 — KPICard), ItemTrendTab/index.tsx (lines 730-750 — empty-state Tips box + error state)
+- Created src/components/ui/callout.tsx (Callout component — Pattern 4, 4 colors: amber/emerald/red/zinc, border-l-4 + bg-{color}-50/60, dark mode, memo-wrapped, 'use client')
+- Added DeltaType 5-level classification (Pattern 6) to TargetComparison.tsx — exported `DeltaType` union, `classifyDelta(delta, thresholds?)` (default moderate threshold = 0.10 = 10%), `deltaTypeColor(deltaType, downIsGood)` returning Tailwind text color class (good=emerald-600, bad=red-600, moderateGood=emerald-500, moderateBad=amber-600, neutral=muted-foreground) with `downIsGood` flag flipping good/bad (used for inverse metrics like deviasi/waste/loss). Appended below TargetComparison component — existing component untouched.
+- Created src/components/dashboard/shared/DeltaBar.tsx (Pattern 1, bidirectional progress bar) — `value` clamped to [-100,100], `isIncreasePositive` flag (default true; false for inverse metrics → positive=red), center separator (1px @ left-1/2), emerald vs red bar color, optional label (20-char truncate) + native tooltip, Indonesian comma decimal in value label, `tabular-nums`, dark mode, `transition-all duration-300` animation toggle, memo-wrapped.
+- Created src/components/dashboard/shared/Tracker.tsx (Pattern 3, status blocks row) — `blocks: TrackerBlock[]` with `color` (emerald/amber/red/zinc) + optional `tooltip` per block, `flex-1` equal-width blocks, `h-8` compact, uses shadcn/ui Tooltip (`@/components/ui/tooltip`), `role="img"` + `aria-label` fallback ("Period N"), dark mode (zinc → zinc-300/zinc-700), memo-wrapped.
+- Applied Callout to ItemTrendTab/index.tsx — replaced inline Tips box (lines 739-745, `bg-amber-50 dark:bg-amber-950/30 border-amber-200` div) with `<Callout color="amber" icon={Info} title="Tips: Z-Score butuh minimal 4 periode">` — same content text + amber theme, kept `max-w-md mt-4 text-left` className. ALSO replaced error state (line 748, was `text-center text-red-600` flat div) with `<Callout color="red" icon={AlertTriangle} title="Gagal memuat trend">` — wrapped in `max-w-md mx-auto py-12 px-6` container for centering. Added `AlertTriangle` to lucide-react imports + `Callout` from `@/components/ui/callout`.
+- Applied DeltaBar to KPICard in ExecutiveSummary.tsx — added import (`DeltaBar` from `@/components/dashboard/shared/DeltaBar`), inserted `<DeltaBar value={growth * 100} isIncreasePositive={!inverse} label="" showAnimation />` between the `vs {previous}` block and the `{hint && ...}` line, wrapped in `<div className="mt-2">`. Renders only when BOTH `growth != null && previous != null` (no bar if either missing). Pill display (lines 134-139) kept as-is (still useful compact indicator). For inverse KPIs (Nominal Deviasi, QTY Deviasi, Net Loss/Surplus), `isIncreasePositive=false` so positive growth = red (up = bad); for Sales + QTY BOM, `isIncreasePositive=true` so positive growth = emerald (up = good).
+- Ran `bun run lint` — 0 errors, 380 warnings (UNCHANGED from baseline — verified via `git stash` + lint + `git stash pop`: baseline is 380 warnings, my changes added 0 new warnings). All warnings pre-existing in test files + 2 in ExecutiveSummary.tsx (`_duration` unused param + `v` unused in AnimatedValue type signature — pre-existing, not from my edits).
+- Ran `bunx tsc --noEmit --skipLibCheck` — 0 errors (clean compile, exit code 0)
+
+Stage Summary:
+- 4 new components: Callout (src/components/ui/callout.tsx, 4-color info box), DeltaType (added to TargetComparison.tsx, 5-level classification), DeltaBar (src/components/dashboard/shared/DeltaBar.tsx, bidirectional progress bar), Tracker (src/components/dashboard/shared/Tracker.tsx, status blocks row)
+- Applied to: KPICard in ExecutiveSummary.tsx (DeltaBar — bidirectional growth bar under each KPI value), ItemTrendTab/index.tsx empty state (Callout amber for Tips) + error state (Callout red for failure message)
+- Lint: 0 errors, 380 warnings (unchanged from baseline)
+- tsc: 0 errors (clean)
+

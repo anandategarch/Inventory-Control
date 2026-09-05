@@ -66,12 +66,13 @@ import {
   Card, CardContent, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Info, Loader2, Package, TrendingUp, Award } from 'lucide-react';
+import { Info, Loader2, Package, TrendingUp, Award, AlertTriangle } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useItemTrend, type ItemTrendMetric, type ItemTrendPeriod } from '@/hooks/useAnalysis';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { Callout } from '@/components/ui/callout';
 
 // Sub-components + helpers extracted in this folder split (Task ID 3-c).
 import { ItemTrendSearchBar } from './ItemTrendSearchBar';
@@ -735,18 +736,30 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
               Cari item di kotak pencarian di atas. Tren menampilkan QTY lintas semua periode dengan Z-Score historis (baseline same-week).
             </p>
-            {/* FIX (UI-12): changed blue palette → amber to match tab theme */}
-            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 max-w-md text-left">
-              <Info className="h-4 w-4 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] text-amber-700 dark:text-amber-300 space-y-1">
-                <p className="font-medium">Tips: Z-Score butuh minimal 4 periode</p>
-                <p>Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).</p>
-              </div>
-            </div>
+            {/* TREMOR-COMPONENTS: replaced inline Tips box with <Callout>
+                (Pattern 4) — same content + amber theme, but with the
+                reusable Callout component (border-left + icon + title +
+                children area). Keeps UI-12 amber palette fix. */}
+            <Callout
+              color="amber"
+              icon={Info}
+              title="Tips: Z-Score butuh minimal 4 periode"
+              className="mt-4 max-w-md text-left"
+            >
+              <p>
+                Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).
+              </p>
+            </Callout>
           </div>
         ) : trend.error ? (
-          <div className="text-center text-red-600 dark:text-red-400 text-sm py-12 px-6">
-            Gagal memuat trend: {trend.error.message}
+          <div className="py-12 px-6 max-w-md mx-auto">
+            <Callout
+              color="red"
+              icon={AlertTriangle}
+              title="Gagal memuat trend"
+            >
+              <p>{trend.error.message}</p>
+            </Callout>
           </div>
         ) : trend.isLoading && periods.length === 0 ? (
           // FIX (UI-02): standardized loading state padding to py-12.

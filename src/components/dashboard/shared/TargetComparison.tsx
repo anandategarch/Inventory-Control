@@ -201,3 +201,96 @@ export const TargetComparison = memo(function TargetComparison({
     </div>
   );
 });
+
+// ============================================================
+//  DeltaType — 5-level delta classification (Pattern 6)
+//  --------------------------------------------------------
+//  Inspired by tremor-npm's DeltaType system. Classifies a
+//  percentage delta into 5 buckets so callers can pick a color
+//  via `deltaTypeColor()` rather than re-implementing direction
+//  + magnitude logic.
+//
+//  Levels (default `moderate` threshold = 10% = 0.10):
+//    - 'increase'          delta > +moderate
+//    - 'moderateIncrease'  0 < delta <= +moderate
+//    - 'unchanged'         delta === 0
+//    - 'moderateDecrease'  -moderate <= delta < 0
+//    - 'decrease'          delta < -moderate
+//
+//  `deltaTypeColor()` maps a DeltaType to a Tailwind text color
+//  class, respecting the `downIsGood` flag (for metrics where a
+//  decrease is an improvement, e.g. deviasi, waste, loss).
+//
+//  Usage:
+//    const dt = classifyDelta(0.15);             // 'increase' (>0.10)
+//    const cls = deltaTypeColor(dt, true);        // red (up = bad)
+//    const dt2 = classifyDelta(0.05);             // 'moderateIncrease'
+//    const cls2 = deltaTypeColor(dt2, true);      // amber (moderate bad)
+// ============================================================
+
+export type DeltaType =
+  | 'increase'
+  | 'moderateIncrease'
+  | 'unchanged'
+  | 'moderateDecrease'
+  | 'decrease';
+
+export interface ClassifyDeltaOptions {
+  /** Absolute threshold (e.g. 0.10 for 10%) above which a change
+   *  is considered "big" rather than "moderate". @default 0.10 */
+  moderate?: number;
+}
+
+/**
+ * Classify a signed delta (typically a fraction 0.15 = +15%) into
+ * 5 buckets. Pass an absolute ratio (e.g. 0.15), not a percent.
+ *
+ * The threshold is symmetric: +moderate / -moderate bracket the
+ * "moderate" zone; anything above (or below) is a full
+ * "increase" / "decrease".
+ */
+export function classifyDelta(
+  delta: number,
+  thresholds?: ClassifyDeltaOptions,
+): DeltaType {
+  const mod = thresholds?.moderate ?? 0.10; // 10% = moderate threshold
+  if (delta === 0) return 'unchanged';
+  if (delta > mod) return 'increase';
+  if (delta > 0) return 'moderateIncrease';
+  if (delta < -mod) return 'decrease';
+  return 'moderateDecrease';
+}
+
+/**
+ * Map a DeltaType to a Tailwind text-color class, respecting the
+ * `downIsGood` flag.
+ *
+ * - `downIsGood=false` (default): increase = green (good),
+ *   decrease = red (bad). Used for sales, surplus, outlet count.
+ * - `downIsGood=true`: increase = red (bad), decrease = green
+ *   (good). Used for deviasi, waste, loss, residual.
+ *
+ * Moderate variants get a softer color (amber instead of red,
+ * emerald-500 instead of emerald-600) to distinguish "small
+ * change" from "big change" at a glance.
+ */
+export function deltaTypeColor(deltaType: DeltaType, downIsGood: boolean): string {
+  const goodColors = 'text-emerald-600 dark:text-emerald-400';
+  const badColors = 'text-red-600 dark:text-red-400';
+  const moderateGoodColors = 'text-emerald-500 dark:text-emerald-500';
+  const moderateBadColors = 'text-amber-600 dark:text-amber-400';
+  const neutralColors = 'text-muted-foreground';
+
+  const isGood = (dt: DeltaType) => dt === 'increase' || dt === 'moderateIncrease';
+  const isBad = (dt: DeltaType) => dt === 'decrease' || dt === 'moderateDecrease';
+
+  // Flip if downIsGood (down = good, up = bad)
+  const effectiveGood = downIsGood ? isBad(deltaType) : isGood(deltaType);
+  const effectiveBad = downIsGood ? isGood(deltaType) : isBad(deltaType);
+  const isModerate =
+    deltaType === 'moderateIncrease' || deltaType === 'moderateDecrease';
+
+  if (effectiveGood) return isModerate ? moderateGoodColors : goodColors;
+  if (effectiveBad) return isModerate ? moderateBadColors : badColors;
+  return neutralColors;
+}
