@@ -140,7 +140,12 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
           : 'from-zinc-50/60 dark:from-zinc-900/15';
   return (
     <Card
-      className={`relative overflow-hidden transition-all duration-200 shadow-md shadow-black/5 dark:shadow-black/20 bg-gradient-to-br to-card ${tintCls}`}
+      // SHADCN-PATTERNS (Pattern 2) — add `@container/card` so children
+      // (the KPI value text + "vs previous" caption) can use container
+      // queries (`@[250px]/card:text-3xl` etc.) instead of viewport
+      // breakpoints. Cards resize with their parent column, not the
+      // viewport — more flexible for sidebar/resizable layouts.
+      className={`@container/card relative overflow-hidden transition-all duration-200 shadow-md shadow-black/5 dark:shadow-black/20 bg-gradient-to-br to-card ${tintCls}`}
     >
       {/* Left border accent (4px colored bar) */}
       <div className={`absolute inset-y-0 left-0 w-1 ${accentCls}`} aria-hidden />
@@ -159,11 +164,11 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
             </span>
           )}
         </div>
-        <p className="mt-1.5 text-2xl font-bold tracking-tight tabular-nums">
+        <p className="mt-1.5 text-2xl font-bold tracking-tight tabular-nums @[250px]/card:text-3xl">
           {unit === 'IDR' ? fmtIDR(animatedValue) : fmtNum(animatedValue, unit || '')}
         </p>
         {previous != null && (
-          <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+          <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums @[250px]/card:text-xs">
             vs {unit === 'IDR' ? fmtIDR(previous) : fmtNum(previous, unit || '')}
           </p>
         )}
@@ -207,7 +212,15 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
           {data.period.comparisonWeek ? ` vs ${data.period.comparisonWeek}${data.period.comparisonMonth && data.period.comparisonMonth !== data.period.monthLabel ? ` ${data.period.comparisonMonth}` : ''}` : ''}
         </Badge>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* FIX (SHADCN Pattern 2): use @container/main queries instead of
+          viewport breakpoints. Cards auto-respond to parent container
+          width, not viewport — more flexible for sidebar/resizable
+          layouts. The `@container/main` ancestor is set on the page's
+          <main> element in `src/app/page.tsx`.
+            base          = grid-cols-2 (narrow — 6 cards in 3 rows of 2)
+            @xl/main      = grid-cols-3 (576px+ — 6 cards in 2 rows of 3)
+            @4xl/main     = grid-cols-6 (864px+ — 6 cards in 1 row) */}
+      <div className="grid grid-cols-2 gap-3 @xl/main:grid-cols-3 @4xl/main:grid-cols-6">
         <KPICard label="Sales" value={s.sales.current} unit="IDR" growth={s.sales.growth} previous={s.sales.previous} accent="emerald" tooltip={KPI_TOOLTIPS.sales} />
         <KPICard label="Nominal Deviasi" value={s.nominalDeviasi.current} unit="IDR" growth={s.nominalDeviasi.growth} previous={s.nominalDeviasi.previous} inverse accent="amber" tooltip={KPI_TOOLTIPS.nominalDeviasi} />
         <KPICard label="QTY BOM" value={s.qtyBom.current} unit="" growth={s.qtyBom.growth} previous={s.qtyBom.previous} accent="zinc" tooltip={KPI_TOOLTIPS.qtyBom} />

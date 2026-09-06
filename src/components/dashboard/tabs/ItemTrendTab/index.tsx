@@ -74,6 +74,12 @@ import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { Callout } from '@/components/ui/callout';
 import { Tracker } from '@/components/dashboard/shared/Tracker';
+// SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState. Replaces
+// the manual `flex flex-col items-center justify-center` divs with a
+// single component that takes icon + title + description + optional
+// action. Loaded from `@/components/ui/empty-state` (UI library — distinct
+// from the page-level `EmptyState` in `@/components/dashboard/shared`).
+import { EmptyState } from '@/components/ui/empty-state';
 
 // Sub-components + helpers extracted in this folder split (Task ID 3-c).
 import { ItemTrendSearchBar } from './ItemTrendSearchBar';
@@ -728,30 +734,29 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
       <CardContent className="p-0">
         {!selectedItem ? (
           // Empty state — prompt user to pick an item.
-          // FIX (UI-02): standardized empty/loading/no-data padding to py-12.
-          <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 mb-3">
-              <TrendingUp className="h-7 w-7" />
-            </div>
-            <p className="text-sm font-medium text-foreground">Pilih item untuk melihat trend</p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
-              Cari item di kotak pencarian di atas. Tren menampilkan QTY lintas semua periode dengan Z-Score historis (baseline same-week).
-            </p>
-            {/* TREMOR-COMPONENTS: replaced inline Tips box with <Callout>
-                (Pattern 4) — same content + amber theme, but with the
-                reusable Callout component (border-left + icon + title +
-                children area). Keeps UI-12 amber palette fix. */}
-            <Callout
-              color="amber"
-              icon={Info}
-              title="Tips: Z-Score butuh minimal 4 periode"
-              className="mt-4 max-w-md text-left"
-            >
-              <p>
-                Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).
-              </p>
-            </Callout>
-          </div>
+          // SHADCN-PATTERNS (Pattern 4) — replaced manual `flex flex-col ...`
+          // div with <EmptyState>. The amber Tips Callout is passed as the
+          // `action` so it renders below the title/description. Keeps the
+          // same copy + amber theme as the previous inline block (UI-12
+          // palette fix preserved).
+          <EmptyState
+            icon={TrendingUp}
+            title="Pilih item untuk melihat trend"
+            description="Cari item di kotak pencarian di atas. Tren menampilkan QTY lintas semua periode dengan Z-Score historis (baseline same-week)."
+            className="py-12"
+            action={
+              <Callout
+                color="amber"
+                icon={Info}
+                title="Tips: Z-Score butuh minimal 4 periode"
+                className="mt-4 max-w-md text-left"
+              >
+                <p>
+                  Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).
+                </p>
+              </Callout>
+            }
+          />
         ) : trend.error ? (
           <div className="py-12 px-6 max-w-md mx-auto">
             <Callout
@@ -769,13 +774,14 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             <span className="ml-2 text-xs text-muted-foreground">Memuat trend...</span>
           </div>
         ) : periods.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-            <Package className="h-8 w-8 text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">Tidak ada data untuk item ini</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">
-              Item <span className="font-medium">{selectedItem}</span> tidak memiliki record dengan filter aktif.
-            </p>
-          </div>
+          // SHADCN-PATTERNS (Pattern 4) — replaced manual `flex flex-col ...`
+          // div with <EmptyState>. Uses Package icon to distinguish "item
+          // exists but no records" from the no-item-selected state above.
+          <EmptyState
+            icon={Package}
+            title="Tidak ada data untuk item ini"
+            description={`Item ${selectedItem} tidak memiliki record dengan filter aktif.`}
+          />
         ) : (
           <div className="space-y-3">
             {/* FIX (UI-10): Flip Summary Card moved here from CardHeader so

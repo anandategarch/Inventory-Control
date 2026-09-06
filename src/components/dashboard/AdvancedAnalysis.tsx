@@ -18,6 +18,11 @@ import {
   Heart, Link2, MapPin,
   ChevronRight, ChevronDown, AlertTriangle, Loader2,
 } from 'lucide-react';
+// SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState. Used
+// inside ItemConsistencyAnalysis's empty-row fallback. Kept inside a
+// `<TableRow><TableCell colSpan={8}>` wrapper to preserve valid table
+// HTML (a bare <div> in <tbody> would be invalid).
+import { EmptyState } from '@/components/ui/empty-state';
 
 // ============================================================
 //  Helpers
@@ -451,7 +456,14 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-8">Tidak ada data</TableCell></TableRow>
+                // SHADCN-PATTERNS (Pattern 4) — replaced inline "Tidak ada
+                // data" TableCell text with <EmptyState>. Wrapped in a
+                // TableRow/TableCell so it stays valid table HTML.
+                <TableRow>
+                  <TableCell colSpan={8} className="p-0">
+                    <EmptyState icon={Link2} title="Tidak ada data" />
+                  </TableCell>
+                </TableRow>
               ) : rows.map((row, i) => {
                 // Minority direction = the LESS-FREQUENT direction of the item.
                 // Anomali count = number of outlets in the minority direction.

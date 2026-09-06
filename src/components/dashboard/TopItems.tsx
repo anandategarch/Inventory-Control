@@ -14,6 +14,10 @@ import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, Chevro
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { BarList } from '@/components/dashboard/shared/BarList';
+// SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState for the
+// BarList-empty case (BarList itself renders nothing when its data array
+// is empty — we surface a small EmptyState below it instead).
+import { EmptyState } from '@/components/ui/empty-state';
 
 export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
@@ -62,6 +66,16 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
             itemName: item.name,
           })}
         />
+        {/* SHADCN-PATTERNS (Pattern 4) — BarList renders nothing when its
+            data array is empty, so we surface an EmptyState below it to
+            give the user a clear "no data" signal instead of a blank card. */}
+        {items.length === 0 && (
+          <EmptyState
+            icon={Coins}
+            title="Tidak ada data"
+            description="Belum ada item dengan deviasi pada periode ini."
+          />
+        )}
         <p className="text-[10px] text-muted-foreground mt-2">💡 Bar length = |Nominal|. Klik untuk drill-down.</p>
       </CardContent>
     </Card>

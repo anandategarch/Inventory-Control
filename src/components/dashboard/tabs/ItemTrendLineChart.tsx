@@ -20,12 +20,28 @@
 
 import { memo, useMemo } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  ReferenceLine,
 } from 'recharts';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { getFlipsForPeriod, periodKey as flipPeriodKey, type FlipAnalysis } from './ItemTrendTab/flipHelpers';
+// SHADCN-PATTERNS (Pattern 1) — ChartContainer + ChartConfig system
+// (inspired by shadcn/ui v4 chart.tsx). Wraps Recharts with a config
+// object that stores label + color per series, auto-injects CSS variables
+// (`--color-qty`, `--color-historicalMean`, `--color-zScore`) into a
+// scoped style tag, and provides ChartTooltipContent + ChartLegendContent
+// that read from the config. We keep the existing CustomTooltip (richer
+// content: period + metric + signed deviasi + z-score + historical mean +
+// nominal + outlets/records) — ChartContainer is used purely for the CSS
+// variable system so `stroke="var(--color-qty)"` works.
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartLegend,
+  ChartLegendContent,
+  type ChartConfig,
+} from '@/components/ui/chart-container';
 
 interface ChartRow {
   period: string;
@@ -219,6 +235,21 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
 export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, metric, onDotClick, flips }: ItemTrendLineChartProps) {
   const data = useMemo(() => periods.map(p => buildRow(p, metric, flips)), [periods, metric, flips]);
 
+  // SHADCN-PATTERNS (Pattern 1) — chartConfig stores label + color per
+  // series. ChartContainer reads this to:
+  //   1. Auto-inject CSS variables `--color-qty`, `--color-historicalMean`,
+  //      `--color-zScore` into a scoped style tag (so `stroke="var(--color-qty)"`
+  //      works inside the chart).
+  //   2. Provide context for ChartLegendContent (reads label from config —
+  //      no manual formatter needed).
+  // Built inside the component (memoized on `metric`) because the `qty`
+  // label is metric-dependent ("QTY Deviasi" / "QTY Waste" / etc.).
+  const chartConfig = useMemo(() => ({
+    qty: { label: METRIC_LABELS[metric], color: '#f59e0b' },
+    historicalMean: { label: 'Historical Mean', color: 'var(--muted-foreground)' },
+    zScore: { label: 'Z-Score', color: 'var(--muted-foreground)' },
+  } satisfies ChartConfig), [metric]);
+
   // Phase 2 drill-down: Recharts passes the chart state to `onClick`,
   // including `activeTooltipIndex` (the index into `data` of the nearest
   // point to the click). Map that back to the underlying ItemTrendPeriod
@@ -324,115 +355,129 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
           </>
         )}
       </p>
-      {/* FIX (UI2-07): h-56 on mobile (224px — leaves room for table), h-72 on desktop */}
-      <div className="h-56 sm:h-72">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={data}
-            margin={{ left: 0, right: 16, top: 10, bottom: 5 }}
-            onClick={onDotClick ? handleChartClick : undefined}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
-            <XAxis
-              dataKey="period"
-              fontSize={10}
-              stroke="var(--muted-foreground)"
-              tickLine={false}
-              axisLine={false}
-              angle={-30}
-              textAnchor="end"
-              height={50}
-            />
-            {/* Left Y axis — QTY value */}
-            <YAxis
-              yAxisId="left"
-              tickFormatter={(v: number) => {
-                const abs = Math.abs(v);
-                if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-                if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
-                return v.toFixed(0);
-              }}
-              fontSize={10}
-              stroke="var(--muted-foreground)"
-              tickLine={false}
-              axisLine={false}
-              width={50}
-            />
-            {/* Right Y axis — Z-Score */}
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              domain={[-4, 4]}
-              ticks={[-3, -2, -1, 0, 1, 2, 3]}
-              tickFormatter={(v: number) => (v > 0 ? `+${v}` : `${v}`)}
-              fontSize={10}
-              stroke="var(--muted-foreground)"
-              tickLine={false}
-              axisLine={false}
-              width={36}
-            />
-            <Tooltip
-              content={<CustomTooltip metric={metric} />}
-              cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}
-              formatter={(value: string) => {
-                if (value === 'qty') return METRIC_LABELS[metric];
-                if (value === 'zScore') return 'Z-Score';
-                if (value === 'historicalMean') return 'Historical Mean';
-                return value;
-              }}
-            />
-            {/* Historical mean baseline — dashed muted line */}
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="historicalMean"
-              stroke="var(--muted-foreground)"
-              strokeWidth={1.5}
-              strokeDasharray="5 4"
-              dot={renderMeanDot}
-              activeDot={false}
-              connectNulls
-              isAnimationActive={false}
-              name="historicalMean"
-            />
-            {/* QTY value — solid amber line */}
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="qty"
-              stroke="#f59e0b"
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 5, fill: '#f59e0b', stroke: 'var(--background)', strokeWidth: 2 }}
-              connectNulls
-              isAnimationActive={false}
-              name="qty"
-            />
-            {/* Z-Score — invisible line (just dots) on the right axis */}
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="zScore"
-              stroke="transparent"
-              strokeWidth={0}
-              dot={renderZDot}
-              activeDot={false}
-              connectNulls={false}
-              isAnimationActive={false}
-              name="zScore"
-            />
-            {/* Reference lines at z=±2 and z=±3 (visual guide for severity) */}
-            <ReferenceLine yAxisId="right" y={2} stroke="#f59e0b" strokeDasharray="2 4" strokeOpacity={0.4} />
-            <ReferenceLine yAxisId="right" y={3} stroke="#dc2626" strokeDasharray="2 4" strokeOpacity={0.4} />
-            <ReferenceLine yAxisId="right" y={0} stroke="var(--muted-foreground)" strokeDasharray="1 3" strokeOpacity={0.3} />
-            <ReferenceLine yAxisId="right" y={-2} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.3} />
-            <ReferenceLine yAxisId="right" y={-3} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.4} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {/* FIX (UI2-07): h-56 on mobile (224px — leaves room for table), h-72 on desktop.
+          SHADCN-PATTERNS (Pattern 1): wrapped with <ChartContainer> instead of
+          a bare <div><ResponsiveContainer></div>. ChartContainer injects the
+          `--color-qty` / `--color-historicalMean` / `--color-zScore` CSS
+          variables from `chartConfig` into a scoped <style>, so the Lines
+          below can use `stroke="var(--color-qty)"` instead of hardcoded
+          `'#f59e0b'`. The existing CustomTooltip is preserved (it has richer
+          content than the generic ChartTooltipContent). */}
+      <ChartContainer config={chartConfig} className="h-56 sm:h-72">
+        <LineChart
+          data={data}
+          margin={{ left: 0, right: 16, top: 10, bottom: 5 }}
+          onClick={onDotClick ? handleChartClick : undefined}
+        >
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
+          <XAxis
+            dataKey="period"
+            fontSize={10}
+            stroke="var(--muted-foreground)"
+            tickLine={false}
+            axisLine={false}
+            angle={-30}
+            textAnchor="end"
+            height={50}
+          />
+          {/* Left Y axis — QTY value */}
+          <YAxis
+            yAxisId="left"
+            tickFormatter={(v: number) => {
+              const abs = Math.abs(v);
+              if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+              if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+              return v.toFixed(0);
+            }}
+            fontSize={10}
+            stroke="var(--muted-foreground)"
+            tickLine={false}
+            axisLine={false}
+            width={50}
+          />
+          {/* Right Y axis — Z-Score */}
+          <YAxis
+            yAxisId="right"
+            orientation="right"
+            domain={[-4, 4]}
+            ticks={[-3, -2, -1, 0, 1, 2, 3]}
+            tickFormatter={(v: number) => (v > 0 ? `+${v}` : `${v}`)}
+            fontSize={10}
+            stroke="var(--muted-foreground)"
+            tickLine={false}
+            axisLine={false}
+            width={36}
+          />
+          {/* SHADCN-PATTERNS (Pattern 1) — ChartTooltip is a re-export of
+              Recharts' Tooltip. We keep the existing CustomTooltip as the
+              content because it has richer content (period + metric +
+              signed deviasi + z-score + historical mean + nominal +
+              outlets/records + flip info) than the generic
+              ChartTooltipContent. ChartContainer provides the CSS variables
+              + config context; the tooltip itself stays custom. */}
+          <ChartTooltip
+            content={<CustomTooltip metric={metric} />}
+            cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}
+          />
+          {/* SHADCN-PATTERNS (Pattern 1) — ChartLegend + ChartLegendContent
+              replace the previous manual <Legend> with a `formatter` callback.
+              ChartLegendContent reads labels from `chartConfig` via context,
+              so no formatter prop is needed. The `<p>` caption above the
+              chart (with the ▮ color key) is kept — it's a custom subtitle,
+              not the Recharts legend. */}
+          <ChartLegend content={<ChartLegendContent />} />
+          {/* Historical mean baseline — dashed muted line.
+              Uses var(--color-historicalMean) (injected by ChartContainer
+              from chartConfig — resolves to var(--muted-foreground)). */}
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="historicalMean"
+            stroke="var(--color-historicalMean)"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            dot={renderMeanDot}
+            activeDot={false}
+            connectNulls
+            isAnimationActive={false}
+            name="historicalMean"
+          />
+          {/* QTY value — solid amber line.
+              Uses var(--color-qty) (injected by ChartContainer from
+              chartConfig — resolves to #f59e0b). */}
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="qty"
+            stroke="var(--color-qty)"
+            strokeWidth={2.5}
+            dot={false}
+            activeDot={{ r: 5, fill: 'var(--color-qty)', stroke: 'var(--background)', strokeWidth: 2 }}
+            connectNulls
+            isAnimationActive={false}
+            name="qty"
+          />
+          {/* Z-Score — invisible line (just dots) on the right axis */}
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="zScore"
+            stroke="transparent"
+            strokeWidth={0}
+            dot={renderZDot}
+            activeDot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+            name="zScore"
+          />
+          {/* Reference lines at z=±2 and z=±3 (visual guide for severity) */}
+          <ReferenceLine yAxisId="right" y={2} stroke="#f59e0b" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine yAxisId="right" y={3} stroke="#dc2626" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine yAxisId="right" y={0} stroke="var(--muted-foreground)" strokeDasharray="1 3" strokeOpacity={0.3} />
+          <ReferenceLine yAxisId="right" y={-2} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.3} />
+          <ReferenceLine yAxisId="right" y={-3} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.4} />
+        </LineChart>
+      </ChartContainer>
     </div>
   );
 });

@@ -52,6 +52,9 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { fmtNum } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+// SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState. Replaces
+// the inline `<Shuffle ... /> Tidak ada data flip ...` block.
+import { EmptyState } from '@/components/ui/empty-state';
 
 // Local types matching /api/flip-ranking response (kept local to avoid
 // importing from the API route file — backend types are not exported).
@@ -671,10 +674,13 @@ export const FlipRanking = memo(function FlipRanking() {
             Gagal memuat flip ranking: {error.message}
           </div>
         ) : sortedItems.length === 0 ? (
-          <div className="text-center text-muted-foreground text-sm py-8 px-6">
-            <Shuffle className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
-            Tidak ada data flip. Butuh minimal 2 periode same-week untuk analisis flip.
-          </div>
+          // SHADCN-PATTERNS (Pattern 4) — replaced inline `<Shuffle ... />`
+          // block with <EmptyState>. Same copy + Shuffle icon as before.
+          <EmptyState
+            icon={Shuffle}
+            title="Tidak ada data flip"
+            description="Butuh minimal 2 periode same-week untuk analisis flip."
+          />
         ) : (
           <div className="max-h-[500px] overflow-auto">
             <Table className="min-w-[900px]">

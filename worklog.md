@@ -40087,3 +40087,49 @@ Stage Summary:
 - Navigation: click outlet row inside expansion → setFocusOutlet → auto-switches to 'resto' tab (Resto Analysis) with that outlet pre-selected
 - Lint: 0 errors, 1 new warning (matches codebase pattern for unused parameter name in function type signature)
 - tsc: 0 errors
+
+---
+Task ID: SHADCN-PATTERNS
+Agent: shadcn/ui v4 Patterns (EmptyState + Container Queries + ChartContainer)
+Task: Build 3 patterns from shadcn/ui v4 analysis
+
+Work Log:
+- Read worklog.md (last 120 lines) + MASTER_CONTEXT.md §6 (Key Features — Dashboard Component Patterns + Tremor patterns) + §9 (Stats — 52,661 LOC, 9 dashboard component patterns, 30 UI components) for context
+- Read existing patterns: ItemTrendTab/index.tsx (lines 700-800 — empty state + loading + no-data), ExecutiveSummary.tsx (lines 1-280 — KPICard + grid), ItemTrendLineChart.tsx (full file — chart structure + CustomTooltip), TopItems.tsx (lines 1-75 — BarList empty case), callout.tsx (full — Pattern 4 reference), format.ts formatByPreset (lines 280-345)
+- Found pre-existing `EmptyState` in `src/components/dashboard/shared/index.tsx` (page-level — renders generic "no data" message, no props). Created a SEPARATE structured EmptyState in `src/components/ui/empty-state.tsx` with icon + title + description + action props — coexists with the shared one (callers import the new one explicitly from `@/components/ui/empty-state`)
+- Created src/components/ui/empty-state.tsx (EmptyState component — 60 LOC, memo'd, plain React + Tailwind, no React Aria, no indigo/blue)
+- Applied EmptyState to 6 files:
+  * ItemTrendTab/index.tsx: 2 sites — (1) "Pilih item untuk melihat trend" with amber Tips Callout as `action` (preserves UI-12 amber palette + TREMOR Callout pattern); (2) "Tidak ada data untuk item ini" with Package icon. Loading spinner kept as-is (different concern)
+  * TopItems.tsx: 1 site — below the BarList (BarList itself renders nothing when empty), uses Coins icon + "Belum ada item dengan deviasi pada periode ini"
+  * FlipRanking.tsx: 1 site — replaces inline `<Shuffle .../> Tidak ada data flip ...` block with EmptyState (Shuffle icon, same copy)
+  * AdvancedAnalysis.tsx: 1 site — wrapped in `<TableRow><TableCell colSpan={8} className="p-0">` to preserve valid table HTML (bare <div> in <tbody> would be invalid), uses Link2 icon
+- Updated ExecutiveSummary.tsx with @container queries (Pattern 2):
+  * KPICard className: added `@container/card` so descendants can use `@[250px]/card:...` container queries
+  * KPI value text: `text-2xl ... @[250px]/card:text-3xl` (scales up when card is ≥250px wide)
+  * "vs previous" caption: `text-[11px] ... @[250px]/card:text-xs`
+  * KPI grid: `grid-cols-2 @xl/main:grid-cols-3 @4xl/main:grid-cols-6` (was `grid-cols-2 sm:grid-cols-3 lg:grid-cols-6` — viewport breakpoints replaced with container queries; 6 KPI cards → 1 row when main is ≥864px wide)
+- Updated page.tsx main element: `@container/main` added to className (Tailwind 4 native container queries — no plugin/config needed since project uses tailwindcss v4 + @tailwindcss/postcss)
+- Created src/components/ui/chart-container.tsx (ChartContainer + ChartConfig + ChartTooltipContent + ChartLegendContent — 206 LOC, memo'd, Recharts wrapper):
+  * ChartContainer: takes `config` + `className` + single ReactElement `children` (narrowed from ReactNode for Recharts ResponsiveContainer type compat), generates `--color-${key}` CSS variables from config in a scoped `<style>` tag (per-instance via useId), wraps with ResponsiveContainer
+  * ChartTooltipContent: standardized tooltip — reads label + color from config context, indicator (dot/line/dashed), labelFormatter + formatter escape hatches
+  * ChartLegendContent: standardized legend — reads labels from config context, hides series with type='none'
+  * Re-exports Tooltip + Legend as ChartTooltip + ChartLegend for one-module import convenience
+- Applied ChartContainer to ItemTrendLineChart.tsx (MINIMAL refactor — preserved all existing functionality):
+  * chartConfig built inside component via useMemo (depends on `metric` — `qty` label is metric-dependent: "QTY Deviasi"/"QTY Waste"/"QTY Susut"/"QTY Trial")
+  * Wrapped `<div className="h-56 sm:h-72"><ResponsiveContainer>...</ResponsiveContainer></div>` with `<ChartContainer config={chartConfig} className="h-56 sm:h-72">...</ChartContainer>` (ResponsiveContainer moved inside ChartContainer)
+  * Replaced `<Tooltip content={<CustomTooltip .../>}>` with `<ChartTooltip content={<CustomTooltip .../>}>` (re-export — preserves richer tooltip: period + metric + signed deviasi + z-score + historical mean + nominal + outlets/records + flip info)
+  * Replaced manual `<Legend formatter={...}>` with `<ChartLegend content={<ChartLegendContent />} />` (reads labels from config context — no formatter needed)
+  * Replaced `stroke="#f59e0b"` on qty Line + activeDot fill with `stroke="var(--color-qty)"` + `fill: 'var(--color-qty)'` (injected by ChartContainer from chartConfig)
+  * Replaced `stroke="var(--muted-foreground)"` on historicalMean Line with `stroke="var(--color-historicalMean)"` (resolves to var(--muted-foreground))
+  * KEPT: CustomTooltip (richer content), renderZDot + renderMeanDot (per-dot coloring), 5 ReferenceLines (chart annotations), the `<p>` legend subtitle above the chart (custom caption, not Recharts Legend)
+- Ran `bun run lint` — 0 errors, 394 warnings (7 NEW warnings — all in chart-container.tsx lines 116-117 from parameter names in `labelFormatter?` + `formatter?` callback type signatures, matching the existing pattern in `src/hooks/useDashboard.ts:34` which has the same warning for `setFocusOutlet: (code: string | null) => void`; the project's base `no-unused-vars` rule lacks an `argsIgnorePattern` so parameter names in callback type signatures always warn — accepted pattern in codebase)
+- Ran `bunx tsc --noEmit --skipLibCheck` — EXIT=0 (0 errors); fixed 1 initial tsc error: ChartContainer `children: ReactNode` → `children: ReactElement` (Recharts ResponsiveContainer expects a single ReactElement, not the broader ReactNode)
+
+Stage Summary:
+- EmptyState: 1 new component (src/components/ui/empty-state.tsx, 60 LOC), applied to 6 sites across 4 files (ItemTrendTab x2, TopItems x1, FlipRanking x1, AdvancedAnalysis x1)
+- Container Queries: KPI grid (`@xl/main:grid-cols-3 @4xl/main:grid-cols-6` — was `sm:grid-cols-3 lg:grid-cols-6`) + per-card `@container/card` with `@[250px]/card:text-3xl` value text + `@[250px]/card:text-xs` caption; ancestor `@container/main` set on page.tsx <main>
+- ChartContainer: 1 new wrapper system (src/components/ui/chart-container.tsx, 206 LOC) — config + CSS variable injection + ChartTooltipContent + ChartLegendContent + ChartTooltip/ChartLegend re-exports; applied to ItemTrendLineChart (1 chart — preserved richer CustomTooltip + per-dot coloring + ReferenceLines; minimal refactor — just added the wrapper, swapped hardcoded '#f59e0b' for var(--color-qty))
+- Lint: 0 errors, 394 warnings (7 NEW — all callback type signature parameter-name warnings in chart-container.tsx, matching existing codebase pattern)
+- tsc: 0 errors (1 fixed during dev: ReactNode → ReactElement for ResponsiveContainer compat)
+- No indigo/blue colors used — palette stays amber/emerald/red/zinc throughout
+- All existing functionality preserved — CustomTooltip with richer content, renderZDot + renderMeanDot per-dot coloring, 5 ReferenceLines, the `<p>` legend subtitle above the chart

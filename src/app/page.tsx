@@ -148,7 +148,13 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      <main id="main-content" aria-label="Dashboard Inventory Control" className="flex-1 px-3 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
+      {/* FIX (SHADCN Pattern 2): add `@container/main` so descendants
+          (KPI grids, card layouts) can use container queries that
+          respond to the main content area's width instead of the
+          viewport. Tailwind 4 supports `@container` natively without
+          plugin/config — breakpoints @xl/main (576px) etc. map to the
+          main element's bounding box, not the window. */}
+      <main id="main-content" aria-label="Dashboard Inventory Control" className="@container/main flex-1 px-3 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
         {!statusLoaded ? (
           <LoadingState />
         ) : !hasData ? (
