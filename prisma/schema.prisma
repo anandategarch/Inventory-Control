@@ -180,6 +180,16 @@ model InventoryRecord {
   // Index 3 [mL,wL,nLS,oId,qD] had 2-col prefix identical to existing [mL,wL].
   // Both caused query planner confusion (stale stats picked wrong index).
   // ANALYZE has been run on Supabase to update stats.
+  // PERF-HIST-AGG (FX-PERF): Covering index for queryHistoricalStatsMultiMetric.
+  // The historical Z-Score baseline scans 7+ months × WEEK N records (~280K rows
+  // for 8 months of data) and groups by (outletId, itemId, monthLabel, weekLabel),
+  // aggregating 5 metrics (qtyBom/qtyDeviasi/qtyWaste/qtySusut/qtyTrial).
+  // Before this index: 8s with parallel index scan + incremental sort + disk
+  // spill on HashAggregate. After: 1.6s with Index Only Scan (Heap Fetches=0).
+  // Index columns (weekLabel, monthLabel, outletId, itemId) match the WHERE +
+  // GROUP BY order; INCLUDE columns enable index-only scan (no heap fetch).
+  // This index is also used by /api/pareto's 5 queryParetoHistorical calls.
+  @@index([weekLabel, monthLabel, outletId, itemId])
 }
 
 // ------------------------------------------------------------
