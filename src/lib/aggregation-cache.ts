@@ -1,4 +1,5 @@
 // ============================================================
+import "server-only";
 //  Aggregation Cache — DB-level caching for expensive queries.
 //  Uses the AggregationCache table (Prisma model) to persist
 //  computed results across serverless cold starts.

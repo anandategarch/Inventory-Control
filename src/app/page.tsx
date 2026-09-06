@@ -32,11 +32,15 @@ import { useDashboardEffects } from '@/hooks/useDashboardEffects';
 import { useDashboardActions } from '@/hooks/useDashboardActions';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardFooter } from '@/components/dashboard/DashboardFooter';
-import { DashboardTab } from '@/components/dashboard/tabs/DashboardTab';
-import { RestoTab } from '@/components/dashboard/tabs/RestoTab';
-import { PeerTab } from '@/components/dashboard/tabs/PeerTab';
-import { ParetoTab } from '@/components/dashboard/tabs/ParetoTab';
-import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';
+// PERF-FASE5: lazy-load tab content for code-splitting.
+// Each tab is a separate chunk — user only downloads the active tab's JS.
+// Suspense fallback shows skeleton while chunk loads.
+import { Suspense, lazy } from 'react';
+const DashboardTab = lazy(() => import('@/components/dashboard/tabs/DashboardTab').then(m => ({ default: m.DashboardTab })));
+const RestoTab = lazy(() => import('@/components/dashboard/tabs/RestoTab').then(m => ({ default: m.RestoTab })));
+const PeerTab = lazy(() => import('@/components/dashboard/tabs/PeerTab').then(m => ({ default: m.PeerTab })));
+const ParetoTab = lazy(() => import('@/components/dashboard/tabs/ParetoTab').then(m => ({ default: m.ParetoTab })));
+const ItemTrendTab = lazy(() => import('@/components/dashboard/tabs/ItemTrendTab').then(m => ({ default: m.ItemTrendTab })));
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -53,6 +57,21 @@ import {
 const ItemDeepDive = dynamic(() => import('@/components/dashboard/ItemDeepDive').then(m => m.ItemDeepDive), { ssr: false, loading: () => (
   <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-amber-500" /></div>
 ) });
+
+// PERF-FASE5: Tab skeleton fallback for Suspense boundaries.
+// Shows a lightweight skeleton while the lazy-loaded tab chunk downloads.
+function TabSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-32 rounded-lg border bg-muted/40" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="h-48 rounded-lg border bg-muted/40" />
+        <div className="h-48 rounded-lg border bg-muted/40" />
+      </div>
+      <div className="h-64 rounded-lg border bg-muted/40" />
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
@@ -184,32 +203,44 @@ export default function DashboardPage() {
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
+            {/* PERF-FASE5: Suspense boundary per tab — chunk loads on demand,
+                skeleton fallback shows while loading (gak blank). */}
             <TabsContent value="dashboard" aria-label="Dashboard tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
+              <Suspense fallback={<TabSkeleton />}>
+                <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
+              </Suspense>
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
             <TabsContent value="resto" aria-label="Resto Analysis tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <RestoTab data={analysis.data} isFetching={analysis.isFetching} />
+              <Suspense fallback={<TabSkeleton />}>
+                <RestoTab data={analysis.data} isFetching={analysis.isFetching} />
+              </Suspense>
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
             <TabsContent value="peer" aria-label="Peer Comparison tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <PeerTab isFetching={analysis.isFetching} />
+              <Suspense fallback={<TabSkeleton />}>
+                <PeerTab isFetching={analysis.isFetching} />
+              </Suspense>
             </TabsContent>
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
             <TabsContent value="pareto" aria-label="Pareto tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <ParetoTab data={analysis.data} isFetching={analysis.isFetching} />
+              <Suspense fallback={<TabSkeleton />}>
+                <ParetoTab data={analysis.data} isFetching={analysis.isFetching} />
+              </Suspense>
             </TabsContent>
 
             {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
             <TabsContent value="trend" aria-label="Trend Item tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <ErrorBoundary label="Trend Item">
-                {/* Phase 1 — pass analysisData so the tab can render the
-                    Rank Badge row (item's national rank in topDeviasiRank). */}
-                <ItemTrendTab analysisData={analysis.data} />
-              </ErrorBoundary>
+              <Suspense fallback={<TabSkeleton />}>
+                <ErrorBoundary label="Trend Item">
+                  {/* Phase 1 — pass analysisData so the tab can render the
+                      Rank Badge row (item's national rank in topDeviasiRank). */}
+                  <ItemTrendTab analysisData={analysis.data} />
+                </ErrorBoundary>
+              </Suspense>
             </TabsContent>
           </Tabs>
         ) : null}

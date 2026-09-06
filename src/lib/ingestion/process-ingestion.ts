@@ -1,4 +1,5 @@
 // ============================================================
+import "server-only";
 //  Ingestion — processIngestion() Main Orchestrator
 //  --------------------------------------------------------
 //  Full-file ingestion path used by /api/ingest + /api/import-drive.

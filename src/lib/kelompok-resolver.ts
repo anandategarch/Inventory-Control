@@ -1,4 +1,5 @@
 // ============================================================
+import "server-only";
 //  Kelompok resolver — shared utilities for kelompok filter.
 //
 //  FIX (BUG-PERF-4 / BUG-PERF-5 / BUG-BE-2): The kelompokOutletCodes

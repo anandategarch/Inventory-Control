@@ -10,7 +10,12 @@
 //
 //  MIG-10 fix: Add statement_timeout=30000 (30s) and idle_timeout=20 (seconds)
 //  to prevent a single hung query from blocking the entire pool.
+//
+//  PERF-FASE5: import "server-only" — crashes if this file is accidentally
+//  imported in a client component, preventing Prisma client (~2MB) from
+//  being bundled into the client JS.
 // ============================================================
+import "server-only";
 import { PrismaClient } from '@prisma/client';
 import { logger } from './logger';
 

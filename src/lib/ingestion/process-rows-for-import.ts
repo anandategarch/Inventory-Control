@@ -1,4 +1,5 @@
 // ============================================================
+import "server-only";
 //  Ingestion — processRowsForImport() Import Flow
 //  --------------------------------------------------------
 //  Per-week / per-batch row-processing path used by
