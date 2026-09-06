@@ -18,7 +18,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CloudDownload, Loader2, CheckCircle2, XCircle, Folder, FileSpreadsheet, Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
+// FIX: replaced direct import of invalidateAnalysisCache (server-only,
+// pulls pg+dns into client bundle causing build error) with API call
+// to /api/refresh which does the same invalidation server-side.
 import { useQueryClient } from '@tanstack/react-query';
 
 interface DriveImportResult {
@@ -80,7 +82,9 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
       const ingestResults = data.ingestResults || data.results || [];
       setDriveResult(ingestResults);
       if (ingestResults.some((r: DriveImportResult) => r.status === 'INGESTED')) {
-        await invalidateAnalysisCache();
+        // FIX: call /api/refresh to invalidate server-side caches
+        // (was: await invalidateAnalysisCache() — direct import pulled pg into client bundle)
+        await fetch('/api/refresh', { method: 'POST' }).catch(() => {});
         queryClient.invalidateQueries({ queryKey: ['status'] });
         queryClient.invalidateQueries({ queryKey: ['analysis'] });
         // FIX (BUG-HUNT-RECENT P1): invalidate ALL data-dependent queries (was only 2)
