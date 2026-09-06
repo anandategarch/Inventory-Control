@@ -54,11 +54,8 @@ const nextConfig: NextConfig = {
       '@radix-ui/react-collapsible',
       '@radix-ui/react-progress',
       '@radix-ui/react-toast',
-      // PERF-FASE5: additional tree-shaking for server-only libs + chart deps.
-      '@prisma/client',
-      'chroma-js',
-      'date-fns',
-      'zod',
+      // PERF-FIX: removed @prisma/client (server-only, no client benefit),
+      // chroma-js (not installed, phantom), date-fns (not directly imported).
     ],
   },
   // PERF-FASE2-INFRA04: Immutable cache for Next.js static assets.

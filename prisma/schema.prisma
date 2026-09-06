@@ -170,22 +170,16 @@ model InventoryRecord {
   // (PostgreSQL FK columns do NOT get an automatic index — without this,
   // deleting a SourceFile triggers a full-table scan on InventoryRecord).
   @@index([sourceFileId])
-  // PERF-FASE5-DB01: Covering index for queryItemConsistency (COUNT DISTINCT
-  // outlet per item per period). Query filters by monthLabel + weekLabel,
-  // then GROUP BY item.name, COUNT(DISTINCT outletId). This index lets PG
-  // do an index-only scan per (month, week) instead of scanning ~306K rows.
-  @@index([monthLabel, weekLabel, itemId, outletId, nominalLossSurplus])
   // PERF-FASE5-DB02: Covering index for flip-ranking query (SUM qtyDeviasi
   // GROUP BY monthLabel, weekLabel, itemName). Query filters by weekLabel
   // + itemName exact match, then GROUP BY (month, week, item). This index
   // pre-sorts by (week, item, month) so the GROUP BY is nearly free.
   @@index([weekLabel, itemId, monthLabel, qtyDeviasi])
-  // PERF-FASE5-DB03: Covering index for item-anomali-outlets (per-outlet
-  // aggregates for 1 item, filter by nominalLossSurplus direction).
-  // Query: WHERE monthLabel=? AND weekLabel=? AND itemName=? AND
-  // nominalLossSurplus < 0 (or > 0) GROUP BY outletId. This index covers
-  // the WHERE + GROUP BY without touching the heap.
-  @@index([monthLabel, weekLabel, nominalLossSurplus, outletId, qtyDeviasi])
+  // PERF-FIX: Index 1 + Index 3 dropped — redundant with existing indexes.
+  // Index 1 [mL,wL,iId,oId,nLS] had 3-col prefix identical to existing [mL,wL,iId].
+  // Index 3 [mL,wL,nLS,oId,qD] had 2-col prefix identical to existing [mL,wL].
+  // Both caused query planner confusion (stale stats picked wrong index).
+  // ANALYZE has been run on Supabase to update stats.
 }
 
 // ------------------------------------------------------------

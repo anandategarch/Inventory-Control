@@ -32,11 +32,11 @@ import { useDashboardEffects } from '@/hooks/useDashboardEffects';
 import { useDashboardActions } from '@/hooks/useDashboardActions';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardFooter } from '@/components/dashboard/DashboardFooter';
-// PERF-FASE5: lazy-load tab content for code-splitting.
-// Each tab is a separate chunk — user only downloads the active tab's JS.
-// Suspense fallback shows skeleton while chunk loads.
+// PERF-FIX: DashboardTab is the DEFAULT tab — statically import so recharts
+// chunk is bundled upfront (no lazy delay on first render).
+// Other tabs stay lazy (user navigates to them explicitly).
+import { DashboardTab } from '@/components/dashboard/tabs/DashboardTab';
 import { Suspense, lazy } from 'react';
-const DashboardTab = lazy(() => import('@/components/dashboard/tabs/DashboardTab').then(m => ({ default: m.DashboardTab })));
 const RestoTab = lazy(() => import('@/components/dashboard/tabs/RestoTab').then(m => ({ default: m.RestoTab })));
 const PeerTab = lazy(() => import('@/components/dashboard/tabs/PeerTab').then(m => ({ default: m.PeerTab })));
 const ParetoTab = lazy(() => import('@/components/dashboard/tabs/ParetoTab').then(m => ({ default: m.ParetoTab })));
@@ -203,12 +203,9 @@ export default function DashboardPage() {
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
-            {/* PERF-FASE5: Suspense boundary per tab — chunk loads on demand,
-                skeleton fallback shows while loading (gak blank). */}
+            {/* DashboardTab is statically imported (default tab) — no Suspense needed. */}
             <TabsContent value="dashboard" aria-label="Dashboard tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <Suspense fallback={<TabSkeleton />}>
-                <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
-              </Suspense>
+              <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}

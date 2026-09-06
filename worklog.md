@@ -40177,3 +40177,187 @@ VERIFIED OK:
 - tsc --noEmit: 0 errors
 - eslint on 9 files: 0 errors, 26 warnings (mostly pre-existing; +7 acknowledged in chart-container.tsx)
 - Tailwind v4 native container query support confirmed (postcss.config.mjs uses @tailwindcss/postcss; globals.css @import "tailwindcss"; no tailwind.config needed)
+
+---
+Task ID: BOTTLENECK-DEAD
+Agent: Dead Code + Config Analysis
+Task: Find dead code, unused packages, config issues
+
+Work Log:
+- Read package.json (57 deps + 12 devDeps — checked each)
+- Read next.config.ts (118 LOC — reviewed optimizePackageImports, headers, experiments)
+- Read src/lib/colorScale.ts (355 LOC — confirmed NO `chroma` import; chroma-js only mentioned in next.config.ts)
+- Read src/components/ui/chart-container.tsx (213 LOC — found 1 dead export: ChartTooltipContent)
+- Read src/components/ui/empty-state.tsx (74 LOC — confirmed used by 4 files)
+- Read src/components/ui/callout.tsx (63 LOC — confirmed used by ItemTrendTab)
+- Read src/components/dashboard/shared/DeltaBar.tsx (115 LOC — used by ExecutiveSummary)
+- Read src/components/dashboard/shared/Tracker.tsx (70 LOC — used by ItemTrendTab)
+- Read src/components/dashboard/shared/BarList.tsx (124 LOC — used by TopItems)
+- Read src/components/dashboard/shared/SparkLine.tsx (138 LOC — used by ranking-nasional)
+- Grep'd src/ for chroma-js, @prisma/adapter-pg, pg, server-only, date-fns, vaul, cmdk
+- Verified node_modules install state: chroma-js ✗, date-fns ✗, @prisma/adapter-pg ✗, pg ✗, server-only ✗
+- Ran `bun run build` (success in ~8s, 4.7s compile + 3.2s tsc)
+- Inspected .next/build/route-bundle-stats.json + 11 first-load chunks
+- Grepped chunks for recharts/lucide/chroma/date-fns/@prisma/exceljs/docx to verify what's bundled
+- Verified vaul is tree-shaken out of all client chunks (drawer.tsx never imported)
+- Verified ChartTooltipContent is exported but only referenced in comments (ItemTrendLineChart.tsx:33,365,416)
+- Confirmed vaul/drawer.tsx genuinely dead (DrillDownDrawer uses Sheet, not Drawer)
+
+Stage Summary:
+- Found 9 findings: P0=1, P1=3, P2=3, P3=2
+
+### FINDINGS
+
+**Finding ID**: DEAD-01
+**Severity**: P1
+**File + line**: /home/z/my-project/next.config.ts:59 (`'chroma-js',`)
+**Description**: `chroma-js` listed in `experimental.optimizePackageImports` but is NOT installed (no `node_modules/chroma-js`), NOT in `package.json`, NOT in `package-lock.json`, and NOT imported anywhere in `src/`. `src/lib/colorScale.ts` has zero `chroma` references — it uses pure JS hex→RGB interpolation. Turbopack still tries to resolve the package on every build (and the experimental warning fires). Pure dead config.
+**Fix**: Remove `'chroma-js'` from the `optimizePackageImports` array.
+
+**Finding ID**: DEAD-02
+**Severity**: P1
+**File + line**: /home/z/my-project/next.config.ts:60 (`'date-fns',`)
+**Description**: `date-fns` listed in `experimental.optimizePackageImports` but is NOT a direct dependency, NOT installed in `node_modules/` (only present transitively via recharts' package-lock entry), and NOT imported anywhere in `src/`. Already flagged in prior DEEP-CODE-QUALITY audit (worklog.md:30285) but never removed. Pure dead config — adds build-time resolution work.
+**Fix**: Remove `'date-fns'` from `optimizePackageImports`.
+
+**Finding ID**: DEAD-03
+**Severity**: P2
+**File + line**: /home/z/my-project/next.config.ts:58 (`'@prisma/client',`)
+**Description**: `@prisma/client` is a SERVER-ONLY package — all 35 imports in `src/` are from server files (lib/db.ts, lib/build-where.ts, lib/queries/*, app/api/*, engine/*). No `'use client'` file imports it. `optimizePackageImports` is meant for client-side barrel-export libraries (recharts, lucide-react). Putting `@prisma/client` here makes Turbopack analyze Prisma's full export surface on every build for a tree-shaking pass that never applies (the package is excluded from client bundles by virtue of being server-only). Adds build overhead with zero benefit. The PERF-FASE5 comment claims "additional tree-shaking for server-only libs" — but `optimizePackageImports` has no effect on server-side code paths in Turbopack.
+**Fix**: Remove `'@prisma/client'` from `optimizePackageImports`. Keep only client-side libraries (recharts, lucide-react, @radix-ui/*, zod).
+
+**Finding ID**: DEAD-04
+**Severity**: P1
+**File + line**: /home/z/my-project/package.json:54 (`"vaul": "^1.1.2"`) + /home/z/my-project/src/components/ui/drawer.tsx (134 LOC, full file)
+**Description**: The `vaul` package is only consumed by `src/components/ui/drawer.tsx` (a shadcn primitive wrapper). However, `drawer.tsx` is NEVER imported by any other file in `src/` (grep for `ui/drawer` returns no matches). The actual drilldown UI uses `Sheet` from `@/components/ui/sheet` (see `src/components/drilldown/DrillDownDrawer.tsx:5`), not Drawer. Vaul is currently tree-shaken out of all client chunks (confirmed via grep on .next/static/chunks/*.js — zero matches for `vaul`, `DrawerPrimitive`, `data-vaul`), so it does NOT bloat the runtime bundle. Still, dead dep + dead file = build complexity + confusion + ~80KB of installed-but-unused node_modules.
+**Fix**: `bun remove vaul` and `rm src/components/ui/drawer.tsx`. (Also re-verify no import surfaces after removal.)
+
+**Finding ID**: DEAD-05
+**Severity**: P2
+**File + line**: /home/z/my-project/src/components/ui/chart-container.tsx:121 (`export const ChartTooltipContent = memo(function ChartTooltipContent(...)`)
+**Description**: `ChartTooltipContent` is exported but NEVER imported by any file outside `chart-container.tsx`. The only references in `src/components/dashboard/tabs/ItemTrendLineChart.tsx` are in comments (lines 33, 365, 416) — the chart uses its own custom tooltip inline, not the generic `ChartTooltipContent`. ~70 lines of memoized tooltip JSX shipped in the chart-container chunk but never executed at runtime. Tree-shaking should drop it, but the export still forces Turbopack to keep the symbol in the module graph during analysis.
+**Fix**: Remove the `ChartTooltipContent` export + the `ChartTooltipContentProps` interface (lines 105-171). Keep `ChartContainer`, `ChartTooltip`, `ChartLegend`, `ChartLegendContent` (all imported by ItemTrendLineChart).
+
+**Finding ID**: DEAD-06
+**Severity**: P1
+**File + line**: `/home/z/my-project/.next/build/route-bundle-stats.json` (route `/` firstLoadUncompressedJsBytes = 804,467 ≈ 805 KB)
+**Description**: First-load JS for the dashboard route is **805 KB uncompressed**, well above the 250 KB threshold. Breakdown of root+page chunks:
+  - 229 KB `3byuobrkyz9bj.js` — core-js ES5 polyfills (trimStart, Symbol.description, Array.flat, Promise.finally, Object.fromEntries)
+  - 178 KB `29r4pqhx1pie9.js` — React/ReactDOM runtime (callServer, transitions, RSC)
+  - 112 KB `0cz1d0mv5g_q7.js` — additional core-js polyfills (es5/array, es5/object, es6/promise)
+  - 95 KB `2ftln8y3ouepv.js` — page main code (status query, layout, lucide icons: Settings, Trophy, Scale, Layers)
+  - 84 KB `3bkj_oa6ly3iz.js` — dashboard icons (trophy, scale, layers from lucide-react)
+  - 76 KB `2v393z78rx34u.js` — Callout + Tracker component chunks
+  - 72 KB `3uhtzzftngwkn.js` — DeltaBar component chunk
+  - smaller chunks sum ~60 KB more
+The 341 KB polyfill chunk (229+112 KB) is the biggest red flag — Next.js 16 + React 19 should not need ES5 polyfills for the modern browsers the dashboard targets. This is likely a browserslist/differential-loading misconfiguration. The user's "lemot" symptom is consistent with parsing/executing 805 KB on every dashboard load.
+**Fix**: Audit `browserslist` config (or add one in package.json) to target modern browsers (e.g. `"> 0.5%, last 2 versions, not dead, not ie 11"`). Consider Next.js's `transpilePackages` review. This is the highest-impact single fix.
+
+**Finding ID**: DEAD-07
+**Severity**: P2
+**File + line**: /home/z/my-project/src/middleware.ts:1 (file convention deprecated)
+**Description**: Build emits: `⚠ The "middleware" file convention is deprecated. Please use "proxy" instead.` Middleware still works but runs through a compatibility shim, adding a tiny per-request overhead. Not a primary slowness cause but a contributing factor + future-breaking hazard when Next.js removes the shim.
+**Fix**: Run `npx @next/codemod@canary middleware-to-proxy .` to auto-migrate `src/middleware.ts` → `src/proxy.ts`.
+
+**Finding ID**: DEAD-08
+**Severity**: P3
+**File + line**: /home/z/my-project/src/app/api/refresh/route.ts:7 + /home/z/my-project/src/components/filters/DriveImportDialog.tsx:21 (comment references)
+**Description**: Both files contain comments referring to `server-only` package (e.g. "cannot directly import @/lib/aggregation-cache (server-only)"). The `server-only` package is NOT installed (no node_modules, not in package.json). Per commit history, it was added in 228c5d4 then removed in b9d9f36 (bun build incompatibility). The comments are now misleading stale docs.
+**Fix**: Update the comments to remove `server-only` references, or rephrase as "server-side only module" without implying the package is installed.
+
+**Finding ID**: DEAD-09
+**Severity**: P3
+**File + line**: /home/z/my-project/next.config.ts:84-115 (headers() function)
+**Description**: Build emits: `Warning: Custom Cache-Control headers detected for the following routes: /_next/static/(.*)` — this is the EXPECTED behavior of the production-only static-asset caching rule (per the AUDIT-CACHE comment). In production builds, NODE_ENV === 'production' so the rule is active and triggers the warning. The warning itself is benign and intentional (the comment says "DEV: omit rule → Turbopack's default no-cache applies"), but it fires on every production build.
+**Fix**: No code change required — the warning is intentional. Optionally suppress via a build-time env flag if the warning is noisy.
+
+### Verification: NOT dead (kept for record)
+- **EmptyState** — used by FlipRanking, ItemTrendTab, TopItems, AdvancedAnalysis (4 sites) ✓
+- **Callout** — used by ItemTrendTab (3 instances) ✓
+- **DeltaBar** — used by ExecutiveSummary ✓
+- **Tracker** — used by ItemTrendTab ✓
+- **BarList** — used by TopItems ✓
+- **SparkLine** — used by ranking-nasional ✓
+- **ChartContainer, ChartTooltip, ChartLegend, ChartLegendContent** — all used by ItemTrendLineChart ✓
+- **TargetComparison** — used by GapAnalysisCard, ExecutiveSummary, ItemPeerComparison ✓
+- **cmdk** — used by command.tsx → SearchableComboBox ✓
+- **next-themes** — used by providers.tsx ✓
+- **exceljs, csv-parse, csv-stringify** — all used (exceljs via dynamic import) ✓
+- **yaml** — used by engine/rules/evaluator.ts ✓
+- **zustand** — used by hooks/useDashboard.ts ✓
+- **@tanstack/react-query, react-virtual** — used ✓
+- **zod** — used in 8 API route files ✓
+- All 14 Radix UI packages — used by shadcn/ui components ✓
+
+
+---
+Task ID: BOTTLENECK-FE
+Agent: Frontend Bottleneck Analysis
+Task: Find real frontend performance bottleneck since ebd3d1c
+
+Work Log:
+- Read page.tsx (lazy + Suspense) — 5 React.lazy tabs + 1 next/dynamic ItemDeepDive + 5 per-tab Suspense boundaries
+- Read next.config.ts (optimizePackageImports) — includes recharts, lucide, 13 Radix pkgs, @prisma/client, chroma-js, date-fns, zod
+- Read loading.tsx — route-level skeleton (only shows on initial route load, not tab switches)
+- Read chart-container.tsx — useId + per-chart <style dangerouslySetInnerHTML> + ResponsiveContainer wrapper
+- Read DashboardTab.tsx — 7 internal next/dynamic chart components (separate from React.lazy)
+- Read ItemTrendTab/index.tsx — nested next/dynamic for ItemTrendLineChart (lazy-in-lazy)
+- Read useAnalysis.ts — staleTime=2min, gcTime=10min, refetchOnWindowFocus=false (good — no re-fetch on tab switch)
+- Checked bundle size via build — root main ~422KB (React+Next framework), recharts shared chunk ~397KB
+- Checked for dead code (pg, @prisma/adapter-pg, server-only) — all 3 verified ABSENT from package.json and src/
+- Checked chroma-js — NOT installed, NOT imported anywhere; phantom entry in optimizePackageImports
+- Checked date-fns — only transitive dep in package-lock, NOT directly imported in src/; phantom entry
+- Checked @prisma/client — only imported in server-side files (src/lib, src/app/api, src/engine) — should not be in optimizePackageImports
+- Checked middleware.ts — auth-only, no heavy imports, doesn't affect client bundle
+
+Stage Summary:
+- Found 9 findings: P0=0, P1=3, P2=6
+- FE-01 (P1): Recharts shared chunk 397KB (0_1pecyfwa6js.js) downloaded on first chart-using tab — biggest single chunk in build, dominates initial load
+- FE-02 (P1): Cascading Suspense + dynamic boundaries — 5 page-level + 7 DashboardTab-internal + 1 ItemTrendLineChart = ~13 boundaries cause multi-stage "pop-in" rendering (skeleton → spinner → chart)
+- FE-03 (P1): Radix Tabs unmounts inactive TabsContent — tab components re-mount + re-execute all hooks (useMemo, useQuery, next/dynamic) on every switch; TanStack cache saves network but not CPU
+- FE-04 (P2): @prisma/client listed in next.config.ts optimizePackageImports — server-only package, never reaches client bundle, entry is a no-op + adds build tracking overhead
+- FE-05 (P2): chroma-js listed in optimizePackageImports but NOT installed and NOT imported — phantom entry, no-op
+- FE-06 (P2): date-fns listed in optimizePackageImports but not directly imported in src/ (transitive only via recharts) — no-op
+- FE-07 (P2): TabSkeleton flashes on FIRST switch to each tab — fundamental tradeoff of code-splitting, perceived as slowness vs pre-ebd3d1c instant switches
+- FE-08 (P2): ChartContainer's per-chart <style dangerouslySetInnerHTML> injection — negligible (React string-diff skips DOM update when content matches)
+- FE-09 (P2 VERIFIED CLEAN): pg / @prisma/adapter-pg / server-only all correctly removed — no dead code
+
+---
+Task ID: BOTTLENECK-BE
+Agent: Backend Bottleneck Analysis
+Task: Find real backend performance bottleneck since ebd3d1c
+
+Work Log:
+- Read db.ts (verify revert) — CLEAN: only comment additions, no leftover adapter imports, PrismaClient-only import intact, globalThis singleton pattern preserved, connection params correct (pgbouncer=true, connection_limit=30, pool_timeout=60, statement_timeout=30000, idle_timeout=20)
+- Read package.json (check leftovers) — CLEAN: `pg` removed, no `@prisma/adapter-pg`, no `server-only`. Only `pg` removal in diff vs ebd3d1c
+- Read shared.ts (withStatementTimeout) — UNCHANGED since ebd3d1c. work_mem=64MB per tx (pre-existing)
+- Read schema.prisma (check 3 new indexes at lines 173-188) — INDEX OVERLAP CONFIRMED: Index 1 prefix redundant with line 168, Index 3 prefix redundant with line 147
+- Read /api/analysis/route.ts + services/run-queries.ts — UNCHANGED since ebd3d1c (no route/query code changes)
+- Read /api/refresh/route.ts — NEW endpoint added in 859c451, calls invalidateAnalysisCache (15 parallel DELETEs via Promise.all)
+- Read aggregation-cache.ts — confirmed 15-route parallel invalidation
+- Read queryItemConsistency in by-other-metric.ts — confirmed query uses `absNominalLossSurplus`, NOT `nominalLossSurplus` (Index 1's claimed covering benefit is FALSE)
+- Read next.config.ts — @prisma/client added to optimizePackageImports (ineffective for server-only pkg)
+- git diff ebd3d1c..HEAD --stat — backend changes limited to: schema.prisma (+16 lines = 3 indexes), /api/refresh (NEW), db.ts (comments only), package.json (pg removed)
+
+Stage Summary:
+- Found 7 findings: P0=0, P1=2, P2=4, P3=1
+- BE-01 (P1): Stale PG statistics — ANALYZE not run after CREATE INDEX (278f61b); planner has default stats for 3 new indexes → suboptimal index choices for existing (monthLabel, weekLabel) queries with 5+ competing indexes
+- BE-02 (P1): Index 1 prefix fully redundant with existing [monthLabel, weekLabel, itemId] index — wider index = slower scans; planner may pick wrong one with stale stats
+- BE-03 (P2): Index 1's "covering for queryItemConsistency" claim is FALSE — query uses `absNominalLossSurplus` (separate column NOT in Index 1 which has `nominalLossSurplus`); index-only scan benefit lost
+- BE-04 (P2): Index 3 prefix redundant with existing [monthLabel, weekLabel] — wider index may be picked for simple period-filter queries
+- BE-05 (P2): /api/refresh fires 15 PARALLEL deleteMany via Promise.all → 2 concurrent imports = pool exhaustion (30 connections)
+- BE-06 (P2): work_mem=64MB × 30 connections = 1.9GB potential RAM vs Supabase ~1GB compute — new indexes may trigger more sort/hash-heavy plans, increasing OOM/swap risk
+- BE-07 (P3): @prisma/client in experimental.optimizePackageImports — ineffective for server-only pkg, no-op at runtime, just build-time noise
+
+Root cause: The 3 new indexes added in 278f61b are the only backend code change since ebd3d1c that affects query performance. The Prisma Adapter revert is clean (db.ts only has comment additions). The primary bottleneck is stale statistics (no ANALYZE after CREATE INDEX) combined with two redundant wider indexes that give the planner more choices — increasing the probability of suboptimal index picks for the ~30 existing analysis queries that filter on (monthLabel, weekLabel).
+
+Immediate fixes (no code change required):
+1. Run `ANALYZE "InventoryRecord";` on Supabase SQL editor to refresh planner stats
+2. Run `EXPLAIN (ANALYZE, BUFFERS)` on the slowest analysis query to identify which index is being picked
+3. If Index 1 or Index 3 is being picked over the simpler indexes, consider dropping them (or dropping the now-redundant simpler indexes `[monthLabel, weekLabel, itemId]` and `[monthLabel, weekLabel]` if the wider indexes are kept)
+4. Set `work_mem = '16MB'` (down from 64MB) in shared.ts line 45 to reduce RAM pressure under concurrent load
+
+Code-level fixes:
+5. Refactor queryItemConsistency to use `ABS(nominalLossSurplus)` instead of `absNominalLossSurplus` (so Index 1 actually covers it), OR drop Index 1 and keep the existing `[monthLabel, weekLabel, itemId]` index
+6. Replace `Promise.all` in invalidateAnalysisCache (aggregation-cache.ts line 435) with serial deleteMany OR a single `deleteMany({})` to avoid 15-connection burst
+7. Remove `@prisma/client` from experimental.optimizePackageImports in next.config.ts
