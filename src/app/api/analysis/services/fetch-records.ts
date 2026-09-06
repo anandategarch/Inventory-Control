@@ -58,6 +58,7 @@ export interface FilterOpts {
 export interface FetchedRecords {
   currSlim: CurrSlimRow[];
   historicalByOutletItem: Map<string, MultiMetricHistoricalStats>;
+  historicalPeriodsCount: number; // number of (monthLabel,weekLabel) pairs used as historical baseline
   weeksRaw: Array<{ weekLabel: string; monthKey: string }>;
   monthKeyByLabel: Map<string, string>;
   monthLabelByKey: Map<string, string>;
@@ -256,6 +257,7 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   return {
     currSlim: currSlimRaw as CurrSlimRow[],
     historicalByOutletItem,
+    historicalPeriodsCount: historicalPeriods.length,
     weeksRaw,
     monthKeyByLabel,
     monthLabelByKey,

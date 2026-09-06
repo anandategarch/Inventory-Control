@@ -18,6 +18,7 @@ import type { buildTrend, buildNetCostTrend } from './trend-builder';
 import type { computeDeviationDrivers } from './deviation-drivers';
 import type { projectTrend } from '@/lib/metrics';
 import type { detectPatterns } from '@/engine/analysis/analysis';
+import type { HistoricalAnalysisResult } from './post-process-historical';
 
 // ============================================================
 //  BOM Correlation Findings — per-record rule fire details
@@ -89,7 +90,7 @@ export interface ProcessedData {
     deviationToSalesRatio: number | null;
     deviationToBomRatio: number | null;
     multiPeriodComparison: Array<Record<string, unknown>>;
-    historicalAnalysis: { criticalItems: Array<Record<string, unknown>> };
+    historicalAnalysis: HistoricalAnalysisResult;
   };
   trend: ReturnType<typeof buildTrend>;
   netCostTrend: ReturnType<typeof buildNetCostTrend>;

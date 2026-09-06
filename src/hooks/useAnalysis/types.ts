@@ -176,6 +176,33 @@ export interface NetCostTrendPoint {
   sales: number;
 }
 
+export interface HistoricalAnalysisMeta {
+  /** # of (monthLabel,weekLabel) pairs used as historical baseline (excluding current). */
+  historicalPeriodsCount: number;
+  /** Minimum weeks required to evaluate a record (from settings, default 4). */
+  minWeeks: number;
+  /** zScore > this → WARNING (from settings, default 1.5). */
+  zWarnThreshold: number;
+  /** zScore > this → ABNORMAL (from settings, default 2). */
+  zHighThreshold: number;
+  /** Total (outlet,item) pairs in the historical stats map. */
+  statsCount: number;
+  /** Pairs with stdDev > 0 AND n >= minWeeks (eligible for Z-Score). */
+  validStatsCount: number;
+  /** Total current records evaluated. */
+  evaluatedCount: number;
+  /** Records flagged by HISTORICAL_* rules. */
+  flaggedCount: number;
+  /** Pre-computed reason for empty criticalItems (frontend uses for empty-state copy). */
+  reason:
+    | 'NO_HISTORICAL_DATA'
+    | 'INSUFFICIENT_WEEKS'
+    | 'NO_VALID_STATS'
+    | 'NO_ANOMALIES'
+    | 'ALL_FILTERED_BOM'
+    | 'NON_EMPTY';
+}
+
 export interface HistoricalAnalysisResult {
   criticalItems: Array<{
     itemName: string; outletCode: string; area: string;
@@ -187,6 +214,9 @@ export interface HistoricalAnalysisResult {
     wasteZScore: number; susutZScore: number; trialZScore: number;
     wasteHistoricalAvg: number; susutHistoricalAvg: number; trialHistoricalAvg: number;
   }>;
+  // FX-HIST-EMPTY: diagnostics for the frontend empty state. Lets the card
+  // show accurate feedback instead of the generic "minimal 4 bulan" tip.
+  meta?: HistoricalAnalysisMeta;
 }
 
 // ============================================================

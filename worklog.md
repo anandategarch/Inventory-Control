@@ -40361,3 +40361,50 @@ Code-level fixes:
 5. Refactor queryItemConsistency to use `ABS(nominalLossSurplus)` instead of `absNominalLossSurplus` (so Index 1 actually covers it), OR drop Index 1 and keep the existing `[monthLabel, weekLabel, itemId]` index
 6. Replace `Promise.all` in invalidateAnalysisCache (aggregation-cache.ts line 435) with serial deleteMany OR a single `deleteMany({})` to avoid 15-connection burst
 7. Remove `@prisma/client` from experimental.optimizePackageImports in next.config.ts
+
+---
+Task ID: FX-HIST-EMPTY
+Agent: Main (Z.ai Code)
+Task: Fix misleading "Tips: Z-Score butuh minimal 4 bulan data" empty-state in Historical Z-Score card when user has 8 months of data (Jan-Aug) and filters July — card always shows the generic "minimal 4 bulan" tip regardless of the real reason criticalItems is empty.
+
+Work Log:
+- Diagnosed root cause: HistoricalZScoreCard.tsx empty state was hardcoded — always showed "Semua item dalam batas normal" + "Tips: Z-Score butuh minimal 4 bulan data" when `items.length === 0`, regardless of WHY items was empty.
+- Identified 5 distinct empty-state reasons by tracing the backend pipeline (fetch-records.ts → rule-evaluation.ts → post-process-historical.ts):
+  (1) NO_HISTORICAL_DATA — no other month has the same weekLabel as the filtered week (historicalPeriods.length === 0)
+  (2) INSUFFICIENT_WEEKS — historicalPeriods.length < minWeeks (default 4)
+  (3) NO_VALID_STATS — historicalByOutletItem has entries but none with stdDev>0 && n>=minWeeks (e.g. user uploaded the same file under different month labels → stdDev=0)
+  (4) NO_ANOMALIES — valid baseline + valid stats, but no record's zScore exceeded warn/high thresholds (current is below historical avg = success state)
+  (5) ALL_FILTERED_BOM — backend emitted HISTORICAL_* flags but the client-side filter (|Dev/BOM|<=5 && activeZ>0 && historicalAvg>0) removed them all
+- Added `historicalPeriodsCount` to FetchedRecords interface (fetch-records.ts) — populated from the existing `historicalPeriods.length` (already computed for the SQL call).
+- Extended `buildHistoricalAnalysis` (post-process-historical.ts) to accept 3 new params (currSlim, historicalPeriodsCount, thresholds) and return a `meta` block alongside `criticalItems`:
+    meta: { historicalPeriodsCount, minWeeks, zWarnThreshold, zHighThreshold, statsCount, validStatsCount, evaluatedCount, flaggedCount, reason }
+  The `reason` field is pre-computed server-side using the 5-way branching above.
+- Updated ProcessedData.growthComparisonWithHist.historicalAnalysis type (post-process-types.ts) to use the new HistoricalAnalysisResult interface (with `meta`).
+- Updated post-process.ts call site to pass currSlim + historicalPeriodsCount + thresholds to buildHistoricalAnalysis.
+- Added HistoricalAnalysisMeta type to hooks/useAnalysis/types.ts + made `meta?` optional on HistoricalAnalysisResult for back-compat with older cached responses.
+- Rewrote HistoricalZScoreCard.tsx empty state:
+    * New `HistoricalEmptyState` sub-component with 6 branches (5 reasons + fallback for missing meta).
+    * Each branch has a tailored icon (Database/History/AlertTriangle/CheckCircle2), title, body copy, color, and a `Statistik:` line showing the actual counts.
+    * NO_ANOMALIES branch (the case the user reported) now shows a green CheckCircle2 + "Semua item dalam batas normal" + a detailed explanation confirming the baseline was valid (X bulan, Y valid stats) — NO "minimal 4 bulan" tip.
+    * INSUFFICIENT_WEEKS branch shows the actual gap: "Saat ini hanya N bulan, butuh minimal 4 bulan, tambah N bulan lagi."
+    * NO_VALID_STATS branch explicitly warns about duplicate file uploads with different month labels (stdDev=0 case).
+    * Fallback branch preserves the old copy when meta is missing (older cached response).
+- Added a baseline-context chip to the card header (when items present): "· baseline N bln · M valid stats" so users can verify the Z-Score was computed from a sufficient historical sample.
+- Removed unused `fmtNum` import from HistoricalZScoreCard.tsx (was already unused pre-change).
+- Added new lucide-react imports: AlertTriangle, Database, CheckCircle2.
+- Verified `lint` passes with 0 errors (only pre-existing warnings in unrelated test files).
+- Verified `tsc --noEmit` passes with 0 errors.
+- Dev server starts cleanly (`/` returns 200 in 9.2s). API requests fail because .env has a stale SQLite URL (DATABASE_URL=file:/home/z/my-project/db/custom.db) but schema requires PostgreSQL — environmental issue from the previous session, not a code regression.
+
+Stage Summary:
+- User's reported issue (misleading "minimal 4 bulan" tip when they have 8 months of data) is FIXED: the empty state now branches on the actual reason. When the user has Jan-Aug data and filters July and no anomalies are detected, they'll see a green "Semua item dalam batas normal" + "Baseline historis WEEK 4 dibangun dari 6 bulan, dengan N pasangan outlet-item valid … Deviasi bulan ini secara umum di bawah atau sama dengan rata-rata historis — kondisi yang baik." — no more misleading tip.
+- New diagnostic `meta` block exposed in the /api/analysis response under `growthComparison.historicalAnalysis.meta` — also surfaces a small "baseline N bln · M valid stats" chip in the card header when items are present.
+- Files modified (5):
+    src/app/api/analysis/services/fetch-records.ts            (added historicalPeriodsCount to FetchedRecords)
+    src/app/api/analysis/services/post-process-historical.ts   (extended to return meta + accept 3 new params)
+    src/app/api/analysis/services/post-process-types.ts        (type update: HistoricalAnalysisResult)
+    src/app/api/analysis/services/post-process.ts              (pass new params to buildHistoricalAnalysis)
+    src/hooks/useAnalysis/types.ts                             (HistoricalAnalysisMeta + meta? field)
+    src/components/dashboard/HistoricalZScoreCard.tsx          (HistoricalEmptyState sub-component + header chip)
+- Backward compatible: `meta?` is optional on the frontend type, so older cached responses (without meta) fall through to the old generic copy. Export-report pipeline (separate from /api/analysis) uses its own type and is unaffected.
+- NOTE: Cannot end-to-end verify with Agent Browser because .env has a stale SQLite URL (Supabase credentials from the previous session were masked). User will need to restore the Supabase DATABASE_URL in .env to see the fix live. Code verified via lint + tsc + dev server boot.

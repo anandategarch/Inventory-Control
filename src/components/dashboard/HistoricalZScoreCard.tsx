@@ -7,9 +7,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import type { HistoricalAnalysisMeta } from '@/hooks/useAnalysis/types';
+import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { zScoreColor } from '@/lib/zScoreHelpers';
-import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown, AlertTriangle, Database, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
 
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
@@ -33,12 +34,177 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
   return sortDir === 'desc' ? <ArrowDown className="h-3 w-3 inline ml-1" /> : <ArrowUp className="h-3 w-3 inline ml-1" />;
 }
 
+// ============================================================
+//  FX-HIST-EMPTY: smart empty state for Historical Z-Score card
+//  --------------------------------------------------------
+//  The card used to ALWAYS show "Semua item dalam batas normal" +
+//  the "minimal 4 bulan data" tip whenever criticalItems was empty.
+//  This was misleading when the user actually has 8 months of data
+//  but no anomalies were detected (current below historical avg).
+//
+//  The meta block from the backend now lets us differentiate:
+//    - NO_HISTORICAL_DATA : no other month has this weekLabel
+//    - INSUFFICIENT_WEEKS : fewer than minWeeks historical periods
+//    - NO_VALID_STATS    : stats exist but stdDev=0 / n<minWeeks (all)
+//    - NO_ANOMALIES      : valid baseline + valid stats, none flagged
+//                          (this is the success state — no tip needed)
+//    - ALL_FILTERED_BOM  : flags exist but all filtered (BOM≈0)
+//
+//  Each reason gets a tailored icon, title, body, and color so the
+//  user understands exactly WHY the table is empty.
+// ============================================================
+function HistoricalEmptyState({ meta, week }: { meta?: HistoricalAnalysisMeta; week?: string }) {
+  // Fallback when backend hasn't returned meta yet (older cached response).
+  if (!meta) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+        <History className="h-8 w-8 text-muted-foreground/40 mb-2" />
+        <p className="text-sm text-muted-foreground">Tidak ada anomali historical</p>
+        <p className="text-xs text-muted-foreground/70 mt-1">Semua item dalam batas normal vs rata-rata historis</p>
+        <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
+          <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
+          <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
+            <p className="font-medium">Tips: Z-Score butuh minimal 4 bulan data</p>
+            <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1). Upload data minimal 4 bulan untuk hasil optimal.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const minWeeks = meta.minWeeks ?? 4;
+  const histPeriods = meta.historicalPeriodsCount ?? 0;
+  const validStats = meta.validStatsCount ?? 0;
+  const statsCount = meta.statsCount ?? 0;
+  const evaluated = meta.evaluatedCount ?? 0;
+  const flagged = meta.flaggedCount ?? 0;
+  const weekLabel = week ?? 'minggu ini';
+
+  // ---- Per-reason render ----
+  if (meta.reason === 'NO_HISTORICAL_DATA') {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+        <Database className="h-8 w-8 text-amber-500/60 mb-2" />
+        <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">
+          Belum ada data historis untuk {weekLabel}
+        </p>
+        <p className="text-xs text-muted-foreground/80 mt-1 max-w-md">
+          Baseline Z-Score membandingkan {weekLabel} di bulan ini dengan {weekLabel} di bulan lain
+          (mis. W4 Juli vs W4 Januari–Juni). Belum ada bulan lain yang memiliki {weekLabel} — upload
+          data bulan sebelumnya dengan minggu yang sama untuk mengaktifkan analisis historis.
+        </p>
+        <div className="mt-3 text-[11px] text-muted-foreground/70 space-y-0.5">
+          <p>Statistik: 0 periode historis · 0 stats · 0 record dievaluasi</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (meta.reason === 'INSUFFICIENT_WEEKS') {
+    const need = Math.max(0, minWeeks - histPeriods);
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+        <History className="h-8 w-8 text-blue-500/60 mb-2" />
+        <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">
+          Data historis belum cukup untuk Z-Score
+        </p>
+        <p className="text-xs text-muted-foreground/80 mt-1 max-w-md">
+          Saat ini hanya <span className="font-semibold tabular-nums">{histPeriods}</span> bulan
+          yang memiliki {weekLabel}, butuh minimal <span className="font-semibold">{minWeeks}</span>{' '}
+          bulan untuk hasil optimal. Tambahkan <span className="font-semibold tabular-nums">{need}</span> bulan lagi
+          dengan {weekLabel} yang sama.
+        </p>
+        <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
+          <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
+          <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
+            <p className="font-medium">Tips: Z-Score butuh minimal {minWeeks} bulan data</p>
+            <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1).</p>
+          </div>
+        </div>
+        <div className="mt-3 text-[11px] text-muted-foreground/70 space-y-0.5">
+          <p>Statistik: {histPeriods} periode historis · {statsCount} stats · {evaluated} record dievaluasi</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (meta.reason === 'NO_VALID_STATS') {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+        <AlertTriangle className="h-8 w-8 text-amber-500/60 mb-2" />
+        <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">
+          Data historis terlalu homogen untuk Z-Score
+        </p>
+        <p className="text-xs text-muted-foreground/80 mt-1 max-w-md">
+          Ada <span className="font-semibold tabular-nums">{statsCount}</span> pasangan outlet-item
+          dengan data historis ({histPeriods} bulan), tapi tidak ada yang memiliki variasi
+          yang cukup (stdDev = 0) atau jumlah minggu &lt; {minWeeks}. Z-Score tidak dapat
+          dihitung jika nilai historis konstan — pastikan upload bulan-bulan yang berbeda
+          (bukan file duplikat dengan label bulan berbeda).
+        </p>
+        <div className="mt-3 text-[11px] text-muted-foreground/70 space-y-0.5">
+          <p>Statistik: {histPeriods} periode · {statsCount} stats · 0 valid (stdDev&gt;0 & n≥{minWeeks}) · {evaluated} record dievaluasi</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (meta.reason === 'ALL_FILTERED_BOM') {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+        <AlertTriangle className="h-8 w-8 text-amber-500/60 mb-2" />
+        <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">
+          {flagged} item ditandai anomali tapi difilter
+        </p>
+        <p className="text-xs text-muted-foreground/80 mt-1 max-w-md">
+          Backend menemukan {flagged} record dengan Z-Score di atas threshold, tapi semua
+          difilter di sisi client karena |Dev/BOM| &gt; 500% (BOM ≈ 0 → pembagian tidak
+          valid) atau historicalAvg = 0. Periksa kembali nilai BOM pada item-item tersebut.
+        </p>
+        <div className="mt-3 text-[11px] text-muted-foreground/70 space-y-0.5">
+          <p>Statistik: {histPeriods} periode · {validStats} valid stats · {flagged} flagged · {evaluated} record dievaluasi</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- NO_ANOMALIES (success state) ----
+  // This is the case the user reported: 8 months of data, filter July,
+  // card says "Semua item dalam batas normal" + "minimal 4 bulan" tip.
+  // The tip is misleading — we now confirm the baseline was valid.
+  return (
+    <div className="flex flex-col items-center justify-center py-10 text-center px-6">
+      <CheckCircle2 className="h-8 w-8 text-emerald-500/60 mb-2" />
+      <p className="text-sm text-emerald-700 dark:text-emerald-300 font-medium">
+        Semua item dalam batas normal vs rata-rata historis
+      </p>
+      <p className="text-xs text-muted-foreground/80 mt-1 max-w-md">
+        Baseline historis <span className="font-semibold">{weekLabel}</span> dibangun dari{' '}
+        <span className="font-semibold tabular-nums">{histPeriods}</span> bulan, dengan{' '}
+        <span className="font-semibold tabular-nums">{validStats}</span> pasangan outlet-item valid
+        (stdDev &gt; 0 &amp; n ≥ {minWeeks}) dari total {statsCount} pasangan. Tidak ada item
+        yang Z-Score-nya melebihi threshold (warn &gt; {meta.zWarnThreshold ?? 1.5}σ · abnormal &gt;{' '}
+        {meta.zHighThreshold ?? 2}σ). Deviasi bulan ini secara umum <span className="font-medium">di bawah
+        atau sama dengan</span> rata-rata historis — kondisi yang baik.
+      </p>
+      <div className="mt-3 text-[11px] text-muted-foreground/70 space-y-0.5">
+        <p>Statistik: {histPeriods} periode · {validStats} valid stats · {evaluated} record dievaluasi · {flagged} ditandai anomali</p>
+      </div>
+    </div>
+  );
+}
+
 export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
   // FIX BUG 1: Filter out items with |Dev/BOM| > 500% — these are data anomalies
   // where BOM ≈ 0 (division by near-zero produces extreme pctQtyDeviasiToBom).
   // Z-Scores of 680.99 are meaningless and pollute the table.
   // Also filter out items with zScore = 0 (no historical baseline).
   const allItems = data.growthComparison?.historicalAnalysis?.criticalItems || [];
+  // FX-HIST-EMPTY: diagnostics meta for the smart empty state.
+  const histMeta = data.growthComparison?.historicalAnalysis?.meta;
+  // The current week filter the user applied — surfaced to the empty state
+  // so it can reference "W4 Juli" instead of a generic "minggu ini".
+  const currentWeek = data.period?.weekLabel || undefined;
   const [metricView, setMetricView] = useState<'devBom' | 'qtyDeviasi'>('devBom');
   // FIX FE-05: filter uses active metric's zScore (was always i.zScore = Dev/BOM)
   const items = useMemo(() => allItems.filter(i => {
@@ -132,6 +298,12 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
             {' · '}
             <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">{abnormalCount} abnormal</span> ·{' '}
             <span className="text-amber-600 dark:text-amber-400 font-medium tabular-nums">{warningCount} warning</span>
+            {/* FX-HIST-EMPTY: surface baseline context so the user can verify
+                the Z-Score was computed from a sufficient historical sample.
+                Hidden when meta is missing (older cached response). */}
+            {histMeta && (
+              <span className="text-muted-foreground/70"> · baseline {histMeta.historicalPeriodsCount} bln · {histMeta.validStatsCount} valid stats</span>
+            )}
           </p>
           {/* Phase B-3: Severity filter */}
           <div className="flex items-center gap-1.5">
@@ -169,19 +341,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
       </CardHeader>
       <CardContent className="p-0">
         {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center px-6">
-            <History className="h-8 w-8 text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">Tidak ada anomali historical</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">Semua item dalam batas normal vs rata-rata historis</p>
-            {/* Phase A-1: Info banner explaining minimum data requirement */}
-            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
-              <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
-                <p className="font-medium">Tips: Z-Score butuh minimal 4 bulan data</p>
-                <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1). Upload data minimal 4 bulan untuk hasil optimal.</p>
-              </div>
-            </div>
-          </div>
+          <HistoricalEmptyState meta={histMeta} week={currentWeek} />
         ) : (
           <div className="max-h-[500px] overflow-auto">
             <Table className="min-w-[900px]">

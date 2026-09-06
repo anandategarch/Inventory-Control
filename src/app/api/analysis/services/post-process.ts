@@ -57,7 +57,7 @@ import { mapTopOutlets } from './post-process-top-outlets';
  */
 export async function postProcess(params: ResolvedParams, records: FetchedRecords, queries: QueryResults): Promise<ProcessedData> {
   const { week, month, prevWeek, prevMonth } = params;
-  const { currSlim, historicalByOutletItem, thresholds, monthKeyByLabel, filterOpts } = records;
+  const { currSlim, historicalByOutletItem, historicalPeriodsCount, thresholds, monthKeyByLabel, filterOpts } = records;
   const {
     earlyPromises,
     execSummary,
@@ -91,7 +91,20 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   const sqlFlags = await earlyPromises.sqlFlagsPromise;
   const [bomCorrelationResult, historicalAnalysis] = await Promise.all([
     buildBomCorrelationFindings(week, month, prevWeek, prevMonth, filterOpts, sqlFlags),
-    buildHistoricalAnalysis(topFlagByKey, week, month, filterOpts, historicalByOutletItem),
+    buildHistoricalAnalysis(
+      topFlagByKey,
+      week,
+      month,
+      filterOpts,
+      historicalByOutletItem,
+      // FX-HIST-EMPTY: pass currSlim + historicalPeriodsCount + thresholds so
+      // buildHistoricalAnalysis can compute a meta block for the frontend
+      // empty state. Without these the card always shows the misleading
+      // "minimal 4 bulan data" tip regardless of the real reason.
+      currSlim,
+      historicalPeriodsCount,
+      thresholds,
+    ),
   ]);
   const { findings: bomCorrelationFindings, counts: bomCorrelationCounts } = bomCorrelationResult;
 
