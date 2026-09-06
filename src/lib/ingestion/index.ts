@@ -1,5 +1,4 @@
 // ============================================================
-import "server-only";
 //  Ingestion Logic — Barrel Export
 //  --------------------------------------------------------
 //  Public entry point for all ingestion paths. Re-exports the

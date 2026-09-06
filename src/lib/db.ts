@@ -15,7 +15,6 @@
 //  imported in a client component, preventing Prisma client (~2MB) from
 //  being bundled into the client JS.
 // ============================================================
-import "server-only";
 import { PrismaClient } from '@prisma/client';
 import { logger } from './logger';
 

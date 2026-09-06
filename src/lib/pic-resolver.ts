@@ -1,5 +1,4 @@
 // ============================================================
-import "server-only";
 //  PIC Resolver — shared logic for resolving PIC name → outlet codes.
 //  Used by 5 API routes: analysis, recommendations, item-search,
 //  pareto, export-report.
