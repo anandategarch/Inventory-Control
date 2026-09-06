@@ -14,17 +14,17 @@
 //      description="Item X tidak memiliki record dengan filter aktif."
 //    />
 //
-//  Or with an action (e.g. a Callout tips box below):
+//  Or with an action + custom icon color:
 //    <EmptyState
 //      icon={TrendingUp}
+//      iconClassName="bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
 //      title="Pilih item untuk melihat trend"
 //      description="..."
 //      action={<Callout color="amber" ...>...</Callout>}
 //    />
 //
-//  No indigo or blue colors per project rule — uses muted token
-//  for icon container. Caller is free to use any project palette
-//  inside `action`.
+//  No indigo or blue colors per project rule — default uses muted
+//  token for icon container. Caller can override via iconClassName.
 // ============================================================
 
 import { memo } from 'react';
@@ -33,9 +33,13 @@ import { cn } from '@/lib/utils';
 interface EmptyStateProps {
   icon?: React.ElementType;
   title: string;
-  description?: string;
+  /** Description text. Can be a string OR ReactNode (for JSX with bold spans). */
+  description?: React.ReactNode;
   action?: React.ReactNode;
   className?: string;
+  /** Override the icon container's Tailwind classes (e.g. for amber theme).
+   *  Default: "bg-muted/40 text-muted-foreground/50" */
+  iconClassName?: string;
 }
 
 export const EmptyState = memo(function EmptyState({
@@ -44,11 +48,15 @@ export const EmptyState = memo(function EmptyState({
   description,
   action,
   className,
+  iconClassName,
 }: EmptyStateProps) {
   return (
     <div className={cn('flex flex-col items-center justify-center text-center py-12 px-6', className)}>
       {Icon && (
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground/50 mb-3">
+        <div className={cn(
+          'flex h-14 w-14 items-center justify-center rounded-2xl border mb-3',
+          iconClassName ?? 'bg-muted/40 text-muted-foreground/50',
+        )}>
           <Icon className="h-7 w-7" />
         </div>
       )}

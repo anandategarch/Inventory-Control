@@ -741,6 +741,8 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           // palette fix preserved).
           <EmptyState
             icon={TrendingUp}
+            // FIX (BUG-SHADCN-01): restore amber icon theme (was muted gray after migration).
+            iconClassName="bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
             title="Pilih item untuk melihat trend"
             description="Cari item di kotak pencarian di atas. Tren menampilkan QTY lintas semua periode dengan Z-Score historis (baseline same-week)."
             className="py-12"
@@ -749,7 +751,8 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                 color="amber"
                 icon={Info}
                 title="Tips: Z-Score butuh minimal 4 periode"
-                className="mt-4 max-w-md text-left"
+                // FIX (BUG-SHADCN-02): removed mt-4 — EmptyState already adds mt-4 wrapper for action.
+                className="max-w-md text-left"
               >
                 <p>
                   Baseline menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4). Item dengan sedikit periode akan menampilkan Z-Score <code className="font-mono">—</code> (tidak cukup data).
@@ -780,7 +783,8 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           <EmptyState
             icon={Package}
             title="Tidak ada data untuk item ini"
-            description={`Item ${selectedItem} tidak memiliki record dengan filter aktif.`}
+            // FIX (BUG-SHADCN-07): use ReactNode (not string) for bold item name.
+            description={<>Item <span className="font-medium">{selectedItem}</span> tidak memiliki record dengan filter aktif.</>}
           />
         ) : (
           <div className="space-y-3">

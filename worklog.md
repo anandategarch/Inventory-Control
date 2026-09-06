@@ -40133,3 +40133,47 @@ Stage Summary:
 - tsc: 0 errors (1 fixed during dev: ReactNode → ReactElement for ResponsiveContainer compat)
 - No indigo/blue colors used — palette stays amber/emerald/red/zinc throughout
 - All existing functionality preserved — CustomTooltip with richer content, renderZDot + renderMeanDot per-dot coloring, 5 ReferenceLines, the `<p>` legend subtitle above the chart
+
+---
+Task ID: BUG-SHADCN
+Agent: shadcn Patterns Bug Hunter
+Task: Audit commit 2b056f4 (EmptyState + Container Queries + ChartContainer)
+
+Work Log:
+- Read all 9 files
+- Checked EmptyState component + 6 application sites
+- Checked container queries (page.tsx + ExecutiveSummary)
+- Checked ChartContainer + ItemTrendLineChart refactor
+- Checked for type errors, unused imports, naming conflicts
+- Ran tsc --noEmit (clean) and eslint on the 9 files (0 errors, 26 warnings — mostly pre-existing + 7 acknowledged callback param warnings)
+- Compared git diff for each migrated site to detect regressions
+
+Stage Summary:
+- Found 8 bugs: P0=0, P1=0, P2=2, P3=6
+- BUG-SHADCN-01 (P2): ItemTrendTab no-item-selected EmptyState — icon container lost amber theme (was bg-amber-50/dark:bg-amber-950/40 + text-amber-600/dark:amber-400, now bg-muted/40 + text-muted-foreground/50). Commit comment claims "amber theme preserved" but only the Callout is amber; the icon container is now muted gray. UI-12 amber palette fix partially lost.
+- BUG-SHADCN-02 (P2): ItemTrendTab no-item-selected EmptyState — double margin on Callout. EmptyState wraps `action` in <div className="mt-4">, but the passed Callout still has className="mt-4 ...". Result is 32px total margin (was 16px before commit). Visual spacing regression.
+- BUG-SHADCN-03 (P3): Duplicate `EmptyState` component name — shared/index.tsx exports EmptyState (page-level, no props) and ui/empty-state.tsx exports EmptyState (in-card, with props). Different files/paths but same name. Commit's own comment in ItemTrendTab acknowledges this.
+- BUG-SHADCN-04 (P3): Duplicate `ChartContainer` / `ChartConfig` implementations — ui/chart.tsx (stock shadcn file, full theme support, getPayloadConfigFromPayload helper) is unused; commit added ui/chart-container.tsx with simplified API. Both export the same names. Two ChartConfig types are NOT interchangeable (chart.tsx supports `theme` field). Maintenance debt for future chart components.
+- BUG-SHADCN-05 (P3): Inconsistent empty-state migration — AdvancedAnalysis.tsx: only ItemConsistencyAnalysis migrated (line 464); OutletHealthRanking (line 103) and AreaAnalysis (line 573) still inline. TopItems.tsx: only TopItemsByNominal migrated; TopItemsByDevBom (line 124) and TopOutlets (line 190) still inline. Cosmetic inconsistency.
+- BUG-SHADCN-06 (P3): Acknowledged lint warnings in chart-container.tsx (lines 116-117) — 7 callback type parameter names flagged as unused by no-unused-vars. Commit message acknowledges "+7 callback type param names, consistent pattern". Not a bug, just a stylistic trade-off documented.
+- BUG-SHADCN-07 (P3): ItemTrendTab no-data-for-item EmptyState — description lost <span className="font-medium">{selectedItem}</span> emphasis. Item name was bold before, plain text now. Minor cosmetic regression.
+- BUG-SHADCN-08 (P3): Other grids in ExecutiveSummary.tsx NOT migrated to container queries — line 232 (grid-cols-2 sm:grid-cols-4), line 407 (grid-cols-3), line 472 (grid-cols-2) still use viewport breakpoints. Commit scope was KPI grid only, but worth noting for future cleanup.
+
+VERIFIED OK:
+- EmptyState component (icon, title, description, action, className — all handled; memo applied; conditional icon/action rendering correct)
+- Container query syntax in page.tsx (`@container/main` on <main>), ExecutiveSummary grid (`@xl/main:grid-cols-3 @4xl/main:grid-cols-6`), KPICard Card (`@container/card`), KPI value (`@[250px]/card:text-3xl`), KPI caption (`@[250px]/card:text-xs`)
+- Old `sm:grid-cols-3 lg:grid-cols-6` completely removed (no duplicate breakpoints)
+- Mobile-friendly default `grid-cols-2` (correct for mobile; 6 cards in 3 rows of 2)
+- ChartContainer properly wraps ResponsiveContainer (children: ReactElement typed)
+- ChartConfig type exported correctly (Record<string, ChartConfigItem>)
+- CSS variable injection scoped per chart instance (useId + data-chart attribute + <style> tag)
+- ChartTooltipContent reads from ChartContext correctly (config lookup by dataKey)
+- ChartLegendContent reads from ChartContext correctly
+- ItemTrendLineChart refactor: ChartContainer wraps LineChart, var(--color-qty) + var(--color-historicalMean) + var(--color-zScore) correctly defined and referenced, CustomTooltip preserved (passed to ChartTooltip content prop), ChartLegendContent replaces manual Legend, renderZDot + renderMeanDot preserved, 5 ReferenceLines preserved, chart height h-56 sm:h-72 preserved, no missing/unused imports in chart-related code (Tooltip/Legend/ResponsiveContainer no longer imported directly from recharts)
+- `cn` utility exists at `@/lib/utils` (uses clsx + twMerge) — properly merges default py-12 px-6 with caller-supplied py-12
+- AdvancedAnalysis EmptyState wrapped correctly in TableRow/TableCell (valid table HTML — colSpan={8}, className="p-0")
+- TopItems EmptyState inside CardContent (not outside Card)
+- FlipRanking EmptyState replaces old inline Shuffle block (no duplicate)
+- tsc --noEmit: 0 errors
+- eslint on 9 files: 0 errors, 26 warnings (mostly pre-existing; +7 acknowledged in chart-container.tsx)
+- Tailwind v4 native container query support confirmed (postcss.config.mjs uses @tailwindcss/postcss; globals.css @import "tailwindcss"; no tailwind.config needed)
