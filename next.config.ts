@@ -19,12 +19,6 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // FIX: enable gzip compression for API responses (334KB → ~40KB, 85% reduction)
   compress: true,
-  // PERF-FASE5: pg (used by @prisma/adapter-pg) relies on Node.js built-in
-  // modules (dns, net) that Turbopack can't bundle for the browser. Marking
-  // it as a server external package tells Turbopack to leave it as-is for
-  // server-side code (Node.js resolves it natively) and skip trying to
-  // bundle it for the client.
-  serverExternalPackages: ['pg', '@prisma/adapter-pg'],
   // PERF-OPT: drop the "X-Powered-By: Next.js" response header — saves a few
   // bytes per response AND avoids advertising the framework (minor security
   // hygiene bonus).

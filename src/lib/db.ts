@@ -1,12 +1,6 @@
 // ============================================================
 //  DB — Prisma client (PostgreSQL / Supabase only)
 //  --------------------------------------------------------
-//  PERF-FASE5-MEDIUM: switched from URL-based connection to
-//  @prisma/adapter-pg for better connection management with
-//  Supabase PgBouncer transaction pooler. The adapter handles
-//  connection lifecycle more efficiently than URL params,
-//  reducing pool exhaustion risk under concurrent load.
-//
 //  Temuan #1 fix: removed Turso/SQLite/libsql adapter logic
 //  schema.prisma is locked to postgresql provider — runtime must match.
 //  If DATABASE_URL is not set or is file://, we error out (no silent fallback).
@@ -17,10 +11,14 @@
 //
 //  MIG-10 fix: Add statement_timeout=30000 (30s) and idle_timeout=20 (seconds)
 //  to prevent a single hung query from blocking the entire pool.
+//
+//  REVERT: @prisma/adapter-pg removed — incompatible with PgBouncer
+//  transaction mode + interactive transactions ($transaction with SET LOCAL).
+//  PgBouncer can switch connections mid-transaction, causing SET LOCAL
+//  to not apply and queries to hang/crash. URL-based connection with
+//  pgbouncer=true param is the proven pattern for Supabase.
 // ============================================================
 import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import { logger } from './logger';
 
 function createPrismaClient(): PrismaClient {
@@ -32,48 +30,48 @@ function createPrismaClient(): PrismaClient {
   }
 
   // Accept only PostgreSQL URLs — schema.prisma is locked to postgresql provider
-  if (!dbUrl.startsWith('postgresql://') && !dbUrl.startsWith('postgres://')) {
-    logger.error('DATABASE_URL must start with postgresql:// or postgres://');
-    throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
+  if (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) {
+    // Auto-switch Supabase pooler from session mode (port 5432) to transaction mode (port 6543)
+    if (dbUrl.includes('.pooler.supabase.com:5432/')) {
+      dbUrl = dbUrl.replace('.pooler.supabase.com:5432/', '.pooler.supabase.com:6543/');
+      logger.info('Using PostgreSQL (Supabase) — switched to transaction mode (port 6543)');
+    } else {
+      logger.info('Using PostgreSQL (Supabase)');
+    }
+    const url = new URL(dbUrl);
+    if (!url.searchParams.has('pgbouncer')) url.searchParams.set('pgbouncer', 'true');
+    // FIX (DEEP-AUDIT-ZEROS): FORCE connection_limit + pool_timeout — do NOT
+    // check if already set. The .env file includes `connection_limit=3&pool_timeout=10`
+    // which is too low for the analysis route (20+ parallel queries).
+    // FIX (BUG6-POOL): increased from 10→20 because /api/analysis has 6 concurrent
+    // withStatementTimeout calls per request (each holds a connection). With 2
+    // concurrent users = 12 connections → pool exhaustion with limit=10.
+    // Supabase transaction pooler allows up to 200 concurrent connections.
+    // DP-30: Bumped from 20→30 — /api/analysis uses 6 concurrent withStatementTimeout
+    // calls per request (each holds a connection). With 3 concurrent users × 6 = 18
+    // connections — close to the old 20 limit. Supabase transaction pooler allows 200.
+    url.searchParams.set('connection_limit', '30');
+    url.searchParams.set('pool_timeout', '60');
+    // FIX MIG-10: statement_timeout stripped by PgBouncer; see withStatementTimeout() for real enforcement.
+    url.searchParams.set('statement_timeout', '30000');
+    url.searchParams.set('idle_timeout', '20');
+    // PERF: Query logging disabled by default — adds 2-3s overhead per analysis call
+    // (200+ queries × stdout write). To temporarily enable for debugging:
+    //   PRISMA_LOG_QUERIES=true bun run dev
+    const logQueries = process.env.PRISMA_LOG_QUERIES === 'true';
+    return new PrismaClient({
+      log: logQueries
+        ? ['error', 'warn', { emit: 'stdout', level: 'query' }]
+        : ['error', 'warn'],
+      datasources: { db: { url: url.toString() } },
+    });
   }
 
-  // Auto-switch Supabase pooler from session mode (port 5432) to transaction mode (port 6543)
-  if (dbUrl.includes('.pooler.supabase.com:5432/')) {
-    dbUrl = dbUrl.replace('.pooler.supabase.com:5432/', '.pooler.supabase.com:6543/');
-    logger.info('Using PostgreSQL (Supabase) — switched to transaction mode (port 6543)');
-  } else {
-    logger.info('Using PostgreSQL (Supabase)');
-  }
-
-  // PERF-FASE5-MEDIUM: Use PrismaPg adapter instead of URL-based connection.
-  // The adapter uses pg.Pool under the hood with proper connection lifecycle
-  // management. This is more efficient than URL params for PgBouncer transaction
-  // mode — the adapter handles idle connection cleanup, reconnection, and
-  // query queueing automatically.
-  //
-  // Connection params:
-  // - max: 30 (match previous connection_limit — Supabase allows up to 200)
-  // - idleTimeoutMillis: 20000 (20s — match previous idle_timeout)
-  // - connectionTimeoutMillis: 60000 (60s — match previous pool_timeout)
-  const pool = new Pool({
-    connectionString: dbUrl,
-    max: 30,
-    idleTimeoutMillis: 20000,
-    connectionTimeoutMillis: 60000,
-  });
-
-  const adapter = new PrismaPg(pool);
-
-  const logQueries = process.env.PRISMA_LOG_QUERIES === 'true';
-  const client = new PrismaClient({
-    adapter,
-    log: logQueries
-      ? ['error', 'warn', { emit: 'stdout', level: 'query' }]
-      : ['error', 'warn'],
-  });
-
-  logger.info('Prisma client created with @prisma/adapter-pg (pool max=30)');
-  return client;
+  // FIX AUDIT-7 #5: Removed non-functional SQLite dev fallback.
+  // schema.prisma locks provider = "postgresql" — PrismaClient cannot connect
+  // to SQLite. The fallback was dead code that crashed on first query.
+  logger.error('DATABASE_URL must start with postgresql:// or postgres://');
+  throw new Error(`Invalid DATABASE_URL protocol. Expected postgresql:// or postgres://`);
 }
 
 // FIX MIG-9: globalThis singleton — prevents connection pool exhaustion during
