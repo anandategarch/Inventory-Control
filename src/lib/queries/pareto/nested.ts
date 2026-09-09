@@ -1,8 +1,8 @@
 // ============================================================
 //  Pareto Nested — Item → Outlet breakdown + generalized parent → child
 //  --------------------------------------------------------
-//  Two exported queries + two private helpers (getDimensionExpr /
-//  getDimensionFilter) used only inside this file.
+//  Two exported queries + one private helper (getDimensionExpr) used
+//  only inside this file.
 //
 //  - queryParetoNestedItemOutlet: top items (Pareto 80%) → per-item
 //    outlet breakdown (Pareto 80% within each item).
@@ -12,7 +12,12 @@
 //
 //  Both follow the 2-step query pattern:
 //    1. Top parents (Pareto 80% via `maxItems` cap)
-//    2. Per-parent child breakdown (parallelized via Promise.all)
+//    2. Per-parent child breakdown — ONE combined query using
+//       ROW_NUMBER() OVER (PARTITION BY parent) rn <= 20 cap
+//       (AUDIT-FOLLOWUP-NESTED-N+1: previously one withStatementTimeout
+//       transaction PER parent — up to 10 concurrent transactions/
+//       connections per request, ×7 pareto queries on the same page →
+//       needless pool pressure against connection_limit=30)
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
@@ -53,14 +58,22 @@ export async function queryParetoNestedItemOutlet(
   const grandTotal = topItems.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
   let itemCumPct = 0;
 
-  // FIX (BUG2-PARETO-2): Parallelize the per-item outlet breakdown queries.
-  // Old code ran 10 sequential queries (N+1 pattern) — 3-5s latency.
-  // Now runs all 10 in parallel via Promise.all — ~0.5s latency.
-  // Also wrap each query in withStatementTimeout (was missing → hang risk under PgBouncer).
-  const outletRowsByItem = await Promise.all(topItems.map((item) => {
-    const itemName = item.itemName;
-    return withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string; outletName: string; area: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number }>>`
-      SELECT o.code as "outletCode", o.name as "outletName", o.area,
+  // FIX (AUDIT-FOLLOWUP-NESTED-N+1): single query replaces the 10 parallel
+  // per-item withStatementTimeout transactions (each call = its own
+  // interactive transaction → its own pooled connection). Same approach as
+  // the AUDIT-PERF-2 fix in by-other-metric.ts: one GROUP BY (item, outlet)
+  // query with ROW_NUMBER() capped at 20 outlets per item produces the same
+  // rows (same WHERE/HAVING, exact i.name match per BUG2-PARETO-14, top-20
+  // per item by ABS(nominalDeviasi) DESC) in ONE transaction.
+  // topItems.length >= 1 here (empty case early-returned above), so the
+  // Prisma.join IN-list always has >= 1 element.
+  const topItemNames = topItems.map((t) => t.itemName);
+  const outletRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    itemName: string; outletCode: string; outletName: string; area: string;
+    totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number;
+  }>>`
+    WITH per_outlet AS (
+      SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", o.area,
         ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
         SUM(ir."qtyDeviasi") as "qtyDeviasi"
@@ -69,17 +82,32 @@ export async function queryParetoNestedItemOutlet(
       JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        -- FIX (BUG2-PARETO-14): use exact match (not LOWER) — the top-items query
-        -- already grouped by exact i.name, so we should match the same exact name.
-        -- LOWER() could match case-variant items that were grouped separately above.
-        AND i.name = ${itemName}
+        -- Exact match (BUG2-PARETO-14): mirrors the Step-1 GROUP BY on exact i.name.
+        AND i.name IN (${Prisma.join(topItemNames)})
         ${f}
-      GROUP BY o.code, o.name, o.area
+      GROUP BY i.name, o.code, o.name, o.area
       HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-      ORDER BY "totalAbsNominal" DESC
-      LIMIT 20
-    `);
-  }));
+    ),
+    ranked AS (
+      -- Top 20 outlets per item by ABS(nominalDeviasi) DESC — same cap the old
+      -- per-item query enforced via ORDER BY ... LIMIT 20. "outletCode" is a
+      -- deterministic tie-break for equal totals (old LIMIT picked ties
+      -- nondeterministically).
+      SELECT per_outlet.*,
+        ROW_NUMBER() OVER (PARTITION BY "itemName" ORDER BY "totalAbsNominal" DESC, "outletCode") AS rn
+      FROM per_outlet
+    )
+    SELECT "itemName", "outletCode", "outletName", "area", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
+    FROM ranked
+    WHERE rn <= 20
+    ORDER BY "itemName", "totalAbsNominal" DESC, "outletCode"
+  `);
+  const outletRowsByItem = new Map<string, typeof outletRows>();
+  for (const row of outletRows) {
+    const list = outletRowsByItem.get(row.itemName) ?? [];
+    list.push(row);
+    outletRowsByItem.set(row.itemName, list);
+  }
 
   const items: NestedParetoItem[] = [];
   for (let idx = 0; idx < topItems.length; idx++) {
@@ -90,7 +118,10 @@ export async function queryParetoNestedItemOutlet(
     const itemQtyDeviasi = Number(item.qtyDeviasi);
     const itemOutletCount = Number(item.outletCount);
 
-    const outletRows = outletRowsByItem[idx];
+    // Map lookup (not index) — rows arrive grouped by itemName from the
+    // combined query; ordering within each item is preserved by the
+    // ORDER BY "itemName", "totalAbsNominal" DESC, "outletCode" above.
+    const outletRows = outletRowsByItem.get(itemName) ?? [];
 
     const outletTotal = outletRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
     let outletCumPct = 0;
@@ -146,7 +177,8 @@ export async function queryParetoNestedItemOutlet(
 //
 //  2-step query pattern (matches `queryParetoNestedItemOutlet` above):
 //    1. Top parents (Pareto 80% via `maxItems` cap)
-//    2. Per-parent child breakdown (parallelized via Promise.all)
+//    2. Per-parent child breakdown — ONE combined query (ROW_NUMBER
+//       PARTITION BY parent, rn <= 20; see AUDIT-FOLLOWUP-NESTED-N+1)
 //
 //  SQL safety: JOINs are built as a plain string joined with space,
 //  then wrapped in `Prisma.raw()`. We do NOT interpolate `Prisma.empty`
@@ -212,47 +244,15 @@ function getDimensionExpr(dim: ParetoDimension): DimensionExpr {
 }
 
 /**
- * Build a parameterized WHERE fragment (`AND ... = ${value}`) for filtering
- * records by a specific dimension value. Used in Step 2 of queryParetoNested
- * to scope the per-parent child breakdown to one parent's slice.
- *
- * Special case for 'pic' with value 'Unassigned': the group uses
- * `COALESCE(pic.pic, 'Unassigned')`, so the matching filter is
- * `pic.pic IS NULL` (NOT `pic.pic = 'Unassigned'` — would match nothing
- * since the literal 'Unassigned' never appears in the pic column).
- *
- * @param dim Pareto dimension
- * @param value Dimension value to match (e.g. item name, outlet code, area)
- * @returns Prisma.Sql fragment beginning with `AND`
- */
-function getDimensionFilter(dim: ParetoDimension, value: string): Prisma.Sql {
-  switch (dim) {
-    case 'item':
-      return Prisma.sql`AND i.name = ${value}`;
-    case 'outlet':
-      return Prisma.sql`AND o.code = ${value}`;
-    case 'area':
-      return Prisma.sql`AND o.area = ${value}`;
-    case 'kelompok':
-      // Must match the group expression exactly so the filter selects the same group
-      return Prisma.sql`AND LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = ${value}`;
-    case 'pic':
-      // 'Unassigned' is the COALESCE sentinel — match via IS NULL on the underlying column
-      if (value === 'Unassigned') {
-        return Prisma.sql`AND pic.pic IS NULL`;
-      }
-      return Prisma.sql`AND pic.pic = ${value}`;
-  }
-}
-
-/**
  * Generalized nested Pareto: top parents (Pareto 80%) → per-parent child
  * breakdown (Pareto 80% within each parent).
  *
  * 2-step pattern (matches `queryParetoNestedItemOutlet` but with pluggable
  * dimensions):
  *   1. Query top N parents by |nominalDeviasi| (LIMIT maxItems)
- *   2. For each parent, query its top 20 children in parallel (Promise.all)
+ *   2. ONE combined query for all parents' top-20 children (ROW_NUMBER
+ *      PARTITION BY parent group, rn <= 20 — AUDIT-FOLLOWUP-NESTED-N+1;
+ *      previously one withStatementTimeout transaction per parent)
  *
  * JOINs are built as a plain space-joined string + wrapped in Prisma.raw().
  * See "SQL safety" comment at top of this section for why we avoid
@@ -333,40 +333,68 @@ export async function queryParetoNested(
 
   const grandTotal = topParents.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
 
-  // Step 2: per-parent child breakdown — parallelized via Promise.all.
-  // Same pattern as queryParetoNestedItemOutlet (BUG2-PARETO-2 fix): each
-  // child query is wrapped in withStatementTimeout to prevent PgBouncer hangs.
-  const childRowsByParent = await Promise.all(
-    topParents.map((parent) => {
-      const parentName = parent.name;
-      const parentFilter = getDimensionFilter(parentDim, parentName);
-      return withStatementTimeout((tx) => tx.$queryRaw<
-        Array<{
-          name: string;
-          totalAbsNominal: number;
-          nominalDeviasi: number;
-          qtyDeviasi: number;
-          outletCount: number;
-        }>
-      >`
-        SELECT ${childGroupExpr} as "name",
-          ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-          SUM(ir."nominalDeviasi") as "nominalDeviasi",
-          SUM(ir."qtyDeviasi") as "qtyDeviasi",
-          CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
-        FROM "InventoryRecord" ir
-        ${childJoins}
-        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-          AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-          ${parentFilter}
-          ${f}
-        GROUP BY ${childGroupExpr}
-        HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-        ORDER BY "totalAbsNominal" DESC
-        LIMIT 20
-      `);
-    }),
-  );
+  // Step 2: per-parent child breakdown — ONE combined query for ALL parents
+  // (AUDIT-FOLLOWUP-NESTED-N+1; previously one withStatementTimeout
+  // transaction per parent → up to 10 concurrent connections per request).
+  //
+  // Scoping trick: instead of a per-parent `${groupExpr} = ${value}` filter
+  // (the old getDimensionFilter helper), we filter `${parentGroupExpr} IN
+  // (top parent names)` and ALSO select it as "parentName" — the exact same
+  // expression Step 1 grouped by, so the two steps can never disagree.
+  // For parentDim='pic' this is strictly MORE consistent than the old
+  // per-parent filter: 'Unassigned' now matches every row the Step-1
+  // COALESCE group counted (pic IS NULL ∪ pic = 'Unassigned'), whereas the
+  // old `pic.pic IS NULL` filter silently dropped the literal-'Unassigned'
+  // subset (children could sum to less than the parent total).
+  //
+  // Child rows keep their old shape; the unused `outletCount` column the
+  // per-parent query computed is dropped (post-processing never read it).
+  // topParents.length >= 1 here (empty case early-returned above), so the
+  // Prisma.join IN-list always has >= 1 element.
+  const parentNames = topParents.map((p) => p.name);
+  const childRows = await withStatementTimeout((tx) => tx.$queryRaw<
+    Array<{
+      parentName: string;
+      name: string;
+      totalAbsNominal: number;
+      nominalDeviasi: number;
+      qtyDeviasi: number;
+    }>
+  >`
+    WITH per_child AS (
+      SELECT ${parentGroupExpr} as "parentName", ${childGroupExpr} as "name",
+        ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi",
+        SUM(ir."qtyDeviasi") as "qtyDeviasi"
+      FROM "InventoryRecord" ir
+      ${childJoins}
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND ${parentGroupExpr} IN (${Prisma.join(parentNames)})
+        ${f}
+      GROUP BY ${parentGroupExpr}, ${childGroupExpr}
+      HAVING ABS(SUM(ir."nominalDeviasi")) > 0
+    ),
+    ranked AS (
+      -- Top 20 children per parent by ABS(nominalDeviasi) DESC — same cap
+      -- the old per-parent query enforced via ORDER BY ... LIMIT 20. Child
+      -- "name" is a deterministic tie-break (old LIMIT picked ties
+      -- nondeterministically).
+      SELECT per_child.*,
+        ROW_NUMBER() OVER (PARTITION BY "parentName" ORDER BY "totalAbsNominal" DESC, "name") AS rn
+      FROM per_child
+    )
+    SELECT "parentName", "name", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
+    FROM ranked
+    WHERE rn <= 20
+    ORDER BY "parentName", "totalAbsNominal" DESC, "name"
+  `);
+  const childRowsByParent = new Map<string, typeof childRows>();
+  for (const row of childRows) {
+    const list = childRowsByParent.get(row.parentName) ?? [];
+    list.push(row);
+    childRowsByParent.set(row.parentName, list);
+  }
 
   // Build result: per-parent share% + cum% + Pareto-80%-filtered children
   const items: NestedParetoResultItem[] = [];
@@ -374,7 +402,10 @@ export async function queryParetoNested(
   for (let idx = 0; idx < topParents.length; idx++) {
     const parent = topParents[idx];
     const parentTotal = Number(parent.totalAbsNominal);
-    const childRows = childRowsByParent[idx];
+    // Map lookup (not index) — rows arrive grouped by parentName from the
+    // combined query; ordering within each parent is preserved by the
+    // ORDER BY "parentName", "totalAbsNominal" DESC, "name" above.
+    const childRows = childRowsByParent.get(parent.name) ?? [];
 
     const childTotal = childRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
     let childCumPct = 0;

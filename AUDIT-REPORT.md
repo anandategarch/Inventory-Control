@@ -210,7 +210,9 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
 **Belum (butuh aksi manual user):**
 - P0: rotasi password Supabase + purge git history + revoke PAT (kredensial masih terbaca di history)
 - Jalankan: `bun run db:fix-duplicate-weeks` LALU `bun run db:fix-null-akun-duplicates` LALU `bun run db:push` (urutan penting: bersihkan duplikat dulu, constraint/index diterapkan terakhir)
-- `src/lib/queries/pareto/nested.ts:60` masih N+1 kecil (10 tx) — kandidat follow-up
+
+**Follow-up terimplementasi:**
+- N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
 
 ---
 *Audit dilakukan read-only — tidak ada file repo yang dimodifikasi.*
