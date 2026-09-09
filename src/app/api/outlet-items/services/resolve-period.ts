@@ -14,7 +14,11 @@
 //       - Otherwise: search backwards for same weekLabel in a DIFFERENT
 //         month (FIX BUG 3: cumulative weeks — chronological previous
 //         caused W4→W2 same-month false positives)
-//       - Fallback: chronological previous period
+//       - No fallback (FIX AUDIT-BUG-2): if no same-weekLabel period
+//         exists in a previous month → { prevWeek: null, prevMonth: null }
+//         so the caller short-circuits (fetch-records guards
+//         `prevWeek && prevMonth`; empty prevRecs → profile renders its
+//         no-comparison / NEW state).
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -98,10 +102,12 @@ export async function resolveOutletAndPeriod(params: {
       }
     }
     prevMonth = foundMonth;
-    if (!prevMonth && currentIdx > 0) {
-      // Fallback: chronological previous
-      prevWeek = allPeriods[currentIdx - 1].weekLabel;
-      prevMonth = allPeriods[currentIdx - 1].monthLabel;
+    // FIX (AUDIT-BUG-2): weeks are CUMULATIVE — cross-week comparison (e.g. W2
+    // vs W1 same month) produces false ~-50% growth. No fallback: no same-week
+    // prior period → no comparison. Both fields null (matches
+    // resolvePreviousPeriod in @/lib/period-resolver) so callers short-circuit.
+    if (!prevMonth) {
+      prevWeek = null;
     }
   }
 

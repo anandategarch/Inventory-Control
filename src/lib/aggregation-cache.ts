@@ -135,7 +135,8 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
 //  Unlike getCached (which deletes expired rows), this helper keeps
 //  the row so the SWR background recompute can update it in place
 //  via setCached (upsert). The cleanup helper (cleanupExpiredCache)
-//  handles bulk deletion of rows older than 30 min.
+//  handles bulk deletion of rows older than 90 min (FIX AUDIT-PERF-5 —
+//  was 30 min; see CLEANUP_TTL_MS below).
 // ============================================================
 export async function getCachedWithMeta<T>(
   cacheKey: string,
@@ -334,7 +335,14 @@ export async function withCacheAndDedup<T>(
 // ============================================================
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 min — cap cleanup frequency
 let _lastCleanupAt = 0;
-const CLEANUP_TTL_MS = 30 * 60 * 1000; // 30 min — be conservative (don't delete still-warm entries)
+// FIX (AUDIT-PERF-5): raised 30 min → 90 min. Stale rows must survive long
+// enough for stale-while-revalidate to SERVE them while the background
+// recompute runs (the analysis recompute alone can take 6-8s+; a burst of
+// keys revalidating concurrently delays individual recomputes further).
+// At the old 30 min cutoff, cleanup could delete a row mid-SWR (right after
+// the stale hit, before setCached upserted the fresh payload) → next request
+// pays the full cold recompute — exactly what SWR exists to prevent.
+const CLEANUP_TTL_MS = 90 * 60 * 1000; // 90 min — keep stale rows so SWR can serve them during background recompute
 
 export async function cleanupExpiredCache(force = false): Promise<void> {
   const now = Date.now();

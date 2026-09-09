@@ -44,13 +44,22 @@ model Week {
   sourceFileId  Int
   sourceFile    SourceFile @relation(fields: [sourceFileId], references: [id], onDelete: Cascade)
   weekLabel     String   // "WEEK 1"
-  weekKey       String   // "2026-07-W1" sortable unique
+  weekKey       String   // "2026-07-W1" sortable (NOT unique — see @@unique below)
   monthKey      String   // "2026-07"
   periodStart   Int      // 1
   periodEnd     Int      // 7
   records       InventoryRecord[]
 
+  // (sourceFileId, weekLabel) — same-file re-import upsert anchor.
   @@unique([sourceFileId, weekLabel])
+  // FIX (AUDIT-BUG-1): a (monthKey, weekLabel) pair must map to AT MOST ONE
+  // Week row. Previously weekKey's "unique" existed only in a comment, so a
+  // re-import of the same month under a DIFFERENT fileName created a second
+  // SourceFile + second Week for the same period → every period-filtered
+  // aggregate DOUBLE-COUNTED. This DB-level constraint makes the duplicate
+  // impossible (ingest-process now purges the old cross-file week BEFORE
+  // the upsert; scripts/fix-duplicate-weeks.ts cleans existing dupes).
+  @@unique([monthKey, weekLabel])
   @@index([monthKey])
 }
 

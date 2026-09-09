@@ -25,11 +25,23 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { buildCacheKey, getCachedWithMeta, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { triggerBackgroundRecompute } from './background-recompute';
 
 // FIX Medium #1: DB-level caching via AggregationCache table.
-// TTL 5 minutes. Cache hit skips all 16 parallel SQL queries (~7s → <100ms).
+// Cache hit skips all 16 parallel SQL queries (~7s → <100ms).
 // Cache invalidated on: ingest, settings change, direction migration (see those routes).
-export const ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
+//
+// FIX (AUDIT-PERF-5): TTL raised 5min → 30min (default, env-overridable via
+// ANALYSIS_CACHE_TTL_MINUTES). Analysis data is IMMUTABLE between mutations —
+// it only changes on ingest/settings/pic/data changes, and every one of those
+// routes already calls invalidateAnalysisCache() (which deletes these rows),
+// so a long TTL is safe. The TTL only bounds how long a row survives when no
+// request re-reads it. The stale-while-revalidate path below covers the tail:
+// a hit past TTL serves the stale row in <100ms and triggers ONE guarded
+// background recompute that upserts the fresh row (see background-recompute.ts).
+const ANALYSIS_TTL_MINUTES = Number(process.env.ANALYSIS_CACHE_TTL_MINUTES || 30);
+export const ANALYSIS_CACHE_TTL_MS =
+  (Number.isFinite(ANALYSIS_TTL_MINUTES) && ANALYSIS_TTL_MINUTES > 0 ? ANALYSIS_TTL_MINUTES : 30) * 60 * 1000;
 
 // Resolved input parameters carried forward to stages 2-5.
 // prevWeek + prevMonth are `string | null` (null when no comparison period exists).
@@ -177,7 +189,8 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
 
   // FIX Medium #1: DB-level cache check.
   // Try to read cached result BEFORE running the 16 parallel SQL queries.
-  // Cache hit: <100ms response (vs 6-8s cold). TTL 5 min.
+  // Cache hit: <100ms response (vs 6-8s cold). TTL 30 min by default
+  // (FIX AUDIT-PERF-5 — see ANALYSIS_CACHE_TTL_MS above).
   // FIX (BUG-KELOMPOK-CACHE): kelompok is now part of the cache key — without it,
   // requests with different kelompok filters would share a cache entry (cache poisoning).
   const cacheKey = buildCacheKey({
@@ -201,10 +214,36 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
     }
   }
 
+  // ============================================================
+  //  FIX (AUDIT-PERF-6): Register the in-flight Promise BEFORE the cache-read
+  //  await below — mirrors withCacheAndDedup step 2 (aggregation-cache.ts).
+  //  Previously, setInflight ran AFTER `await getCachedWithMeta`, leaving a
+  //  check-then-act race window: two concurrent requests could both observe
+  //  getInflight=null while the first was still awaiting the cache read, then
+  //  BOTH fall through and run the full 20-50-query pipeline (cache stampede,
+  //  amplified by the frontend's 3x retry). Now any request that arrives while
+  //  we're awaiting the cache read sees this Promise via getInflight (step 1
+  //  above on its pass) and awaits it. On a cache HIT we resolve it below with
+  //  the cached payload; on a MISS route.ts resolves/rejects it (see
+  //  ValidateAndResolveOutcome).
+  //  FIX (DEEP-AUDIT-ZEROS): reject is captured too — if stages 2-5 throw, the
+  //  in-flight Promise rejects so concurrent requests don't hang forever
+  //  (previously only resolve was captured, so errors left the Promise pending
+  //  indefinitely → concurrent requests waited forever → dashboard stuck/0s).
+  // ============================================================
+  let resolveComputation!: (v: unknown) => void;
+  let rejectComputation!: (e: unknown) => void;
+  const computationPromise = new Promise<unknown>((resolve, reject) => {
+    resolveComputation = resolve;
+    rejectComputation = reject;
+  });
+  setInflight(cacheKey, computationPromise);
+
   // PERF-CACHE-01 (SWR): Use getCachedWithMeta instead of getCached.
-  // getCached deletes expired rows → first user after TTL pays full 21s recompute.
+  // getCached deletes expired rows → first user after TTL pays full recompute.
   // getCachedWithMeta returns stale data → user gets response in <100ms.
-  // Background: delete the stale entry so next request recomputes fresh data.
+  // FIX (AUDIT-PERF-5): the stale row is NO LONGER deleted — a background
+  // recompute (triggerBackgroundRecompute) refreshes it in place instead.
   const cachedWithMeta = await getCachedWithMeta<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
   if (cachedWithMeta && cachedWithMeta.data && typeof cachedWithMeta.data === 'object' && 'success' in cachedWithMeta.data) {
     // Cache hit (fresh or stale) — return immediately
@@ -214,31 +253,44 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
     if (cachedWithMeta.stale) {
       // SWR: serve stale data + flag for client + background refresh
       cachedResult.stale = true;
-      // Fire-and-forget: delete stale entry so next request recomputes fresh
-      // (can't run full pipeline in background due to multi-stage architecture)
-      void db.aggregationCache.delete({ where: { cacheKey } }).catch((e: unknown) => {
-        import('@/lib/logger').then(({ logger }) => {
-          logger.error('[analysis] SWR stale cache delete failed', { error: e instanceof Error ? e.message : String(e), cacheKey });
-        });
-      });
+    }
+    // FIX (AUDIT-PERF-6): resolve the in-flight Promise (registered above)
+    // with the cached payload so concurrent requests that arrived during the
+    // cache-read await get this response instead of hanging or re-computing.
+    resolveComputation(cachedResult);
+    if (cachedWithMeta.stale) {
+      // FIX (AUDIT-PERF-5): true SWR — serve stale, then recompute in the
+      // background and UPSERT the fresh row (setCached). The next request
+      // reads fresh data from the DB cache. The old behavior fire-and-forgot
+      // DELETED the stale row, so the very next user paid the full cold
+      // recompute (20-50 SQL queries, 6-8s) even though the data was still
+      // valid — mutations already invalidate this cache explicitly, so
+      // keeping + refreshing the row is safe.
+      // paramsForRecompute mirrors the miss-path params (prevWeek/prevMonth
+      // are null — fetch-records resolves them during its own run).
+      const paramsForRecompute: ResolvedParams = {
+        month: month!,
+        week: week!,
+        prevWeek: null,
+        prevMonth: null,
+        compareWeek,
+        compareMonthExplicit,
+        area,
+        kelompok,
+        outletCode,
+        itemName,
+        pic,
+        startedAt,
+      };
+      triggerBackgroundRecompute(cacheKey, paramsForRecompute);
     }
     return { kind: 'response', response: NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS }) };
   }
-
-  // FIX M3 (AUDIT-5): Register in-flight Promise to prevent cache stampede.
-  // Concurrent requests for the same key will await this Promise (checked
-  // at the top of the handler via getInflight) instead of computing in parallel.
-  // FIX (DEEP-AUDIT-ZEROS): also capture reject — if the computation throws,
-  // the in-flight Promise must reject so concurrent requests don't hang forever
-  // (previously only resolve was captured, so errors left the Promise pending
-  // indefinitely → concurrent requests waited forever → dashboard stuck/0s).
-  let resolveComputation!: (v: unknown) => void;
-  let rejectComputation!: (e: unknown) => void;
-  const computationPromise = new Promise<unknown>((resolve, reject) => {
-    resolveComputation = resolve;
-    rejectComputation = reject;
-  });
-  setInflight(cacheKey, computationPromise);
+  // Cache MISS (or the row's payload failed the response-shape guard): fall
+  // through to compute. The in-flight Promise registered above stays PENDING
+  // until route.ts resolves it with the fresh result — do NOT resolve it here,
+  // the route owns resolution on both the success and the 404 short-circuit
+  // paths (concurrent awaiters must get the fresh data, not a miss).
 
   return {
     kind: 'continue',

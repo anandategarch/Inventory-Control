@@ -8,6 +8,13 @@
 //  W4 vs W2 same month is NOT apples-to-apples. Must compare
 //  same weekLabel: W4 Juli vs W4 Juni, W2 Juli vs W2 Juni, etc.
 //
+//  FIX (AUDIT-BUG-2): NO chronological-previous fallback anywhere in this
+//  module — when no same-weekLabel period exists in a previous month, we
+//  return { prevWeek: null, prevMonth: null } so callers short-circuit into
+//  their no-comparison path (callers verified: analysis fetch-records,
+//  export-report data-fetcher, outlet-items fetch-records, recommendations
+//  queryRestoRecommendations — all null-safe).
+//
 //  Before this module, each route had ~30 lines of inline period
 //  resolution logic.
 // ============================================================
@@ -20,11 +27,12 @@ export interface ResolvedPeriod {
 
 /**
  * Auto-compute previous period (same weekLabel in chronologically previous month).
- * Falls back to chronological previous if same-weekLabel not found.
+ * No fallback: if no same-weekLabel period exists in a previous month, returns
+ * { prevWeek: null, prevMonth: null } so the caller short-circuits (no comparison).
  *
  * @param week Current weekLabel (e.g. "WEEK 2")
  * @param month Current monthLabel (e.g. "Agustus 2026")
- * @returns { prevWeek, prevMonth } or { null, null } if no previous period exists
+ * @returns { prevWeek, prevMonth } or { null, null } if no same-week previous period exists
  */
 export async function resolvePreviousPeriod(
   week: string,
@@ -63,12 +71,9 @@ export async function resolvePreviousPeriod(
   prevWeek = week;
   let prevMonth = foundMonth;
 
-  if (!prevMonth && currentIdx > 0) {
-    // Fallback: chronological previous
-    prevWeek = allPeriods[currentIdx - 1].weekLabel;
-    prevMonth = allPeriods[currentIdx - 1].monthLabel;
-  }
-
+  // FIX (AUDIT-BUG-2): weeks are CUMULATIVE — cross-week comparison (e.g. W2
+  // vs W1 same month) produces false ~-50% growth. No fallback: no same-week
+  // prior period → no comparison.
   if (!prevMonth) {
     return { prevWeek: null, prevMonth: null };
   }
@@ -81,8 +86,9 @@ export async function resolvePreviousPeriod(
  * explicit compareMonth. Handles 3 cases:
  *
  *  - Case 1 (compareWeek is null): auto-previous — same weekLabel in the
- *    chronologically previous month. Falls back to the chronological previous
- *    period if same-weekLabel not found. Delegates to `resolvePreviousPeriod`.
+ *    chronologically previous month. No fallback (FIX AUDIT-BUG-2): if no
+ *    same-weekLabel period exists in a previous month, returns nulls so the
+ *    caller short-circuits. Delegates to `resolvePreviousPeriod`.
  *
  *  - Case 2 (compareWeek + compareMonthExplicit both set): use them directly.
  *    No DB lookup needed (caller already validated the month label exists).

@@ -431,21 +431,21 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Create Week record — upsert to handle re-uploads
-      // FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-      const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g,'')) * 7, 31) };
-      const weekRec = await db.week.upsert({
-        where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
-        update: {
-          weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
-          monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
-        },
-        create: {
-          sourceFileId: sourceFile.id, weekLabel,
-          weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
-          monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
-        },
+      // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a previous
+      // import under a different fileName must NOT create a second Week for the same
+      // period (doubles every aggregate). Replace the old week's data instead.
+      // (Straight-line code here — monthInfo narrowing from the guard above applies.)
+      const existingWeek = await db.week.findFirst({
+        where: { monthKey: monthInfo.monthKey, weekLabel },
+        select: { id: true, sourceFileId: true },
       });
+
+      // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+      // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction below —
+      // it must run AFTER the cross-file purge, otherwise the new
+      // @@unique([monthKey, weekLabel]) constraint rejects the create with P2002
+      // while the old cross-file week still exists.
+      const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g,'')) * 7, 31) };
 
       // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
       // transaction so that if createMany fails (DB error, timeout, OOM), the
@@ -465,9 +465,58 @@ export async function POST(req: NextRequest) {
       // during placeholder-filename resolution above), so TypeScript narrowing from
       // the `if (!monthInfo) return` guard doesn't carry into the closure below.
       const monthLabelForTx = monthInfo.monthLabel;
+      // FIX (AUDIT-BUG-1): capture monthKey too — the Week upsert now runs inside
+      // the transaction closure (see above).
+      const monthKeyForTx = monthInfo.monthKey;
 
       const result = await db.$transaction(
         async (tx) => {
+          if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
+            // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
+            // (monthKey, weekLabel) — purge it so the new file becomes the
+            // single source of truth for this (month, week). The old code only
+            // deleted the NEW file's week records, leaving BOTH weeks in place
+            // (Week.weekKey "unique" existed only in a comment) → every
+            // period-filtered aggregate double-counted.
+            await tx.inventoryRecord.deleteMany({ where: { weekId: existingWeek.id } });
+            // Old file's precomputed sales MODE for this weekLabel (a SourceFile
+            // belongs to ONE month, so (sourceFileId, weekLabel) pins exactly this
+            // period). Outlets covered by the new import are re-inserted by
+            // computeOutletPeriodSales inside processRowsForImport (ON CONFLICT
+            // latest-wins); deleting here prevents stale rows for outlets the new
+            // import no longer contains.
+            await tx.outletPeriodSales.deleteMany({
+              where: { sourceFileId: existingWeek.sourceFileId, weekLabel },
+            });
+            await tx.week.delete({ where: { id: existingWeek.id } });
+            // Delete the old SourceFile if it has no weeks left (fully superseded
+            // file) — its DQIssues cascade-delete with it.
+            const remainingWeeks = await tx.week.count({ where: { sourceFileId: existingWeek.sourceFileId } });
+            if (remainingWeeks === 0) {
+              await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
+              await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
+            }
+          }
+
+          // Create Week record — upsert to handle re-uploads (same-file re-import:
+          // the purge above was skipped because existingWeek.sourceFileId ===
+          // sourceFile.id, so this upsert finds no conflicting week).
+          // FIX (AUDIT-BUG-1): runs AFTER the cross-file purge (see comment above
+          // the transaction) and rolls back with the import on failure.
+          // FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+          const weekRec = await tx.week.upsert({
+            where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
+            update: {
+              weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
+              monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
+            },
+            create: {
+              sourceFileId: sourceFile.id, weekLabel,
+              weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
+              monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
+            },
+          });
+
           await tx.inventoryRecord.deleteMany({
             where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
           });
@@ -682,30 +731,79 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // Create Week record — upsert to handle re-uploads
-        const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g, '')) * 7, 31) };
-        const weekRec = await db.week.upsert({
-          where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
-          update: {
-            weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
-            monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
-          },
-          create: {
-            sourceFileId: sourceFile.id, weekLabel,
-            weekKey: `${monthInfo.monthKey}-${weekLabel.replace(/\s+/g, '')}`,
-            monthKey: monthInfo.monthKey, periodStart: p.start, periodEnd: p.end,
-          },
+        // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a
+        // previous import under a different fileName must NOT create a second
+        // Week for the same period (doubles every aggregate). Replace the old
+        // week's data instead. (Straight-line code — monthInfo narrowing from
+        // the guard above applies; inside the transaction closure it doesn't.)
+        const existingWeek = await db.week.findFirst({
+          where: { monthKey: monthInfo.monthKey, weekLabel },
+          select: { id: true, sourceFileId: true },
         });
+
+        // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+        // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction
+        // below — it must run AFTER the cross-file purge, otherwise the new
+        // @@unique([monthKey, weekLabel]) constraint rejects the create with
+        // P2002 while the old cross-file week still exists.
+        const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g, '')) * 7, 31) };
 
         // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
         // transaction so that if createMany fails, the deleteMany is rolled back.
-        // Same rationale as `import` mode above (line ~446). Without this, a
+        // Same rationale as `import` mode above. Without this, a
         // createMany failure mid-week would leave the week with 0 records.
         // Capture monthLabel before the transaction — `monthInfo` is a `let`, so TS
         // narrowing from the `if (!monthInfo) return` guard doesn't carry into closures.
         const monthLabelForTx = monthInfo.monthLabel;
+        // FIX (AUDIT-BUG-1): capture monthKey too — the Week upsert now runs
+        // inside the transaction closure (see above).
+        const monthKeyForTx = monthInfo.monthKey;
         const result = await db.$transaction(
           async (tx) => {
+            if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
+              // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
+              // (monthKey, weekLabel) — purge it so the new file becomes the
+              // single source of truth for this (month, week). The old code only
+              // deleted the NEW file's week records, leaving BOTH weeks in place
+              // (Week.weekKey "unique" existed only in a comment) → every
+              // period-filtered aggregate double-counted.
+              await tx.inventoryRecord.deleteMany({ where: { weekId: existingWeek.id } });
+              // Old file's precomputed sales MODE for this weekLabel (a
+              // SourceFile belongs to ONE month, so (sourceFileId, weekLabel)
+              // pins exactly this period). Outlets covered by the new import
+              // are re-inserted by computeOutletPeriodSales inside
+              // processRowsForImport (ON CONFLICT latest-wins).
+              await tx.outletPeriodSales.deleteMany({
+                where: { sourceFileId: existingWeek.sourceFileId, weekLabel },
+              });
+              await tx.week.delete({ where: { id: existingWeek.id } });
+              // Delete the old SourceFile if it has no weeks left (fully
+              // superseded file) — its DQIssues cascade-delete with it.
+              const remainingWeeks = await tx.week.count({ where: { sourceFileId: existingWeek.sourceFileId } });
+              if (remainingWeeks === 0) {
+                await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
+                await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
+              }
+            }
+
+            // Create Week record — upsert to handle re-uploads (same-file
+            // re-import: the purge above was skipped because
+            // existingWeek.sourceFileId === sourceFile.id).
+            // FIX (AUDIT-BUG-1): runs AFTER the cross-file purge (see comment
+            // above the transaction) and rolls back with the import on failure.
+            const weekRec = await tx.week.upsert({
+              where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
+              update: {
+                weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
+                monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
+              },
+              create: {
+                sourceFileId: sourceFile.id, weekLabel,
+                weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
+                monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
+              },
+            });
+
             await tx.inventoryRecord.deleteMany({
               where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
             });

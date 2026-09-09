@@ -69,8 +69,11 @@ describe('resolveComparePeriod — Case 1: auto-previous (compareWeek null)', ()
     expect(r).toEqual({ prevWeek: null, prevMonth: null });
   });
 
-  it('falls back to chronological previous when same weekLabel not found backwards', async () => {
-    // Agustus WEEK 4 — no WEEK 4 in previous months; falls back to chronological previous
+  it('returns {null, null} when same weekLabel not found backwards (FIX AUDIT-BUG-2: no chronological fallback)', async () => {
+    // Agustus WEEK 4 — no WEEK 4 in previous months → NO comparison.
+    // FIX (AUDIT-BUG-2): weeks are CUMULATIVE — cross-week comparison (e.g. W2
+    // vs W1 same month) produces false ~-50% growth. The old code fell back to
+    // the chronological previous period (Juli WEEK 2) — a mismatched-week pair.
     setupPeriods([
       { month: 'Juni 2026', week: 'WEEK 1', monthKey: '2026-06' },
       { month: 'Juni 2026', week: 'WEEK 2', monthKey: '2026-06' },
@@ -79,9 +82,21 @@ describe('resolveComparePeriod — Case 1: auto-previous (compareWeek null)', ()
       { month: 'Agustus 2026', week: 'WEEK 4', monthKey: '2026-08' },
     ]);
     const r = await resolveComparePeriod('WEEK 4', 'Agustus 2026', null, null);
-    // No WEEK 4 in previous months → fallback to chronological previous (Juli WEEK 2)
-    expect(r.prevMonth).toBe('Juli 2026');
-    expect(r.prevWeek).toBe('WEEK 2');
+    // No WEEK 4 in previous months → no comparison (was: Juli WEEK 2)
+    expect(r.prevMonth).toBe(null);
+    expect(r.prevWeek).toBe(null);
+  });
+
+  it('skips over an intervening month without the same weekLabel and finds the older same-week period', async () => {
+    // Current = Agustus WEEK 2; Juli has no WEEK 2; Juni has WEEK 2 → Juni WEEK 2 wins
+    // (search goes ALL the way back, not just the immediately previous month).
+    setupPeriods([
+      { month: 'Juni 2026', week: 'WEEK 2', monthKey: '2026-06' },
+      { month: 'Juli 2026', week: 'WEEK 1', monthKey: '2026-07' },
+      { month: 'Agustus 2026', week: 'WEEK 2', monthKey: '2026-08' },
+    ]);
+    const r = await resolveComparePeriod('WEEK 2', 'Agustus 2026', null, null);
+    expect(r).toEqual({ prevWeek: 'WEEK 2', prevMonth: 'Juni 2026' });
   });
 });
 
@@ -155,15 +170,17 @@ describe('resolvePreviousPeriod', () => {
     expect(r).toEqual({ prevWeek: null, prevMonth: null });
   });
 
-  it('falls back to chronological previous when same weekLabel not found', async () => {
+  it('returns {null, null} when same weekLabel not found (FIX AUDIT-BUG-2: no chronological fallback)', async () => {
     setupPeriods([
       { month: 'Juni 2026', week: 'WEEK 1', monthKey: '2026-06' },
       { month: 'Juli 2026', week: 'WEEK 1', monthKey: '2026-07' },
       { month: 'Agustus 2026', week: 'WEEK 4', monthKey: '2026-08' },
     ]);
-    // Current = Agustus WEEK 4; no WEEK 4 before → fallback to chronological previous (Juli WEEK 1)
+    // Current = Agustus WEEK 4; no WEEK 4 before → NO comparison.
+    // Old behavior fell back to the chronological previous period (Juli WEEK 1)
+    // — mismatched weeks produce false ~-50% growth (weeks are cumulative).
     const r = await resolvePreviousPeriod('WEEK 4', 'Agustus 2026');
-    expect(r.prevMonth).toBe('Juli 2026');
-    expect(r.prevWeek).toBe('WEEK 1');
+    expect(r.prevMonth).toBe(null);
+    expect(r.prevWeek).toBe(null);
   });
 });

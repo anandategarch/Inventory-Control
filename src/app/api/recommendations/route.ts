@@ -96,14 +96,20 @@ export async function GET(req: NextRequest) {
             (p) => p.monthLabel === resolvedMonth && p.weekLabel === week,
           );
           if (currentIdx > 0) {
-            // Auto-compare: same weekLabel in previous month (if exists), else previous period
+            // Auto-compare: same weekLabel in a previous month ONLY.
+            // FIX (AUDIT-BUG-2): weeks are CUMULATIVE — cross-week comparison
+            // (e.g. W2 vs W1 same month) produces false ~-50% growth. No
+            // fallback: no same-week prior period → no comparison (leave
+            // resolvedPrevWeek/resolvedPrevMonth unchanged; they stay null and
+            // queryRestoRecommendations takes its no-comparison path).
             const sameWeekInPrevMonth = allPeriods
               .slice(0, currentIdx)
               .reverse()
               .find((p) => p.weekLabel === week);
-            const prevPeriod = sameWeekInPrevMonth || allPeriods[currentIdx - 1];
-            if (!resolvedPrevWeek) resolvedPrevWeek = prevPeriod.weekLabel;
-            if (!resolvedPrevMonth) resolvedPrevMonth = prevPeriod.monthLabel;
+            if (sameWeekInPrevMonth) {
+              if (!resolvedPrevWeek) resolvedPrevWeek = sameWeekInPrevMonth.weekLabel;
+              if (!resolvedPrevMonth) resolvedPrevMonth = sameWeekInPrevMonth.monthLabel;
+            }
           }
         } catch {
           // Week table may not exist — skip auto-compute
