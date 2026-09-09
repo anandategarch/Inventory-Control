@@ -19,7 +19,12 @@ import { CACHE_METADATA, CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
+// PERF-DELETE-1: was 30s — deleting a month (~54-100K records) or ALL
+// (~306K records, 16 indexes on InventoryRecord) can exceed 30s on the
+// Supabase pooler. Vercel then killed the function mid-transaction → client
+// timeout → user retried → 429 "tunggu beberapa menit" ("hapus juga lama").
+// 300s matches /api/ingest-process, the other heavy mutation route.
+export const maxDuration = 300;
 
 // ------------------------------------------------------------
 //  GET /api/data — list all SourceFiles grouped by month
@@ -147,13 +152,24 @@ export async function DELETE(req: NextRequest) {
       deletedRecords = await db.inventoryRecord.count();
       deletedWeeks = await db.week.count();
 
-      // FIX (BUG 1): Wrap cascade in transaction for atomicity
-      await db.$transaction([
-        db.dQIssue.deleteMany(),
-        db.inventoryRecord.deleteMany(),
-        db.week.deleteMany(),
-        db.sourceFile.deleteMany(),
-      ]);
+      // PERF-DELETE-2: single atomic TRUNCATE instead of four deleteMany.
+      // DELETE walks every row and removes its entry from EVERY index —
+      // InventoryRecord alone has ~16 indexes (12 @@index + unique + NULL-safe
+      // + INCLUDE covering), so "reset semua" (~306K rows) performed millions
+      // of index-tuple deletions in one transaction: tens of seconds + heavy
+      // WAL. TRUNCATE is metadata-level (O(1) regardless of row count), still
+      // fully atomic, and resets nothing else — sequence values are preserved
+      // (ids continue like the old DELETE path).
+      // All five tables are truncated together so FK references (Week →
+      // SourceFile, InventoryRecord → Week/SourceFile, DQIssue → SourceFile,
+      // OutletPeriodSales → SourceFile) are satisfied without CASCADE.
+      // Outlet/Item are intentionally NOT truncated (Restrict FKs from
+      // InventoryRecord — truncating InventoryRecord is allowed without
+      // touching them, and they are master data, not imported data).
+      // Table names are static identifiers — no injection surface.
+      await db.$executeRawUnsafe(
+        'TRUNCATE TABLE "DQIssue", "InventoryRecord", "Week", "SourceFile", "OutletPeriodSales"',
+      );
     } else if (data.monthKey || data.month) {
       // Delete all SourceFiles for this month — cascade.
       // FIX (DEEP-AUDIT-API-3, DEEP-AUDIT-FLOW-7): query by monthKey, NOT monthLabel.
@@ -197,7 +213,16 @@ export async function DELETE(req: NextRequest) {
       // FIX (BUG 1): Capture counts BEFORE, then wrap deletes in transaction
       deletedRecords = await db.inventoryRecord.count({ where: { sourceFileId: { in: fileIds } } });
       deletedWeeks = await db.week.count({ where: { sourceFileId: { in: fileIds } } });
+      // PERF-DELETE-3: advisory lock on the same key space as imports
+      // (pg_advisory_xact_lock(hashtext(monthKey)) — see
+      // src/lib/ingestion/ingestion-lock.ts). Without it, a DELETE of a
+      // month racing a concurrent import of the SAME month interleaves:
+      // import deletes+inserts inside its transaction while the delete's
+      // deleteMany runs → the final state depends on commit order (the
+      // "deleted" month can partially resurrect). xact-scoped → auto-released
+      // at COMMIT/ROLLBACK even if the function dies mid-transaction.
       await db.$transaction([
+        db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${monthKeyToDelete}))`,
         db.dQIssue.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
         db.inventoryRecord.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
         db.week.deleteMany({ where: { sourceFileId: { in: fileIds } } }),
@@ -208,7 +233,7 @@ export async function DELETE(req: NextRequest) {
       // Delete a single SourceFile by ID — cascade
       const file = await db.sourceFile.findUnique({
         where: { id: data.fileId },
-        select: { id: true, fileName: true, monthLabel: true },
+        select: { id: true, fileName: true, monthLabel: true, monthKey: true },
       });
       if (!file) {
         return NextResponse.json(
@@ -220,7 +245,11 @@ export async function DELETE(req: NextRequest) {
       // FIX (BUG 1): Capture counts BEFORE, then wrap deletes in transaction
       deletedRecords = await db.inventoryRecord.count({ where: { sourceFileId: file.id } });
       deletedWeeks = await db.week.count({ where: { sourceFileId: file.id } });
+      // PERF-DELETE-3: advisory lock on the file's monthKey — same key space
+      // as imports (see month-branch comment + ingestion-lock.ts) so a delete
+      // can't interleave with a concurrent import of the same month.
       await db.$transaction([
+        db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${file.monthKey}))`,
         db.dQIssue.deleteMany({ where: { sourceFileId: file.id } }),
         db.inventoryRecord.deleteMany({ where: { sourceFileId: file.id } }),
         db.week.deleteMany({ where: { sourceFileId: file.id } }),

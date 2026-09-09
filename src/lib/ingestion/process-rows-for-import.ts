@@ -3,23 +3,43 @@
 //  --------------------------------------------------------
 //  Per-week / per-batch row-processing path used by
 //  /api/ingest-process. Takes raw rows, validates + normalizes
-//  + derives records, ensures outlet/item exist (race-safe
-//  upserts, BUG-5-5), batch-inserts InventoryRecords, then
-//  pre-computes OutletPeriodSales MODE for the sourceFileId
-//  (DRY: computeOutletPeriodSales).
+//  + derives records, ensures outlet/item exist (race-safe,
+//  BUG-5-5), batch-inserts InventoryRecords, then pre-computes
+//  OutletPeriodSales MODE for the sourceFileId (DRY:
+//  computeOutletPeriodSales).
 //
 //  P2 fix: shared logic for ImportService unification — both
 //  processIngestion (full file) and ingest-process (per-week)
 //  historically used ~150 LOC of duplicate logic. This function
 //  is the per-week variant.
 //
+//  PERF-IMPORT-2 (bulk master-data resolution): the old loop
+//  issued a sequential awaited `outlet.upsert` / `item.upsert`
+//  on the FIRST row where each new code/name appeared — with
+//  333 outlets + 109 items that is ~442 network round trips
+//  INSIDE the interactive transaction (5-15ms each through the
+//  Supabase transaction pooler → 3-8s of pure latency per
+//  import, repeated on EVERY upload because the maps start
+//  empty per request). The flow is now three passes:
+//    PASS 1 (CPU): validate + normalize + derive all rows,
+//                  collecting distinct outlet/item candidates.
+//    PASS 2 (DB):  resolve ALL outlets/items with 2-6 set-based
+//                  queries (findMany IN + createMany for missing).
+//    PASS 3 (DB):  enqueue + batch-insert with pure Map lookups
+//                  (zero per-row master-data queries).
+//
 //  INVARIANTS:
 //   - BUG2-INGEST-3: tx propagation — if caller passes a `tx`
 //     (Prisma.TransactionClient), all writes use it so they
 //     roll back on failure. Falls back to global `db` only when
 //     no tx is provided (legacy non-transactional callers).
-//   - BUG-5-5: outlet + item creation use upsert (ON CONFLICT
-//     DO UPDATE) to avoid P2002 under concurrent imports.
+//   - BUG-5-5: outlet + item creation uses createMany with
+//     skipDuplicates (ON CONFLICT DO NOTHING) to avoid P2002
+//     under concurrent imports — same tolerance as the old
+//     per-row upserts.
+//   - LOGIC-12: existing outlets get area+name refreshed when the
+//     first-seen row's values actually differ (the old upsert
+//     wrote them unconditionally; outcome-identical, fewer writes).
 //   - AUDIT-BUG-3: in-memory natural-key dedup — NULL akunPenyesuaian
 //     rows escape the DB unique constraint (NULL ≠ NULL in PG) and
 //     fastMode skips validateRow's seenKeys check.
@@ -33,6 +53,128 @@ import { validateRow, type DQIssueRow } from '@/engine/validator';
 import { computeOutletPeriodSales } from './outlet-period-sales';
 import { insertInventoryRecords } from './batch-insert';
 import type { ProcessRowsResult } from './types';
+import { logger } from '../logger';
+
+type NormalizedRow = ReturnType<typeof normalizeRow>;
+type Derived = ReturnType<typeof deriveRecord>;
+
+/** PASS-1 output: one CPU-normalized row (no DB touched yet). */
+interface PreparedRow {
+  rowNumber: number;
+  n: NormalizedRow;
+  derived: Derived;
+}
+
+/** Distinct outlet to resolve (first-seen row wins, matching old upsert-on-first-encounter). */
+interface OutletCandidate {
+  code: string;
+  name: string;
+  outletCode: string;
+  area: string;
+}
+
+/**
+ * PASS 2 helper — resolve every distinct outlet code in ≤4 set-based queries:
+ * findMany(existing) → [update only changed] → createMany(missing, skipDuplicates)
+ * → findMany(created ids). Replaces ~333 sequential upsert round trips.
+ */
+async function ensureOutletsExist(
+  client: Prisma.TransactionClient,
+  outletDbMap: Map<string, number>,
+  candidates: Map<string, OutletCandidate>,
+): Promise<void> {
+  // Only resolve codes the caller's pre-populated map doesn't already cover.
+  const codes = [...candidates.keys()].filter((c) => !outletDbMap.has(c));
+  if (codes.length === 0) return;
+
+  const existing = await client.outlet.findMany({
+    where: { code: { in: codes } },
+    select: { id: true, code: true, area: true, name: true },
+  });
+  const existingByCode = new Map(existing.map((o) => [o.code, o]));
+
+  let updated = 0;
+  for (const code of codes) {
+    const found = existingByCode.get(code);
+    if (!found) continue;
+    outletDbMap.set(code, found.id);
+    const cand = candidates.get(code)!;
+    // LOGIC-12 parity: refresh area+name only when they actually differ
+    // (the old upsert rewrote them on every import — same end state, but
+    // ~333 no-op UPDATEs per upload).
+    if (cand.area && (found.area !== cand.area || found.name !== cand.name)) {
+      await client.outlet.update({ where: { code }, data: { area: cand.area, name: cand.name } });
+      updated++;
+    }
+  }
+  if (updated > 0) logger.info(`process-rows: refreshed area/name for ${updated} existing outlet(s)`);
+
+  const missing = codes.filter((c) => !existingByCode.has(c));
+  if (missing.length > 0) {
+    // BUG-5-5 parity: skipDuplicates (= ON CONFLICT DO NOTHING) tolerates a
+    // concurrent creator exactly like the old per-row upsert did.
+    await client.outlet.createMany({
+      data: missing.map((c) => {
+        const cand = candidates.get(c)!;
+        return { code: c, name: cand.name, outletCode: cand.outletCode, area: cand.area };
+      }),
+      skipDuplicates: true,
+    });
+    // Refetch to obtain ids (also covers rows a concurrent transaction
+    // created between our findMany and createMany).
+    const created = await client.outlet.findMany({
+      where: { code: { in: missing } },
+      select: { id: true, code: true },
+    });
+    for (const o of created) outletDbMap.set(o.code, o.id);
+  }
+}
+
+/**
+ * PASS 2 helper — resolve every distinct item name in ≤3 set-based queries.
+ * Replaces ~109 sequential upsert round trips. Existing items keep their
+ * satuan; it is back-filled only when the DB row has NULL satuan and the
+ * first-seen row provides one (the documented intent of the old upsert).
+ */
+async function ensureItemsExist(
+  client: Prisma.TransactionClient,
+  itemDbMap: Map<string, { id: number; satuan: string | null }>,
+  candidates: Map<string, string | null>,
+): Promise<void> {
+  const names = [...candidates.keys()].filter((nm) => !itemDbMap.has(nm));
+  if (names.length === 0) return;
+
+  const existing = await client.item.findMany({
+    where: { name: { in: names } },
+    select: { id: true, name: true, satuan: true },
+  });
+  const existingNames = new Set(existing.map((e) => e.name));
+
+  for (const it of existing) {
+    const satuan = candidates.get(it.name) ?? null;
+    // Satuan back-fill (see module header): only when DB has NULL and the
+    // row provides one. The map must reflect the post-update value.
+    if (satuan && !it.satuan) {
+      await client.item.update({ where: { name: it.name }, data: { satuan } });
+      itemDbMap.set(it.name, { id: it.id, satuan });
+    } else {
+      itemDbMap.set(it.name, { id: it.id, satuan: it.satuan });
+    }
+  }
+
+  const missing = names.filter((nm) => !existingNames.has(nm));
+  if (missing.length > 0) {
+    await client.item.createMany({
+      data: missing.map((nm) => ({ name: nm, satuan: candidates.get(nm) ?? null })),
+      skipDuplicates: true,
+    });
+    const created = await client.item.findMany({
+      where: { name: { in: missing } },
+      select: { id: true, name: true, satuan: true },
+    });
+    for (const it of created) itemDbMap.set(it.name, { id: it.id, satuan: it.satuan });
+  }
+}
 
 /**
  * Process rows for import — shared logic for both full-file and per-week ingestion.
@@ -55,7 +197,7 @@ import type { ProcessRowsResult } from './types';
  *             inventoryRecord createMany) use this transaction client. This enables the caller to
  *             wrap delete + insert in a single atomic transaction (FIX BUG2-INGEST-3: prevents
  *             data loss if createMany fails after deleteMany succeeds).
- * @returns { inserted, skippedErrors, dqIssues }
+ * @returns { inserted, skippedErrors, dqIssues, skippedDuplicates }
  */
 export async function processRowsForImport(
   rows: Array<Record<string, unknown> & { _sheetName?: string }>,
@@ -88,10 +230,21 @@ export async function processRowsForImport(
   const _naturalKeys = new Set<string>();
   let skippedDuplicates = 0;
   const allIssues: DQIssueRow[] = [];
-  const BATCH_SIZE = 500;
+  // PERF-IMPORT-1: 500 → 1000. Each InventoryRecordCreateManyInput carries 42
+  // columns → 1000 rows = 42,000 bind parameters, well under PostgreSQL's
+  // 65,535 limit. Halves the sequential createMany round trips per week
+  // (35K rows: 70 → 35 statements), each paying a full pooler round trip.
+  const BATCH_SIZE = 1000;
   let batchRecords: Prisma.InventoryRecordCreateManyInput[] = [];
   let inserted = 0;
   let skippedErrors = 0;
+
+  // ============================================================
+  // PASS 1 — CPU only: validate (non-fastMode) + normalize + derive.
+  // ============================================================
+  const prepared: PreparedRow[] = [];
+  const outletCandidates = new Map<string, OutletCandidate>();
+  const itemCandidates = new Map<string, string | null>();
 
   for (let i = 0; i < rows.length; i++) {
     const rawRow = rows[i];
@@ -113,46 +266,35 @@ export async function processRowsForImport(
 
     const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, numberLocale || 'auto');
     const derived = deriveRecord(n);
+    prepared.push({ rowNumber, n, derived });
 
-    // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
-    // findUnique + create. Two concurrent imports of different weeks for the
-    // same NEW outlet code previously raced: both findUnique miss → both create →
-    // P2002 unique constraint violation → entire week import fails.
-    // Upsert is atomic: if the row exists, update area/name if changed; if not,
-    // create it. Either way, no P2002.
-    if (derived.outletCode && !_outletDbMap.has(derived.outletCode)) {
-      const outlet = await client.outlet.upsert({
-        where: { code: derived.outletCode },
-        // LOGIC-12 fix: update area + name if outlet moved to different area.
-        update: n.area ? { area: n.area, name: derived.outletName } : {},
-        create: {
-          code: derived.outletCode,
-          name: derived.outletName,
-          outletCode: derived.outletNumericCode,
-          area: n.area,
-        },
-        select: { id: true },
+    // First occurrence wins — matches the old upsert-on-first-encounter
+    // semantics (later rows for the same code/name never re-upserted).
+    if (derived.outletCode && !outletCandidates.has(derived.outletCode)) {
+      outletCandidates.set(derived.outletCode, {
+        code: derived.outletCode,
+        name: derived.outletName,
+        outletCode: derived.outletNumericCode,
+        area: n.area,
       });
-      _outletDbMap.set(derived.outletCode, outlet.id);
     }
-
-    // FIX-A-4 (BUG-5-5): Race-safe item creation — use upsert instead of
-    // findUnique + create to handle concurrent imports of the same new item.
-    // Preserves the original behavior of back-filling `satuan` on existing items
-    // when the DB row has null satuan and the current row provides one.
-    if (n.namaBahan && !_itemDbMap.has(n.namaBahan)) {
-      const item = await client.item.upsert({
-        where: { name: n.namaBahan },
-        // If existing item has no satuan, fill it from the current row.
-        // (Prisma returns the row AFTER the upsert, so the returned satuan is the
-        // post-update value — either the newly-filled one or the pre-existing one.)
-        update: n.satuan ? { satuan: n.satuan } : {},
-        create: { name: n.namaBahan, satuan: n.satuan },
-        select: { id: true, satuan: true },
-      });
-      _itemDbMap.set(n.namaBahan, { id: item.id, satuan: item.satuan });
+    if (n.namaBahan && !itemCandidates.has(n.namaBahan)) {
+      itemCandidates.set(n.namaBahan, n.satuan ?? null);
     }
+  }
 
+  // ============================================================
+  // PASS 2 — Set-based master-data resolution (2-6 queries total,
+  // replacing ~442 sequential per-row upserts).
+  // ============================================================
+  await ensureOutletsExist(client, _outletDbMap, outletCandidates);
+  await ensureItemsExist(client, _itemDbMap, itemCandidates);
+
+  // ============================================================
+  // PASS 3 — Enqueue + batch insert (pure Map lookups, zero
+  // per-row master-data DB queries).
+  // ============================================================
+  for (const { rowNumber, n, derived } of prepared) {
     const outletId = _outletDbMap.get(derived.outletCode) ?? 0;
     const itemEntry = _itemDbMap.get(n.namaBahan);
     const itemId = itemEntry?.id ?? 0;
@@ -224,9 +366,7 @@ export async function processRowsForImport(
   // empty → "Top by Sales" widget blank, peer comparison broken, sales=0 everywhere.
   //
   // DRY (Task 4-b): the SQL is now centralized in computeOutletPeriodSales() — both
-  // processIngestion and processRowsForImport invoke it. Byte-identical to the
-  // original inline block (was duplicated verbatim L761-792 here and L479-510
-  // in process-ingestion).
+  // processIngestion and processRowsForImport invoke it.
   //
   // FIX (BUG2-INGEST-3): pass `client` (tx if provided) so this is part of the
   // caller's transaction. The helper is signature-compatible with both

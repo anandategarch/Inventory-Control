@@ -9,7 +9,10 @@ import { validateBody, ingestPostBodySchema } from '@/lib/validation';
 import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
+// PERF-DELETE-1 sibling: GET triggers BULK ingestion (all .xlsx in DATA_DIR —
+// parse + insert of potentially hundreds of thousands of rows). 30s was the
+// Vercel kill point for large folders; 300s matches /api/ingest-process.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();

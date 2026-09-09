@@ -82,8 +82,16 @@ export const RATE_LIMITS = {
   analysis: { maxRequests: 60, windowMs: 60_000 },
   // Status: 30 req/min per IP
   status: { maxRequests: 30, windowMs: 60_000 },
-  // Ingest: 5 req/min per IP (heavy operation)
+  // Ingest: 5 req/min per IP (heavy operation — full-file / per-week import)
   ingest: { maxRequests: 5, windowMs: 60_000 },
+  // PERF-UPLOAD-1: Chunk uploads are NOT heavy per-request — each chunk is
+  // capped at 5MB server-side (MAX_CHUNK_SIZE in /api/ingest-upload) and the
+  // total file is capped at 50MB server-side (FIX-A-3). A 50MB file is ~13
+  // chunks, and each is a single idempotent upsert. Reusing the ingest bucket
+  // (5/min) meant any file >20MB hit "429 Rate limit" at chunk #6 → upload
+  // failed and the user retried for minutes ("upload lama"). 120/min is still
+  // DoS-safe (120 × 5MB = 600MB/min worst case, bounded by per-chunk checks).
+  ingestUpload: { maxRequests: 120, windowMs: 60_000 },
   // Import-drive: 3 req/min per IP (very heavy)
   importDrive: { maxRequests: 3, windowMs: 60_000 },
   // Settings: 10 req/min per IP

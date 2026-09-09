@@ -162,6 +162,34 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
 
 ---
 
+## ⚡ OPTIMASI KECEPATAN (akar "lemot") — UPLOAD & DELETE
+
+### PERF-UPLOAD-1 (FATAL): Rate limit 5/menit dipakai PER-CHUNK upload — `ingest-upload/route.ts` + `rate-limit.ts`
+`/api/ingest-upload` memakai `RATE_LIMITS.ingest` (5 req/mnt). Frontend mengupload chunk 4MB **berurutan** → file >20MB = 6+ chunk → **chunk ke-6 selalu kena 429 "Rate limit exceeded"** → upload gagal / user retry berkali-kali → terasa "upload lama". FIX: bucket khusus `ingestUpload` (120/mnt) — aman karena per-chunk dibatasi 5MB dan total 50MB di sisi server (FIX-A-3).
+
+### PERF-UPLOAD-2: Last-chunk re-download SELURUH file dari DB hanya untuk menghitung total byte
+`findMany({select:{data}})` menarik semua byte chunk (hingga 50MB) dari Postgres hanya untuk `sum(c.data.length)`. FIX: `SELECT COUNT(*), SUM(LENGTH("data"))` — Postgres menghitung in-process, hanya 2 integer yang ditransfer.
+
+### PERF-UPLOAD-3: File ter-transfer 3× + parse 2× pada alur detect → import-all
+Alur: (a) upload N chunk ke DB, (b) last-chunk menarik semua chunk kembali (lihat PERF-UPLOAD-2), (c) `detect` reassemble = **menarik semua chunk lagi** + parse Excel penuh, (d) `import-all` reassemble **lagi** + parse **lagi**. FIX: (i) verifikasi ukuran kini via agregat (PERF-UPLOAD-2); (ii) `/tmp/ingest-process/{fileHash}{ext}` yang ditinggalkan `detect` kini di-REUSE oleh import/import-all (path content-addressed by SHA-256 + cek ukuran advisory) — 1 full-download + 1 parse hilang; cold instance serverless fallback transparan ke jalur lama.
+
+### PERF-UPLOAD-4: Chunk di-upload SEKUENSIAL — `FileUploadDialog.tsx`
+1 fetch = 1 round-trip penuh per 4MB. FIX: worker pool 3-konkuren; chunk TERAKHIR selalu dikirim paling akhir (server memakai chunk terakhir sebagai pemicu verifikasi jumlah+ukuran → baru PERF-UPLOAD-3 check chunk count server-side `storedChunks !== totalChunks`).
+
+### PERF-IMPORT-1/2: ~442 round-trip upsert master-data PER IMPORT — `process-rows-for-import.ts`
+Setiap kemunculan pertama outlet (333) / item (109) → 1 `await upsert` SEKUENSIAL di dalam transaksi interaktif (5-15ms per hop lewat pooler Supabase → 3-8s latensi murni per upload, berulang tiap request karena map selalu mulai kosong). FIX: 3-pass — (1) CPU normalize+derive semua baris sambil kumpulkan kandidat outlet/item distinct, (2) resolusi SET-BASED (findMany IN → createMany skipDuplicates → findMany ids; ± 4 query total, race-safe paritas BUG-5-5, LOGIC-12 area/name refresh hanya saat beda nilai), (3) enqueue + insert via Map lookup (0 query master-data per baris). `BATCH_SIZE` 500 → 1000 (42 kolom × 1000 = 42K bind params < limit 65.535) → jumlah round-trip createMany per 35K baris turun 70 → 35.
+
+### PERF-DELETE-1 (FATAL): `maxDuration=30` di `/api/data` — hapus bulan/reset semua terpotong Vercel
+InventoryRecord punya **~16 index** (12 `@@index` + unique + NULL-safe + INCLUDE covering) → DELETE per baris membersihkan 16 entri index; reset semua = 306K baris × 16 ≈ 5M operasi index dalam SATU transaksi → puluhan detik → Vercel mematikan function di 30s → client timeout → user retry → kena 429 (bucket 5/mnt) "tunggu beberapa menit" → inilah "hapus juga lama". FIX: `maxDuration` 300 (paritas ingest-process).
+
+### PERF-DELETE-2: Reset semua kini TRUNCATE — `data/route.ts`
+`TRUNCATE TABLE "DQIssue","InventoryRecord","Week","SourceFile","OutletPeriodSales"` — operasi level-metadata O(1) terhadap jumlah baris (vs DELETE row-by-row × 16 index), tetap atomik, sequence dipertahankan (id lanjut seperti jalur lama). Outlet/Item sengaja tidak di-truncate (master data, FK Restrict).
+
+### PERF-DELETE-3: Hapus bulan/file vs import paralel bisa interleave
+DELETE tidak memegang advisory lock yang sama dengan import (`pg_advisory_xact_lock(hashtext(monthKey))`) → hapus bulan yang bersamaan dengan import bulan sama menghasilkan state tergantung urutan commit. FIX: lock ditambahkan sebagai statement pertama di transaksi delete month & fileId (xact-scoped, key space sama dengan import).
+
+---
+
 ## 🔒 SECURITY (ringkas)
 
 | # | Severity | Temuan | Fix |
@@ -218,6 +246,7 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
 
 **Follow-up terimplementasi:**
 - N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
+- **Perf & correctness upload/hapus (PERF-UPLOAD-1..4, PERF-IMPORT-1/2, PERF-DELETE-1..3)** — lihat seksi "UPLOAD & DELETE" di atas. Ringkas: bucket rate-limit chunk khusus 120/mnt (akhir 429 di chunk #6 untuk file >20MB), verifikasi total-ukuran via `SUM(LENGTH(data))` (tidak re-download 50MB), upload chunk paralel ×3 (chunk terakhir tetap terakhir), reuse `/tmp` antara detect→import (1 download+parse hilang), resolusi master-data bulk (±442 → ±4 query), `BATCH_SIZE` 1000, `maxDuration` /api/data & /api/ingest 300s, reset-semua via TRUNCATE atomik, advisory lock pada delete bulan/file. Verifikasi: `tsc --noEmit` 0 error, eslint 0 error, vitest 438/438.
 
 **Eksekusi script DB (2026-09-09, terhadap DB produksi):**
 - `db:fix-duplicate-weeks` — dijalankan: **0 duplikat** (data bersih). Script sempat crash saat eksekusi nyata (`having: {_count:...}` ditolak validasi runtime Prisma 6.11) → diganti deteksi `$queryRaw` (SCRIPT-RUNTIME-1).

@@ -86,6 +86,29 @@ async function reassembleFile(fileHash: string, ext: string): Promise<string> {
   return filePath;
 }
 
+// PERF-UPLOAD-5: /tmp file reuse between detect → import(-all).
+// `detect` leaves the reassembled file at a content-addressed path
+// (/tmp/ingest-process/{fileHash}{ext}) for exactly this purpose. The import
+// call previously re-downloaded EVERY chunk from Postgres and re-wrote the
+// byte-identical file — up to 50MB transferred + reassembled again, seconds
+// of pure waste on every upload. Reuse the temp file when present AND
+// size-matched (advisory check — `fileSize` comes from the server-verified
+// last-chunk sum, FIX-A-3, so a mismatch means a truncated stale temp file
+// from an interrupted invocation → fall back to full reassembly). On a cold
+// serverless instance there is no temp file → transparent fallback to the
+// old chunk-assembly path. fileHash is SHA-256 of content, so a present
+// file at this path is byte-identical to what reassembly would produce.
+async function reuseTempFile(fileHash: string, ext: string, expectedSize: number): Promise<string | null> {
+  const filePath = path.join('/tmp/ingest-process', `${fileHash}${ext}`);
+  try {
+    const st = await fs.stat(filePath);
+    if (expectedSize > 0 && st.size !== expectedSize) return null;
+    return filePath;
+  } catch {
+    return null; // not present (cold instance / different invocation) → reassemble
+  }
+}
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   try {
@@ -215,7 +238,11 @@ export async function POST(req: NextRequest) {
     // ============================================================
     if (mode === 'detect') {
       // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
-      const filePath = await reassembleFile(safeFileHash, fileExt);
+      // PERF-UPLOAD-5: reuse a leftover /tmp file from a previous invocation when
+      // possible (re-upload of an identical file); fall back to chunk reassembly.
+      const filePath =
+        (await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10))) ??
+        (await reassembleFile(safeFileHash, fileExt));
 
       // Verify size — FIX-A-1 note: client-provided fileSize is advisory only (used to
       // detect chunk corruption). The real size enforcement happens at upload time
@@ -339,8 +366,12 @@ export async function POST(req: NextRequest) {
       // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
       let filePath: string;
       try {
-        filePath = await reassembleFile(safeFileHash, fileExt);
-        logger.info(`[ingest-process] reassembled to ${filePath}`);
+        // PERF-UPLOAD-5: detect (same or previous invocation) already left the
+        // reassembled file at the content-addressed /tmp path — reuse it and
+        // skip re-downloading every chunk from Postgres (up to 50MB).
+        const reused = await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10));
+        filePath = reused ?? (await reassembleFile(safeFileHash, fileExt));
+        logger.info(`[ingest-process] ${reused ? 'reused temp file' : 'reassembled'}: ${filePath}`);
       } catch (e: unknown) {
         logger.error("[ingest-process] reassemble failed", { error: e });
         return NextResponse.json(
@@ -641,8 +672,12 @@ export async function POST(req: NextRequest) {
       // Reassemble ONCE
       let filePath: string;
       try {
-        filePath = await reassembleFile(safeFileHash, fileExt);
-        logger.info(`[ingest-process] reassembled to ${filePath}`);
+        // PERF-UPLOAD-5: detect (same or previous invocation) already left the
+        // reassembled file at the content-addressed /tmp path — reuse it and
+        // skip re-downloading every chunk from Postgres (up to 50MB).
+        const reused = await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10));
+        filePath = reused ?? (await reassembleFile(safeFileHash, fileExt));
+        logger.info(`[ingest-process] ${reused ? 'reused temp file' : 'reassembled'}: ${filePath}`);
       } catch (e: unknown) {
         const err = e as Error;
         logger.error("[ingest-process] reassemble failed", { error: err });

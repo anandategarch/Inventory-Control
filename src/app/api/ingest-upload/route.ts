@@ -24,11 +24,15 @@ const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB total per uploaded file
 export async function POST(req: NextRequest) {
   try {
     const ip = getClientIP(req);
-    const rl = rateLimit(`ingest-upload:${ip}`, RATE_LIMITS.ingest.maxRequests, RATE_LIMITS.ingest.windowMs);
+    // PERF-UPLOAD-1: dedicated bucket (120/min) — chunk uploads are bounded
+    // per-request (5MB) + total (50MB, FIX-A-3), so they don't need the heavy
+    // 5/min ingest limit. The old shared bucket failed any file >20MB at
+    // chunk #6 with a 429 ("upload lama" / retry loop).
+    const rl = rateLimit(`ingest-upload:${ip}`, RATE_LIMITS.ingestUpload.maxRequests, RATE_LIMITS.ingestUpload.windowMs);
     if (!rl.allowed) {
       return NextResponse.json(
         { success: false, error: 'Rate limit exceeded.' },
-        { status: 429 }
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
       );
     }
 
@@ -111,14 +115,29 @@ export async function POST(req: NextRequest) {
     }
 
     // FIX-A-3 (BUG-5-4): Last chunk — verify ACCUMULATED size server-side.
-    // Do NOT trust client-provided `fileSize`. Sum actual chunk byte lengths
-    // from the DB; if total exceeds MAX_TOTAL_SIZE, reject and delete all
-    // chunks to free DB space (avoid orphaned chunk buildup).
-    const allChunks = await db.fileChunk.findMany({
-      where: { fileHash },
-      select: { data: true },
-    });
-    const totalBytes = allChunks.reduce((sum, c) => sum + c.data.length, 0);
+    // Do NOT trust client-provided `fileSize`.
+    //
+    // PERF-UPLOAD-2: the old implementation called findMany({ select: { data } })
+    // and pulled EVERY chunk's full bytes out of Postgres (up to 50MB over the
+    // network) just to compute a sum. That re-downloaded the entire file on
+    // the LAST chunk of every upload — seconds of pure waste per upload.
+    // Postgres computes it in-process instead: SUM(LENGTH(data)) is a TOAST-aware
+    // aggregate that transfers only 2 small integers back.
+    const [agg] = await db.$queryRaw<Array<{ chunk_count: bigint; total_bytes: bigint }>>`
+      SELECT COUNT(*)::bigint AS chunk_count, COALESCE(SUM(LENGTH("data")), 0)::bigint AS total_bytes
+      FROM "FileChunk"
+      WHERE "fileHash" = ${fileHash}`;
+    const totalBytes = Number(agg?.total_bytes ?? 0);
+    // PERF-UPLOAD-3: also verify chunk COUNT — the last-arriving chunk must see
+    // all totalChunks rows stored (guards against out-of-order delivery and
+    // gives reassembleFile's P2-11 count check an earlier, clearer failure).
+    const storedChunks = Number(agg?.chunk_count ?? 0);
+    if (storedChunks !== totalChunks) {
+      return NextResponse.json(
+        { success: false, error: `Chunk belum lengkap: ${storedChunks}/${totalChunks} tersimpan. Upload ulang file.` },
+        { status: 400 }
+      );
+    }
     if (totalBytes > MAX_TOTAL_SIZE) {
       await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
       return NextResponse.json(

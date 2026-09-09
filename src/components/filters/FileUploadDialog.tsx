@@ -192,7 +192,18 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
 
       let uploadResult: any = null;
 
-      for (let i = 0; i < totalChunks; i++) {
+      // PERF-UPLOAD-4: upload chunks in PARALLEL (3 concurrent) instead of one
+      // at a time. Each chunk is an independent idempotent upsert keyed by
+      // (fileHash, chunkIndex) — order does not matter. The LAST chunk is held
+      // back and sent strictly after all others so the server's last-chunk
+      // verification (chunk count + total size, PERF-UPLOAD-3) sees the
+      // complete file. Sequential upload paid a full network round trip per
+      // 4MB chunk; parallel overlaps them → ~3x faster for multi-chunk files.
+      const UPLOAD_CONCURRENCY = 3;
+      let completedChunks = 0;
+      let uploadFailed = false;
+
+      const uploadSingleChunk = async (i: number): Promise<any | null> => {
         const start = i * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunkBlob = file.slice(start, end);
@@ -204,13 +215,6 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
         formData.append('fileName', file.name);
         formData.append('fileHash', fileHash);
         formData.append('fileSize', String(file.size));
-
-        const chunkProgress = ((i + 1) / totalChunks) * 40; // 0-40% for upload
-        setProgress(chunkProgress);
-
-        if (i > 0) {
-          setStatusLog(prev => [...prev, `📦 Upload chunk ${i + 1}/${totalChunks}...`]);
-        }
 
         const res = await fetch('/api/ingest-upload', {
           method: 'POST',
@@ -231,9 +235,38 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           throw new Error(data.error || `HTTP ${res.status}`);
         }
 
-        if (i === totalChunks - 1) {
-          uploadResult = data;
-        }
+        completedChunks++;
+        setProgress((completedChunks / totalChunks) * 40); // 0-40% for upload
+        return data;
+      };
+
+      // Upload every chunk EXCEPT the last, with bounded concurrency.
+      // A worker pool (shared cursor) keeps exactly ≤3 requests in flight.
+      const bodyCount = Math.max(totalChunks - 1, 0); // last chunk sent separately below
+      let nextIndex = 0;
+      const workers: Promise<void>[] = [];
+      for (let w = 0; w < Math.min(UPLOAD_CONCURRENCY, bodyCount); w++) {
+        workers.push((async () => {
+          while (!uploadFailed) {
+            const i = nextIndex++;
+            if (i >= bodyCount) break;
+            setStatusLog(prev => [...prev, `📦 Upload chunk ${i + 1}/${totalChunks}...`]);
+            try {
+              await uploadSingleChunk(i);
+            } catch (err) {
+              uploadFailed = true; // stop dispatching new chunks; error surfaces via Promise.all
+              throw err;
+            }
+          }
+        })());
+      }
+      await Promise.all(workers);
+
+      // Send the LAST chunk strictly after all others — the server treats the
+      // last chunk as "upload complete" and runs the count + total-size checks.
+      if (totalChunks > 0) {
+        setStatusLog(prev => [...prev, `📦 Upload chunk ${totalChunks}/${totalChunks}...`]);
+        uploadResult = await uploadSingleChunk(totalChunks - 1);
       }
 
       if (!uploadResult || !uploadResult.uploaded) {
