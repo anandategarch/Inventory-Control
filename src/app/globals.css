@@ -170,10 +170,11 @@
 }
 
 
-/* Tab content transition */
-[data-state="active"][role="tabpanel"] {
-  animation: fadeInUp 0.25s ease-out;
-}
+/* Tab content transition — REMOVED (PERF-FE PAKET A): this rule re-ran a
+   0.25s fadeInUp on every tab switch, stacking with the (also removed)
+   `animate-fade-in-up` class on each TabsContent in page.tsx — double-layered
+   entrance animation on a subtree of hundreds of DOM nodes made every tab
+   switch feel laggy. Tabs now switch instantly (keep-alive via forceMount). */
 
 /* Card hover lift effect */
 .card-hover {

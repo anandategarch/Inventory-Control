@@ -48,18 +48,18 @@
 //    `selectedItem` + `setSelectedItem` as props).
 //
 //  Patterns reused from existing dashboard:
-//    - React.memo + ErrorBoundary + FetchAware (RestoTab pattern)
+//    - React.memo + ErrorBoundary (RestoTab pattern)
 //    - zScoreColor + zScoreBadge (HistoricalZScoreCard pattern)
 //    - Metric selector toggle buttons (HistoricalZScoreCard pattern)
 //    - next/dynamic lazy-load for Recharts (DashboardTab pattern)
-//    - useDeferredValue debounce (GlobalItemSearchModal pattern)
+//    - 300ms timer debounce before the autocomplete request fires
 //
 //  Barrel: This file IS the barrel for `@/components/dashboard/tabs/ItemTrendTab`
 //  (folder + index.tsx — TypeScript moduleResolution "bundler" resolves
 //  automatically). Re-exports sub-components + types for reuse.
 // ============================================================
 
-import { memo, useState, useMemo, useCallback, useDeferredValue, useEffect, useRef } from 'react';
+import { memo, useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
@@ -350,7 +350,19 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   // Local UI state (not in Zustand — only the Trend Item tab cares about these).
   const [metric, setMetric] = useState<ItemTrendMetric>('qtyDeviasi');
   const [query, setQuery] = useState('');
-  const deferredQuery = useDeferredValue(query);
+  // PERF-FE (PAKET A): real 300ms debounce. `useDeferredValue` only defers
+  // RENDERING — the deferred value still changed on every keystroke, so the
+  // autocomplete queryKey below produced a new cache entry (and an HTTP
+  // request) per character typed ("ayam goreng" = 9 requests). A timer-based
+  // debounce collapses a burst of keystrokes into a single request.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  useEffect(() => {
+    // Clearing the input propagates instantly (delay 0); typing debounces at
+    // 300ms. setState only ever runs inside the timer callback (async), never
+    // synchronously in the effect body (react-hooks/set-state-in-effect).
+    const t = setTimeout(() => setDebouncedQuery(query), query === '' ? 0 : 300);
+    return () => clearTimeout(t);
+  }, [query]);
   const [showDropdown, setShowDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -392,15 +404,14 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showDropdown]);
 
-  // Stage 1: autocomplete (debounced via useDeferredValue — same pattern
-  // as GlobalItemSearchModal). Fires only when input is ≥2 chars AND no
-  // item is currently selected.
+  // Stage 1: autocomplete (debounced 300ms — see the debounce effect above).
+  // Fires only when input is ≥2 chars AND no item is currently selected.
   const { data: acData, isLoading: acLoading } = useQuery<{ results: AutocompleteResult[] }>({
-    queryKey: ['item-search', 'autocomplete', 'trend-tab', monthLabel, currentWeek, deferredQuery],
+    queryKey: ['item-search', 'autocomplete', 'trend-tab', monthLabel, currentWeek, debouncedQuery],
     queryFn: async () => {
       const p = new URLSearchParams({
         mode: 'autocomplete',
-        q: deferredQuery,
+        q: debouncedQuery,
         month: monthLabel || '',
         week: currentWeek || '',
       });
@@ -408,7 +419,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    enabled: Boolean(deferredQuery.length >= 2 && monthLabel && currentWeek && !selectedItem),
+    enabled: Boolean(debouncedQuery.length >= 2 && monthLabel && currentWeek && !selectedItem),
     staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
@@ -665,7 +676,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             setQuery={setQuery}
             showDropdown={showDropdown}
             setShowDropdown={setShowDropdown}
-            deferredQuery={deferredQuery}
+            debouncedQuery={debouncedQuery}
             selectedItem={selectedItem}
             setSelectedItem={setSelectedItem}
             acResults={acResults}

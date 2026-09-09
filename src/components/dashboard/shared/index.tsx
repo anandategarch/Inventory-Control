@@ -216,7 +216,7 @@ export function ErrorState({ message }: { message: string }) {
 
 
 
-export function SectionHeader({ icon, title, badge, isFetching }: { icon: React.ReactNode; title: string; badge?: string; isFetching?: boolean }) {
+export function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
   return (
     <div className="flex items-center gap-2.5 mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
       <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
@@ -228,17 +228,9 @@ export function SectionHeader({ icon, title, badge, isFetching }: { icon: React.
           {badge}
         </Badge>
       )}
-      {isFetching && (
-        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5">
-          <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
-          Memperbarui
-        </Badge>
-      )}
     </div>
   );
 }
-
-// Wrapper that shows loading overlay when fetching
 
 
 export function ScrollToTop() {
@@ -275,25 +267,13 @@ export function LoadingChart() {
 }
 
 // ============================================================
-//  FetchAware — wrapper that dims its children + shows a
-//  "Memperbarui" badge while a refetch is in flight. Preserves
-//  the existing layout (no remount) so users see stale data with
-//  a clear indicator that an update is pending.
+//  FetchAware was removed (PERF-FE PAKET A). It dimmed sections +
+//  set `pointer-events-none` during every background refetch,
+//  freezing the dashboard while stale data was still usable, and
+//  its `isFetching` input defeated React.memo on the tab wrappers
+//  (10+ sections re-rendered twice per fetch cycle). The refresh
+//  indicator now lives only in DashboardHeader (global, single).
 // ============================================================
-export function FetchAware({ isFetching, children }: { isFetching: boolean; children: React.ReactNode }) {
-  return (
-    <div className={`relative transition-all duration-200 ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
-      {isFetching && (
-        <div className="absolute inset-0 z-10 flex items-start justify-end p-2">
-          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300/70 dark:text-amber-400 dark:border-amber-800/70 bg-background/85 backdrop-blur-sm h-5 shadow-sm">
-            <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
-            Memperbarui
-          </Badge>
-        </div>
-      )}
-      {children}
-    </div>
-  );
-}
+
 
 

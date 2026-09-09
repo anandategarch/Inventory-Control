@@ -4,15 +4,23 @@
 //  DashboardTab — the main "Dashboard" overview tab extracted
 //  from page.tsx (lines 504-645 of the original god file).
 //  --------------------------------------------------------
-//  Renders 10+ analytical sections wrapped in ErrorBoundary +
-//  FetchAware. Heavy chart components are lazy-loaded via
-//  next/dynamic to keep Recharts (5.4MB) out of the main bundle.
+//  Renders 10+ analytical sections wrapped in ErrorBoundary.
+//  Heavy chart components are lazy-loaded via next/dynamic to
+//  keep Recharts (5.4MB) out of the main bundle.
 //  PERF-FE: wrapped in React.memo — the parent (page.tsx) re-renders
 //  on any Zustand state change (e.g., opening a modal). Without
 //  memo, DashboardTab re-renders on every one of those even though
-//  its only props (`data` + `isFetching`) haven't changed. Since
-//  DashboardTab contains 10+ sections, skipping unnecessary
-//  re-renders is a meaningful win.
+//  its only prop (`data`) hasn't changed. Since DashboardTab
+//  contains 10+ sections, skipping unnecessary re-renders is a
+//  meaningful win.
+//  PERF-FE (PAKET A): the `isFetching` prop and the FetchAware
+//  wrappers were removed. Every background refetch toggled the
+//  prop false→true→false, defeating React.memo and re-rendering
+//  10+ sections twice per cycle; FetchAware also dimmed the
+//  sections and set `pointer-events-none`, freezing the whole
+//  dashboard while stale data was still perfectly usable. The
+//  global refresh indicator lives in DashboardHeader
+//  (`analysisFetching`) — that is the single source of truth now.
 // ============================================================
 
 import { memo } from 'react';
@@ -27,7 +35,7 @@ import {
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import {
-  FetchAware, LoadingChart, SectionHeader,
+  LoadingChart, SectionHeader,
 } from '@/components/dashboard/shared';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 
@@ -43,18 +51,15 @@ const AreaItemHeatmap = dynamic(() => import('@/components/dashboard/AreaItemHea
 
 export interface DashboardTabProps {
   data: AnalysisData;
-  isFetching: boolean;
 }
 
-export const DashboardTab = memo(function DashboardTab({ data, isFetching }: DashboardTabProps) {
+export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabProps) {
   return (
     <div className="space-y-4 min-w-0">
       {/* Section: Executive Summary */}
-      <FetchAware isFetching={isFetching}>
-        <ErrorBoundary label="Executive Summary">
-          <ExecutiveSummary data={data} />
-        </ErrorBoundary>
-      </FetchAware>
+      <ErrorBoundary label="Executive Summary">
+        <ExecutiveSummary data={data} />
+      </ErrorBoundary>
 
       {/* Section: Resto Recommendation Engine */}
       <ErrorBoundary label="Resto Prioritas Analisa">
@@ -62,39 +67,32 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
       </ErrorBoundary>
 
       {/* Section: Insights Panel */}
-      <FetchAware isFetching={isFetching}>
-        <ErrorBoundary label="Insights Panel">
-          <InsightsPanel data={data} />
-        </ErrorBoundary>
-      </FetchAware>
+      <ErrorBoundary label="Insights Panel">
+        <InsightsPanel data={data} />
+      </ErrorBoundary>
 
       {/* Section: Health + Growth */}
-      <FetchAware isFetching={isFetching}>
-        <section className="grid lg:grid-cols-3 gap-4 min-w-0">
-          <ErrorBoundary label="Health Alert">
-            <HealthAlert data={data} />
-          </ErrorBoundary>
-          <ErrorBoundary label="Growth Comparison">
-            <GrowthComparison data={data} />
-          </ErrorBoundary>
-          <ErrorBoundary label="Deviation Breakdown">
-            <DeviationBreakdownChart data={data} />
-          </ErrorBoundary>
-        </section>
-      </FetchAware>
+      <section className="grid lg:grid-cols-3 gap-4 min-w-0">
+        <ErrorBoundary label="Health Alert">
+          <HealthAlert data={data} />
+        </ErrorBoundary>
+        <ErrorBoundary label="Growth Comparison">
+          <GrowthComparison data={data} />
+        </ErrorBoundary>
+        <ErrorBoundary label="Deviation Breakdown">
+          <DeviationBreakdownChart data={data} />
+        </ErrorBoundary>
+      </section>
 
       {/* Section: Multi-Period Comparison */}
       <section>
         <SectionHeader
           icon={<Calendar className="h-4 w-4 text-muted-foreground" />}
           title="Perbandingan Multi-Periode"
-          isFetching={isFetching}
         />
-        <FetchAware isFetching={isFetching}>
-          <ErrorBoundary label="Multi-Period Comparison">
-            <MultiPeriodComparisonCard data={data} />
-          </ErrorBoundary>
-        </FetchAware>
+        <ErrorBoundary label="Multi-Period Comparison">
+          <MultiPeriodComparisonCard data={data} />
+        </ErrorBoundary>
       </section>
 
       {/* Section: Top Items + Top Outlets */}
@@ -102,19 +100,16 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
           title="Item Prioritas & Top Resto"
-          isFetching={isFetching}
         />
-        <FetchAware isFetching={isFetching}>
-          {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
-              FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
-          <div className="grid lg:grid-cols-3 gap-4 min-w-0">
-            <ErrorBoundary label="Top Items & Outlets">
-              <TopItemsByNominal data={data} />
-              <TopItemsByDevBom data={data} />
-              <TopOutlets data={data} />
-            </ErrorBoundary>
-          </div>
-        </FetchAware>
+        {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
+            FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
+        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
+          <ErrorBoundary label="Top Items & Outlets">
+            <TopItemsByNominal data={data} />
+            <TopItemsByDevBom data={data} />
+            <TopOutlets data={data} />
+          </ErrorBoundary>
+        </div>
       </section>
 
       {/* Section: Area Comparison + Outlet Health Ranking */}
@@ -124,25 +119,19 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
           <SectionHeader
             icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
             title="Perbandingan Area"
-            isFetching={isFetching}
           />
-          <FetchAware isFetching={isFetching}>
-            <ErrorBoundary label="Area Comparison">
-              <AreaComparison data={data} />
-            </ErrorBoundary>
-          </FetchAware>
+          <ErrorBoundary label="Area Comparison">
+            <AreaComparison data={data} />
+          </ErrorBoundary>
         </div>
         <div>
           <SectionHeader
             icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
             title="Ranking Kondisi Resto"
-            isFetching={isFetching}
           />
-          <FetchAware isFetching={isFetching}>
-            <ErrorBoundary label="Outlet Health Ranking">
-              <OutletHealthRanking data={data} />
-            </ErrorBoundary>
-          </FetchAware>
+          <ErrorBoundary label="Outlet Health Ranking">
+            <OutletHealthRanking data={data} />
+          </ErrorBoundary>
         </div>
       </section>
 
@@ -151,13 +140,10 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
           title="Pola Item (Massal / Regional / Lokal)"
-          isFetching={isFetching}
         />
-        <FetchAware isFetching={isFetching}>
-          <ErrorBoundary label="Item Consistency Analysis">
-            <ItemConsistencyAnalysis data={data} />
-          </ErrorBoundary>
-        </FetchAware>
+        <ErrorBoundary label="Item Consistency Analysis">
+          <ItemConsistencyAnalysis data={data} />
+        </ErrorBoundary>
       </section>
 
       {/* Section: Historical Z-Score + BOM Correlation (replaces Area Trend) */}
@@ -165,29 +151,24 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
         <SectionHeader
           icon={<History className="h-4 w-4 text-muted-foreground" />}
           title="Analisis Historis (Z-Score + Korelasi BOM)"
-          isFetching={isFetching}
         />
-        <FetchAware isFetching={isFetching}>
-          <div className="space-y-4">
-            <ErrorBoundary label="Historical Z-Score">
-              <HistoricalZScoreCard data={data} />
-            </ErrorBoundary>
-            <ErrorBoundary label="BOM Correlation">
-              <BomCorrelationCard data={data} />
-            </ErrorBoundary>
-          </div>
-        </FetchAware>
+        <div className="space-y-4">
+          <ErrorBoundary label="Historical Z-Score">
+            <HistoricalZScoreCard data={data} />
+          </ErrorBoundary>
+          <ErrorBoundary label="BOM Correlation">
+            <BomCorrelationCard data={data} />
+          </ErrorBoundary>
+        </div>
       </section>
 
       {/* Section: Loss/Surplus (TrendChart removed per user request) */}
-      <FetchAware isFetching={isFetching}>
-        {/* FIX (UI-05): added min-w-0 to grid wrapper. */}
-        <section className="grid lg:grid-cols-1 gap-4 min-w-0">
-          <ErrorBoundary label="Loss vs Surplus">
-            <LossVsSurplusChart data={data} />
-          </ErrorBoundary>
-        </section>
-      </FetchAware>
+      {/* FIX (UI-05): added min-w-0 to grid wrapper. */}
+      <section className="grid lg:grid-cols-1 gap-4 min-w-0">
+        <ErrorBoundary label="Loss vs Surplus">
+          <LossVsSurplusChart data={data} />
+        </ErrorBoundary>
+      </section>
 
       {/* Section: Heatmap Area × Item (standalone fetch, not dependent on analysis data) */}
       <ErrorBoundary label="Heatmap Area × Item">

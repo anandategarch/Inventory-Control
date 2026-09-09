@@ -190,6 +190,30 @@ DELETE tidak memegang advisory lock yang sama dengan import (`pg_advisory_xact_l
 
 ---
 
+## ⚡ OPTIMASI KESEPAKAN INTERAKSI FRONTEND (akar "lemot saat dipakai") — PAKET A
+
+Audit susulan (setelah upload/delete) menemukan 3 penyebab utama aplikasi terasa berat SAAT DIPAKAI sehari-hari (pindah tab, mengetik pencarian, refresh background). Semuanya fixed di paket ini:
+
+### FE-INTERACT-1 (P1): Pindah tab = remount seluruh subtree + refetch storm — `page.tsx` + `PeerComparison.tsx` + `RestoAnalysis.tsx`
+Dua lapis masalah yang saling menguatkan:
+1. **Remount**: `TabsContent` Radix tanpa `forceMount` → setiap pindah tab, seluruh isi tab (chart, tabel, state lokal seperti outlet peer terpilih) di-*unmount* dan dibangun ulang dari nol.
+2. **Refetch storm**: 4 query (`peer-comparison` main/items/trend di `PeerComparison.tsx` + `outlet-items` di `RestoAnalysis.tsx`) tanpa `staleTime` → jatuh ke default global 30 dtk → user balik ke tab Peer/Resto setelah >30 dtk = 3-4 request ditembak ulang padahal data tidak berubah (hanya berubah saat upload / tombol refresh — yang memang sudah meng-invalidate key-key ini).
+
+FIX: (a) `forceMount` + `data-[state=inactive]:hidden` di kelima `TabsContent` (keep-alive — state & DOM bertahan, ganti tab jadi instan; Radix tidak menyembunyikan konten force-mount sendiri, class Tailwind yang melakukannya); (b) `staleTime: 5*60_000` + `gcTime: 10*60_000` pada 4 query tersebut (paritas dengan umur cache server & semantik "data hanya berubah saat ingest/refresh").
+
+### FE-INTERACT-2 (P1): Autocomplete item-search = 1 request per huruf — `ItemTrendTab/index.tsx`
+`useDeferredValue` **bukan debounce** — ia hanya menunda render; nilainya tetap berubah tiap ketikan → queryKey baru per karakter → "ayam goreng" = 9 request ke `/api/item-search`. FIX: debounce timer 300ms (`setTimeout`/`clearTimeout` di `useEffect`, clear instan delay-0 saat input dikosongkan); prop `debouncedQuery` ke `ItemTrendSearchBar` (pengganti `deferredQuery`).
+
+### FE-INTERACT-3 (P2): Dashboard "terkunci" saat refresh background + animasi tab ganda
+1. **isFetching drill**: prop `analysis.isFetching` diturunkan ke 4 komponen tab → setiap background refetch toggling false→true→false mengalahkan `React.memo` (10+ section re-render 2× per siklus); `FetchAware` men-dim + `pointer-events-none` → seluruh dashboard tidak bisa diklik selama refresh (padahal data lama masih valid dipakai).
+2. **Animasi ganda**: class `animate-fade-in-up` (0.3s) di tiap `TabsContent` **ditumpuk** rule CSS `[data-state=active][role=tabpanel]{animation:fadeInUp .25s}` → animasi entrance berlapis tiap ganti tab di subtree ratusan node DOM.
+
+FIX: (a) seluruh wrapper `FetchAware` + prop `isFetching` dihapus dari `DashboardTab`/`RestoTab`/`PeerTab`/`ParetoTab` + `SectionHeader` (indikator refresh kini tunggal & global di `DashboardHeader.analysisFetching`); (b) kedua lapis animasi dihapus (tab switch instan).
+
+**Verifikasi**: `tsc --noEmit` 0 error · eslint 11 file berubah 0 error · vitest **438/438** · perilaku Radix `forceMount` diverifikasi langsung dari source `@radix-ui/react-tabs@1.1.13` (konten force-mount tetap dirender + `hidden=false` → wajib class hide; tidak bergantung asumsi).
+
+---
+
 ## 🔒 SECURITY (ringkas)
 
 | # | Severity | Temuan | Fix |
@@ -247,6 +271,7 @@ DELETE tidak memegang advisory lock yang sama dengan import (`pg_advisory_xact_l
 **Follow-up terimplementasi:**
 - N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
 - **Perf & correctness upload/hapus (PERF-UPLOAD-1..4, PERF-IMPORT-1/2, PERF-DELETE-1..3)** — lihat seksi "UPLOAD & DELETE" di atas. Ringkas: bucket rate-limit chunk khusus 120/mnt (akhir 429 di chunk #6 untuk file >20MB), verifikasi total-ukuran via `SUM(LENGTH(data))` (tidak re-download 50MB), upload chunk paralel ×3 (chunk terakhir tetap terakhir), reuse `/tmp` antara detect→import (1 download+parse hilang), resolusi master-data bulk (±442 → ±4 query), `BATCH_SIZE` 1000, `maxDuration` /api/data & /api/ingest 300s, reset-semua via TRUNCATE atomik, advisory lock pada delete bulan/file. Verifikasi: `tsc --noEmit` 0 error, eslint 0 error, vitest 438/438.
+- **Interaksi frontend "lemot saat dipakai" (PAKET A — FE-INTERACT-1/2/3)** — lihat seksi "PAKET A" di atas. Ringkas: tab keep-alive via `forceMount` + `data-[state=inactive]:hidden` (pindah tab tidak lagi rebuild seluruh subtree & state lokal bertahan), `staleTime` 5 mnt + `gcTime` 10 mnt pada 4 query peer/outlet (refetch storm tiap balik tab >30 dtk hilang), debounce 300ms autocomplete item-search (was 1 request per huruf), hapus drill `isFetching` + `FetchAware` (dashboard tidak lagi "terkunci" `pointer-events-none` saat refresh background; indikator refresh kini tunggal di header), hapus animasi tab CSS ganda (0.25s+0.3s berlapis). Verifikasi: `tsc --noEmit` 0 error, eslint 0 error, vitest 438/438.
 
 **Eksekusi script DB (2026-09-09, terhadap DB produksi):**
 - `db:fix-duplicate-weeks` — dijalankan: **0 duplikat** (data bersih). Script sempat crash saat eksekusi nyata (`having: {_count:...}` ditolak validasi runtime Prisma 6.11) → diganti deteksi `$queryRaw` (SCRIPT-RUNTIME-1).

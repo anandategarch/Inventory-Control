@@ -19,7 +19,7 @@
 //    • tabs/ItemTrendTab    — per-item QTY timeline + Z-Score (NEW — TREND-FRONTEND)
 //    • useDashboardEffects  — 2 useEffects (atomic auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
-//    • shared/index.tsx     — FetchAware, LoadingChart, EmptyState, etc.
+//    • shared/index.tsx     — LoadingChart, SectionHeader, EmptyState, etc.
 // ============================================================
 
 import { useState } from 'react';
@@ -205,33 +205,41 @@ export default function DashboardPage() {
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
             {/* DashboardTab is statically imported (default tab) — no Suspense needed. */}
-            <TabsContent value="dashboard" aria-label="Dashboard tab" className="space-y-4 mt-2 animate-fade-in-up">
-              <DashboardTab data={analysis.data} isFetching={analysis.isFetching} />
+            {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden = keep-alive
+                tabs. Previously Radix unmounted every tab on switch → the whole
+                subtree (charts, tables, local state like the selected peer outlet)
+                was rebuilt from scratch on every tab change. Radix does NOT hide
+                force-mounted inactive content by itself — the Tailwind variant
+                does it. The animate-fade-in-up entrance animation is also gone
+                (it re-ran on every switch and stacked with the globals.css
+                tabpanel animation — double-layered 0.25s+0.3s jank). */}
+            <TabsContent value="dashboard" forceMount aria-label="Dashboard tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+              <DashboardTab data={analysis.data} />
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
-            <TabsContent value="resto" aria-label="Resto Analysis tab" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="resto" forceMount aria-label="Resto Analysis tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <Suspense fallback={<TabSkeleton />}>
-                <RestoTab data={analysis.data} isFetching={analysis.isFetching} />
+                <RestoTab data={analysis.data} />
               </Suspense>
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
-            <TabsContent value="peer" aria-label="Peer Comparison tab" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="peer" forceMount aria-label="Peer Comparison tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <Suspense fallback={<TabSkeleton />}>
-                <PeerTab isFetching={analysis.isFetching} />
+                <PeerTab />
               </Suspense>
             </TabsContent>
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
-            <TabsContent value="pareto" aria-label="Pareto tab" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="pareto" forceMount aria-label="Pareto tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <Suspense fallback={<TabSkeleton />}>
-                <ParetoTab data={analysis.data} isFetching={analysis.isFetching} />
+                <ParetoTab data={analysis.data} />
               </Suspense>
             </TabsContent>
 
             {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
-            <TabsContent value="trend" aria-label="Trend Item tab" className="space-y-4 mt-2 animate-fade-in-up">
+            <TabsContent value="trend" forceMount aria-label="Trend Item tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <Suspense fallback={<TabSkeleton />}>
                 <ErrorBoundary label="Trend Item">
                   {/* Phase 1 — pass analysisData so the tab can render the

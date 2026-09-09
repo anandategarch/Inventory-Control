@@ -239,6 +239,13 @@ export function PeerComparison() {
       return res.json();
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // PERF-FE (PAKET A): peer data only changes on ingest / manual refresh
+    // (handleRefresh invalidates ['peer-comparison']) — not every 30s.
+    // Without an explicit staleTime these queries fell back to the 30s
+    // global default, so re-entering the tab after >30s refetched all
+    // three queries even though nothing had changed.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
     // FIX #20: keepPreviousData so switching outlet shows smooth transition
     // (old peers stay visible) instead of a full loading skeleton flash.
     placeholderData: keepPreviousData,
@@ -272,6 +279,10 @@ export function PeerComparison() {
       return res.json() as Promise<ItemComparisonResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // PERF-FE (PAKET A): see main query — 5 min staleTime + 10 min gcTime
+    // instead of the 30s default refetch-on-remount storm.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
   });
 
   // Trend query — depends on peerCodes from main for stable peer
@@ -294,6 +305,10 @@ export function PeerComparison() {
       return res.json() as Promise<TrendResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0),
+    // PERF-FE (PAKET A): see main query — 5 min staleTime + 10 min gcTime
+    // instead of the 30s default refetch-on-remount storm.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
   });
 
   // Peer averages object (used by subcomponents) — memoized

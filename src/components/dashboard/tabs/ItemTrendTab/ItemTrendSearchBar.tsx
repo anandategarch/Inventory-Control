@@ -23,7 +23,9 @@ export interface ItemTrendSearchBarProps {
   setQuery: (q: string) => void;
   showDropdown: boolean;
   setShowDropdown: (b: boolean) => void;
-  deferredQuery: string;
+  debouncedQuery: string;
+  // ^ PERF-FE (PAKET A): 300ms-debounced value of `query` — replaced the old
+  // `deferredQuery` (useDeferredValue) which changed on every keystroke.
   selectedItem: string | null;
   setSelectedItem: (item: string | null) => void;
   acResults: AutocompleteResult[];
@@ -39,7 +41,8 @@ export function ItemTrendSearchBar({
   setQuery,
   showDropdown,
   setShowDropdown,
-  deferredQuery,
+  debouncedQuery,
+  // ^ PERF-FE (PAKET A): 300ms-debounced value of `query` (see parent).
   selectedItem,
   setSelectedItem,
   acResults,
@@ -82,7 +85,7 @@ export function ItemTrendSearchBar({
       )}
 
       {/* Autocomplete dropdown */}
-      {showDropdown && deferredQuery.length >= 2 && (
+      {showDropdown && debouncedQuery.length >= 2 && (
         <div className="absolute z-30 left-0 right-0 mt-1 max-h-72 overflow-auto rounded-md border bg-background shadow-lg">
           {(!monthLabel || !currentWeek) ? (
             <div className="flex flex-col items-center justify-center py-6 text-xs text-muted-foreground">
@@ -96,7 +99,7 @@ export function ItemTrendSearchBar({
           ) : acResults.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-6 text-xs text-muted-foreground">
               <Package className="h-6 w-6 mb-1 opacity-30" />
-              Tidak ada item ditemukan untuk &ldquo;{deferredQuery}&rdquo;
+              Tidak ada item ditemukan untuk &ldquo;{debouncedQuery}&rdquo;
             </div>
           ) : (
             <>

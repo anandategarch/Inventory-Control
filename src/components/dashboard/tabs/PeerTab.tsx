@@ -6,32 +6,27 @@
 //  --------------------------------------------------------
 //  PeerComparison is lazy-loaded (recharts heavy) — the
 //  LoadingChart fallback reserves layout space.
-//  PERF-FE: wrapped in React.memo — only `isFetching` prop; skips
-//  re-render when parent re-renders for unrelated Zustand state.
+//  PERF-FE: wrapped in React.memo — skips re-render when parent
+//  re-renders for unrelated Zustand state (modal/drawer toggles).
+//  PERF-FE (PAKET A): `isFetching` prop + FetchAware wrapper removed
+//  — the prop toggled on every background refetch (defeating memo)
+//  and FetchAware froze clicks while stale data was still usable.
+//  PeerComparison keeps its own internal, local fetch indicators
+//  (e.g. the refetch button spinner), which is where that signal
+//  belongs.
 // ============================================================
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { FetchAware, LoadingChart } from '@/components/dashboard/shared';
+import { LoadingChart } from '@/components/dashboard/shared';
 
 const PeerComparison = dynamic(() => import('@/components/dashboard/PeerComparison').then(m => m.PeerComparison), { ssr: false, loading: () => <LoadingChart /> });
 
-export interface PeerTabProps {
-  isFetching: boolean;
-}
-
-export const PeerTab = memo(function PeerTab({ isFetching }: PeerTabProps) {
+export const PeerTab = memo(function PeerTab() {
   return (
-    <>
-      {/* FIX #32: FetchAware wraps PeerComparison — it has its own
-          internal isFetching indicator too, but this keeps the
-          dashboard-wide refetch indicator visible. */}
-      <FetchAware isFetching={isFetching}>
-        <ErrorBoundary label="Peer Comparison">
-          <PeerComparison />
-        </ErrorBoundary>
-      </FetchAware>
-    </>
+    <ErrorBoundary label="Peer Comparison">
+      <PeerComparison />
+    </ErrorBoundary>
   );
 });

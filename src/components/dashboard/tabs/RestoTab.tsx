@@ -10,12 +10,16 @@
 //  PERF-FE: wrapped in React.memo — page.tsx re-renders on any
 //  Zustand state change; without memo, RestoTab (and its lazy
 //  RestoAnalysis chunk) would re-render unnecessarily.
+//  PERF-FE (PAKET A): `isFetching` prop + FetchAware wrapper removed
+//  — the prop toggled on every background refetch (defeating memo)
+//  and FetchAware froze clicks while stale data was still usable.
+//  Global refresh indicator lives in DashboardHeader.
 // ============================================================
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { FetchAware, LoadingChart } from '@/components/dashboard/shared';
+import { LoadingChart } from '@/components/dashboard/shared';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 
 // Phase 4 FIX: RestoAnalysis lazy-loaded — it pulls in PrioritySummaryCard →
@@ -25,19 +29,12 @@ const RestoAnalysis = dynamic(() => import('@/components/dashboard/RestoAnalysis
 
 export interface RestoTabProps {
   data: AnalysisData;
-  isFetching: boolean;
 }
 
-export const RestoTab = memo(function RestoTab({ data, isFetching }: RestoTabProps) {
+export const RestoTab = memo(function RestoTab({ data }: RestoTabProps) {
   return (
-    <>
-      {/* FIX #32: wrap RestoAnalysis in FetchAware so the refetch
-          indicator stays visible while the dashboard refreshes. */}
-      <FetchAware isFetching={isFetching}>
-        <ErrorBoundary label="Resto Analysis">
-          <RestoAnalysis analysisData={data} />
-        </ErrorBoundary>
-      </FetchAware>
-    </>
+    <ErrorBoundary label="Resto Analysis">
+      <RestoAnalysis analysisData={data} />
+    </ErrorBoundary>
   );
 });

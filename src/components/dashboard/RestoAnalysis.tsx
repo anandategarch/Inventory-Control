@@ -78,6 +78,12 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       return res.json() as Promise<OutletItemsResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // PERF-FE (PAKET A): outlet data only changes on ingest / manual refresh
+    // (handleRefresh invalidates ['outlet-items']) — not every 30s. Without
+    // an explicit staleTime this fell back to the 30s global default and
+    // refetched whenever the user re-entered the Resto tab after >30s.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
     // FIX (BUG-FE-5): keepPreviousData for smooth transition on filter change
     placeholderData: keepPreviousData,
   });
