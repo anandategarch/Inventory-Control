@@ -274,6 +274,15 @@ describe('evaluateRulesSql', () => {
     expect(sqlText).toContain('WITH curr AS');
     expect(sqlText).toContain('LATERAL');
     expect(sqlText).toContain('prev AS');
+    // FIX (AUDIT-PERF-3): the main SELECT is wrapped in a `flags` CTE and only
+    // rows with at least one fired rule (sum of the 16 flag columns > 0) egress.
+    expect(sqlText).toContain('flags AS');
+    expect(sqlText).toContain('FROM flags');
+    expect(sqlText).toContain('"f_tol_breach_high" + "f_tol_breach"');
+    expect(sqlText).toContain('"f_bom_disproportionate") > 0');
+    // All 16 flag columns still selected + row order preserved
+    expect(sqlText).toContain('"f_trial_bom_mismatch", "f_bom_disproportionate"');
+    expect(sqlText).toContain('ORDER BY "outletId", "itemId"');
   });
 
   // ============================================================

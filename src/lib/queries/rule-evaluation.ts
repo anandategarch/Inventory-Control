@@ -14,6 +14,17 @@
 //  - UNNEST(ARRAY[...]) to produce one row per fired rule
 //
 //  Performance: single query, ~2-3s (was 6-8s with 35K record load + JS loop)
+//
+//  FIX (AUDIT-PERF-3): only flagged rows transferred to Node (~10x less
+//  egress). The main SELECT is wrapped in a `flags` CTE and the outer query
+//  filters to rows where at least one of the 16 f_* columns is 1. Previously
+//  ALL current-period rows (~10-35K × 19 columns) were shipped to Node and
+//  the JS RULE_MAP loop skipped the zero-flag rows anyway — only flagged
+//  rows drive worklist/priorities/health counts (verified consumers:
+//  analysis post-process-flags.ts + export-report data-fetcher.ts/docx-
+//  builder.ts — the normal/warning/abnormal denominators come from
+//  queryOutletHealthRanking's zeroDevCount/nonZeroDevCount, NOT from these
+//  rows), so the filter is semantics-preserving.
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -47,6 +58,12 @@ export async function evaluateRulesSql(
     : Prisma.sql`AND 1=0`;
 
   // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — LATERAL joins on 35K rows.
+  // FIX (AUDIT-PERF-3): wrap the row-returning SELECT in a `flags` CTE and filter
+  // to rows with at least one fired rule (sum of the 16 INT 0/1 flag columns > 0).
+  // Each flag column is a CASE WHEN ... THEN 1 ELSE 0 END — never NULL — so the
+  // plain sum is safe. All flag expressions + LATERAL joins are preserved
+  // verbatim inside the CTE; only rows with zero fired rules are dropped
+  // (the JS RULE_MAP loop below never produced flags for those rows anyway).
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<SqlRuleFlag[]>`
     WITH curr AS (
       SELECT ir."outletId", ir."itemId", ir."akunPenyesuaian",
@@ -86,7 +103,8 @@ export async function evaluateRulesSql(
                NULL::float as mean, NULL::float as "stdDev", 0 as n
         WHERE 1=0
       ) hs
-    )
+    ),
+    flags AS (
     SELECT
       c."outletId", c."itemId", c."akunPenyesuaian",
       -- Return all flag columns as booleans — JS post-processing builds the flag array
@@ -179,7 +197,21 @@ export async function evaluateRulesSql(
           THEN (ABS(c."qtyTrial") - ABS(p."prevQtyTrial")) / ABS(p."prevQtyTrial")
           ELSE NULL END as "trialGrowth"
     ) g
-    ORDER BY c."outletId", c."itemId"
+    -- (ORDER BY moved to the outer query — it governs the final row order)
+    )
+    SELECT
+      "outletId", "itemId", "akunPenyesuaian",
+      "f_tol_breach_high", "f_tol_breach", "f_tol_not_set", "f_over_explained",
+      "f_resid_high", "f_resid_warn", "f_high_loss", "f_dir_flip",
+      "f_sales_mismatch", "f_sales_decrease", "f_bom_mismatch", "f_bom_down_dev_up",
+      "f_waste_bom_mismatch", "f_susut_bom_mismatch", "f_trial_bom_mismatch", "f_bom_disproportionate"
+    FROM flags
+    WHERE ("f_tol_breach_high" + "f_tol_breach" + "f_tol_not_set" + "f_over_explained"
+      + "f_resid_high" + "f_resid_warn" + "f_high_loss" + "f_dir_flip"
+      + "f_sales_mismatch" + "f_sales_decrease" + "f_bom_mismatch" + "f_bom_down_dev_up"
+      + "f_waste_bom_mismatch" + "f_susut_bom_mismatch" + "f_trial_bom_mismatch"
+      + "f_bom_disproportionate") > 0
+    ORDER BY "outletId", "itemId"
   `);
 
   // Convert boolean columns to SqlRuleFlag[]

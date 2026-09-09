@@ -319,13 +319,23 @@ export async function queryParetoByDevBom(
   const grandTotal = topItems.reduce((s, r) => s + Number(r.absNominal), 0);
   let cumPct = 0;
 
-  const outletRowsByItem = await Promise.all(topItems.map((item) => {
-    const itemName = item.itemName;
-    return withStatementTimeout((tx) => tx.$queryRaw<Array<{
-      outletCode: string; outletName: string; area: string;
-      devBom: number; devBomAbs: number; nominalDeviasi: number; absNominal: number;
-    }>>`
-      SELECT o.code as "outletCode", o.name as "outletName", o.area,
+  // FIX (AUDIT-PERF-2): single query with ROW_NUMBER cap replaces 20 per-item
+  // transactions (pool exhaustion). The old code fired ONE withStatementTimeout
+  // transaction PER top item (up to 20 parallel full-period scans → ~32
+  // concurrent connections vs connection_limit=30 → intermittent pool
+  // exhaustion / ECHECKOUTRETRIES stalls, which the frontend then retried,
+  // amplifying the problem). This single GROUP BY (item, outlet) query produces
+  // the same per-item outlet rows (same WHERE/HAVING expressions, same top-20
+  // per item by ABS(nominalDeviasi) DESC) in ONE transaction.
+  // topItems.length >= 1 here (empty case early-returned above), so the
+  // Prisma.join IN-list always has >= 1 element.
+  const topItemNames = topItems.map((t) => t.itemName);
+  const outletRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    itemName: string; outletCode: string; outletName: string; area: string;
+    devBom: number; devBomAbs: number; nominalDeviasi: number; absNominal: number;
+  }>>`
+    WITH per_outlet AS (
+      SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", o.area,
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
@@ -340,24 +350,41 @@ export async function queryParetoByDevBom(
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
-        AND i.name = ${itemName}
+        AND i.name IN (${Prisma.join(topItemNames)})
         ${f}
-      GROUP BY o.code, o.name, o.area
+      GROUP BY i.name, o.code, o.name, o.area
       HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END > ${threshold}
-      ORDER BY "absNominal" DESC
-      LIMIT 20
-    `);
-  }));
+    ),
+    ranked AS (
+      -- Top 20 outlets per item by ABS(nominalDeviasi) DESC — same cap the old
+      -- per-item query enforced via ORDER BY ... LIMIT 20. "outletCode" is a
+      -- deterministic tie-break for equal absNominal (old query's LIMIT
+      -- picked ties nondeterministically).
+      SELECT per_outlet.*,
+        ROW_NUMBER() OVER (PARTITION BY "itemName" ORDER BY "absNominal" DESC, "outletCode") AS rn
+      FROM per_outlet
+    )
+    SELECT "itemName", "outletCode", "outletName", "area", "devBom", "devBomAbs", "nominalDeviasi", "absNominal"
+    FROM ranked
+    WHERE rn <= 20
+    ORDER BY "itemName", "absNominal" DESC, "outletCode"
+  `);
+  const outletRowsByItem = new Map<string, typeof outletRows>();
+  for (const row of outletRows) {
+    const list = outletRowsByItem.get(row.itemName) ?? [];
+    list.push(row);
+    outletRowsByItem.set(row.itemName, list);
+  }
 
-  const drivers: ParetoDevBomRow[] = topItems.map((item, idx) => {
+  const drivers: ParetoDevBomRow[] = topItems.map((item) => {
     const itemName = item.itemName;
     const itemAbsNominal = Number(item.absNominal);
     const sharePct = grandTotal > 0 ? (itemAbsNominal / grandTotal) * 100 : 0;
     cumPct += sharePct;
 
-    const outletRows = outletRowsByItem[idx];
+    const outletRows = outletRowsByItem.get(itemName) ?? [];
     const outletTotal = outletRows.reduce((s, r) => s + Number(r.absNominal), 0);
     let outletCum = 0;
     const outlets: ParetoDevBomOutletRow[] = outletRows.map((r) => {

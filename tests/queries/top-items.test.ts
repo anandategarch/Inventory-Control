@@ -1,7 +1,7 @@
 // Tests for src/lib/queries/items/top-items.ts — queryTopItemsByNominal + queryTopItemsByDevBom.
 // Mock @/lib/db so $queryRaw returns canned rows; verify SQL is invoked + result shape.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { queryTopItemsByNominal, queryTopItemsByDevBom } from '@/lib/queries/items/top-items';
+import { queryTopItemsByNominal, queryTopItemsByDevBom, queryParetoByDevBom } from '@/lib/queries/items/top-items';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
@@ -135,5 +135,69 @@ describe('queryTopItemsByDevBom', () => {
     const call = mockQueryRaw.mock.calls[0][0];
     const sqlText = Array.isArray(call) ? call.join('$') : String(call);
     expect(sqlText).toContain('"qtyBom"');
+  });
+});
+
+describe('queryParetoByDevBom', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+    mockExecuteRaw.mockReset();
+  });
+
+  it('returns empty result without firing the outlet query when no items exceed the threshold', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]); // topItems query → empty
+    const r = await queryParetoByDevBom('WEEK 1', 'Agustus 2026', {}, 20, 0.5);
+    expect(r.drivers).toEqual([]);
+    expect(r.totalCount).toBe(0);
+    expect(r.totalAbsNominal).toBe(0);
+    expect(r.thresholdPct).toBe(0.5);
+    // Early return — the per-outlet breakdown query must NOT fire
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds drivers + outlet breakdown from ONE combined outlet query (no per-item N+1) — FIX AUDIT-PERF-2', async () => {
+    // Step 1 (topItems): two items, absNominal 100 + 50 (grandTotal = 150)
+    mockQueryRaw.mockResolvedValueOnce([
+      { itemName: 'Item A', outletCount: 2, devBom: 0.6, devBomAbs: 0.7, nominalDeviasi: -100, absNominal: 100 },
+      { itemName: 'Item B', outletCount: 1, devBom: 0.9, devBomAbs: 0.9, nominalDeviasi: 50, absNominal: 50 },
+    ]);
+    // Step 2 (single combined outlet query): rows for BOTH items in ONE result —
+    // grouped by (itemName, outletCode) with the ROW_NUMBER top-20-per-item cap.
+    mockQueryRaw.mockResolvedValueOnce([
+      { itemName: 'Item A', outletCode: '1030.BDG1', outletName: 'Outlet BDG 1', area: 'JAWA BARAT', devBom: 0.6, devBomAbs: 0.7, nominalDeviasi: -80, absNominal: 80 },
+      { itemName: 'Item A', outletCode: '1031.BDG2', outletName: 'Outlet BDG 2', area: 'JAWA BARAT', devBom: 0.8, devBomAbs: 0.8, nominalDeviasi: -20, absNominal: 20 },
+      { itemName: 'Item B', outletCode: '1040.MLG1', outletName: 'Outlet MLG 1', area: 'JAWA TIMUR', devBom: 0.9, devBomAbs: 0.9, nominalDeviasi: 50, absNominal: 50 },
+    ]);
+    const r = await queryParetoByDevBom('WEEK 1', 'Agustus 2026', {}, 20, 0.5);
+    // ONE topItems query + ONE combined outlet query (old code fired one
+    // transaction PER top item — 2 items = 2 extra transactions, 20 items = 20)
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+    expect(r.totalCount).toBe(2);
+    expect(r.totalAbsNominal).toBe(150);
+    expect(r.drivers).toHaveLength(2);
+    // Driver-level share/cum math unchanged (same as the old per-item path)
+    expect(r.drivers[0].itemName).toBe('Item A');
+    expect(r.drivers[0].sharePct).toBe(66.7);
+    expect(r.drivers[0].cumPct).toBe(66.7);
+    expect(r.drivers[0].outlets).toHaveLength(2);
+    expect(r.drivers[0].outlets[0].outletCode).toBe('1030.BDG1');
+    expect(r.drivers[0].outlets[0].sharePct).toBe(80); // 80 / 100
+    expect(r.drivers[0].outlets[0].cumPct).toBe(80);
+    expect(r.drivers[0].outlets[1].outletCode).toBe('1031.BDG2');
+    expect(r.drivers[0].outlets[1].sharePct).toBe(20); // 20 / 100
+    expect(r.drivers[0].outlets[1].cumPct).toBe(100);
+    expect(r.drivers[1].itemName).toBe('Item B');
+    expect(r.drivers[1].sharePct).toBe(33.3);
+    expect(r.drivers[1].cumPct).toBe(100);
+    expect(r.drivers[1].outlets).toHaveLength(1);
+    expect(r.drivers[1].outlets[0].outletCode).toBe('1040.MLG1');
+    expect(r.drivers[1].outlets[0].sharePct).toBe(100);
+    // Query shape: single GROUP BY (item, outlet) query with ROW_NUMBER top-20 cap
+    const call = mockQueryRaw.mock.calls[1][0];
+    const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
+    expect(sqlText).toContain('WITH per_outlet AS');
+    expect(sqlText).toContain('ROW_NUMBER() OVER (PARTITION BY "itemName"');
+    expect(sqlText).toContain('WHERE rn <= 20');
+    expect(sqlText).toContain('i.name IN ('); // parameterized IN-list (Prisma.join)
   });
 });
