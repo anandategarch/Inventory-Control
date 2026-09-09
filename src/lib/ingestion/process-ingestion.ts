@@ -14,6 +14,9 @@
 //   - BUG2-INGEST-1: delete+insert in single transaction (atomic)
 //   - BUG-5-5: race-safe upserts (ON CONFLICT DO UPDATE)
 //   - BUG2-INGEST-3: tx propagation to all sub-functions
+//   - AUDIT-BUG-3: in-memory natural-key dedup (akun NULL ≠ NULL in PG)
+//   - AUDIT-BUG-4: insertInventoryRecords — no more silent per-row catch{}
+//   - AUDIT-BUG-5: pg advisory lock + in-tx rechecks (cross-instance safe)
 // ============================================================
 import path from 'path';
 import { logger } from '../logger';
@@ -29,8 +32,9 @@ import { parseCsvStream } from '@/lib/csv-parser';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { DATA_DIR, safePath } from './safe-path';
 import { findExcelFiles } from './find-excel-files';
-import { acquireIngestionLock, releaseIngestionLock } from './ingestion-lock';
+import { acquireIngestionLock, releaseIngestionLock, acquireDbAdvisoryLock } from './ingestion-lock';
 import { computeOutletPeriodSales } from './outlet-period-sales';
+import { insertInventoryRecords } from './batch-insert';
 import type { IngestResult, IngestRequestBody } from './types';
 
 export async function processIngestion(body: IngestRequestBody, fastMode?: boolean): Promise<IngestResult[]> {
@@ -159,22 +163,14 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       // duplicate records split by case → query returns 0 for one case variant.
       // monthKey is always "2026-08" (numeric, case-insensitive) → safe dedup.
       //
-      // FIX (BUG2-INGEST-1): The old code DELETED the existing SourceFiles HERE (before
-      // creating the new one + inserting rows). If the subsequent create/insert failed
-      // (Excel parse error already handled above, but DB error / OOM / Vercel timeout
-      // can still happen mid-insert), the old data was PERMANENTLY LOST.
-      // Now we CAPTURE the list of old SourceFile IDs here (read-only) and defer the
-      // actual delete to INSIDE the transaction below (line ~270). This way, if the
-      // transaction fails, the delete is rolled back → old data is preserved.
-      const existingPeriodFiles = monthKey !== 'unknown'
-        ? await db.sourceFile.findMany({
-            where: { monthKey },
-            select: { id: true, fileName: true },
-          })
-        : await db.sourceFile.findMany({
-            where: { monthLabel },
-            select: { id: true, fileName: true },
-          });
+      // FIX (BUG2-INGEST-1): the dedup-delete runs INSIDE the transaction below (deferred),
+      // so a failed create/insert rolls the delete back → old data preserved.
+      //
+      // FIX (AUDIT-BUG-5): the existingPeriodFiles LIST itself is also queried inside
+      // the transaction, AFTER the pg advisory lock — reading it here (before the lock)
+      // would use a stale snapshot when a concurrent import of the same month commits
+      // while we wait for the lock, leaving TWO SourceFiles for one month
+      // (double-counted aggregates).
 
       // STEP 3: Pre-cache ALL outlets & items (avoid per-row DB queries — 50% faster)
       // Read-only — safe to do outside the transaction. The maps are populated and
@@ -186,6 +182,16 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       const itemDbMap = new Map<string, { id: number; satuan: string | null }>(allItems.map(i => [i.name, { id: i.id, satuan: i.satuan }]));
 
       const seenKeys = new Set<string>();
+      // FIX (AUDIT-BUG-3): in-memory natural-key dedup — PostgreSQL unique indexes
+      // treat NULL ≠ NULL, so rows with akunPenyesuaian = NULL escape BOTH the
+      // @@unique([weekId, outletId, itemId, akunPenyesuaian]) constraint AND
+      // createMany({skipDuplicates}) until the NULL-safe index from
+      // scripts/fix-null-akun-duplicates.ts is applied. fastMode (and the
+      // always-fastMode /api/ingest-process path) also skips validateRow's
+      // seenKeys DUPLICATE check → this Set is the last line of defense.
+      // Key mirrors the NULL-safe index expression: COALESCE(akun, '').
+      const naturalKeys = new Set<string>();
+      let skippedDuplicates = 0;
       const allIssues: DQIssueRow[] = [];
       const weekDbMap = new Map<string, number>();
 
@@ -200,10 +206,57 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       // timeout — PostgreSQL will then roll back automatically when the connection drops.
       // For /api/import-drive (300s), the 240s timeout gives headroom for post-tx work
       // (cache invalidation).
-      const { totalInserted, dq } = await db.$transaction(
+      const { totalInserted, dq, duplicateOf } = await db.$transaction(
         async (tx) => {
+          // FIX (AUDIT-BUG-5): FIRST statement — transaction-scoped PostgreSQL advisory
+          // lock keyed on monthKey. Serializes concurrent imports of the same month
+          // ACROSS instances (the in-memory Set only guards one process; serverless
+          // runs many). xact-scoped → auto-released at COMMIT/ROLLBACK, even on crash.
+          // Best-effort no-op on non-PG backends (see ingestion-lock.ts).
+          await acquireDbAdvisoryLock(tx, monthKey);
+
+          // FIX (AUDIT-BUG-5): re-check the file hash INSIDE the lock. A concurrent
+          // import may have committed this exact file between the unlocked check
+          // above and the lock acquisition — without this re-check both imports
+          // would run delete+insert interleaved. Skipping here is correct: the
+          // data is already in, verified by the row count below.
+          const racedFile = await tx.sourceFile.findUnique({
+            where: { fileHash },
+            select: { id: true },
+          });
+          if (racedFile) {
+            const racedCount = await tx.inventoryRecord.count({
+              where: { sourceFileId: racedFile.id },
+            });
+            if (racedCount > 0) {
+              return {
+                totalInserted: 0, skippedErrors: 0,
+                dq: { summary: [], severityCounts: { ERROR: 0, WARNING: 0, INFO: 0 }, status: 'OK' as const },
+                duplicateOf: { id: racedFile.id, rowCount: racedCount },
+              };
+            }
+            // Stale stub (0 records) committed by a concurrent failed import →
+            // purge it here, inside the lock, then proceed with our import.
+            await tx.dQIssue.deleteMany({ where: { sourceFileId: racedFile.id } });
+            await tx.inventoryRecord.deleteMany({ where: { sourceFileId: racedFile.id } });
+            await tx.week.deleteMany({ where: { sourceFileId: racedFile.id } });
+            await tx.sourceFile.delete({ where: { id: racedFile.id } });
+          }
+
           // STEP 1 (deferred): Delete old SourceFiles for the same monthKey/monthLabel.
           // This runs INSIDE the transaction so it's rolled back if the insert fails.
+          // FIX (AUDIT-BUG-5): the list is queried AFTER the advisory lock so a
+          // concurrent import's commit is visible here (no stale snapshot → no
+          // leftover second SourceFile for the month).
+          const existingPeriodFiles = monthKey !== 'unknown'
+            ? await tx.sourceFile.findMany({
+                where: { monthKey },
+                select: { id: true, fileName: true },
+              })
+            : await tx.sourceFile.findMany({
+                where: { monthLabel },
+                select: { id: true, fileName: true },
+              });
           if (existingPeriodFiles.length > 0) {
             const oldIds = existingPeriodFiles.map(f => f.id);
             await tx.dQIssue.deleteMany({ where: { sourceFileId: { in: oldIds } } });
@@ -318,6 +371,25 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
             const itemId = itemEntry?.id ?? 0;
 
             if (weekId > 0 && outletId > 0 && itemId > 0) {
+              // FIX (AUDIT-BUG-3): natural-key dedup BEFORE enqueueing — see the
+              // naturalKeys declaration above. First occurrence wins (mirrors
+              // ON CONFLICT DO NOTHING). fastMode: only counted (DQ validation is
+              // off); non-fastMode: also surfaced as a WARNING DQ issue.
+              const naturalKey = `${weekId}|${outletId}|${itemId}|${n.akunPenyesuaian ?? ''}`;
+              if (naturalKeys.has(naturalKey)) {
+                skippedDuplicates++;
+                if (!fastMode) {
+                  allIssues.push({
+                    severity: 'WARNING',
+                    code: 'DUPLICATE',
+                    message: `Row ${rowNumber}: duplikat natural key ${naturalKey} — baris dilewati`,
+                    rawValue: naturalKey,
+                    rowNumber,
+                  });
+                }
+                continue;
+              }
+              naturalKeys.add(naturalKey);
               batchRecords.push({
                 sourceFileId: sourceFile.id, weekId, outletId, itemId,
                 akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
@@ -341,36 +413,22 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
             // Batch insert
             if (batchRecords.length >= BATCH_SIZE) {
               // BUG-06 fix: createMany returns { count: N } — use actual count, not batch length
-              // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
-              let result;
-              try {
-                result = await tx.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-              } catch {
-                // SQLite fallback: insert one by one, skip duplicates manually
-                let count = 0;
-                for (const rec of batchRecords) {
-                  try { await tx.inventoryRecord.create({ data: rec }); count++; } catch {}
-                }
-                result = { count };
-              }
-              totalInserted += result.count;
+              // FIX (AUDIT-BUG-4): insertInventoryRecords — duplicates (P2002 / ON
+              // CONFLICT) are skipped + counted; every OTHER error is rethrown so
+              // this transaction rolls back. The old per-row `catch {}` here silently
+              // dropped rows on connection/timeout/data errors (import "succeeded"
+              // with missing data).
+              const result = await insertInventoryRecords(tx, batchRecords);
+              totalInserted += result.inserted;
               batchRecords = [];
             }
           }
 
           // Insert remaining records
           if (batchRecords.length > 0) {
-            let result2;
-            try {
-              result2 = await tx.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-            } catch {
-              let count = 0;
-              for (const rec of batchRecords) {
-                try { await tx.inventoryRecord.create({ data: rec }); count++; } catch {}
-              }
-              result2 = { count };
-            }
-            totalInserted += result2.count;
+            // FIX (AUDIT-BUG-4): same error-strict semantics for the final flush.
+            const result2 = await insertInventoryRecords(tx, batchRecords);
+            totalInserted += result2.inserted;
           }
 
           // STEP 4: Update source file record
@@ -426,10 +484,30 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
             }
           }
 
-          return { totalInserted, skippedErrors, dq };
+          return { totalInserted, skippedErrors, dq, duplicateOf: undefined };
         },
         { timeout: 240_000, maxWait: 10_000 },
       );
+
+      // FIX (AUDIT-BUG-5): a concurrent import committed this exact file while we
+      // waited on the advisory lock — its data is already in (row count verified
+      // inside the lock). Report SKIPPED instead of double-importing.
+      if (duplicateOf) {
+        results.push({
+          fileName, status: 'SKIPPED', rowCount: duplicateOf.rowCount,
+          dqStatus: 'OK', dqErrors: 0, dqWarnings: 0,
+        });
+        continue;
+      }
+
+      // FIX (AUDIT-BUG-3): surface in-memory duplicate skips (fastMode has no DQ
+      // pipeline — without this log the dropped rows would be invisible).
+      if (skippedDuplicates > 0) {
+        logger.warn(
+          `ingest ${fileName}: skipped ${skippedDuplicates} in-batch duplicate row(s) ` +
+            '(natural key week|outlet|item|akun — first occurrence kept)',
+        );
+      }
 
       // Phase 3: invalidate analysis cache when new data is ingested
       // BUG FIX (BUG-NORECORDS-3): clear statusCache so dropdown shows new months immediately.

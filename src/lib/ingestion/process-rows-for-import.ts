@@ -20,12 +20,18 @@
 //     no tx is provided (legacy non-transactional callers).
 //   - BUG-5-5: outlet + item creation use upsert (ON CONFLICT
 //     DO UPDATE) to avoid P2002 under concurrent imports.
+//   - AUDIT-BUG-3: in-memory natural-key dedup — NULL akunPenyesuaian
+//     rows escape the DB unique constraint (NULL ≠ NULL in PG) and
+//     fastMode skips validateRow's seenKeys check.
+//   - AUDIT-BUG-4: insertInventoryRecords — per-row insert failures are
+//     either counted duplicates (P2002) or RETHROWN (no silent data loss).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { normalizeRow, deriveRecord, type NumberLocale } from '@/engine/transform';
 import { validateRow, type DQIssueRow } from '@/engine/validator';
 import { computeOutletPeriodSales } from './outlet-period-sales';
+import { insertInventoryRecords } from './batch-insert';
 import type { ProcessRowsResult } from './types';
 
 /**
@@ -72,6 +78,15 @@ export async function processRowsForImport(
   const _outletDbMap = outletDbMap ?? new Map<string, number>();
   const _itemDbMap = itemDbMap ?? new Map<string, { id: number; satuan: string | null }>();
   const _seenKeys = seenKeys ?? new Set<string>();
+  // FIX (AUDIT-BUG-3): in-memory natural-key dedup. PostgreSQL unique indexes
+  // treat NULL ≠ NULL, so rows with akunPenyesuaian = NULL escape BOTH the
+  // @@unique constraint AND createMany({skipDuplicates}) until the NULL-safe
+  // index from scripts/fix-null-akun-duplicates.ts is applied. This path is
+  // ALWAYS fastMode (see /api/ingest-process) → validateRow's seenKeys
+  // DUPLICATE check never runs → this Set is the last line of defense.
+  // Key mirrors the NULL-safe index expression: COALESCE(akun, '').
+  const _naturalKeys = new Set<string>();
+  let skippedDuplicates = 0;
   const allIssues: DQIssueRow[] = [];
   const BATCH_SIZE = 500;
   let batchRecords: Prisma.InventoryRecordCreateManyInput[] = [];
@@ -143,6 +158,25 @@ export async function processRowsForImport(
     const itemId = itemEntry?.id ?? 0;
 
     if (weekId > 0 && outletId > 0 && itemId > 0) {
+      // FIX (AUDIT-BUG-3): natural-key dedup BEFORE enqueueing — first
+      // occurrence wins (mirrors ON CONFLICT DO NOTHING). fastMode: counted
+      // only (returned via skippedDuplicates); non-fastMode: also a WARNING
+      // DQ issue so the drop is visible in the DQ report.
+      const naturalKey = `${weekId}|${outletId}|${itemId}|${n.akunPenyesuaian ?? ''}`;
+      if (_naturalKeys.has(naturalKey)) {
+        skippedDuplicates++;
+        if (!fastMode) {
+          allIssues.push({
+            severity: 'WARNING',
+            code: 'DUPLICATE',
+            message: `Row ${rowNumber}: duplikat natural key ${naturalKey} — baris dilewati`,
+            rawValue: naturalKey,
+            rowNumber,
+          });
+        }
+        continue;
+      }
+      _naturalKeys.add(naturalKey);
       batchRecords.push({
         sourceFileId, weekId, outletId, itemId,
         akunPenyesuaian: n.akunPenyesuaian, status: n.status, satuan: n.satuan,
@@ -164,36 +198,25 @@ export async function processRowsForImport(
     }
 
     if (batchRecords.length >= BATCH_SIZE) {
-      // FIX DB2-2: skipDuplicates is PostgreSQL-only — try/catch fallback for SQLite
-      // FIX (BUG2-INGEST-3): use `client` (tx if provided) so this is part of the caller's transaction.
-      let result;
-      try {
-        result = await client.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-      } catch {
-        let count = 0;
-        for (const rec of batchRecords) {
-          try { await client.inventoryRecord.create({ data: rec }); count++; } catch {}
-        }
-        result = { count };
-      }
-      inserted += result.count;
+      // FIX (AUDIT-BUG-4): insertInventoryRecords — duplicates (P2002 / ON
+      // CONFLICT) are skipped + counted; every OTHER error is rethrown so the
+      // caller's transaction rolls back. The old per-row `catch {}` here silently
+      // dropped rows on connection/timeout/data errors (import "succeeded"
+      // with missing data).
+      // FIX (BUG2-INGEST-3): uses `client` (tx if provided) so this is part of
+      // the caller's transaction.
+      const result = await insertInventoryRecords(client, batchRecords);
+      inserted += result.inserted;
       batchRecords = [];
     }
   }
 
   if (batchRecords.length > 0) {
-    // FIX (BUG2-INGEST-3): use `client` (tx if provided) so this is part of the caller's transaction.
-    let result2;
-    try {
-      result2 = await client.inventoryRecord.createMany({ data: batchRecords, skipDuplicates: true });
-    } catch {
-      let count = 0;
-      for (const rec of batchRecords) {
-        try { await client.inventoryRecord.create({ data: rec }); count++; } catch {}
-      }
-      result2 = { count };
-    }
-    inserted += result2.count;
+    // FIX (AUDIT-BUG-4): same error-strict semantics for the final flush.
+    // FIX (BUG2-INGEST-3): uses `client` (tx if provided) so this is part of
+    // the caller's transaction.
+    const result2 = await insertInventoryRecords(client, batchRecords);
+    inserted += result2.inserted;
   }
 
   // API-02 FIX: Pre-compute sales MODE per (outlet, period) — same as processIngestion STEP 3.5.
@@ -210,5 +233,5 @@ export async function processRowsForImport(
   // Prisma.TransactionClient and PrismaClient (Proxy).
   await computeOutletPeriodSales(client, sourceFileId);
 
-  return { inserted, skippedErrors, dqIssues: allIssues };
+  return { inserted, skippedErrors, dqIssues: allIssues, skippedDuplicates };
 }

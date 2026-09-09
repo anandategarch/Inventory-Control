@@ -149,6 +149,18 @@ model InventoryRecord {
 
   createdAt           DateTime @default(now())
 
+  // AUDIT-BUG-3: in PostgreSQL NULL ≠ NULL in unique indexes, so this
+  // constraint does NOT stop duplicate rows when akunPenyesuaian IS NULL
+  // (createMany skipDuplicates lets both through → double-counted
+  // aggregates). A NULL-safe EXPRESSION index can't be expressed in
+  // Prisma, so it is created by scripts/fix-null-akun-duplicates.ts
+  // (also dedups existing rows first):
+  //   CREATE UNIQUE INDEX "InventoryRecord_nullsafe_akun"
+  //   ON "InventoryRecord" ("weekId","outletId","itemId",
+  //      COALESCE("akunPenyesuaian", ''))
+  // ON CONFLICT DO NOTHING (skipDuplicates) honors it. Keep this
+  // @@unique too — it covers the akun NOT NULL case and documents the
+  // natural key for Prisma Client's upsert/where types.
   @@unique([weekId, outletId, itemId, akunPenyesuaian])
   @@index([outletId, weekId])
   @@index([itemId, weekId])

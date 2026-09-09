@@ -37,4 +37,8 @@ export interface ProcessRowsResult {
   inserted: number;
   skippedErrors: number;
   dqIssues: DQIssueRow[];
+  /** FIX (AUDIT-BUG-3): rows skipped by the in-memory natural-key dedup
+   *  (week|outlet|item|COALESCE(akun,'')) — fastMode callers have no DQ
+   *  pipeline, so the count is surfaced here for logging/reporting. */
+  skippedDuplicates: number;
 }

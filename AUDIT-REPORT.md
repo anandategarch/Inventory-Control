@@ -195,4 +195,22 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
 | P4 | PERF-8/9 + sisanya | bertahap | Polish |
 
 ---
+## 📌 Status Implementasi (update)
+
+**Sudah diterapkan di repo (commit berurutan):**
+
+- `perf(fe)` — PERF-1 (fetch `/api/analysis` 1× via action atomik `setPeriod`), PERF-7 (animasi Recharts off)
+- `perf(db)` — PERF-2 (Pareto N+1 → 1 query `ROW_NUMBER`), PERF-3/4 (filter baris di sisi SQL)
+- `fix(cache/ingest)` — PERF-5 (TTL 30 mnt + SWR background recompute), PERF-6 (race dedup in-flight), BUG-1 (`@@unique([monthKey, weekLabel])` + purge lintas-file + script `db:fix-duplicate-weeks`), BUG-2 (fallback beda-minggu dihapus, FE+BE)
+- `fix(ingest-integrity)` — **BUG-3/4/5**:
+  - **BUG-3**: dedup natural-key in-memory di kedua jalur ingest (kunci `week|outlet|item|COALESCE(akun,'')`, jalan juga di fastMode) + script `bun run db:fix-null-akun-duplicates` (normalisasi `''`→NULL, dedup baris lama — keeper = baris terkaya data, tie-break id terbaru, lalu `CREATE UNIQUE INDEX "InventoryRecord_nullsafe_akun" ON "InventoryRecord"("weekId","outletId","itemId",COALESCE("akunPenyesuaian",''))` — indeks ekspresi yang tidak bisa diekspresikan di schema.prisma; `ON CONFLICT DO NOTHING` menghormatinya).
+  - **BUG-4**: helper `insertInventoryRecords` (`src/lib/ingestion/batch-insert.ts`) — P2002 di-skip + dihitung + di-log; error lain di-rethrow supaya transaksi rollback (dipakai di 4 titik: process-ingestion ×2, process-rows-for-import ×2, plus route pic/import — kelas bug sama).
+  - **BUG-5**: `pg_advisory_xact_lock(hashtext(monthKey))` sebagai statement PERTAMA di dalam semua 3 transaksi import (process-ingestion + 2 mode ingest-process) — serialisasi lintas-instance, auto-release saat COMMIT/ROLLBACK; query `existingPeriodFiles`/`existingWeek` dipindah ke DALAM transaksi setelah lock (hapus stale-snapshot) + re-check `fileHash` dalam transaksi untuk menang import file sama yang berbarengan (hasil: SKIPPED, bukan double-import).
+
+**Belum (butuh aksi manual user):**
+- P0: rotasi password Supabase + purge git history + revoke PAT (kredensial masih terbaca di history)
+- Jalankan: `bun run db:fix-duplicate-weeks` LALU `bun run db:fix-null-akun-duplicates` LALU `bun run db:push` (urutan penting: bersihkan duplikat dulu, constraint/index diterapkan terakhir)
+- `src/lib/queries/pareto/nested.ts:60` masih N+1 kecil (10 tx) — kandidat follow-up
+
+---
 *Audit dilakukan read-only — tidak ada file repo yang dimodifikasi.*

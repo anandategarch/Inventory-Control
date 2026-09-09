@@ -34,10 +34,19 @@
 //    ./process-rows-for-import  — processRowsForImport() import flow
 //                                 (BUG2-INGEST-3 tx propagation,
 //                                  BUG-5-5 race-safe upserts)
+//    ./batch-insert             — insertInventoryRecords() batch helper
+//                                 (AUDIT-BUG-4: duplicate-tolerant,
+//                                  error-strict insert — no silent loss)
+//    ./ingestion-lock           — acquireIngestionLock / releaseIngestionLock
+//                                 (Bug 3 fix: in-process race lock)
+//                                 + acquireDbAdvisoryLock (AUDIT-BUG-5:
+//                                 cross-instance pg advisory lock)
+//                                 INTERNAL — not re-exported.
 // ============================================================
 export * from './types';
 export * from './safe-path';
 export * from './find-excel-files';
 export * from './outlet-period-sales';
+export * from './batch-insert';
 export * from './process-ingestion';
 export * from './process-rows-for-import';

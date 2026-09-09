@@ -17,6 +17,7 @@ import { validateManualFileName } from '@/lib/filename';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { summarizeDQ } from '@/engine/validator';
 import { processRowsForImport } from '@/lib/ingestion';
+import { acquireDbAdvisoryLock } from '@/lib/ingestion/ingestion-lock';
 import { validateBody, ingestProcessBodySchema, ingestProcessDeleteBodySchema } from '@/lib/validation';
 import path from 'path';
 import fs from 'fs/promises';
@@ -434,11 +435,8 @@ export async function POST(req: NextRequest) {
       // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a previous
       // import under a different fileName must NOT create a second Week for the same
       // period (doubles every aggregate). Replace the old week's data instead.
-      // (Straight-line code here — monthInfo narrowing from the guard above applies.)
-      const existingWeek = await db.week.findFirst({
-        where: { monthKey: monthInfo.monthKey, weekLabel },
-        select: { id: true, sourceFileId: true },
-      });
+      // FIX (AUDIT-BUG-5): the findFirst itself moved INSIDE the transaction (after
+      // the advisory lock) — see the comment there.
 
       // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
       // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction below —
@@ -471,6 +469,24 @@ export async function POST(req: NextRequest) {
 
       const result = await db.$transaction(
         async (tx) => {
+          // FIX (AUDIT-BUG-5): FIRST statement — transaction-scoped PostgreSQL advisory
+          // lock keyed on monthKey (SAME key space as processIngestion, so full-file
+          // /api/ingest imports and per-week /api/ingest-process imports of the same
+          // month serialize against each other, ACROSS serverless instances — the
+          // old in-process Set lock never covered this route). xact-scoped → released
+          // automatically at COMMIT/ROLLBACK, even on crash.
+          await acquireDbAdvisoryLock(tx, monthKeyForTx);
+
+          // FIX (AUDIT-BUG-1 + AUDIT-BUG-5): resolve the existing Week INSIDE the
+          // transaction, AFTER the advisory lock. Resolving it before the lock used
+          // a stale snapshot when a concurrent import of the same month committed
+          // while we waited for the lock → tx.week.delete below would target an
+          // already-deleted week (P2025 abort) or leave the old week in place.
+          const existingWeek = await tx.week.findFirst({
+            where: { monthKey: monthKeyForTx, weekLabel },
+            select: { id: true, sourceFileId: true },
+          });
+
           if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
             // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
             // (monthKey, weekLabel) — purge it so the new file becomes the
@@ -734,12 +750,9 @@ export async function POST(req: NextRequest) {
         // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a
         // previous import under a different fileName must NOT create a second
         // Week for the same period (doubles every aggregate). Replace the old
-        // week's data instead. (Straight-line code — monthInfo narrowing from
-        // the guard above applies; inside the transaction closure it doesn't.)
-        const existingWeek = await db.week.findFirst({
-          where: { monthKey: monthInfo.monthKey, weekLabel },
-          select: { id: true, sourceFileId: true },
-        });
+        // week's data instead.
+        // FIX (AUDIT-BUG-5): the findFirst itself moved INSIDE the transaction
+        // (after the advisory lock) — see the comment there.
 
         // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
         // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction
@@ -760,6 +773,20 @@ export async function POST(req: NextRequest) {
         const monthKeyForTx = monthInfo.monthKey;
         const result = await db.$transaction(
           async (tx) => {
+            // FIX (AUDIT-BUG-5): FIRST statement — transaction-scoped PostgreSQL
+            // advisory lock keyed on monthKey (same key space as `import` mode and
+            // processIngestion — all writers of a month serialize, cross-instance).
+            // xact-scoped → released automatically at COMMIT/ROLLBACK, even on crash.
+            await acquireDbAdvisoryLock(tx, monthKeyForTx);
+
+            // FIX (AUDIT-BUG-1 + AUDIT-BUG-5): resolve the existing Week INSIDE the
+            // transaction, AFTER the advisory lock (stale-snapshot fix — same
+            // rationale as `import` mode above).
+            const existingWeek = await tx.week.findFirst({
+              where: { monthKey: monthKeyForTx, weekLabel },
+              select: { id: true, sourceFileId: true },
+            });
+
             if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
               // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
               // (monthKey, weekLabel) — purge it so the new file becomes the

@@ -8,6 +8,7 @@
 //  Returns: { success: true, imported: N, errors: [...] }
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
@@ -96,12 +97,21 @@ export async function POST(req: NextRequest) {
             });
             actuallyCreated = result.count;
           } catch {
-            // SQLite fallback: insert one by one, skip duplicates manually
+            // SQLite fallback: insert one by one, skip duplicates manually.
+            // FIX (AUDIT-BUG-4, same class): catch ONLY P2002 (unique violation)
+            // as "skipped duplicate"; every OTHER error is rethrown so the outer
+            // handler surfaces it — the old empty catch {} silently dropped rows
+            // on connection/timeout/data errors (import "succeeded" with gaps).
             for (const rec of toCreate) {
               try {
                 await db.outletPIC.create({ data: rec });
                 actuallyCreated++;
-              } catch {}
+              } catch (rowError) {
+                if (rowError instanceof Prisma.PrismaClientKnownRequestError && rowError.code === 'P2002') {
+                  continue; // duplicate outletCode from a concurrent import — skip
+                }
+                throw rowError;
+              }
             }
           }
         }
