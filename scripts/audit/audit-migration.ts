@@ -21,8 +21,15 @@
 // ============================================================
 import { Pool } from 'pg';
 
-const OLD_URL = 'postgresql://postgres.vefkgapveggbmkloaslw:***REDACTED-SUPABASE-PASSWORD-ROTATED***@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres';
-const NEW_URL = 'postgresql://postgres.proosjqivxadwgftofry:***REDACTED-SUPABASE-PASSWORD-ROTATED***@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres';
+// FIX (AUDIT-SEC-ENV): these were previously HARDCODED connection strings with
+// real passwords — committed to git history (see AUDIT-REPORT.md P0). The
+// passwords are now sourced from environment variables, and git history was
+// purged with git-filter-repo. Rotate the Supabase password regardless
+// (purge cannot retract anything already cloned/cached).
+//   NEW DB: DATABASE_URL
+//   OLD DB: OLD_DATABASE_URL (optional — cross-DB checks skip when unset)
+const OLD_URL = process.env.OLD_DATABASE_URL || '';
+const NEW_URL = process.env.DATABASE_URL || '';
 
 // Track OLD DB reachability — if false, skip cross-DB checks
 let OLD_REACHABLE = true;
@@ -56,7 +63,15 @@ function addIssue(id: string, severity: Issue['severity'], title: string, findin
   issues.push({ id, severity, title, finding, impact, fix });
 }
 
-const oldPool = new Pool({ connectionString: OLD_URL, connectionTimeoutMillis: 15000, max: 4 });
+if (!NEW_URL) {
+  throw new Error('DATABASE_URL is not set — cannot audit the NEW database. ' +
+    'Usage: DATABASE_URL=postgresql://... bun run scripts/audit/audit-migration.ts');
+}
+if (!OLD_URL) {
+  console.log('ℹ OLD_DATABASE_URL not set — cross-DB (old vs new) checks will be skipped.');
+}
+
+const oldPool = new Pool({ connectionString: OLD_URL || 'postgresql://invalid.invalid:5432/none', connectionTimeoutMillis: 15000, max: 4 });
 const newPool = new Pool({ connectionString: NEW_URL, connectionTimeoutMillis: 15000, max: 4 });
 
 async function q(pool: Pool, sql: string, params?: any[]) {

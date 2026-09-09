@@ -211,6 +211,16 @@ model InventoryRecord {
   // GROUP BY order; INCLUDE columns enable index-only scan (no heap fetch).
   // This index is also used by /api/pareto's 5 queryParetoHistorical calls.
   @@index([weekLabel, monthLabel, outletId, itemId])
+
+  // ⚠️ AUDIT-DB-PUSH-2 — COVERING (INCLUDE) INDEX WARNING ⚠️
+  // The three indexes above with "covering" comments exist in the DB with
+  // INCLUDE columns (index-only scans — e.g. histAgg 8s → 1.6s) created via
+  // raw SQL. Prisma CANNOT model INCLUDE, so on every `prisma db push` /
+  // `migrate` it will DROP the INCLUDE versions and CREATE these plain
+  // shadows instead. After ANY db push/migrate, run:
+  //     bun run db:recreate-covering-indexes
+  // (scripts/recreate-covering-indexes.ts — idempotent) to restore the
+  // INCLUDE versions (then optionally drop the plain duplicates it lists).
 }
 
 // ------------------------------------------------------------
@@ -323,4 +333,25 @@ model FileChunk {
 
   @@unique([fileHash, chunkIndex])
   @@index([fileHash])
+}
+
+// ------------------------------------------------------------
+//  Audit Log — request/analysis audit trail
+//  ---------------------------------------------------------
+//  FIX (AUDIT-DB-PUSH-1): this model was accidentally LOST from the
+//  schema in an earlier force push, but the table still exists in the
+//  production DB (402 rows, actively written by the currently deployed
+//  app build). WITHOUT this model, `prisma db push --accept-data-loss`
+//  would DROP the table and its data (verified via `prisma migrate
+//  diff` before running any push). Model restored 1:1 from the live
+//  table definition (timestamp(3), detail NOT NULL).
+//  No app code currently reads/writes it via Prisma — kept for data
+//  preservation and future re-use.
+// ------------------------------------------------------------
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String   // e.g. ANALYSIS
+  detail    String   // human-readable description of the audited action
+  duration  Int?     // milliseconds (nullable for non-timed actions)
+  createdAt DateTime @default(now())
 }

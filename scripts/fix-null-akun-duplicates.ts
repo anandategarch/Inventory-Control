@@ -92,12 +92,20 @@ async function main() {
   }
 
   // --- Step 1: find duplicate groups (NULL-safe key) -------------------
+  // FIX (SCRIPT-RUNTIME-2): was GROUP BY ... COALESCE("akunPenyesuaian", '')
+  // while SELECTing the bare "akunPenyesuaian" column → Postgres 42803
+  // ("column must appear in the GROUP BY clause"). Plain GROUP BY on the
+  // column is correct here: GROUP BY treats NULLs as EQUAL (one group per
+  // key — unlike unique indexes), and Step 0 has already normalized any
+  // legacy '' to NULL, so the grouping is identical to the COALESCE intent.
+  // (The COALESCE expression stays in the unique INDEX below — that is where
+  // NULL≠NULL actually bites and the expression is required.)
   const dupGroups: Array<{
     weekId: number; outletId: number; itemId: number; akun: string | null; cnt: bigint;
   }> = await db.$queryRaw`
     SELECT "weekId", "outletId", "itemId", "akunPenyesuaian" AS "akun", COUNT(*) AS "cnt"
     FROM "InventoryRecord"
-    GROUP BY "weekId", "outletId", "itemId", COALESCE("akunPenyesuaian", '')
+    GROUP BY "weekId", "outletId", "itemId", "akunPenyesuaian"
     HAVING COUNT(*) > 1
     ORDER BY "cnt" DESC
   `;

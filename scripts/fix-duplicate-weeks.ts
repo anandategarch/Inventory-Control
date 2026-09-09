@@ -42,11 +42,19 @@ async function main() {
   console.log('═══════════════════════════════════════════════');
 
   // Groups of (monthKey, weekLabel) having more than one Week row.
-  const dupGroups = await db.week.groupBy({
-    by: ['monthKey', 'weekLabel'],
-    _count: { _all: true },
-    having: { _count: { _all: { gt: 1 } } },
-  });
+  // FIX (SCRIPT-RUNTIME-1): was `db.week.groupBy({ by: [...], _count: { _all: true },
+  // having: { _count: { _all: { gt: 1 } } } })` — Prisma 6.11's generated
+  // `having` type is WeekScalarWhereWithAggregatesInput (field filters only),
+  // so the `_count` key fails runtime validation ("Unknown argument `_count`")
+  // and the script crashed on first real execution. Raw SQL is the standard
+  // workaround (deterministic, same semantics; verified against production).
+  const dupGroups = await db.$queryRaw<Array<{ monthKey: string; weekLabel: string }>>`
+    SELECT "monthKey", "weekLabel"
+    FROM "Week"
+    GROUP BY "monthKey", "weekLabel"
+    HAVING COUNT(*) > 1
+    ORDER BY "monthKey", "weekLabel"
+  `;
 
   if (dupGroups.length === 0) {
     console.log('✓ No duplicate (monthKey, weekLabel) buckets found — nothing to fix.');

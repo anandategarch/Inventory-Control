@@ -208,11 +208,17 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
   - **BUG-5**: `pg_advisory_xact_lock(hashtext(monthKey))` sebagai statement PERTAMA di dalam semua 3 transaksi import (process-ingestion + 2 mode ingest-process) — serialisasi lintas-instance, auto-release saat COMMIT/ROLLBACK; query `existingPeriodFiles`/`existingWeek` dipindah ke DALAM transaksi setelah lock (hapus stale-snapshot) + re-check `fileHash` dalam transaksi untuk menang import file sama yang berbarengan (hasil: SKIPPED, bukan double-import).
 
 **Belum (butuh aksi manual user):**
-- P0: rotasi password Supabase + purge git history + revoke PAT (kredensial masih terbaca di history)
-- Jalankan: `bun run db:fix-duplicate-weeks` LALU `bun run db:fix-null-akun-duplicates` LALU `bun run db:push` (urutan penting: bersihkan duplikat dulu, constraint/index diterapkan terakhir)
+- P0: rotasi password Supabase + revoke PAT (kredensial tercantum di history sampai purge dijalankan; rotasi password tetap satu-satunya proteksi absolut)
 
 **Follow-up terimplementasi:**
 - N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
+
+**Eksekusi script DB (2026-09-09, terhadap DB produksi):**
+- `db:fix-duplicate-weeks` — dijalankan: **0 duplikat** (data bersih). Script sempat crash saat eksekusi nyata (`having: {_count:...}` ditolak validasi runtime Prisma 6.11) → diganti deteksi `$queryRaw` (SCRIPT-RUNTIME-1).
+- `db:fix-null-akun-duplicates` — dijalankan: **0 duplikat / 0 normalisasi**; query deteksi GROUP BY+COALESCE asli kena error PG 42803 → diganti GROUP BY kolom biasa (SCRIPT-RUNTIME-2, semantik identik karena Step 0 sudah menormalkan `''`→NULL; di GROUP BY NULL memang setara). **Index unik `InventoryRecord_nullsafe_akun` BERHASIL DIBUAT** (penjaga BUG-3 level DB aktif).
+- Constraint `Week(monthKey, weekLabel)` — **DITERAPKAN** via `CREATE UNIQUE INDEX "Week_monthKey_weekLabel_key"` (nama + definisi identik dengan output Prisma; diterapkan surgikal, 20 baris, instan).
+- **`db:push` TIDAK dijalankan langsung** — preview `prisma migrate diff` menunjukkan collateral: `DROP TABLE "AuditLog"` (model hilang dari schema saat force-push dulu; tabel produksi masih ada, 402 baris, MASIH DITULIS deployment aktif) + DROP 3 index covering INCLUDE (perf index-only scan 8s→1.6s) yang tak bisa dimodelkan Prisma. Mitigasi: (a) `model AuditLog` direstorasi ke schema (push berikutnya aman untuk tabel itu), (b) script `db:recreate-covering-indexes` baru (idempoten) untuk memulihkan INCLUDE indexes setelah push di masa depan, (c) unique Week diterapkan surgikal di atas.
+- ⚠️ Catatan operasional: SETELAH `db:push`/`db:migrate` apa pun di masa depan, selalu jalankan `bun run db:recreate-covering-indexes` (lihat komentar AUDIT-DB-PUSH-2 di schema.prisma).
 
 ---
 *Audit dilakukan read-only — tidak ada file repo yang dimodifikasi.*
