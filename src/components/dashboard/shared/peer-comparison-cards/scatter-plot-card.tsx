@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 // ============================================================
 //  Scatter Plot Card — presentational
 //  --------------------------------------------------------
@@ -130,7 +132,10 @@ export const ScatterPlotCard = memo(function ScatterPlotCard({
                   );
                 }}
               />
-              <Scatter data={points}>
+              {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                  replays on every Radix tab re-entry (tab content unmounts) and on every
+                  period-change refetch; the double-fetch fix removed the second replay. */}
+              <Scatter data={points} isAnimationActive={false}>
                 {points.map((entry, i) => {
                   let fill = '#71717a'; // gray-500 (NEUTRAL / Peer Tab peer default)
                   let stroke = 'var(--background)';

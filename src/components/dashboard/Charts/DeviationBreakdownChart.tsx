@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -90,7 +92,10 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
                 formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
                 contentStyle={getTooltipStyle()}
               />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
+              {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                  replays on every Radix tab re-entry (tab content unmounts) and on every
+                  period-change refetch; the double-fetch fix removed the second replay. */}
+              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48} isAnimationActive={false} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
               </Bar>
             </BarChart>

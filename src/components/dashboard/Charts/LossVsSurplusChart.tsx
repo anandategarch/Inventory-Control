@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
@@ -45,7 +47,10 @@ export const LossVsSurplusChart = memo(function LossVsSurplusChart({ data }: { d
               <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
               <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={getTooltipStyle()} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]} maxBarSize={56}>
+              {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                  replays on every Radix tab re-entry (tab content unmounts) and on every
+                  period-change refetch; the double-fetch fix removed the second replay. */}
+              <Bar dataKey="records" name="Jumlah Record" radius={[4, 4, 0, 0]} maxBarSize={56} isAnimationActive={false}>
                 {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
               </Bar>
             </BarChart>

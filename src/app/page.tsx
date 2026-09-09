@@ -17,7 +17,7 @@
 //    • tabs/PeerTab         — peer comparison (lazy)
 //    • tabs/ParetoTab       — 80/20 Pareto analysis
 //    • tabs/ItemTrendTab    — per-item QTY timeline + Z-Score (NEW — TREND-FRONTEND)
-//    • useDashboardEffects  — 5 useEffects (auto-select + cache warming)
+//    • useDashboardEffects  — 2 useEffects (atomic auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
 //    • shared/index.tsx     — FetchAware, LoadingChart, EmptyState, etc.
 // ============================================================
@@ -74,7 +74,11 @@ function TabSkeleton() {
 }
 
 export default function DashboardPage() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+  // FIX (PERF-1 / AUDIT-FE): selector now pulls setPeriod (atomic month+week+
+  // compare setter) instead of setMonth/setWeek/setCompareWeek — the effects
+  // hook only needs the atomic setter, and the old three-setter chain caused
+  // the double /api/analysis fetch on every period change.
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -84,9 +88,7 @@ export default function DashboardPage() {
     outletCode: s.outletCode,
     itemName: s.itemName,
     pic: s.pic,
-    setMonth: s.setMonth,
-    setWeek: s.setWeek,
-    setCompareWeek: s.setCompareWeek,
+    setPeriod: s.setPeriod,
     activeTab: s.activeTab,
     setActiveTab: s.setActiveTab,
     setDrilldown: s.setDrilldown,
@@ -97,17 +99,16 @@ export default function DashboardPage() {
   const { data: status } = useStatus();
   const queryClient = useQueryClient();
 
-  // 5 useEffect hooks: auto-select month/week, cache warming, auto-set
-  // compare period, validate week. Side-effect-only — no return value.
+  // 2 useEffect hooks: combined auto-select (month+week+compare resolved in
+  // ONE atomic setPeriod — PERF-1 fix) + cache warming with resolved compare.
+  // Side-effect-only — no return value.
   useDashboardEffects({
     status,
     monthLabel,
     currentWeek,
     comparisonWeek,
     comparisonMonth,
-    setMonth,
-    setWeek,
-    setCompareWeek,
+    setPeriod,
     queryClient,
   });
 

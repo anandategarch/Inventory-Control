@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { fmtPct } from '@/lib/format';
@@ -112,7 +114,10 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                   <XAxis type="number" tickFormatter={(v) => fmtPct(v, true, 0)} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="name" width={90} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                   <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => fmtPct(v as number, true, 2)} contentStyle={getTooltipStyle()} />
-                  <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
+                  {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                      replays on every Radix tab re-entry (tab content unmounts) and on every
+                      period-change refetch; the double-fetch fix removed the second replay. */}
+                  <Bar dataKey="growth" radius={[0, 4, 4, 0]} maxBarSize={28} isAnimationActive={false} onClick={(d: { key?: string }) => d.key && setExpanded(expanded === d.key ? null : d.key)} cursor="pointer">
                     {chartData.map((d, i) => {
                       const mismatch =
                         (d.name === 'Sales' && mismatchSales) ||

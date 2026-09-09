@@ -3,20 +3,50 @@
 // ============================================================
 //  useDashboardEffects — extracted from page.tsx lines 113-206.
 //  --------------------------------------------------------
-//  Side-effect-only hook (no return value). Bundles the 5
-//  useEffect hooks that drive dashboard auto-selection +
-//  cache warming + week validation:
+//  Side-effect-only hook (no return value). Was 5 chained
+//  useEffects (auto month → auto week → cache warming →
+//  auto-compare → week validation); now TWO effects:
 //
-//    1. Auto-select first available month on mount.
-//    2. Auto-select first available week for the chosen month.
-//    3. PERF-OPT cache warming — prefetch the latest period as
-//       soon as status loads (don't wait for the auto-select
-//       chain to settle; saves ~1 render cycle).
-//    4. Auto-set default compare period = SAME weekLabel in the
-//       most recent PRIOR month (BUG-1 fix: previously compared
-//       W4→W2 same-month which produced false-positive growth).
-//    5. BUG-8 fix: validate currentWeek belongs to monthLabel;
-//       reset to last available week if mismatch.
+//    1. Combined auto-select effect (replaces old effects 1, 2,
+//       4 and 5) — runs when monthLabel/currentWeek are missing
+//       or currentWeek doesn't belong to monthLabel's weeks.
+//       Resolves month + week + default compare period in ONE
+//       atomic setPeriod() call:
+//         • target month  = existing monthLabel (if still in
+//           status) or the latest month from status.
+//         • target week   = currentWeek if it belongs to the
+//           target month's weeks, else the last available week.
+//         • compare       = same weekLabel searched BACKWARDS in
+//           a different month (BUG-1 fix, kept from old effect 4).
+//
+//    2. PERF-OPT cache warming — prefetch the latest period as
+//       soon as status loads, WITH the resolved compare period
+//       so the prefetch queryKey matches the final live query
+//       key exactly (was compareWeek: null — a wasted fetch that
+//       never deduped against the live query).
+//
+//  FIX (PERF-1 / AUDIT-FE — CRITICAL double-fetch): the old
+//  5-effect chain updated the store in SEPARATE commits
+//  (setMonth → setWeek → setCompareWeek). useAnalysis fired on
+//  every intermediate state: first with compareWeek: null, then
+//  again when the auto-compare effect changed the queryKey →
+//  /api/analysis (heaviest payload, 6-8s cold) was fetched TWICE
+//  on mount and on EVERY period change. With ONE atomic
+//  setPeriod() the queryKey changes exactly once.
+//
+//  FIX (AUDIT-BUG-2, frontend half): the old auto-compare effect
+//  had a chronological fallback (`allPeriods[currentIdx - 1]`)
+//  that compared mismatched weeks (W2 vs W1 of the same month —
+//  cumulative weeks → false ~-50% growth). Removed: when no
+//  same-weekLabel prior month exists, compare = null (backend
+//  handles a null compare gracefully).
+//
+//  Edge case preserved: when the user EXPLICITLY clears the
+//  compare select ("Tidak dibandingkan" → setCompareWeek(null,
+//  null)) and month+week are valid, this hook does NOT re-set a
+//  compare — the old effect 4 immediately re-set one (annoying).
+//  Compare is auto-resolved ONLY during the combined auto-select
+//  (month/week missing or invalid) and in FilterBar's handlers.
 //
 //  All inputs are passed in by the parent (DashboardPage) so this
 //  hook is pure with respect to the store — no direct useDashboard
@@ -26,6 +56,7 @@
 import { useEffect, useRef } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import { prefetchAnalysis, prefetchHeatmap, type AnalysisParams, type StatusData } from '@/hooks/useAnalysis';
+import { findAutoCompareForStatus } from '@/lib/auto-compare';
 
 export interface UseDashboardEffectsParams {
   status: StatusData | undefined;
@@ -33,9 +64,10 @@ export interface UseDashboardEffectsParams {
   currentWeek: string | null;
   comparisonWeek: string | null;
   comparisonMonth: string | null;
-  setMonth: (m: string) => void;
-  setWeek: (w: string | null) => void;
-  setCompareWeek: (w: string, m: string) => void;
+  // FIX (PERF-1 / AUDIT-FE): the hook now needs ONLY the atomic period setter.
+  // Replaces the old setMonth/setWeek/setCompareWeek props whose three separate
+  // store commits caused the double /api/analysis fetch.
+  setPeriod: (month: string | null, week: string | null, compareWeek: string | null, compareMonth: string | null) => void;
   queryClient: QueryClient;
 }
 
@@ -45,9 +77,7 @@ export function useDashboardEffects({
   currentWeek,
   comparisonWeek,
   comparisonMonth,
-  setMonth,
-  setWeek,
-  setCompareWeek,
+  setPeriod,
   queryClient,
 }: UseDashboardEffectsParams): void {
   // PERF-OPT: track whether cache warming has already fired for this status
@@ -55,27 +85,87 @@ export function useDashboardEffects({
   // 5-min staleTime, but its reference may update on invalidation).
   const warmedStatusKey = useRef<string | null>(null);
 
-  // Auto-select first available month on mount
+  // ============================================================
+  //  Effect 1 — combined auto-select (old effects 1, 2, 4, 5).
+  //  Runs when monthLabel or currentWeek is missing, or when
+  //  currentWeek doesn't belong to monthLabel's weeks (BUG-8
+  //  validation). Resolves the FULL (month, week, compare) state
+  //  and commits it with ONE atomic setPeriod() so useAnalysis's
+  //  queryKey changes exactly once (PERF-1).
+  // ============================================================
   useEffect(() => {
-    if (!monthLabel && status?.months?.length) {
-      setMonth(status.months[status.months.length - 1].label);
-    }
-  }, [status, monthLabel, setMonth]);
+    if (!status?.months?.length || !status?.weeksByMonth) return;
 
-  useEffect(() => {
-    if (monthLabel && !currentWeek && status?.weeksByMonth && status?.months) {
-      const m = status.months.find((mm) => mm.label === monthLabel);
-      if (m) {
-        const weeks = status.weeksByMonth[m.key];
-        if (weeks?.length) setWeek(weeks[weeks.length - 1]);
-      }
-    }
-  }, [status, monthLabel, currentWeek, setWeek]);
+    // Target month: the current monthLabel if still valid in status,
+    // else the latest available month (old effect 1 / stale-month case).
+    const monthEntry = monthLabel
+      ? status.months.find((m) => m.label === monthLabel)
+      : undefined;
+    const targetMonth = monthEntry ?? status.months[status.months.length - 1];
+    if (!targetMonth) return;
 
-  // PERF-OPT: Cache warming — fire prefetch for the latest month/week as
-  // soon as status loads (don't wait for the auto-select useEffect chain
-  // above to set monthLabel/currentWeek first). Saves ~1 render cycle on
-  // initial dashboard load.
+    // Target week: currentWeek if it belongs to targetMonth's weeks
+    // (BUG-8 validation), else the last available week (old effect 2).
+    const weeks = status.weeksByMonth[targetMonth.key] || [];
+    const weekValid = Boolean(currentWeek && weeks.includes(currentWeek));
+    const targetWeek = weekValid
+      ? currentWeek
+      : (weeks[weeks.length - 1] ?? null);
+
+    // Auto-select mode: month/week missing or invalid. ONLY in this mode do
+    // we auto-resolve the compare period — so the first useAnalysis queryKey
+    // is FULLY resolved (PERF-1). When month+week are valid, comparisonWeek
+    // === null means the user explicitly picked "Tidak dibandingkan" in
+    // FilterBar — leave it null (old effect 4 annoyingly re-set it).
+    // `!monthEntry` covers the stale-month case (monthLabel no longer in
+    // status, e.g. its data was deleted): targetMonth falls back to the
+    // latest month, so the compare is re-resolved for the NEW month instead
+    // of preserving one that may reference a deleted period.
+    const needsAutoSelect = !monthLabel || !monthEntry || !currentWeek || !weekValid;
+
+    let targetCompareWeek = comparisonWeek;
+    let targetCompareMonth = comparisonMonth;
+    if (needsAutoSelect) {
+      // Default compare = SAME weekLabel in the most recent PRIOR month
+      // (BUG-1 fix, kept from old effect 4: W4 Juli → W4 Juni).
+      // FIX (AUDIT-BUG-2): no chronological fallback — cumulative weeks make
+      // cross-week comparisons meaningless. No prior same-weekLabel month →
+      // compare stays null.
+      const compare = targetWeek
+        ? findAutoCompareForStatus(status, targetMonth.label, targetWeek)
+        : null;
+      targetCompareWeek = compare?.weekLabel ?? null;
+      targetCompareMonth = compare?.monthLabel ?? null;
+    }
+
+    // Guard against render loops: only commit when a value actually differs
+    // from the current store state (e.g. first month of data → compare is
+    // null and stays null → this effect settles after ONE setPeriod).
+    if (
+      targetMonth.label !== monthLabel ||
+      targetWeek !== currentWeek ||
+      targetCompareWeek !== comparisonWeek ||
+      targetCompareMonth !== comparisonMonth
+    ) {
+      setPeriod(targetMonth.label, targetWeek, targetCompareWeek, targetCompareMonth);
+    }
+  }, [status, monthLabel, currentWeek, comparisonWeek, comparisonMonth, setPeriod]);
+
+  // ============================================================
+  //  Effect 2 — PERF-OPT cache warming (old effect 3).
+  //  Fires a prefetch for the latest month/week as soon as status
+  //  loads (don't wait for the auto-select effect to settle).
+  //
+  //  FIX (PERF-1 / AUDIT-FE): the prefetch now includes the RESOLVED
+  //  compare period (same findAutoCompareForStatus search the combined
+  //  effect uses), so the prefetch queryKey matches the final live
+  //  useAnalysis queryKey EXACTLY — TanStack dedupes them into a single
+  //  /api/analysis fetch. Previously it prefetched with compareWeek:
+  //  null, which was a guaranteed wasted fetch. kelompok: null is also
+  //  included so the key shape matches page.tsx's useAnalysis params
+  //  field-for-field (same class of mismatch FilterBar's BUG-FE-1 fixed
+  //  for the hover-prefetch).
+  // ============================================================
   useEffect(() => {
     if (!status?.months?.length || !status?.weeksByMonth) return;
     // Only fire once per status payload (key by latest monthKey + week)
@@ -89,12 +179,16 @@ export function useDashboardEffects({
     warmedStatusKey.current = warmKey;
     // Only warm if user hasn't already selected a different period
     if (monthLabel || currentWeek) return;
+    // Resolve the compare the combined auto-select effect WILL resolve,
+    // so the prefetch key and the live key are identical.
+    const compare = findAutoCompareForStatus(status, latestMonth.label, latestWeek);
     const params: AnalysisParams = {
       month: latestMonth.label,
       week: latestWeek,
-      compareWeek: null, // auto-compare will be resolved server-side
-      compareMonth: null,
+      compareWeek: compare?.weekLabel ?? null, // resolved up front — not null (PERF-1)
+      compareMonth: compare?.monthLabel ?? null,
       area: null,
+      kelompok: null,
       outlet: null,
       item: null,
       pic: null,
@@ -103,56 +197,4 @@ export function useDashboardEffects({
     // PERF-HEATMAP: also prefetch heatmap (independent API, not part of analysis)
     prefetchHeatmap(queryClient, { month: params.month, week: params.week });
   }, [status, queryClient, monthLabel, currentWeek]);
-
-  // Auto-set default periode pembanding = SAME weekLabel in previous month (cumulative weeks)
-  // FIX (BUG 1): Was using chronological previous (W4→W2 same month = false positive growth).
-  // Now finds same weekLabel in most recent month BEFORE current (W4 Juli → W4 Juni).
-  useEffect(() => {
-    if (monthLabel && currentWeek && !comparisonWeek && status?.weeksByMonth && status?.months) {
-      const allPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }> = [];
-      for (const m of status.months) {
-        const ws = status.weeksByMonth[m.key] || [];
-        for (const w of ws) {
-          allPeriods.push({ monthLabel: m.label, weekLabel: w, sortKey: `${m.key}|${String(parseInt(w.replace(/\D/g, '')) || 0).padStart(2, '0')}` });
-        }
-      }
-      allPeriods.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-      const currentIdx = allPeriods.findIndex((p) => p.monthLabel === monthLabel && p.weekLabel === currentWeek);
-      if (currentIdx >= 0) {
-        // Search backwards for same weekLabel in a DIFFERENT month
-        let found: { monthLabel: string; weekLabel: string } | null = null;
-        for (let i = currentIdx - 1; i >= 0; i--) {
-          if (allPeriods[i].weekLabel === currentWeek && allPeriods[i].monthLabel !== monthLabel) {
-            found = allPeriods[i];
-            break;
-          }
-        }
-        // Fallback: chronological previous period
-        if (!found && currentIdx > 0) {
-          found = allPeriods[currentIdx - 1];
-        }
-        if (found) setCompareWeek(found.weekLabel, found.monthLabel);
-      }
-    }
-  }, [status, monthLabel, currentWeek, comparisonWeek, setCompareWeek]);
-
-  // Bug 8 fix: validate currentWeek belongs to monthLabel — reset if invalid
-  useEffect(() => {
-    if (monthLabel && currentWeek && status?.weeksByMonth && status?.months) {
-      const m = status.months.find((mm) => mm.label === monthLabel);
-      if (m) {
-        const weeks = status.weeksByMonth[m.key] || [];
-        if (!weeks.includes(currentWeek)) {
-          // currentWeek doesn't belong to this month — reset to last available week
-          setWeek(weeks.length > 0 ? weeks[weeks.length - 1] : null);
-        }
-      }
-    }
-  }, [status, monthLabel, currentWeek, setWeek]);
-
-  // comparisonMonth is part of the dependency set of the auto-compare effect
-  // (it determines whether setCompareWeek should fire). Including it here keeps
-  // the lint rule happy without changing runtime behavior — setCompareWeek is
-  // already a stable store setter.
-  void comparisonMonth;
 }

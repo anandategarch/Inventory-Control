@@ -14,6 +14,7 @@ import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, 
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
+import { findAutoCompareForStatus } from '@/lib/auto-compare';
 import { Badge } from '@/components/ui/badge';
 import { useState, useMemo, useEffect } from 'react';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
@@ -43,7 +44,11 @@ const DriveImportDialog = dynamic(
 );
 
 export function FilterBar() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setMonth, setWeek, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard(useShallow((s) => ({
+  // FIX (PERF-1 / AUDIT-FE): setPeriod replaces setMonth/setWeek in the month/week
+  // Select handlers — period changes are now ATOMIC (one store update, one
+  // queryKey change, one /api/analysis fetch). setCompareWeek stays for the
+  // compare Select (single-field change is already atomic).
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -53,8 +58,7 @@ export function FilterBar() {
     outletCode: s.outletCode,
     itemName: s.itemName,
     pic: s.pic,
-    setMonth: s.setMonth,
-    setWeek: s.setWeek,
+    setPeriod: s.setPeriod,
     setCompareWeek: s.setCompareWeek,
     setArea: s.setArea,
     setKelompok: s.setKelompok,
@@ -200,6 +204,47 @@ export function FilterBar() {
     }
   }
 
+  // ============================================================
+  //  FIX (PERF-1 / AUDIT-FE): atomic period-change handlers.
+  //  --------------------------------------------------------
+  //  Previously `onValueChange={setMonth}` / `onValueChange={setWeek}`
+  //  reset week+compare (store setters null them out), then the
+  //  useDashboardEffects chain re-set them across several renders →
+  //  useAnalysis's queryKey changed TWICE per interaction → the heavy
+  //  /api/analysis payload was double-fetched on every month/week
+  //  change. These handlers resolve the full (month, week, compare)
+  //  triple up front and commit it with ONE setPeriod() call.
+  //
+  //  Compare resolution = same-weekLabel search BACKWARDS in a
+  //  different month (shared with useDashboardEffects via
+  //  src/lib/auto-compare.ts).
+  //  FIX (AUDIT-BUG-2): no chronological fallback — cumulative weeks
+  //  make cross-week comparisons meaningless. No same-weekLabel prior
+  //  month → compare = null (backend handles null compare gracefully).
+  // ============================================================
+  function handleMonthChange(newMonth: string) {
+    // New month's last available week (the same week the auto-select
+    // effect / hover-prefetch assume for a month switch).
+    const m = status?.months.find((mm) => mm.label === newMonth);
+    const weeksForMonth = m && status?.weeksByMonth ? (status.weeksByMonth[m.key] || []) : [];
+    const lastWeek = weeksForMonth[weeksForMonth.length - 1] ?? null;
+    if (!lastWeek) {
+      // Week data not available for the new month — clear week+compare;
+      // the combined auto-select effect in useDashboardEffects fills them
+      // (still ONE setPeriod from the user's click, one more from the effect).
+      setPeriod(newMonth, null, null, null);
+      return;
+    }
+    const compare = findAutoCompareForStatus(status, newMonth, lastWeek);
+    setPeriod(newMonth, lastWeek, compare?.weekLabel ?? null, compare?.monthLabel ?? null);
+  }
+
+  function handleWeekChange(newWeek: string) {
+    if (!monthLabel) return; // Select is disabled without a month — defensive
+    const compare = findAutoCompareForStatus(status, monthLabel, newWeek);
+    setPeriod(monthLabel, newWeek, compare?.weekLabel ?? null, compare?.monthLabel ?? null);
+  }
+
   return (
     <>
       {/* REDesign-HEADER: FilterBar now renders BARE content (no Card wrapper).
@@ -215,7 +260,7 @@ export function FilterBar() {
       <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
         {/* Filter dropdowns — no labels (placeholder in dropdown is clear enough) */}
         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
-          <Select value={monthLabel || ''} onValueChange={setMonth} disabled={isLoading}>
+          <Select value={monthLabel || ''} onValueChange={handleMonthChange} disabled={isLoading}>
             <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[120px]"><SelectValue placeholder="Bulan" /></SelectTrigger>
                   <SelectContent>
                     {months.map((m) => (
@@ -224,8 +269,9 @@ export function FilterBar() {
                         value={m.label}
                         className="text-xs"
                         // PERF-OPT: prefetch analysis for this month on hover.
-                        // Uses the LAST week of the hovered month (the auto-
-                        // select useEffect will pick the same week on click).
+                        // Uses the LAST week of the hovered month (handleMonthChange
+                        // picks the same week on click) + the resolved compare so
+                        // the prefetch key matches the live key.
                         // TanStack Query dedupes — safe to fire multiple times.
                         onMouseEnter={() => {
                           const weeksForMonth = status?.weeksByMonth?.[m.key] || [];
@@ -235,11 +281,16 @@ export function FilterBar() {
                           // so the prefetch queryKey matches the live useAnalysis
                           // queryKey. Without this, prefetch cache entries were
                           // never reused when kelompok was active.
+                          // FIX (PERF-1 / AUDIT-FE): also include the RESOLVED
+                          // compare period — handleMonthChange now sets it on
+                          // click, so compareWeek: null here would make the
+                          // hover-prefetch key never match the live key.
+                          const compare = findAutoCompareForStatus(status, m.label, lastWeek);
                           prefetchAnalysis({
                             month: m.label,
                             week: lastWeek,
-                            compareWeek: null,
-                            compareMonth: null,
+                            compareWeek: compare?.weekLabel ?? null,
+                            compareMonth: compare?.monthLabel ?? null,
                             area,
                             kelompok,
                             outlet: outletCode,
@@ -254,7 +305,7 @@ export function FilterBar() {
                   </SelectContent>
                 </Select>
 
-          <Select value={currentWeek || ''} onValueChange={setWeek} disabled={!monthLabel}>
+          <Select value={currentWeek || ''} onValueChange={handleWeekChange} disabled={!monthLabel}>
             <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[90px]"><SelectValue placeholder="Minggu" /></SelectTrigger>
                   <SelectContent>
                     {weeks.map((w) => (
@@ -263,17 +314,23 @@ export function FilterBar() {
                         value={w}
                         className="text-xs"
                         // PERF-OPT: prefetch analysis for this week on hover.
-                        // compareWeek=null lets the server auto-resolve the
-                        // previous period (matches what useAnalysis will send
-                        // when the user actually clicks).
+                        // Includes the resolved compare period so the prefetch
+                        // key matches what useAnalysis will send when the user
+                        // actually clicks (handleWeekChange).
                         onMouseEnter={() => {
                           if (!monthLabel) return;
                           // FIX (BUG-FE-1): include kelompok in prefetch params
+                          // FIX (PERF-1 / AUDIT-FE): also include the RESOLVED
+                          // compare period — handleWeekChange now sets it on
+                          // click (was compareWeek: null, which relied on a
+                          // server-side auto-resolve the live query no longer
+                          // triggers after the atomic-handler change).
+                          const compare = findAutoCompareForStatus(status, monthLabel, w);
                           prefetchAnalysis({
                             month: monthLabel,
                             week: w,
-                            compareWeek: null,
-                            compareMonth: null,
+                            compareWeek: compare?.weekLabel ?? null,
+                            compareMonth: compare?.monthLabel ?? null,
                             area,
                             kelompok,
                             outlet: outletCode,

@@ -16,6 +16,16 @@ interface DashboardStore {
   setMonth: (v: string | null) => void;
   setWeek: (v: string | null) => void;
   setCompareWeek: (v: string | null, m: string | null) => void;
+  // FIX (PERF-1 / AUDIT-FE): atomic period setter — sets monthLabel, currentWeek,
+  // comparisonWeek AND comparisonMonth in ONE store update. The old flow called
+  // setMonth/setWeek (which reset comparisonWeek → useAnalysis fetched with
+  // compareWeek: null) and THEN setCompareWeek → queryKey changed → the heavy
+  // /api/analysis payload was fetched TWICE on every period change. Callers that
+  // can compute the full (month, week, compare) triple up front (useDashboardEffects
+  // combined auto-select, FilterBar month/week handlers) must use this instead of
+  // the field-resetting setters. setMonth/setWeek/setCompareWeek stay untouched for
+  // single-field callers.
+  setPeriod: (month: string | null, week: string | null, compareWeek: string | null, compareMonth: string | null) => void;
   setArea: (v: string | null) => void;
   setKelompok: (v: string | null) => void;
   setOutlet: (v: string | null) => void;
@@ -56,6 +66,7 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setMonth: (v) => set({ monthLabel: v, currentWeek: null, comparisonWeek: null, comparisonMonth: null }),
   setWeek: (v) => set({ currentWeek: v, comparisonWeek: null, comparisonMonth: null }),
   setCompareWeek: (v, m) => set({ comparisonWeek: v, comparisonMonth: m }),
+  setPeriod: (month, week, compareWeek, compareMonth) => set({ monthLabel: month, currentWeek: week, comparisonWeek: compareWeek, comparisonMonth: compareMonth }),
   setArea: (v) => set({ area: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
   setKelompok: (v) => set({ kelompok: v, outletCode: null, focusOutlet: null, scorecardOutlet: null }),
   setOutlet: (v) => set({ outletCode: v, focusOutlet: null }),

@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 import { memo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -158,6 +160,10 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                   <div className="h-40">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
+                        {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance
+                            animation replays on every dialog open (Dialog unmounts on close)
+                            and on every period-change refetch; the double-fetch fix removed
+                            the second replay. */}
                         <Pie
                           data={[
                             { name: 'LOSS', value: lossCount, color: 'var(--chart-loss)' },
@@ -168,6 +174,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                           cx="50%"
                           cy="50%"
                           outerRadius={55}
+                          isAnimationActive={false}
                           label={({ name, percent }: { name?: string; percent?: number }) =>
                             name && percent != null ? `${name} ${(percent * 100).toFixed(0)}%` : ''
                           }
@@ -281,7 +288,11 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                           labelFormatter={(label) => `Periode: ${label}`}
                         />
                         <ReferenceLine y={histAvgDevBom} stroke="var(--chart-surplus, #10b981)" strokeDasharray="5 5" label={{ value: `Avg: ${histAvgDevBom.toFixed(1)}%`, fontSize: 9, fill: 'var(--chart-surplus, #10b981)' }} />
-                        <Line type="monotone" dataKey="devBom" stroke="var(--chart-loss, #ef4444)" strokeWidth={2} dot={{ r: 3 }} />
+                        {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance
+                            animation replays on every dialog open (Dialog unmounts on close)
+                            and on every period-change refetch; the double-fetch fix removed
+                            the second replay. */}
+                        <Line type="monotone" dataKey="devBom" stroke="var(--chart-loss, #ef4444)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>

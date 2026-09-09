@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 // ============================================================
 //  Feature 6: Trend Chart — Dev/BOM across weeks
 //  Target vs peer avg line chart.
@@ -89,6 +91,9 @@ export const TrendChartCard = memo(function TrendChartCard({
                   }}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+                {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                    replays on every Radix tab re-entry (tab content unmounts) and on every
+                    period-change refetch; the double-fetch fix removed the second replay. */}
                 <Line
                   type="monotone"
                   dataKey="target"
@@ -97,6 +102,7 @@ export const TrendChartCard = memo(function TrendChartCard({
                   strokeWidth={2.5}
                   dot={{ r: 4, fill: 'var(--chart-loss)' }}
                   activeDot={{ r: 6 }}
+                  isAnimationActive={false}
                 />
                 <Line
                   type="monotone"
@@ -106,6 +112,7 @@ export const TrendChartCard = memo(function TrendChartCard({
                   strokeWidth={2}
                   strokeDasharray="5 4"
                   dot={{ r: 3, fill: '#71717a' }}
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>

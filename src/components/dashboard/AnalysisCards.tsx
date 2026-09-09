@@ -1,5 +1,7 @@
 'use client';
 
+// PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
+
 import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
@@ -80,10 +82,13 @@ export const MultiPeriodComparisonCard = memo(function MultiPeriodComparisonCard
                   }
                 />
                 <Legend wrapperStyle={{ fontSize: 10 }} iconType="circle" />
-                <Bar yAxisId="left" dataKey="sales" name="Sales" fill="var(--chart-surplus)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Bar yAxisId="left" dataKey="bom" name="BOM" fill="#71717a" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Bar yAxisId="left" dataKey="deviation" name="Deviasi" fill="var(--chart-waste)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                <Line yAxisId="right" type="monotone" dataKey="growthPct" name="Growth" stroke="var(--chart-loss)" strokeWidth={2} dot={{ r: 3, fill: 'var(--chart-loss)' }} activeDot={{ r: 5 }} />
+                {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
+                    replays on every Radix tab re-entry (tab content unmounts) and on every
+                    period-change refetch; the double-fetch fix removed the second replay. */}
+                <Bar yAxisId="left" dataKey="sales" name="Sales" fill="var(--chart-surplus)" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+                <Bar yAxisId="left" dataKey="bom" name="BOM" fill="#71717a" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+                <Bar yAxisId="left" dataKey="deviation" name="Deviasi" fill="var(--chart-waste)" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+                <Line yAxisId="right" type="monotone" dataKey="growthPct" name="Growth" stroke="var(--chart-loss)" strokeWidth={2} dot={{ r: 3, fill: 'var(--chart-loss)' }} activeDot={{ r: 5 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
