@@ -208,7 +208,13 @@ Data hanya berubah via ingest/settings/pic — invalidation sudah wired ke 15 ro
   - **BUG-5**: `pg_advisory_xact_lock(hashtext(monthKey))` sebagai statement PERTAMA di dalam semua 3 transaksi import (process-ingestion + 2 mode ingest-process) — serialisasi lintas-instance, auto-release saat COMMIT/ROLLBACK; query `existingPeriodFiles`/`existingWeek` dipindah ke DALAM transaksi setelah lock (hapus stale-snapshot) + re-check `fileHash` dalam transaksi untuk menang import file sama yang berbarengan (hasil: SKIPPED, bukan double-import).
 
 **Belum (butuh aksi manual user):**
-- P0: rotasi password Supabase + revoke PAT (kredensial tercantum di history sampai purge dijalankan; rotasi password tetap satu-satunya proteksi absolut)
+- P0: **rotasi password Supabase** (3 project: `fmnfutshaqycabuxzizq`, `vefkgapveggbmkloaslw`, `proosjqivxadwgftofry`) + **revoke PAT GitHub**. Rotasi password tetap WAJIB: purge tidak bisa menarik kembali apa yang sudah ter-clone/cache (GitHub menyimpan objek tak-terjangkau untuk sementara; clone/fork/PR lama masih memuatnya).
+
+**Purge git history — SELESAI (2026-09-09):**
+- git-filter-repo `--replace-text` atas seluruh 494 commit: 3 password Supabase (`R3Sef79DEk0AiZiZ`, `mLQROZchGEigkHmK`, `eMPn5DL91pc15nHv`) + PAT GitHub di-replace dengan marker `***REDACTED-***`. Verifikasi: 0 kemunculan di seluruh history baru.
+- File terkontaminasi di history lama: `MASTER_CONTEXT.md` (103 commit), `scripts/audit/audit-migration.ts` (85), `worklog.md` (275 — password project tertua). HEAD sebelum purge sudah bersih → isi file terbaru tidak berubah.
+- Force-push `main` (`d938dac...137ea9e`). Semua commit SHA setelah titik kontaminasi pertama berubah — clone lama di mesin lain harus **re-clone** (atau `git fetch && git reset --hard origin/main`).
+- `scripts/audit/audit-migration.ts` kini baca kredensial dari env (`DATABASE_URL` / `OLD_DATABASE_URL` — AUDIT-SEC-ENV).
 
 **Follow-up terimplementasi:**
 - N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
