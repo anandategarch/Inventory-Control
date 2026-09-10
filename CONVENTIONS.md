@@ -22,19 +22,18 @@ export async function GET(req: NextRequest) {
     const validation = validateQuery(schemaName, url.searchParams);
     if (!validation.success) return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
 
-    // 3. DB cache check (for heavy routes)
-    const cacheKey = buildCacheKey({ route: 'route-name', month, week, ...filters });
-    const cached = await getCached(cacheKey, 5 * 60 * 1000);
-    if (cached) return NextResponse.json(cached, { headers: CACHE_ANALYSIS });
+    // 3. Heavy routes: DB cache + in-flight dedup + SWR via withCacheAndDedup
+    //    (PREFERRED — see §3.1; /api/analysis uses the bespoke raw-JSON passthrough pipeline)
+    const cacheKey = buildCacheKey({ route: 'route-name', month, week, ...filters, extra: { ...routeSpecificParams } });
+    const { data, cached, stale } = await withCacheAndDedup<ResultType>(
+      cacheKey,
+      5 * 60 * 1000,
+      async () => heavyQuery(...),
+    );
 
-    // 4. Compute
-    const result = await heavyQuery(...);
-
-    // 5. Cache write (MUST await with awaitWrite=true)
-    await setCached(cacheKey, result, true);
-
-    // 6. Response with cache headers
-    return NextResponse.json({ success: true, ...result, durationMs: Date.now() - startedAt }, { headers: CACHE_ANALYSIS });
+    // 4. Response — envelope rebuilt per request (never cached); surface flags per §2
+    const payload = { success: true, ...data, ...(cached ? { cached: true } : {}), ...(stale ? { stale: true } : {}) };
+    return NextResponse.json(payload, { headers: CACHE_ANALYSIS, });
   } catch (e: unknown) {
     return errorResponse(e, 'route-name'); // MUST prefix with 'return'
   }
@@ -58,9 +57,8 @@ export async function GET(req: NextRequest) {
 - Include `period: { month, week }` for data routes
 - `cached: true` flag when returning from DB cache
 - `stale: true` flag (PERF-CACHE-09 SWR) when returning from an EXPIRED cache
-  entry while a background recompute is in flight. Surfaced by 7 JSON routes
-  (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history,
-  drilldown, heatmap) — see §3.1.
+  entry while a background recompute is in flight. Surfaced by 18 JSON routes
+  (all cached routes except export-report binary — see §3.1).
 
 ## 3. Cache Pattern
 
@@ -72,20 +70,21 @@ const cacheKey = buildCacheKey({
   week,
   compareWeek, compareMonth,
   area, kelompok, outletCode, itemName, pic,
+  extra: { /* route-specific params that change the result — omitting causes cache poisoning */ },
 });
 
-// Read (5-min TTL)
-const cached = await getCached<unknown>(cacheKey, 5 * 60 * 1000);
-if (cached && typeof cached === 'object' && 'success' in cached) {
-  return NextResponse.json(cached, { headers: CACHE_ANALYSIS });
-}
-
-// Write (MUST await, awaitWrite=true for critical caches)
-await setCached(cacheKey, result, true);
+// PREFERRED: one call = cache lookup + in-flight dedup + SWR + cache write
+const { data, cached, stale } = await withCacheAndDedup<unknown>(
+  cacheKey,
+  5 * 60 * 1000,
+  () => computeFn(), // runs only on miss (or as background SWR recompute) — MUST return plain JSON-serialisable object
+);
 
 // Invalidate (on mutations: ingest, settings, pic, data delete, migrate)
-await invalidateAnalysisCache(); // Clears ALL 9 cached routes
+await invalidateAnalysisCache(); // Clears ALL 20 cached routes
 ```
+
+**Legacy manual helpers** (`getCached`/`setCached`) hanya dipakai jalur non-SWR; `getCachedWithMeta` + `getCachedRawWithMeta` (raw string, zero-parse) ada untuk pipeline bespoke (`/api/analysis`).
 
 ### 3.1 SWR (Stale-While-Revalidate) — PERF-CACHE-09
 
@@ -128,26 +127,36 @@ SWR contract:
 4. **No entry** → compute synchronously + write cache + resolve in-flight.
 5. **On error**: reject in-flight + re-throw.
 6. **`/api/export-report`** uses `withCacheAndDedup` but returns binary (docx
-   buffer) — the `stale` flag is NOT surfaced on the response (the client gets
-   the stale file immediately; the next download gets fresh). SWR still works
-   internally.
-7. **`/api/analysis`** is NOT migrated to SWR yet (bespoke multi-stage pipeline
-   in `services/`; the cache check is in `validate-and-resolve.ts` stage 1 but
-   the compute is in `route.ts` stages 2–5). Already has in-flight dedup +
-   TanStack `keepPreviousData` + HTTP SWR. Phase C work.
+   **base64** payload — P3-HYG-4) — the `stale` flag is NOT surfaced on the
+   response (the client gets the stale file immediately; the next download gets
+   fresh). SWR still works internally.
+7. **`/api/analysis`** IS on SWR (migrated): TTL 30 mnt (env
+   `ANALYSIS_CACHE_TTL_MINUTES`) + `triggerBackgroundRecompute()` (guarded,
+   fire-and-forget) + **raw-JSON passthrough** (P3-HYG-1): cache hit serves the
+   stored JSON string directly — flag envelope injected via O(1) string surgery
+   after the leading `{` (safe: stored payload never contains `cached`/`stale`);
+   in-flight resolved with a `{__rawJson, stale}` marker. LONG TTL is safe
+   because mutations ALWAYS invalidate explicitly.
+8. **Envelope flags rebuilt per request** — `cached`/`stale` are NEVER stored in
+   the cached payload (poisoning the cache with stale flags would freeze them).
 
-### Cached Routes (9)
+### Cached Routes (20)
 
 `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`,
-`heatmap` (added PERF-CACHE-08), `outlet-items` (added PERF-API-01),
-`item-history` (added PERF-API-02), `drilldown` (added PERF-API-03).
+`heatmap`, `outlet-items`, `item-history`, `drilldown`, `item-trend`,
+`item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`,
+`item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`,
+`peer-comparison-trend` (P3-HYG-3), `compliance`, `chronic-outlets` (PAKET E).
 
-All 9 are invalidated on any mutation via `invalidateAnalysisCache()` (clears
+All 20 are invalidated on any mutation via `invalidateAnalysisCache()` (clears
 every prefix in the list). The `extra` field on `buildCacheKey` carries
 route-specific params (e.g. `metric + itemLimit + mode` for heatmap,
 `parentDim + childDim` for pareto, `priority + limit` for resto-bahan-matrix,
-`sections` for export-report) — omitting these from the key causes cache
-poisoning between two requests with different params.
+`sections` for export-report, `mode/limit/topItems/peers` for peer-comparison ×3)
+— omitting these from the key causes cache poisoning between two requests with
+different params. **MENAMBAH ROUTE CACHE BARU → WAJIB daftarkan prefix-nya di
+`invalidateAnalysisCache()`** (kasus nyata: compliance + chronic-outlets sempat
+tidak terdaftar → mutasi menyajikan data basi 5 mnt).
 
 ## 4. Error Handling
 
@@ -274,6 +283,7 @@ export const DashboardTab = memo(function DashboardTab({ data, isFetching }: Das
 ```
 
 Conventions:
+- **Keep-alive WAJIB (PAKET A)**: `<TabsContent forceMount className="data-[state=inactive]:hidden">` — pindah tab TIDAK unmount subtree (state lokal: sort, expand, scroll bertahan). Tanpa forceMount, tiap balik tab = remount + semua `useQuery` mount ulang (refetch storm).
 - Wrap the tab in `React.memo` — `page.tsx` re-renders on any Zustand state
   change (modal toggles, filter selections); without memo, the active tab
   re-renders unnecessarily. TanStack Query returns stable `data` refs (same ref
@@ -284,9 +294,11 @@ Conventions:
 - The `data` prop is `AnalysisData` (typed in `src/hooks/useAnalysis.ts`).
   Don't pass derived values as separate props (keeps the prop interface stable
   + memo effective).
-- New tabs (5th tab onwards) also need: a `<TabsTrigger>` in `page.tsx`, a
-  `<TabsContent>` in `page.tsx`, and an entry in the keyboard-shortcut handler
-  in `useDashboardActions.ts`.
+- New tabs (7th tab onwards) also need: a `<TabsTrigger>` in `page.tsx`, a
+  `<TabsContent forceMount>` in `page.tsx`, an entry in the keyboard-shortcut
+  handler in `useDashboardActions.ts` (digit `1..6` — probe dropdown-open
+  HANYA di dalam cabang digit, P3-HYG-6), dan invalidasi TanStack key baru di
+  `handleRefresh` (`useDashboardActions.ts`).
 
 ### 5.3 Lazy Sheet Pattern
 
@@ -548,12 +560,21 @@ the package to `optimizePackageImports` in the same PR.
 ### 8.6 Statement Timeout + LIMIT Safety
 
 Every raw SQL query MUST be wrapped in `withStatementTimeout()` (sets
-`statement_timeout` + bumps `work_mem` to 64 MB). Every top-N or unbounded
+`statement_timeout` + `work_mem` — **32 MB sejak PAKET B**, diturunkan dari 64 MB
+karena 64 × ~10 transaksi konkuren menekan memori free-tier). Every top-N or unbounded
 `GROUP BY` query MUST have an explicit `LIMIT` clause (defense-in-depth —
 current production data is small but prevents unbounded payloads if the
 catalog ever grows or multi-tenant scenarios arrive).
 
-### 8.7 Cache-Control Immutable — PROD Only
+### 8.7 Render-Time Compute MUST `useMemo` (P3-HYG-7 — PAKET F)
+
+Derived arrays/objects yang di-pass ke komponen memo (BarList, tabel, chart) WAJIB dibungkus `useMemo` — array/object literal baru per render mengalahkan memo anak. **Jebakan umum**: fallback `const items = data.x || []` membuat array kosong BARU tiap render → deps `[items]` berubah tiap render → bungkus juga fallbacknya: `useMemo(() => data.x || [], [data.x])`. Handler yang di-pass sebagai prop → `useCallback`. Pipeline berat (filter→group→sort atas ratusan baris) yang dirender di >1 tab → satu `useMemo` + pre-sort hasil di dalam memo (jangan sort inline per repaint).
+
+### 8.8 Keydown Handler: Probe DOM Hanya di Cabang yang Butuh (P3-HYG-6)
+
+Handler keydown global jangan menjalankan `document.querySelector(...)` sebelum guard type key — evaluasi selector HANYA setelah key terbukti relevant (mis. digit tab). Konstanta selector di-hoist ke module scope. Setiap keypress (termasuk huruf di input) tidak boleh membayar probe DOM.
+
+### 8.9 Cache-Control Immutable — PROD Only
 
 `next.config.ts` MUST gate the `Cache-Control: immutable` header for
 `/_next/static/*` on `NODE_ENV === 'production'`. Turbopack dev mode uses
@@ -589,7 +610,7 @@ pushes. To bypass (emergency only): `git push --no-verify`.
 
 ### 9.2 Cache-Control Immutable — PROD Only (Cross-Ref)
 
-See §8.7 — the `immutable` static-asset cache header is gated on
+See §8.9 — the `immutable` static-asset cache header is gated on
 `NODE_ENV === 'production'` to avoid breaking Turbopack dev HMR. This is a
 build-config convention, not a runtime one — it lives in `next.config.ts`
 `headers()`, not in any application code.
@@ -701,6 +722,15 @@ Verified: 0 lint errors, N tests pass, tsc clean.
 | `docs` | Documentation only |
 | `refactor` | Code restructuring (no behavior change) |
 
+**Git identity (WAJIB untuk repo ini):** semua commit + push memakai
+`anandategarch <anandategarch@users.noreply.github.com>` sebagai author DAN
+committer:
+```bash
+git -c user.name="anandategarch" -c user.email="anandategarch@users.noreply.github.com" commit -m "..."
+```
+Scope konvensi aktual: `analysis`, `be`, `fe-interact`, `deploy`, `db`,
+`cache/ingest`, `ingest-integrity`, `upload/delete`, `pareto`, `hygiene`.
+
 ## 15. Number Formatting
 
 | Function | Use Case | Example |
@@ -772,8 +802,10 @@ src/
 
 ---
 
-*Authored by Agent DOC-PRD. Last updated by Agent DOC-UPDATE-2 (added §3.1
-SWR, §5.2 Tab Component Pattern, §5.3 Lazy Sheet Pattern, §7 Heatmap
-Conventions, §8 Performance Conventions, §9 Git Conventions; renumbered
-subsequent sections §10–§17; updated §1 cell-detail note, §2 `stale` flag,
-§3 cached routes 5 → 9).*
+*Authored by Agent DOC-PRD. Last updated by Agent DOC-INTENSIF (session audit
+PAKET A/B/C/E/F: §1 route template → withCacheAndDedup, §3 cache pattern +
+invalidasi 20 route (compliance/chronic-outlets didaftarkan — bug nyata),
+§3.1 SWR contract item 7-8 (analysis migrated + raw-JSON passthrough), §5.2
+tab keep-alive forceMount, §8.6 work_mem 32MB, §8.7 useMemo + §8.8 keydown
+baru, §14 git identity; renumber §8.7→8.9. Sebelumnya: DOC-UPDATE-2 (SWR,
+tab/sheet pattern, heatmap conventions; cached routes 5 → 9).*

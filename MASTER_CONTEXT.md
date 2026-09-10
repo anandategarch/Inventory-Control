@@ -6,7 +6,8 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
-> **Last updated:** Session TREMOR (Dashboard Component Patterns: 6 new tremor components — Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine + 3 evidence-dev patterns documented — Format Presets System (33 presets in lib/format.ts), TargetComparison component, Diverging Color Scale (lib/colorScale.ts); KPICard + Callout applied; LOC 51,313 → 52,661); previously Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1 (zScore/format helpers → lib/) + Batch 2 (shared peer-comparison-cards/ — 5 cards unified); UI review + fixes 35 issues; PC-focused design; 14 cached routes)
+> **Last updated:** Session AUDIT-INTENSIF (Full code audit → AUDIT-REPORT.md + 6 paket perbaikan: PAKET UPLOAD/DELETE (upload 3× lebih cepat + chunk paralel + delete TRUNCATE atomik), PAKET A (interaksi FE: tab keep-alive `forceMount` + refetch storm dibunuh + debounce autocomplete + dashboard tidak terkunci saat refresh), PAKET B (backend scan-merge: 4 KPI 1-scan, kategori 1 query, import 3-pass bulk ±446→±4-8 round-trip), PAKET C (deploy: Fluid Compute + vercel.json bersih + bun.lock satu-satunya lockfile), PAKET E (tab **Kepatuhan** — 11 lensa kontrol dari 2 scan: 9 lensa period + 2 lensa month-grain; route `/api/compliance` + `/api/chronic-outlets`), PAKET F (P3 hygiene: cache hit analysis zero-parse via raw-JSON passthrough, 3 route peer-comparison kini di-cache, docx cache base64, index `[direction]` dead dihapus, TrendChart mati dihapus, 3 render pipeline di-memo); BUG-3/4/5 ingest integrity + purge git-history password; LOC 52,661 → 57,861; cached routes 14 → 20; routes 27 → 35; tests 435 → 438)
+> **Previously:** Session TREMOR (Dashboard Component Patterns: 6 new tremor components — Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine + 3 evidence-dev patterns documented — Format Presets System (33 presets in lib/format.ts), TargetComparison component, Diverging Color Scale (lib/colorScale.ts); KPICard + Callout applied); Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1+2)
 > **Maintainer:** Z.ai Code
 
 ---
@@ -87,54 +88,64 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ---
 
-## 4. API Routes (27 routes)
+## 4. API Routes (35 routes)
 
 | Route | Cache | Zod | Rate Limit | Auth |
 |-------|-------|------|------------|------|
-| `/api/analysis` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
+| `/api/analysis` | ✅ DB 30min TTL + SWR + **raw-JSON passthrough** (P3-HYG-1) | ✅ | ✅ | Public GET |
 | `/api/area-item-heatmap` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/area-item-heatmap/cell-detail` | ❌ | ✅ | ✅ | Public GET (sub-route) |
+| `/api/chronic-outlets` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW PAKET E — month-grain lensa Kepatuhan #8+10) |
+| `/api/compliance` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW PAKET E — 9 lensa kontrol dari 1 scan) |
 | `/api/data` | ❌ | ✅ | ✅ | Protected mutations |
 | `/api/drilldown` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
-| `/api/export-report` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
-| `/api/flip-ranking` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Phase C) |
-| `/api/flip-ranking/drilldown` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Phase C — per-outlet breakdown) |
+| `/api/export-report` | ✅ DB 5min (SWR) — payload cache base64 (P3-HYG-4) | ✅ | ✅ | Public GET |
+| `/api/flip-ranking` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (Phase C) |
+| `/api/flip-ranking/drilldown` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (Phase C — per-outlet breakdown) |
 | `/api/import-drive` | ❌ | ✅ | ✅ | Protected POST |
 | `/api/ingest` | ❌ | ✅ | ✅ | Protected |
 | `/api/ingest-process` | ❌ | ✅ | ✅ | Protected |
-| `/api/ingest-upload` | ❌ | ✅ | ✅ | Protected POST |
+| `/api/ingest-upload` | ❌ | ✅ | ✅ (bucket 120/mnt khusus — PAKET UPLOAD) | Protected POST |
 | `/api/item-history` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/item-peer-comparison` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (Phase 2) |
-| `/api/item-search` | ❌ | ✅ | ✅ | Public GET (autocomplete-only — cross-outlet + trend modes REMOVED) |
+| `/api/item-search` | ❌ | ✅ | ✅ | Public GET (autocomplete-only) |
 | `/api/item-trend` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/item-trend-rank` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (Phase 3) |
 | `/api/migrate-direction` | ❌ | ✅ | ✅ | Protected |
 | `/api/outlet-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/pareto` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
-| `/api/peer-comparison` | ❌ | ✅ | ✅ | Public GET |
+| `/api/peer-comparison` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW P3-HYG-3 — sebelumnya uncached) |
+| `/api/peer-comparison/items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW P3-HYG-3) |
+| `/api/peer-comparison/trend` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW P3-HYG-3) |
 | `/api/pic` | ❌ | ✅ | ✅ | Protected mutations |
+| `/api/pic/import` | ❌ | ✅ | ✅ | Protected (maxDuration 60 — PAKET C DEPLOY-3) |
 | `/api/recommendations` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/resto-bahan-matrix` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/settings` | ❌ | ✅ | ✅ | Protected |
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 25/27 main routes use Zod validation (incl. `/api/item-search` — Zod added in AUDIT-NEWFEATURES C4; only `/api/status` skips Zod) · **14 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown) · All protected routes use `ADMIN_TOKEN` middleware.
+**Totals:** 33/35 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` + root `/api/route.ts` health stub skip Zod) · **20 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, compliance, chronic-outlets) — all 20 prefixes invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
 
 **REMOVED (DEL-AUDIT):** `/api/audit-log` route + `AuditLog` Prisma model — entire audit log feature deleted (model, route, dialog, 14 write sites, button, state, middleware entry). 0 dangling references verified.
 
 **New route specs:**
+- `GET /api/compliance?month=&week=[wajib]&area=&kelompok=&outlet=&pic=` — **PAKET E**: 9 lensa kontrol dari SATU scan periode (CTE `base` dimaterialisasi sekali → 6 agregat + `UNION ALL (lens, to_jsonb(row))` 1 round-trip): kepatuhan toleransi per item (paritas penuh rule engine — threshold dari `getRuntimeThresholds()` yang sama), prioritas penetapan toleransi, residual per outlet (WARN/HIGH paritas rule), |deviasi|/penjualan per outlet, kategori BAHAN/PACKAGING, transfer antar outlet (item×area loss↔surplus serentak), ketidakcocokan antar-area (pairing di lapisan shaping dari `transfer_agg` yang sama — nol scan tambahan), kualitas input angka bulat (3 kolom FILTER di scan yang sama). Threshold paritas: `f_tol_breach`/`f_tol_breach_high`/`f_tol_not_set`/`f_resid_warn`/`f_resid_high` share `stdDevBomPct`/`residualWarnPct`/`residualHighPct` dengan rule engine. Cache 5 mnt, rate-limit 30/mnt, maxDuration 60.
+- `GET /api/chronic-outlets?month=[wajib, TANPA week]&area=&kelompok=&outlet=&pic=` — **PAKET E**: lensa level BULAN (month-grain BY DESIGN — strict zod menolak param liar): klasifikasi KRONIS (deviasi ≥3 minggu AND ≥75% minggu berdata) / SPIKE (minggu terburuk ≥60% |dev| bulanan) / VARIABEL + arah dominan + minggu terburuk (argmax via ROW_NUMBER) + **momentum** (tren |deviasi| paruh kedua vs pertama per outlet — baris per outlet×minggu sebagai lensa 'week' UNION ALL di query yang sama). 1 scan bulan, cache 5 mnt (reusable antar minggu — FE keyed month-only), rate-limit 30/mnt, maxDuration 60.
+- `GET /api/peer-comparison?outlet=&month=&week=&mode=&limit=&kelompok=` — **kini di-cache** (P3-HYG-3, 5 mnt + in-flight dedup). Cache key: outlet/month/week/kelompok + extra {mode, limit}. Dulu menjalankan CROSS JOIN multi-CTE di setiap request.
+- `GET /api/peer-comparison/items?outlet=&month=&week=&mode=&topItems=&kelompok=` — **kini di-cache** (P3-HYG-3). Compute di-ekstrak ke fungsi murni `computePeerComparisonItems`; extra {mode, topItems}.
+- `GET /api/peer-comparison/trend?outlet=&month=&peers=&kelompok=` — **kini di-cache** (P3-HYG-3). Kedua jalur (peer eksplisit + auto-compute ±10% band) dalam satu computeFn; extra {peers}.
 - `GET /api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=` — Target outlet + peer outlets (BOM ±50% via `ABS(c.qtyBom) BETWEEN ABS(t.qtyBom)*0.5 AND *1.5`) + peer averages. Auto-selects worst outlet (ORDER BY ABS(nominalDeviasi) DESC LIMIT 1) when `outletCode` omitted. 5-min DB cache + SWR. Phase 2.
 - `GET /api/item-trend-rank?item=&week=&area=&kelompok=&outlet=&pic=` — Per-period national rank by `ABS(nominalDeviasi)` via `RANK() OVER (PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC)`. Week filter respected. 5-min DB cache + SWR. Phase 3.
 - `GET /api/flip-ranking?week=&month=&area=&kelompok=&outlet=&pic=&limit=` — Cross-item flip risk ranking. Scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY monthLabel, weekLabel, i.name. Risk score = `sempurnaCount*100 + dominanCount*40 + parsialCount*15` (sempurna = flip pair with disparity < 10%, dominan < 40%, parsial ≥ 40%). Risk level: `sempurnaCount>0 ? high : flipCount>0 ? moderate : low` (aligned FE+BE in BUG2-FLIP-05 fix). 5-min DB cache + SWR. Phase C.
 - `GET /api/flip-ranking/drilldown?item=&week=&month1=&month2=` — Per-outlet breakdown for ONE flip pair. Returns outlet × P1 QTY + P2 QTY + Δ QTY + Net + flip% (disparityPct = |net| / MAX(|P1|,|P2|) × 100). Sorted by flip% ASC (most balanced at top). Filtered to flip-only outlets. Satuan-aware (dynamic unit, not hardcoded `kg`). 5-min DB cache + SWR. Phase C.
 
-**14 cached routes** (all use `withCacheAndDedup` SWR — including `/api/analysis` which was migrated from legacy `getCached` to `getCachedWithMeta` SWR):
-1. `/api/analysis` (SWR via `getCachedWithMeta` — stale data served immediately + background refresh)
+**20 cached routes** (19 pakai `withCacheAndDedup` SWR + `/api/analysis` pipeline bespoke dengan raw-JSON passthrough — P3-HYG-1):
+1. `/api/analysis` (SWR 30 mnt TTL via `getCachedRawWithMeta` + background-recompute + **raw-JSON passthrough** — cache hit menyajikan string JSON tersimpan langsung, flag `cached`/`stale` di-inject via string surgery, NOL JSON.parse/stringify)
 2. `/api/pareto`
 3. `/api/recommendations`
 4. `/api/resto-bahan-matrix`
-5. `/api/export-report` (binary docx buffer)
+5. `/api/export-report` (binary docx — payload cache **base64** sejak P3-HYG-4, 1.33× ukuran biner vs 4× number[] lama)
 6. `/api/outlet-items`
 7. `/api/item-history`
 8. `/api/drilldown`
@@ -142,8 +153,14 @@ Deviation is decomposed into 4 categories for root cause identification:
 10. `/api/item-trend` (per-item QTY fluctuation across periods)
 11. `/api/item-peer-comparison` (Phase 2 — target + peers BOM ±50% + averages; auto-selects worst outlet)
 12. `/api/item-trend-rank` (Phase 3 — per-period national rank by ABS(nominalDeviasi); RANK() window function)
-13. `/api/flip-ranking` (NEW Phase C — cross-item flip risk ranking; sempurna/dominan/parsial categories)
-14. `/api/flip-ranking/drilldown` (NEW Phase C — per-outlet flip breakdown; sorted by flip% ASC)
+13. `/api/flip-ranking` (Phase C — cross-item flip risk ranking; sempurna/dominan/parsial categories)
+14. `/api/flip-ranking/drilldown` (Phase C — per-outlet flip breakdown; sorted by flip% ASC)
+15. `/api/item-anomali-outlets` (per-outlet drill-down MINORITY direction)
+16. `/api/peer-comparison` (P3-HYG-3)
+17. `/api/peer-comparison/items` (P3-HYG-3)
+18. `/api/peer-comparison/trend` (P3-HYG-3)
+19. `/api/compliance` (PAKET E)
+20. `/api/chronic-outlets` (PAKET E)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query — small result set, low latency, user-initiated drill-down).
 >
@@ -158,10 +175,11 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `InsightsPanel` — AI narrative insights
 - `RestoRecommendationCard` — Restaurant recommendation card
 - `AdvancedAnalysis` — Advanced analysis panel
-- `Charts` — 5 chart types (Deviation, Waste, Susut, Trial, Residual)
+- `Charts` — 3 chart types via barrel `Charts/index.ts` (GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart). **`TrendChart` DELETED (P3-HYG-5)** — tidak dirender lagi sejak DashboardTab drop tetapi tetap ter-bundle via barrel export.
 - `HistoricalZScoreCard` — Z-Score with 2-metric selector: Dev/BOM (ratio) + QTY Deviasi (absolute, signed display). Z-Score is SIGNED: positive=above historical mean (worse, red), negative=below (better, green). Only positive zScore triggers anomaly rules. Waste/Susut/Trial removed from selector per user request.
 - `BomCorrelationCard` — Per-record BOM correlation findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate alignment table + narrative — *reads `bomCorrelationFindings` from `/api/analysis` response (added in FIX-BOM-UI rewrite)*
 - `ItemDeepDive` — Item-level deep dive
+- `Compliance` — **NEW PAKET E**: tab Kepatuhan (ke-6) — strip 6 KPI ringkasan + 9 section tabel lensa kontrol + 1 tabel kronis/momentum (query kedua keyed month-only); row item-grain klik → ItemDeepDive (`clickableRowProps` a11y); LevelBadge WARN/HIGH paritas rule; empty-state per section; `overflow-x-auto` mobile
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
 - `RestoAnalysis` — Restaurant analysis panel
@@ -170,11 +188,12 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `DashboardHeader` — Sticky 2-tier header (logo + actions + FilterBar); extracted from `page.tsx` split
 - `DashboardFooter` — Sticky bottom footer (brand + stats + last-analysis perf); extracted from `page.tsx` split
 
-#### `tabs/` folder (6 tab modules — extracted from `page.tsx` split)
-- `DashboardTab.tsx` — Main overview tab (11 sections: Exec Summary, Resto Rec, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency [Massal/Regional/Lokal], Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 `next/dynamic` lazy imports for heavy chart components.
+#### `tabs/` folder (6 tab modules + wrapper — extracted from `page.tsx` split)
+- `DashboardTab.tsx` — Main overview tab (11 sections: Exec Summary, Resto Rec, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency [Massal/Regional/Lokal], Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 `next/dynamic` lazy imports for heavy chart components. **PAKET A**: semua `TabsContent` memakai `forceMount` + `data-[state=inactive]:hidden` (keep-alive — pindah tab tidak remount subtree; state lokal + scroll position bertahan).
 - `RestoTab.tsx` — Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary`
 - `PeerTab.tsx` — Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary`
 - `ParetoTab.tsx` — Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary`
+- `ComplianceTab.tsx` — **NEW PAKET E**: wrapper memo + dynamic + ErrorBoundary (pola PeerTab) untuk lazy `Compliance`
 - `ItemTrendTab.tsx` — Trend Item tab (5th tab) — item search autocomplete + metric selector (QTY Deviasi/Waste/Susut/Trial) + sortable table + Z-Score coloring (signed: positive=red/worse, negative=green/better) + Rank Badge header + Period drill-down + Rank Trend chart + Peer Comparison panel. See `tabs/ItemTrendTab/` folder above for the 8-module breakdown.
 - `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3
 
@@ -354,6 +373,31 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 
 **Satuan-aware**: dynamic unit field via `MAX(ir.satuan)` query + `ItemTrendPeriod.satuan` in hook type. Extracted via `periods[0]?.satuan` in `index.tsx`, passed to `ItemTrendTable` + `FlipMatrix` + drill-down table. No more hardcoded `"kg"` (SATUAN-BUG fix).
 
+### Kontrol & Kepatuhan (NEW PAKET E — tab ke-6, 11 lensa dari 2 scan)
+
+**Pertanyaan audit yang dijawab tab ini:** "apakah proses kontrol berjalan?" — bukan hanya "berapa besar deviasinya". Dua query backend:
+
+1. **`queryComplianceDashboard`** (`src/lib/queries/compliance.ts`) — 1 scan periode: CTE `base` (period+filter, per-record ABS/COALESCE expr) direferensikan 6 agregat (tol_item, outlet_agg, cat_agg, transfer_agg, transfer_top ROW_NUMBER, totals) → dimaterialisasi SEKALI → hasil 1 round-trip via `UNION ALL (lens, to_jsonb(row))` (to_jsonb menormalkan COUNT bigint → angka JSON).
+2. **`queryChronicOutlets`** (`src/lib/queries/chronic-outlets.ts`) — 1 scan bulan penuh: CTE `wk` (SUM per outlet×minggu) direferensikan 3 CTE + lensa 'week' (baris per outlet×minggu untuk momentum).
+
+**9 lensa period + 2 lensa month-grain:**
+
+| # | Lensa | Sumber data | Nilai audit |
+|---|-------|-------------|-------------|
+| 1 | Kepatuhan toleransi per item | flag `f_tol_*` paritas rule engine (`getRuntimeThresholds()` yang SAMA) | Item pelanggar terbanyak |
+| 2 | Prioritas penetapan toleransi | `tolerancePct` NULL + deviasi besar | Daftar aksi "tetapkan toleransi dulu" |
+| 3 | Deviasi tak terjelaskan per outlet | residual = dev − (waste+susut+trial), WARN/HIGH paritas rule | Indikator penyelidikan terkuat |
+| 4 | Efisiensi vs penjualan | \|deviasi\|/penjualan per outlet | Pembanding apple-to-appel outlet beda ukuran |
+| 5 | Kategori BAHAN vs PACKAGING | `Item.category` | Split sumber deviasi per kategori |
+| 6 | Indikasi transfer antar outlet | item×area loss↔surplus serentak + outlet terbesar per sisi | Stok berpindah tanpa dokumen |
+| 7 | Ketidakcocokan antar-area | pairing loss area A ↔ surplus area B dari baris `transfer_agg` SAMA (nol scan tambahan) | Mutasi antar area tanpa dokumen |
+| 8 | Kronis vs sekali-timu per outlet | month-grain (route terpisah) — KRONIS ≥75% minggu / SPIKE minggu terburuk ≥60% | Masalah sistemik vs peristiwa sekali |
+| 9 | Kualitas input: angka bulat | share \|qtyDeviasi\| berakhir 0/5 vs baseline periode (3 kolom FILTER di scan sama) | PIC menaksir vs menghitung |
+| 10 | Momentum outlet | rata \|dev\| paruh kedua vs pertama (lensa 'week' di query chronic sama) | Memburuk → intervensi dini |
+| 11 | Drilldown baris item | 4 tabel item-grain klik → modal `ItemDeepDive` reuse (a11y `clickableRowProps`) | Turun ke detail tanpa endpoint baru |
+
+**Paritas threshold PENUH dengan rule engine**: lensa 1/3 memakai `stdDevBomPct`/`residualWarnPct`/`residualHighPct` dari `getRuntimeThresholds()` — panel dan mesin rule mustahil beda versi. **Tabel outlet-grain (residual/penjualan/kronis/angka-bulat) sengaja tidak klik-able** — ItemDeepDive berbasis item×minggu, bukan outlet×bulan.
+
 ### Data Operations
 - Export laporan Word (`.docx`)
 - Import Excel + Google Drive
@@ -362,19 +406,21 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 > **REMOVED (DEL-AUDIT):** Audit Log feature deleted entirely. Previously: `AuditLog` Prisma model + `/api/audit-log` route + `AuditLogDialog.tsx` + dashboard button + state + middleware entry + 11 write sites (auditLog.create calls scattered across ingest, settings, pic, data, migrate-direction). Now: 0 audit log references in codebase. Removed because audit-log writes added latency to every mutation (extra INSERT) + the model was never queried for actual investigation use.
 
 ### Caching
-- **DB-level `AggregationCache`** (5-min TTL, `awaitWrite` pattern)
-  - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (NEW — returns `{ data, stale }` without deleting expired row, for SWR pattern)
-  - **14 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison` (Phase 2), `item-trend-rank` (Phase 3), `flip-ranking` (Phase C), `flip-ranking-drilldown` (Phase C)
-  - `invalidateAnalysisCache()` clears ALL 14 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
-- **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01): `withCacheAndDup()` implements SWR on top of `getCachedWithMeta`:
+- **DB-level `AggregationCache`** (TTL: 5 mnt default; `/api/analysis` 30 mnt via `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi, mutasi selalu invalidate; `awaitWrite` pattern)
+  - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (returns `{ data, stale }` without deleting expired row, for SWR pattern), `getCachedRawWithMeta()` (NEW P3-HYG-1 — returns `{ raw, stale }` RAW JSON string tanpa parse, untuk raw passthrough)
+  - **20 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `compliance` + `chronic-outlets` (PAKET E)
+  - `invalidateAnalysisCache()` clears ALL 20 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
+- **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01 + AUDIT-PERF-5): `withCacheAndDedup()` implements SWR on top of `getCachedWithMeta`:
   - Fresh hit → return immediately
   - Stale hit → return stale data in <50ms + fire-and-forget background recompute (writes fresh cache via `setCached(awaitWrite=true)`, resolves in-flight Promise so concurrent requests get fresh data)
   - No entry → compute synchronously + write cache
-  - ALL 14 cached routes use SWR (including `/api/analysis` — migrated from legacy `getCached` to `getCachedWithMeta` SWR in CACHE-01 fix). 12 JSON routes surface `stale: true` flag (incl. `item-peer-comparison` + `item-trend-rank` + `flip-ranking` + `flip-ranking-drilldown`). `/api/export-report` binary + `/api/analysis` bespoke pipeline serve stale internally.
-- **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (NEW — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it.
+  - ALL 20 cached routes use SWR — **termasuk `/api/analysis`** (72aad95: TTL 30 mnt + `triggerBackgroundRecompute` SWR + in-flight resolve; analysis TTL panjang AMAN karena mutasi selalu invalidate eksplisit). 18 JSON routes surface `stale: true` flag. `/api/export-report` binary serves stale internally.
+- **Raw-JSON passthrough** (P3-HYG-1, PAKET F): cache hit `/api/analysis` menyajikan string JSON tersimpan LANGSUNG — `getCachedRawWithMeta` (nol `JSON.parse`) + flag envelope `"cached":true`/`"stale":true` di-inject via string surgery O(1) setelah `{` pembuka (aman duplicate-key — payload tersimpan tak pernah memuatnya) + `Content-Type: application/json` eksplisit. In-flight dedup di-resolve dengan marker `{__rawJson, stale}`; awaiter melayani marker dengan response raw yang sama. Menghilangkan double-serialize ~1MB (parse+stringify ±20-40ms CPU) per hit.
+- **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it.
 - **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes; `NO_STORE` for `/api/status` — BUG-PIC-STALE fix below)
 - **BUG-PIC-STALE fix:** `/api/status` switched from `CACHE_METADATA` (s-maxage=60) → `NO_STORE` because CDN edge wasn't cleared by `statusCache.clear()` or `invalidateAnalysisCache()` — caused stale data after PIC mutation. Both cached + freshly-computed branches now return `NO_STORE` headers. Other metadata routes (`/api/data`, `/api/pic`) still use `CACHE_METADATA` (narrower mutation triggers).
-- **Performance:** Prisma query log disabled by default (`PRISMA_LOG_QUERIES=true` to enable); export-report route uses DB cache (5-min TTL) to skip recomputation on repeat exports.
+- **Cleanup:** `cleanupExpiredCache()` (fire-and-forget dari `/api/status`, rate-limit 10 mnt) menghapus row lebih tua dari **90 mnt** (dinaikkan dari 30 mnt — AUDIT-PERF-5: row stale harus tetap hidup untuk SWR serve selama background recompute berjalan).
+- **Performance:** Prisma query log disabled by default (`PRISMA_LOG_QUERIES=true` to enable); export-report route uses DB cache (5-min TTL, payload **base64** sejak P3-HYG-4) to skip recomputation on repeat exports.
 
 ### UI Design Principles
 - **PC-focused**: UI optimized for **PC desktop** (not mobile) per explicit user request — "ini untuk PC ya bukan mobile". Touch-target-specific accessibility issues (44px minimum per WCAG 2.5.5) intentionally skipped. Sticky header + footer for desktop viewport. Tables use `min-w` + `overflow-x-auto` for wide content but assume desktop monitor width.
@@ -404,21 +450,29 @@ Two pattern families power the dashboard's reusable components — **9 patterns 
 
 ## 7. Performance Benchmarks
 
-Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgftofry`):
+Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgftofry`). Angka "warm" pasca-PAKET A/B/F — audit penuh per rute ada di `AUDIT-REPORT.md`:
 
 | Route | Cold | Warm (cache) | Notes |
 |-------|------|-------------|-------|
-| `/api/analysis` | 0.56s | 0.24s | DB cache + parallelized post-process (PERF-API-04) |
-| `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms |
-| `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) |
+| `/api/analysis` | ~0.5s (pasca scan-merge PAKET B) | **<100ms, zero-parse** (raw passthrough P3-HYG-1) | DB cache 30 mnt + SWR background-recompute + in-flight dedup |
+| `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms; nested-Pareto N+1 (10 tx) → 1 query ROW_NUMBER (f6a126b) |
+| `/api/compliance` | ~1 scan periode | <100ms | 9 lensa dari 1 scan + cache 5 mnt (PAKET E) |
+| `/api/chronic-outlets` | ~1 scan bulan | <100ms | Cache 5 mnt reusable antar minggu (keyed month-only) |
+| `/api/peer-comparison` ×3 | CROSS JOIN multi-CTE | <100ms | **kini di-cache** (P3-HYG-3 — dulu full compute per request) |
+| `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) + scan-merge (PAKET B) |
 | `/api/resto-bahan-matrix` | 0.3s | 0.2s | SWR |
-| `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal |
-| `/api/outlet-items` | 2.17s | 0.006s | NEW cached (PERF-API-01) — 157× warm speedup |
-| `/api/item-history` | 1.37s | 0.006s | NEW cached (PERF-API-02) — 83× warm speedup |
-| `/api/drilldown` | 1.01s | 0.023s | NEW cached (PERF-API-03) + slim `select` (PERF-API-06) |
-| `/api/area-item-heatmap` | 0.21s | 0.21s | NEW cached (PERF-CACHE-08); warm ≈ cold (already fast) |
-| `/api/area-item-heatmap/cell-detail` | 0.05s | n/a | NOT cached (direct query, LIMIT 1000) |
-| `/api/status` | 0.01s | 0.007s | In-memory LRU cache + cleanupExpiredCache (NO_STORE HTTP headers — BUG-PIC-STALE fix) |
+| `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal; payload cache base64 (P3-HYG-4) |
+| `/api/outlet-items` | 2.17s | 0.006s | cached (PERF-API-01) — 157× warm speedup |
+| `/api/item-history` | 1.37s | 0.006s | cached (PERF-API-02) — 83× warm speedup |
+| `/api/drilldown` | 1.01s | 0.023s | cached (PERF-API-03) + slim `select` (PERF-API-06) |
+| `/api/area-item-heatmap` | 0.21s | 0.21s | cached (PERF-CACHE-08); warm ≈ cold (already fast) |
+| `/api/status` | 0.01s | 0.007s | In-memory LRU cache + cleanupExpiredCache (NO_STORE) |
+
+**Efek paket (diukur/dianalisis di AUDIT-REPORT.md):**
+- **PAKET A (FE interaksi)**: pindah tab = nol remount (keep-alive `forceMount`), refetch storm tiap balik tab >30 dtk hilang (staleTime 5 mnt + gcTime 10 mnt pada query peer/outlet), autocomplete 1 request/huruf → debounce 300ms, dashboard tidak lagi terkunci (`pointer-events-none` saat refresh background dihapus).
+- **PAKET B (BE scan-merge)**: −3 scan full-period + −3 tx (KPI), −3 scan + −3 tx (kategori), growthDrivers −2 tx −4 scan; import master-data ±446 → ±4-8 round-trip (3-pass bulk); metadata −2 RT.
+- **PAKET UPLOAD/DELETE**: upload 429-per-chunk → bucket khusus 120/mnt + chunk paralel ×3 + 1× transfer (dulu 3×) + reuse `/tmp`; delete bulan 30s-kill → TRUNCATE atomik + advisory lock (dulu row-by-row index purge).
+- **PAKET F (P3 hygiene)**: cache hit analysis zero-parse (±20-40ms CPU/hit dihemat); 3 route peer-comparison tidak lagi full compute per request.
 
 ---
 
@@ -453,25 +507,26 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 52,661 (was 51,313 — +1,348 LOC from TREMOR session: 6 new shared/ui components + colorScale.ts + format presets expansion) |
+| Lines of code in `src/` | 57,861 (was 52,661 — +5,200 LOC dari session AUDIT-INTENSIF: tab Kepatuhan 11 lensa + AUDIT-REPORT + audit fixes + upload/delete perf) |
 | Test files | 22 |
-| Test cases | 435 |
-| Git commits | 400+ |
-| npm dependencies | 23 |
-| API routes (main) | 27 (was 26 incl. audit-log — REMOVED -1, ADDED flip-ranking + flip-ranking/drilldown = net +1) |
-| Cached routes | 14 (was 12 — added `flip-ranking` + `flip-ranking-drilldown` Phase C) |
-| Dashboard components | 24 + `tabs/ItemTrendTab/` folder (11 modules + barrel — incl. 3 NEW flip modules) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files, NEW Batch 2) + `shared/` dashboard components (5 NEW TREMOR: TargetComparison + DeltaBar + Tracker + BarList + SparkLine) |
-| UI components | 30 (was 29 shadcn — +1 Callout [NEW TREMOR Pattern 4]) |
-| Dashboard component patterns | 9 total (3 evidence-dev: Format Presets 33 presets + TargetComparison + Diverging Color Scale; 6 tremor: Callout + DeltaBar + Tracker + BarList + SparkLine + DeltaType) |
-| Format presets | 33 (in `lib/format.ts` — num/idr/pct/qty categories, accessible via `formatByPreset(value, preset)`) |
+| Test cases | 438 |
+| Git commits | 506 |
+| npm dependencies | 31 |
+| API routes (main) | 35 (was 27 — ADDED compliance + chronic-outlets + peer-comparison/items + peer-comparison/trend + item-anomali-outlets; flip-ranking ×2) |
+| Cached routes | 20 (was 14 — added item-anomali-outlets + 3 peer-comparison (P3-HYG-3) + compliance + chronic-outlets (PAKET E); analysis raw-JSON passthrough P3-HYG-1) |
+| Dashboard components | 25 (+`Compliance`) + `tabs/ItemTrendTab/` folder (11 modules + barrel) + `tabs/ComplianceTab.tsx` + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files) + `shared/` dashboard components (5 TREMOR) |
+| UI components | 30 (29 shadcn + Callout) |
+| Dashboard component patterns | 9 total (3 evidence-dev + 6 tremor) |
+| Format presets | 33 (in `lib/format.ts`) |
 | Hooks | 6 (incl. `useAnalysis/` folder split into 8 files via barrel re-export) |
 | DB host | `proosjqivxadwgftofry` |
-| DB indexes | 14 on InventoryRecord (incl. 2 covering indexes for heatmap + trend) |
-| Z-Score | SIGNED (positive=worse/red, negative=better/green) — was non-negative |
-| Bug fixes (cumulative) | 64 total: 20 (Phase 1+2+3 audit — BUG-1: 3, BUG-2: 11, BUG-3: 6) + 5 (audit v2 — BUG2-RANK-01/02 + 3 others) + 4 (calc audit — CALC-01..04) + 35 (UI audit — UI2-XX responsive/a11y + UI-XX layout/visual) |
-| Bug fixes (Phase A+B+C flip) | 6 (BUG2-FLIP-01..06 — flip detection edge cases) |
-| File consolidation | 2 batches: Batch 1 (4 helpers → `lib/`) + Batch 2 (5 shared peer-comparison cards — ~766 LOC duplication eliminated) |
-| Removed features | Audit Log (model + route + dialog + 14 write sites — ~565 LOC removed, 0 dangling refs) |
+| DB indexes | 12 B-tree + 1 nullsafe expression (`InventoryRecord_nullsafe_akun`) + 1 unique `Week(monthKey,weekLabel)` + 2 covering INCLUDE (recreate via script) on InventoryRecord-family; **`@@index([direction])` DROPPED (P3-HYG-2 — dead, nol query mem-filter, apply pada db:push berikutnya)** |
+| Z-Score | SIGNED (positive=worse/red, negative=better/green) |
+| Bug fixes (audit intensif) | BUG-3 NULL-akun dedup, BUG-4 silent row loss, BUG-5 cross-instance lock (ingest integrity) + BUG-KELOMPOK-CACHE + BUG-EDGE-4 key collision + Week dedup + 429 upload + delete 30s-kill + 12 P3-HYG hygiene |
+| Bug fixes (cumulative sebelumnya) | 64 total (Phase 1+2+3 + audit v2 + calc + UI) + 6 flip (BUG2-FLIP-01..06) |
+| File consolidation | 2 batches (Batch 1 helpers + Batch 2 peer-comparison cards) + 11 god-file splits barrel pattern |
+| Removed features | Audit Log (~565 LOC); `TrendChart` (dead export, P3-HYG-5); `package-lock.json` stale (PAKET C — bun.lock satu-satunya) |
+| Git identity | `anandategarch <anandategarch@users.noreply.github.com>` (author + committer) |
 
 ---
 
@@ -480,45 +535,52 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 ```
 src/
 ├── app/
-│   ├── page.tsx                    # Thin orchestrator (227 lines — 5 tabs: Dashboard/Resto/Peer/Pareto/Trend Item)
+│   ├── page.tsx                    # Thin orchestrator (288 lines — 6 tabs: Dashboard/Resto/Peer/Pareto/Trend Item/Kepatuhan; semua TabsContent forceMount keep-alive PAKET A)
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
-│   └── api/                        # 27 API routes + sub-routes (was 26 incl. audit-log REMOVED -1, +2 flip-ranking = net +1)
+│   └── api/                        # 35 API routes + sub-routes
 │       ├── area-item-heatmap/
 │       │   ├── route.ts            # Heatmap matrix (cached, SWR)
 │       │   └── cell-detail/route.ts # Per-outlet drill-down (NOT cached)
-│       ├── analysis/services/      # 8-stage pipeline (validate/fetch/run-queries/post-process/exec-summary/assemble/trend-builder/deviation-drivers)
-│       ├── flip-ranking/           # NEW Phase C: cross-item flip risk ranking (cached, SWR)
+│       ├── analysis/services/      # 8-stage pipeline (validate/fetch/run-queries/post-process/exec-summary/assemble/trend-builder/deviation-drivers) — validate-and-resolve memuat raw-JSON passthrough (P3-HYG-1) + background-recompute (SWR 30 mnt)
+│       ├── chronic-outlets/route.ts # NEW PAKET E: month-grain kronis vs spike + momentum (cached, SWR)
+│       ├── compliance/route.ts     # NEW PAKET E: 9 lensa kontrol dari 1 scan (cached, SWR)
+│       ├── flip-ranking/           # Phase C: cross-item flip risk ranking (cached, SWR)
 │       │   ├── route.ts            # Risk score + sempurna/dominan/parsial counts
 │       │   └── drilldown/route.ts  # Per-outlet unified table (cached, SWR)
+│       ├── item-anomali-outlets/route.ts # Per-outlet MINORITY-direction drill-down (cached)
 │       ├── item-peer-comparison/route.ts # Phase 2: target + peers BOM ±50% + averages (cached, SWR)
-│       ├── item-search/route.ts    # Autocomplete-only (cross-outlet + trend modes removed; Zod added)
+│       ├── item-search/route.ts    # Autocomplete-only
 │       ├── item-trend/route.ts     # Per-item QTY fluctuation across periods (cached, SWR, week filter)
-│       ├── item-trend-rank/route.ts # Phase 3: per-period national rank by ABS(nominalDeviasi) (cached, SWR)
-│       ├── outlet-items/route.ts   # Cached
+│       ├── item-trend-rank/route.ts # Phase 3: per-period national rank (cached, SWR)
+│       ├── outlet-items/route.ts   # Cached (slim route + services/ siblings)
 │       ├── item-history/route.ts   # Cached
 │       ├── drilldown/route.ts      # Cached (slim select, respects dashboard filters)
-│       ├── pareto|recommendations|resto-bahan-matrix|export-report|analysis  # Original 5 cached routes
+│       ├── pareto|recommendations|resto-bahan-matrix|export-report|analysis  # Original 5 cached routes (export-report: services/ data-fetcher + docx-builder — payload cache base64)
+│       ├── peer-comparison/        # 3 routes, SEMUA cached (P3-HYG-3): route.ts + items/route.ts (computePeerComparisonItems) + trend/route.ts
 │       ├── status/route.ts         # NO_STORE HTTP headers (BUG-PIC-STALE fix)
-│       └── ...                     # 10 other routes (data, ingest-*, peer-comparison, pic, settings, setup, etc.) — /api/audit-log REMOVED
+│       └── ...                     # 10 other routes (data, ingest-*, pic + pic/import, settings, setup, refresh, migrate-direction) — /api/audit-log REMOVED
 ├── components/
 │   ├── dashboard/
-│   │   ├── tabs/ItemTrendTab/      # NEW Phase 1+2+3 + Phase A+B+C: 11 modules + barrel index (split from monolithic ItemTrendTab.tsx) — index.tsx + ItemTrendSearchBar + ItemTrendTable + ItemTrendLineChart + ItemTrendRankChart + ItemPeerComparison + FlipMatrix [P-B] + FlipRanking [P-C] + flipHelpers [P-A] + types + zScoreHelpers + periodHelpers
+│   │   ├── tabs/ItemTrendTab/      # 11 modules + barrel index — index.tsx + ItemTrendSearchBar + ItemTrendTable + ItemTrendLineChart + ItemTrendRankChart + ItemPeerComparison + FlipMatrix [P-B] + FlipRanking [P-C] + flipHelpers [P-A] + types + zScoreHelpers + periodHelpers
+│   │   ├── tabs/ComplianceTab.tsx  # NEW PAKET E: wrapper memo+dynamic+ErrorBoundary (pola PeerTab)
+│   │   ├── Compliance.tsx          # NEW PAKET E: 6 KPI + 10 section tabel lensa kontrol + kronis/momentum + drilldown ItemDeepDive
 │   │   ├── AreaItemHeatmap.tsx     # Heatmap matrix component (549 lines)
-│   │   ├── AreaItemHeatmapSheet.tsx # NEW: drill-down Sheet (lazy-loaded via next/dynamic)
+│   │   ├── AreaItemHeatmapSheet.tsx # drill-down Sheet (lazy-loaded via next/dynamic)
 │   │   ├── BomCorrelationCard.tsx  # Per-record BOM findings table
-│   │   ├── DashboardHeader.tsx     # NEW: sticky header (extracted from page.tsx)
-│   │   ├── DashboardFooter.tsx     # NEW: sticky footer (extracted from page.tsx)
-│   │   ├── shared/peer-comparison-cards/ # NEW Batch 2: 7 files (675 LOC) — presentational peer cards (efficiency-score + gap-analysis + scatter-plot + ranking-summary + anomaly-flags + types + index)
+│   │   ├── DashboardHeader.tsx     # sticky header (extracted from page.tsx)
+│   │   ├── DashboardFooter.tsx     # sticky footer (extracted from page.tsx)
+│   │   ├── Charts/                 # 3 chart (GrowthComparison, DeviationBreakdownChart, LossVsSurplusChart) — TrendChart DELETED (P3-HYG-5)
+│   │   ├── shared/peer-comparison-cards/ # 7 files (675 LOC) — presentational peer cards
 │   │   ├── shared/index.tsx        # EmptyState/LoadingState/ErrorState/SectionHeader/ScrollToTop/FetchAware/LoadingChart
-│   │   ├── shared/TargetComparison.tsx # NEW TREMOR: Pattern 2 evidence-dev — target vs actual vs benchmark + DeltaType 5-level classification (Pattern 6 tremor)
-│   │   ├── shared/DeltaBar.tsx     # NEW TREMOR: Pattern 1 — bidirectional progress bar with isIncreasePositive flag (applied to KPICard)
-│   │   ├── shared/Tracker.tsx      # NEW TREMOR: Pattern 3 — horizontal status blocks per period
-│   │   ├── shared/BarList.tsx      # NEW TREMOR: Pattern 2 — ranked bar list with inline bars + sortOrder + onValueChange
-│   │   ├── shared/SparkLine.tsx    # NEW TREMOR: Pattern 5 — mini inline line chart (80×24px, pure SVG)
+│   │   ├── shared/TargetComparison.tsx # TREMOR Pattern 2 + DeltaType 5-level (Pattern 6)
+│   │   ├── shared/DeltaBar.tsx     # TREMOR Pattern 1 — bidirectional progress bar (applied to KPICard)
+│   │   ├── shared/Tracker.tsx      # TREMOR Pattern 3 — status blocks per period
+│   │   ├── shared/BarList.tsx      # TREMOR Pattern 2 — ranked bar list (data+handler di-memo P3-HYG-7a)
+│   │   ├── shared/SparkLine.tsx    # TREMOR Pattern 5 — mini inline line chart (80×24px, pure SVG)
 │   │   └── ...                     # 15 other dashboard components
 │   ├── filters/                    # 9 components (FilterBar + 5 dialogs + SearchableComboBox — AuditLogDialog.tsx REMOVED)
 │   ├── drilldown/                  # 2 components
-│   └── ui/                         # 30 components (29 shadcn + Callout [NEW TREMOR Pattern 4])
+│   └── ui/                         # 30 components (29 shadcn + Callout)
 ├── hooks/
 │   ├── useAnalysis/               # NEW (SPLIT Batch 2): 8-file folder + barrel — index.ts + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts
 │   ├── useDashboard.ts             # Zustand store (filters + UI state + trendSelectedItem + setFocusOutlet [NEW Phase 1+2])
@@ -527,14 +589,14 @@ src/
 │   ├── use-mobile.ts               # shadcn responsive viewport hook
 │   └── use-toast.ts                # shadcn toast hook
 ├── lib/
-│   ├── queries/                    # 14 query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts [NEW P-C] + flip-drilldown.ts [NEW P-C])
+│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + compliance.ts [NEW PAKET E] + chronic-outlets.ts [NEW PAKET E] + shared.ts buildSqlFilters)
 │   ├── metrics/                    # 8 metric functions (deviation, benchmark, historical, growth)
 │   ├── cache-headers.ts            # HTTP Cache-Control presets
 │   ├── error-response.ts           # Sanitized error helper
-│   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/getCachedWithMeta/withCacheAndDedup/invalidateAnalysisCache — 14 routes invalidated)
-│   ├── zScoreHelpers.ts            # NEW Batch 1: zScoreColor + zScoreStatus (moved from ItemTrendTab/zScoreHelpers.ts; old file re-exports)
-│   ├── format.ts                   # NEW Batch 1: fmtGrowth + growthColor + growthColorClass + fmtFullSigned (consolidated from resto-analysis/helpers.tsx + BomCorrelationCard.tsx + FlipMatrix.tsx) + NEW TREMOR: FORMAT_PRESETS (33 presets) + formatByPreset + isValidPreset + getPresetsByCategory (Pattern 3 evidence-dev)
-│   ├── colorScale.ts               # NEW TREMOR: createDivergingScale + createLinearScale + RED_GREEN_DIVERGING palette (Pattern 1 evidence-dev — symmetric/asymmetric diverging color ramps for heatmap + delta visualizations)
+│   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/getCachedWithMeta/getCachedRawWithMeta/withCacheAndDedup/invalidateAnalysisCache — 20 routes invalidated)
+│   ├── zScoreHelpers.ts            # zScoreColor + zScoreStatus
+│   ├── format.ts                   # fmtGrowth + growthColor + fmtFullSigned + FORMAT_PRESETS (33 presets)
+│   ├── colorScale.ts               # createDivergingScale + createLinearScale + palettes
 │   ├── db.ts                       # Prisma client (connection_limit=30, pool_timeout=60)
 │   ├── rate-limit.ts               # In-memory rate limiter
 │   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)

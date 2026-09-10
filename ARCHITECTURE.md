@@ -2,7 +2,7 @@
 
 > **Technical Architecture** — Read when fixing bugs or optimizing performance.
 >
-> **Last updated:** Session DOC-2 (Phase 1+2+3 Trend Item Tab expansion: rank badge + ItemPeerComparison + ItemTrendRankChart + 2 new cached API routes + barrel re-export splits + /api/status NO_STORE fix). Prior session: DOC-UPDATE-2 (heatmap drill-down + Pareto + dual display, page.tsx split, DB migration, SWR cache, prefetchHeatmap, perf optimizations).
+> **Last updated:** Session AUDIT-INTENSIF-DOCS (post-PAKET A/B/C/UPLOAD/E/F: audit penuh di `AUDIT-REPORT.md`; cache hit analysis raw-JSON passthrough; 20 cached routes + invalidasi; analysis SWR 30 mnt + background-recompute; 3-pass bulk master-data import + advisory lock lintas-instance; upload chunk paralel + bucket rate-limit khusus; delete TRUNCATE atomik; tab keep-alive forceMount; Fluid Compute + maxDuration single-source; bun.lock satu-satunya; index [direction] dropped). Prior: Session DOC-2 (Trend Item Tab Phase 1+2+3).
 
 This document describes **HOW** the Inventory Control Intelligence application is built. It covers the runtime topology, data ingestion pipeline, query architecture, caching layers, auth model, performance optimizations, security controls, test coverage, known tech debt, and deployment pipeline.
 
@@ -41,23 +41,31 @@ User Browser → Caddy (port 81, zstd gzip, static bypass) → Next.js (port 300
 ### Ingestion Pipeline (Excel / CSV → DB)
 
 ```
-Excel/CSV → /api/ingest-upload (chunked) → /api/ingest-process (reassemble + parse)
+Excel/CSV → /api/ingest-upload (chunked, paralel ×3, bucket 120/mnt) → /api/ingest-process (reassemble + parse)
   → engine/transform.ts (normalize + derive) → engine/validator.ts (DQ check)
-  → Prisma createMany (bulk insert) → OutletPeriodSales (pre-compute sales MODE)
-  → invalidateAnalysisCache (clear all 5 caches)
+  → insertInventoryRecords (P2002 di-skip + dihitung — BUG-4) → OutletPeriodSales (pre-compute sales MODE)
+  → invalidateAnalysisCache (clear all 20 route prefixes)
 ```
 
 **Stage detail:**
 
 | Stage                | File                                        | Responsibility                                                                                     |
 | -------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 1. Chunked upload    | `src/app/api/ingest-upload/route.ts`        | Receives file in 5MB chunks. Validates `fileHash` (hex), extension allowlist. Writes to `upload/`. |
-| 2. Reassemble+parse  | `src/app/api/ingest-process/route.ts` (~700 LOC) | Reassembles chunks, parses rows (XLSX/CSV), runs transform pipeline.                             |
+| 1. Chunked upload    | `src/app/api/ingest-upload/route.ts`        | Receives file in chunks (PAKET UPLOAD: **3 chunk paralel** — chunk terakhir tetap terakhir; bucket rate-limit khusus 120/mnt mengakhiri 429 di chunk #6 untuk file >20MB; verifikasi total-ukuran via `SUM(LENGTH(data))` — tidak re-download). Writes to `upload/`. |
+| 2. Reassemble+parse  | `src/app/api/ingest-process/route.ts` (~700 LOC) | Reassembles chunks, parses rows (XLSX/CSV), runs transform pipeline. **BUG-5: `pg_advisory_xact_lock(hashtext(monthKey))` sebagai statement PERTAMA dalam semua 3 transaksi import** — serialisasi lintas-instance (serverless multi-instance), auto-release saat COMMIT/ROLLBACK. |
 | 3. Normalize+derive  | `src/lib/engine/transform.ts`               | Coercion of types, unit normalization, derived fields (deviation decomposition, residual calc).   |
-| 4. DQ validation     | `src/lib/engine/validator.ts`               | Data-quality checks: missing outlet, negative qty, period mismatch, etc. Reports row-level errors. |
-| 5. Bulk persist      | Prisma `createMany`                         | Single round-trip insert into `OutletPeriodSales`. Skips ORM hooks for speed.                      |
-| 6. Pre-compute MODE  | `OutletPeriodSales.salesMode`               | Per-outlet-per-period sales MODE precomputed at ingest time so dashboard reads are O(1).           |
-| 7. Cache bust        | `invalidateAnalysisCache()`                 | Clears all 5 cached route prefixes (see §4).                                                       |
+| 4. DQ validation     | `src/lib/engine/validator.ts`               | Data-quality checks: missing outlet, negative qty, period mismatch, etc. Reports row-level errors.  |
+| 5. Bulk persist      | `insertInventoryRecords` (`src/lib/ingestion/batch-insert.ts` — BUG-4) | Bulk insert helper dipakai di 4 titik: P2002 (duplicate natural key) di-SKIP + dihitung + di-log; error lain di-rethrow → transaksi rollback (dulu: error apa pun di-skip diam-diam = kehilangan baris tanpa jejak). |
+| 5b. Master-data 3-pass | `process-ingestion.ts` + `process-rows-for-import.ts` (PAKET B) | Resolusi master-data (Outlet/Item/Week/PIC) via **3-pass bulk** (SELECT all → map in-memory → createMany missing) — ±446 round-trip upsert per-baris → ±4-8 round-trip. Ported ke jalur `/api/ingest` + `import-drive`. |
+| 6. Pre-compute MODE  | `OutletPeriodSales.salesMode`               | Per-outlet-per-period sales MODE precomputed at ingest time so dashboard reads are O(1).              |
+| 7. Cache bust        | `invalidateAnalysisCache()`                 | Clears all 20 cached route prefixes (see §4).                                                       |
+
+**Integrity guards (BUG-3/4/5, commit 95d58a7):**
+- **BUG-3**: dedup natural-key in-memory di kedua jalur ingest (kunci `week|outlet|item|COALESCE(akun,'')` — berjalan juga di fastMode) + index unik NULL-safe `InventoryRecord_nullsafe_akun` ON `(weekId,outletId,itemId,COALESCE(akunPenyesuaian,''))` dibuat via script (`scripts/fix-null-akun-duplicates.ts` — ekspresi COALESCE tak bisa dimodelkan Prisma). Postgres NULL ≠ NULL di unique index → duplikat lolos diam-diam tanpa ini.
+- **BUG-4**: lihat stage 5.
+- **BUG-5**: lihat stage 2 — plus re-check `fileHash` DALAM transaksi untuk menang import file sama yang berbarengan (hasil: SKIPPED, bukan double-import).
+
+**Delete path (PAKET UPLOAD/DELETE):** reset-semua via **TRUNCATE atomik** (dulu DELETE row-by-row + purge index 30 detik); hapus bulan/file memakai advisory lock agar tidak interleaving dengan import paralel.
 
 **Google Drive ingestion** follows the same pipeline after SSRF-safe fetch.
 
@@ -189,29 +197,38 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | Property        | Value                                                                                |
 | --------------- | ------------------------------------------------------------------------------------ |
 | Storage         | `AggregationCache` table (PostgreSQL row)                                            |
-| Key             | `"{route}␟{filterHash}"` — e.g. `analysis␟outlet=5|month=Januari%202024|metric=loss` |
-| Value           | JSON-serialized payload (text column, no size limit)                                 |
-| TTL             | 5 minutes (`expiresAt` column)                                                       |
+| Key             | `"{route}␟{month}␟{week}␟…␟{extra}"` — `\x1f` (Unit Separator) delimiter anti-collision; kelompok di-uppercased + 'all'→'ALL' dinormalisasi; `extra` membawa param route-spesifik (BUG-KELOMPOK-CACHE + BUG-EDGE-4 + PERF-CACHE-01..04) |
+| Value           | JSON-serialized payload (text column; export-report menyimpan **base64** — P3-HYG-4) |
+| TTL             | 5 minutes default; `/api/analysis` **30 minutes** (env `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi; mutasi selalu invalidate eksplisit) |
 | Write mode      | `awaitWrite=true` — readers wait for in-flight writers (prevents cache stampede)     |
-| Invalidation    | `invalidateAnalysisCache()` clears ALL 11 route prefixes on any mutation              |
+| Invalidation    | `invalidateAnalysisCache()` clears ALL **20** route prefixes on any mutation          |
 
-**11 cached routes** (`/api/analysis` uses direct `getCached` / `await setCached` with bespoke in-flight dedup; the other 10 use `withCacheAndDedup` which bundles cache lookup + in-flight dedup + SWR — see §4.6. Note: `setCached` MUST be `await`-ed; an earlier audit found 18 routes calling `errorResponse()` without `return` and several `setCached` calls missing `await` — both fixed):
+**20 cached routes** (17 pakai `withCacheAndDedup` — cache lookup + in-flight dedup + SWR; `/api/analysis` pipeline bespoke dengan raw-JSON passthrough; `/api/export-report` binary base64):
 
-1. `/api/analysis` (direct `setCached`; bespoke 8-stage pipeline makes SWR complex — has in-flight dedup + TanStack `keepPreviousData` instead)
+1. `/api/analysis` (bespoke 8-stage pipeline; cache check di `validate-and-resolve.ts` — **SWR 30 mnt + background-recompute + raw-JSON passthrough** P3-HYG-1)
 2. `/api/pareto`
 3. `/api/recommendations`
 4. `/api/resto-bahan-matrix`
-5. `/api/export-report` (cached per `month|week|compareWeek|compareMonth|sections` hash; full report build is ~8s cold, ~0.2s warm; binary docx — SWR flag not surfaced on response)
-6. `/api/outlet-items` (NEW — PERF-API-01; cache key includes outletCode+month+week+compareWeek+compareMonth)
-7. `/api/item-history` (NEW — PERF-API-02; cache key includes outletCode+itemName+month+week)
-8. `/api/drilldown` (NEW — PERF-API-03; cache key includes outletCode+itemName+weekLabel+monthLabel+limit+cursor)
-9. `/api/area-item-heatmap` (NEW — PERF-CACHE-08; cache key includes metric+itemLimit+mode + standard filter set)
-10. `/api/item-peer-comparison` (NEW — Phase 2 P2-BE; cache key includes route+month+week+outletCode-or-AUTO+itemName+area+kelompok+pic; 5-min TTL + SWR; auto-selects worst outlet when outletCode omitted; `peers[]` INCLUDES target for ranking + scatter highlight)
-11. `/api/item-trend-rank` (NEW — Phase 3 P3-BE; cache key includes route+month-or-ALL+week-or-ALL+itemName+area+kelompok+outlet+pic; 5-min TTL + SWR; covers ALL periods — month/week are cache-key context only)
+5. `/api/export-report` (cached per `month|week|compareWeek|compareMonth|sections`; ~8s cold, ~0.2s warm; binary docx)
+6. `/api/outlet-items` (PERF-API-01)
+7. `/api/item-history` (PERF-API-02)
+8. `/api/drilldown` (PERF-API-03)
+9. `/api/area-item-heatmap` (PERF-CACHE-08; extra: metric+itemLimit+mode)
+10. `/api/item-peer-comparison` (Phase 2; auto-selects worst outlet when outletCode omitted)
+11. `/api/item-trend-rank` (Phase 3; RANK() window)
+12. `/api/flip-ranking` (Phase C)
+13. `/api/flip-ranking/drilldown` (Phase C)
+14. `/api/item-anomali-outlets` (MINORITY-direction drill-down)
+15. `/api/peer-comparison` (P3-HYG-3; extra: mode+limit)
+16. `/api/peer-comparison/items` (P3-HYG-3; compute di-ekstrak ke `computePeerComparisonItems`; extra: mode+topItems)
+17. `/api/peer-comparison/trend` (P3-HYG-3; peer eksplisit + auto-compute dalam satu computeFn; extra: peers)
+18. `/api/compliance` (PAKET E — 9 lensa dari 1 scan)
+19. `/api/chronic-outlets` (PAKET E — month-grain; cache reusable antar minggu)
+20. `/api/item-trend` (per-item QTY fluctuation; week filter)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query, LIMIT 1000, user-initiated drill-down — small payload, low latency).
 
-**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the 11 routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts:397-413`). Both new routes (`item-peer-comparison`, `item-trend-rank`) are added to the invalidation array — mutations (ingest, settings change, PIC update, etc.) clear their cache so no stale entry survives a write.
+**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the **20** routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts`). Mutations (ingest, settings change, PIC update, data delete, migrate-direction, import-drive) clear SEMUA prefix — tidak ada entry stale yang selamat dari write.
 
 **Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts` (used by `ingest` + `import-drive`), `DriveImportDialog`.
 
@@ -262,9 +279,9 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
 ### 4.5 Cache Coherence Guarantees
 
 - **Write-through**: Mutations write to DB first, then invalidate cache. No write-behind.
-- **No stale reads** (post-mutation): `invalidateAnalysisCache()` deletes ALL 11 cached route prefixes on any mutation, so no stale entry survives a write. (Between mutations, SWR may serve stale-but-not-yet-recomputed data — see §4.6.)
+- **No stale reads** (post-mutation): `invalidateAnalysisCache()` deletes ALL 20 cached route prefixes on any mutation, so no stale entry survives a write. (Between mutations, SWR may serve stale-but-not-yet-recomputed data — see §4.6.)
 - **Stampede protection**: In-flight Promise dedup + `awaitWrite=true` ensures a single cold-miss request triggers exactly one DB query, even under 100 concurrent identical requests.
-- **Cache cleanup**: `cleanupExpiredCache()` (called fire-and-forget from `/api/status`, rate-limited to once per 10 min) removes entries older than 30 min — bounds table growth.
+- **Cache cleanup**: `cleanupExpiredCache()` (called fire-and-forget from `/api/status`, rate-limited to once per 10 min) removes entries older than **90 min** (raised from 30 min — AUDIT-PERF-5: stale rows must survive long enough for SWR to SERVE them while the background recompute runs; at the 30-min cutoff cleanup could delete a row mid-SWR → next request pays full cold recompute).
 
 ### 4.6 Stale-While-Revalidate (SWR) — NEW (PERF-CACHE-09)
 
@@ -280,16 +297,27 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
    - **No entry** → compute synchronously + write cache + resolve in-flight.
 4. **On error** → reject in-flight + re-throw.
 
-**Surface area:** 9 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap, item-peer-comparison [NEW Phase 2], item-trend-rank [NEW Phase 3]). `/api/analysis` was NOT migrated to SWR (bespoke 8-stage pipeline makes fire-and-forget recompute complex — left as future P3 improvement; analysis already has in-flight dedup + TanStack `keepPreviousData` + HTTP SWR for marginal benefit). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
+**Surface area:** 18 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap, item-peer-comparison, item-trend-rank, flip-ranking ×2, item-anomali-outlets, peer-comparison ×3, compliance, chronic-outlets, item-trend). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
 
-**Impact:** On the first request after 5-min TTL expiry, the 9 routes return stale data in <50ms instead of waiting 0.3–3.9s for a recompute. Background recompute refreshes the cache so the next request gets fresh data. **No stale data risk after mutations** — `invalidateAnalysisCache()` deletes entries, so there's no stale entry to serve post-mutation.
+**`/api/analysis` — NOW on SWR (commit 72aad95, AUDIT-PERF-5):** TTL 30 mnt (env `ANALYSIS_CACHE_TTL_MINUTES`); on a stale hit, `validate-and-resolve.ts` serves the stale row immediately + flags `stale: true` + triggers `triggerBackgroundRecompute()` (guarded — max ONE recompute per key per instance, fire-and-forget, upserts fresh row via `setCached(awaitWrite=true)`). TTL panjang aman karena mutasi SELALU invalidate eksplisit. **Plus raw-JSON passthrough (P3-HYG-1, PAKET F):** cache hit menyajikan string JSON tersimpan LANGSUNG — `getCachedRawWithMeta` (nol `JSON.parse`) → flag `"cached":true`/`"stale":true` di-inject via string surgery O(1) setelah `{` pembuka (payload tersimpan tak pernah memuat key itu — aman duplicate-key) → `new NextResponse(raw, { Content-Type: application/json })`. In-flight di-resolve dengan marker `{__rawJson, stale}`; awaiter melayani marker dengan response raw yang sama. Shape guard murah: `raw[0]==='{' && raw.includes('"success":')` (substring scan µs vs full parse 10-20ms). Menghilangkan double-serialize ~1MB per hit.
+
+**Impact:** On the first request after TTL expiry, the routes return stale data in <50ms instead of waiting 0.3–3.9s for a recompute. Background recompute refreshes the cache so the next request gets fresh data. **No stale data risk after mutations** — `invalidateAnalysisCache()` deletes entries, so there's no stale entry to serve post-mutation.
 
 ### 4.7 Cache Warming
 
 - **`prefetchAnalysis(queryClient, params)`** — called from FilterBar hover (month/week hover) + first status load in `useDashboardEffects`. Fires a background TanStack Query `prefetchQuery` for the latest period as soon as `/api/status` returns, before the auto-select useEffect chain sets `monthLabel`/`currentWeek`. Saves ~1 render cycle on initial dashboard load.
-- **`prefetchHeatmap(queryClient, { month, week })`** (NEW) — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load. Heatmap matrix is warm before user scrolls down to it. Uses the SAME queryKey shape as `AreaItemHeatmap`'s `useQuery` so the prefetched entry is a cache hit when the component mounts.
+- **`prefetchHeatmap(queryClient, { month, week })`** — called from `useDashboardEffects` alongside `prefetchAnalysis` on status load. Heatmap matrix is warm before user scrolls down to it. Uses the SAME queryKey shape as `AreaItemHeatmap`'s `useQuery` so the prefetched entry is a cache hit when the component mounts.
 
 > Other routes (pareto, recommendations, drilldown, etc.) do NOT have explicit prefetch hooks — they're lazy-loaded tabs or user-initiated drill-downs, so prefetching would waste a cold query on a tab the user may never open.
+
+### 4.8 Query Pattern: Single-Scan Multi-Lens (NEW — PAKET B + E)
+
+Dua bentuk query scan-merging menopang route berat (lihat `src/lib/queries/compliance.ts` + `chronic-outlets.ts` + `dashboard.ts`):
+
+1. **Multi-CTE single materialization**: satu CTE `base`/`wk` (per-row expr ABS/COALESCE/SUM) direferensikan oleh N agregat (outlet_agg, cat_agg, tol_item, transfer_agg, transfer_top ROW_NUMBER, totals) → PostgreSQL mematerialisasikan CTE SEKALI → semua lensa agregat berbagi 1 scan fisik. Hasil semua lensa kembali dalam **1 round-trip** via `UNION ALL (lens, to_jsonb(row))` — `to_jsonb` menormalkan COUNT bigint → angka JSON.
+2. **Lensa turunan di lapisan shaping**: pairing antar-area (lensa 7) dihitung dari baris `transfer_agg` yang SAMA di JS — nol scan/round-trip tambahan; momentum outlet dihitung dari lensa 'week' (baris per outlet×minggu) yang di-UNION ke query chronic yang sama.
+3. **Threshold paritas rule engine**: lensa kepatuhan memakai `getRuntimeThresholds()` (stdDevBomPct/residualWarnPct/residualHighPct) — SAMA dengan rule-evaluation — panel & mesin rule tidak mungkin berbeda versi.
+4. **Agregat COUNT FILTER** (kualitas input angka bulat): 3 kolom `COUNT(*) FILTER (WHERE predikat)` di outlet_agg + totals dari scan yang sama — nol CTE baru.
 
 ---
 
@@ -338,7 +366,8 @@ function constantTimeCompare(a: string, b: string): boolean {
 - **Indexes**: All filterable columns indexed (outlet_id, period_week, period_month, pic_id, plus composite `(monthLabel, weekLabel, itemId)` added in PERF-DB-03 for heatmap cells query). See `prisma/schema.prisma`.
 - **Export-report DB cache**: the Word export route caches the full generated payload (5-min TTL) keyed by `month|week|compareWeek|compareMonth|sections` — repeat exports of the same period+sections hit the cache in ~0.2s instead of regenerating (~8s).
 - **LIMIT safety** (PERF-DB-02): All top-N queries have explicit `LIMIT` clauses; heatmap items query has `LIMIT 500` defense-in-depth cap (production Item catalog is ~153 rows); cell-detail query has `LIMIT 1000`.
-- **`work_mem=64MB`** bump (PERF-DB-03): All heavy query modules wrapped in `withStatementTimeout()` which now also sets `work_mem='64MB'` to give PG planner headroom for hash joins + sorts on the 306K-row `InventoryRecord` table.
+- **`work_mem=32MB`** (PAKET B — PERF-TXMEM-5, diturunkan dari 64MB): All heavy query modules wrapped in `withStatementTimeout()` which also sets `work_mem` — 64MB × ~10 transaksi konkuren menekan memori server (free tier); 32MB cukup untuk hash join + sort di tabel InventoryRecord, dengan margin.
+- **Scan-merge (PAKET B — PERF-DB-SCAN-1/2/3)**: 4 KPI single-row yang men-scan WHERE identik 4× → 1 scan `queryDashboardKpis` (dipakai analysis + export); 4 (8 di export) query kategori top-items → 1 scan `queryTopItemsByAllCategories` dengan `ROW_NUMBER`+`FILTER` (presisi semantik per kategori terjaga); growthDrivers 4→2 transaksi. Nested-Pareto 10 tx → 1 query ROW_NUMBER (f6a126b).
 
 ### 6.2 Code Splitting (Client)
 
@@ -354,14 +383,19 @@ function constantTimeCompare(a: string, b: string): boolean {
 
 ### 6.3 React Re-render Control
 
-- **`React.memo`**: 41+ components memoized (all leaf chart components, KPI cards, table rows, 4 tab components `DashboardTab`/`RestoTab`/`PeerTab`/`ParetoTab` added in PERF-FE-06).
+- **Tab keep-alive (PAKET A — FE-INTERACT-1, P1)**: semua `TabsContent` memakai **`forceMount`** + `data-[state=inactive]:hidden` — pindah tab TIDAK lagi unmount/remount subtree (state lokal: sort direction, expand, scroll position bertahan); Radix tetap men-hide lewat CSS. Tanpa ini tiap balik tab = rebuild seluruh subtree + semua `useQuery` mount ulang.
+- **`React.memo`**: 41+ components memoized (all leaf chart components, KPI cards, table rows, 6 tab components incl. `ComplianceTab`).
 - **`useShallow` (Zustand)**: 13 callsites — selectors return new object refs only when shallow-equal values change.
 - **`keepPreviousData` (TanStack Query)**: Drilldown navigation shows previous data while new data loads — no layout shift.
+- **staleTime 5 mnt + gcTime 10 mnt pada query peer/outlet (PAKET A — FE-INTERACT-2)**: refetch storm tiap balik tab >30 dtk dihilangkan (default gcTime 5 mnt membakar cache sebelum user balik).
+- **Debounce 300ms autocomplete item-search (PAKET A — FE-INTERACT-3)**: dulu 1 request per huruf.
+- **Dashboard tidak terkunci saat refresh background (PAKET A — FE-INTERACT-4)**: `FetchAware` `pointer-events-none` + drill `isFetching` gate dihapus — user bisa klik card saat refresh berjalan; indikator refresh tunggal di header.
 - **Custom memo comparator** on `HeatmapCellView` — only re-renders when `value`/`recordCount`/`outletCount`/`maxVal`/`metric` change (280 cells efficiently memoized).
-- **`refetchOnWindowFocus: false`** (PERF-FE-04): `useAnalysis`, `useStatus`, `useDrilldown`, and `AreaItemHeatmapSheet`'s cell-detail query all explicitly disable window-focus refetch (was triggering 6-8s cold refetches on every browser tab switch).
-- **`placeholderData: keepPreviousData`** on cell-detail query (PERF-FE-02): switching cells keeps the previous cell's data visible while the new one loads (no skeleton flicker between cells).
-- **Memoized props** (PERF-FE-03): `AreaItemHeatmap` memoizes `sheetFilters` via `useMemo` + `handleSheetOpenChange` via `useCallback` so the Sheet's internal `useMemo` for params stays stable.
-- **Memoized derived arrays** (PERF-FE-05): `BomCorrelationCard` wraps `rows` + `findingsNarrative` + `totalBomFlags` in `useMemo` for stable array refs.
+- **`refetchOnWindowFocus: false`** (PERF-FE-04): `useAnalysis`, `useStatus`, `useDrilldown`, and `AreaItemHeatmapSheet`'s cell-detail query all explicitly disable window-focus refetch.
+- **`placeholderData: keepPreviousData`** on cell-detail query (PERF-FE-02): switching cells keeps the previous cell's data visible while the new one loads.
+- **Memoized props** (PERF-FE-03): `AreaItemHeatmap` memoizes `sheetFilters` via `useMemo` + `handleSheetOpenChange` via `useCallback`.
+- **Memoized derived arrays** (PERF-FE-05 + **P3-HYG-7 PAKET F**): `BomCorrelationCard` wraps `rows` + `findingsNarrative` + `totalBomFlags` in `useMemo`; `TopItemsByNominal` BarList data + handler di-memo (fallback `|| []` di-pin identitasnya dengan `useMemo` juga — array kosong baru per render mengalahkan memo); `GapAnalysisCard` pipeline filter→group→avgGap→sort (dirender di 3 tab) satu `useMemo` + `sortedOutlets` pre-sorted (dulu sort inline per repaint expand); `RankingNasionalCard` filter+slice di-memo.
+- **Keydown handler (P3-HYG-6)**: probe DOM `querySelector` 3-selector hanya dievaluasi SETELAH key terbukti digit tab `1..5` (dulu tiap keypress, termasuk huruf biasa di input).
 
 ### 6.4 Bundle Optimization
 
@@ -589,7 +623,7 @@ Implementation: `src/lib/rate-limit.ts` — sliding window, Map-based, no extern
 
 ### 8.3 Test Distribution
 
-**22 test files**, **435 test cases**, focused on:
+**22 test files**, **438 test cases**, focused on:
 
 | Area                          | Files | Approach                                                              |
 | ----------------------------- | ----- | --------------------------------------------------------------------- |
@@ -617,8 +651,9 @@ Documented here so future agents don't re-discover them. **Fix priority is conte
 | File                                    | LOC | Issue                                                                  |
 | --------------------------------------- | --- | --------------------------------------------------------------------- |
 | `src/app/api/ingest-process/route.ts`   | ~700| Single handler: chunk reassembly + parse + transform + validate + DB. |
-| `src/app/api/export-report/route.ts`    | ~650| Single handler: query + format + sheet build + respond.               |
-| `src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx` | ~756 | NEW Phase 2 — single component renders 4 analysis cards + peer table. Could be split into EfficiencyScoreCard.tsx + GapAnalysisCard.tsx + ScatterPlotCard.tsx + RankingSummaryCard.tsx + PeerTable.tsx + PeerTableRow.tsx (mirrors `peer-comparison/` folder pattern from outlet-level). |
+| `src/components/dashboard/tabs/ItemTrendTab/ItemPeerComparison.tsx` | ~756 | Phase 2 — single component renders 4 analysis cards + peer table. Could be split (mirrors `peer-comparison/` folder pattern). |
+
+> **Sudah displit sejak dokumen ini ditulis terakhir:** `export-report/route.ts` (~650) → `route.ts` + `services/` (data-fetcher + docx-builder + types); `analysis/route.ts` (910) → `services/` 8-stage pipeline; `outlet-items/route.ts` (560) → slim route + `services/` 6 files. God file tersisa yang benar-benar >700 LOC hanya ingest-process + ItemPeerComparison.
 
 > **Recently split (Tasks 1-a/1-b/1-c/1-d, 2-a/2-b, 3-a/3-b/3-c, 4-a/4-d):** 11 god
 > files were split into ~75 smaller files via the barrel re-export pattern (see §6.9).
@@ -674,10 +709,14 @@ These were identified by the `BUG-CACHE` audit and **have been fixed**. Listed h
 
 ### 10.2 Build Pipeline
 
-```bash
-# vercel.json — build command
-bun run build
-# = prisma generate + next build --turbo
+```json
+// vercel.json (final — PAKET C)
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "bunx prisma generate && bun run next build",
+  "framework": "nextjs",
+  "fluid": true
+}
 ```
 
 | Step                  | Duration (approx) | Notes                                                          |
@@ -685,6 +724,12 @@ bun run build
 | `prisma generate`     | ~5s               | Generates typed client from `schema.prisma`.                   |
 | `next build --turbo`  | ~60-90s           | Turbopack build. Static + server routes compiled.              |
 | Total cold build      | ~90s              | Warm cache: ~40s.                                              |
+
+**PAKET C (DEPLOY-1..4) — penting:**
+- **DEPLOY-1**: blok `functions` vercel.json LAMA adalah no-op permanen (key path tanpa `/route.ts` tidak pernah match function Vercel) — dihapus. `maxDuration` kini single-source-of-truth di route export (31 route, 10–300s) yang memang bekerja native.
+- **DEPLOY-2**: `"fluid": true` top-level — tanpa Fluid, plafon duration plan Hobby (60s) memotong analysis 120s & import/reset 300s di produksi ("upload gagal setelah ~1 menit"). Bonus: instance reuse → cache in-memory + rate-limit konsisten lintas-request, cold start jarang. **Verifikasi pasca-deploy HANYA via dashboard Vercel (Settings → Functions → Fluid ON)** — project lama bisa mengabaikan config file → toggle manual.
+- **DEPLOY-4**: `package-lock.json` stale dihapus (masih memuat 10+ paket radix yang sudah dihapus dari package.json — `npm ci` diam-diam memasang graph dependency LAMA). **`bun.lock` satu-satunya lockfile** (dipakai Vercel buildCommand + Railway startCommand; diverifikasi sinkron offline 50/50 dep).
+- ⚠️ **`bun install --frozen-lockfile` TIDAK boleh dipakai di sandbox** (hang network); validasi sinkron dilakukan offline via dep-set compare.
 
 ### 10.3 Environment Variables
 
@@ -707,6 +752,13 @@ bun run db:migrate # Create + apply migration (production)
 **Workflow**: Use `db:push` during active development (fast iteration). Use `db:migrate` for production releases (creates versioned migration files in `prisma/migrations/`).
 
 **Supabase PgBouncer caveat**: `bun run db:push` may HANG on the Supabase transaction-mode pooler (port 6543) because PgBouncer doesn't support all the interactive prompts Prisma uses. Workarounds: (a) use `DIRECT_URL` (port 5432) for migrations, or (b) apply schema changes directly via raw SQL through Prisma's `$executeRawUnsafe` (verified present in `pg_indexes` after running).
+
+**⚠️ AUDIT-DB-PUSH-2 — WAJIB setelah `db:push`/`migrate` APA PUN:** Prisma TIDAK bisa memodelkan index INCLUDE (covering, index-only scan — historical 8s→1.6s) maupun ekspresi COALESCE (nullsafe unique). Push akan DROP versi INCLUDE + CREATE shadow polos. SELALU jalankan setelah push:
+```bash
+bun run db:recreate-covering-indexes   # idempotent — pulihkan INCLUDE indexes + daftar duplikat polos yang bisa di-drop
+```
+
+**db:push checklist (audit 137ea9e + P3-HYG-2):** `model AuditLog` direstorasi ke schema (push lama sempat mau DROP tabel produksi yang masih ditulis deployment aktif); index `Week(monthKey,weekLabel)` unique + `InventoryRecord_nullsafe_akun` sudah diterapkan surgikal di produksi; **`@@index([direction])` dihapus dari schema (P3-HYG-2 — dead) → akan ter-drop saat push berikutnya** (aman: nol query mem-filter kolom itu).
 
 ### 10.5 DB Migration: vefkgapv → proosjqiv (2026-08-30)
 

@@ -4,14 +4,16 @@
 > Read when adding features.
 
 This document is written retroactively: the product has been live for several iterations
-(AUDIT-1 → AUDIT-4, FIX-HIGH, FIX-MEDIUM, Phase A & B shipped). This PRD captures the
+(AUDIT-1 → AUDIT-4, FIX-HIGH, FIX-MEDIUM, Phase A & B, PERF passes, TREMOR/FLIP sessions,
+dan **audit intensif 2026-09: PAKET UPLOAD/DELETE + A + B + C + E + F**). This PRD captures the
 **as-built** behaviour from a user's point of view so future contributors can decide
 whether a new feature fits the product, conflicts with an existing one, or belongs on
 the roadmap.
 
 > **Scope note.** This is a *product* document (what & why), not an *engineering*
 > document (how). For architecture, schema, API surface and rule DSL, read
-> `MASTER_CONTEXT.md`. For implementation history, read `worklog.md`.
+> `MASTER_CONTEXT.md`. For implementation history, read `worklog.md`. Untuk temuan
+> audit teknis lengkap (bug/perf/security per kode), baca `AUDIT-REPORT.md`.
 
 ---
 
@@ -26,7 +28,7 @@ the roadmap.
 | **Domain** | F&B operations / Inventory control / Loss prevention. |
 | **Data cadence** | Weekly stock opname (SO) per outlet, rolled up monthly for reporting. |
 | **Deployment** | Web app (responsive, desktop-first). No mobile app. |
-| **Current state** | Production, single-tenant, manual Excel import. NextAuth wired but not exposed. |
+| **Current state** | Production, single-tenant, manual Excel import. NextAuth wired but not exposed. **Tab ke-6 "Kepatuhan" (kontrol & compliance, 11 lensa) live.** Upload/import/delete kini cepat (audit intensif 2026-09: upload paralel, import bulk 3-pass, delete atomik, cache 20 route, interaksi tab keep-alive). Deploy Vercel + Fluid Compute. |
 
 ### 1.1 Problem being solved
 
@@ -232,6 +234,7 @@ Open Pengaturan dialog (gear icon)
 | Peer Trend | Peer Comparison | Multi-week trend comparison vs peers |
 | Item Deep Dive | Modal | Direction pie, top 5 outlets, multi-period trend, Total Kemunculan |
 | Trend Item Tab | Tab | Per-item investigation: QTY trend chart + sortable table + (Phase 1) rank badge + pattern classification + navigation bridge from RankingNasionalCard; (Phase 2) ItemPeerComparison drill-down panel with 4 analysis cards + peer table; (Phase 3) compact inverted-axis rank trend chart. See §6 for full feature spec. |
+| **Kontrol & Kepatuhan** | **Tab (ke-6, PAKET E)** | 6 KPI ringkasan (kepatuhan, tanpa toleransi, tak terjelaskan, sinyal transfer, records, total \|deviasi\|) + **11 lensa**: (1) kepatuhan toleransi per item — semantik IDENTIK rule engine; (2) prioritas penetapan toleransi — item tanpa toleransi berdeviasi besar; (3) deviasi tak terjelaskan per outlet — residual WARN/HIGH; (4) efisiensi vs penjualan — \|deviasi\|/penjualan per outlet; (5) kategori BAHAN vs PACKAGING; (6) indikasi transfer antar outlet — item×area loss↔surplus serentak; (7) ketidakcocokan antar-area — loss area A ↔ surplus area B; (8) kronis vs sekali-timu per outlet — KRONIS/SPIKE/VARIABEL + minggu terburuk; (9) kualitas input angka bulat — share berakhir 0/5 vs baseline (PIC menaksir vs menghitung); (10) momentum outlet — memburuk/membaik/stabil; (11) drilldown baris item → ItemDeepDive. |
 
 > **Removed (FIX-DOCS):** "Weekly Trend" (dual-axis Dev/BOM % + Nominal Deviasi chart) and "Trend Dev/BOM per Area" (`AreaTrendChart`) were removed from the Dashboard tab to make room for BOM Correlation — the `AreaTrendChart.tsx` file has since been deleted as dead code. `CardDrillDown.tsx` was also deleted; ExecutiveSummary KPI cards are now static display (no click-through drilldown). The RestoAnalisa priority-score drilldown is also a static card display.
 
@@ -241,10 +244,10 @@ Open Pengaturan dialog (gear icon)
 
 | Feature | Surface | Purpose |
 |---------|---------|---------|
-| Upload File | FilterBar | Drag-drop `.xlsx` (multi-sheet) → parser, dedup, direction computation, residual calc |
-| Chunked Upload | API | Large files split into chunks (`/api/ingest-upload` + `/api/ingest-process`) |
-| Import from Drive | FilterBar | Paste Google Drive URL → SSRF-allowlisted fetch + ingest |
-| Kelola Data | Dialog | List / delete source files (with cascade) |
+| Upload File | FilterBar | Drag-drop `.xlsx` (multi-sheet) → parser, dedup, direction computation, residual calc — **kini 3× lebih cepat** (audit 2026-09: chunk paralel, 1× transfer, tanpa 429) |
+| Chunked Upload | API | Large files split into chunks (`/api/ingest-upload` + `/api/ingest-process`) — bucket rate-limit khusus 120/mnt |
+| Import from Drive | FilterBar | Paste Google Drive URL → SSRF-allowlisted fetch + ingest — **import bulk 3-pass (±446 → ±4-8 round-trip master-data)** |
+| Kelola Data | Dialog | List / delete source files (with cascade) — **delete/reset kini instan** (TRUNCATE atomik + advisory lock; dulu 30 dtk + terpotong maxDuration) |
 | Kelola PIC | Dialog | PIC assignment management + CSV import (`/api/pic`, `/api/pic/import`) |
 | Migrate Direction | API | Idempotent recompute of `direction` field (admin trigger) |
 | First-time Setup | API | `/api/setup` — bootstrap check |
@@ -758,28 +761,29 @@ These are **current** limitations, not bugs. Each is tracked for a future phase
 
 ### 7.5 Performance (as-shipped benchmarks)
 
-After the PERF-API / PERF-DB / PERF-FE / PERF-CACHE passes (Tasks PERF-*, see
-`worklog.md`), the dashboard's hot paths are:
+After the PERF passes + audit intensif 2026-09 (PAKET A/B/F — detail di
+`AUDIT-REPORT.md`), the dashboard's hot paths are:
 
 | Route | Cold (uncached) | Warm (cached) | Speedup | Cache layers |
 |-------|-----------------|---------------|---------|--------------|
-| `/api/analysis` | 12.6 s → 0.56 s* | ~50 ms (cache hit) | 3–5× warm | DB AggregationCache (5 min) + in-flight dedup + HTTP SWR + TanStack `keepPreviousData` |
-| `/api/pareto` | 3.87 s | 0.22 s | ~18× | DB cache + SWR (PERF-CACHE-09) |
+| `/api/analysis` | 12.6 s → 0.56 s* | **<100 ms, zero-parse** | 3–5× warm | DB AggregationCache (**30 mnt** TTL + SWR background-recompute + raw-JSON passthrough) + in-flight dedup + TanStack `keepPreviousData` |
+| `/api/pareto` | 3.87 s | 0.22 s | ~18× | DB cache + SWR |
+| `/api/compliance` | ~1 scan periode | <100 ms | 9 lensa / 1 scan | DB cache 5 mnt (PAKET E) |
+| `/api/chronic-outlets` | ~1 scan bulan | <100 ms | reusable antar minggu | DB cache 5 mnt, FE keyed month-only (PAKET E) |
+| `/api/peer-comparison` ×3 | CROSS JOIN multi-CTE | <100 ms | full compute per request → cached | DB cache 5 mnt (P3-HYG-3) |
 | `/api/recommendations` | 1.82 s | 0.21 s | ~8.6× | DB cache + SWR |
-| `/api/outlet-items` | 1.06 s | 0.25 s | ~3.8× | DB cache (PERF-API-01) + SWR |
-| `/api/item-history` | 0.65 s | 0.23 s | ~2.2× | DB cache (PERF-API-02) + SWR |
-| `/api/drilldown` | 0.42 s | 0.23 s | similar (reliable) | DB cache (PERF-API-03) + SWR |
-| `/api/area-item-heatmap` | ~2–3 s | ~50 ms | ~30× | DB cache (PERF-CACHE-08) + SWR |
+| `/api/outlet-items` | 1.06 s | 0.25 s | ~3.8× | DB cache + SWR |
+| `/api/item-history` | 0.65 s | 0.23 s | ~2.2× | DB cache + SWR |
+| `/api/drilldown` | 0.42 s | 0.23 s | similar (reliable) | DB cache + SWR |
+| `/api/area-item-heatmap` | ~2–3 s | ~50 ms | ~30× | DB cache + SWR |
 
-*After PERF-API-04 parallelisation of post-process sub-steps; was 12.60 s.
+*After PERF-API-04 parallelisation + PAKET B scan-merge; was 12.60 s.
 
-**SWR pattern** (`PERF-CACHE-09`): the 7 JSON cached routes (pareto, recommendations,
-resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap) return the
-stale DB cache entry immediately (`stale: true` flag) on the first request after
-the 5-min TTL expires, while a fire-and-forget background recompute refreshes
-the cache. Concurrent requests during the recompute get fresh data (via in-flight
-dedup). Mutations (`invalidateAnalysisCache`) delete all 9 route prefixes so no
-stale entry is served after a write.
+**Interaksi (PAKET A — "lemot saat dipakai" teratasi):** pindah tab nol remount
+(keep-alive `forceMount`), refetch storm >30 dtk hilang (staleTime 5 mnt),
+autocomplete debounce 300ms, dashboard tidak terkunci saat refresh background.
+
+**SWR pattern** (`PERF-CACHE-09` + AUDIT-PERF-5): SEMUA 20 route cache mengembalikan stale DB entry segera (`stale: true` flag — termasuk `/api/analysis` sejak migrasi SWR 30 mnt + background-recompute) pada request pertama setelah TTL, sementara recompute background menyegarkan cache. Mutasi (`invalidateAnalysisCache`) menghapus SEMUA 20 prefix — tidak ada stale entry yang selamat dari write. **Bonus (P3-HYG-1)**: cache hit analysis menyajikan payload tanpa parse/stringify ulang (raw-JSON passthrough) — hit terasa instan di semua interaksi dashboard.
 
 **Frontend cache warming** (`prefetchAnalysis` + `prefetchHeatmap`): on the
 first `/api/status` load, `useDashboardEffects` fires both prefetches for the
@@ -869,6 +873,19 @@ Shipped as part of PERF-API / PERF-DB / PERF-FE / PERF-CACHE / AUDIT-CACHE:
   `NODE_ENV === 'production'` (was breaking Turbopack dev HMR).
 - **Pre-push hook** (`.githooks/pre-push`) blocks force-push to `main`.
 
+### Phase B++ — Audit intensif (DONE, 2026-09)
+
+Full code audit (4 agen paralel — temuan lengkap di `AUDIT-REPORT.md`) + 6 paket perbaikan:
+
+- **PAKET UPLOAD/DELETE**: upload 3× lebih cepat (chunk paralel ×3, bucket rate-limit khusus 120/mnt mengakhiri 429 di chunk #6, 1× transfer file vs 3×, reuse `/tmp`); import master-data bulk 3-pass (±446 → ±4-8 round-trip); delete/reset instan (TRUNCATE atomik + advisory lock — dulu 30 dtk dan terpotong plafon duration).
+- **PAKET A (interaksi "lemot saat dipakai")**: tab keep-alive (pindah tab tidak remount — state lokal bertahan), refetch storm dihilangkan (staleTime 5 mnt + gcTime 10 mnt), autocomplete di-debounce 300ms (dulu 1 request/huruf), dashboard tidak terkunci saat refresh background.
+- **PAKET B (backend scan-merge)**: KPI 4 scan → 1; kategori 4 query → 1; growthDrivers 4 → 2 transaksi; metadata fetch −2 round-trip.
+- **PAKET C (deploy)**: Fluid Compute ON (plafon Hobby 60s → route 120-300s berfungsi), vercel.json dibersihkan, bun.lock satu-satunya lockfile.
+- **PAKET E — FITUR: tab "Kepatuhan" (Kontrol & Kepatuhan)**: 11 lensa kontrol dari 2 scan — lihat §4.1. Ini fitur analisa terbesar sejak TREMOR.
+- **PAKET F (P3 hygiene)**: cache hit analysis zero-parse, 3 route peer-comparison kini di-cache, payload cache docx base64, index DB dead dihapus, render pipeline di-memo.
+- **Integritas data (BUG-3/4/5)**: dedup NULL-akun + index nullsafe unique; silent row loss di-fix (error dihitung + di-log, bukan di-skip); advisory lock lintas-instance mencegah double-import.
+- **Keamanan**: purge git-history (password Supabase + PAT ter-redact dari seluruh 494 commit; 5ea643e) — rotasi password + revoke PAT tetap tindakan manual user.
+
 ### Phase C — Foundation (PLANNED)
 
 Multi-quarter effort, prerequisites for enterprise readiness:
@@ -878,10 +895,7 @@ Multi-quarter effort, prerequisites for enterprise readiness:
 2. **Scheduled reports** — Cron-style monthly Word/PDF email to distribution list.
 3. **Alerting** — Email / Slack / WhatsApp push when a P1 anomaly fires.
 4. **PDF export** — In addition to `.docx` (likely via Playwright headless render).
-5. **DB-level caching** — `AggregationCache` table now enabled across 9 routes
-   (see §7.5); Phase C work is to surface `stale: true` flag in the UI + add
-   SWR to `/api/analysis` (currently uses bespoke pipeline + in-flight dedup
-   only).
+5. **DB-level caching** — DONE di audit intensif: `AggregationCache` aktif di **20 route** (termasuk `/api/analysis` SWR 30 mnt + background-recompute + raw-JSON passthrough) + invalidasi total pada mutasi. Sisa Phase C: surface flag `stale: true` di UI (badge "data lama, segarkan?").
 6. **Statement timeout** on DB pool — single hung query no longer blocks the pool.
 
 ### Phase D — Growth (FUTURE)
