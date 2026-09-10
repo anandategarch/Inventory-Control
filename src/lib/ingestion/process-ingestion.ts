@@ -28,6 +28,7 @@ import { clearMonthResolverCache } from '@/lib/month-resolver';
 import { parseMonthFromFilename, parseExcelFile, hashFile } from '@/lib/excel';
 import { normalizeRow, deriveRecord } from '@/engine/transform';
 import { validateRow, summarizeDQ, type DQIssueRow } from '@/engine/validator';
+import { ensureOutletsExist, ensureItemsExist, type OutletCandidate } from './process-rows-for-import';
 import { parseCsvStream } from '@/lib/csv-parser';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { DATA_DIR, safePath } from './safe-path';
@@ -174,8 +175,9 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
 
       // STEP 3: Pre-cache ALL outlets & items (avoid per-row DB queries — 50% faster)
       // Read-only — safe to do outside the transaction. The maps are populated and
-      // reused inside the transaction loop. New outlets/items encountered inside the
-      // transaction are upserted via `tx` (rolled back if the transaction fails).
+      // reused inside the transaction. New outlets/items (codes not in these maps)
+      // are resolved INSIDE the transaction by PASS 2's set-based helpers
+      // (ensureOutletsExist/ensureItemsExist — rolled back if the transaction fails).
       const allOutlets = await db.outlet.findMany({ select: { id: true, code: true } });
       const allItems = await db.item.findMany({ select: { id: true, name: true, satuan: true } });
       const outletDbMap = new Map<string, number>(allOutlets.map(o => [o.code, o.id]));
@@ -194,6 +196,63 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       let skippedDuplicates = 0;
       const allIssues: DQIssueRow[] = [];
       const weekDbMap = new Map<string, number>();
+
+      // ============================================================
+      // STEP 3.5 (PERF PAKET B / F3) — PASS 1: CPU-only normalization.
+      // --------------------------------------------------------
+      // Validate (non-fastMode) + normalize + derive every row up front and
+      // collect the distinct outlet/item candidates. The transaction below
+      // then resolves ALL of them in a handful of set-based queries
+      // (ensureOutletsExist/ensureItemsExist — the same helpers the
+      // /api/ingest-process path already uses) instead of one sequential
+      // upsert per new master-data code (~442 round-trips on the first
+      // import of new outlet/item codes, 5-15ms per hop via the pooler).
+      // ============================================================
+      type PreparedRow = {
+        rowNumber: number;
+        n: ReturnType<typeof normalizeRow>;
+        derived: ReturnType<typeof deriveRecord>;
+      };
+      const prepared: PreparedRow[] = [];
+      const outletCandidates = new Map<string, OutletCandidate>();
+      const itemCandidates = new Map<string, string | null>();
+      let totalRows = 0;
+      let skippedErrors = 0;
+      for (const rawRow of allRows) {
+        totalRows++;
+        const rowNumber = totalRows + 1;
+
+        if (!fastMode) {
+          // Validate
+          const issues = validateRow(rawRow, rowNumber, seenKeys, rawRow._sheetName, body.numberLocale || 'auto');
+          allIssues.push(...issues);
+
+          const hasError = issues.some((i) => i.severity === 'ERROR');
+          if (hasError) {
+            skippedErrors++;
+            continue;
+          }
+        }
+
+        // Normalize — pass numberLocale from body (default 'auto')
+        const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, body.numberLocale || 'auto');
+        const derived = deriveRecord(n);
+        prepared.push({ rowNumber, n, derived });
+
+        // First occurrence wins — matches the old upsert-on-first-encounter
+        // semantics (later rows for the same code/name never re-upserted).
+        if (derived.outletCode && !outletCandidates.has(derived.outletCode)) {
+          outletCandidates.set(derived.outletCode, {
+            code: derived.outletCode,
+            name: derived.outletName,
+            outletCode: derived.outletNumericCode,
+            area: n.area,
+          });
+        }
+        if (n.namaBahan && !itemCandidates.has(n.namaBahan)) {
+          itemCandidates.set(n.namaBahan, n.satuan ?? null);
+        }
+      }
 
       // FIX (BUG2-INGEST-1): Wrap dedup-delete + create + insert + update + DQ in a
       // single transaction so that if ANY step fails, ALL writes are rolled back.
@@ -277,94 +336,50 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
           const BATCH_SIZE = 2000;
           let batchRecords: Prisma.InventoryRecordCreateManyInput[] = [];
           let totalInserted = 0;
-          let totalRows = 0;
-          let skippedErrors = 0;
 
-          // SINGLE PASS: validate + normalize + create outlets/items lazily + insert
-          // Pre-loaded outletDbMap and itemDbMap from SELECT above.
-          // New outlets/items created on first encounter, then cached.
-          //
-          // FAST MODE: skip validateRow() entirely — pure normalize + derive + insert.
-          // Validation can be run separately later. ~3-5x faster for large files.
-          for (const rawRow of allRows) {
-            totalRows++;
-            const rowNumber = totalRows + 1;
+          // ============================================================
+          // STEP 2.5 (PERF PAKET B / F3) — PASS 2: set-based master-data
+          // resolution (2-6 queries total, replacing the old per-row lazy
+          // upserts). Uses the exact same race-safe helpers as the
+          // /api/ingest-process path: BUG-5-5 parity (skipDuplicates =
+          // ON CONFLICT DO NOTHING), LOGIC-12 parity (area/name refresh
+          // only when actually changed), satuan backfill only when DB NULL.
+          // ============================================================
+          await ensureOutletsExist(tx, outletDbMap, outletCandidates);
+          await ensureItemsExist(tx, itemDbMap, itemCandidates);
 
-            if (!fastMode) {
-              // Validate
-              const issues = validateRow(rawRow, rowNumber, seenKeys, rawRow._sheetName, body.numberLocale || 'auto');
-              allIssues.push(...issues);
-
-              const hasError = issues.some((i) => i.severity === 'ERROR');
-              if (hasError) {
-                skippedErrors++;
-                continue;
-              }
+          // Weeks (only 3-4 unique labels per file) — resolve up front too.
+          // FIX: Use CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
+          // Previously: inline duplicate with WRONG discrete ranges (W2=8-14, W3/4=15-31)
+          const uniqueWeekLabels = [...new Set(prepared.map((p) => p.n.weekLabel || 'UNKNOWN'))];
+          for (const wk of uniqueWeekLabels) {
+            if (weekDbMap.has(wk)) continue;
+            let p = CFG_RECON_SETTINGS.WEEK_PERIODS[wk];
+            if (!p) {
+              // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
+              const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
+              p = { start: 1, end: Math.min(weekNum * 7, 31) };
+              logger.warn(`Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
             }
+            const w = await tx.week.upsert({
+              where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
+              update: {},
+              create: {
+                sourceFileId: sourceFile.id, weekLabel: wk,
+                weekKey: `${monthKey}-${wk.replace(/\s+/g, '')}`,
+                monthKey, periodStart: p.start, periodEnd: p.end,
+              },
+            });
+            weekDbMap.set(wk, w.id);
+          }
 
-            // Normalize — pass numberLocale from body (default 'auto')
-            const n = normalizeRow(rawRow, fileName, rowNumber, monthLabel, body.numberLocale || 'auto');
-            const derived = deriveRecord(n);
-
-            // Ensure week exists (only 3-4 unique weeks per file)
-            const wk = n.weekLabel || 'UNKNOWN';
-            if (!weekDbMap.has(wk)) {
-              // FIX: Use CUMULATIVE week periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-              // Previously: inline duplicate with WRONG discrete ranges (W2=8-14, W3/4=15-31)
-              let p = CFG_RECON_SETTINGS.WEEK_PERIODS[wk];
-              if (!p) {
-                // Derive for WEEK 5+ (rare): cumulative up to min(N*7, 31)
-                const weekNum = parseInt(wk.replace(/\D/g, '')) || 1;
-                p = { start: 1, end: Math.min(weekNum * 7, 31) };
-                logger.warn(`Unknown weekLabel "${wk}", derived cumulative period ${p.start}-${p.end}`);
-              }
-              const w = await tx.week.upsert({
-                where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel: wk } },
-                update: {},
-                create: {
-                  sourceFileId: sourceFile.id, weekLabel: wk,
-                  weekKey: `${monthKey}-${wk.replace(/\s+/g, '')}`,
-                  monthKey, periodStart: p.start, periodEnd: p.end,
-                },
-              });
-              weekDbMap.set(wk, w.id);
-            }
-
-            // FIX-A-4 (BUG-5-5): Race-safe outlet creation — use upsert instead of
-            // findUnique + create. Two concurrent imports of different weeks for the
-            // same NEW outlet code previously raced: both findUnique miss → both create →
-            // P2002 unique constraint violation → entire week import fails.
-            // Upsert is atomic: if the row exists, update area/name if changed; if not,
-            // create it. Either way, no P2002.
-            if (derived.outletCode && !outletDbMap.has(derived.outletCode)) {
-              const outlet = await tx.outlet.upsert({
-                where: { code: derived.outletCode },
-                // LOGIC-12 fix: update area + name if outlet moved to different area.
-                // Conditional update avoids unnecessary writes when nothing changed.
-                update: n.area ? { area: n.area, name: derived.outletName } : {},
-                create: {
-                  code: derived.outletCode,
-                  name: derived.outletName,
-                  outletCode: derived.outletNumericCode,
-                  area: n.area,
-                },
-                select: { id: true },
-              });
-              outletDbMap.set(derived.outletCode, outlet.id);
-            }
-
-            // FIX-A-4 (BUG-5-5): Race-safe item creation — same upsert pattern.
-            if (n.namaBahan && !itemDbMap.has(n.namaBahan)) {
-              const item = await tx.item.upsert({
-                where: { name: n.namaBahan },
-                update: {}, // existing items keep their satuan (see processRowsForImport for satuan fill)
-                create: { name: n.namaBahan, satuan: n.satuan },
-                select: { id: true },
-              });
-              itemDbMap.set(n.namaBahan, { id: item.id, satuan: n.satuan });
-            }
-
+          // ============================================================
+          // PASS 3 — enqueue + batch insert (pure Map lookups, zero
+          // per-row master-data DB queries).
+          // ============================================================
+          for (const { rowNumber, n, derived } of prepared) {
             // Get IDs from cache (O(1) Map lookup, no DB query)
+            const wk = n.weekLabel || 'UNKNOWN';
             const weekId = weekDbMap.get(wk) ?? 0;
             const outletId = outletDbMap.get(derived.outletCode) ?? 0;
             const itemEntry = itemDbMap.get(n.namaBahan);

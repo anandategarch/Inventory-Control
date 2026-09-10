@@ -328,6 +328,52 @@ export async function queryCostImpact(
       ${f}
   `);
   const r = rows[0] || { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0 };
+  return costImpactRatios(r, salesTotal);
+}
+
+// ============================================================
+//  PERF (PAKET B / F2 — scan merge): queryDashboardKpis
+//  --------------------------------------------------------
+//  queryExecSummary + queryDeviationBreakdown + queryLossVsSurplus +
+//  queryCostImpact each scanned the SAME filtered period
+//  (WHERE monthLabel/weekLabel/f) separately — 4 scans + 4 transactions
+//  for what is one logical "current-period KPI" read. This function does
+//  it in ONE scan + ONE transaction.
+//
+//  Field-for-field identical to the four originals:
+//    - exec:      sales (sales_mode CTE) + the 13 aggs expressions
+//    - breakdown: waste/susut/trial = the same qty aggregates already in
+//                 exec (qtyWaste/qtySusut/qtyTrial); total = qtyDeviasi;
+//                 residual = NEW SUM(ABS(residualQty))
+//    - lvs:       lossNominal/surplusNominal = totalLoss/totalSurplus
+//                 (identical expressions); loss/surplus counts = NEW
+//    - cost:      the 5 nominal aggregates (identical expressions)
+//  The individual functions are kept (tested + used by export-report);
+//  the analysis pipeline + export-report now use this merged query.
+// ============================================================
+export interface DashboardKpisRow extends ExecSummaryRow {
+  // queryDeviationBreakdown extras
+  residualQtyAbs: number;
+  // queryLossVsSurplus extras
+  lossCount: number;
+  surplusCount: number;
+  // queryCostImpact fields
+  wasteCost: number;
+  susutCost: number;
+  trialCost: number;
+  residualCost: number;
+  totalCost: number;
+}
+
+/** Shared ratio math — used by both queryCostImpact and kpisToCostImpact. */
+function costImpactRatios(
+  r: Pick<DashboardKpisRow, 'wasteCost' | 'susutCost' | 'trialCost' | 'residualCost' | 'totalCost'>,
+  salesTotal: number,
+): {
+  wasteCost: number; susutCost: number; trialCost: number; residualCost: number; totalCost: number;
+  wastePct: number; susutPct: number; trialPct: number; residualPct: number;
+  wasteToSales: number; susutToSales: number; trialToSales: number; residualToSales: number; totalCostToSales: number;
+} {
   // BUG 2.3 fix: if totalCost is 0, percentages should be 0 (not wasteCost/1 = 10000%).
   // Previously `total = totalCost || 1` produced 10000% values when columns were NULL.
   const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;
@@ -343,4 +389,95 @@ export async function queryCostImpact(
     residualToSales: safeDiv(r.residualCost, salesTotal),
     totalCostToSales: safeDiv(r.totalCost, salesTotal),
   };
+}
+
+export async function queryDashboardKpis(
+  week: string,
+  month: string,
+  filters: SqlFilterOpts
+): Promise<DashboardKpisRow | null> {
+  const f = buildSqlFilters(filters);
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<DashboardKpisRow[]>`
+    WITH sales_mode AS (
+      SELECT SUM(ops."salesMode") as sales
+      FROM "OutletPeriodSales" ops
+      WHERE ops."monthLabel" = ${month} AND ops."weekLabel" = ${week}
+        AND ops."outletId" IN (
+          SELECT DISTINCT ir."outletId"
+          FROM "InventoryRecord" ir
+          WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+            ${f}
+        )
+    ),
+    aggs AS (
+      SELECT
+        -- ==== queryExecSummary fields (identical expressions) ====
+        COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
+        COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
+        COALESCE(SUM(ir."absQtyDeviasi"), 0) as "qtyDeviasi",
+        COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "qtyWaste",
+        COALESCE(SUM(ABS(ir."qtySusut")), 0) as "qtySusut",
+        COALESCE(SUM(ABS(ir."qtyTrial")), 0) as "qtyTrial",
+        COALESCE(SUM(ir."absQtyLossSurplus"), 0) as "qtyLossSurplus",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalLoss",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalSurplus",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END), 0) as "residualLossQty",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residualLossNominal",
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."absQtyDeviasi" ELSE 0 END), 0) as "qtyDeviasiLoss",
+        -- ==== queryDeviationBreakdown extras ====
+        COALESCE(SUM(ABS(ir."residualQty")), 0) as "residualQtyAbs",
+        -- ==== queryLossVsSurplus extras (nominal totals = totalLoss/totalSurplus above) ====
+        CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as "lossCount",
+        CAST(COUNT(CASE WHEN ir."nominalLossSurplus" > 0 THEN 1 END) AS INTEGER) as "surplusCount",
+        -- ==== queryCostImpact fields (identical expressions) ====
+        COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "wasteCost",
+        COALESCE(SUM(ABS(ir."nominalSusut")), 0) as "susutCost",
+        COALESCE(SUM(ABS(ir."nominalTrial")), 0) as "trialCost",
+        COALESCE(SUM(ABS(ir."residualNominal")), 0) as "residualCost",
+        COALESCE(SUM(ABS(ir."nominalWaste")), 0)
+          + COALESCE(SUM(ABS(ir."nominalSusut")), 0)
+          + COALESCE(SUM(ABS(ir."nominalTrial")), 0)
+          + COALESCE(SUM(ABS(ir."residualNominal")), 0) as "totalCost"
+      FROM "InventoryRecord" ir
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        ${f}
+    )
+    SELECT
+      COALESCE(sm.sales, 0) as sales,
+      a."nominalDeviasi", a."qtyBom", a."qtyDeviasi", a."qtyWaste",
+      a."qtySusut", a."qtyTrial", a."qtyLossSurplus",
+      a."totalLoss", a."totalSurplus",
+      a."residualLossQty", a."residualLossNominal",
+      a."qtyDeviasiLoss",
+      a."residualQtyAbs", a."lossCount", a."surplusCount",
+      a."wasteCost", a."susutCost", a."trialCost", a."residualCost", a."totalCost"
+    FROM aggs a, sales_mode sm
+  `);
+  return rows[0] || null;
+}
+
+const ZERO_KPIS: DashboardKpisRow = {
+  sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0,
+  qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0,
+  residualLossQty: 0, residualLossNominal: 0, qtyDeviasiLoss: 0,
+  residualQtyAbs: 0, lossCount: 0, surplusCount: 0,
+  wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0,
+};
+
+/** Derive queryDeviationBreakdown's result shape from a merged KPI row. */
+export function kpisToBreakdown(k: DashboardKpisRow | null): { waste: number; susut: number; trial: number; residual: number; total: number } {
+  const r = k ?? ZERO_KPIS;
+  return { waste: r.qtyWaste, susut: r.qtySusut, trial: r.qtyTrial, residual: r.residualQtyAbs, total: r.qtyDeviasi };
+}
+
+/** Derive queryLossVsSurplus's result shape from a merged KPI row. */
+export function kpisToLvs(k: DashboardKpisRow | null): { loss: number; surplus: number; lossNominal: number; surplusNominal: number } {
+  const r = k ?? ZERO_KPIS;
+  return { loss: r.lossCount, surplus: r.surplusCount, lossNominal: r.totalLoss, surplusNominal: r.totalSurplus };
+}
+
+/** Derive queryCostImpact's result shape from a merged KPI row. */
+export function kpisToCostImpact(k: DashboardKpisRow | null, salesTotal: number): ReturnType<typeof costImpactRatios> {
+  const r = k ?? ZERO_KPIS;
+  return costImpactRatios(r, salesTotal);
 }

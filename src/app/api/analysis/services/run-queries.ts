@@ -6,10 +6,10 @@
 //  Responsibilities:
 //    1. Fire 4 early-start promises (sqlFlags, healthRanking, variance,
 //       growthDrivers) — they run in background during Batches 1-4
-//    2. Run Batch 0 (exec summary curr + prev)
-//    3. Run Batch 1 (top items: nominal, devBom, waste, susut, trial)
-//    4. Run Batch 2 (lossSurplus + area + topOutlets + breakdown + Pareto)
-//    5. Run Batch 3 (lvs + trend + cost + consistency + DQ groupBy)
+//    2. Run Batch 0 (merged KPI scan curr + exec summary prev)
+//    3. Run Batch 1 (top items nominal + devBom + ALL 4 categories in 1 scan)
+//    4. Run Batch 2 (area + topOutlets + Pareto)
+//    5. Run Batch 3 (trend + consistency + DQ groupBy)
 //    6. Run Batch 4 (deviasi + drivers + health + variance + growth)
 //    7. Map raw SQL rows into response-ready shapes
 //
@@ -23,23 +23,32 @@ import { logger } from '@/lib/logger';
 import {
   queryTrendAgg,
   queryExecSummary,
+  queryDashboardKpis,
+  kpisToBreakdown,
+  kpisToLvs,
+  kpisToCostImpact,
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
-  queryTopItemsByCategory,
+  queryTopItemsByAllCategories,
   queryTopItemsByDeviasiRank,
   queryTopOutlets,
   queryTopOutletsBySales,
-  queryDeviationBreakdown,
   queryDeviationBreakdownDrivers,
-  queryLossVsSurplus,
   queryAreaAnalysis,
-  queryCostImpact,
   queryItemConsistency,
   queryOutletHealthRanking,
   queryVarianceAnalysis,
   queryParetoByDevBom,
 } from '@/lib/queries';
 import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
+// Type-only: the standalone KPI queries are no longer CALLED by this pipeline
+// (replaced by the merged queryDashboardKpis scan), but their return types
+// still shape the QueryResults interface below (consumed by post-process).
+import type {
+  queryDeviationBreakdown,
+  queryLossVsSurplus,
+  queryCostImpact,
+} from '@/lib/queries';
 import { evaluateRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import { buildExecSummaryFromSql } from './exec-summary';
 import type { FetchedRecords, FilterOpts } from './fetch-records';
@@ -126,13 +135,24 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   // and is awaited just before post-processing (line ~562). Same pattern
   // already used by healthRankingSql/varianceAnalysis/growthDrivers (lines 429-431).
   // Expected: ~1-2s off cold cache path.
-  const [currSummary, prevSummary] = await Promise.all([
-    queryExecSummary(week, month, filterOpts),
+  //
+  // PERF (PAKET B / F2 — scan merge): the current exec summary, deviation
+  // breakdown, loss-vs-surplus and cost-impact queries all scanned the SAME
+  // filtered period separately (4 scans + 4 transactions). queryDashboardKpis
+  // computes all of them in ONE scan; breakdown/lvs/costImpact are derived
+  // from the merged row below. Only the PREVIOUS-period exec summary still
+  // runs standalone (different period).
+  const [kpis, prevSummary] = await Promise.all([
+    queryDashboardKpis(week, month, filterOpts),
     // prevWeek && prevMonth narrowing — if no compare period, return null
     // so buildExecSummaryFromSql skips the prev summary entirely.
     prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
   ]);
-  const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month, week, prevWeek);
+  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
+  // Single-scan derivations (field-for-field identical to the standalone queries):
+  const breakdown = kpisToBreakdown(kpis);
+  const lvs = kpisToLvs(kpis);
+  const costImpactSql = kpisToCostImpact(kpis, execSummary.sales.current);
 
   // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency + health + variance + growth
   // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
@@ -152,35 +172,39 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   const topNItems = thresholds.TOP_N_ITEMS || 10;
   const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
 
-  // Batch 1: top items (nominal, devBom, waste, susut, trial)
-  const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows] = await Promise.all([
+  // PERF (PAKET B / F2 — scan merge): the four category queries (waste /
+  // susut / trial / lossSurplus) each scanned the same period separately;
+  // queryTopItemsByAllCategories does ONE scan and returns the union of the
+  // 4 per-category top-N sets (ranked server-side via ROW_NUMBER).
+  const [topNominal, topDevBom, topCategories] = await Promise.all([
     queryTopItemsByNominal(week, month, filterOpts, topNItems),
     queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'waste', topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'susut', topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'trial', topNItems),
+    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
   ]);
+  const topWasteRows = topCategories.waste;
+  const topSusutRows = topCategories.susut;
+  const topTrialRows = topCategories.trial;
+  const topLossSurplusRows = topCategories.lossSurplus;
 
-  // Batch 2: lossSurplus category + area analysis + top outlets + breakdown + Pareto DevBom
+  // Batch 2: area analysis + top outlets + breakdown + Pareto DevBom
+  // (lossSurplus category now comes from the merged topCategories above;
+  //  breakdown from the merged KPI row — PERF PAKET B / F2)
   // FIX (BUG6-1+BUG6-POOL): paretoDevBom back in Promise.all with .catch() wrapper.
   const safeParetoDevBom = queryParetoByDevBom(week, month, filterOpts, 20, 0.50).catch((e: unknown) => {
     logger.error('[analysis] queryParetoByDevBom failed (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: 0.50 };
   });
-  const [topLossSurplusRows, areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, breakdown, paretoDevBom] = await Promise.all([
-    queryTopItemsByCategory(week, month, filterOpts, 'lossSurplus', topNItems),
+  const [areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, paretoDevBom] = await Promise.all([
     queryAreaAnalysis(week, month, filterOpts),
     queryTopOutlets(week, month, filterOpts, topNOutlets),
     queryTopOutletsBySales(week, month, filterOpts, topNOutlets),
-    queryDeviationBreakdown(week, month, filterOpts),
     safeParetoDevBom,
   ]);
 
-  // Batch 3: loss vs surplus + trend + cost + consistency + DQ issues
-  const [lvs, trendAggRows, costImpactSql, consistencyItems, dqIssuesRaw] = await Promise.all([
-    queryLossVsSurplus(week, month, filterOpts),
+  // Batch 3: trend + consistency + DQ issues
+  // (lvs + costImpact now derived from the merged KPI row — PERF PAKET B / F2)
+  const [trendAggRows, consistencyItems, dqIssuesRaw] = await Promise.all([
     queryTrendAgg({ ...filterOpts, weekLabel: week }),
-    queryCostImpact(week, month, execSummary.sales.current, filterOpts),
     queryItemConsistency(week, month, filterOpts),
     db.dQIssue.groupBy({
       by: ['severity'],

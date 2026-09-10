@@ -41,8 +41,13 @@ export async function withStatementTimeout<T>(
       // not user input — no SQL injection risk).
       await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(String(timeoutMs))}`;
       // PERF-DB-03: bump work_mem per-transaction to avoid sort spills.
-      // 64MB is generous — PG only allocates what it actually needs per sort node.
-      await tx.$executeRaw`SET LOCAL work_mem = '64MB'`;
+      // PERF (PAKET B / F11): lowered 64MB → 32MB. The pipeline keeps up to
+      // ~10 transactions open concurrently (early promises + batch queries),
+      // so the theoretical worst-case work_mem budget was 640MB against a
+      // small shared Postgres. The aggregate sorts here scan ≤ ~35K rows
+      // (~a few MB per sort node), so 32MB per tx still avoids spills while
+      // halving the worst-case memory pressure.
+      await tx.$executeRaw`SET LOCAL work_mem = '32MB'`;
       return fn(tx);
     },
     {

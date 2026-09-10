@@ -66,7 +66,9 @@ interface PreparedRow {
 }
 
 /** Distinct outlet to resolve (first-seen row wins, matching old upsert-on-first-encounter). */
-interface OutletCandidate {
+// PERF (PAKET B / F3): exported so process-ingestion.ts (the /api/ingest &
+// import-drive path) can reuse the exact same set-based resolution helpers.
+export interface OutletCandidate {
   code: string;
   name: string;
   outletCode: string;
@@ -78,7 +80,7 @@ interface OutletCandidate {
  * findMany(existing) → [update only changed] → createMany(missing, skipDuplicates)
  * → findMany(created ids). Replaces ~333 sequential upsert round trips.
  */
-async function ensureOutletsExist(
+export async function ensureOutletsExist(
   client: Prisma.TransactionClient,
   outletDbMap: Map<string, number>,
   candidates: Map<string, OutletCandidate>,
@@ -136,7 +138,7 @@ async function ensureOutletsExist(
  * satuan; it is back-filled only when the DB row has NULL satuan and the
  * first-seen row provides one (the documented intent of the old upsert).
  */
-async function ensureItemsExist(
+export async function ensureItemsExist(
   client: Prisma.TransactionClient,
   itemDbMap: Map<string, { id: number; satuan: string | null }>,
   candidates: Map<string, string | null>,

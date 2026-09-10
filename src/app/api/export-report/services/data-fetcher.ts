@@ -40,12 +40,13 @@ import { calcGrowth, computeNominalDeviationGrowth, calcZScoreFromStats } from '
 import {
   queryTrendAgg,
   queryExecSummary,
+  queryDashboardKpis,
+  kpisToBreakdown,
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
-  queryTopItemsByCategory,
+  queryTopItemsByAllCategories,
   queryTopItemsByDeviasiRank,
   queryHistoricalCategoryAvg,
-  queryDeviationBreakdown,
   queryAreaAnalysis,
   queryOutletHealthRanking,
 } from '@/lib/queries';
@@ -288,19 +289,24 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     }
   }
   // SQL queries
-  const [currSummary, prevSummary] = await Promise.all([
-    queryExecSummary(week, month, filterOpts),
+  // PERF (PAKET B / F2 — scan merge): current-period exec summary + deviation
+  // breakdown come from ONE merged scan (queryDashboardKpis); only the
+  // previous-period exec summary still runs standalone.
+  const [kpis, prevSummary] = await Promise.all([
+    queryDashboardKpis(week, month, filterOpts),
     prevMonth && prevWeek ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
   ]);
-  const execSummary = buildExecSummaryFromSql(currSummary, prevSummary, month, week, prevWeek);
+  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
+  const breakdown = kpisToBreakdown(kpis);
 
   const topNItems = thresholds.TOP_N_ITEMS || 10;
 
   // Rev 2: Fetch previous period + historical category data for comparison
   const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
-  const [topNominal, topDevBom, topWasteRows, topSusutRows, topTrialRows, topLossSurplusRows, areaAnalysisRaw, breakdown, trendAggRows,
-    // Previous period category data (Rev 2)
-    prevWasteRows, prevSusutRows, prevTrialRows, prevLossSurplusRows,
+  // PERF (PAKET B / F2 — scan merge): the 4 current + 4 previous category
+  // queries each scanned their period separately; now 1 merged scan per
+  // period (queryTopItemsByAllCategories — same result sets).
+  const [topNominal, topDevBom, topCategories, prevTopCategories, areaAnalysisRaw, trendAggRows,
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
     // Top Items by Deviasi Rank (Section 13 replacement)
@@ -308,18 +314,10 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   ] = await Promise.all([
     queryTopItemsByNominal(week, month, filterOpts, topNItems),
     queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'waste', topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'susut', topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'trial', topNItems),
-    queryTopItemsByCategory(week, month, filterOpts, 'lossSurplus', topNItems),
+    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+    prevMonth && prevWeek ? queryTopItemsByAllCategories(prevWeek, prevMonth, filterOpts, 100) : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
     queryAreaAnalysis(week, month, filterOpts),
-    queryDeviationBreakdown(week, month, filterOpts),
     queryTrendAgg({ ...filterOpts, weekLabel: week }),
-    // Rev 2: Previous period category data
-    prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'waste', 100) : Promise.resolve([]),
-    prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'susut', 100) : Promise.resolve([]),
-    prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'trial', 100) : Promise.resolve([]),
-    prevMonth && prevWeek ? queryTopItemsByCategory(prevWeek, prevMonth, filterOpts, 'lossSurplus', 100) : Promise.resolve([]),
     // Rev 2: Historical category averages
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
@@ -328,6 +326,15 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // Section 13: Top Items by Deviasi Rank (national ranking)
     queryTopItemsByDeviasiRank(week, month, filterOpts, 500),
   ]);
+  const topWasteRows = topCategories.waste;
+  const topSusutRows = topCategories.susut;
+  const topTrialRows = topCategories.trial;
+  const topLossSurplusRows = topCategories.lossSurplus;
+  // Previous period category data (Rev 2)
+  const prevWasteRows = prevTopCategories.waste;
+  const prevSusutRows = prevTopCategories.susut;
+  const prevTrialRows = prevTopCategories.trial;
+  const prevLossSurplusRows = prevTopCategories.lossSurplus;
 
   // Build prev + historical lookup maps keyed by "itemName|outletCode"
   const prevCatMap = (rows: Array<{ itemName: string; outletCode: string; qty: number; nominal: number }>, _qtyKey: string, _nomKey: string) => {

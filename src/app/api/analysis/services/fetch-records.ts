@@ -141,11 +141,16 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   // most recent month before current (fallback: after current, then current month).
   // The helper does its own db.week + db.sourceFile fetch (~3ms — small tables);
   // allPeriods above is still needed below for historicalPeriods filtering.
+  // PERF (PAKET B / F4): pass the ALREADY-fetched weeksRaw + fileMonthKeys
+  // into resolveComparePeriod — previously it re-fetched both tables (2 extra
+  // round-trips + a serial barrier) right after this same data had just been
+  // loaded by the parallel metadata batch above.
   const { prevWeek, prevMonth } = await resolveComparePeriod(
     week,
     resolvedMonth,
     compareWeek,
     resolvedCompareMonth,
+    { weeksRaw, fileMonthKeys },
   );
   params.prevWeek = prevWeek;
   params.prevMonth = prevMonth;

@@ -26,6 +26,55 @@ export interface ResolvedPeriod {
 }
 
 /**
+ * PERF (PAKET B / F4): optional pre-fetched Week + SourceFile metadata.
+ * Callers that already loaded these tables in their parallel metadata batch
+ * (e.g. /api/analysis fetch-records Stage 2) pass them here so this resolver
+ * no longer re-fetches both tables sequentially on every request.
+ */
+export interface PreloadedPeriodTables {
+  weeksRaw: Array<{ weekLabel: string; monthKey: string }>;
+  fileMonthKeys: Array<{ monthLabel: string; monthKey: string }>;
+}
+
+/**
+ * PERF (PAKET B / F4): the two metadata fetches used to run SEQUENTIALLY
+ * (await week.findMany; await sourceFile.findMany). Promise.all them —
+ * removes one serial round-trip barrier on every call that doesn't preload.
+ */
+async function loadPeriodTables(preloaded?: PreloadedPeriodTables): Promise<PreloadedPeriodTables> {
+  if (preloaded) return preloaded;
+  const [weeksRaw, fileMonthKeys] = await Promise.all([
+    db.week.findMany({
+      select: { weekLabel: true, monthKey: true },
+      distinct: ['monthKey', 'weekLabel'],
+    }),
+    db.sourceFile.findMany({
+      select: { monthLabel: true, monthKey: true },
+    }),
+  ]);
+  return { weeksRaw, fileMonthKeys };
+}
+
+interface PeriodRow {
+  monthLabel: string;
+  weekLabel: string;
+  monthKey: string;
+  sortKey: string;
+}
+
+function buildAllPeriods(tables: PreloadedPeriodTables): PeriodRow[] {
+  const monthLabelByKey = new Map(tables.fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
+  return tables.weeksRaw
+    .map(w => ({
+      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+      weekLabel: w.weekLabel,
+      monthKey: w.monthKey,
+      sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
+    }))
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+}
+
+/**
  * Auto-compute previous period (same weekLabel in chronologically previous month).
  * No fallback: if no same-weekLabel period exists in a previous month, returns
  * { prevWeek: null, prevMonth: null } so the caller short-circuits (no comparison).
@@ -37,24 +86,9 @@ export interface ResolvedPeriod {
 export async function resolvePreviousPeriod(
   week: string,
   month: string,
+  preloaded?: PreloadedPeriodTables,
 ): Promise<ResolvedPeriod> {
-  const weeksRaw = await db.week.findMany({
-    select: { weekLabel: true, monthKey: true },
-    distinct: ['monthKey', 'weekLabel'],
-  });
-  const fileMonthKeys = await db.sourceFile.findMany({
-    select: { monthLabel: true, monthKey: true },
-  });
-  const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
-
-  const allPeriods = weeksRaw
-    .map(w => ({
-      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
-      weekLabel: w.weekLabel,
-      monthKey: w.monthKey,
-      sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-    }))
-    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  const allPeriods = buildAllPeriods(await loadPeriodTables(preloaded));
 
   const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
 
@@ -116,6 +150,7 @@ export async function resolveComparePeriod(
   month: string,
   compareWeek: string | null,
   compareMonthExplicit: string | null,
+  preloaded?: PreloadedPeriodTables,
 ): Promise<ResolvedPeriod> {
   // Case 2: both compareWeek + compareMonthExplicit provided — use them directly.
   // No DB lookup needed; caller already validated the month label exists.
@@ -126,29 +161,13 @@ export async function resolveComparePeriod(
   // Case 1: compareWeek is null → auto-previous (same weekLabel in previous month).
   // Delegates to the existing resolvePreviousPeriod helper.
   if (!compareWeek) {
-    return resolvePreviousPeriod(week, month);
+    return resolvePreviousPeriod(week, month, preloaded);
   }
 
   // Case 3: compareWeek set, compareMonthExplicit null.
   // Find same weekLabel in most recent month BEFORE current; fall back to
   // searching forward (after current); fall back to current month itself.
-  const weeksRaw = await db.week.findMany({
-    select: { weekLabel: true, monthKey: true },
-    distinct: ['monthKey', 'weekLabel'],
-  });
-  const fileMonthKeys = await db.sourceFile.findMany({
-    select: { monthLabel: true, monthKey: true },
-  });
-  const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
-
-  const allPeriods = weeksRaw
-    .map(w => ({
-      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
-      weekLabel: w.weekLabel,
-      monthKey: w.monthKey,
-      sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-    }))
-    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  const allPeriods = buildAllPeriods(await loadPeriodTables(preloaded));
 
   const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
 

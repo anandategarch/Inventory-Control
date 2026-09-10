@@ -135,6 +135,92 @@ async function aggregateMetric(
 }
 
 // ============================================================
+//  PERF (PAKET B / F6): aggregateItemMetrics
+//  --------------------------------------------------------
+//  3 of the 4 growth metrics (bom / qtyDeviasi / nominalDeviasi) share
+//  the item grain — they each ran aggregateMetric separately, i.e. 3×
+//  (curr CTE scan + prev CTE scan + FULL OUTER JOIN + transaction).
+//  This merged query computes all 3 metric pairs per item in ONE pair
+//  of CTE scans + ONE FULL OUTER JOIN + ONE transaction.
+//
+//  Semantics parity with per-metric aggregateMetric:
+//    - each metric's sum uses FILTER (WHERE <field> IS NOT NULL) —
+//      identical to the original's per-metric `AND field IS NOT NULL`
+//      row filter (a group whose rows are all NULL for a field gets
+//      COALESCE 0 on both curr+prev → delta 0 → filtered by the
+//      caller's delta threshold, exactly like the group being absent).
+//    - bom/nominalDeviasi use SUM(ABS(field)); qtyDeviasi is SIGNED.
+// ============================================================
+async function aggregateItemMetrics(
+  week: string,
+  month: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: FilterOpts,
+): Promise<{
+  bom: Map<string, { curr: number; prev: number }>;
+  qtyDeviasi: Map<string, { curr: number; prev: number }>;
+  nominalDeviasi: Map<string, { curr: number; prev: number }>;
+}> {
+  const f = buildSqlFilters(filters);
+  const hasPrev = !!(prevWeek && prevMonth);
+
+  const sums = Prisma.sql`
+    i.name as name,
+    COALESCE(SUM(ABS(ir."qtyBom")) FILTER (WHERE ir."qtyBom" IS NOT NULL), 0) as bom,
+    COALESCE(SUM(ir."qtyDeviasi") FILTER (WHERE ir."qtyDeviasi" IS NOT NULL), 0) as qd,
+    COALESCE(SUM(ABS(ir."nominalDeviasi")) FILTER (WHERE ir."nominalDeviasi" IS NOT NULL), 0) as nd
+  `;
+
+  const currCte = Prisma.sql`
+    SELECT ${sums}
+    FROM "InventoryRecord" ir
+    JOIN "Item" i ON ir."itemId" = i.id
+    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+      ${f}
+    GROUP BY i.name
+  `;
+  const prevCte = hasPrev
+    ? Prisma.sql`
+      SELECT ${sums}
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      WHERE ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}
+        ${f}
+      GROUP BY i.name
+    `
+    : Prisma.sql`SELECT NULL::text as name, 0::float as bom, 0::float as qd, 0::float as nd WHERE 1=0`;
+
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    name: string;
+    bomCurr: number | bigint | null; bomPrev: number | bigint | null;
+    qdCurr: number | bigint | null; qdPrev: number | bigint | null;
+    ndCurr: number | bigint | null; ndPrev: number | bigint | null;
+  }>>`
+    WITH curr_agg AS (${currCte}),
+         prev_agg AS (${prevCte})
+    SELECT
+      COALESCE(c.name, p.name) as name,
+      COALESCE(c.bom, 0) as "bomCurr", COALESCE(p.bom, 0) as "bomPrev",
+      COALESCE(c.qd, 0) as "qdCurr", COALESCE(p.qd, 0) as "qdPrev",
+      COALESCE(c.nd, 0) as "ndCurr", COALESCE(p.nd, 0) as "ndPrev"
+    FROM curr_agg c
+    FULL OUTER JOIN prev_agg p ON c.name = p.name
+  `);
+
+  const bom = new Map<string, { curr: number; prev: number }>();
+  const qtyDeviasi = new Map<string, { curr: number; prev: number }>();
+  const nominalDeviasi = new Map<string, { curr: number; prev: number }>();
+  for (const r of rows) {
+    if (r.name == null) continue;
+    bom.set(r.name, { curr: Number(r.bomCurr) || 0, prev: Number(r.bomPrev) || 0 });
+    qtyDeviasi.set(r.name, { curr: Number(r.qdCurr) || 0, prev: Number(r.qdPrev) || 0 });
+    nominalDeviasi.set(r.name, { curr: Number(r.ndCurr) || 0, prev: Number(r.ndPrev) || 0 });
+  }
+  return { bom, qtyDeviasi, nominalDeviasi };
+}
+
+// ============================================================
 //  Pareto 80% — delegates to shared computePareto8020 in ./shared.
 //  Sort by |delta| desc, take top 20 with cumulative share ≤ 80%.
 //  FIX (RESTORE-SHARED-1): previously ~25 lines of inline sort+cumsum
@@ -154,7 +240,9 @@ function computePareto(
 }
 
 // ============================================================
-//  Main entry — runs 4 metric aggregations in parallel
+//  Main entry — 2 aggregations in parallel (PERF PAKET B / F6:
+//  was 4 — sales (outlet grain) + the 3 item-grain metrics merged
+//  into one query by aggregateItemMetrics)
 // ============================================================
 export async function queryGrowthDrivers(
   week: string,
@@ -170,15 +258,20 @@ export async function queryGrowthDrivers(
     { key: 'nominalDeviasi', field: 'nominalDeviasi' as const, label: 'Nominal Deviasi', groupBy: 'item' as const, signed: false },
   ];
 
-  // Run all 4 metric aggregations in parallel
-  const aggregations = await Promise.all(
-    metrics.map((m) =>
-      aggregateMetric(week, month, prevWeek, prevMonth, filters, m.groupBy, m.field, m.signed)
-        .then((map) => ({ ...m, map }))
-    )
-  );
+  // Run the outlet-grain metric + the merged item-grain metrics in parallel
+  const [salesMap, itemMaps] = await Promise.all([
+    aggregateMetric(week, month, prevWeek, prevMonth, filters, 'outlet', 'nominalSales', false),
+    aggregateItemMetrics(week, month, prevWeek, prevMonth, filters),
+  ]);
+  const maps: Record<string, Map<string, { curr: number; prev: number }>> = {
+    sales: salesMap,
+    bom: itemMaps.bom,
+    qtyDeviasi: itemMaps.qtyDeviasi,
+    nominalDeviasi: itemMaps.nominalDeviasi,
+  };
 
-  return aggregations.map(({ key, label, groupBy, map }) => {
+  return metrics.map(({ key, label, groupBy }) => {
+    const map = maps[key];
     const allKeys = [...map.keys()];
     const positive: Array<{ item: string; delta: number; pct: number }> = [];
     const negative: Array<{ item: string; delta: number; pct: number }> = [];

@@ -214,6 +214,35 @@ FIX: (a) seluruh wrapper `FetchAware` + prop `isFetching` dihapus dari `Dashboar
 
 ---
 
+## ⚡ OPTIMASI BACKEND (akar "lemot" server-side) — PAKET B
+
+Audit susulan D-a menemukan sisa beban backend terbesar: scan periode sama berulang 7-10×, jalur import kedua masih per-baris, dan fetch metadata duplikat per request. Semuanya fixed di paket ini:
+
+### PERF-DB-SCAN-1 (P1): 4 KPI single-row men-scan WHERE identik 4× — `queries/dashboard.ts` + `run-queries.ts` + `export-report/data-fetcher.ts`
+`queryExecSummary`, `queryDeviationBreakdown`, `queryLossVsSurplus`, `queryCostImpact` masing-masing scan `WHERE monthLabel+weekLabel+f` yang SAMA (35K baris) + 4 transaksi terpisah. FIX: `queryDashboardKpis` — SATU scan + SATU transaksi menghasilkan semua 21 ekspresi (13 exec + residual + 2 count + 5 cost); breakdown/lvs/costImpact diturunkan via `kpisToBreakdown`/`kpisToLvs`/`kpisToCostImpact` (field-per-field identik — ekspresi yang sama persis, beberapa bahkan sudah overlap di kode lama: `totalLoss`≡`lossNominal`, `qtyDeviasi`≡`total`). Fungsi lama tetap ada (dites unit + pemanggil lain); pipeline analysis & export-report kini pakai versi merge. **3 scan + 3 transaksi hilang per request dingin.**
+
+### PERF-DB-SCAN-2 (P1): queryTopItemsByCategory ×4 → 1 query — `by-other-metric.ts`
+4 query kategori (waste/susut/trial/lossSurplus) scan periode + join yang sama; export-report bahkan 8× (4 curr + 4 prev). FIX: `queryTopItemsByAllCategories` — 1 scan, ranking per kategori di sisi server via `ROW_NUMBER() OVER (ORDER BY SUM(ABS(qtyX)) FILTER (...) DESC)`, hanya union top-N yang keluar DB (pola yang sama dengan fix variance & nested-Pareto). Presisi semantik dijaga: `FILTER (WHERE qtyX IS NOT NULL AND qtyX != 0)` identik dengan WHERE lama per kategori, direction per kategori replikasi `DIRECTION_FROM_SUM_SQL` atas row-set terfilter yang sama. **Analysis: 4→1 query; export: 8→2.**
+
+### PERF-DB-SCAN-3 (P2): growthDrivers 4 transaksi → 2 — `growth-drivers.ts`
+3 dari 4 metrik (bom/qtyDeviasi/nominalDeviasi) grain-ITEM: masing-masing FULL OUTER JOIN curr×prev sendiri = 8 scan period. FIX: `aggregateItemMetrics` — 1 pasang CTE + 1 FULL OUTER JOIN menghasilkan 3 pasang metrik per item (`FILTER (WHERE field IS NOT NULL)` = parity filter row lama; group yang semua-row-NULL → 0/0 → delta 0 → terfilter threshold, identik hasil akhirnya). Sales (grain outlet) tetap query sendiri (grain beda). **8→4 scan period; 4→2 transaksi.**
+
+### PERF-IMPORT-3PASS (P1): jalur `/api/ingest` & `import-drive` masih upsert master-data per-baris — `process-ingestion.ts`
+Fix C5 (3-pass bulk master-data) hanya diterapkan ke `/api/ingest-process`; jalur process-ingestion masih `await tx.outlet.upsert(...)` per kode baru di dalam loop baris — import pertama dengan master baru = **±446 round-trip sequential** (5-15ms per hop via pooler). FIX: helper `ensureOutletsExist`/`ensureItemsExist` di-export dari `process-rows-for-import.ts` dan dipakai ulang: PASS 1 (CPU: validate+normalize+derive + kumpul kandidat distinct, first-seen-wins), PASS 2 (di dalam tx setelah advisory lock: findMany IN → update-bila-bedua → createMany skipDuplicates → findMany ids; parity BUG-5-5 race-safe + LOGIC-12 refresh area/nama + backfill satuan), PASS 3 (enqueue + batch insert via Map murni). Week upsert (3-4 unik) di-hoist dari loop. **±446 → ±4-8 query per import.**
+
+### PERF-FETCH-4 (P2): `resolveComparePeriod` re-fetch week+sourceFile sequential — `period-resolver.ts` + `fetch-records.ts`
+Stage-2 sudah mengambil `weeksRaw`+`fileMonthKeys` paralel, lalu resolver fetch ulang KEDUANYA **secara sequential** (2 RT + 1 barrier serial) di SETIAP request analysis/export/outlet-items/rekomendasi. FIX: (a) parameter `preloaded?: PreloadedPeriodTables` — analysis fetch-records kini meneruskan data yang sudah ada (0 query ekstra); (b) pemanggil tanpa preloaded kini `Promise.all` (2→1 barrier). Backward-compatible (param opsional).
+
+### PERF-TXMEM-5 (P3): `work_mem 64MB` per transaksi × ~10 konkuren = tekanan memori — `queries/shared.ts`
+Budget teoretis 640MB vs shared Postgres kecil. FIX: 64MB → **32MB** (sort agregat di pipeline ini ≤ beberapa MB per sort node — tetap bebas spill, tekanan memori terpangkas separuh).
+
+### Catatan desain — kenapa "pajak round-trip" withStatementTimeout TIDAK di-batch penuh (keputusan disengaja)
+Temuan D-a F1 memperkirakan +110-120 round-trip per request dingin. Analisis lebih dalam menunjukkan estimasi itu mengasumsikan RT serial — padahal batch pipeline ini menjalankan 5-6 transaksi PARALEL (BEGIN/SET/COMMIT saling tumpang-tindih antar koneksi), jadi biaya wall-clock riil ~50-150ms. Menggabungkan query ke 1 transaksi per batch akan MENYERIALKAN query di satu koneksi → regresi wall-clock justru lebih besar (3× durasi query per batch) saat cache dingin. Kompromi (split K-transaksi per batch) menambah kompleksitas + risiko isolasi-kesalahan (query non-blocking seperti pareto yang di-`.catch()` bisa meracuni transaksi bersama). Keputusan: scan-merge (F2/F6) yang mengurangi PEKERJAAN DB (bukan hanya RT) + work_mem turun + dokumentasi ini agar maintainer masa depan tidak "memperbaiki" arah yang salah. RT tax yang tersisa sudah ter-overlap paralel.
+
+**Verifikasi**: `tsc --noEmit` 0 error · eslint 10 file berubah **0 error** (15 warning pre-existing, terverifikasi identik di HEAD) · vitest **438/438** (termasuk test growth-drivers, dashboard, top-items) · parity semantik didokumentasikan per-fix di komentar kode.
+
+---
+
 ## 🔒 SECURITY (ringkas)
 
 | # | Severity | Temuan | Fix |
@@ -272,6 +301,7 @@ FIX: (a) seluruh wrapper `FetchAware` + prop `isFetching` dihapus dari `Dashboar
 - N+1 kecil `pareto/nested.ts` (10 tx) — FIXED: Step 2 kedua fungsi (`queryParetoNestedItemOutlet` + `queryParetoNested`) sekarang 1 query CTE `ROW_NUMBER() OVER (PARTITION BY parent) rn<=20` (pola sama dengan fix PERF-2), menggantikan 10 transaksi `withStatementTimeout` paralel. Bonus konsistensi: filter parent kini pakai ekspresi group yang SAMA dengan Step 1 (`pic` 'Unassigned' tidak lagi mismatch vs total parent).
 - **Perf & correctness upload/hapus (PERF-UPLOAD-1..4, PERF-IMPORT-1/2, PERF-DELETE-1..3)** — lihat seksi "UPLOAD & DELETE" di atas. Ringkas: bucket rate-limit chunk khusus 120/mnt (akhir 429 di chunk #6 untuk file >20MB), verifikasi total-ukuran via `SUM(LENGTH(data))` (tidak re-download 50MB), upload chunk paralel ×3 (chunk terakhir tetap terakhir), reuse `/tmp` antara detect→import (1 download+parse hilang), resolusi master-data bulk (±442 → ±4 query), `BATCH_SIZE` 1000, `maxDuration` /api/data & /api/ingest 300s, reset-semua via TRUNCATE atomik, advisory lock pada delete bulan/file. Verifikasi: `tsc --noEmit` 0 error, eslint 0 error, vitest 438/438.
 - **Interaksi frontend "lemot saat dipakai" (PAKET A — FE-INTERACT-1/2/3)** — lihat seksi "PAKET A" di atas. Ringkas: tab keep-alive via `forceMount` + `data-[state=inactive]:hidden` (pindah tab tidak lagi rebuild seluruh subtree & state lokal bertahan), `staleTime` 5 mnt + `gcTime` 10 mnt pada 4 query peer/outlet (refetch storm tiap balik tab >30 dtk hilang), debounce 300ms autocomplete item-search (was 1 request per huruf), hapus drill `isFetching` + `FetchAware` (dashboard tidak lagi "terkunci" `pointer-events-none` saat refresh background; indikator refresh kini tunggal di header), hapus animasi tab CSS ganda (0.25s+0.3s berlapis). Verifikasi: `tsc --noEmit` 0 error, eslint 0 error, vitest 438/438.
+- **Backend scan-merge & jalur import (PAKET B — PERF-DB-SCAN-1/2/3, PERF-IMPORT-3PASS, PERF-FETCH-4, PERF-TXMEM-5)** — lihat seksi "PAKET B" di atas. Ringkas: 4 KPI single-row → 1 scan `queryDashboardKpis` (analysis + export), 4 (atau 8 di export) query kategori top-items → 1 scan `queryTopItemsByAllCategories` dengan `ROW_NUMBER`+`FILTER` (presisi semantik per kategori), growthDrivers 4→2 transaksi (3 metrik item-grain merge), jalur `/api/ingest`+`import-drive` di-port ke 3-pass bulk master-data (±446 → ±4-8 RT), `resolveComparePeriod` menerima data pre-loaded (2 RT + 1 barrier serial hilang per request), `work_mem` 64→32MB. Keputusan disengaja: batching penuh `withStatementTimeout` DITOLAK (analisis wall-clock di seksi PAKET B — akan menyerialkan query paralel). Verifikasi: `tsc --noEmit` 0 error, eslint 0 error (warning pre-existing), vitest 438/438.
 
 **Eksekusi script DB (2026-09-09, terhadap DB produksi):**
 - `db:fix-duplicate-weeks` — dijalankan: **0 duplikat** (data bersih). Script sempat crash saat eksekusi nyata (`having: {_count:...}` ditolak validasi runtime Prisma 6.11) → diganti deteksi `$queryRaw` (SCRIPT-RUNTIME-1).
