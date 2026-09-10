@@ -22,6 +22,13 @@
 //  SURPLUS in area B ≠ A: stock moving between areas without a
 //  transfer document, or double-sided misrecording).
 //
+//  outlet_agg also carries the ROUND-NUMBER input-quality lens
+//  (3 FILTER columns — zero extra scans): share of non-zero
+//  |qtyDeviasi| values whose rounded decigram integer is divisible
+//  by 5 (ends in .0/.5 or last digit 5/0) or by 10 (strict "ends
+//  in 0"), per outlet vs the period baseline from totals. Humans
+//  who ESTIMATE instead of counting tend to produce round numbers.
+//
 //  PERF (PAKET E — scan-merge): `base` is referenced by six CTEs,
 //  so PostgreSQL materializes it ONCE (multi-reference CTEs are
 //  not inlined) — one physical scan of the period, then six cheap
@@ -108,6 +115,38 @@ export interface SalesOutletRow {
   devPerSalesPct: number;
 }
 
+/** Round-number input quality — per outlet, vs the period baseline.
+ *  "Round" = ROUND(|qtyDeviasi| × 10) divisible by 5 (catches .0/.5
+ *  endings and 5/0 last integer digits); tier 10 is the stricter
+ *  "ends in 0" test. Estimation instead of counting shows up as a
+ *  share far ABOVE the peer baseline. */
+export interface RoundOutletRow {
+  outletId: number;
+  outletCode: string;
+  outletName: string;
+  area: string;
+  /** Non-zero |qtyDeviasi| records — the sample. */
+  nDev: number;
+  nRound5: number;
+  nRound10: number;
+  /** nRound5 / nDev * 100. */
+  share5Pct: number;
+  /** nRound10 / nDev * 100. */
+  share10Pct: number;
+  /** share5Pct − baseline share (percentage points). */
+  delta5Pct: number;
+  delta10Pct: number;
+}
+
+/** Period-wide baseline for the round-number lens (from totals). */
+export interface RoundBaseline {
+  nDev: number;
+  nRound5: number;
+  nRound10: number;
+  share5Pct: number;
+  share10Pct: number;
+}
+
 export interface CategoryRow {
   category: string;
   n: number;
@@ -188,6 +227,8 @@ export interface ComplianceResult {
   categories: CategoryRow[];
   transferSignals: TransferSignalRow[];
   crossAreaPairs: CrossAreaPairRow[];
+  roundOutlets: RoundOutletRow[];
+  roundBaseline: RoundBaseline;
 }
 
 // ------------------------------------------------------------
@@ -266,7 +307,15 @@ export async function queryComplianceDashboard(
         -- of the outlet within one week) — MAX is the safe single-week read.
         MAX(b."nominalSales") AS "nominalSales",
         COUNT(*) FILTER (WHERE b."residualQtyAbs" > 0) AS "nResidualPos",
-        COUNT(*) FILTER (WHERE b."absQtyDeviasi" > 0) AS "nDevPos"
+        COUNT(*) FILTER (WHERE b."absQtyDeviasi" > 0) AS "nDevPos",
+        -- ROUND-NUMBER input-quality lens (mod-5 / mod-10 of the
+        -- rounded decigram integer — see file header). Same GROUP BY:
+        -- zero extra scans.
+        COUNT(*) FILTER (WHERE b."qtyDevAbs" > 0) AS "nDev",
+        COUNT(*) FILTER (WHERE b."qtyDevAbs" > 0
+          AND (ROUND(b."qtyDevAbs" * 10)::int % 5) = 0) AS "nRound5",
+        COUNT(*) FILTER (WHERE b."qtyDevAbs" > 0
+          AND (ROUND(b."qtyDevAbs" * 10)::int % 10) = 0) AS "nRound10"
       FROM base b
       GROUP BY b."outletId", b."area"
     ),
@@ -321,6 +370,12 @@ export async function queryComplianceDashboard(
           AND "pctQtyDeviasiToBom" IS NOT NULL
           AND ABS("pctQtyDeviasiToBom") > ${thresholds.stdDevBomPct}) AS "nNotSetHigh",
         COUNT(*) FILTER (WHERE "tolerancePct" IS NULL) AS "nNoTol",
+        -- Round-number baseline (same predicate as outlet_agg)
+        COUNT(*) FILTER (WHERE "qtyDevAbs" > 0) AS "nDev",
+        COUNT(*) FILTER (WHERE "qtyDevAbs" > 0
+          AND (ROUND("qtyDevAbs" * 10)::int % 5) = 0) AS "nRound5",
+        COUNT(*) FILTER (WHERE "qtyDevAbs" > 0
+          AND (ROUND("qtyDevAbs" * 10)::int % 10) = 0) AS "nRound10",
         COALESCE(SUM("residualQtyAbs"), 0) AS "residualAbs",
         COALESCE(SUM("absQtyDeviasi"), 0) AS "absQtyDev",
         COALESCE(SUM("residualNominalAbs"), 0) AS "residualNominalAbs",
@@ -496,6 +551,47 @@ function shapeCompliance(
     .sort((a, b) => b.devPerSalesPct - a.devPerSalesPct)
     .slice(0, topN);
 
+  // ---- outlet (round-number lens) → roundBaseline + roundOutlets ----
+  // Baseline from totals; per-outlet rows from the SAME 'outlet' lens
+  // rows (the 3 FILTER columns ride along outlet_agg). Min sample 3:
+  // below that a share is noise (documented constant).
+  const ROUND_MIN_SAMPLE = 3;
+  const roundBaseline: RoundBaseline = {
+    nDev: num(t.nDev),
+    nRound5: num(t.nRound5),
+    nRound10: num(t.nRound10),
+    share5Pct: num(t.nDev) > 0 ? (num(t.nRound5) / num(t.nDev)) * 100 : 0,
+    share10Pct: num(t.nDev) > 0 ? (num(t.nRound10) / num(t.nDev)) * 100 : 0,
+  };
+  const roundOutlets: RoundOutletRow[] = outletRaw
+    .map((r) => {
+      const nDev = num(r.nDev);
+      const nRound5 = num(r.nRound5);
+      const nRound10 = num(r.nRound10);
+      const share5Pct = nDev > 0 ? (nRound5 / nDev) * 100 : 0;
+      const share10Pct = nDev > 0 ? (nRound10 / nDev) * 100 : 0;
+      return {
+        outletId: num(r.outletId),
+        outletCode: asString(r.outletCode) ?? '?',
+        outletName: asString(r.outletName) ?? '?',
+        area: asString(r.area) ?? '-',
+        nDev,
+        nRound5,
+        nRound10,
+        share5Pct,
+        share10Pct,
+        delta5Pct: share5Pct - roundBaseline.share5Pct,
+        delta10Pct: share10Pct - roundBaseline.share10Pct,
+      };
+    })
+    .filter((r) => r.nDev >= ROUND_MIN_SAMPLE)
+    // Most suspicious first: farthest ABOVE the peer baseline.
+    .sort((a, b) =>
+      b.delta5Pct - a.delta5Pct
+      || b.share5Pct - a.share5Pct
+      || a.outletId - b.outletId)
+    .slice(0, topN);
+
   // ---- category ----
   const catTotal = (byLens.get('category') ?? []).reduce(
     (acc, r) => acc + num(r.absNominalDev), 0);
@@ -639,5 +735,7 @@ function shapeCompliance(
     categories,
     transferSignals,
     crossAreaPairs,
+    roundOutlets,
+    roundBaseline,
   };
 }

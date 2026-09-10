@@ -21,6 +21,10 @@
 //                          appears in another (cross-area mismatch
 //                          pairs — derived from the same transfer
 //                          rows, zero extra scanning)
+//    roundOutlets        — round-number input quality per outlet
+//                          vs period baseline (3 FILTER columns on
+//                          outlet_agg — same scan), plus
+//                          roundBaseline from totals
 //
 //  Pattern (per CONVENTIONS.md — flip-ranking / pareto precedent):
 //    - force-dynamic + maxDuration=60 (single scan + aggregates)
@@ -126,6 +130,8 @@ function emptyComplianceResult(): ComplianceResult {
     categories: [],
     transferSignals: [],
     crossAreaPairs: [],
+    roundOutlets: [],
+    roundBaseline: { nDev: 0, nRound5: 0, nRound10: 0, share5Pct: 0, share10Pct: 0 },
   };
 }
 

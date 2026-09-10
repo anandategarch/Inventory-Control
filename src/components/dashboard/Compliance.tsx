@@ -22,6 +22,9 @@
 //       not refetch when the user switches weeks): does this
 //       outlet deviate EVERY week (chronic) or only in one
 //       dominant week (spike)?
+//    9. Kualitas Input: Angka Bulat — share of |qtyDeviasi|
+//       ending in 0/5 per outlet vs the period baseline
+//       (estimation instead of counting indicator)
 //
 //  PERF-FE (PAKET A pattern): staleTime 5 min + gcTime 10 min —
 //  data only changes on ingest / manual refresh (handleRefresh
@@ -37,7 +40,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route, CalendarClock,
+  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route, CalendarClock, Hash,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -161,6 +164,8 @@ export function Compliance() {
   const transferSignals = useMemo(() => data?.transferSignals ?? [], [data]);
   const crossAreaPairs = useMemo(() => data?.crossAreaPairs ?? [], [data]);
   const chronicOutlets = useMemo(() => chronicData?.outlets ?? [], [chronicData]);
+  const roundOutlets = useMemo(() => data?.roundOutlets ?? [], [data]);
+  const roundBaseline = useMemo(() => data?.roundBaseline, [data]);
 
   if (error) {
     return (
@@ -686,6 +691,66 @@ export function Compliance() {
                               : r.classification === 'SPIKE' ? (
                                 <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400 border-amber-200 dark:border-amber-800">Spike</Badge>
                               ) : <Badge variant="secondary">Variabel</Badge>}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ====== 9. KUALITAS INPUT: ANGKA BULAT ====== */}
+          <Card>
+            <CardContent className="p-3 sm:p-4 pt-3 sm:pt-4 space-y-2">
+              <SectionHeader
+                icon={<Hash className="h-4 w-4" />}
+                title="Kualitas Input: Angka Bulat per Outlet"
+                badge={roundBaseline && roundBaseline.nDev > 0 ? `baseline ${fmtPctAbs(roundBaseline.share5Pct)}` : undefined}
+              />
+              <p className="text-[11px] text-muted-foreground -mt-1 px-1 flex items-center gap-1">
+                Share |qtyDeviasi| berakhiran <b>0/5</b> per outlet — outlet yang <b>menaksir</b> (bukan menghitung fisik) cenderung jauh di atas baseline.
+                <InfoTooltip content="Angka bulat = ROUND(|qtyDeviasi| × 10) habis dibagi 5 (berakhir .0/.5 atau digit akhir 5/0); tingkat ketat 'berakhir 0' = habis dibagi 10. Stok yang benar-benar dihitung jarang sering berakhir 0/5. Δ = share outlet − baseline seluruh periode (berbagi satuan kemasan bisa membuat angka bulat wajar — selalu bandingkan dengan baseline). Outlet dengan &lt; 3 baris deviasi dikecualikan." />
+              </p>
+              {roundOutlets.length === 0 ? (
+                <SectionEmpty text="Tidak cukup baris deviasi (min 3 per outlet) untuk analisa angka bulat." />
+              ) : (
+                <div className={tableWrap}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className={th}>Outlet</TableHead>
+                        <TableHead className={th}>Area</TableHead>
+                        <TableHead className={`${th} text-right`}>Baris Deviasi</TableHead>
+                        <TableHead className={`${th} text-right`}>Bulat 0/5</TableHead>
+                        <TableHead className={`${th} text-right`}>Bulat 0</TableHead>
+                        <TableHead className={`${th} text-right`}>Δ vs Baseline</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {roundOutlets.map((r) => (
+                        <TableRow key={r.outletId}>
+                          <TableCell className={`${td} font-medium max-w-[200px] truncate`}>
+                            {r.outletCode}
+                            <span className="text-muted-foreground font-normal"> · {r.outletName}</span>
+                          </TableCell>
+                          <TableCell className={`${td} text-muted-foreground max-w-[140px] truncate`}>{r.area}</TableCell>
+                          <TableCell className={`${td} text-right tabular-nums`}>{fmtNum(r.nDev)}</TableCell>
+                          <TableCell className={`${td} text-right tabular-nums`}>
+                            {fmtPctAbs(r.share5Pct)}
+                            <span className="block text-[10px] text-muted-foreground font-normal">{fmtNum(r.nRound5)} baris</span>
+                          </TableCell>
+                          <TableCell className={`${td} text-right tabular-nums text-muted-foreground`}>
+                            {fmtPctAbs(r.share10Pct)}
+                            <span className="block text-[10px] text-muted-foreground font-normal">{fmtNum(r.nRound10)} baris</span>
+                          </TableCell>
+                          <TableCell className={`${td} text-right tabular-nums ${
+                            r.delta5Pct >= 15 ? 'text-rose-600 dark:text-rose-400 font-semibold'
+                              : r.delta5Pct >= 8 ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-muted-foreground'
+                          }`}>
+                            {r.delta5Pct >= 0 ? '+' : ''}{fmtPctAbs(r.delta5Pct)}
                           </TableCell>
                         </TableRow>
                       ))}
