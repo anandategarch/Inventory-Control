@@ -31,6 +31,10 @@
 //  invalidates ['compliance'] AND ['chronic-outlets']), NOT
 //  every 30s global default.
 //  keepPreviousData for smooth period switches.
+//
+//  DRILLDOWN: item rows in the item-grain tables (sections 1, 2,
+//  6, 7) open ItemDeepDive via setDeepDiveItem — same a11y pattern
+//  as TopItems (clickableRowProps: role=button, Enter/Space).
 // ============================================================
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
@@ -43,6 +47,7 @@ import {
   ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route, CalendarClock, Hash,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
+import { clickableRowProps } from '@/lib/a11y';
 import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -99,13 +104,14 @@ const td = 'text-xs whitespace-nowrap py-2';
 //  Main component
 // ------------------------------------------------------------
 export function Compliance() {
-  const { monthLabel, currentWeek, area, kelompok, outletCode, pic } = useDashboard(useShallow((s) => ({
+  const { monthLabel, currentWeek, area, kelompok, outletCode, pic, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     area: s.area,
     kelompok: s.kelompok,
     outletCode: s.outletCode,
     pic: s.pic,
+    setDeepDiveItem: s.setDeepDiveItem,
   })));
 
   const { data, isLoading, error } = useQuery({
@@ -245,6 +251,11 @@ export function Compliance() {
         </Card>
       ) : (
         <>
+          {/* Drilldown affordance hint — item rows open ItemDeepDive */}
+          <p className="text-[11px] text-muted-foreground px-1 -mt-1">
+            Tips: klik baris item (tabel Kepatuhan Toleransi, Prioritas Penetapan, Transfer, dan Antar-Area) untuk membuka detail drilldown item — seluruh outlet pada minggu terpilih.
+          </p>
+
           {/* ====== 1. KEPATUHAN TOLERANSI (per item) ====== */}
           <Card>
             <CardContent className="p-3 sm:p-4 pt-3 sm:pt-4 space-y-2">
@@ -275,7 +286,11 @@ export function Compliance() {
                     </TableHeader>
                     <TableBody>
                       {toleranceItems.map((r) => (
-                        <TableRow key={r.itemId}>
+                        <TableRow
+                          key={r.itemId}
+                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          {...clickableRowProps(() => setDeepDiveItem({ itemName: r.itemName, outletCode: null }))}
+                        >
                           <TableCell className={`${td} font-medium max-w-[220px] truncate`}>
                             {r.itemName}
                             {r.satuan ? <span className="text-muted-foreground font-normal"> · {r.satuan}</span> : null}
@@ -330,7 +345,11 @@ export function Compliance() {
                     </TableHeader>
                     <TableBody>
                       {tolerancePriority.map((r) => (
-                        <TableRow key={r.itemId}>
+                        <TableRow
+                          key={r.itemId}
+                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          {...clickableRowProps(() => setDeepDiveItem({ itemName: r.itemName, outletCode: null }))}
+                        >
                           <TableCell className={`${td} font-medium max-w-[220px] truncate`}>
                             {r.itemName}
                             {r.satuan ? <span className="text-muted-foreground font-normal"> · {r.satuan}</span> : null}
@@ -540,7 +559,11 @@ export function Compliance() {
                     </TableHeader>
                     <TableBody>
                       {transferSignals.map((r) => (
-                        <TableRow key={`${r.itemId}-${r.area}`}>
+                        <TableRow
+                          key={`${r.itemId}-${r.area}`}
+                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          {...clickableRowProps(() => setDeepDiveItem({ itemName: r.itemName, outletCode: null }))}
+                        >
                           <TableCell className={`${td} font-medium max-w-[200px] truncate`}>{r.itemName}</TableCell>
                           <TableCell className={`${td} text-muted-foreground max-w-[150px] truncate`}>{r.area}</TableCell>
                           <TableCell className={`${td} text-right tabular-nums text-rose-600 dark:text-rose-400`}>
@@ -595,7 +618,11 @@ export function Compliance() {
                     </TableHeader>
                     <TableBody>
                       {crossAreaPairs.map((r) => (
-                        <TableRow key={`${r.itemId}-${r.lossArea}-${r.surplusArea}`}>
+                        <TableRow
+                          key={`${r.itemId}-${r.lossArea}-${r.surplusArea}`}
+                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          {...clickableRowProps(() => setDeepDiveItem({ itemName: r.itemName, outletCode: null }))}
+                        >
                           <TableCell className={`${td} font-medium max-w-[200px] truncate`}>{r.itemName}</TableCell>
                           <TableCell className={`${td} max-w-[140px] truncate`}>
                             <span className="text-rose-600 dark:text-rose-400 font-medium">{r.lossArea}</span>
