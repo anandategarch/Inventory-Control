@@ -65,30 +65,33 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">Financial impact ranking (absolute)</p>
       </CardHeader>
-      <CardContent className="p-4">
-        {/* TREMOR Pattern 2 — BarList: replaces the previous Table layout
-            with a compact ranked bar list. Each bar's length encodes
-            |Nominal Deviasi| (absolute financial impact), color encodes
-            direction (red=LOSS, emerald=SURPLUS), metadata shows direction
-            label. Click triggers drill-down via onValueChange. */}
-        <BarList
-          data={barData}
-          valueFormatter={fmtIDR}
-          sortOrder="descending"
-          showAnimation
-          onValueChange={handleBarClick}
-        />
-        {/* SHADCN-PATTERNS (Pattern 4) — BarList renders nothing when its
-            data array is empty, so we surface an EmptyState below it to
-            give the user a clear "no data" signal instead of a blank card. */}
-        {items.length === 0 && (
+      <CardContent className="p-0">
+        {/* HI-1 (UI-audit): fixed h-80 viewport — identical to the two sibling
+            cards in this grid row (TopItemsByDevBom / TopOutlets). Without a
+            scroll viewport, setting TOP_N_ITEMS=50 via QuickSettings grew this
+            card to ~1400px while its neighbors stayed fixed, breaking the
+            3-card row balance. Inner px-4 py-3 keeps the BarList inset so the
+            scrollbar sits flush with the card edge like the sibling tables. */}
+        {items.length > 0 ? (
+          <ScrollArea className="h-80">
+            <div className="px-4 py-3">
+              <BarList
+                data={barData}
+                valueFormatter={fmtIDR}
+                sortOrder="descending"
+                showAnimation
+                onValueChange={handleBarClick}
+              />
+            </div>
+          </ScrollArea>
+        ) : (
           <EmptyState
             icon={Coins}
             title="Tidak ada data"
             description="Belum ada item dengan deviasi pada periode ini."
           />
         )}
-        <p className="text-[10px] text-muted-foreground mt-2">💡 Bar length = |Nominal|. Klik untuk drill-down.</p>
+        <p className="text-[10px] text-muted-foreground px-4 pb-3 pt-1">💡 Bar length = |Nominal|. Klik untuk drill-down.</p>
       </CardContent>
     </Card>
   );
@@ -120,7 +123,10 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
         <p className="text-xs text-muted-foreground ml-9">Operational abnormality ranking</p>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-72">
+        {/* HI-2 (UI-audit): h-72 → h-80 — matches every other table viewport
+            in the Dashboard tab (AdvancedAnalysis trio) so section heights
+            stop jumping 288px↔320px while scrolling. */}
+        <ScrollArea className="h-80">
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
@@ -185,7 +191,8 @@ export const TopOutlets = memo(function TopOutlets({ data }: { data: AnalysisDat
         <p className="text-xs text-muted-foreground ml-9">By absolute nominal deviation</p>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-72">
+        {/* HI-2 (UI-audit): h-72 → h-80 — same unification as above. */}
+        <ScrollArea className="h-80">
           <Table>
             <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
               <TableRow className="border-b hover:bg-transparent">
