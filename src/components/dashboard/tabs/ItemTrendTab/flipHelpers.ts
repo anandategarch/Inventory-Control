@@ -77,7 +77,7 @@ export interface ItemFlipScore {
   parsialCount: number;
   /** konsisten-naik + konsisten-turun + stagnan (NOT flip, NOT first). */
   konsistenCount: number;
-  /** 0-100 — weighted risk score for the item (sempurna=100, dominan=60, parsial=30, others=0). */
+  /** 0-100 — weighted risk score: min(100, sempurnaCount*30 + flipCount*10) (post-BUG2-FLIP-05). */
   riskScore: number;
   riskLevel: 'low' | 'moderate' | 'high';
 }
@@ -210,18 +210,13 @@ export function computeFlipAnalyses(periods: ItemTrendPeriod[]): FlipAnalysis[] 
 /**
  * Compute aggregate flip score for an item across all same-week pairs.
  *
- * `riskScore` is a weighted 0-100 score:
- *   sempurna → 100 per pair
- *   dominan  → 60 per pair
- *   parsial  → 30 per pair
- *   others   → 0 per pair
- * Averaged across totalPairs (so an item with 1 sempurna out of 1 pair
- * = 100; out of 4 pairs = 25).
+ * `riskScore` (post-BUG2-FLIP-05, identical FE+BE):
+ *   min(100, sempurnaCount * 30 + flipCount * 10)
  *
- * `riskLevel` thresholds:
- *   riskScore >= 50 → high
- *   riskScore >= 20 → moderate
- *   else            → low
+ * `riskLevel` (aligned with backend flip-ranking.ts):
+ *   sempurnaCount > 0 → high
+ *   flipCount > 0      → moderate
+ *   else               → low
  */
 export function computeItemFlipScore(flips: FlipAnalysis[]): ItemFlipScore {
   const totalPairs = flips.length;

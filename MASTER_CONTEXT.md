@@ -137,7 +137,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `GET /api/peer-comparison/trend?outlet=&month=&peers=&kelompok=` — **kini di-cache** (P3-HYG-3). Kedua jalur (peer eksplisit + auto-compute ±10% band) dalam satu computeFn; extra {peers}.
 - `GET /api/item-peer-comparison?item=&month=&week=&outletCode=&area=&kelompok=&pic=` — Target outlet + peer outlets (BOM ±50% via `ABS(c.qtyBom) BETWEEN ABS(t.qtyBom)*0.5 AND *1.5`) + peer averages. Auto-selects worst outlet (ORDER BY ABS(nominalDeviasi) DESC LIMIT 1) when `outletCode` omitted. 5-min DB cache + SWR. Phase 2.
 - `GET /api/item-trend-rank?item=&week=&area=&kelompok=&outlet=&pic=` — Per-period national rank by `ABS(nominalDeviasi)` via `RANK() OVER (PARTITION BY monthLabel, weekLabel ORDER BY absNominal DESC)`. Week filter respected. 5-min DB cache + SWR. Phase 3.
-- `GET /api/flip-ranking?week=&month=&area=&kelompok=&outlet=&pic=&limit=` — Cross-item flip risk ranking. Scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY monthLabel, weekLabel, i.name. Risk score = `sempurnaCount*100 + dominanCount*40 + parsialCount*15` (sempurna = flip pair with disparity < 10%, dominan < 40%, parsial ≥ 40%). Risk level: `sempurnaCount>0 ? high : flipCount>0 ? moderate : low` (aligned FE+BE in BUG2-FLIP-05 fix). 5-min DB cache + SWR. Phase C.
+- `GET /api/flip-ranking?week=&month=&area=&kelompok=&outlet=&pic=&limit=` — Cross-item flip risk ranking. Scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY monthLabel, weekLabel, i.name. Risk score = `min(100, sempurnaCount*30 + flipCount*10)` (formula post-BUG2-FLIP-05 — sempurna = flip pair with disparity < 10%, dominan < 40%, parsial ≥ 40%). Risk level: `sempurnaCount>0 ? high : flipCount>0 ? moderate : low` (aligned FE+BE in BUG2-FLIP-05 fix). 5-min DB cache + SWR. Phase C.
 - `GET /api/flip-ranking/drilldown?item=&week=&month1=&month2=` — Per-outlet breakdown for ONE flip pair. Returns outlet × P1 QTY + P2 QTY + Δ QTY + Net + flip% (disparityPct = |net| / MAX(|P1|,|P2|) × 100). Sorted by flip% ASC (most balanced at top). Filtered to flip-only outlets. Satuan-aware (dynamic unit, not hardcoded `kg`). 5-min DB cache + SWR. Phase C.
 
 **20 cached routes** (19 pakai `withCacheAndDedup` SWR + `/api/analysis` pipeline bespoke dengan raw-JSON passthrough — P3-HYG-1):
@@ -345,7 +345,7 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
   - 🟡 **Dominan** — disparity 10-40% (one period dominates but other still significant)
   - 🔴 **Parsial** — disparity ≥ 40% (weakest flip signal)
 - Risk level (aligned FE+BE per BUG2-FLIP-05): `sempurnaCount>0 ? 'high' : flipCount>0 ? 'moderate' : 'low'`
-- Risk score (BE): `sempurnaCount*100 + dominanCount*40 + parsialCount*15`
+- Risk score (FE+BE identik): `min(100, sempurnaCount*30 + flipCount*10)` — formula baru hasil fix BUG2-FLIP-05 (commit 5489f9c; formula lama `sempurna*100 + dominan*40 + parsial*15` sudah tidak dipakai di mana pun)
 
 **3 implementation phases:**
 
