@@ -144,6 +144,23 @@
   }
 }
 
+/* UI-AUDIT (OPT-B): keyboard focus visibility for clickable table rows.
+   clickableRowProps (lib/a11y.ts) makes <tr> focusable (tabIndex=0,
+   role="button") so keyboard users can Tab onto data rows and activate
+   them with Enter/Space — but nothing ever PAINTED that focus: the base
+   `*` rule above only sets outline-COLOR (outline-ring/50), and an
+   outline with no style/width never renders (WCAG 2.4.7 Focus Visible).
+   Selector matches ONLY elements with an explicit role="button"
+   attribute — every such element comes from clickableRowProps; native
+   <button>s keep their own focus styling. :focus-visible only, so mouse
+   clicks stay clean. outline-offset -2px draws the ring INSIDE the row
+   box so it is never clipped by table scroll containers (max-h +
+   overflow-auto). */
+[role="button"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 /* Fix #13: Page transition animations */
 @keyframes fadeInUp {
   from {

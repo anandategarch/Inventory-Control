@@ -5,12 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { fmtIDR, fmtNum, fmtPctAbs, numberColor, formatByPreset } from '@/lib/format';
+import { fmtIDR, fmtPctAbs, numberColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
-import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { BarList, type BarListItem } from '@/components/dashboard/shared/BarList';
@@ -165,7 +165,6 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
 });
 
 export const TopOutlets = memo(function TopOutlets({ data }: { data: AnalysisData }) {
-  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
   const items = data.topOutlets || [];
   return (

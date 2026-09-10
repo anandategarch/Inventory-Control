@@ -283,7 +283,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
               {profile.historical.trend === 'DETERIORATING' && <TrendingUp className="h-4 w-4 text-red-600" />}
               {profile.historical.trend === 'IMPROVING' && <TrendingDown className="h-4 w-4 text-emerald-600" />}
               {profile.historical.trend === 'STABLE' && <Minus className="h-4 w-4 text-muted-foreground" />}
-              <span className={`font-semibold text-[11px] ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+              <span className={`font-semibold text-xs ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
                 {profile.historical.trend}
               </span>
             </div>
@@ -385,7 +385,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {currentRanking.map((r, idx) => (
+                    {currentRanking.map((r) => (
                       <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-xs py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
                         <TableCell className="text-xs py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
