@@ -132,6 +132,9 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
     queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
+    // PAKET E — Kontrol & Kepatuhan tab (same invalidation semantics:
+    // manual refresh must bypass the 5-min staleTime).
+    queryClient.invalidateQueries({ queryKey: ['compliance'] });
     toast({ title: '🔄 Data diperbarui' });
   }, [queryClient, toast]);
 

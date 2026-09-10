@@ -41,6 +41,7 @@ const RestoTab = lazy(() => import('@/components/dashboard/tabs/RestoTab').then(
 const PeerTab = lazy(() => import('@/components/dashboard/tabs/PeerTab').then(m => ({ default: m.PeerTab })));
 const ParetoTab = lazy(() => import('@/components/dashboard/tabs/ParetoTab').then(m => ({ default: m.ParetoTab })));
 const ItemTrendTab = lazy(() => import('@/components/dashboard/tabs/ItemTrendTab').then(m => ({ default: m.ItemTrendTab })));
+const ComplianceTab = lazy(() => import('@/components/dashboard/tabs/ComplianceTab').then(m => ({ default: m.ComplianceTab })));
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -50,7 +51,7 @@ import {
   EmptyState, LoadingState, ErrorState, ScrollToTop,
 } from '@/components/dashboard/shared';
 import {
-  Activity, BarChart3, Loader2, Store, TrendingDown, TrendingUp,
+  Activity, BarChart3, Loader2, ShieldCheck, Store, TrendingDown, TrendingUp,
 } from 'lucide-react';
 
 // ItemDeepDive — lazy-loaded (heavy). Custom spinner fallback.
@@ -201,6 +202,9 @@ export default function DashboardPage() {
               <TabsTrigger value="trend" className={tabTriggerClass}>
                 <TrendingUp className="h-3.5 w-3.5" /> Trend Item
               </TabsTrigger>
+              <TabsTrigger value="compliance" className={tabTriggerClass}>
+                <ShieldCheck className="h-3.5 w-3.5" /> Kepatuhan
+              </TabsTrigger>
             </TabsList>
 
             {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
@@ -235,6 +239,18 @@ export default function DashboardPage() {
             <TabsContent value="pareto" forceMount aria-label="Pareto tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <Suspense fallback={<TabSkeleton />}>
                 <ParetoTab data={analysis.data} />
+              </Suspense>
+            </TabsContent>
+
+            {/* ====== KEPATUHAN TAB (Kontrol & Kepatuhan — PAKET E) ====== */}
+            {/* Single fetch → 6 lenses from ONE period scan (see
+                queries/compliance.ts). Same keep-alive pattern as the
+                other tabs (forceMount + hidden when inactive). */}
+            <TabsContent value="compliance" forceMount aria-label="Kepatuhan tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+              <Suspense fallback={<TabSkeleton />}>
+                <ErrorBoundary label="Kepatuhan">
+                  <ComplianceTab />
+                </ErrorBoundary>
               </Suspense>
             </TabsContent>
 
