@@ -506,20 +506,23 @@ export function PeerComparison() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {/* STRUCTURAL (S-3, opsi b): plain table cells bumped
+                      text-[11px] → text-xs (12px floor). Badges + AnomalyFlags
+                      pills keep their own independent scale. */}
                   {/* Peer Average Row */}
                   {otherPeers.length > 0 && (
                     <TableRow className="border-b-2 border-foreground/20 bg-muted/50 dark:bg-zinc-900/50 font-medium">
-                      <TableCell className="text-[11px] font-bold sticky left-0 bg-muted/50 dark:bg-zinc-900/50 z-10">📊 Peer Avg</TableCell>
-                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
-                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
-                      <TableCell className="text-[11px] text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs font-bold sticky left-0 bg-muted/50 dark:bg-zinc-900/50 z-10">📊 Peer Avg</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">—</TableCell>
                       {columns.map(col => (
-                        <TableCell key={col.key} className="text-[11px] text-right text-muted-foreground font-mono tabular-nums">
+                        <TableCell key={col.key} className="text-xs text-right text-muted-foreground font-mono tabular-nums">
                           {col.format(peerAverages[col.key] as number)}
                         </TableCell>
                       ))}
-                      <TableCell className="text-[11px] text-center text-muted-foreground">—</TableCell>
-                      <TableCell className="text-[11px] text-center text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-center text-muted-foreground">—</TableCell>
+                      <TableCell className="text-xs text-center text-muted-foreground">—</TableCell>
                     </TableRow>
                   )}
                   {/* Outlet Rows */}
@@ -529,7 +532,7 @@ export function PeerComparison() {
                       className={`cursor-pointer hover:bg-muted/40 transition-colors ${p.isTarget ? 'bg-amber-50/60 dark:bg-amber-950/20 border-l-2 border-l-amber-500' : i % 2 === 1 ? 'bg-muted/20' : ''}`}
                       {...clickableRowProps(() => setFocusOutlet(p.outletCode))}
                     >
-                      <TableCell className="text-[11px] font-medium sticky left-0 bg-background z-10">
+                      <TableCell className="text-xs font-medium sticky left-0 bg-background z-10">
                         <div className="flex items-center gap-1.5">
                           {p.isTarget && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
                           <span className="truncate">{p.outletName}</span>
@@ -537,22 +540,22 @@ export function PeerComparison() {
                         {p.isTarget && <Badge variant="default" className="text-[11px] ml-3 h-4 bg-amber-600 hover:bg-amber-600 text-white">TARGET</Badge>}
                         <div className="text-xs text-muted-foreground">{p.outletCode}</div>
                       </TableCell>
-                      <TableCell className="text-[11px] text-muted-foreground">{p.area}</TableCell>
-                      <TableCell className="text-[11px] text-muted-foreground">{p.pic || '—'}</TableCell>
-                      <TableCell className="text-[11px] max-w-[160px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{p.area}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{p.pic || '—'}</TableCell>
+                      <TableCell className="text-xs max-w-[160px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
                       {columns.map(col => {
                         const val = p[col.key] as number;
                         const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, otherPeers.length, col.higherBetter) : '';
                         return (
-                          <TableCell key={col.key} className={`text-[11px] text-right font-mono tabular-nums ${colorClass}`}>
+                          <TableCell key={col.key} className={`text-xs text-right font-mono tabular-nums ${colorClass}`}>
                             {col.format(val)}
                           </TableCell>
                         );
                       })}
-                      <TableCell className={`text-[11px] text-center font-bold ${p.direction === 'LOSS' ? 'text-red-600 dark:text-red-400' : p.direction === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+                      <TableCell className={`text-xs text-center font-bold ${p.direction === 'LOSS' ? 'text-red-600 dark:text-red-400' : p.direction === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                         {p.direction?.[0] || '—'}
                       </TableCell>
-                      <TableCell className="text-[11px] text-center">
+                      <TableCell className="text-xs text-center">
                         <AnomalyFlags flags={computePeerAnomalyFlags(p, peerAverages)} textSize="11px" />
                       </TableCell>
                     </TableRow>

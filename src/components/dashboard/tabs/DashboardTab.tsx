@@ -61,6 +61,29 @@ export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabPro
         <ExecutiveSummary data={data} />
       </ErrorBoundary>
 
+      {/* Section: Top Items + Top Outlets
+          STRUCTURAL (S-1): moved up to position 2, right after ExecutiveSummary.
+          Workflow order is Monitor (KPI) → Detect (which items/outlets deviate
+          most) → supporting analysis. Previously this section sat at position 6
+          of 11, burying the primary "where do I start" lists 2–3 screens deep
+          behind recommendation/insight/chart context. Pure JSX reorder — no
+          logic, data, or component changes. */}
+      <section>
+        <SectionHeader
+          icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+          title="Item Prioritas & Top Resto"
+        />
+        {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
+            FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
+        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
+          <ErrorBoundary label="Top Items & Outlets">
+            <TopItemsByNominal data={data} />
+            <TopItemsByDevBom data={data} />
+            <TopOutlets data={data} />
+          </ErrorBoundary>
+        </div>
+      </section>
+
       {/* Section: Resto Recommendation Engine */}
       <ErrorBoundary label="Resto Prioritas Analisa">
         <RestoRecommendationCard />
@@ -93,23 +116,6 @@ export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabPro
         <ErrorBoundary label="Multi-Period Comparison">
           <MultiPeriodComparisonCard data={data} />
         </ErrorBoundary>
-      </section>
-
-      {/* Section: Top Items + Top Outlets */}
-      <section>
-        <SectionHeader
-          icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-          title="Item Prioritas & Top Resto"
-        />
-        {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
-            FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
-        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
-          <ErrorBoundary label="Top Items & Outlets">
-            <TopItemsByNominal data={data} />
-            <TopItemsByDevBom data={data} />
-            <TopOutlets data={data} />
-          </ErrorBoundary>
-        </div>
       </section>
 
       {/* Section: Area Comparison + Outlet Health Ranking */}

@@ -361,6 +361,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
 
             <TabsContent value={rankingTab} className="mt-3">
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto border rounded-lg">
+                {/* STRUCTURAL (S-3, opsi b): cells bumped text-[11px] → text-xs
+                    (12px readability floor). py-1.5 + font-mono kept on purpose —
+                    this 14-column ranking stays compact; declared deviation
+                    from the py-2 default (nested-detail density precedent). */}
                 <Table>
                   <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                     <TableRow className="border-b hover:bg-transparent">
@@ -383,26 +387,26 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                   <TableBody>
                     {currentRanking.map((r, idx) => (
                       <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all`} {...clickableRowProps(() => setSelectedItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
-                        <TableCell className="text-[11px] py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyDeviasi)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{fmtIDR(r.nominalLossSurplus)}</TableCell>
-                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${directionColor(r.direction)}`}>{r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">{r.residualRatio != null ? fmtPct(r.residualRatio) : '—'}</TableCell>
-                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${r.historicalTrend === '↑' ? 'text-red-600 dark:text-red-400' : r.historicalTrend === '↓' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>{r.historicalTrend}</TableCell>
-                        <TableCell className="text-[11px] py-1.5 text-right font-mono tabular-nums">
+                        <TableCell className="text-xs py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
+                        <TableCell className="text-xs py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyDeviasi)}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtIDR(r.nominalLossSurplus)}</TableCell>
+                        <TableCell className={`text-xs py-1.5 text-center font-bold ${directionColor(r.direction)}`}>{r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtySusut > 0 ? fmtNum(r.qtySusut) : '—'}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyTrial > 0 ? fmtNum(r.qtyTrial) : '—'}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{r.residualRatio != null ? fmtPct(r.residualRatio) : '—'}</TableCell>
+                        <TableCell className={`text-xs py-1.5 text-center font-bold ${r.historicalTrend === '↑' ? 'text-red-600 dark:text-red-400' : r.historicalTrend === '↓' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>{r.historicalTrend}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">
                           {r.areaMultiplier != null ? (
                             <span className={r.areaMultiplier > 1.5 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}>
                               {r.areaMultiplier.toFixed(1)}×
                             </span>
                           ) : '—'}
                         </TableCell>
-                        <TableCell className={`text-[11px] py-1.5 text-center font-bold ${priorityColor(r.priority)}`}>{r.priority}</TableCell>
+                        <TableCell className={`text-xs py-1.5 text-center font-bold ${priorityColor(r.priority)}`}>{r.priority}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

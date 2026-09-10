@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, memo, useMemo, useCallback } from 'react';
+import { useState, memo, useMemo, useCallback, Fragment } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -251,7 +251,7 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
   };
 
   return (
-    <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-2.5">
@@ -270,57 +270,69 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
         {drivers.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada item dengan |Dev/BOM| &gt; {(pareto?.thresholdPct ?? 0.50) * 100}% pada periode ini.</p>
         ) : (
-          <div className="max-h-[400px] overflow-auto">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1 sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm z-10">
-              <span className="w-5 shrink-0">#</span>
-              <span className="w-3 shrink-0"></span>
-              <span className="min-w-[120px] flex-1 shrink-0">Item</span>
-              <span className="w-16 text-right shrink-0">Dev/BOM</span>
-              <span className="w-24 text-right shrink-0">Nominal</span>
-              <span className="w-10 text-right shrink-0">%</span>
-              <span className="w-10 text-right shrink-0">Cum</span>
-            </div>
-            <div className="space-y-0.5">
-              {drivers.map((item, i) => {
-                const isExpanded = expandedItems.has(item.itemName);
-                return (
-                  <div key={`${item.itemName}-${i}`}>
-                    <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
-                      <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
-                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                      <span className="flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
-                      <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} out</span>
-                      <span className="w-16 text-right tabular-nums font-bold shrink-0 text-red-600 dark:text-red-400">{(item.devBomAbs * 100).toFixed(0)}%</span>
-                      <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
-                      <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
-                      <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
-                    </button>
-                    {isExpanded && item.outlets.length > 0 && (
-                      <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
-                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
-                          <span className="w-4 shrink-0"></span>
-                          <span className="min-w-[100px] flex-1 shrink-0">Outlet</span>
-                          <span className="w-16 text-right shrink-0">Dev/BOM</span>
-                          <span className="w-24 text-right shrink-0">Nominal</span>
-                          <span className="w-10 text-right shrink-0">%</span>
-                          <span className="w-10 text-right shrink-0">Cum</span>
-                        </div>
-                        {item.outlets.map((o, j) => (
-                          <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
-                            <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
-                            <span className="flex-1 truncate" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
-                            <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${numberColor(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</span>
-                            <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
-                            <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
-                            <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{o.cumPct.toFixed(0)}%</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+          // STRUCTURAL (S-2): rewritten from a hand-rolled flex-list (fixed-width
+          // spans + manual sticky pseudo-header) to the standard Table component
+          // with the unified density spec (text-xs cells, h-8 headers) — same
+          // data, same expand/collapse + drill-down interactions. Outlet rows
+          // align 1:1 with the main columns, so they render as flat nested
+          // table rows at the intentional denser detail density (py-1.5,
+          // text-[11px] — nested-detail pattern, same as AnomaliOutletExpansion).
+          <div className="overflow-x-auto max-h-[400px] overflow-y-auto border rounded-lg">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
+                <TableRow className="border-b hover:bg-transparent">
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 w-8 text-center">#</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3">Item</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">Dev/BOM</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">Nominal</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">%</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">Cum</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {drivers.map((item, i) => {
+                  const isExpanded = expandedItems.has(item.itemName);
+                  return (
+                    <Fragment key={`${item.itemName}-${i}`}>
+                      <TableRow
+                        className={`cursor-pointer hover:bg-muted/40 transition-colors ${isExpanded ? 'bg-muted/30' : ''}`}
+                        aria-expanded={isExpanded}
+                        {...clickableRowProps(() => toggleItem(item.itemName))}
+                      >
+                        <TableCell className="text-xs px-3 py-2 text-center font-medium tabular-nums text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="text-xs px-3 py-2">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                            <span className="truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                            <span className="text-[10px] text-muted-foreground shrink-0">{item.outletCount} out</span>
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-xs px-3 py-2 text-right font-bold tabular-nums text-red-600 dark:text-red-400">{(item.devBomAbs * 100).toFixed(0)}%</TableCell>
+                        <TableCell className={`text-xs px-3 py-2 text-right font-medium tabular-nums ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</TableCell>
+                        <TableCell className="text-xs px-3 py-2 text-right text-muted-foreground tabular-nums">{item.sharePct.toFixed(0)}%</TableCell>
+                        <TableCell className="text-xs px-3 py-2 text-right text-muted-foreground/60 tabular-nums">{item.cumPct.toFixed(0)}%</TableCell>
+                      </TableRow>
+                      {isExpanded && item.outlets.length > 0 && item.outlets.map((o, j) => (
+                        <TableRow
+                          key={`${o.outletCode}-${j}`}
+                          className="cursor-pointer bg-muted/20 hover:bg-muted/40 transition-colors"
+                          {...clickableRowProps(() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName }))}
+                        >
+                          <TableCell className="text-[11px] px-3 py-1.5 text-center tabular-nums text-muted-foreground/60">{j + 1}</TableCell>
+                          <TableCell className="text-[11px] px-3 py-1.5 pl-9">
+                            <span className="block truncate max-w-[200px]" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
+                          </TableCell>
+                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-bold tabular-nums ${numberColor(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</TableCell>
+                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-medium tabular-nums ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
+                          <TableCell className="text-[11px] px-3 py-1.5 text-right text-muted-foreground tabular-nums">{o.sharePct.toFixed(0)}%</TableCell>
+                          <TableCell className="text-[11px] px-3 py-1.5 text-right text-muted-foreground/60 tabular-nums">{o.cumPct.toFixed(0)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         )}
       </CardContent>
@@ -375,7 +387,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
   };
 
   return (
-    <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-2.5">
@@ -392,58 +404,91 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
         {itemGaps.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Tidak ada data rank untuk periode ini.</p>
         ) : (
-          <div className="max-h-[400px] overflow-auto">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1 sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm z-10">
-              <span className="w-5 shrink-0">#</span>
-              <span className="w-3 shrink-0"></span>
-              <span className="min-w-[120px] flex-1 shrink-0">Item</span>
-              <span className="w-16 text-right shrink-0">Avg Gap</span>
-              <span className="w-10 text-right shrink-0">Outlets</span>
-            </div>
-            <div className="space-y-0.5">
-              {itemGaps.map((item, i) => {
-                const isExpanded = expandedItems.has(item.itemName);
-                const gap = Math.round(item.avgGap);
-                const isQtyDriven = gap > 0;
-                const isPriceDriven = gap < 0;
-                return (
-                  <div key={`${item.itemName}-${i}`}>
-                    <button onClick={() => toggleItem(item.itemName)} aria-expanded={isExpanded} className="w-full flex items-center gap-2 text-xs py-1.5 px-2 rounded-md hover:bg-muted/40 transition-colors text-left">
-                      <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
-                      {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                      <span className="flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
-                      <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${isQtyDriven ? 'text-red-600 dark:text-red-400' : isPriceDriven ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{gap > 0 ? `+${gap}` : gap}</span>
-                      <span className="w-10 text-right text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount}</span>
-                    </button>
-                    {isExpanded && item.sortedOutlets.length > 0 && (
-                      <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
-                        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
-                          <span className="w-4 shrink-0"></span>
-                          <span className="min-w-[80px] flex-1 shrink-0">Outlet</span>
-                          <span className="w-12 text-center shrink-0">Rank N</span>
-                          <span className="w-12 text-center shrink-0">Rank B</span>
-                          <span className="w-12 text-center shrink-0">Gap</span>
-                          <span className="w-24 text-right shrink-0">Nominal</span>
-                        </div>
-                        {item.sortedOutlets.map((o, j) => {
-                          const oGap = o.rankBom - o.rankNominal;
-                          return (
-                            <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">
-                              <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
-                            <span className="flex-1 truncate" title={o.outletCode}>{o.outletCode}</span>
-                              <span className="w-12 text-center tabular-nums shrink-0">{o.rankNominal}</span>
-                              <span className="w-12 text-center tabular-nums shrink-0">{o.rankBom}</span>
-                              <span className={`w-12 text-center tabular-nums font-bold shrink-0 ${oGap > 0 ? 'text-red-600 dark:text-red-400' : oGap < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{oGap > 0 ? `+${oGap}` : oGap}</span>
-                              <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+          // STRUCTURAL (S-2): rewritten from a hand-rolled flex-list to the
+          // standard Table component (same spec as ParetoDevBomCard above).
+          // The outlet detail has a different column set than the main rows,
+          // so the expansion follows the AnomaliOutletExpansion pattern: a
+          // colSpan row containing a nested table at the intentional denser
+          // detail density (text-[10px] h-7 headers, py-1.5 cells).
+          <div className="overflow-x-auto max-h-[400px] overflow-y-auto border rounded-lg">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
+                <TableRow className="border-b hover:bg-transparent">
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 w-8 text-center">#</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3">Item</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">Avg Gap</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-8 px-3 text-right">Outlets</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {itemGaps.map((item, i) => {
+                  const isExpanded = expandedItems.has(item.itemName);
+                  const gap = Math.round(item.avgGap);
+                  const isQtyDriven = gap > 0;
+                  const isPriceDriven = gap < 0;
+                  return (
+                    <Fragment key={`${item.itemName}-${i}`}>
+                      <TableRow
+                        className={`cursor-pointer hover:bg-muted/40 transition-colors ${isExpanded ? 'bg-muted/30' : ''}`}
+                        aria-expanded={isExpanded}
+                        {...clickableRowProps(() => toggleItem(item.itemName))}
+                      >
+                        <TableCell className="text-xs px-3 py-2 text-center font-medium tabular-nums text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="text-xs px-3 py-2">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                            <span className="truncate font-medium" title={item.itemName}>{item.itemName}</span>
+                          </span>
+                        </TableCell>
+                        <TableCell className={`text-xs px-3 py-2 text-right font-bold tabular-nums ${isQtyDriven ? 'text-red-600 dark:text-red-400' : isPriceDriven ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{gap > 0 ? `+${gap}` : gap}</TableCell>
+                        <TableCell className="text-xs px-3 py-2 text-right text-muted-foreground tabular-nums">{item.outletCount}</TableCell>
+                      </TableRow>
+                      {isExpanded && item.sortedOutlets.length > 0 && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={4} className="p-0">
+                            <div className="bg-muted/20 border-t border-border/40 px-3 py-2">
+                              <div className="max-h-48 overflow-auto rounded-md border border-border/40 bg-background/60">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="text-[10px] h-7 px-2 w-8 text-center">#</TableHead>
+                                      <TableHead className="text-[10px] h-7 px-2">Outlet</TableHead>
+                                      <TableHead className="text-center text-[10px] h-7 px-2">Rank N</TableHead>
+                                      <TableHead className="text-center text-[10px] h-7 px-2">Rank B</TableHead>
+                                      <TableHead className="text-center text-[10px] h-7 px-2">Gap</TableHead>
+                                      <TableHead className="text-right text-[10px] h-7 px-2">Nominal</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {item.sortedOutlets.map((o, j) => {
+                                      const oGap = o.rankBom - o.rankNominal;
+                                      return (
+                                        <TableRow
+                                          key={`${o.outletCode}-${j}`}
+                                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                                          {...clickableRowProps(() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName }))}
+                                        >
+                                          <TableCell className="text-[11px] px-2 py-1.5 text-center tabular-nums text-muted-foreground/60">{j + 1}</TableCell>
+                                          <TableCell className="text-[11px] px-2 py-1.5 font-medium" title={o.outletCode}>{o.outletCode}</TableCell>
+                                          <TableCell className="text-[11px] px-2 py-1.5 text-center tabular-nums">{o.rankNominal}</TableCell>
+                                          <TableCell className="text-[11px] px-2 py-1.5 text-center tabular-nums">{o.rankBom}</TableCell>
+                                          <TableCell className={`text-[11px] px-2 py-1.5 text-center font-bold tabular-nums ${oGap > 0 ? 'text-red-600 dark:text-red-400' : oGap < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{oGap > 0 ? `+${oGap}` : oGap}</TableCell>
+                                          <TableCell className={`text-[11px] px-2 py-1.5 text-right font-medium tabular-nums ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         )}
       </CardContent>

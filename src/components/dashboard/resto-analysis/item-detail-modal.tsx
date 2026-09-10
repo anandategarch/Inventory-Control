@@ -98,37 +98,39 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
               <CardHeader className="pb-2"><CardTitle className="text-sm">Historical Timeline</CardTitle></CardHeader>
               <CardContent>
                 <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
+                  {/* STRUCTURAL (S-3, opsi b): same density policy as Bahan
+                      Analysis — text-xs, py-1.5 + font-mono kept. */}
                   <Table>
                     <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                       <TableRow>
-                        <TableHead className="text-[11px] h-8">Periode</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">BOM</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">Deviasi</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">Dev/BOM</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">Nominal</TableHead>
-                        <TableHead className="text-[11px] h-8 text-center">Dir</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">W</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">S</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">T</TableHead>
-                        <TableHead className="text-[11px] h-8 text-right">Resid%</TableHead>
+                        <TableHead className="text-xs h-8">Periode</TableHead>
+                        <TableHead className="text-xs h-8 text-right">BOM</TableHead>
+                        <TableHead className="text-xs h-8 text-right">Deviasi</TableHead>
+                        <TableHead className="text-xs h-8 text-right">Dev/BOM</TableHead>
+                        <TableHead className="text-xs h-8 text-right">Nominal</TableHead>
+                        <TableHead className="text-xs h-8 text-center">Dir</TableHead>
+                        <TableHead className="text-xs h-8 text-right">W</TableHead>
+                        <TableHead className="text-xs h-8 text-right">S</TableHead>
+                        <TableHead className="text-xs h-8 text-right">T</TableHead>
+                        <TableHead className="text-xs h-8 text-right">Resid%</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {data.timeline?.map((t: ItemHistoryTimelineRow, i: number) => (
                         <TableRow key={i} className={t.isCurrent ? 'bg-primary/5 font-semibold' : ''}>
-                          <TableCell className="text-[11px] py-1.5 whitespace-nowrap">
+                          <TableCell className="text-xs py-1.5 whitespace-nowrap">
                             {t.weekLabel} {t.monthLabel?.split(' ')[0]?.slice(0, 3)}
-                            {t.isCurrent && <span className="ml-1 text-[11px] text-primary">●</span>}
+                            {t.isCurrent && <span className="ml-1 text-xs text-primary">●</span>}
                           </TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(t.qtyBom)}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtNum(t.qtyDeviasi)}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono text-red-600">{fmtPct(t.devBom)}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtIDR(t.nominalLossSurplus)}</TableCell>
-                          <TableCell className={`text-[11px] py-1.5 text-center ${directionColor(t.direction)}`}>{t.direction === 'LOSS' ? 'L' : t.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{t.qtyWaste > 0 ? fmtNum(t.qtyWaste) : '—'}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{t.qtySusut > 0 ? fmtNum(t.qtySusut) : '—'}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono text-muted-foreground">{t.qtyTrial > 0 ? fmtNum(t.qtyTrial) : '—'}</TableCell>
-                          <TableCell className="text-[11px] py-1.5 text-right font-mono">{fmtPct(t.residualRatio)}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono">{fmtNum(t.qtyBom)}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono">{fmtNum(t.qtyDeviasi)}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono text-red-600">{fmtPct(t.devBom)}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono">{fmtIDR(t.nominalLossSurplus)}</TableCell>
+                          <TableCell className={`text-xs py-1.5 text-center ${directionColor(t.direction)}`}>{t.direction === 'LOSS' ? 'L' : t.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground">{t.qtyWaste > 0 ? fmtNum(t.qtyWaste) : '—'}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground">{t.qtySusut > 0 ? fmtNum(t.qtySusut) : '—'}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground">{t.qtyTrial > 0 ? fmtNum(t.qtyTrial) : '—'}</TableCell>
+                          <TableCell className="text-xs py-1.5 text-right font-mono">{fmtPct(t.residualRatio)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
