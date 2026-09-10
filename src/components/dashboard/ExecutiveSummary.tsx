@@ -56,16 +56,9 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
 //  The previous implementation caused negative KPI values in React Strict
 //  Mode (dev) due to timing issues with rAF + microtask setHasAnimated.
 //  This was the root cause of the "dashboard angka 0 semua" report.
-//  KPI values now display instantly — no animation, no timing bugs.
+//  KPI values display instantly. (Task W: the leftover pass-through
+//  useCountUp stub + AnimatedValue wrapper were removed as dead code.)
 // ============================================================
-function useCountUp(target: number | null, _duration = 500): number | null {
-  return target;
-}
-
-function AnimatedValue({ value, format }: { value: number | null; format: (v: number | null) => string }) {
-  const animated = useCountUp(value);
-  return <>{format(animated)}</>;
-}
 
 interface KPI {
   label: string;
@@ -80,7 +73,6 @@ interface KPI {
 }
 
 const KPICard = memo(function KPICard({ label, value, unit, growth, previous, inverse, hint, tooltip, accent }: KPI) {
-  const animatedValue = useCountUp(value);
   const growthStr = growth != null ? fmtPct(growth) : null;
   const Icon = growth == null ? Minus : growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
   // FIX (PATTERN-2): delegate pill color to TargetComparison's color logic.
@@ -165,7 +157,7 @@ const KPICard = memo(function KPICard({ label, value, unit, growth, previous, in
           )}
         </div>
         <p className="mt-1.5 text-2xl font-bold tracking-tight tabular-nums @[250px]/card:text-3xl">
-          {unit === 'IDR' ? fmtIDR(animatedValue) : fmtNum(animatedValue, unit || '')}
+          {unit === 'IDR' ? fmtIDR(value) : fmtNum(value, unit || '')}
         </p>
         {previous != null && (
           <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums @[250px]/card:text-xs">
@@ -240,7 +232,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
               </div>
               <TrendingDown className="h-3.5 w-3.5 text-red-500/70" />
             </div>
-            <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalLoss} format={fmtIDR} /></p>
+            <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5">{fmtIDR(s.totalLoss)}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
           </CardContent>
         </Card>
@@ -254,7 +246,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
               </div>
               <TrendingUp className="h-3.5 w-3.5 text-emerald-500/70" />
             </div>
-            <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5"><AnimatedValue value={s.totalSurplus} format={fmtIDR} /></p>
+            <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">{fmtIDR(s.totalSurplus)}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
           </CardContent>
         </Card>
@@ -268,7 +260,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
               </div>
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500/70" />
             </div>
-            <p className="text-lg font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5"><AnimatedValue value={s.residualLossQty} format={(v) => fmtNum(v, '')} /></p>
+            <p className="text-lg font-bold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5">{fmtNum(s.residualLossQty, '')}</p>
             <p className="text-xs text-muted-foreground mt-0.5"><span className="font-medium tabular-nums">{fmtPct(s.residualLossPct, false)}</span> of deviation</p>
           </CardContent>
         </Card>
@@ -282,7 +274,7 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
               </div>
               <BarChart3 className="h-3.5 w-3.5 text-muted-foreground/70" />
             </div>
-            <p className="text-lg font-bold tabular-nums mt-0.5"><AnimatedValue value={s.deviationToBom} format={(v) => fmtPct(v, false)} /></p>
+            <p className="text-lg font-bold tabular-nums mt-0.5">{fmtPct(s.deviationToBom, false)}</p>
             <p className="text-xs text-muted-foreground mt-0.5">normalized ratio</p>
           </CardContent>
         </Card>

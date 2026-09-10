@@ -12,8 +12,7 @@
 //  for outlets where ALL items are zero-dev, but those are rare and
 //  irrelevant for systemic-pattern detection.
 // ============================================================
-import { detectPatterns } from '@/engine/analysis/analysis';
-import type { AnalysisOutlet, AnalysisArea } from '@/engine/analysis';
+import { detectPatterns, type AnalysisOutlet, type AnalysisArea } from '@/engine/analysis';
 
 /**
  * Sub-step 6 — pattern detection (systemic/area-level/network-wide).

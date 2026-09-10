@@ -330,8 +330,6 @@ export interface AnalysisData {
   // NEW: 80% Pareto per deviation category — powers Deviation Breakdown drill-down
   deviationDrivers?: DeviationDriverCategory[];
   lossVsSurplus: { loss: number; surplus: number; lossNominal: number; surplusNominal: number };
-  // FIX: removed investigationWorklist (dead field — not consumed by any component)
-  // investigationWorklist: InvestigationItem[];
   trend: Array<{ weekLabel: string; devBom: number; sales: number; nominal: number }>;
   // Extended analytical fields (computed server-side, optional for backward compat)
   areaAnalysis?: AreaAnalysis[];

@@ -142,8 +142,6 @@ export function assembleResponse(
     topDeviasiRank,
     deviationBreakdown: breakdown,
     lossVsSurplus: lvs,
-    // FIX: removed investigationWorklist (56KB dead field — never consumed by frontend)
-    // investigationWorklist: worklist,
     trend,
     // Extended analytics (Task 5)
     areaAnalysis,

@@ -17,7 +17,7 @@ import type { AnalysisOutlet } from '@/engine/analysis';
 import type { buildTrend, buildNetCostTrend } from './trend-builder';
 import type { computeDeviationDrivers } from './deviation-drivers';
 import type { projectTrend } from '@/lib/metrics';
-import type { detectPatterns } from '@/engine/analysis/analysis';
+import type { detectPatterns } from '@/engine/analysis';
 import type { HistoricalAnalysisResult } from './post-process-historical';
 
 // ============================================================

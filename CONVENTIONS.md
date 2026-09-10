@@ -345,7 +345,7 @@ Conventions:
 ## 6. Rule Definition Conventions
 
 Rules live in one place:
-1. `src/config/rules.yaml` — **sole source of truth** (DSL: comparison + logical + arithmetic operators). The previous `src/config/rules.ts` TS mirror was deleted as dead code in FIX-DOCS (was never imported at runtime).
+1. `src/config/rules.yaml` — **sole source of truth** untuk DEFINISI rule (DSL: comparison + logical + arithmetic operators). The previous `src/config/rules.ts` TS mirror was deleted as dead code in FIX-DOCS (was never imported at runtime); the legacy JS evaluator (`src/engine/rules/`) was likewise deleted as dead code in Task W (zero production callers since the SQL migration) — the yaml is now **spec-only documentation**.
 
 The SQL push-down evaluator (`src/lib/queries/rule-evaluation.ts`) is the active evaluator on `/api/analysis` and `/api/export-report`. It hardcodes a `CASE WHEN` column per rule and a `RULE_MAP` entry that maps the column name → rule code + severity + category + priority. **Both must be updated together when adding a rule.**
 
@@ -393,15 +393,16 @@ The 4 BOM Correlation rules (`WASTE_BOM_MISMATCH`, `SUSUT_BOM_MISMATCH`, `TRIAL_
 
 ### 6.4 SQL vs JS Evaluator Patterns
 
-The codebase has TWO rule evaluators — they serve different routes and must stay in sync on rule semantics:
+Rule evaluation lives in ONE file (`src/lib/queries/rule-evaluation.ts`) with two stages — they must stay in sync on rule semantics:
 
-| Evaluator | File | Routes | Rule count | Notes |
+| Stage | Function | Routes | Rule count | Notes |
 |-----------|------|--------|------------|-------|
-| SQL push-down | `src/lib/queries/rule-evaluation.ts` (`evaluateRulesSql`) | `/api/analysis`, `/api/export-report` | 16 (all non-zScore) | Single SQL query; runs in ~2–3s for 35K records. **Active path.** |
-| JS post-process | `src/lib/queries/rule-evaluation.ts` (`evaluateHistoricalRulesJs`) | same | 3 (zScore-based) | Uses `historicalByOutletItem` Map; runs in JS after the SQL eval. (BENCHMARK_ABOVE_AREA/NETWORK removed in FIX-RULE-CONFIG CONFIG-05.) |
-| Legacy JS | `src/engine/rules/evaluator.ts` | `/api/item-history`, `/api/outlet-items` | 15 (no BOM Correlation, no BENCHMARK) | Older single-record evaluator; not updated with BOM Correlation rules. |
+| SQL push-down | `evaluateRulesSql` | `/api/analysis`, `/api/export-report` | 16 (all non-zScore) | Single SQL query; runs in ~2–3s for 35K records. **Active path.** |
+| JS post-process | `evaluateHistoricalRulesJs` (same file) | same | 3 (zScore-based) | Uses `historicalByOutletItem` Map; runs in JS after the SQL eval. (BENCHMARK_ABOVE_AREA/NETWORK removed in FIX-RULE-CONFIG CONFIG-05.) |
 
-When adding a rule, prefer the **SQL push-down** path (Stage 1) unless the rule needs historical stats. Update `RULE_MAP` in `rule-evaluation.ts` and add the corresponding `CASE WHEN` column. Do NOT add the rule to `src/engine/rules/evaluator.ts` unless the `/api/item-history` route needs it — and if you do, document the divergence in a comment.
+The legacy per-record JS evaluator (`src/engine/rules/evaluator.ts` + its 455-line test) was deleted in Task W — it had zero production callers since the SQL migration (item-history/outlet-items never used it; doc claims to the contrary were stale). `rules.yaml` remains as the declarative spec.
+
+When adding a rule, use the **SQL push-down** path (Stage 1) unless the rule needs historical stats. Update `RULE_MAP` in `rule-evaluation.ts` and add the corresponding `CASE WHEN` column, plus append the rule to `rules.yaml` so the spec stays in sync.
 
 ## 7. Heatmap Conventions
 

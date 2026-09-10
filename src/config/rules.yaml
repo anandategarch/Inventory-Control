@@ -1,10 +1,16 @@
 # ============================================================
 #  ATURAN ANOMALI — Inventory Control Intelligence Platform
 #  ----------------------------------------------------------
-#  Edit/tambah aturan di sini tanpa menyentuh kode engine.
-#  Engine mengevaluasi setiap aturan terhadap setiap record (outlet, item, week).
+#  SPEC ONLY (Task W / dead-code cleanup): file ini adalah SPESIFIKASI
+#  deklaratif 19 aturan anomaly — dokumentasi satu-satunya definisi rule.
+#  Eksekusi aktual ada di src/lib/queries/rule-evaluation.ts
+#  (16 rule via SQL push-down + 3 rule zScore via evaluateHistoricalRulesJs).
+#  Legacy JS evaluator (src/engine/rules/) dihapus — tidak ada pemanggil
+#  produksi sejak migrasi SQL. Saat menambah/mengubah aturan: update file
+#  ini (dokumentasi spec) DAN rule-evaluation.ts (implementasi) — keduanya
+#  WAJIB sinkron (lihat CONVENTIONS.md §9.2).
 #
-#  Condition DSL (mirip JSON):
+#  Condition DSL (mirip JSON) — referensi semantik kondisi tiap rule:
 #    - Comparison: { field: { op: value } }
 #      ops: gt, gte, lt, lte, eq, neq, between, in, is_null, not_null
 #    - Logical:  { all: [...] }  /  { any: [...] }

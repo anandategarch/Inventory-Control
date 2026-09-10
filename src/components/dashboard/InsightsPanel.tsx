@@ -85,7 +85,6 @@ function buildInsights(data: AnalysisData): Insight[] {
       severity: 'critical',
       title: 'Kondisi Inventory KRITIS',
       body: `${abnormalPct.toFixed(1)}% record abnormal (>20%). ${hs.abnormal.toLocaleString()} dari ${total.toLocaleString()} record memerlukan investigasi segera.`,
-      action: 'Buka Investigation Worklist',
     });
   } else if (abnormalPct > 5) {
     out.push({

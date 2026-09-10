@@ -1,19 +1,19 @@
 // ============================================================
 //  Analysis Engine — Barrel Export
 //  --------------------------------------------------------
-//  All functions split into services:
-//  - ruleService.ts      (buildRuleContext, recommendAction)
+//  Services:
 //  - patternEngine.ts    (cross-outlet pattern detection)
-//  - rootCauseEngine.ts  (ruleCode → root causes + recommended actions)
 //  - types.ts            (shared types)
 //
-//  FIX (BUG2-P0-2): Removed insightEngine.ts (dead code — generateExecutiveInsights
-//  was never called by any active route or component. Referenced investigationWorklist
-//  field which was removed from AnalysisData type.)
-//  DC-01: Removed rankingService.ts (dead code — 5 functions replaced by SQL
-//  equivalents in src/lib/queries/health-ranking.ts, never removed from JS).
+//  Removed as dead code (see git history):
+//  - insightEngine.ts (BUG2-P0-2), rankingService.ts (DC-01)
+//  - DC-02 (Task W): ruleService.ts (buildRuleContext + recommendAction —
+//    zero callers since the rule loop moved to SQL push-down in
+//    src/lib/queries/rule-evaluation.ts), rootCauseEngine.ts +
+//    rootCauseMappings.ts (~500 LOC, never imported outside the engine),
+//    and the whole src/engine/rules/ JS evaluator subtree.
+//    src/config/rules.yaml remains as the declarative rule SPEC only.
 // ============================================================
-export { buildRuleContext, recommendAction } from './ruleService';
 export {
   detectPatterns,
   type AnalysisData,
@@ -22,15 +22,4 @@ export {
   type AnalysisOutlet,
   type PatternDetection,
 } from './patternEngine';
-export {
-  getRootCauses,
-  getRootCause,
-  listKnownRuleCodes,
-  ROOT_CAUSE_MAPPINGS,
-} from './rootCauseEngine';
-export type {
-  RootCauseMapping,
-  RootCauseSeverity,
-  RootCauseCategory,
-} from './rootCauseEngine';
 export type { RecWithRels } from './types';

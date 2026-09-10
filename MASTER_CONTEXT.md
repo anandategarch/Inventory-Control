@@ -272,10 +272,10 @@ Deviation is decomposed into 4 categories for root cause identification:
 ## 6. Key Features
 
 ### Anomaly Engine
-- **19-rule engine** (15 original + 4 BOM correlation, YAML-configured, SQL-pushed evaluator)
+- **19-rule engine** (15 original + 4 BOM correlation; spec deklaratif di `rules.yaml`, eksekusi SQL push-down)
 - Rules defined in `src/config/rules.yaml` (sole source of truth — `src/config/rules.ts` was deleted as dead code in FIX-DOCS)
 - Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` (16 rules) + JS post-process for zScore-based rules (3 rules: HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
-- Analysis modules: `patternEngine`, `rootCauseEngine`, `ruleService`. The `ROOT_CAUSE_MAPPINGS` table in `rootCauseEngine.ts` now includes 4 BOM correlation rule mappings (WASTE_BOM_MISMATCH, SUSUT_BOM_MISMATCH, TRIAL_BOM_MISMATCH, BOM_DEVIATION_DISPROPORTIONATE); the 2 BENCHMARK mappings were removed alongside the rule deletions.
+- Analysis module: `patternEngine` (cross-outlet pattern detection). `rootCauseEngine` + `ruleService` dihapus sebagai dead code (Task W) — seluruh evaluasi rule berjalan via SQL di `rule-evaluation.ts`; teks rekomendasi yang hidup ada di InsightsPanel + resto-recommendations.
 
 ### 19 Anomaly Rules
 
@@ -507,9 +507,9 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 57,861 (was 52,661 — +5,200 LOC dari session AUDIT-INTENSIF: tab Kepatuhan 11 lensa + AUDIT-REPORT + audit fixes + upload/delete perf) |
-| Test files | 22 |
-| Test cases | 438 |
+| Lines of code in `src/` | 56,786 (Task W: −1.709 baris dead code — JS evaluator + ruleService + rootCauseEngine dihapus) |
+| Test files | 21 |
+| Test cases | 402 |
 | Git commits | 506 |
 | npm dependencies | 31 |
 | API routes (main) | 35 (was 27 — ADDED compliance + chronic-outlets + peer-comparison/items + peer-comparison/trend + item-anomali-outlets; flip-ranking ×2) |
@@ -601,11 +601,10 @@ src/
 │   ├── rate-limit.ts               # In-memory rate limiter
 │   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)
 ├── engine/
-│   ├── rules/evaluator.ts          # Legacy JS rule evaluator (used by item-history, outlet-items)
-│   └── analysis/                   # patternEngine, rootCauseEngine, ruleService
+│   └── analysis/                   # patternEngine + shared types (ruleService/rootCause/engine-rules dihapus Task W — dead code)
 ├── lib/queries/rule-evaluation.ts  # 19-rule SQL push-down evaluator (16 SQL + 3 JS post-process)
 ├── config/
-│   └── rules.yaml                  # 19 anomaly rules definition (sole source of truth)
+│   └── rules.yaml                  # 19 anomaly rules — SPEC deklaratif (eksekusi = rule-evaluation.ts)
 └── middleware.ts                   # Auth (ADMIN_TOKEN, PROTECTED_PATHS)
 
 .githooks/

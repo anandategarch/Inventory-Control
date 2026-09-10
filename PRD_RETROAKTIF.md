@@ -282,7 +282,7 @@ Open Pengaturan dialog (gear icon)
 
 ### 5.1 The 19 anomaly detection rules
 
-Source of truth: `src/config/rules.yaml` (sole source of truth — the previous `src/config/rules.ts` TS mirror was deleted as dead code in FIX-DOCS). SQL evaluator: `src/lib/queries/rule-evaluation.ts` (16 rules evaluated in SQL push-down) + JS post-process (`evaluateHistoricalRulesJs`) for the 3 zScore-based rules. Each rule has a **severity** (`NORMAL` / `WARNING` / `ABNORMAL`) and a **priority** (higher = more important, used for tie-break in Priority Summary).
+Source of truth: `src/config/rules.yaml` (sole source of truth untuk DEFINISI rule — spec-only sejak Task W: legacy JS evaluator dihapus sebagai dead code, eksekusi 100% di `rule-evaluation.ts`). SQL evaluator: `src/lib/queries/rule-evaluation.ts` (16 rules evaluated in SQL push-down) + JS post-process (`evaluateHistoricalRulesJs`) for the 3 zScore-based rules. Each rule has a **severity** (`NORMAL` / `WARNING` / `ABNORMAL`) and a **priority** (higher = more important, used for tie-break in Priority Summary).
 
 | # | Code | Category | Severity | Priority | Trigger |
 |---|------|----------|----------|----------|---------|
@@ -956,7 +956,7 @@ from this product. They belong to other systems (POS, ERP, recipe management, HA
 | `MASTER_CONTEXT.md` | Architecture, DB schema, API surface, rule DSL, audit history. **Read first** for any code change. |
 | `CONVENTIONS.md` | Code conventions (API route pattern, cache pattern, component pattern, rule DSL, performance + git conventions). Read before writing any new code. |
 | `worklog.md` | Full chronological task history (every agent run, every fix). Search by Task ID. |
-| `src/config/rules.yaml` | The 19 anomaly rules (15 original + 4 BOM correlation) — edit here to add/tune rules without touching engine code. Sole source of truth (legacy `rules.ts` mirror deleted). |
+| `src/config/rules.yaml` | The 19 anomaly rules (15 original + 4 BOM correlation) — SPESIFIKASI deklaratif / sole source of truth definisi rule. Eksekusi ada di `rule-evaluation.ts` — saat add/tune rule, update keduanya (legacy `rules.ts` mirror + JS evaluator dihapus sebagai dead code). |
 | `src/lib/settings.ts` | The 43 runtime thresholds — defaults + descriptions. |
 | `src/lib/metrics/definitions.ts` | Single source of truth for metric formulas (Dev/BOM, Z-Score, Health Score, Priority, Direction, Three-Layer). |
 | `src/config/thresholds.ts` | Static default thresholds (overridden at runtime by `Setting` table). |

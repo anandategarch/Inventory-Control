@@ -6,8 +6,7 @@
 //  results from export-report route) — structurally compatible.
 //
 //  Field list verified by grepping every `curr.*` / `prev.*` / `rec.*`
-//  access in src/engine/analysis/{ruleService,rankingService}.ts plus the
-//  analysis route's rule-eval loop.
+//  access in patternEngine.ts plus fetch-records.ts's select shape.
 // ============================================================
 import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 
@@ -18,8 +17,8 @@ import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
 export type RecWithRelsFull = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
 
 /**
- * Slim record shape — only fields the rule engine + downstream
- * computations (variance / health-ranking / historical / worklist) read.
+ * Slim record shape — only fields patternEngine + downstream
+ * computations (variance / health-ranking / historical) read.
  * Switching the analysis route's findMany from `include` to `select` with
  * this exact field set avoids transferring ~10 unused columns per row
  * (id, sourceFileId, weekId, status, satuan, qtyCom, nominalWaste/Susut/Trial,
@@ -32,7 +31,7 @@ export type RecWithRels = {
   itemId: number;
   akunPenyesuaian: string | null;
 
-  // Raw qty columns read by ruleService.buildRuleContext + rankingService
+  // Raw qty columns read by patternEngine + post-process consumers
   qtyBom: number | null;
   qtyDeviasi: number | null;
   qtyWaste: number | null;
@@ -58,7 +57,7 @@ export type RecWithRels = {
   residualQty: number | null;
   residualRatio: number | null;
 
-  // Denormalized area (used by ranking/variance/worklist/historical)
+  // Denormalized area (used by pattern detection / variance / historical)
   area: string;
 
   // Relations — only the fields actually accessed

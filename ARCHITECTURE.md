@@ -119,7 +119,7 @@ This pattern appears in:
 
 ### 3.3 Rule Evaluation Architecture (19 Rules)
 
-Rules are split across two evaluators for performance. See `src/lib/queries/rule-evaluation.ts`.
+Rules are evaluated in two stages for performance. See `src/lib/queries/rule-evaluation.ts`.
 
 **Two-stage evaluation:**
 
@@ -623,7 +623,7 @@ Implementation: `src/lib/rate-limit.ts` — sliding window, Map-based, no extern
 
 ### 8.3 Test Distribution
 
-**22 test files**, **438 test cases**, focused on:
+**21 test files**, **402 test cases**, focused on:
 
 | Area                          | Files | Approach                                                              |
 | ----------------------------- | ----- | --------------------------------------------------------------------- |
@@ -887,8 +887,7 @@ src/
 │   │       └── global-search.ts          # queryItemAutocomplete (cross-outlet + trend functions removed with GlobalItemSearchModal)
 │   └── format.ts                          # fmtNum / fmtIDR / fmtPctAbs / fmtHeatmapCompact
 ├── config/
-│   └── rules.yaml                         # 19 anomaly rules (sole source of truth; rules.ts deleted as dead code)
-├── engine/rules/evaluator.ts              # Legacy JS rule evaluator (used by item-history, outlet-items)
+│   └── rules.yaml                         # 19 anomaly rules — SPEC deklaratif (eksekusi = lib/queries/rule-evaluation.ts; rules.ts + legacy JS evaluator deleted as dead code)
 ├── middleware.ts                          # Auth gate (Edge runtime) — ADMIN_TOKEN middleware (fixed in DOC-UPDATE)
 └── next.config.ts                         # CSP, optimizePackageImports (16 packages — was 5), prod-only immutable Cache-Control
 
