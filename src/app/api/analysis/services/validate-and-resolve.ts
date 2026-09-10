@@ -22,10 +22,57 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { buildCacheKey, getCachedWithMeta, getInflight, setInflight } from '@/lib/aggregation-cache';
+import { buildCacheKey, getCachedRawWithMeta, getInflight, setInflight } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { triggerBackgroundRecompute } from './background-recompute';
+
+// ============================================================
+//  P3-HYG-1 (double-serialize): serve the cached analysis payload as the
+//  RAW JSON string stored in AggregationCache — skip the JSON.parse →
+//  mutate → NextResponse.json(JSON.stringify) roundtrip entirely.
+//  At ~1MB per analysis payload, the old hit path spent ~20-40ms of pure
+//  CPU per hit re-parsing + re-stringifying a string the DB already had.
+//
+//  Envelope flags ("cached":true / "stale":true) are injected via O(1)
+//  string surgery right after the leading `{` — safe because the STORED
+//  payload never contains those keys (assembleResponse doesn't set them;
+//  the old flow mutated a post-parse COPY). The payload's own durationMs
+//  (the ORIGINAL compute duration) is kept as-is — nothing in the frontend
+//  reads analysis durationMs, and `cached:true` already conveys provenance.
+// ============================================================
+
+/** P3-HYG-1: marker resolved into the in-flight Promise on a cache HIT. */
+interface RawCacheHit {
+  readonly __rawJson: string;
+  readonly stale: boolean;
+}
+
+function isRawCacheHit(v: unknown): v is RawCacheHit {
+  return typeof v === 'object' && v !== null && '__rawJson' in v;
+}
+
+/**
+ * P3-HYG-1: cheap shape guard on the RAW string (equivalent of the old
+ * `'success' in cachedResult` object check): the stored payload always
+ * starts with `{` (JSON.stringify of a response object) and contains a
+ * top-level "success": key. A 1MB substring scan is ~µs (memchr in C++) —
+ * vs ~10-20ms for a full JSON.parse.
+ */
+function looksLikeAnalysisEnvelope(raw: string): boolean {
+  return raw.length > 2 && raw.charCodeAt(0) === 0x7b /* { */ && raw.includes('"success":');
+}
+
+/** P3-HYG-1: build the raw-string response with injected envelope flags. */
+function rawCacheResponse(hit: RawCacheHit): NextResponse {
+  const inject = `"cached":true${hit.stale ? ',"stale":true' : ''},`;
+  // '{' + inject + rest-of-payload — e.g.
+  // {"cached":true,"stale":true,"success":true,"period":{…},…}
+  // (No duplicate-key risk: the stored payload has no cached/stale keys.)
+  return new NextResponse('{'.concat(inject, hit.__rawJson.slice(1)), {
+    headers: { ...CACHE_ANALYSIS, 'Content-Type': 'application/json' },
+  });
+}
 
 // FIX Medium #1: DB-level caching via AggregationCache table.
 // Cache hit skips all 16 parallel SQL queries (~7s → <100ms).
@@ -206,6 +253,11 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
   const inflight = getInflight<unknown>(cacheKey);
   if (inflight) {
     const inflightResult = await inflight;
+    // P3-HYG-1: a CACHE HIT resolves the in-flight with the raw marker (see
+    // the hit path below) — serve the same zero-parse raw response.
+    if (isRawCacheHit(inflightResult)) {
+      return { kind: 'response', response: rawCacheResponse(inflightResult) };
+    }
     if (inflightResult && typeof inflightResult === 'object' && 'success' in inflightResult) {
       const r = inflightResult as Record<string, unknown>;
       r.cached = true;
@@ -239,26 +291,22 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
   });
   setInflight(cacheKey, computationPromise);
 
-  // PERF-CACHE-01 (SWR): Use getCachedWithMeta instead of getCached.
+  // PERF-CACHE-01 (SWR): raw-string cache read (P3-HYG-1).
   // getCached deletes expired rows → first user after TTL pays full recompute.
-  // getCachedWithMeta returns stale data → user gets response in <100ms.
+  // getCachedRawWithMeta returns stale data → user gets response in <100ms.
   // FIX (AUDIT-PERF-5): the stale row is NO LONGER deleted — a background
   // recompute (triggerBackgroundRecompute) refreshes it in place instead.
-  const cachedWithMeta = await getCachedWithMeta<unknown>(cacheKey, ANALYSIS_CACHE_TTL_MS);
-  if (cachedWithMeta && cachedWithMeta.data && typeof cachedWithMeta.data === 'object' && 'success' in cachedWithMeta.data) {
-    // Cache hit (fresh or stale) — return immediately
-    const cachedResult = cachedWithMeta.data as Record<string, unknown>;
-    cachedResult.cached = true;
-    cachedResult.durationMs = Date.now() - startedAt;
-    if (cachedWithMeta.stale) {
-      // SWR: serve stale data + flag for client + background refresh
-      cachedResult.stale = true;
-    }
+  const cachedRaw = await getCachedRawWithMeta(cacheKey, ANALYSIS_CACHE_TTL_MS);
+  if (cachedRaw && looksLikeAnalysisEnvelope(cachedRaw.raw)) {
+    // Cache hit (fresh or stale) — serve the stored JSON string DIRECTLY
+    // (P3-HYG-1: no JSON.parse + no re-stringify on the ~1MB payload).
+    const hit: RawCacheHit = { __rawJson: cachedRaw.raw, stale: cachedRaw.stale };
     // FIX (AUDIT-PERF-6): resolve the in-flight Promise (registered above)
-    // with the cached payload so concurrent requests that arrived during the
-    // cache-read await get this response instead of hanging or re-computing.
-    resolveComputation(cachedResult);
-    if (cachedWithMeta.stale) {
+    // with the raw marker so concurrent requests that arrived during the
+    // cache-read await serve the same raw response (see the awaiter at the
+    // top of this function) instead of hanging or re-computing.
+    resolveComputation(hit);
+    if (cachedRaw.stale) {
       // FIX (AUDIT-PERF-5): true SWR — serve stale, then recompute in the
       // background and UPSERT the fresh row (setCached). The next request
       // reads fresh data from the DB cache. The old behavior fire-and-forgot
@@ -284,9 +332,10 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
       };
       triggerBackgroundRecompute(cacheKey, paramsForRecompute);
     }
-    return { kind: 'response', response: NextResponse.json(cachedResult, { headers: CACHE_ANALYSIS }) };
+    return { kind: 'response', response: rawCacheResponse(hit) };
   }
-  // Cache MISS (or the row's payload failed the response-shape guard): fall
+  // Cache MISS (or the row's payload failed the raw shape guard — treated
+  // exactly like a miss): fall
   // through to compute. The in-flight Promise registered above stays PENDING
   // until route.ts resolves it with the fresh result — do NOT resolve it here,
   // the route owns resolution on both the success and the 404 short-circuit

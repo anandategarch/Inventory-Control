@@ -14,7 +14,7 @@
 //    Hover hint shown at the top of the card body.
 // ============================================================
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -52,9 +52,13 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
   // Primary source: per-outlet top 30 (from /api/outlet-items — fired when
   // resto is selected). Falls back to analysisData.topDeviasiRank (national
   // top-50) if outlet-items hasn't loaded yet.
-  const items: DeviasiRankItem[] = outletDeviasiRank && outletDeviasiRank.length > 0
-    ? outletDeviasiRank
-    : (analysisData?.topDeviasiRank || []).filter((it) => it.outletCode === focusOutlet).slice(0, 30);
+  // P3-HYG-7c: memoized — the filter+slice ran inline on every render
+  // (each hover/parent re-render repaid the cost over the national top-50).
+  const items: DeviasiRankItem[] = useMemo(() => (
+    outletDeviasiRank && outletDeviasiRank.length > 0
+      ? outletDeviasiRank
+      : (analysisData?.topDeviasiRank || []).filter((it) => it.outletCode === focusOutlet).slice(0, 30)
+  ), [outletDeviasiRank, analysisData, focusOutlet]);
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">

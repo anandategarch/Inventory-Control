@@ -24,6 +24,13 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 
+// P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-5 tab
+// shortcuts — hoisted to module scope + only evaluated inside that branch
+// (was: 3-selector document.querySelector on EVERY keypress, even plain
+// typing in inputs, before the isTyping guard had a chance to matter).
+const OPEN_DROPDOWN_SELECTOR =
+  '[role="combobox"][aria-expanded="true"], [data-state="open"][role="listbox"], [data-state="open"][role="combobox"]';
+
 export interface UseDashboardActionsParams {
   analysisData: AnalysisData | undefined;
   monthLabel: string | null;
@@ -163,13 +170,14 @@ export function useDashboardActions({
         handleRefresh();
         return;
       }
-      // 1 / 2 / 3 / 4 → switch tabs (only when not typing in an input)
+      // 1 / 2 / 3 / 4 / 5 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
-      const isDropdownOpen = Boolean(
-        document.querySelector('[role="combobox"][aria-expanded="true"], [data-state="open"][role="listbox"], [data-state="open"][role="combobox"]')
-      );
-      if (!mod && !isTyping && !e.altKey && !isDropdownOpen && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
+      // P3-HYG-6: the querySelector probe now runs ONLY when the key is one
+      // of the tab digits — cheap constant folding for every other keypress.
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
+        const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
+        if (isDropdownOpen) return;
         const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend' };
         setActiveTab(tabMap[e.key]);
         return;

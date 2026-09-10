@@ -20,9 +20,15 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildSqlFilters, withStatementTimeout } from '@/lib/queries/shared';
 import { validateQuery, peerComparisonItemsQuerySchema } from '@/lib/validation';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — item comparison can be slow with many items
+
+// P3-HYG-3: DB-level cache (5 min) + in-flight dedup for the whole
+// multi-CTE CROSS JOIN + grouping pipeline (same pattern as the main
+// /api/peer-comparison route — see the comment there).
+const PEER_ITEMS_CACHE_TTL = 5 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   try {
@@ -56,6 +62,77 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
+    // P3-HYG-3: cache key — outletCode/month/week/kelompok via the standard
+    // filter set; mode + topItems as extras (both change the result grain).
+    const cacheKey = buildCacheKey({
+      route: 'peer-comparison-items',
+      month,
+      week,
+      outletCode,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      extra: { mode, topItems },
+    });
+
+    const { data: resultData, cached, stale } = await withCacheAndDedup<{ items: GroupedItem[] }>(
+      cacheKey,
+      PEER_ITEMS_CACHE_TTL,
+      () => computePeerComparisonItems({ outletCode, month, week, mode, topItems, kelompok }),
+    );
+
+    return NextResponse.json({
+      success: true,
+      targetOutlet: outletCode,
+      mode,
+      topItems,
+      items: resultData.items,
+      ...(cached ? { cached: true } : {}),
+      ...(stale ? { stale: true } : {}),
+    });
+  } catch (e: unknown) {
+    logger.error("[peer-comparison-items] error:", { error: e });
+    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+  }
+}
+
+/**
+ * P3-HYG-3: the heavy compute extracted from the GET handler so it can be
+ * wrapped in withCacheAndDedup. Pure function of its explicit params (all
+ * validated + month-resolved by the handler BEFORE this runs) — SQL fetch +
+ * row grouping + per-item peer stats. Returns the `items` array only;
+ * response envelope fields (success/cached/…) are added by the handler on
+ * every request so cache hits never freeze stale envelope flags.
+ */
+interface PeerItemsComputeParams {
+  outletCode: string;
+  month: string;
+  week: string | null;
+  mode: 'week' | 'month';
+  topItems: number;
+  kelompok: string | null;
+}
+
+// P3-HYG-3: hoisted to module scope (was inside the GET handler) — the
+// compute function's return type + the handler's cache-wrapper generic
+// both reference GroupedItem.
+interface PeerOutletEntry {
+  outletCode: string;
+  outletName: string;
+  isTarget: boolean;
+  qtyDeviasi: number;
+  devBom: number;
+  nominal: number;
+  missing: boolean;
+}
+interface GroupedItem {
+  itemId: number;
+  itemName: string;
+  target: { qtyDeviasi: number; devBom: number; nominal: number };
+  peers: PeerOutletEntry[];
+}
+
+async function computePeerComparisonItems(
+  { outletCode, month, week, mode, topItems, kelompok }: PeerItemsComputeParams,
+): Promise<{ items: GroupedItem[] }> {
     // Same week filter logic as queryPeerComparison (outlets.ts)
     const weekFilter = mode === 'week' && week
       ? Prisma.sql`AND ir."weekLabel" = ${week}`
@@ -179,21 +256,7 @@ export async function GET(req: NextRequest) {
     `);
 
     // Group rows by itemId → { itemName, target, peers: [{outletCode, outletName, isTarget, qtyDeviasi, devBom, nominal}] }
-    interface PeerOutletEntry {
-      outletCode: string;
-      outletName: string;
-      isTarget: boolean;
-      qtyDeviasi: number;
-      devBom: number;
-      nominal: number;
-      missing: boolean;
-    }
-    interface GroupedItem {
-      itemId: number;
-      itemName: string;
-      target: { qtyDeviasi: number; devBom: number; nominal: number };
-      peers: PeerOutletEntry[];
-    }
+    // (PeerOutletEntry + GroupedItem hoisted to module scope — see above.)
     const itemMap = new Map<number, GroupedItem>();
     for (const r of rows) {
       const itemId = Number(r.itemId);
@@ -238,7 +301,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Compute peer avg / peer best / gap per item (exclude target row from peer stats)
     const items = Array.from(itemMap.values()).map((item) => {
       const otherPeers = item.peers.filter((p) => !p.isTarget && !p.missing);
       const n = otherPeers.length;
@@ -263,15 +325,5 @@ export async function GET(req: NextRequest) {
       return { ...item, peerAvg, peerBest, gap, peerCount: n };
     });
 
-    return NextResponse.json({
-      success: true,
-      targetOutlet: outletCode,
-      mode,
-      topItems,
-      items,
-    });
-  } catch (e: unknown) {
-    logger.error("[peer-comparison-items] error:", { error: e });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
-  }
+    return { items };
 }

@@ -10,10 +10,17 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryPeerComparison } from '@/lib/queries';
 import { validateQuery, peerComparisonQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — peer comparison CROSS JOIN can be slow
+
+// P3-HYG-3: DB-level cache (5 min) + in-flight dedup — same AggregationCache
+// pattern as the analysis/pareto/compliance family. Previously this route
+// (and its /items + /trend siblings) re-ran the CROSS JOIN query on EVERY
+// request — the Peer tab re-fires all 3 on every outlet/period/filter change.
+const PEER_CACHE_TTL = 5 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   try {
@@ -48,14 +55,34 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
-    const { targetSales, peers } = await queryPeerComparison(outletCode, month, week, mode, limit, kelompok);
+    // P3-HYG-3: cache key covers every response-affecting param —
+    // outletCode/month/week/kelompok via the standard filter set, plus
+    // mode + limit as route-specific extras (mode=week vs month changes
+    // the aggregation grain; limit caps the peer set).
+    const cacheKey = buildCacheKey({
+      route: 'peer-comparison',
+      month,
+      week,
+      outletCode,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      extra: { mode, limit },
+    });
+
+    type PeerComparisonData = Awaited<ReturnType<typeof queryPeerComparison>>;
+    const { data: peerData, cached, stale } = await withCacheAndDedup<PeerComparisonData>(
+      cacheKey,
+      PEER_CACHE_TTL,
+      async () => queryPeerComparison(outletCode, month, week, mode, limit, kelompok),
+    );
 
     return NextResponse.json({
       success: true,
       targetOutlet: outletCode,
-      targetSales,
+      targetSales: peerData.targetSales,
       mode,
-      peers,
+      peers: peerData.peers,
+      ...(cached ? { cached: true } : {}),
+      ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     logger.error("[peer-comparison] error:", { error: e });

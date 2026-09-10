@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, memo } from 'react';
+import { useState, memo, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -13,7 +13,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { ExternalLink, Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
-import { BarList } from '@/components/dashboard/shared/BarList';
+import { BarList, type BarListItem } from '@/components/dashboard/shared/BarList';
 // SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState for the
 // BarList-empty case (BarList itself renders nothing when its data array
 // is empty — we surface a small EmptyState below it instead).
@@ -21,7 +21,28 @@ import { EmptyState } from '@/components/ui/empty-state';
 
 export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
-  const items = data.topItemsByNominal || [];
+  // P3-HYG-7a: pin `items` identity FIRST — `data.topItemsByNominal || []`
+  // created a NEW empty array whenever the field is undefined, which would
+  // defeat both memos below (deps change every render). useMemo keeps the
+  // fallback [] stable across renders while the dep is undefined.
+  const items = useMemo(() => data.topItemsByNominal || [], [data.topItemsByNominal]);
+  // P3-HYG-7a: the BarList data array was rebuilt (new array + new object
+  // per item + new closure) on EVERY render — BarList's memo could never hit.
+  // useMemo pins the array identity to `items`; useCallback pins the handler
+  // (the items.find() lookup inside is cheap and only runs on click).
+  const barData = useMemo(() => items.map((it) => ({
+    key: `${it.itemName}-${it.outletCode}`,
+    name: it.itemName,
+    value: Math.abs(it.nominalDeviasi),
+    color: (it.nominalDeviasi < 0 ? 'red' : 'emerald') as 'red' | 'emerald',
+    metadata: it.direction,
+  })), [items]);
+  const handleBarClick = useCallback((item: BarListItem) => {
+    setDrilldown({
+      outletCode: items.find((it) => `${it.itemName}-${it.outletCode}` === item.key)?.outletCode ?? '',
+      itemName: item.name,
+    });
+  }, [items, setDrilldown]);
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -51,20 +72,11 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
             direction (red=LOSS, emerald=SURPLUS), metadata shows direction
             label. Click triggers drill-down via onValueChange. */}
         <BarList
-          data={items.map((it) => ({
-            key: `${it.itemName}-${it.outletCode}`,
-            name: it.itemName,
-            value: Math.abs(it.nominalDeviasi),
-            color: it.nominalDeviasi < 0 ? 'red' : 'emerald',
-            metadata: it.direction,
-          }))}
+          data={barData}
           valueFormatter={fmtIDR}
           sortOrder="descending"
           showAnimation
-          onValueChange={(item) => setDrilldown({
-            outletCode: items.find(it => `${it.itemName}-${it.outletCode}` === item.key)?.outletCode ?? '',
-            itemName: item.name,
-          })}
+          onValueChange={handleBarClick}
         />
         {/* SHADCN-PATTERNS (Pattern 4) — BarList renders nothing when its
             data array is empty, so we surface an EmptyState below it to
@@ -317,19 +329,35 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
 export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const items = (data.topDeviasiRank || []).filter((it: any) => it.rankBom != null && it.rankBom > 0);
 
-  const grouped = items.reduce((acc, it) => {
-    if (!acc.has(it.itemName)) acc.set(it.itemName, []);
-    acc.get(it.itemName)!.push(it);
-    return acc;
-  }, new Map<string, any[]>());
-
-  const itemGaps = Array.from(grouped.entries()).map(([itemName, outlets]) => {
-    const gaps = outlets.map(o => o.rankBom - o.rankNominal);
-    const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-    return { itemName, outlets, avgGap, outletCount: outlets.length };
-  }).sort((a, b) => b.avgGap - a.avgGap);
+  // P3-HYG-7b: the whole gap pipeline (filter → group-by-item reduce →
+  // avgGap map → sort, plus the per-item outlet sort that used to run inline
+  // at render time on every expanded repaint) is now ONE memo keyed on the
+  // source array. This card renders in 3 tabs (Pareto / Peer / ItemPeer) —
+  // previously every mount + every expand-toggle re-ran the full computation
+  // over up to 500 topDeviasiRank rows.
+  const itemGaps = useMemo(() => {
+    const items = (data.topDeviasiRank || []).filter((it: any) => it.rankBom != null && it.rankBom > 0);
+    const grouped = items.reduce((acc, it) => {
+      if (!acc.has(it.itemName)) acc.set(it.itemName, []);
+      acc.get(it.itemName)!.push(it);
+      return acc;
+    }, new Map<string, any[]>());
+    return Array.from(grouped.entries()).map(([itemName, outlets]) => {
+      const gaps = outlets.map((o) => o.rankBom - o.rankNominal);
+      const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+      return {
+        itemName,
+        avgGap,
+        outletCount: outlets.length,
+        // Pre-sorted outlets (desc by outlet gap) — replaces the inline
+        // [...outlets].sort(...) that ran per render inside the map.
+        sortedOutlets: [...outlets].sort(
+          (a, b) => (b.rankBom - b.rankNominal) - (a.rankBom - a.rankNominal),
+        ),
+      };
+    }).sort((a, b) => b.avgGap - a.avgGap);
+  }, [data.topDeviasiRank]);
 
   const toggleItem = (name: string) => {
     setExpandedItems(prev => {
@@ -380,7 +408,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
                       <span className={`w-16 text-right tabular-nums font-bold shrink-0 ${isQtyDriven ? 'text-red-600 dark:text-red-400' : isPriceDriven ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{gap > 0 ? `+${gap}` : gap}</span>
                       <span className="w-10 text-right text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount}</span>
                     </button>
-                    {isExpanded && item.outlets.length > 0 && (
+                    {isExpanded && item.sortedOutlets.length > 0 && (
                       <div className="ml-10 mr-2 mb-1 border-l-2 border-border/40 pl-2 space-y-0.5">
                         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 py-0.5">
                           <span className="w-4 shrink-0"></span>
@@ -390,7 +418,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
                           <span className="w-12 text-center shrink-0">Gap</span>
                           <span className="w-24 text-right shrink-0">Nominal</span>
                         </div>
-                        {[...item.outlets].sort((a, b) => (b.rankBom - b.rankNominal) - (a.rankBom - a.rankNominal)).map((o, j) => {
+                        {item.sortedOutlets.map((o, j) => {
                           const oGap = o.rankBom - o.rankNominal;
                           return (
                             <button key={`${o.outletCode}-${j}`} onClick={() => setDrilldown({ outletCode: o.outletCode, itemName: item.itemName })} className="w-full flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20 hover:bg-muted/40 transition-colors text-left">

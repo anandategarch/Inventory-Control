@@ -103,8 +103,8 @@ export async function GET(req: NextRequest) {
 
     // PERF-CACHE-06: wrap the heavy compute (thresholds → SQL fetches → docx
     // assembly → Packer.toBuffer) in withCacheAndDedup. On cache hit, returns
-    // the stored { buffer, fileName } without re-running any of the ~8s pipeline.
-    const { data: exportData } = await withCacheAndDedup<{ buffer: number[]; fileName: string }>(
+    // the stored { bufferBase64, fileName } without re-running any of the ~8s pipeline.
+    const { data: exportData } = await withCacheAndDedup<{ bufferBase64: string; fileName: string }>(
       cacheKey,
       EXPORT_CACHE_TTL,
       async () => {
@@ -118,15 +118,18 @@ export async function GET(req: NextRequest) {
         const { data, ctx } = await fetchReportData(params);
 
         // Stage 2 — assemble the Word document (title + 7 sections + footer
-        // + Packer.toBuffer). Returns { buffer: number[], fileName } for the
-        // cache wrapper (Array.from keeps the binary data JSON-serializable).
+        // + Packer.toBuffer). Returns { bufferBase64, fileName } for the
+        // cache wrapper — P3-HYG-4: base64 keeps the cache row compact +
+        // JSON-serializable (see docx-builder.ts).
         return buildDocxReport(data, ctx);
       },
     );
 
-    // Reconstruct the binary Buffer from the cached/fresh payload + send as
-    // Word download. Same response shape for both cache hit and fresh compute.
-    const buffer = Buffer.from(exportData.buffer);
+    // Reconstruct the binary Buffer from the cached/fresh base64 payload +
+    // send as Word download. Same response shape for both cache hit and
+    // fresh compute. (P3-HYG-4: Buffer.from(b64) is a single fast decode —
+    // was Buffer.from(number[]) which walks a 500K-element JS array.)
+    const buffer = Buffer.from(exportData.bufferBase64, 'base64');
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,
       headers: {

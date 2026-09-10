@@ -28,9 +28,16 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets/peer-comparison';
 import { validateQuery, peerComparisonTrendQuerySchema } from '@/lib/validation';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — trend across multiple weeks can be slow
+
+// P3-HYG-3: DB-level cache (5 min) + in-flight dedup — same AggregationCache
+// pattern as the main /api/peer-comparison route (see the comment there).
+// Covers BOTH the explicit-peers path and the auto-computed peer set
+// (queryPeerComparison call) — the peer resolution is part of the compute.
+const PEER_TREND_CACHE_TTL = 5 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   try {
@@ -62,40 +69,65 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
-    // Peer codes — explicit list preferred (frontend passes the main
-    // query's peer set for a stable trend across weeks). If omitted,
-    // auto-compute via queryPeerComparison so the ±10% sales band
-    // matches the main peer table (single source of truth).
-    let peerCodes: string[] = peersParam
-      ? peersParam.split(',').map(s => s.trim()).filter(Boolean)
-      : [];
+    // P3-HYG-3: cache key — the explicit `peers` list (when provided) fully
+    // determines the peer set, so it goes into `extra`; kelompok only
+    // matters on the auto-compute path (peers omitted) but is included
+    // unconditionally for simplicity — two entries at worst, never a wrong
+    // cache hit (auto-compute with kelompok vs explicit peers produce the
+    // same key ONLY if the explicit list equals kelompok's auto set → same
+    // answer anyway).
+    const cacheKey = buildCacheKey({
+      route: 'peer-comparison-trend',
+      month,
+      outletCode,
+      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      extra: { peers: peersParam },
+    });
 
-    if (peerCodes.length === 0) {
-      // month mode → MAX(weekLabel) = whole-month aggregate (matches
-      // the main table's peer band derivation; see outlets.ts:177-182).
-      // Pass kelompok so the auto-computed peer set respects the global filter.
-      const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20, kelompok);
-      peerCodes = peers
-        .filter(p => !p.isTarget)
-        .map(p => p.outletCode)
-        .slice(0, 20);
-    }
+    const { data: trendData, cached, stale } = await withCacheAndDedup<{
+      weeks: Array<{ weekLabel: string; devBomTarget: number; devBomPeerAvg: number }>;
+    }>(cacheKey, PEER_TREND_CACHE_TTL, async () => {
+      // Peer codes — explicit list preferred (frontend passes the main
+      // query's peer set for a stable trend across weeks). If omitted,
+      // auto-compute via queryPeerComparison so the ±10% sales band
+      // matches the main peer table (single source of truth).
+      let peerCodes: string[] = peersParam
+        ? peersParam.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
 
-    // Single GROUP BY query — replaces the previous N+1 loop.
-    // queryPeerTrend aggregates ALL weeks × ALL peer outlets in one
-    // SQL pass (see outlets.ts:458-501). Caps implicit via the peer
-    // list (≤20 peers + target).
-    const rows = await queryPeerTrend(outletCode, month, '', peerCodes);
+      if (peerCodes.length === 0) {
+        // month mode → MAX(weekLabel) = whole-month aggregate (matches
+        // the main table's peer band derivation; see outlets.ts:177-182).
+        // Pass kelompok so the auto-computed peer set respects the global filter.
+        const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20, kelompok);
+        peerCodes = peers
+          .filter((p) => !p.isTarget)
+          .map((p) => p.outletCode)
+          .slice(0, 20);
+      }
+
+      // Single GROUP BY query — replaces the previous N+1 loop.
+      // queryPeerTrend aggregates ALL weeks × ALL peer outlets in one
+      // SQL pass (see outlets.ts:458-501). Caps implicit via the peer
+      // list (≤20 peers + target).
+      const rows = await queryPeerTrend(outletCode, month, '', peerCodes);
+
+      return {
+        weeks: rows.map((r) => ({
+          weekLabel: r.weekLabel,
+          devBomTarget: r.targetDevBom,
+          devBomPeerAvg: r.peerAvgDevBom,
+        })),
+      };
+    });
 
     return NextResponse.json({
       success: true,
       targetOutlet: outletCode,
       month,
-      weeks: rows.map(r => ({
-        weekLabel: r.weekLabel,
-        devBomTarget: r.targetDevBom,
-        devBomPeerAvg: r.peerAvgDevBom,
-      })),
+      weeks: trendData.weeks,
+      ...(cached ? { cached: true } : {}),
+      ...(stale ? { stale: true } : {}),
     });
   } catch (e: unknown) {
     logger.error("[peer-comparison-trend] error:", { error: e });

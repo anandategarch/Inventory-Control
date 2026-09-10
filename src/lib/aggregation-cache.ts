@@ -154,6 +154,40 @@ export async function getCachedWithMeta<T>(
   }
 }
 
+// ============================================================
+//  P3-HYG-1: getCachedRawWithMeta — returns the cached payload as the
+//  RAW JSON string (NO JSON.parse). For routes whose cache-hit response
+//  is the payload serialized back to JSON anyway (/api/analysis — the
+//  ~1MB dashboard payload), the old flow paid DOUBLE serialization on
+//  every hit: JSON.parse(row.payload) (1MB string → object) inside
+//  getCachedWithMeta, then NextResponse.json() (object → 1MB string)
+//  again. That's ~20-40ms of pure CPU per hit at 1MB — repeated for
+//  every tab switch / filter change that lands on a warm cache.
+//  The raw path serves the stored string directly: zero parse, zero
+//  stringify (the route injects its `cached`/`stale` envelope flags
+//  via O(1) string surgery on the leading `{`).
+//
+//  Semantics mirror getCachedWithMeta: SWR-aware (expired rows are
+//  returned marked stale, NOT deleted — the background recompute
+//  upserts in place; cleanupExpiredCache handles final deletion).
+// ============================================================
+export async function getCachedRawWithMeta(
+  cacheKey: string,
+  ttlMs: number = DEFAULT_TTL_MS,
+): Promise<{ raw: string; stale: boolean } | null> {
+  try {
+    const row = await db.aggregationCache.findUnique({ where: { cacheKey } });
+    if (!row) return null;
+    const stale = Date.now() - row.computedAt.getTime() > ttlMs;
+    return { raw: row.payload, stale };
+  } catch (e) {
+    // Non-blocking: if cache read fails (DB error), return null and let
+    // the caller compute fresh. No JSON.parse here, so no parse errors.
+    logger.error('[cache] getCachedRawWithMeta error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
 /**
  * Store a computed result in the DB cache.
  * Fire-and-forget by default — doesn't block the response.
@@ -434,11 +468,16 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // for the MINORITY direction of an item — reads per-outlet SIGNED
   // SUM(qtyDeviasi/nominalDeviasi) for the (item, month, week, direction)
   // tuple, so mutations affect which outlets are surfaced as anomali).
+  // P3-HYG-3: added the 3 peer-comparison routes (main / items / trend —
+  // each reads InventoryRecord + OutletPeriodSales for its period scope,
+  // so ingest/settings/pic/migrate mutations affect them; they were
+  // previously uncached AND un-invalidated).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
+    'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

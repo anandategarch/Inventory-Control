@@ -20,7 +20,7 @@
 //         - Section 6: Variance Analysis (top-10 worsened items)
 //         - Section 7: Trend across periods
 //         - Footer
-//       Returns { buffer: number[], fileName } for the cache wrapper.
+//       Returns { bufferBase64, fileName } for the cache wrapper (P3-HYG-4).
 //
 //  All comments preserved VERBATIM from the original route.ts (FIX #3,
 //  CONFIG-06, CONFIG-07, EVAL-09, FIX-SETTINGS, Rev 2/3/4 markers, etc.).
@@ -173,14 +173,15 @@ function makeTable(headers: string[], rows: string[][]): Table {
 //  `data` + many free variables from the enclosing computeFn scope;
 //  now an explicit (data, ctx) pair so the function is self-contained.
 //
-//  Returns { buffer: number[]; fileName } for withCacheAndDedup to
-//  JSON-serialize + cache (Array.from(buffer) keeps binary data JSON-
-//  serializable; the route handler Buffer.from()s it back to bytes).
+//  Returns { bufferBase64: string; fileName: string } for
+//  withCacheAndDedup to JSON-serialize + cache (P3-HYG-4: base64 keeps the
+//  cache row 1.33× the binary size instead of ~4× for the old number[]
+//  encoding; the route handler Buffer.from(b64, 'base64')s it back).
 // ============================================================
 export async function buildDocxReport(
   data: ReportData,
   ctx: DocxContext,
-): Promise<{ buffer: number[]; fileName: string }> {
+): Promise<{ bufferBase64: string; fileName: string }> {
   // Local section-filter helper — matches route.ts:316 verbatim.
   const hasSection = (key: string) => !ctx.sections || ctx.sections.includes(key);
 
@@ -606,8 +607,11 @@ export async function buildDocxReport(
   const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_')}.docx`;
 
   // PERF-CACHE-06: withCacheAndDedup handles setCached(awaitWrite=true) +
-  // in-flight Promise resolution. Return the { buffer, fileName } payload —
-  // the helper stores it as JSON (Array.from(buffer) keeps the binary data
-  // JSON-serializable; consumers Buffer.from() it back to bytes).
-  return { buffer: Array.from(buffer), fileName };
+  // in-flight Promise resolution. Return { bufferBase64, fileName } —
+  // P3-HYG-4: base64 instead of the old Array.from(buffer) number[].
+  // A JSON number[] serializes each byte as "123," (~4× bloat: a 500KB docx
+  // became a ~2MB cache row + a slow JSON.parse); base64 is 1.33× and parses
+  // to a string instantly. The route handler Buffer.from(b64, 'base64')s it
+  // back to bytes on both the fresh + cache-hit paths.
+  return { bufferBase64: buffer.toString('base64'), fileName };
 }

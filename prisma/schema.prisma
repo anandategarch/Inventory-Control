@@ -166,7 +166,13 @@ model InventoryRecord {
   @@index([itemId, weekId])
   @@index([area, weekId])
   @@index([monthLabel, weekLabel])
-  @@index([direction])
+  // P3-HYG-2: single-column index [direction] REMOVED — dead weight.
+  // No query filters on InventoryRecord.direction (every "direction" in
+  // src/lib/queries is a SELECTed computed value from SUMs/CTEs;
+  // /api/migrate-direction only SETs it). A 3-value low-cardinality
+  // B-tree is never chosen by the planner, so the index only added write
+  // amplification — every ingest (~54K rows/month) + every bulk import
+  // maintained a dead B-tree. Takes effect on the next `bun run db:push`.
   @@index([outletId, itemId])
   @@index([area, monthLabel, weekLabel])
   @@index([monthLabel, weekLabel, outletId])
