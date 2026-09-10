@@ -5,7 +5,8 @@
 //  lenses (tolerance compliance, tolerance-setting priority,
 //  unexplained-deviation residual per outlet, sales-normalized
 //  efficiency, BAHAN vs PACKAGING category split, and
-//  cross-outlet loss↔surplus transfer signals):
+//  cross-outlet loss↔surplus transfer signals, plus cross-AREA
+//  mismatch pairs derived from the same transfer rows):
 //
 //    base        — period + filter scan, per-record expressions
 //    tol_item    — GROUP BY itemId  (tolerance breach stats)
@@ -14,6 +15,12 @@
 //    transfer_agg— GROUP BY itemId, area, direction
 //    transfer_top— ROW_NUMBER top outlet per (item,area,direction)
 //    totals      — single-row grand totals
+//
+//  transfer_agg feeds TWO lenses (no extra scan): within-area
+//  pairing (v1 — loss outlets ↔ surplus outlets in the SAME area)
+//  and cross-area mismatch pairs (v2 — item LOSS in area A while
+//  SURPLUS in area B ≠ A: stock moving between areas without a
+//  transfer document, or double-sided misrecording).
 //
 //  PERF (PAKET E — scan-merge): `base` is referenced by six CTEs,
 //  so PostgreSQL materializes it ONCE (multi-reference CTEs are
@@ -134,6 +141,22 @@ export interface TransferSignalRow {
   matchNominal: number;
 }
 
+/** Same item, same week, DIFFERENT areas: LOSS concentrated in one
+ *  area while SURPLUS appears in another — cross-area mismatch pair. */
+export interface CrossAreaPairRow {
+  itemId: number;
+  itemName: string;
+  /** Area where this item shows net LOSS. */
+  lossArea: string;
+  /** A DIFFERENT area where the same item shows net SURPLUS. */
+  surplusArea: string;
+  loss: TransferSide;
+  surplus: TransferSide;
+  /** min(loss, surplus) across the two areas — candidate moved amount. */
+  matchQty: number;
+  matchNominal: number;
+}
+
 export interface ComplianceSummary {
   nRecords: number;
   nOutlets: number;
@@ -151,6 +174,9 @@ export interface ComplianceSummary {
   absNominalDev: number;
   transferSignalCount: number;
   transferMatchNominalTotal: number;
+  /** Cross-area mismatch pairs (loss area ≠ surplus area). */
+  crossAreaSignalCount: number;
+  crossAreaMatchNominalTotal: number;
 }
 
 export interface ComplianceResult {
@@ -161,6 +187,7 @@ export interface ComplianceResult {
   salesOutlets: SalesOutletRow[];
   categories: CategoryRow[];
   transferSignals: TransferSignalRow[];
+  crossAreaPairs: CrossAreaPairRow[];
 }
 
 // ------------------------------------------------------------
@@ -378,6 +405,8 @@ function shapeCompliance(
     absNominalDev,
     transferSignalCount: 0,
     transferMatchNominalTotal: 0,
+    crossAreaSignalCount: 0,
+    crossAreaMatchNominalTotal: 0,
   };
 
   // ---- tolItem → toleranceItems + tolerancePriority ----
@@ -484,15 +513,32 @@ function shapeCompliance(
     }))
     .sort((a, b) => b.absNominalDev - a.absNominalDev);
 
-  // ---- transfer → transferSignals ----
+  // ---- transfer → transferSignals + crossAreaPairs ----
   const key2 = (itemId: number, area: string) => `${itemId}\u0000${area}`;
   const lossMap = new Map<string, Record<string, unknown>>();
   const surplusMap = new Map<string, Record<string, unknown>>();
+  // Per-item side lists (same rows as the maps above) — used by the
+  // cross-area pairing below. O(items × areas²), areas is small.
+  interface SideEntry { itemId: number; itemName: string; area: string; row: Record<string, unknown> }
+  const lossByItem = new Map<number, SideEntry[]>();
+  const surplusByItem = new Map<number, SideEntry[]>();
+  const pushSide = (m: Map<number, SideEntry[]>, e: SideEntry) => {
+    const list = m.get(e.itemId) ?? [];
+    list.push(e);
+    m.set(e.itemId, list);
+  };
   for (const r of byLens.get('transfer') ?? []) {
     const direction = asString(r.direction);
-    const key = key2(num(r.itemId), asString(r.area) ?? '-');
-    if (direction === 'LOSS') lossMap.set(key, r);
-    else if (direction === 'SURPLUS') surplusMap.set(key, r);
+    const itemId = num(r.itemId);
+    const area = asString(r.area) ?? '-';
+    const key = key2(itemId, area);
+    if (direction === 'LOSS') {
+      lossMap.set(key, r);
+      pushSide(lossByItem, { itemId, itemName: asString(r.itemName) ?? '?', area, row: r });
+    } else if (direction === 'SURPLUS') {
+      surplusMap.set(key, r);
+      pushSide(surplusByItem, { itemId, itemName: asString(r.itemName) ?? '?', area, row: r });
+    }
   }
   const topMap = new Map<string, { outletCode: string; qtyDevAbs: number }>();
   for (const r of byLens.get('transferTop') ?? []) {
@@ -546,6 +592,44 @@ function shapeCompliance(
   summary.transferMatchNominalTotal = allSignals.reduce((acc, s) => acc + s.matchNominal, 0);
   const transferSignals = allSignals.slice(0, topN);
 
+  // ---- transfer (cross-area) → crossAreaPairs ----
+  // Each item's LOSS areas are paired with every SURPLUS area that is
+  // DIFFERENT. Pairs are investigative candidates, NOT a partition —
+  // one side can appear in several pairs (documented in the FE tooltip).
+  const crossPairs: CrossAreaPairRow[] = [];
+  for (const [itemId, losses] of lossByItem) {
+    const surpluses = surplusByItem.get(itemId);
+    if (!surpluses) continue;
+    for (const l of losses) {
+      for (const s of surpluses) {
+        if (l.area === s.area) continue; // cross-area only — v1 covers same-area
+        const loss = sideOf(l.row, 'LOSS', itemId, l.area);
+        const surplus = sideOf(s.row, 'SURPLUS', itemId, s.area);
+        const matchQty = Math.min(loss.qtyTotal, surplus.qtyTotal);
+        const matchNominal = Math.min(loss.nominalTotal, surplus.nominalTotal);
+        if (matchQty <= 0 && matchNominal <= 0) continue;
+        crossPairs.push({
+          itemId,
+          itemName: l.itemName,
+          lossArea: l.area,
+          surplusArea: s.area,
+          loss,
+          surplus,
+          matchQty,
+          matchNominal,
+        });
+      }
+    }
+  }
+  crossPairs.sort((a, b) =>
+    b.matchNominal - a.matchNominal || b.matchQty - a.matchQty
+    || a.itemId - b.itemId
+    || a.lossArea.localeCompare(b.lossArea)
+    || a.surplusArea.localeCompare(b.surplusArea));
+  summary.crossAreaSignalCount = crossPairs.length;
+  summary.crossAreaMatchNominalTotal = crossPairs.reduce((acc, p) => acc + p.matchNominal, 0);
+  const crossAreaPairs = crossPairs.slice(0, topN);
+
   return {
     summary,
     toleranceItems,
@@ -554,5 +638,6 @@ function shapeCompliance(
     salesOutlets,
     categories,
     transferSignals,
+    crossAreaPairs,
   };
 }

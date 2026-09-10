@@ -16,6 +16,11 @@
 //    transferSignals     — item×area with BOTH loss outlets AND
 //                          surplus outlets in the same week
 //                          (cross-outlet stock-transfer indicator)
+//    crossAreaPairs      — same item, DIFFERENT areas: loss
+//                          concentrated in one area while surplus
+//                          appears in another (cross-area mismatch
+//                          pairs — derived from the same transfer
+//                          rows, zero extra scanning)
 //
 //  Pattern (per CONVENTIONS.md — flip-ranking / pareto precedent):
 //    - force-dynamic + maxDuration=60 (single scan + aggregates)
@@ -112,6 +117,7 @@ function emptyComplianceResult(): ComplianceResult {
       breachRatePct: 0, noTolerancePct: 0, residualSharePct: 0,
       residualNominalAbs: 0, absNominalDev: 0,
       transferSignalCount: 0, transferMatchNominalTotal: 0,
+      crossAreaSignalCount: 0, crossAreaMatchNominalTotal: 0,
     },
     toleranceItems: [],
     tolerancePriority: [],
@@ -119,6 +125,7 @@ function emptyComplianceResult(): ComplianceResult {
     salesOutlets: [],
     categories: [],
     transferSignals: [],
+    crossAreaPairs: [],
   };
 }
 

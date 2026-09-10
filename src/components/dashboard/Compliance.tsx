@@ -14,6 +14,9 @@
 //    5. Kategori BAHAN vs PACKAGING
 //    6. Indikasi Transfer Antar Outlet — same item, same area,
 //       same week: LOSS outlets vs SURPLUS outlets
+//    7. Ketidakcocokan Antar-Area — same item, same week,
+//       DIFFERENT areas: LOSS in one area vs SURPLUS in another
+//       (cross-area mismatch pairs, derived from the same response)
 //
 //  PERF-FE (PAKET A pattern): staleTime 5 min + gcTime 10 min —
 //  data only changes on ingest / manual refresh (handleRefresh
@@ -28,7 +31,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes,
+  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -123,6 +126,7 @@ export function Compliance() {
   const salesOutlets = useMemo(() => data?.salesOutlets ?? [], [data]);
   const categories = useMemo(() => data?.categories ?? [], [data]);
   const transferSignals = useMemo(() => data?.transferSignals ?? [], [data]);
+  const crossAreaPairs = useMemo(() => data?.crossAreaPairs ?? [], [data]);
 
   if (error) {
     return (
@@ -187,9 +191,9 @@ export function Compliance() {
         />
         <StatCard
           label="Sinyal Transfer"
-          value={fmtNum(summary.transferSignalCount)}
-          sub={`${fmtIDR(summary.transferMatchNominalTotal)} nilai cocok`}
-          tone={summary.transferSignalCount > 0 ? 'warn' : undefined}
+          value={fmtNum(summary.transferSignalCount + summary.crossAreaSignalCount)}
+          sub={`${fmtIDR(summary.transferMatchNominalTotal + summary.crossAreaMatchNominalTotal)} nilai cocok · ${fmtNum(summary.crossAreaSignalCount)} antar-area`}
+          tone={(summary.transferSignalCount + summary.crossAreaSignalCount) > 0 ? 'warn' : undefined}
         />
         <StatCard label="Total |Deviasi|" value={fmtIDR(summary.absNominalDev)} sub="nominal absolut periode" />
       </div>
@@ -508,6 +512,64 @@ export function Compliance() {
                           <TableCell className={`${td} text-right tabular-nums text-emerald-600 dark:text-emerald-400`}>
                             {fmtNum(r.surplus.nOutlets)}
                             {r.surplus.topOutletCode ? <span className="block text-[10px] text-muted-foreground font-normal">terbesar: {r.surplus.topOutletCode}</span> : null}
+                          </TableCell>
+                          <TableCell className={`${td} text-right tabular-nums text-emerald-600 dark:text-emerald-400`}>{fmtNum(r.surplus.qtyTotal)}</TableCell>
+                          <TableCell className={`${td} text-right tabular-nums font-semibold`}>
+                            {fmtNum(r.matchQty)} qty
+                            <span className="block text-[10px] text-muted-foreground font-normal">{fmtIDR(r.matchNominal)}</span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ====== 7. KETIDAKCOCOKAN ANTAR-AREA ====== */}
+          <Card>
+            <CardContent className="p-3 sm:p-4 pt-3 sm:pt-4 space-y-2">
+              <SectionHeader
+                icon={<Route className="h-4 w-4" />}
+                title="Ketidakcocokan Antar-Area"
+                badge={crossAreaPairs.length > 0 ? `Top ${crossAreaPairs.length}` : undefined}
+              />
+              <p className="text-[11px] text-muted-foreground -mt-1 px-1 flex items-center gap-1">
+                Item yang sama, minggu yang sama, <b>area berbeda</b>: loss terkonsentrasi di satu area, surplus muncul di area lain.
+                <InfoTooltip content="Pola loss di area A + surplus di area B pada item &amp; minggu yang sama biasanya menandakan stok berpindah ANTAR AREA tanpa dokumen transfer (mutasi gudang/area), atau pencatatan ganda di kedua area. 'Nilai cocok' = min(total loss area A, total surplus area B). Catatan: pasangan antar-area adalah kandidat penyelidikan, BUKAN partisi — satu sisi bisa muncul di beberapa pasangan. Sinyal ini hanya muncul saat filter area tidak aktif." />
+              </p>
+              {crossAreaPairs.length === 0 ? (
+                <SectionEmpty text="Tidak ada pasangan loss↔surplus antar-area pada item yang sama (sinyal antar-area hanya muncul saat filter area tidak aktif)." />
+              ) : (
+                <div className={tableWrap}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className={th}>Item</TableHead>
+                        <TableHead className={th}>Area LOSS</TableHead>
+                        <TableHead className={`${th} text-right`}>Qty LOSS</TableHead>
+                        <TableHead className={th}>Area SURPLUS</TableHead>
+                        <TableHead className={`${th} text-right`}>Qty SURPLUS</TableHead>
+                        <TableHead className={`${th} text-right`}>Nilai Cocok</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {crossAreaPairs.map((r) => (
+                        <TableRow key={`${r.itemId}-${r.lossArea}-${r.surplusArea}`}>
+                          <TableCell className={`${td} font-medium max-w-[200px] truncate`}>{r.itemName}</TableCell>
+                          <TableCell className={`${td} max-w-[140px] truncate`}>
+                            <span className="text-rose-600 dark:text-rose-400 font-medium">{r.lossArea}</span>
+                            <span className="block text-[10px] text-muted-foreground font-normal">
+                              {fmtNum(r.loss.nOutlets)} outlet{r.loss.topOutletCode ? ` · terbesar: ${r.loss.topOutletCode}` : ''}
+                            </span>
+                          </TableCell>
+                          <TableCell className={`${td} text-right tabular-nums text-rose-600 dark:text-rose-400`}>{fmtNum(r.loss.qtyTotal)}</TableCell>
+                          <TableCell className={`${td} max-w-[140px] truncate`}>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">{r.surplusArea}</span>
+                            <span className="block text-[10px] text-muted-foreground font-normal">
+                              {fmtNum(r.surplus.nOutlets)} outlet{r.surplus.topOutletCode ? ` · terbesar: ${r.surplus.topOutletCode}` : ''}
+                            </span>
                           </TableCell>
                           <TableCell className={`${td} text-right tabular-nums text-emerald-600 dark:text-emerald-400`}>{fmtNum(r.surplus.qtyTotal)}</TableCell>
                           <TableCell className={`${td} text-right tabular-nums font-semibold`}>
