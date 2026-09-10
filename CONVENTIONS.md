@@ -140,19 +140,22 @@ SWR contract:
 8. **Envelope flags rebuilt per request** — `cached`/`stale` are NEVER stored in
    the cached payload (poisoning the cache with stale flags would freeze them).
 
-### Cached Routes (20)
+### Cached Routes (21)
 
 `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`,
 `heatmap`, `outlet-items`, `item-history`, `drilldown`, `item-trend`,
 `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`,
 `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`,
-`peer-comparison-trend` (P3-HYG-3), `compliance`, `chronic-outlets` (PAKET E).
+`peer-comparison-trend` (P3-HYG-3), `compliance`, `chronic-outlets` (PAKET E),
+`price-effect` (Task W).
 
-All 20 are invalidated on any mutation via `invalidateAnalysisCache()` (clears
+All 21 are invalidated on any mutation via `invalidateAnalysisCache()` (clears
 every prefix in the list). The `extra` field on `buildCacheKey` carries
 route-specific params (e.g. `metric + itemLimit + mode` for heatmap,
 `parentDim + childDim` for pareto, `priority + limit` for resto-bahan-matrix,
-`sections` for export-report, `mode/limit/topItems/peers` for peer-comparison ×3)
+`sections` for export-report, `mode/limit/topItems/peers` for peer-comparison ×3,
+`compareWeek + compareMonth` for price-effect — passed as top-level cache-key
+fields there)
 — omitting these from the key causes cache poisoning between two requests with
 different params. **MENAMBAH ROUTE CACHE BARU → WAJIB daftarkan prefix-nya di
 `invalidateAnalysisCache()`** (kasus nyata: compliance + chronic-outlets sempat

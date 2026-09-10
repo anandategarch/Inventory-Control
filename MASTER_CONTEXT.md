@@ -88,7 +88,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ---
 
-## 4. API Routes (35 routes)
+## 4. API Routes (36 routes)
 
 | Route | Cache | Zod | Rate Limit | Auth |
 |-------|-------|------|------------|------|
@@ -119,17 +119,19 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/peer-comparison/trend` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW P3-HYG-3) |
 | `/api/pic` | ❌ | ✅ | ✅ | Protected mutations |
 | `/api/pic/import` | ❌ | ✅ | ✅ | Protected (maxDuration 60 — PAKET C DEPLOY-3) |
+| `/api/price-effect` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Task W — dekomposisi Bennet efek harga vs kuantitas) |
 | `/api/recommendations` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/resto-bahan-matrix` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/settings` | ❌ | ✅ | ✅ | Protected |
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 33/35 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` + root `/api/route.ts` health stub skip Zod) · **20 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, compliance, chronic-outlets) — all 20 prefixes invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
+**Totals:** 34/36 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` + root `/api/route.ts` health stub skip Zod) · **21 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, compliance, chronic-outlets, price-effect) — all 21 prefixes invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
 
 **REMOVED (DEL-AUDIT):** `/api/audit-log` route + `AuditLog` Prisma model — entire audit log feature deleted (model, route, dialog, 14 write sites, button, state, middleware entry). 0 dangling references verified.
 
 **New route specs:**
+- `GET /api/price-effect?month=&week=[wajib]&compareMonth=&compareWeek=[opsional]&area=&kelompok=&outlet=&pic=` — **Task W**: dekomposisi Bennet (EKSAK, tanpa residual interaksi) atas ΔΣ|nominalDeviasi| vs periode pembanding menjadi **Efek Harga + Efek Kuantitas** per item + agregat. Implements Master Context bisnis §22 AVG PRICE / §55 (Nominal effect = Quantity effect + Price effect). Harga implisit per item = Σ|nominalDeviasi|/Σ|qtyDeviasi| (harga nasional teramati via baris deviation); efek kuantitas = (Qc−Qp)×avg(Pc,Pp); efek harga = (Pc−Pp)×avg(Qc,Qp). Klasifikasi dominansi per item: PRICE (≥70% share efek harga) / QTY (≤30%) / MIXED / FLAT. Item baru/hilang di luar dekomposisi (dilaporkan terpisah agar agregat terekonsiliasi). AVG Price Δ nasional = weighted mean (bobot |nominal prev|) + median growth harga per item. SQL: 2 CTE agregat (curr+prev, GROUP BY item) + 1 FULL OUTER JOIN (~154 baris/sisi). Cache 5 mnt (prefix `price-effect` terdaftar di invalidateAnalysisCache), rate-limit 30/mnt, maxDuration 60. Tanpa param compare → `hasCompare:false` + items kosong (FE menampilkan hint pilih pembanding).
 - `GET /api/compliance?month=&week=[wajib]&area=&kelompok=&outlet=&pic=` — **PAKET E**: 9 lensa kontrol dari SATU scan periode (CTE `base` dimaterialisasi sekali → 6 agregat + `UNION ALL (lens, to_jsonb(row))` 1 round-trip): kepatuhan toleransi per item (paritas penuh rule engine — threshold dari `getRuntimeThresholds()` yang sama), prioritas penetapan toleransi, residual per outlet (WARN/HIGH paritas rule), |deviasi|/penjualan per outlet, kategori BAHAN/PACKAGING, transfer antar outlet (item×area loss↔surplus serentak), ketidakcocokan antar-area (pairing di lapisan shaping dari `transfer_agg` yang sama — nol scan tambahan), kualitas input angka bulat (3 kolom FILTER di scan yang sama). Threshold paritas: `f_tol_breach`/`f_tol_breach_high`/`f_tol_not_set`/`f_resid_warn`/`f_resid_high` share `stdDevBomPct`/`residualWarnPct`/`residualHighPct` dengan rule engine. Cache 5 mnt, rate-limit 30/mnt, maxDuration 60.
 - `GET /api/chronic-outlets?month=[wajib, TANPA week]&area=&kelompok=&outlet=&pic=` — **PAKET E**: lensa level BULAN (month-grain BY DESIGN — strict zod menolak param liar): klasifikasi KRONIS (deviasi ≥3 minggu AND ≥75% minggu berdata) / SPIKE (minggu terburuk ≥60% |dev| bulanan) / VARIABEL + arah dominan + minggu terburuk (argmax via ROW_NUMBER) + **momentum** (tren |deviasi| paruh kedua vs pertama per outlet — baris per outlet×minggu sebagai lensa 'week' UNION ALL di query yang sama). 1 scan bulan, cache 5 mnt (reusable antar minggu — FE keyed month-only), rate-limit 30/mnt, maxDuration 60.
 - `GET /api/peer-comparison?outlet=&month=&week=&mode=&limit=&kelompok=` — **kini di-cache** (P3-HYG-3, 5 mnt + in-flight dedup). Cache key: outlet/month/week/kelompok + extra {mode, limit}. Dulu menjalankan CROSS JOIN multi-CTE di setiap request.
@@ -507,13 +509,13 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 56,786 (Task W: −1.709 baris dead code — JS evaluator + ruleService + rootCauseEngine dihapus) |
+| Lines of code in `src/` | 57,666 (Task W: −1.709 baris dead code dihapus, +880 baris fitur price-effect: query + route + PriceEffectCard) |
 | Test files | 21 |
 | Test cases | 402 |
-| Git commits | 506 |
+| Git commits | 514 |
 | npm dependencies | 31 |
-| API routes (main) | 35 (was 27 — ADDED compliance + chronic-outlets + peer-comparison/items + peer-comparison/trend + item-anomali-outlets; flip-ranking ×2) |
-| Cached routes | 20 (was 14 — added item-anomali-outlets + 3 peer-comparison (P3-HYG-3) + compliance + chronic-outlets (PAKET E); analysis raw-JSON passthrough P3-HYG-1) |
+| API routes (main) | 36 (was 35 — Task W added price-effect) |
+| Cached routes | 21 (was 20 — Task W added price-effect) |
 | Dashboard components | 25 (+`Compliance`) + `tabs/ItemTrendTab/` folder (11 modules + barrel) + `tabs/ComplianceTab.tsx` + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files) + `shared/` dashboard components (5 TREMOR) |
 | UI components | 30 (29 shadcn + Callout) |
 | Dashboard component patterns | 9 total (3 evidence-dev + 6 tremor) |

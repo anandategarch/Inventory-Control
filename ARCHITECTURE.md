@@ -201,9 +201,9 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 | Value           | JSON-serialized payload (text column; export-report menyimpan **base64** — P3-HYG-4) |
 | TTL             | 5 minutes default; `/api/analysis` **30 minutes** (env `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi; mutasi selalu invalidate eksplisit) |
 | Write mode      | `awaitWrite=true` — readers wait for in-flight writers (prevents cache stampede)     |
-| Invalidation    | `invalidateAnalysisCache()` clears ALL **20** route prefixes on any mutation          |
+| Invalidation    | `invalidateAnalysisCache()` clears ALL **21** route prefixes on any mutation          |
 
-**20 cached routes** (17 pakai `withCacheAndDedup` — cache lookup + in-flight dedup + SWR; `/api/analysis` pipeline bespoke dengan raw-JSON passthrough; `/api/export-report` binary base64):
+**21 cached routes** (18 pakai `withCacheAndDedup` — cache lookup + in-flight dedup + SWR; `/api/analysis` pipeline bespoke dengan raw-JSON passthrough; `/api/export-report` binary base64):
 
 1. `/api/analysis` (bespoke 8-stage pipeline; cache check di `validate-and-resolve.ts` — **SWR 30 mnt + background-recompute + raw-JSON passthrough** P3-HYG-1)
 2. `/api/pareto`
@@ -225,10 +225,11 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 18. `/api/compliance` (PAKET E — 9 lensa dari 1 scan)
 19. `/api/chronic-outlets` (PAKET E — month-grain; cache reusable antar minggu)
 20. `/api/item-trend` (per-item QTY fluctuation; week filter)
+21. `/api/price-effect` (Task W — AVG Price Effect Bennet decomposition; extra: compareWeek + compareMonth)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query, LIMIT 1000, user-initiated drill-down — small payload, low latency).
 
-**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the **20** routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts`). Mutations (ingest, settings change, PIC update, data delete, migrate-direction, import-drive) clear SEMUA prefix — tidak ada entry stale yang selamat dari write.
+**`invalidateAnalysisCache()`** deletes rows where `key LIKE '<route>\x1f%'` for each of the **21** routes (ASCII Unit Separator `\x1f` delimiter, see `src/lib/aggregation-cache.ts`). Mutations (ingest, settings change, PIC update, data delete, migrate-direction, import-drive) clear SEMUA prefix — tidak ada entry stale yang selamat dari write.
 
 **Call sites:** 9 mutation routes — `ingest-process`, `data`, `settings`, `pic`, `pic/import`, `migrate-direction`, `ingestion.ts` (used by `ingest` + `import-drive`), `DriveImportDialog`.
 
@@ -297,7 +298,7 @@ keepPreviousData: true,    // drilldown navigation: no flash of empty state
    - **No entry** → compute synchronously + write cache + resolve in-flight.
 4. **On error** → reject in-flight + re-throw.
 
-**Surface area:** 18 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap, item-peer-comparison, item-trend-rank, flip-ranking ×2, item-anomali-outlets, peer-comparison ×3, compliance, chronic-outlets, item-trend). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
+**Surface area:** 19 JSON routes surface `stale: true` on the response when serving from an expired cache entry (pareto, recommendations, resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap, item-peer-comparison, item-trend-rank, flip-ranking ×2, item-anomali-outlets, peer-comparison ×3, compliance, chronic-outlets, item-trend, price-effect). `/api/export-report` uses SWR internally but the binary docx response can't surface the flag (next download gets fresh).
 
 **`/api/analysis` — NOW on SWR (commit 72aad95, AUDIT-PERF-5):** TTL 30 mnt (env `ANALYSIS_CACHE_TTL_MINUTES`); on a stale hit, `validate-and-resolve.ts` serves the stale row immediately + flags `stale: true` + triggers `triggerBackgroundRecompute()` (guarded — max ONE recompute per key per instance, fire-and-forget, upserts fresh row via `setCached(awaitWrite=true)`). TTL panjang aman karena mutasi SELALU invalidate eksplisit. **Plus raw-JSON passthrough (P3-HYG-1, PAKET F):** cache hit menyajikan string JSON tersimpan LANGSUNG — `getCachedRawWithMeta` (nol `JSON.parse`) → flag `"cached":true`/`"stale":true` di-inject via string surgery O(1) setelah `{` pembuka (payload tersimpan tak pernah memuat key itu — aman duplicate-key) → `new NextResponse(raw, { Content-Type: application/json })`. In-flight di-resolve dengan marker `{__rawJson, stale}`; awaiter melayani marker dengan response raw yang sama. Shape guard murah: `raw[0]==='{' && raw.includes('"success":')` (substring scan µs vs full parse 10-20ms). Menghilangkan double-serialize ~1MB per hit.
 

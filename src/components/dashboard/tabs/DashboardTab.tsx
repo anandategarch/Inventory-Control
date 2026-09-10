@@ -25,7 +25,7 @@
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
-import { BarChart3, Calendar, History, MapPin } from 'lucide-react';
+import { BarChart3, Calendar, History, MapPin, Tags } from 'lucide-react';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
@@ -33,6 +33,7 @@ import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
 } from '@/components/dashboard/AdvancedAnalysis';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
+import { PriceEffectCard } from '@/components/dashboard/PriceEffectCard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import {
   LoadingChart, SectionHeader,
@@ -115,6 +116,22 @@ export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabPro
         />
         <ErrorBoundary label="Multi-Period Comparison">
           <MultiPeriodComparisonCard data={data} />
+        </ErrorBoundary>
+      </section>
+
+      {/* Section: AVG Price Effect (Harga vs Kuantitas)
+          Task W: implements Master Context (business doc) §22/§55 — separates
+          the Δ|Nominal Deviasi| vs the compare period into a price effect and
+          a quantity effect (Bennet, exact). Compare-period-driven, hence placed
+          right after Multi-Period Comparison. Self-contained fetch
+          (/api/price-effect) — no `data` prop needed. */}
+      <section>
+        <SectionHeader
+          icon={<Tags className="h-4 w-4 text-muted-foreground" />}
+          title="AVG Price Effect (Harga vs Kuantitas)"
+        />
+        <ErrorBoundary label="AVG Price Effect">
+          <PriceEffectCard />
         </ErrorBoundary>
       </section>
 
