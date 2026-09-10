@@ -18,6 +18,10 @@ import { validateBody } from '@/lib/validation';
 import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
+// DEPLOY-3: bulk transaction (up to ~333 sequential outletPIC.update via pooler
+// + cache invalidation) can exceed Vercel's 10s default — align with other
+// mutation routes at 60s.
+export const maxDuration = 60;
 
 const importSchema = z
   .object({

@@ -1,12 +1,6 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "bunx prisma generate && bun run next build",
   "framework": "nextjs",
-  "functions": {
-    "src/app/api/ingest": {
-      "maxDuration": 300
-    },
-    "src/app/api/import-drive": {
-      "maxDuration": 300
-    }
-  }
+  "fluid": true
 }
