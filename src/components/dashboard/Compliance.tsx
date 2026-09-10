@@ -17,10 +17,16 @@
 //    7. Ketidakcocokan Antar-Area — same item, same week,
 //       DIFFERENT areas: LOSS in one area vs SURPLUS in another
 //       (cross-area mismatch pairs, derived from the same response)
+//    8. Kronis vs Sekali-Timu per Outlet — month-grain second
+//       query (/api/chronic-outlets, keyed on month ONLY — does
+//       not refetch when the user switches weeks): does this
+//       outlet deviate EVERY week (chronic) or only in one
+//       dominant week (spike)?
 //
 //  PERF-FE (PAKET A pattern): staleTime 5 min + gcTime 10 min —
 //  data only changes on ingest / manual refresh (handleRefresh
-//  invalidates ['compliance']), NOT every 30s global default.
+//  invalidates ['compliance'] AND ['chronic-outlets']), NOT
+//  every 30s global default.
 //  keepPreviousData for smooth period switches.
 // ============================================================
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -31,7 +37,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route,
+  ShieldCheck, Gauge, Receipt, ArrowLeftRight, Tags, TriangleAlert, Boxes, Route, CalendarClock,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -39,8 +45,14 @@ import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { SectionHeader } from '@/components/dashboard/shared';
 import type { ComplianceResult } from '@/lib/queries/compliance';
+import type { ChronicOutletsResult } from '@/lib/queries/chronic-outlets';
 
 type ComplianceResponse = ComplianceResult & {
+  success: boolean;
+  durationMs?: number;
+};
+
+type ChronicResponse = ChronicOutletsResult & {
   success: boolean;
   durationMs?: number;
 };
@@ -118,6 +130,27 @@ export function Compliance() {
     placeholderData: keepPreviousData,
   });
 
+  const { data: chronicData, isLoading: chronicLoading } = useQuery({
+    queryKey: ['chronic-outlets', monthLabel, area, kelompok, outletCode, pic],
+    queryFn: async () => {
+      const month = monthLabel ?? '';
+      if (!month) throw new Error('Bulan belum dipilih');
+      const p = new URLSearchParams();
+      p.set('month', month);
+      if (area && area !== 'all') p.set('area', area);
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      if (outletCode && outletCode !== 'all') p.set('outlet', outletCode);
+      if (pic && pic !== 'all') p.set('pic', pic);
+      const res = await fetch(`/api/chronic-outlets?${p.toString()}`);
+      if (!res.ok) throw new Error('Gagal memuat data kronis outlet');
+      return res.json() as Promise<ChronicResponse>;
+    },
+    enabled: Boolean(monthLabel),
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+
   // Memoize shaped views (tables re-sort nothing — pure slices of the payload)
   const summary = useMemo(() => data?.summary, [data]);
   const toleranceItems = useMemo(() => data?.toleranceItems ?? [], [data]);
@@ -127,6 +160,7 @@ export function Compliance() {
   const categories = useMemo(() => data?.categories ?? [], [data]);
   const transferSignals = useMemo(() => data?.transferSignals ?? [], [data]);
   const crossAreaPairs = useMemo(() => data?.crossAreaPairs ?? [], [data]);
+  const chronicOutlets = useMemo(() => chronicData?.outlets ?? [], [chronicData]);
 
   if (error) {
     return (
@@ -575,6 +609,83 @@ export function Compliance() {
                           <TableCell className={`${td} text-right tabular-nums font-semibold`}>
                             {fmtNum(r.matchQty)} qty
                             <span className="block text-[10px] text-muted-foreground font-normal">{fmtIDR(r.matchNominal)}</span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ====== 8. KRONIS vs SEKALI-TIMU (per outlet, bulan) ====== */}
+          <Card>
+            <CardContent className="p-3 sm:p-4 pt-3 sm:pt-4 space-y-2">
+              <SectionHeader
+                icon={<CalendarClock className="h-4 w-4" />}
+                title="Kronis vs Sekali-Timu per Outlet"
+                badge={chronicData ? `${fmtNum(chronicData.chronicCount)} kronis · ${fmtNum(chronicData.spikeCount)} spike` : undefined}
+              />
+              <p className="text-[11px] text-muted-foreground -mt-1 px-1 flex items-center gap-1">
+                Sepanjang bulan {monthLabel} (tidak tergantung minggu terpilih): outlet <b>kronis</b> menyimpang hampir tiap minggu — outlet <b>spike</b> buruk hanya di satu minggu dominan.
+                <InfoTooltip content="KRONIS = deviasi di &ge;3 minggu DAN &ge;75% minggu yang ada datanya → masalah sistemik (proses/PIC/kebocoran), layak audit mendalam. SPIKE = minggu terburuk menampung &ge;60% |deviasi| bulanan (min. 2 minggu data) → peristiwa sekali-timu, cek kejadian minggu itu. 'Minggu residual' = minggu dengan deviasi tak terjelaskan &gt; 0. Analisa ini level BULAN — mengganti minggu tidak mengubahnya." />
+              </p>
+              {!chronicData && chronicLoading ? (
+                <div className="h-32 rounded-xl bg-muted/40 animate-pulse" />
+              ) : chronicOutlets.length === 0 ? (
+                <SectionEmpty text="Tidak ada outlet berdeviasi pada bulan ini (dengan filter aktif)." />
+              ) : (
+                <div className={tableWrap}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className={th}>Outlet</TableHead>
+                        <TableHead className={th}>Area</TableHead>
+                        <TableHead className={`${th} text-right`}>Minggu Deviasi</TableHead>
+                        <TableHead className={th}>Arah</TableHead>
+                        <TableHead className={`${th} text-right`}>Total |Dev| Bulan</TableHead>
+                        <TableHead className={`${th} text-right`}>Rata / Minggu Dev</TableHead>
+                        <TableHead className={th}>Minggu Terburuk</TableHead>
+                        <TableHead className={th}>Klasifikasi</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {chronicOutlets.map((r) => (
+                        <TableRow key={r.outletId}>
+                          <TableCell className={`${td} font-medium max-w-[200px] truncate`}>
+                            {r.outletCode}
+                            <span className="text-muted-foreground font-normal"> · {r.outletName}</span>
+                          </TableCell>
+                          <TableCell className={`${td} text-muted-foreground max-w-[140px] truncate`}>{r.area}</TableCell>
+                          <TableCell className={`${td} text-right tabular-nums`}>
+                            {fmtNum(r.nDevWeeks)}/{fmtNum(r.nWeeks)}
+                            {r.nResidWeeks > 0 ? (
+                              <span className="block text-[10px] text-muted-foreground font-normal">residual: {fmtNum(r.nResidWeeks)} mgg</span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className={`${td}`}>
+                            <span className={
+                              r.dominant === 'LOSS' ? 'text-rose-600 dark:text-rose-400'
+                                : r.dominant === 'SURPLUS' ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-muted-foreground'
+                            }>{r.dominant === 'LOSS' ? 'Loss' : r.dominant === 'SURPLUS' ? 'Surplus' : 'Campuran'}</span>
+                          </TableCell>
+                          <TableCell className={`${td} text-right tabular-nums font-medium`}>{fmtIDR(r.totalAbsNom)}</TableCell>
+                          <TableCell className={`${td} text-right tabular-nums text-muted-foreground`}>{fmtIDR(r.avgPerDevWeek)}</TableCell>
+                          <TableCell className={`${td}`}>
+                            {r.maxWeekLabel ? (
+                              <>
+                                <span className="tabular-nums">{r.maxWeekLabel}</span>
+                                <span className="block text-[10px] text-muted-foreground font-normal">{fmtIDR(r.maxWeekAbs)} · {fmtPctAbs(r.maxWeekSharePct)} dari bulan</span>
+                              </>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className={`${td}`}>
+                            {r.classification === 'CHRONIC' ? <Badge variant="destructive">Kronis</Badge>
+                              : r.classification === 'SPIKE' ? (
+                                <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400 border-amber-200 dark:border-amber-800">Spike</Badge>
+                              ) : <Badge variant="secondary">Variabel</Badge>}
                           </TableCell>
                         </TableRow>
                       ))}

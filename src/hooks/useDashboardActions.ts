@@ -135,6 +135,7 @@ export function useDashboardActions({
     // PAKET E — Kontrol & Kepatuhan tab (same invalidation semantics:
     // manual refresh must bypass the 5-min staleTime).
     queryClient.invalidateQueries({ queryKey: ['compliance'] });
+    queryClient.invalidateQueries({ queryKey: ['chronic-outlets'] });
     toast({ title: '🔄 Data diperbarui' });
   }, [queryClient, toast]);
 
