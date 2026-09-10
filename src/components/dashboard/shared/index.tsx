@@ -8,7 +8,8 @@
 import { useState, useEffect, memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
+// QW hygiene: Button import removed — every CTA here is a raw <button>
+// (custom amber styling), the shadcn Button was never referenced.
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -31,30 +32,27 @@ export const EmptyState = memo(function EmptyState() {
       <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
         Database masih kosong. Mulai dengan upload file Excel rekoniliasi atau import langsung dari Google Drive untuk analisis pertama.
       </p>
-      {/* CTA buttons */}
+      {/* CTA buttons — QW-D: converted from <a href="#filter-bar"> to real
+          <button> elements. The old anchors pointed at an id that never
+          existed (dead href) and prevented default on every click — a
+          button is the correct semantics for a JS-only action. */}
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-        <a
-          href="#filter-bar"
-          onClick={(e) => {
-            e.preventDefault();
-            document.dispatchEvent(new CustomEvent('open-upload-dialog'));
-          }}
+        <button
+          type="button"
+          onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 hover:shadow active:scale-95 transition-all"
         >
           <Upload className="h-3.5 w-3.5" />
           Upload File
-        </a>
-        <a
-          href="#filter-bar"
-          onClick={(e) => {
-            e.preventDefault();
-            document.dispatchEvent(new CustomEvent('open-drive-dialog'));
-          }}
+        </button>
+        <button
+          type="button"
+          onClick={() => document.dispatchEvent(new CustomEvent('open-drive-dialog'))}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium border border-border bg-background hover:bg-muted/60 hover:shadow-sm active:scale-95 transition-all"
         >
           <CloudDownload className="h-3.5 w-3.5" />
           Import dari Drive
-        </a>
+        </button>
       </div>
       <p className="mt-4 text-[11px] text-muted-foreground/70 flex items-center gap-1.5">
         <Sparkles className="h-3 w-3 text-amber-500" />
@@ -244,7 +242,11 @@ export function ScrollToTop() {
   return (
     <button
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      className="fixed bottom-6 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-all duration-200 group"
+      // QW-C: bottom-16 (was bottom-6) — the 40px button used to overlap
+      // the ~38px sticky footer (z-30) right where the footer's hint text
+      // lives. 64px lifts it clear above the footer while staying in the
+      // bottom-right corner thumb zone.
+      className="fixed bottom-16 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-all duration-200 group"
       aria-label="Scroll to top"
     >
       <ArrowUp className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />

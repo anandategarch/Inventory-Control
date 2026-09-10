@@ -64,9 +64,22 @@ export function DashboardHeader({
             </Badge>
           )}
           {analysisData && (
-            <Badge variant="outline" className="text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground">
+            <Badge
+              variant="outline"
+              // QW-B (Phase C item 5): surface the SWR `stale` flag — backend
+              // injects "stale":true when the response came from an EXPIRED
+              // DB-cache entry while a background recompute runs (validate-
+              // and-resolve.ts). Amber styling + native title so the user
+              // knows the numbers on screen may be one generation behind.
+              title={analysisData.stale
+                ? 'Data dari cache kedaluwarsa — versi terbaru sedang dihitung ulang di latar belakang'
+                : undefined}
+              className={`text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 ${analysisData.stale
+                ? 'border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30'
+                : 'text-muted-foreground'}`}
+            >
               <Activity className="h-3 w-3" />
-              <span className="tabular-nums">{analysisData.cached ? 'cache' : 'langsung'} · {analysisData.durationMs}ms</span>
+              <span className="tabular-nums">{analysisData.stale ? 'cache lama' : analysisData.cached ? 'cache' : 'langsung'} · {analysisData.durationMs}ms</span>
             </Badge>
           )}
           {analysisData && (
@@ -105,6 +118,8 @@ export function DashboardHeader({
                 <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">4</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Trend Item</span><kbd className="font-mono">5</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Kepatuhan</span><kbd className="font-mono">6</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
               </ul>
             </TooltipContent>

@@ -11,7 +11,7 @@
 //      recommendations) + fires a toast. Memoized.
 //    • isExporting   — local UI state toggled by handleExport.
 //    • Global keyboard shortcuts useEffect (Cmd/Ctrl+E, R, K,
-//      1/2/3/4, Escape).
+//      1-6, Escape).
 //
 //  Parent (DashboardPage) still owns `exportDialogOpen` +
 //  `itemSearchOpen` state because the modals
@@ -149,7 +149,8 @@ export function useDashboardActions({
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
-  // 1 / 2 / 3 → switch tabs (Dashboard / Resto Analysis / Peer Comparison)
+  // 1-6 → switch tabs (Dashboard / Resto / Peer / Pareto /
+  //       Trend Item / Kepatuhan)
   // Escape → close any open dialog/drawer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -170,15 +171,15 @@ export function useDashboardActions({
         handleRefresh();
         return;
       }
-      // 1 / 2 / 3 / 4 / 5 → switch tabs (only when not typing in an input)
+      // 1-6 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
       // P3-HYG-6: the querySelector probe now runs ONLY when the key is one
       // of the tab digits — cheap constant folding for every other keypress.
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6')) {
         const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
         if (isDropdownOpen) return;
-        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend' };
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend', '6': 'compliance' };
         setActiveTab(tabMap[e.key]);
         return;
       }

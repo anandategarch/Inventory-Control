@@ -34,8 +34,18 @@ export function DashboardFooter({ status, analysisData }: DashboardFooterProps) 
         </div>
         <div className="flex items-center gap-3">
           {analysisData && (
-            <span className="tabular-nums">
-              Analisis terakhir: {analysisData.durationMs}ms · {analysisData.cached ? 'cache' : 'segar'}
+            <span
+              className="tabular-nums"
+              // QW-B (Phase C item 5): mirror the header's stale indicator —
+              // "cache lama" = served from an expired DB-cache entry while a
+              // background recompute runs (stale-while-revalidate).
+              title={analysisData.stale
+                ? 'Data dari cache kedaluwarsa — versi terbaru sedang dihitung ulang di latar belakang'
+                : undefined}
+            >
+              Analisis terakhir: {analysisData.durationMs}ms · {analysisData.stale
+                ? 'cache lama (menghitung ulang)'
+                : analysisData.cached ? 'cache' : 'segar'}
             </span>
           )}
           <span className="hidden sm:inline text-muted-foreground flex items-center gap-1">
