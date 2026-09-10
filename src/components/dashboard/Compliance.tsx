@@ -630,11 +630,11 @@ export function Compliance() {
               <SectionHeader
                 icon={<CalendarClock className="h-4 w-4" />}
                 title="Kronis vs Sekali-Timu per Outlet"
-                badge={chronicData ? `${fmtNum(chronicData.chronicCount)} kronis · ${fmtNum(chronicData.spikeCount)} spike` : undefined}
+                badge={chronicData ? `${fmtNum(chronicData.chronicCount)} kronis · ${fmtNum(chronicData.spikeCount)} spike${chronicData.worseningCount > 0 ? ` · ${fmtNum(chronicData.worseningCount)} memburuk` : ''}` : undefined}
               />
               <p className="text-[11px] text-muted-foreground -mt-1 px-1 flex items-center gap-1">
-                Sepanjang bulan {monthLabel} (tidak tergantung minggu terpilih): outlet <b>kronis</b> menyimpang hampir tiap minggu — outlet <b>spike</b> buruk hanya di satu minggu dominan.
-                <InfoTooltip content="KRONIS = deviasi di &ge;3 minggu DAN &ge;75% minggu yang ada datanya → masalah sistemik (proses/PIC/kebocoran), layak audit mendalam. SPIKE = minggu terburuk menampung &ge;60% |deviasi| bulanan (min. 2 minggu data) → peristiwa sekali-timu, cek kejadian minggu itu. 'Minggu residual' = minggu dengan deviasi tak terjelaskan &gt; 0. Analisa ini level BULAN — mengganti minggu tidak mengubahnya." />
+                Sepanjang bulan {monthLabel} (tidak tergantung minggu terpilih): outlet <b>kronis</b> menyimpang hampir tiap minggu — outlet <b>spike</b> buruk hanya di satu minggu dominan. Kolom <b>Momen</b> = tren |deviasi| paruh kedua vs paruh pertama.
+                <InfoTooltip content="KRONIS = deviasi di &ge;3 minggu DAN &ge;75% minggu yang ada datanya → masalah sistemik (proses/PIC/kebocoran), layak audit mendalam. SPIKE = minggu terburuk menampung &ge;60% |deviasi| bulanan (min. 2 minggu data) → peristiwa sekali-timu, cek kejadian minggu itu. MOMEN = rata-rata |deviasi| paruh KEDUA vs paruh PERTAMA minggu outlet (band &plusmn;25%: di luar band = memburuk/membaik; paruh pertama nol + paruh kedua ada deviasi = 'baru'); memburuk = besaran deviasi sedang MEMBESAR. 'Minggu residual' = minggu dengan deviasi tak terjelaskan &gt; 0. Analisa ini level BULAN — mengganti minggu tidak mengubahnya." />
               </p>
               {!chronicData && chronicLoading ? (
                 <div className="h-32 rounded-xl bg-muted/40 animate-pulse" />
@@ -652,6 +652,7 @@ export function Compliance() {
                         <TableHead className={`${th} text-right`}>Total |Dev| Bulan</TableHead>
                         <TableHead className={`${th} text-right`}>Rata / Minggu Dev</TableHead>
                         <TableHead className={th}>Minggu Terburuk</TableHead>
+                        <TableHead className={th}>Momen</TableHead>
                         <TableHead className={th}>Klasifikasi</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -684,6 +685,15 @@ export function Compliance() {
                                 <span className="tabular-nums">{r.maxWeekLabel}</span>
                                 <span className="block text-[10px] text-muted-foreground font-normal">{fmtIDR(r.maxWeekAbs)} · {fmtPctAbs(r.maxWeekSharePct)} dari bulan</span>
                               </>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className={`${td}`}>
+                            {r.momentum === 'WORSE' ? (
+                              <span className="text-rose-600 dark:text-rose-400 font-medium">{r.momentumPct === null ? 'baru' : `+${fmtPctAbs(r.momentumPct)}`} · memburuk</span>
+                            ) : r.momentum === 'BETTER' ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-medium">-{fmtPctAbs(Math.abs(r.momentumPct ?? 0))} · membaik</span>
+                            ) : r.momentum === 'STABLE' ? (
+                              <span className="text-muted-foreground">stabil</span>
                             ) : '—'}
                           </TableCell>
                           <TableCell className={`${td}`}>

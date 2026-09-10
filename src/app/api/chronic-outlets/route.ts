@@ -92,7 +92,7 @@ async function resolveOutletCodeFilters(
 
 /** Empty result with the full response shape (filters matched no outlets). */
 function emptyChronicResult(): ChronicOutletsResult {
-  return { outlets: [], nWeeksMax: 0, chronicCount: 0, spikeCount: 0 };
+  return { outlets: [], nWeeksMax: 0, chronicCount: 0, spikeCount: 0, worseningCount: 0 };
 }
 
 export async function GET(req: NextRequest) {
