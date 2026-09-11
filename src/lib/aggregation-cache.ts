@@ -520,6 +520,10 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'price-effect', 'item-search', 'heatmap-cell-detail',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
     'q-outlet-agg',
+    // H-11 (#3): the remaining export-shared queries — every heavy query the
+    // analysis + export-report pipelines both compute is now behind a q-* row.
+    'q-exec-summary', 'q-top-nominal', 'q-top-devbom', 'q-area',
+    'q-hist-stats', 'q-hist-critical', 'q-hist-catavg',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

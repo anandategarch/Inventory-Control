@@ -26,10 +26,24 @@
 //    moderate — dominan or parsial flip
 //    low      — konsisten / first
 //
+//  PERF/CLEANUP (H-11 / #4c): the core flip FORMULAS (isFlip / disparity /
+//  category thresholds / risk score+level) now live in ONE shared module —
+//  src/lib/flip-metrics.ts — imported by this file, by the SERVER's
+//  flip-ranking query, and by FlipRanking.tsx's drill panel. This file keeps
+//  only the ItemTrend-tab-specific shaping (period grouping, per-pair rich
+//  analysis objects, badges, lookups).
+//
 //  No 'use client', no React — fully tree-shakeable + unit-testable.
 // ============================================================
 
 import type { ItemTrendPeriod } from '@/hooks/useAnalysis';
+import {
+  isFlipPair,
+  flipDisparity,
+  categorizeFlipDisparity,
+  flipRiskScore as sharedFlipRiskScore,
+  flipRiskLevel as sharedFlipRiskLevel,
+} from '@/lib/flip-metrics';
 import { periodShortLabel } from './periodHelpers';
 
 // ----------------------------------------------------------------
@@ -91,12 +105,8 @@ export function periodKey(p: ItemTrendPeriod): string {
   return `${p.monthLabel}|${p.weekLabel}`;
 }
 
-/** Safe sign helper — returns -1, 0, or +1. */
-function sign(n: number): -1 | 0 | 1 {
-  if (n < 0) return -1;
-  if (n > 0) return 1;
-  return 0;
-}
+// sign() moved to src/lib/flip-metrics.ts as flipSign() (H-11 / #4c single
+// flip-formula module) — this file now imports the shared implementations.
 
 // ----------------------------------------------------------------
 //  Public API
@@ -152,28 +162,17 @@ export function computeFlipAnalyses(periods: ItemTrendPeriod[]): FlipAnalysis[] 
       const qtyP1 = p1.qtyDeviasiSigned;
       const qtyP2 = p2.qtyDeviasiSigned;
       const net = qtyP1 + qtyP2;
-      const absP1 = Math.abs(qtyP1);
-      const absP2 = Math.abs(qtyP2);
-      const maxMagnitude = Math.max(absP1, absP2);
-      // Disparity: 0 when net cancels perfectly, 1 when one side dominates entirely.
-      const disparity = maxMagnitude > 0 ? Math.min(Math.abs(net) / maxMagnitude, 1) : 0;
+      // Core formulas from the shared single module (H-11 / #4c).
+      const disparity = flipDisparity(qtyP1, qtyP2);
       const disparityPct = disparity * 100;
-      const isFlip = sign(qtyP1) !== sign(qtyP2) && qtyP1 !== 0 && qtyP2 !== 0;
+      const isFlip = isFlipPair(qtyP1, qtyP2);
 
       let category: FlipAnalysis['category'];
       let riskLevel: FlipAnalysis['riskLevel'];
 
       if (isFlip) {
-        if (disparity < 0.10) {
-          category = 'sempurna';
-          riskLevel = 'high';
-        } else if (disparity < 0.40) {
-          category = 'dominan';
-          riskLevel = 'moderate';
-        } else {
-          category = 'parsial';
-          riskLevel = 'moderate';
-        }
+        category = categorizeFlipDisparity(disparity);
+        riskLevel = category === 'sempurna' ? 'high' : 'moderate';
       } else {
         // Same direction (or one side zero) — classify by delta.
         if (qtyP2 > qtyP1) {
@@ -254,16 +253,12 @@ export function computeItemFlipScore(flips: FlipAnalysis[]): ItemFlipScore {
     }
   }
 
-  // FIX (BUG2-FLIP-05): align riskLevel with backend (flip-ranking.ts) so
-  // the FlipSummaryCard + Flip Ranking widget show the SAME risk level for
-  // the same item. Was using weighted/totalPairs (normalized 0-100) which
-  // could classify an item with 1 sempurna + 3 konsisten as MODERATE,
-  // while backend classifies it as HIGH (sempurnaCount > 0).
-  // Now: riskLevel = sempurnaCount>0 ? high : flipCount>0 ? moderate : low
-  // (matches backend exactly). riskScore still computed for display.
-  const riskScore = Math.min(100, sempurnaCount * 30 + flipCount * 10);
-  const riskLevel: ItemFlipScore['riskLevel'] =
-    sempurnaCount > 0 ? 'high' : flipCount > 0 ? 'moderate' : 'low';
+  // FIX (BUG2-FLIP-05): riskLevel/riskScore come from the shared single
+  // flip-formula module (src/lib/flip-metrics.ts) — same expressions the
+  // backend flip-ranking query uses, so the FlipSummaryCard + Flip Ranking
+  // widget show the SAME risk level for the same item.
+  const riskScore = sharedFlipRiskScore(sempurnaCount, flipCount);
+  const riskLevel = sharedFlipRiskLevel(sempurnaCount, flipCount);
 
   return {
     totalPairs,

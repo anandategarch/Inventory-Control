@@ -16,7 +16,7 @@ vi.mock('@/lib/aggregation-cache', () => ({
   withCacheAndDedup: mockWithCacheAndDedup,
 }));
 
-import { cachedSharedQuery } from '@/lib/queries/query-cache';
+import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts, histCriticalKeysHash } from '@/lib/queries/query-cache';
 
 describe('cachedSharedQuery', () => {
   beforeEach(() => {
@@ -79,5 +79,106 @@ describe('cachedSharedQuery', () => {
     await expect(
       cachedSharedQuery('q-y', { month: 'M', week: 'W', filters: {} }, vi.fn().mockResolvedValue(null)),
     ).rejects.toThrow('db down');
+  });
+});
+
+describe('histPeriodsKeyParts (H-11 #3 — historical-period key fingerprint)', () => {
+  it('derives month from the sorted distinct monthLabels and week from distinct weekLabels', () => {
+    // NOTE: the sort is ALPHABETICAL (localeCompare), not chronological —
+    // "Juni" < "Mei" alphabetically. Only determinism + set-uniqueness
+    // matter for the fingerprint (both pipelines call the same helper),
+    // so alphabetical is fine.
+    const a = histPeriodsKeyParts([
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 4' },
+      { monthLabel: 'April 2026', weekLabel: 'WEEK 4' },
+      { monthLabel: 'Mei 2026', weekLabel: 'WEEK 4' },
+    ]);
+    expect(a).toEqual({ month: 'April 2026|Juni 2026|Mei 2026', week: 'WEEK 4' });
+  });
+
+  it('is order-insensitive — the two pipelines get ONE key for the same period set', () => {
+    const a = histPeriodsKeyParts([
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 4' },
+      { monthLabel: 'April 2026', weekLabel: 'WEEK 4' },
+    ]);
+    const b = histPeriodsKeyParts([
+      { monthLabel: 'April 2026', weekLabel: 'WEEK 4' },
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 4' },
+      // duplicate entries must not change the fingerprint
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 4' },
+    ]);
+    expect(a).toEqual(b);
+  });
+
+  it('empty list → empty parts (callers guard length > 0 before caching)', () => {
+    expect(histPeriodsKeyParts([])).toEqual({ month: '', week: '' });
+  });
+});
+
+describe('histCriticalKeysHash (H-11 #3 — histCriticalKeys fingerprint)', () => {
+  it('is order-insensitive — identical key SETS hash identically', () => {
+    const a = histCriticalKeysHash([
+      { outletId: 7, itemId: 3, akunPenyesuaian: 'WASTE' },
+      { outletId: 1, itemId: 9, akunPenyesuaian: null },
+    ]);
+    const b = histCriticalKeysHash([
+      { outletId: 1, itemId: 9, akunPenyesuaian: null },
+      { outletId: 7, itemId: 3, akunPenyesuaian: 'WASTE' },
+    ]);
+    expect(a).toBe(b);
+  });
+
+  it('different key sets (or sizes) hash differently', () => {
+    const base = { outletId: 1, itemId: 9, akunPenyesuaian: null };
+    const a = histCriticalKeysHash([base]);
+    const b = histCriticalKeysHash([base, base]);
+    const c = histCriticalKeysHash([{ ...base, itemId: 10 }]);
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it('null vs empty-string akunPenyesuaian are distinct inputs', () => {
+    const a = histCriticalKeysHash([{ outletId: 1, itemId: 1, akunPenyesuaian: null }]);
+    const b = histCriticalKeysHash([{ outletId: 1, itemId: 1, akunPenyesuaian: '' }]);
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('cachedSharedQueryMap (H-11 #3 — Map-safe cache wrapper)', () => {
+  beforeEach(() => {
+    mockWithCacheAndDedup.mockReset();
+  });
+
+  it('caches the Map as a JSON-safe entry array and rebuilds a Map on read', async () => {
+    // First call — MISS: computeFn runs, withCacheAndDedup stores the entries.
+    mockWithCacheAndDedup.mockResolvedValueOnce({
+      data: [['a|b', { avgQty: 1 }], ['c|d', { avgQty: 2 }]],
+      cached: false,
+    });
+    const out = await cachedSharedQueryMap('q-hist-stats', { month: 'A|B', week: 'W', filters: {} }, async () => {
+      throw new Error('should not recompute on hit path');
+    });
+    expect(out).toBeInstanceOf(Map);
+    expect(out.get('a|b')).toEqual({ avgQty: 1 });
+    expect(out.get('c|d')).toEqual({ avgQty: 2 });
+    expect(out.size).toBe(2);
+  });
+
+  it('serializes the computed Map into entries before it reaches the cache layer', async () => {
+    let storedPayload: unknown;
+    mockWithCacheAndDedup.mockImplementationOnce(async (_key, _ttl, computeFn) => {
+      storedPayload = await computeFn();
+      return { data: storedPayload, cached: false };
+    });
+    const out = await cachedSharedQueryMap('q-hist-catavg', { month: 'X', week: 'W', filters: {} }, async () => {
+      const m = new Map<string, number>();
+      m.set('k1', 42);
+      return m;
+    });
+    // The payload stored in the (JSON-stringifying) cache layer must NOT be
+    // a Map — JSON.stringify(Map) would silently produce "{}" and corrupt
+    // every subsequent read.
+    expect(storedPayload).toEqual([['k1', 42]]);
+    expect(out.get('k1')).toBe(42);
   });
 });

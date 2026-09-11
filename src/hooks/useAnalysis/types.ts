@@ -39,31 +39,10 @@ export interface TopItemByDevBom {
   tolerance: number | null;
 }
 
-/** Top outlet (with direction + loss/surplus magnitude). */
-export interface TopOutlet {
-  outletCode: string;
-  outletName: string;
-  area: string;
-  absNominal: number;      // ABS — for sorting only
-  nominalDeviasi: number;  // FIX: signed SUM for display
-  devBom: number;
-  areaAvg: number;
-  sales: number;
-  lossAmount: number;
-  surplusAmount: number;
-  direction: string;
-}
-
-/** Top outlets ranked by sales (mode per outlet). */
-export interface TopOutletBySales {
-  outletCode: string;
-  outletName: string;
-  area: string;
-  sales: number;
-  absNominal: number;      // ABS — for sorting only
-  nominalDeviasi: number;  // FIX: signed SUM for display
-  devToSalesRatio: number | null;
-}
+/** H-11 (#4a): TopOutlet / TopOutletBySales REMOVED — the analysis payload's
+ *  topOutlets / topOutletsBySales sections were deleted together with the
+ *  Dashboard's TopOutlets card (duplicate of the Pareto tab's byOutlet
+ *  quadrant card; topOutletsBySales never had a renderer at all). */
 
 /** Top items by Waste / Susut / Trial / LossSurplus (category top-N). */
 export interface TopItemByCategory {
@@ -335,8 +314,10 @@ export interface AnalysisData {
     totalCount: number;
     thresholdPct: number;
   };
-  topOutlets: TopOutlet[];
-  topOutletsBySales: TopOutletBySales[];
+  // H-11 (#4a): topOutlets / topOutletsBySales removed from the analysis
+  // payload (see the TopOutlet note above). Outlet 80/20 → Pareto tab's
+  // byOutlet quadrant card (/api/pareto); outlet priority → Resto Prioritas
+  // Analisa + Ranking Kondisi Resto.
   topItemsByWaste: TopItemByCategory[];
   topItemsBySusut: TopItemByCategory[];
   topItemsByTrial: TopItemByCategory[];

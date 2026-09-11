@@ -57,7 +57,7 @@ import {
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
 import { evaluateRulesSql, evaluateHistoricalRulesSql } from '@/lib/queries/rule-evaluation';
-import { cachedSharedQuery } from '@/lib/queries/query-cache';
+import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts, histCriticalKeysHash } from '@/lib/queries/query-cache';
 import { queryHistoricalStatsMultiMetric } from '@/lib/queries/historical';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -251,7 +251,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const [currRecordCount, historicalByOutletItem, sqlFlags, varianceAnalysis, histFlags] = await Promise.all([
     db.inventoryRecord.count({ where: buildWhere(week, month) }),
     historicalPeriods.length > 0
-      ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
+      ? cachedSharedQueryMap(
+          'q-hist-stats',
+          { ...histPeriodsKeyParts(historicalPeriods), filters: filterOpts },
+          () => queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts),
+        )
       : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
     cachedSharedQuery(
       'q-rules',
@@ -308,7 +312,15 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const histCriticalKeys = [...topFlagByKey.values()]
     .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
     .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
-  const histCriticalRowsPromise = queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
+  // PERF (H-11 / #3): q-hist-critical — SAME queryId + keys fingerprint as
+  // the analysis pipeline's identical call (both derive the keys from the
+  // shared q-rules / q-hist-rules rows), so a dashboard view before the
+  // export skips this scan entirely.
+  const histCriticalRowsPromise = cachedSharedQuery(
+    'q-hist-critical',
+    { month, week, filters: filterOpts, extra: { keys: histCriticalKeysHash(histCriticalKeys) } },
+    () => queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys),
+  );
   // SQL queries
   // PERF (PAKET B / F2 — scan merge): current-period exec summary + deviation
   // breakdown come from ONE merged scan (queryDashboardKpis); only the
@@ -321,7 +333,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       { month, week, filters: filterOpts },
       () => queryDashboardKpis(week, month, filterOpts),
     ),
-    prevMonth && prevWeek ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+    // PERF (H-11 / #3): q-exec-summary — SAME queryId + period key as the
+    // analysis pipeline's prev-period call, so whichever pipeline runs
+    // first warms the row for the other.
+    prevMonth && prevWeek ? cachedSharedQuery(
+      'q-exec-summary',
+      { month: prevMonth, week: prevWeek, filters: filterOpts },
+      () => queryExecSummary(prevWeek, prevMonth, filterOpts),
+    ) : Promise.resolve(null),
   ]);
   const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
   const breakdown = kpisToBreakdown(kpis);
@@ -337,25 +356,61 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
   ] = await Promise.all([
-    queryTopItemsByNominal(week, month, filterOpts, topNItems),
-    queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+    // PERF (H-11 / #3): q-top-nominal / q-top-devbom / q-area — SAME queryIds
+    // + keys as the analysis pipeline's calls (limit in the key), and
+    // q-hist-catavg — shared across export runs with different `sections`
+    // params (the route-level cache key includes sections; the q-* rows do
+    // not, so a sections change no longer re-pays the whole query bill).
+    cachedSharedQuery(
+      'q-top-nominal',
+      { month, week, filters: filterOpts, extra: { limit: topNItems } },
+      () => queryTopItemsByNominal(week, month, filterOpts, topNItems),
+    ),
+    cachedSharedQuery(
+      'q-top-devbom',
+      { month, week, filters: filterOpts, extra: { limit: topNItems } },
+      () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+    ),
     cachedSharedQuery(
       'q-topcat',
       { month, week, filters: filterOpts, extra: { limit: topNItems } },
       () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
     ),
     prevMonth && prevWeek ? queryTopItemsByAllCategories(prevWeek, prevMonth, filterOpts, 100) : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
-    queryAreaAnalysis(week, month, filterOpts),
+    cachedSharedQuery(
+      'q-area',
+      { month, week, filters: filterOpts },
+      () => queryAreaAnalysis(week, month, filterOpts),
+    ),
     cachedSharedQuery(
       'q-trend',
       { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
       () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
     ),
-    // Rev 2: Historical category averages
-    queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
-    queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
-    queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
-    queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
+    // Rev 2: Historical category averages (Map-safe wrapper — see
+    // cachedSharedQueryMap for why Maps must be cached as entry arrays).
+    // Empty-periods guard: skip caching degenerate empty rows (the query
+    // itself early-returns an empty Map when there is no baseline).
+    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+      'q-hist-catavg',
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'waste' } },
+      () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
+    ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
+    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+      'q-hist-catavg',
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'susut' } },
+      () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
+    ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
+    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+      'q-hist-catavg',
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'trial' } },
+      () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
+    ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
+    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+      'q-hist-catavg',
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus' } },
+      () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
+    ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
   ]);
   const topWasteRows = topCategories.waste;
   const topSusutRows = topCategories.susut;

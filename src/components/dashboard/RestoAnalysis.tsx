@@ -23,9 +23,10 @@ import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
 import { useState } from 'react';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { useRecommendations, useSharedRecommendationForOutlet } from '@/hooks/useRecommendations';
 
 import type {
-  OutletItemsResponse, RecommendationResponse,
+  OutletItemsResponse,
   RestoProfile, ItemRow, ItemHistoryTimelineRow, ItemHistoryResponse,
 } from './resto-analysis/types';
 import {
@@ -37,22 +38,25 @@ import { ItemDetailModal } from './resto-analysis/item-detail-modal';
 
 // Backward-compat re-exports (no external file imports types from here today,
 // but keep them exported so future imports don't break).
+// H-11 (#4b): RecommendationResponse dropped from this re-export list — the
+// recommendations fetch moved to the shared hook
+// (src/hooks/useRecommendations.ts) which owns the canonical response type.
 export type {
-  OutletItemsResponse, RecommendationResponse,
+  OutletItemsResponse,
   RestoProfile, ItemRow, ItemHistoryTimelineRow, ItemHistoryResponse,
 };
 
 export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData }) {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic } = useDashboard(useShallow((s) => ({
+  // H-11 (#4b): area/kelompok/pic no longer destructured here — the
+  // recommendations fetch moved to the shared hook (which reads them from
+  // useDashboard itself); the outlet-items query doesn't use them.
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard(useShallow((s) => ({
     focusOutlet: s.focusOutlet,
     outletCode: s.outletCode,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
     comparisonMonth: s.comparisonMonth,
-    area: s.area,
-    kelompok: s.kelompok,
-    pic: s.pic,
   })));
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
@@ -88,32 +92,25 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
     placeholderData: keepPreviousData,
   });
 
-  // FIX DRILLDOWN: fetch recommendation for this specific outlet to show Priority Summary
-  // FIX INT-1: pass area + pic params so Signal 1 (Dev/BOM vs Peer) uses correct network scope
-  const { data: recoData } = useQuery<RecommendationResponse>({
-    queryKey: ['recommendations', 'single', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      p.set('month', monthLabel!);
-      p.set('week', currentWeek!);
-      if (comparisonWeek) p.set('prevWeek', comparisonWeek);
-      if (comparisonMonth) p.set('prevMonth', comparisonMonth);
-      p.set('outletCode', activeOutlet!);
-      p.set('limit', '1');
-      if (area && area !== 'all') p.set('area', area);
-      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so single-outlet recommendation
-      // is consistent with the global kelompok filter (also affects network benchmark scope)
-      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (pic) p.set('pic', pic);
-      const res = await fetch(`/api/recommendations?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) return { success: false, recommendations: [] };
-      return res.json() as Promise<RecommendationResponse>;
-    },
-    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
-    staleTime: 60_000,
+  // H-11 (#4b): ONE recommendations fetch for the whole app. First PEEK the
+  // shared (unscoped) response the Dashboard's Resto Prioritas card already
+  // cached — when the focused outlet is in that top-5 list, NO extra request
+  // is made at all (dashboard → click resto → Resto tab = zero extra fetch,
+  // previously a limit=1 refetch of data the app already had). Only when the
+  // outlet is NOT in the shared list does the scoped query fire — and it uses
+  // the SAME key + limit shape as the Dashboard card, so when a global outlet
+  // filter is active both tabs dedupe into ONE request + ONE server cache
+  // row (was: limit 5 vs limit 1 → two cache rows, double compute).
+  // FIX INT-1 (kept): area + pic + kelompok params ride along in the shared
+  // hook so Signal 1 (Dev/BOM vs Peer) uses the correct network scope.
+  const sharedReco = useSharedRecommendationForOutlet(activeOutlet);
+  const { data: recoData } = useRecommendations(activeOutlet, {
+    enabled: Boolean(activeOutlet) && !sharedReco,
   });
-  const recommendation = recoData?.success && recoData.recommendations && recoData.recommendations.length > 0 ? recoData.recommendations[0] : null;
+  const recommendation = sharedReco
+    ?? (recoData?.success && recoData.recommendations && recoData.recommendations.length > 0
+      ? recoData.recommendations[0]
+      : null);
 
   if (!activeOutlet) {
     return (

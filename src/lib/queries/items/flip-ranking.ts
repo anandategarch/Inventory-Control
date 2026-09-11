@@ -35,6 +35,11 @@
 //  - Compute flip analysis in JS — sequential pair analysis per
 //    (item, week) requires sorting + pair iteration, which is complex
 //    to express correctly in SQL. JS is also cheaper for ~1224 rows.
+//  - CLEANUP (H-11 / #4c): the flip FORMULAS (isFlip / disparity /
+//    category / risk score+level) are imported from the shared single
+//    module src/lib/flip-metrics.ts — the same module the frontend's
+//    flipHelpers.ts and FlipRanking.tsx drill panel use. No more
+//    comment-convention "same as frontend" duplication.
 //  - Uses `withStatementTimeout` for the SQL query.
 //  - Uses `buildSqlFilters` for area/kelompok/outletCode/picOutletCodes.
 //    itemName is NOT passed through filters (this query scans ALL items;
@@ -46,6 +51,13 @@
 //    here, but Number() is defensive in case the schema adds aggregates).
 // ============================================================
 import { Prisma } from '@prisma/client';
+import {
+  isFlipPair,
+  flipDisparity,
+  categorizeFlipDisparity,
+  flipRiskScore,
+  flipRiskLevel,
+} from '@/lib/flip-metrics';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
 
 // ------------------------------------------------------------
@@ -118,17 +130,8 @@ function periodShortLabel(monthLabel: string, weekLabel: string): string {
   return `${mon} ${wk}`;
 }
 
-/**
- * Categorize a flip pair by disparity ratio (0-1 range):
- *   < 0.10 → 'sempurna'
- *   < 0.40 → 'dominan'
- *   else   → 'parsial'
- */
-function categorizeFlip(disparity: number): 'sempurna' | 'dominan' | 'parsial' {
-  if (disparity < 0.10) return 'sempurna';
-  if (disparity < 0.40) return 'dominan';
-  return 'parsial';
-}
+// categorizeFlip moved to src/lib/flip-metrics.ts as
+// categorizeFlipDisparity() (H-11 / #4c — single flip-formula module).
 
 /** Raw row shape returned by the SQL query. */
 interface RawPeriodRow {
@@ -287,21 +290,16 @@ export async function queryFlipRanking(
 
         totalPairs += 1;
 
-        const sign1 = Math.sign(v1);
-        const sign2 = Math.sign(v2);
-        // isFlip = signs differ AND both non-zero.
-        const isFlip = sign1 !== 0 && sign2 !== 0 && sign1 !== sign2;
-
-        if (!isFlip) {
+        // Shared single-module formulas (H-11 / #4c — src/lib/flip-metrics.ts).
+        if (!isFlipPair(v1, v2)) {
           konsistenCount += 1;
           continue;
         }
 
         // Compute disparity (0 = perfectly balanced reversal, 1 = one-sided).
         const net = v1 + v2;
-        const maxMagnitude = Math.max(Math.abs(v1), Math.abs(v2));
-        const disparity = maxMagnitude > 0 ? Math.abs(net) / maxMagnitude : 0;
-        const category = categorizeFlip(disparity);
+        const disparity = flipDisparity(v1, v2);
+        const category = categorizeFlipDisparity(disparity);
 
         flipCount += 1;
         disparitySum += disparity;
@@ -324,9 +322,9 @@ export async function queryFlipRanking(
     }
 
     const avgDisparity = flipCount > 0 ? disparitySum / flipCount : 0;
-    const riskScore = Math.min(100, sempurnaCount * 30 + flipCount * 10);
-    const riskLevel: 'low' | 'moderate' | 'high' =
-      sempurnaCount > 0 ? 'high' : flipCount > 0 ? 'moderate' : 'low';
+    // Shared single-module formulas (H-11 / #4c — src/lib/flip-metrics.ts).
+    const riskScore = flipRiskScore(sempurnaCount, flipCount);
+    const riskLevel = flipRiskLevel(sempurnaCount, flipCount);
 
     // Top 3 most balanced flips = lowest disparityPct ASC (most balanced first).
     allFlips.sort((a, b) => a.disparityPct - b.disparityPct);

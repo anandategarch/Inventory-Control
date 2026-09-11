@@ -52,6 +52,9 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { fmtNum } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+// H-11 / #4c: per-outlet flip formulas come from the SINGLE shared module
+// (same one the backend flip-ranking query + flipHelpers use).
+import { isFlipPair, flipDisparityPct } from '@/lib/flip-metrics';
 // SHADCN-PATTERNS (Pattern 4) — reusable structured EmptyState. Replaces
 // the inline `<Shuffle ... /> Tidak ada data flip ...` block.
 import { EmptyState } from '@/components/ui/empty-state';
@@ -268,14 +271,10 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
       if (!o2) continue; // outlet only in P1 — can't flip
       const v1 = o1.qtyDeviasiSigned;
       const v2 = o2.qtyDeviasiSigned;
-      const sign1 = Math.sign(v1);
-      const sign2 = Math.sign(v2);
-      const isFlip = sign1 !== 0 && sign2 !== 0 && sign1 !== sign2;
-      if (!isFlip) continue; // USER-REQ: hide konsisten outlets
+      if (!isFlipPair(v1, v2)) continue; // USER-REQ: hide konsisten outlets
       const net = v1 + v2;
       const delta = v2 - v1;
-      const maxMag = Math.max(Math.abs(v1), Math.abs(v2));
-      const disparityPct = maxMag > 0 ? (Math.abs(net) / maxMag) * 100 : 0;
+      const disparityPct = flipDisparityPct(v1, v2);
       rows.push({
         outletCode: code,
         outletName: o1.outletName,

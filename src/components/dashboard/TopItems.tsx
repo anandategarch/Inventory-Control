@@ -10,7 +10,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
-import { Coins, Percent, Store, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Coins, Percent, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { BarList, type BarListItem } from '@/components/dashboard/shared/BarList';
@@ -164,72 +164,25 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
   );
 });
 
-export const TopOutlets = memo(function TopOutlets({ data }: { data: AnalysisData }) {
-  const setFocusOutlet = useDashboard((s) => s.setFocusOutlet);
-  const items = data.topOutlets || [];
-  return (
-    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0">
-            <Store className="h-3.5 w-3.5" />
-          </span>
-          Top Outlets
-          <FormulaInfo
-            formula="Rank by Σ|NOMINAL DEVIASI| per outlet (descending)"
-            description="Outlet dengan total magnitude nominal deviation tertinggi. Dev/BOM = rata-rata |QTY Deviasi|/|QTY BOM| item di outlet tersebut. Area Avg = rata-rata Dev/BOM semua outlet di area yang sama. Merah = Dev/BOM outlet > 1.5× area avg."
-            example="Outlet A: Σ|Nom Dev| = Rp 182M, Dev/BOM 18% vs Area Avg 12%"
-            side="bottom"
-          />
-          <QuickSettings
-            settings={[
-              { key: 'TOP_N_OUTLETS', label: 'Jumlah Top Outlet', dataType: 'number', min: 5, max: 50, step: 5 },
-            ]}
-          />
-        </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">By absolute nominal deviation</p>
-      </CardHeader>
-      <CardContent className="p-0">
-        {/* HI-2 (UI-audit): h-72 → h-80 — same unification as above. */}
-        <ScrollArea className="h-80">
-          <Table>
-            <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
-              <TableRow className="border-b hover:bg-transparent">
-                <TableHead className="w-8 h-8 text-xs font-semibold uppercase tracking-wider">#</TableHead>
-                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Outlet</TableHead>
-                <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Area</TableHead>
-                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal</TableHead>
-                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Dev/BOM</TableHead>
-                <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Area Avg</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
-              ) : items.map((o, i) => {
-                const aboveArea = o.areaAvg > 0 && o.devBom > o.areaAvg * 1.5;
-                return (
-                  <TableRow
-                    key={o.outletCode}
-                    className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${aboveArea ? 'bg-red-50/40 dark:bg-red-950/10' : ''}`}
-                    {...clickableRowProps(() => setFocusOutlet(o.outletCode))}
-                  >
-                    <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                    <TableCell className="font-medium text-xs whitespace-normal" title={o.outletName}>{o.outletName}<div className="text-[11px] text-muted-foreground">{o.outletCode}</div></TableCell>
-                    <TableCell className="text-xs text-muted-foreground" title={o.area}>{o.area}</TableCell>
-                    <TableCell className={`text-right font-semibold text-xs tabular-nums ${o.nominalDeviasi != null && o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtIDR(o.nominalDeviasi ?? o.absNominal)}</TableCell>
-                    <TableCell className={`text-right text-xs font-semibold tabular-nums ${aboveArea ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(o.devBom)}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{fmtPctAbs(o.areaAvg)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-});
+// ============================================================
+//  TopOutlets — REMOVED (H-11 / #4a — UI dedup).
+//  --------------------------------------------------------
+//  The Dashboard's "Top Outlets" card ranked outlets by
+//  ABS(SUM(nominalDeviasi)) — the SAME metric the Pareto tab's
+//  "Top Outlets (80% Deviation)" QuadrantCard renders (via
+//  /api/pareto byOutlet, with cumulative 80/20 distribution on
+//  top). Two tabs, two backend scans, one analysis.
+//
+//  Kept: the Pareto tab's quadrant card (it is one of the five
+//  Pareto dimensions — Items/Outlets/Kelompok/Areas/PIC — and the
+//  80/20 view is the Pareto tab's core purpose).
+//  Removed with the card (dead upstream): the analysis payload's
+//  `topOutlets` + `topOutletsBySales` sections and the
+//  queryTopOutlets / queryTopOutletsBySales scans — see
+//  src/app/api/analysis/services/ (H-11).
+//  Outlet prioritization on the Dashboard remains covered by Resto
+//  Prioritas Analisa + Ranking Kondisi Resto (both click-to-focus).
+// ============================================================
 
 // ============================================================
 //  Pareto Dev/BOM — 80/20 untuk item dengan |Dev/BOM| > 50%

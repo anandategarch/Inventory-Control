@@ -54,8 +54,14 @@
  *      `contributorRankMetric` descriptor. A v4 row (ΔSales per resto /
  *      ΔBOM per barang) must never be served as if it were the new
  *      metric — bump + marker below guarantee that.
+ * v6 = H-11 (#4a — UI dedup): payload sections `topOutlets` +
+ *      `topOutletsBySales` REMOVED (the Dashboard's TopOutlets card —
+ *      their only renderer — was deleted; it duplicated the Pareto tab's
+ *      byOutlet quadrant card, and topOutletsBySales never had a renderer
+ *      at all). A v5 row carrying those dead sections must never be
+ *      served — the version bump orphans it.
  */
-export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 5;
+export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 6;
 
 /**
  * Top-level JSON key markers that MUST exist in a cached row for the

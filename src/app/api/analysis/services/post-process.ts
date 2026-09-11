@@ -14,7 +14,9 @@
 //    4. buildHistoricalAnalysis — zScore-ranked critical items (top 200)  → post-process-historical.ts
 //    5. buildTrendProjection    — linear projection of next period        → post-process-trend-projection.ts
 //    6. buildPatterns           — systemic/area/network classification    → post-process-patterns.ts
-//    7. mapTopOutlets           — top outlets (deviasi) + bySales         → post-process-top-outlets.ts
+//    7. (REMOVED H-11 #4a) mapTopOutlets — deleted with the Dashboard's
+//       TopOutlets card (duplicate of the Pareto tab's byOutlet card);
+//       post-process-top-outlets.ts was deleted with it.
 //
 //  Plus Sub-step 1b/1c (BOM correlation) — post-process-bom-correlation.ts
 //
@@ -34,7 +36,8 @@ export * from './post-process-health-ranking';
 export * from './post-process-historical';
 export * from './post-process-trend-projection';
 export * from './post-process-patterns';
-export * from './post-process-top-outlets';
+// H-11 (#4a): './post-process-top-outlets' was deleted with the Dashboard's
+// TopOutlets card (duplicate of the Pareto tab's byOutlet quadrant card).
 
 import { computeDeviationDrivers } from './deviation-drivers';
 import type { ResolvedParams } from './validate-and-resolve';
@@ -48,7 +51,6 @@ import { buildOutletHealthRanking } from './post-process-health-ranking';
 import { buildHistoricalAnalysis } from './post-process-historical';
 import { buildTrendProjection } from './post-process-trend-projection';
 import { buildPatterns } from './post-process-patterns';
-import { mapTopOutlets } from './post-process-top-outlets';
 
 /**
  * Stage 4 — post-process raw query results into response-ready shapes.
@@ -62,8 +64,6 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
     earlyPromises,
     execSummary,
     areaAnalysisRaw,
-    topOutletsRaw,
-    topOutletsSalesRaw,
     costImpactSql,
     lvs,
     consistencyItems,
@@ -175,8 +175,10 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   // Sub-step 6: pattern detection
   const patterns = buildPatterns(outletHealthRanking, itemConsistencyAnalysis, areaAnalysis);
 
-  // Sub-step 7: top outlets mapping
-  const { topOut, topOutletsSales } = mapTopOutlets(topOutletsRaw, topOutletsSalesRaw, areaAnalysisRaw);
+  // Sub-step 7: top outlets mapping — REMOVED (H-11 / #4a). The Dashboard's
+  // TopOutlets card was deleted (duplicate of the Pareto tab's byOutlet
+  // quadrant card) and topOutletsBySales had no renderer at all, so
+  // mapTopOutlets + its two per-outlet scans are dead compute.
 
   // Deviation Drivers — Phase 3 service
   const deviationDrivers = computeDeviationDrivers(deviationDriverRows);
@@ -185,7 +187,7 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
     normal, warning, abnormal, ruleBreakdown, topFlagByKey,
     growthMetrics, growthComparisonWithHist,
     trend, netCostTrend, trendProjection, patterns,
-    dqSeverityCounts, areaAnalysis, topOut, topOutletsSales,
+    dqSeverityCounts, areaAnalysis,
     outletHealthRanking, costImpact, itemConsistencyAnalysis, deviationDrivers,
     bomCorrelationFindings, bomCorrelationCounts,
   };

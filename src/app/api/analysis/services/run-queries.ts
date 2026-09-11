@@ -34,8 +34,6 @@ import {
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
   queryTopItemsByDeviasiRank,
-  queryTopOutlets,
-  queryTopOutletsBySales,
   queryDeviationBreakdownDrivers,
   queryAreaAnalysis,
   queryItemConsistency,
@@ -74,8 +72,10 @@ export interface QueryResults {
   topTrial: Array<{ itemName: string; outletCode: string; qtyTrial: unknown; nominalTrial: unknown }>;
   topLossSurplus: Array<{ itemName: string; outletCode: string; qtyLossSurplus: unknown; nominalLossSurplus: unknown; direction: unknown }>;
   areaAnalysisRaw: Awaited<ReturnType<typeof queryAreaAnalysis>>;
-  topOutletsRaw: Awaited<ReturnType<typeof queryTopOutlets>>;
-  topOutletsSalesRaw: Awaited<ReturnType<typeof queryTopOutletsBySales>>;
+  // H-11 (#4a): topOutletsRaw / topOutletsSalesRaw REMOVED — the Dashboard's
+  // TopOutlets card was deleted (duplicate of the Pareto tab's byOutlet
+  // quadrant card) and topOutletsBySales had no renderer at all, so both
+  // per-outlet scans (2× per analysis run) were dead compute.
   // H-10: standalone KPI queries removed — shapes now derive from the
   // kpisTo* mappers (field-for-field identical to the old standalone queries).
   breakdown: ReturnType<typeof kpisToBreakdown>;
@@ -168,7 +168,6 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   //  come from ONE merged scan (queryTopItemsByAllCategories).
   // ============================================================
   const topNItems = thresholds.TOP_N_ITEMS || 10;
-  const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
 
   // PERF (TAHAP-2 / P2-9): cachedSharedQuery wraps the export-shared queries
   // (see the early-fire block above for the rationale).
@@ -206,7 +205,7 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   const [
     kpis, prevSummary,
     topNominal, topDevBom, topCategories,
-    areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, paretoDevBom,
+    areaAnalysisRaw, paretoDevBom,
     trendAggRows, consistencyItems, dqIssuesRaw,
     topDeviasiRank, deviationDriverRows,
     healthRankingRows, varianceAnalysis, growthDrivers,
@@ -216,15 +215,40 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     kpisPromise,
     // prevWeek && prevMonth narrowing — if no compare period, return null
     // so buildExecSummaryFromSql skips the prev summary entirely.
-    prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+    // PERF (H-11 / #3): q-exec-summary — the prev-period scan is wrapped in
+    // the shared per-query cache with the SAME queryId + key as the export
+    // pipeline's prev summary, so "view dashboard → export report" no longer
+    // recomputes it (~0.3-0.8s of the export cold path).
+    prevWeek && prevMonth ? cachedSharedQuery(
+      'q-exec-summary',
+      { month: prevMonth, week: prevWeek, filters: filterOpts },
+      () => queryExecSummary(prevWeek, prevMonth, filterOpts),
+    ) : Promise.resolve(null),
     // Batch 1: top items by nominal + devBom + merged category scan
-    queryTopItemsByNominal(week, month, filterOpts, topNItems),
-    queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+    // PERF (H-11 / #3): q-top-nominal / q-top-devbom — same queryIds as the
+    // export pipeline (limit in the key so a TOP_N_ITEMS change can't share
+    // a stale row).
+    cachedSharedQuery(
+      'q-top-nominal',
+      { month, week, filters: filterOpts, extra: { limit: topNItems } },
+      () => queryTopItemsByNominal(week, month, filterOpts, topNItems),
+    ),
+    cachedSharedQuery(
+      'q-top-devbom',
+      { month, week, filters: filterOpts, extra: { limit: topNItems } },
+      () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+    ),
     topCategoriesPromise,
-    // Batch 2: area + top outlets + Pareto DevBom
-    queryAreaAnalysis(week, month, filterOpts),
-    queryTopOutlets(week, month, filterOpts, topNOutlets),
-    queryTopOutletsBySales(week, month, filterOpts, topNOutlets),
+    // Batch 2: area analysis + Pareto DevBom
+    // PERF (H-11 / #3): q-area — shared with the export pipeline's
+    // areaAnalysis fetch (identical period + filters → one scan for both).
+    cachedSharedQuery(
+      'q-area',
+      { month, week, filters: filterOpts },
+      () => queryAreaAnalysis(week, month, filterOpts),
+    ),
+    // H-11 (#4a): queryTopOutlets + queryTopOutletsBySales REMOVED (dead
+    // compute — see QueryResults note above).
     safeParetoDevBom,
     // Batch 3: trend + consistency + DQ issues
     trendAggPromise,
@@ -279,8 +303,6 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     topTrial,
     topLossSurplus,
     areaAnalysisRaw,
-    topOutletsRaw,
-    topOutletsSalesRaw,
     breakdown,
     paretoDevBom,
     lvs,

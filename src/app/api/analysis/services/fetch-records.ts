@@ -28,6 +28,7 @@ import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
 import { queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
+import { cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams, WeekDayRange } from './validate-and-resolve';
 
@@ -234,9 +235,13 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   //  current period only needs a COUNT for the 404 short-circuit —
   //  index-driven, 1 row egress. historicalByOutletItem stays:
   //  buildHistoricalAnalysis still merges its 5-metric stats into the
-  //  critical-items payload. (The export pipeline calls the same query
-  //  function but recomputes it — not yet q-* cache-shared; see H-10
-  //  follow-up candidates.)
+  //  critical-items payload.
+  //
+  //  PERF (H-11 / #3): q-hist-stats — this multi-week baseline scan is
+  //  wrapped in the shared per-query cache with the SAME queryId + key
+  //  parts (histPeriodsKeyParts) as the export pipeline's identical call,
+  //  so "view dashboard → export report" skips recomputing it. Map-safe
+  //  wrapper (cachedSharedQueryMap) — AggregationCache stores JSON.
   //
   //  FIX: Historical periods now filter by SAME weekLabel only.
   //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline
@@ -255,7 +260,11 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
     // the 404 probe + the payload's evaluatedCount meta only need the number.
     db.inventoryRecord.count({ where: buildWhere(week, resolvedMonth) }),
     historicalPeriods.length > 0
-      ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
+      ? cachedSharedQueryMap(
+          'q-hist-stats',
+          { ...histPeriodsKeyParts(historicalPeriods), filters: filterOpts },
+          () => queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts),
+        )
       : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
   ]);
 

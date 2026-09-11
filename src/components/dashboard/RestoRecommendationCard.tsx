@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { Loader2, AlertTriangle, Target, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Target, Loader2, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
+import { useRecommendations, type RestoRecommendation } from '@/hooks/useRecommendations';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -62,54 +62,13 @@ const TONE_CLASS: Record<SignalBadge['tone'], string> = {
   neutral: '',
 };
 
-interface RestoRecommendation {
-  outletCode: string;
-  outletName: string;
-  area: string;
-  priorityScore: number;
-  priorityLevel: 'TINGGI' | 'SEDANG' | 'RENDAH';
-  signals: {
-    devBomRatio: number;
-    deviasiGrowth: number | null;
-    abnormalCount: number;
-    residualRatio: number;
-    lossToSales: number;
-    directionFlip: boolean;
-    trendDeteriorating: boolean;
-    itemConcentration: number;
-    toleranceBreachCount: number;
-    toleranceBreachHighCount: number;
-    zScoreAbnormalCount: number;
-    overExplainedCount: number;
-    highLossItemCount: number;
-    noToleranceItems: number;
-    benchmarkHighCount: number;
-  };
-  metrics: {
-    sales: number;
-    nominalDeviasi: number;
-    devBom: number;
-    totalLoss: number;
-    totalSurplus: number;
-    residualQty: number;
-    itemCount: number;
-    direction: string;
-    topItem: string | null;
-    topItemNominal: number;
-  };
-  analysis: string[];
-}
+// H-11 (#4b): RestoRecommendation now lives in the shared hook module
+// (src/hooks/useRecommendations.ts) — same type for the Dashboard card +
+// the Resto tab's Priority Summary.
 
 export function RestoRecommendationCard() {
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic, setFocusOutlet } = useDashboard(useShallow((s) => ({
-    monthLabel: s.monthLabel,
-    currentWeek: s.currentWeek,
-    comparisonWeek: s.comparisonWeek,
-    comparisonMonth: s.comparisonMonth,
-    area: s.area,
-    kelompok: s.kelompok,
+  const { outletCode, setFocusOutlet } = useDashboard(useShallow((s) => ({
     outletCode: s.outletCode,
-    pic: s.pic,
     setFocusOutlet: s.setFocusOutlet,
   })));
   const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
@@ -121,31 +80,11 @@ export function RestoRecommendationCard() {
       return next;
     });
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['recommendations', monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, pic],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      p.set('month', monthLabel!);
-      p.set('week', currentWeek!);
-      if (comparisonWeek) p.set('prevWeek', comparisonWeek);
-      if (comparisonMonth) p.set('prevMonth', comparisonMonth);
-      p.set('limit', '5');
-      if (area && area !== 'all') p.set('area', area);
-      // FIX (BUG-KELOMPOK-GLOBAL): pass kelompok so recommendations respect the global filter
-      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode && outletCode !== 'all') p.set('outletCode', outletCode);
-      if (pic) p.set('pic', pic);
-      const res = await fetch(`/api/recommendations?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error');
-      return res.json();
-    },
-    enabled: Boolean(monthLabel && currentWeek),
-    staleTime: 60_000,
-    // FIX (BUG-FE-5): keepPreviousData so the card shows stale data during refetch
-    // (smooth transition) instead of flashing full-screen skeletons when kelompok changes.
-    placeholderData: keepPreviousData,
-  });
+  // H-11 (#4b): shared fetch — same queryKey + limit as the Resto tab's
+  // scoped query, so identical scopes dedupe into ONE request and ONE
+  // server cache row (was: limit 5 here vs limit 1 in RestoAnalysis →
+  // double compute for the same scope).
+  const { data, isLoading, isFetching, error, refetch } = useRecommendations(outletCode);
 
   if (isLoading) {
     return (

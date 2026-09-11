@@ -50,8 +50,9 @@ export interface AnalysisResponse {
   topItemsByNominal: unknown;
   topItemsByDevBom: unknown;
   paretoDevBom: unknown;
-  topOutlets: unknown;
-  topOutletsBySales: unknown;
+  // H-11 (#4a): topOutlets / topOutletsBySales REMOVED — the Dashboard's
+  // TopOutlets card (their only renderer) was deleted; the Pareto tab's
+  // byOutlet quadrant card (/api/pareto) covers the outlet 80/20 view.
   growthDrivers: unknown;
   // Task H-2c (CHANGE 6): Top Growth — biggest SALES movers per resto &
   // per barang vs the compare period ({ byOutlet, byItem } arrays).
@@ -118,8 +119,6 @@ export function assembleResponse(
     patterns,
     dqSeverityCounts,
     areaAnalysis,
-    topOut,
-    topOutletsSales,
     outletHealthRanking,
     costImpact,
     itemConsistencyAnalysis,
@@ -161,8 +160,6 @@ export function assembleResponse(
     topItemsByDevBom: topDevBom,
     // FIX (BUG6-POOL): paretoDevBom in response
     paretoDevBom,
-    topOutlets: topOut,
-    topOutletsBySales: topOutletsSales,
     growthDrivers, // FIX: Pareto 80% drivers per metric
     // Task H-2c (CHANGE 6): Top Growth per resto & per barang (SALES movers
     // vs compare period) — rides the same 30-min cache / SWR / background

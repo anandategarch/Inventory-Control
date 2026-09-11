@@ -33,15 +33,18 @@ import {
   hasCurrentPayloadShape,
 } from '@/app/api/analysis/services/payload-schema';
 
-describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6 + H-7)', () => {
-  it('schema version is 5 (bumped when topGrowth changed metrics — H-7)', () => {
+describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6 + H-7 + H-11)', () => {
+  it('schema version is 6 (bumped when topOutlets sections were removed — H-11 #4a)', () => {
     // v1 (implicit) = pre-Top-Growth rows. v2 = + topGrowth. v3 = +
     // contributors/contributorLimit + comparisonAuto/weekRange. v4 =
     // salesMode/BOM rework + byOutletMetric/byItemMetric + unit. v5 =
     // nominalDeviasi metric for both grains + qtyDeviasi-ranked drill-down
-    // + contributorRankMetric. If this fails, the version was bumped
-    // without updating this test — update BOTH together.
-    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(5);
+    // + contributorRankMetric. v6 (H-11 #4a) = topOutlets + topOutletsBySales
+    // sections REMOVED (Dashboard TopOutlets card deleted — duplicate of the
+    // Pareto tab's byOutlet card; topOutletsBySales never had a renderer).
+    // If this fails, the version was bumped without updating this test —
+    // update BOTH together.
+    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(6);
   });
 
   it('accepts a current-shape payload (contains every required marker)', () => {

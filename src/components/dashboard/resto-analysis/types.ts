@@ -6,7 +6,6 @@
 import type { OutletItem } from '@/components/dashboard/PrioritySummaryCard';
 import type { Recommendation } from '@/components/dashboard/PrioritySummaryCard';
 import type { DeviasiRankItem } from '@/hooks/useAnalysis';
-
 /** Server-side resto profile (perf + behavior + historical + benchmark + top risk + investigation). */
 export interface RestoProfile {
   performance: {
@@ -119,12 +118,10 @@ export interface ItemHistoryResponse {
   error?: string;
 }
 
-/** /api/recommendations response payload. */
-export interface RecommendationResponse {
-  success: boolean;
-  recommendations: Recommendation[];
-  error?: string;
-}
+// H-11 (#4b): RecommendationResponse (the old local /api/recommendations
+// response shape) REMOVED — the canonical response type now lives in the
+// shared hook module src/hooks/useRecommendations.ts, which owns the fetch
+// for BOTH the Dashboard card and this tab.
 
 // Re-export shared types from PrioritySummaryCard so callers can import from
 // a single convenient location if desired.

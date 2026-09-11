@@ -24,6 +24,7 @@
 // ============================================================
 import { calcZScoreFromStats } from '@/lib/metrics';
 import { queryHistoricalCriticalItems } from '@/lib/queries';
+import { cachedSharedQuery, histCriticalKeysHash } from '@/lib/queries/query-cache';
 import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import type { FetchedRecords } from './fetch-records';
 
@@ -101,7 +102,16 @@ export async function buildHistoricalAnalysis(
     .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
     .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
   const flaggedCount = histCriticalKeys.length;
-  const histCriticalRows = await queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
+  // PERF (H-11 / #3): q-hist-critical — wrapped in the shared per-query
+  // cache with the SAME queryId + keys fingerprint (histCriticalKeysHash) as
+  // the export pipeline's identical call. Both pipelines derive the keys
+  // from the shared q-rules / q-hist-rules cached rows, so the fingerprint
+  // matches and "view dashboard → export report" skips this scan.
+  const histCriticalRows = await cachedSharedQuery(
+    'q-hist-critical',
+    { month, week, filters: filterOpts, extra: { keys: histCriticalKeysHash(histCriticalKeys) } },
+    () => queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys),
+  );
   const histCriticalItems = histCriticalRows.map(row => {
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);

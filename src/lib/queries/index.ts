@@ -7,7 +7,10 @@ export * from './shared';
 export * from './dashboard';
 export * from './items/top-items';
 export * from './items/global-search';
-export * from './outlets/top-outlets';
+// H-11 (#4a): './outlets/top-outlets' REMOVED — queryTopOutlets +
+// queryTopOutletsBySales were deleted with the Dashboard's TopOutlets card
+// (duplicate of the Pareto tab's byOutlet quadrant card) and the never-rendered
+// topOutletsBySales payload section.
 export * from './outlets/peer-comparison';
 export * from './outlets/resto-recommendations';
 export * from './areas';

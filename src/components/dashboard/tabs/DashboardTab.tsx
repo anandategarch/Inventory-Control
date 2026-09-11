@@ -27,7 +27,7 @@ import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { BarChart3, Calendar, History, MapPin, Tags, TrendingUp } from 'lucide-react';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
-import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
+import { TopItemsByNominal, TopItemsByDevBom } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import {
   OutletHealthRanking, ItemConsistencyAnalysis, AreaComparison,
@@ -66,25 +66,30 @@ export const DashboardTab = memo(function DashboardTab({ data, onRefresh }: Dash
         <ExecutiveSummary data={data} />
       </ErrorBoundary>
 
-      {/* Section: Top Items + Top Outlets
-          STRUCTURAL (S-1): moved up to position 2, right after ExecutiveSummary.
-          Workflow order is Monitor (KPI) → Detect (which items/outlets deviate
-          most) → supporting analysis. Previously this section sat at position 6
-          of 11, burying the primary "where do I start" lists 2–3 screens deep
-          behind recommendation/insight/chart context. Pure JSX reorder — no
-          logic, data, or component changes. */}
+      {/* Section: Top Items
+          H-11 (#4a — UI dedup): the Dashboard's Top Outlets card was REMOVED —
+          it duplicated the Pareto tab's "Top Outlets (80% Deviation)"
+          QuadrantCard (same ABS(SUM(nominalDeviasi)) ranking, two backend
+          scans). The Pareto tab keeps the quadrant card (it is one of the 5
+          Pareto dimensions); this section now shows the item-level lists only.
+          Outlet prioritization on the Dashboard remains covered by Resto
+          Prioritas Analisa (top-5 priority outlets) + Ranking Kondisi Resto
+          (health ranking) — both keep the click-to-focus interaction the
+          removed card had.
+          STRUCTURAL (S-1, kept): position 2, right after ExecutiveSummary.
+          Workflow order is Monitor (KPI) → Detect (which items deviate most)
+          → supporting analysis. */}
       <section>
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-          title="Item Prioritas & Top Resto"
+          title="Item Prioritas"
         />
-        {/* FIX (UI-05): added min-w-0 to grid wrapper to prevent overflow.
-            FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
-        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
-          <ErrorBoundary label="Top Items & Outlets">
+        {/* FIX (UI-05): min-w-0 on grid wrapper prevents overflow.
+            H-11 (#4a): 3→2 columns after the TopOutlets card removal. */}
+        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
+          <ErrorBoundary label="Top Items">
             <TopItemsByNominal data={data} />
             <TopItemsByDevBom data={data} />
-            <TopOutlets data={data} />
           </ErrorBoundary>
         </div>
       </section>

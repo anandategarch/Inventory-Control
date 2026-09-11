@@ -98,8 +98,9 @@ export interface ProcessedData {
   patterns: ReturnType<typeof detectPatterns>;
   dqSeverityCounts: Map<string, number>;
   areaAnalysis: Array<Record<string, unknown>>;
-  topOut: Array<Record<string, unknown>>;
-  topOutletsSales: Array<Record<string, unknown>>;
+  // H-11 (#4a): topOut / topOutletsSales REMOVED with the Dashboard's
+  // TopOutlets card (duplicate of the Pareto tab's byOutlet quadrant card;
+  // topOutletsBySales had no renderer at all).
   outletHealthRanking: Array<AnalysisOutlet & { nominalDeviasi: number; residualPct: number; lossToSales: number | null }>;
   costImpact: Record<string, unknown>;
   itemConsistencyAnalysis: Record<string, unknown>;
