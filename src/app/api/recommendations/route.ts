@@ -63,7 +63,12 @@ export async function GET(req: NextRequest) {
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       pic,
-      extra: { limit },
+      // v: 2 (H-13) — payload shape changed (signals.zScoreAbnormalCount →
+      // signals.highDevBomCount). Old-shape cached payloads must never be
+      // served to the new frontend (and vice versa). The route prefix in
+      // invalidateAnalysisCache() is unchanged, so mutations still clear rows
+      // of BOTH shapes.
+      extra: { limit, v: 2 },
     });
     const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
 

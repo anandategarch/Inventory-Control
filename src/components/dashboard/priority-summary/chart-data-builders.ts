@@ -45,11 +45,13 @@ export function buildTrendMemburukData(r: Recommendation) {
   ];
 }
 
-// FIX Bug 2A: use REAL item data instead of synthesized fake z-scores
-// Each item's devBom is used as proxy for "abnormality" — items with devBom > 0.50 (50%)
+// FIX Bug 2A: use REAL item data instead of synthesized fake values
+// Each item's devBom is used as the abnormality proxy — items with devBom > 0.50 (50%)
 // are shown as red (abnormal), others as grey (normal).
-export function buildZScoreData(r: Recommendation, items: OutletItem[]) {
-  const abnormalCount = r.signals.zScoreAbnormalCount;
+// H-13: renamed from buildZScoreData — this chart is NOT a z-score, it plots
+// per-item Dev/BOM % against the fixed 50% threshold line.
+export function buildHighDevBomData(r: Recommendation, items: OutletItem[]) {
+  const abnormalCount = r.signals.highDevBomCount;
   // Use real items sorted by devBom magnitude
   const sorted = [...items]
     .filter(it => it.devBom != null)

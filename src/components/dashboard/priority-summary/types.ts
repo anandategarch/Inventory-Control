@@ -28,7 +28,8 @@ export interface Recommendation {
     itemConcentration: number;
     toleranceBreachCount: number;
     toleranceBreachHighCount: number;
-    zScoreAbnormalCount: number;
+    /** Items with |Dev/BOM| > 50% — fixed threshold, NOT a z-score (H-13 rename). */
+    highDevBomCount: number;
     overExplainedCount: number;
     highLossItemCount: number;
     noToleranceItems: number;

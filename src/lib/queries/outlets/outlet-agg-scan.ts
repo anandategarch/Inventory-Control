@@ -6,7 +6,7 @@
 //    1. queryOutletHealthRanking (analysis payload)     — FILTERed
 //       (WHERE NOT zeroDev) sums + zero/non-zero counts.
 //    2. queryRestoRecommendations' `curr` CTE (/api/recommendations)
-//       — unfiltered sums + tolerance/zScore-proxy counts + topItem.
+//       — unfiltered sums + tolerance/Dev-BOM-threshold counts + topItem.
 //  With the Resto tab open alongside the Dashboard (keep-alive tabs),
 //  the same ~280K-row period scan ran TWICE per session.
 //
@@ -20,14 +20,21 @@
 //      along in the same round trip.
 //
 //  The result is wrapped in cachedSharedQuery under queryId
-//  `q-outlet-agg` (TTL 30 min, mutation-invalidated). Whichever
-//  pipeline touches the period first (analysis via the early-fired
-//  healthRanking promise, or /api/recommendations) pays the scan; the
-//  other reads the stored row (~5-15ms). `highLossThreshold` affects
-//  the highLossItem count, so it is part of the cache key (`hlt`) —
-//  callers that have runtime thresholds should pass them explicitly;
-//  otherwise the runtime Settings value is resolved here (both then
-//  produce the same key for the same settings state).
+//  `q-outlet-agg` (TTL 30 min, mutation-invalidated). Whichever pipeline
+//  touches the period first (analysis via the early-fired healthRanking
+//  promise, or /api/recommendations) pays the scan; the other reads the
+//  stored row (~5-15ms). `highLossThreshold` affects the highLossItem
+//  count, so it is part of the cache key (`hlt`) — callers that have
+//  runtime thresholds should pass them explicitly; otherwise the runtime
+//  Settings value is resolved here (both then produce the same key for
+//  the same settings state).
+//
+//  H-13 (naming fix): the column formerly aliased "zScoreAbnormalCount" is
+//  now "highDevBomCount" — it counts items with ABS(pctQtyDeviasiToBom)
+//  > 0.50, which is NOT a z-score (no historical mean/stdDev). The dead
+//  "zScoreWarningCount" (> 0.25) column was removed — zero consumers. The
+//  `v: 2` marker in the cache key guarantees rows stored under the OLD
+//  field names are never served to the NEW mapper (and vice versa).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
@@ -67,8 +74,8 @@ export interface OutletAggScanRow {
   residualNominal: number;
   toleranceBreachCount: number;
   toleranceBreachHighCount: number;
-  zScoreAbnormalCount: number;
-  zScoreWarningCount: number;
+  /** Items with |Dev/BOM| > 50% — fixed-threshold count, NOT a z-score (H-13). */
+  highDevBomCount: number;
   benchmarkHighCount: number;
   benchmarkWarningCount: number;
   overExplainedCount: number;
@@ -134,9 +141,9 @@ async function computeOutletAggregateScan(
         -- FIX CALC-2: ABS() on both sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
         COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN 1 END) as "toleranceBreachCount",
         COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN 1 END) as "toleranceBreachHighCount",
-        -- zScore/benchmark proxies: ABS(pctQtyDeviasiToBom) thresholds (0.50 / 0.25 per user request)
-        COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "zScoreAbnormalCount",
-        COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.25 THEN 1 END) as "zScoreWarningCount",
+        -- High Dev/BOM item count (H-13): items with |pctQtyDeviasiToBom| > 0.50 — a
+        -- fixed-threshold count, NOT a z-score. Formerly aliased "zScoreAbnormalCount".
+        COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "highDevBomCount",
         COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "benchmarkHighCount",
         0 as "benchmarkWarningCount",
         COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
@@ -186,8 +193,7 @@ async function computeOutletAggregateScan(
       COALESCE(os."residualNominal", 0) as "residualNominal",
       COALESCE(os."toleranceBreachCount", 0) as "toleranceBreachCount",
       COALESCE(os."toleranceBreachHighCount", 0) as "toleranceBreachHighCount",
-      COALESCE(os."zScoreAbnormalCount", 0) as "zScoreAbnormalCount",
-      COALESCE(os."zScoreWarningCount", 0) as "zScoreWarningCount",
+      COALESCE(os."highDevBomCount", 0) as "highDevBomCount",
       COALESCE(os."benchmarkHighCount", 0) as "benchmarkHighCount",
       COALESCE(os."benchmarkWarningCount", 0) as "benchmarkWarningCount",
       COALESCE(os."overExplainedCount", 0) as "overExplainedCount",
@@ -248,8 +254,7 @@ async function computeOutletAggregateScan(
     residualNominal: Number(r.residualNominal) || 0,
     toleranceBreachCount: Number(r.toleranceBreachCount) || 0,
     toleranceBreachHighCount: Number(r.toleranceBreachHighCount) || 0,
-    zScoreAbnormalCount: Number(r.zScoreAbnormalCount) || 0,
-    zScoreWarningCount: Number(r.zScoreWarningCount) || 0,
+    highDevBomCount: Number(r.highDevBomCount) || 0,
     benchmarkHighCount: Number(r.benchmarkHighCount) || 0,
     benchmarkWarningCount: Number(r.benchmarkWarningCount) || 0,
     overExplainedCount: Number(r.overExplainedCount) || 0,
@@ -278,7 +283,17 @@ export async function queryOutletAggregateScan(
   const hlt = highLossThreshold ?? (await getRuntimeThresholds()).HIGH_LOSS_NOMINAL_THRESHOLD;
   return cachedSharedQuery(
     'q-outlet-agg',
-    { month, week, filters, extra: { hlt } },
+    {
+      month,
+      week,
+      filters,
+      // v: 2 (H-13) — row shape changed (zScoreAbnormalCount → highDevBomCount,
+      // zScoreWarningCount removed). The version marker separates old-shape
+      // rows from new-shape rows so neither is ever served to the other's
+      // mapper. Invalidation prefix ('q-outlet-agg') is unchanged — mutations
+      // still clear BOTH shapes.
+      extra: { hlt, v: 2 },
+    },
     () => computeOutletAggregateScan(week, month, filters, hlt),
   );
 }

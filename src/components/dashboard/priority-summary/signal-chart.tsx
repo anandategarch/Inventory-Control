@@ -19,7 +19,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { CHART, TOOLTIP_STYLE } from './constants';
 import type { Recommendation, OutletItem } from './types';
 import {
-  buildDevBomData, buildDeviasiGrowthData, buildTrendMemburukData, buildZScoreData,
+  buildDevBomData, buildDeviasiGrowthData, buildTrendMemburukData, buildHighDevBomData,
   buildResidualRatioData, buildLossSalesData, buildDirectionFlipData,
   buildItemConcentrationData, buildTolBreachHighData, buildTolBreachData,
   buildOverExplainedData, buildHighLossData, buildBenchmarkData,
@@ -107,7 +107,7 @@ export const SignalChart = memo(function SignalChart({ name, r, items }: { name:
       );
     }
     case 'Deviasi >50% BOM': {
-      const { abnormal, normal } = buildZScoreData(r, items);
+      const { abnormal, normal } = buildHighDevBomData(r, items);
       return (
         <ResponsiveContainer width="100%" height={200}>
           <ScatterChart margin={{ top: 8, right: 12, left: -28, bottom: 0 }}>

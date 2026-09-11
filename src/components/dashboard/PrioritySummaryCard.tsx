@@ -210,9 +210,11 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
               Bench High: {r.signals.benchmarkHighCount}
             </Badge>
           )}
-          {r.signals.zScoreAbnormalCount > 0 && (
+          {r.signals.highDevBomCount > 0 && (
             <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
-              Z-Score Abnormal: {r.signals.zScoreAbnormalCount}
+              {/* H-13: honest label — this count is a fixed |Dev/BOM| > 50% threshold,
+                  not a z-score (badge formerly read "Z-Score Abnormal"). */}
+              Deviasi &gt;50% BOM: {r.signals.highDevBomCount}
             </Badge>
           )}
         </div>

@@ -29,7 +29,8 @@ export interface RestoRecommendation {
     itemConcentration: number;
     toleranceBreachCount: number;
     toleranceBreachHighCount: number;
-    zScoreAbnormalCount: number;
+    /** Items with |Dev/BOM| > 50% — fixed threshold, NOT a z-score (H-13 rename). */
+    highDevBomCount: number;
     overExplainedCount: number;
     highLossItemCount: number;
     noToleranceItems: number;
@@ -195,7 +196,7 @@ export async function queryRestoRecommendations(
     const residualNominal = Number(r.residualNominal || 0);
     const toleranceBreachCount = Number(r.toleranceBreachCount || 0);
     const toleranceBreachHighCount = Number(r.toleranceBreachHighCount || 0);
-    const zScoreAbnormalCount = Number(r.zScoreAbnormalCount || 0);
+    const highDevBomCount = Number(r.highDevBomCount || 0);
     const overExplainedCount = Number(r.overExplainedCount || 0);
     const hasNoTolerance = Number(r.hasNoTolerance || 0);
     const highLossItem = Number(r.highLossItem || 0);
@@ -232,10 +233,11 @@ export async function queryRestoRecommendations(
       ? Math.min(100, deviasiGrowthHybrid * 100)
       : 0;
 
-    // Signal 3: High Deviation Item Count (10%) — items with |devBom| > 0.50 (proxy for z-score abnormal)
-    // NOTE: not a true z-score — uses fixed threshold 0.50 as proxy. See queryNetworkItemRisk for true z-score.
-    const abnormalCount = zScoreAbnormalCount;
-    const s3Score = Math.min(100, zScoreAbnormalCount * 20);
+    // Signal 3: High Deviation Item Count (10%) — items with |Dev/BOM| > 0.50.
+    // H-13 naming fix: formerly "zScoreAbnormalCount" — NOT a z-score, a fixed
+    // 0.50 threshold count. See queryNetworkItemRisk for the true z-score.
+    const abnormalCount = highDevBomCount;
+    const s3Score = Math.min(100, highDevBomCount * 20);
 
     // Signal 4: Residual Ratio (10%)
     // FIX CALC2-2: use qtyDeviasiLoss (LOSS-only) as denominator, not totalQtyDeviasi (ALL items).
@@ -327,7 +329,7 @@ export async function queryRestoRecommendations(
     } else if (deviasiGrowthHistorical != null && deviasiGrowthHistorical > 0.2) {
       analysis.push(`Nominal Deviasi naik ${(deviasiGrowthHistorical * 100).toFixed(0)}% vs rata-rata historis (${histPeriodCount} bulan) — trend jangka panjang memburuk`);
     }
-    if (zScoreAbnormalCount > 0) analysis.push(`${zScoreAbnormalCount} item dengan deviasi > 50% BOM (proxy z-score abnormal — indikasi perilaku tidak wajar)`);
+    if (highDevBomCount > 0) analysis.push(`${highDevBomCount} item dengan deviasi > 50% BOM (indikasi perilaku tidak wajar)`);
     // FIX: removed residual ratio bullet per user request
     // if (residualRatio > 0.4) analysis.push(`Residual ${(residualRatio * 100).toFixed(0)}% — ${Math.abs(residualQty).toLocaleString('id-ID')} dari ${qtyDeviasiLoss.toLocaleString('id-ID')} total deviasi LOSS tidak terjelaskan`);
     if (lossToSales > 0.03) analysis.push(`Loss/Sales ${(lossToSales * 100).toFixed(1)}% — rugi Rp ${totalLoss.toLocaleString('id-ID')} dari penjualan Rp ${sales.toLocaleString('id-ID')}`);
@@ -363,7 +365,7 @@ export async function queryRestoRecommendations(
         itemConcentration,
         toleranceBreachCount,
         toleranceBreachHighCount,
-        zScoreAbnormalCount,
+        highDevBomCount,
         overExplainedCount,
         highLossItemCount: highLossItem,
         noToleranceItems: hasNoTolerance,
@@ -386,7 +388,7 @@ export async function queryRestoRecommendations(
       signalScores: [
         { name: 'Dev/BOM vs Peer', score: Math.round(s1Score), weight: 0.15, value: `${devBomRatio.toFixed(2)}×` },
         { name: 'Deviasi Growth', score: Math.round(s2Score), weight: 0.10, value: `MoM: ${deviasiGrowth != null ? (deviasiGrowth * 100).toFixed(0) + '%' : '—'} | Hist: ${deviasiGrowthHistorical != null ? (deviasiGrowthHistorical * 100).toFixed(0) + '%' : '—'}` },
-        { name: 'Deviasi >50% BOM', score: Math.round(s3Score), weight: 0.10, value: `${zScoreAbnormalCount} item` },
+        { name: 'Deviasi >50% BOM', score: Math.round(s3Score), weight: 0.10, value: `${highDevBomCount} item` },
         { name: 'Residual Ratio', score: Math.round(s4Score), weight: 0.10, value: `${(residualRatio * 100).toFixed(0)}%` },
         { name: 'Loss/Sales', score: Math.round(s5Score), weight: 0.08, value: `${(lossToSales * 100).toFixed(1)}%` },
         { name: 'Direction Flip', score: Math.round(s6Score), weight: 0.08, value: directionFlip ? 'YA' : 'Tidak' },
