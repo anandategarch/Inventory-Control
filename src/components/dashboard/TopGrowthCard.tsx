@@ -27,11 +27,12 @@
 //  the field existed) renders a tidy empty state instead of crashing.
 // ============================================================
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { TrendingUp } from 'lucide-react';
+import { RefreshCw, TrendingUp } from 'lucide-react';
 import { fmtGrowth, growthColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -71,7 +72,60 @@ function GrowthEmptyState({ text }: { text: string }) {
   );
 }
 
-export const TopGrowthCard = memo(function TopGrowthCard({ data }: { data: AnalysisData }) {
+// ------------------------------------------------------------
+//  FIX (TASK H-3): old-cache empty state is now ACTIONABLE. The passive
+//  "tunggu recompute background" copy was useless — pre-H-3, a pre-deploy
+//  cache row was served as a FRESH hit (no recompute ever triggered), and
+//  refreshing only re-hit the same server row. With the H-3 server fix
+//  (payload-schema versioning in the cache key) this branch is effectively
+//  unreachable, but the button guarantees recovery even if it somehow
+//  appears: it triggers the full refresh flow (server cache clear +
+//  client refetch) instead of asking the user to wait.
+// ------------------------------------------------------------
+function StalePayloadEmptyState({ onRefresh }: { onRefresh?: () => void }) {
+  const [requested, setRequested] = useState(false);
+
+  const handleClick = useCallback(() => {
+    if (requested) return;
+    setRequested(true);
+    onRefresh?.();
+    // Re-arm after 2 minutes in case the recompute failed. The success path
+    // never lands here: the refreshed payload contains topGrowth, so this
+    // whole branch unmounts. (setState-after-unmount is a no-op in React 18+.)
+    window.setTimeout(() => setRequested(false), 120_000);
+  }, [onRefresh, requested]);
+
+  return (
+    <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
+      <TrendingUp className="h-8 w-8 text-muted-foreground/40 mb-2" />
+      <p className="text-sm text-muted-foreground">
+        Data Top Growth belum ada di payload lama (cache sebelum pembaruan).
+        {onRefresh ? ' Hitung ulang data analisis untuk memuatnya.' : ' Muat ulang halaman setelah beberapa saat.'}
+      </p>
+      {onRefresh ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleClick}
+          disabled={requested}
+          className="h-8 gap-1.5 text-xs"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${requested ? 'animate-spin' : ''}`} />
+          {requested ? 'Menghitung ulang…' : 'Hitung Ulang Data Analisis'}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export const TopGrowthCard = memo(function TopGrowthCard({
+  data,
+  onRefresh,
+}: {
+  data: AnalysisData;
+  /** TASK H-3: full refresh flow (server cache clear + client refetch) — used by the stale-payload recovery button. */
+  onRefresh?: () => void;
+}) {
   const [grain, setGrain] = useState<Grain>('outlet');
 
   // Pin field identities first (P3-HYG-7a lesson) so the useMemo below
@@ -130,10 +184,11 @@ export const TopGrowthCard = memo(function TopGrowthCard({ data }: { data: Analy
           </TabsList>
         </Tabs>
 
-        {/* Payload predates the field (old 30-min cache entry) — tidy empty
-            state, never a crash. Resolves itself on the next recompute. */}
+        {/* Payload predates the field (old cache entry) — ACTIONABLE recovery
+            since TASK H-3: the button clears the server cache + refetches, so
+            the next payload contains topGrowth and this branch unmounts. */}
         {!topGrowth ? (
-          <GrowthEmptyState text="Data Top Growth belum tersedia di payload ini (cache lama). Tunggu recompute background atau refresh data analisis." />
+          <StalePayloadEmptyState onRefresh={onRefresh} />
         ) : !comparisonWeek ? (
           // Mirrors GrowthComparison's no-compare-period branch — without a
           // compare period every group would be "Baru" (base nol), which is

@@ -26,6 +26,7 @@ import { buildCacheKey, getCachedRawWithMeta, getInflight, setInflight } from '@
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { triggerBackgroundRecompute } from './background-recompute';
+import { ANALYSIS_PAYLOAD_SCHEMA_VERSION, hasCurrentPayloadShape } from './payload-schema';
 
 // ============================================================
 //  P3-HYG-1 (double-serialize): serve the cached analysis payload as the
@@ -240,12 +241,22 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
   // (FIX AUDIT-PERF-5 — see ANALYSIS_CACHE_TTL_MS above).
   // FIX (BUG-KELOMPOK-CACHE): kelompok is now part of the cache key — without it,
   // requests with different kelompok filters would share a cache entry (cache poisoning).
+  //
+  // FIX (TASK H-3 — payload-shape versioning): ANALYSIS_PAYLOAD_SCHEMA_VERSION is
+  // part of the cache key (via `extra`). A deploy that changes the response shape
+  // bumps the version → every pre-deploy row has a DIFFERENT key → guaranteed miss
+  // → the first request recomputes with the new code. Previously a pre-topGrowth row
+  // was served as a FRESH hit for the full 30-min TTL (the "Top Growth cache lama"
+  // bug): browser/Cmd+R refreshes only invalidated the CLIENT cache and re-hit the
+  // same old-shape server row. `extra` appends AFTER the standard filter components,
+  // so invalidateAnalysisCache()'s analysis-prefixed key match still covers this key.
   const cacheKey = buildCacheKey({
     route: 'analysis',
     month, week,
     compareWeek: compareWeek ?? compareMonthExplicit,
     compareMonth: compareMonthExplicit,
     area, kelompok, outletCode, itemName, pic,
+    extra: { v: ANALYSIS_PAYLOAD_SCHEMA_VERSION },
   });
 
   // FIX M3 (AUDIT-5): Check in-flight Promise map (prevents cache stampede).
@@ -297,7 +308,13 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
   // FIX (AUDIT-PERF-5): the stale row is NO LONGER deleted — a background
   // recompute (triggerBackgroundRecompute) refreshes it in place instead.
   const cachedRaw = await getCachedRawWithMeta(cacheKey, ANALYSIS_CACHE_TTL_MS);
-  if (cachedRaw && looksLikeAnalysisEnvelope(cachedRaw.raw)) {
+  // FIX (TASK H-3 — shape guard): hasCurrentPayloadShape is a second layer of
+  // defense ON TOP of the versioned cache key. If a future payload-shape change
+  // forgets to bump ANALYSIS_PAYLOAD_SCHEMA_VERSION, a row missing the current
+  // required markers (e.g. '"topGrowth":') is treated as a MISS here — it is
+  // NEVER served, fresh or stale. This is exactly the class of bug that made
+  // pre-topGrowth rows look like valid fresh hits for 30 minutes.
+  if (cachedRaw && looksLikeAnalysisEnvelope(cachedRaw.raw) && hasCurrentPayloadShape(cachedRaw.raw)) {
     // Cache hit (fresh or stale) — serve the stored JSON string DIRECTLY
     // (P3-HYG-1: no JSON.parse + no re-stringify on the ~1MB payload).
     const hit: RawCacheHit = { __rawJson: cachedRaw.raw, stale: cachedRaw.stale };
@@ -334,8 +351,8 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
     }
     return { kind: 'response', response: rawCacheResponse(hit) };
   }
-  // Cache MISS (or the row's payload failed the raw shape guard — treated
-  // exactly like a miss): fall
+  // Cache MISS (or the row's payload failed the raw shape guard / the current
+  // payload-shape marker guard — both treated exactly like a miss): fall
   // through to compute. The in-flight Promise registered above stays PENDING
   // until route.ts resolves it with the fresh result — do NOT resolve it here,
   // the route owns resolution on both the success and the 404 short-circuit

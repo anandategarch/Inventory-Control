@@ -128,7 +128,10 @@ export default function DashboardPage() {
   // hook can reach the setters AND so the modals can render here.
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
-  const { handleExport, isExporting } = useDashboardActions({
+  // TASK H-3: handleRefresh is now ALSO consumed by the DashboardTab tree
+  // (TopGrowthCard's stale-payload recovery button) — previously it was only
+  // reachable via the Cmd/Ctrl+R keyboard shortcut inside the hook itself.
+  const { handleExport, handleRefresh, isExporting } = useDashboardActions({
     analysisData: analysis.data,
     monthLabel,
     currentWeek,
@@ -214,7 +217,7 @@ export default function DashboardPage() {
                 (it re-ran on every switch and stacked with the globals.css
                 tabpanel animation — double-layered 0.25s+0.3s jank). */}
             <TabsContent value="dashboard" forceMount aria-label="Dashboard tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <DashboardTab data={analysis.data} />
+              <DashboardTab data={analysis.data} onRefresh={handleRefresh} />
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}

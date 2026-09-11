@@ -53,9 +53,12 @@ const AreaItemHeatmap = dynamic(() => import('@/components/dashboard/AreaItemHea
 
 export interface DashboardTabProps {
   data: AnalysisData;
+  /** TASK H-3: full refresh flow (server cache clear + client refetch) —
+   *  threaded to TopGrowthCard's stale-payload recovery button. */
+  onRefresh?: () => void;
 }
 
-export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabProps) {
+export const DashboardTab = memo(function DashboardTab({ data, onRefresh }: DashboardTabProps) {
   return (
     <div className="space-y-4 min-w-0">
       {/* Section: Executive Summary */}
@@ -121,7 +124,7 @@ export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabPro
           title="Top Growth (Resto & Barang)"
         />
         <ErrorBoundary label="Top Growth">
-          <TopGrowthCard data={data} />
+          <TopGrowthCard data={data} onRefresh={onRefresh} />
         </ErrorBoundary>
       </section>
 

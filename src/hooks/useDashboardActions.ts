@@ -53,7 +53,13 @@ export interface UseDashboardActionsParams {
 
 export interface UseDashboardActionsResult {
   handleExport: (selectedSections: string[]) => Promise<void>;
-  handleRefresh: () => void;
+  /**
+   * FIX (TASK H-3): now async — awaits the SERVER-side cache clear
+   * (POST /api/refresh) before invalidating client queries, so the
+   * refetch triggered by invalidation is guaranteed to recompute
+   * instead of re-hitting a warm AggregationCache row.
+   */
+  handleRefresh: () => Promise<void>;
   isExporting: boolean;
 }
 
@@ -125,9 +131,27 @@ export function useDashboardActions({
     }
   }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, toast, status, setExportDialogOpen]);
 
-  // UX-ENHANCE: Refresh handler — invalidates ALL query caches.
+  // UX-ENHANCE + FIX (TASK H-3): Refresh handler — clears the SERVER-side
+  // AggregationCache FIRST, then invalidates ALL client query caches.
+  // ---------------------------------------------------------------
+  // The old handler only invalidated client-side TanStack queries: the
+  // refetch re-hit the SAME warm DB-cache row (30-min TTL) and served the
+  // identical payload — "refresh" was a no-op whenever the server cache
+  // was warm (root cause of the "Top Growth cache lama meskipun sudah
+  // refresh" report). POST /api/refresh awaits invalidateAnalysisCache()
+  // (deleteMany on all cached routes) before returning, so ordering here
+  // is load-bearing: server clear → THEN client invalidation → refetch
+  // recomputes fresh.
+  // Non-fatal by design: if /api/refresh fails (429 rate limit — 30/min —
+  // or transient network), we still invalidate the client queries; the
+  // refetch then serves whatever the server has (same as the old behavior).
   // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, resto-bahan-matrix, pareto)
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
+    try {
+      await fetch('/api/refresh', { method: 'POST' });
+    } catch {
+      // Non-fatal — proceed to client-side invalidation regardless.
+    }
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
     queryClient.invalidateQueries({ queryKey: ['status'] });
     queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
@@ -139,7 +163,10 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
     queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
-    toast({ title: '🔄 Data diperbarui' });
+    toast({
+      title: '🔄 Data diperbarui',
+      description: 'Cache server dibersihkan — data dihitung ulang (butuh beberapa detik).',
+    });
   }, [queryClient, toast]);
 
   // UX-ENHANCE: Global keyboard shortcuts.
@@ -164,7 +191,7 @@ export function useDashboardActions({
       // Cmd/Ctrl+R → refresh data (prevent browser refresh)
       if (mod && (e.key === 'r' || e.key === 'R')) {
         e.preventDefault();
-        handleRefresh();
+        void handleRefresh(); // async since TASK H-3 — intentionally fire-and-forget
         return;
       }
       // 1-5 → switch tabs (only when not typing in an input)
