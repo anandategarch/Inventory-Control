@@ -68,7 +68,7 @@ import { logger } from '@/lib/logger';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import type { MultiMetricHistoricalStats } from '@/lib/queries/historical';
-import { EarlyHttpResponse } from './types';
+import { EarlyHttpResponse } from '@/lib/early-http-response';
 import type {
   ExecSummaryWithPrev,
   ReportParams,

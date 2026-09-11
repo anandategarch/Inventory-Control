@@ -11,7 +11,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, paretoQuerySchema } from '@/lib/validation';
-import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
+import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea, queryParetoByKelompok, queryParetoByPIC, queryParetoNestedItemOutlet, nestedItemOutletToGeneralized, queryParetoNested, queryParetoHistorical, mergeHistoricalIntoPareto, type ParetoDimension } from '@/lib/queries/pareto';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
@@ -67,6 +67,13 @@ export async function GET(req: NextRequest) {
     const childDim = url.searchParams.get('childDim') as ParetoDimension | null;
     const useGeneralizedNested =
       !!parentDim && !!childDim && parentDim !== childDim;
+    // FIX (H-12 / nested-Pareto twin merge): when a client EXPLICITLY requests
+    // the default combo (item→outlet), the generalized breakdown is byte-for-byte
+    // the same computation as `nested` — derive it from the nested rows instead
+    // of running a SECOND identical query. (The frontend never sends parentDim/
+    // childDim for the default combo — this covers direct API consumers.)
+    const generalizedIsDefaultCombo =
+      useGeneralizedNested && parentDim === 'item' && childDim === 'outlet';
 
     const filters = {
       area: area && area !== 'all' ? area : null,
@@ -100,19 +107,25 @@ export async function GET(req: NextRequest) {
       // run the generalized `queryParetoNested` in parallel with the other 6
       // queries and include its result as `nestedGeneralized` in the response.
       // PERF-03: Fold currentSourceFile into first Promise.all (8th entry — independent of the other 7)
-      const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralized, currentSourceFile] = await Promise.all([
+      // H-12: item→outlet skips the second query (derived from `nested` below).
+      const [byItem, byOutlet, byArea, byKelompok, byPIC, nested, nestedGeneralizedComputed, currentSourceFile] = await Promise.all([
         queryParetoByItem(week, month, filters),
         queryParetoByOutlet(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
         queryParetoByArea(week, month, { kelompok: filters.kelompok, picOutletCodes }),
         queryParetoByKelompok(week, month, { area: filters.area, picOutletCodes }), // intentional: no kelompok filter
         queryParetoByPIC(week, month, { area: filters.area, kelompok: filters.kelompok, picOutletCodes }),
         queryParetoNestedItemOutlet(week, month, filters, 10),
-        useGeneralizedNested
+        useGeneralizedNested && !generalizedIsDefaultCombo
           ? queryParetoNested(week, month, filters, parentDim!, childDim!, 10)
           : Promise.resolve(null),
         // PERF-03: was sequential await after the first Promise.all — now parallel
         db.sourceFile.findFirst({ where: { monthLabel: month }, select: { monthKey: true } }),
       ]);
+
+      // H-12: default combo → pure-JS reshape of the already-computed nested
+      // rows (zero extra DB work); other combos use the parallel query above.
+      const nestedGeneralized = nestedGeneralizedComputed
+        ?? (generalizedIsDefaultCombo ? nestedItemOutletToGeneralized(nested) : null);
 
       // FIX (BUG2-PARETO-1): resolve currentMonthKey to filter out future months
       const currentMonthKey = currentSourceFile?.monthKey ?? undefined;

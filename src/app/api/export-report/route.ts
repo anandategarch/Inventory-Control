@@ -24,7 +24,7 @@ import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
-import { EarlyHttpResponse } from './services/types';
+import { EarlyHttpResponse } from '@/lib/early-http-response';
 import type { ReportParams } from './services/types';
 import { fetchReportData } from './services/data-fetcher';
 import { buildDocxReport } from './services/docx-builder';

@@ -29,6 +29,7 @@ import { withStatementTimeout } from '@/lib/queries/shared';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+import { EarlyHttpResponse } from '@/lib/early-http-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -37,12 +38,7 @@ export const maxDuration = 60;
 // outlet-items) — lets the cache-wrapped computeFn signal "abort compute + return
 // this response" for early-return paths (404 outlet not found, 404 no records,
 // 404 current period not found). Cache is NOT populated for 404s.
-class EarlyHttpResponse extends Error {
-  constructor(public response: NextResponse) {
-    super('EarlyHttpResponse');
-    this.name = 'EarlyHttpResponse';
-  }
-}
+// H-12: the class now lives in ONE shared module (src/lib/early-http-response.ts).
 
 
 export async function GET(req: NextRequest) {

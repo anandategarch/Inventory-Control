@@ -4,12 +4,14 @@
 //  Extracted from the original 673-line route.ts (Phase 4 refactor).
 //
 //  Contains:
-//    - EarlyHttpResponse class (PERF-API-01 pattern)
 //    - SQL row shapes (CurrentRecRow, PrevRecRow, BenchRow)
 //    - Shared service-level types (OutletLookup, ResolvedPeriod,
 //      FetchedRecords, ItemBreakdownRow, PrevByItemIdEntry)
+//
+//  H-12: the EarlyHttpResponse class moved to the shared module
+//  src/lib/early-http-response.ts (was defined verbatim 3×) — import it
+//  from there.
 // ============================================================
-import type { NextResponse } from 'next/server';
 import type { OutletPIC } from '@prisma/client';
 import type { RuntimeThresholds } from '@/lib/settings';
 import type { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/top-items';
@@ -18,13 +20,8 @@ import type { queryTopItemsByDeviasiRankForOutlet } from '@/lib/queries/items/to
 // — lets the cache-wrapped computeFn signal "abort compute + return this response"
 // for early-return paths (404 outlet not found). Throwing propagates through
 // withCacheAndDedup's rejectComputation so concurrent in-flight awaiters also
-// see the 404 (cache is NOT populated for 404s).
-export class EarlyHttpResponse extends Error {
-  constructor(public response: NextResponse) {
-    super('EarlyHttpResponse');
-    this.name = 'EarlyHttpResponse';
-  }
-}
+// see the 404 (cache is NOT populated for 404s). H-12: import from the shared
+// src/lib/early-http-response.ts (was defined verbatim in this file).
 
 // Shape returned by db.outlet.findFirst({select: {id, code, name, area}})
 export interface OutletLookup {

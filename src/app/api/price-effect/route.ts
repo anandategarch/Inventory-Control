@@ -27,8 +27,7 @@ import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { resolvePICOutletCodes } from '@/lib/pic-resolver';
-import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
+import { resolveOutletCodeFilters } from '@/lib/outlet-code-filters';
 import { queryPriceEffect, type PriceEffectResult } from '@/lib/queries/price-effect';
 import { validateQuery } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
@@ -52,44 +51,6 @@ const priceEffectQuerySchema = z.object({
   outlet: z.string().min(1).max(50).optional(),
   pic: z.string().min(1).max(100).optional(),
 }).strict();
-
-/**
- * Resolve kelompok + PIC filters into a single combined outletCodes array.
- * Same pattern as /api/peer-comparison (resolveOutletCodeFilters).
- */
-async function resolveOutletCodeFilters(
-  kelompok: string | null,
-  pic: string | null,
-): Promise<{ codes: string[] | null; noMatch: boolean }> {
-  const [kelompokCodes, picCodes] = await Promise.all([
-    kelompok ? resolveKelompokOutletCodes(kelompok) : Promise.resolve<string[]>([]),
-    resolvePICOutletCodes(pic),
-  ]);
-
-  const k = kelompokCodes && kelompokCodes.length > 0 ? kelompokCodes : null;
-  const p = picCodes && picCodes.length > 0 ? picCodes : null;
-
-  if (k && k.length === 1 && k[0] === '__NO_MATCH__') {
-    return { codes: null, noMatch: true };
-  }
-  if (p && p.length === 1 && p[0] === '__NO_MATCH__') {
-    return { codes: null, noMatch: true };
-  }
-
-  if (k && p) {
-    const pSet = new Set(p);
-    const intersection = k.filter((c) => pSet.has(c));
-    if (intersection.length === 0) {
-      return { codes: null, noMatch: true };
-    }
-    return { codes: intersection, noMatch: false };
-  }
-
-  if (k) return { codes: k, noMatch: false };
-  if (p) return { codes: p, noMatch: false };
-
-  return { codes: null, noMatch: false };
-}
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();

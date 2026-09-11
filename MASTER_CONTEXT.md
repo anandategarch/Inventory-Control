@@ -259,7 +259,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ### Drilldown (`src/components/drilldown/` — 2 components)
 - `DrillDownDrawer` — Slide-out drill-down panel
-- `SourceDataModal` — Source data modal viewer
+- `SourceDataModal` — Source data modal viewer (**H-12**: queryKey kini identik field-for-field dengan DrillDownDrawer — limit 50 + area/kelompok/pic — jadi buka "Sumber Lengkap" = reuse cache drawer, nol fetch duplikat + baris konsisten dengan filter aktif; sebelumnya limit undefined + tanpa filter = refetch 50 baris yang sama + baris tak terfilter saat filter aktif)
 
 ### UI (`src/components/ui/` — 30 components — 29 shadcn + Callout [NEW TREMOR])
 - Complete shadcn/ui (New York) component set
@@ -418,7 +418,7 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
   - No entry → compute synchronously + write cache
   - ALL 20 cached routes use SWR — **termasuk `/api/analysis`** (72aad95: TTL 30 mnt + `triggerBackgroundRecompute` SWR + in-flight resolve; analysis TTL panjang AMAN karena mutasi selalu invalidate eksplisit). 18 JSON routes surface `stale: true` flag. `/api/export-report` binary serves stale internally.
 - **Raw-JSON passthrough** (P3-HYG-1, PAKET F): cache hit `/api/analysis` menyajikan string JSON tersimpan LANGSUNG — `getCachedRawWithMeta` (nol `JSON.parse`) + flag envelope `"cached":true`/`"stale":true` di-inject via string surgery O(1) setelah `{` pembuka (aman duplicate-key — payload tersimpan tak pernah memuatnya) + `Content-Type: application/json` eksplisit. In-flight dedup di-resolve dengan marker `{__rawJson, stale}`; awaiter melayani marker dengan response raw yang sama. Menghilangkan double-serialize ~1MB (parse+stringify ±20-40ms CPU) per hit.
-- **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it.
+- **Cache warming**: `prefetchAnalysis()` (FilterBar hover + first status load) + `prefetchHeatmap()` (called from `useDashboardEffects` alongside `prefetchAnalysis` on status load). Heatmap matrix is warm before user scrolls down to it. **H-12**: `prefetchHeatmap` kini menerima + menormalisasi filter dashboard (area/kelompok/outlet/pic) PERSIS seperti kartu AreaItemHeatmap — key prefetch ≡ key live by construction (sebelumnya filter diabaikan → prefetch sia-sia saat filter aktif).
 - **HTTP Cache-Control** headers (`s-maxage=300` for analysis routes; `NO_STORE` for `/api/status` — BUG-PIC-STALE fix below)
 - **BUG-PIC-STALE fix:** `/api/status` switched from `CACHE_METADATA` (s-maxage=60) → `NO_STORE` because CDN edge wasn't cleared by `statusCache.clear()` or `invalidateAnalysisCache()` — caused stale data after PIC mutation. Both cached + freshly-computed branches now return `NO_STORE` headers. Other metadata routes (`/api/data`, `/api/pic`) still use `CACHE_METADATA` (narrower mutation triggers).
 - **Cleanup:** `cleanupExpiredCache()` (fire-and-forget dari `/api/status`, rate-limit 10 mnt) menghapus row lebih tua dari **90 mnt** (dinaikkan dari 30 mnt — AUDIT-PERF-5: row stale harus tetap hidup untuk SWR serve selama background recompute berjalan).
@@ -457,7 +457,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 | Route | Cold | Warm (cache) | Notes |
 |-------|------|-------------|-------|
 | `/api/analysis` | ~0.5s (pasca scan-merge PAKET B) | **<100ms, zero-parse** (raw passthrough P3-HYG-1) | DB cache 30 mnt + SWR background-recompute + in-flight dedup |
-| `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms; nested-Pareto N+1 (10 tx) → 1 query ROW_NUMBER (f6a126b) |
+| `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms; nested-Pareto N+1 (10 tx) → 1 query ROW_NUMBER (f6a126b); H-12: item→outlet eksplisit = derive dari `nested` (nol query ke-2) |
 | `/api/peer-comparison` ×3 | CROSS JOIN multi-CTE | <100ms | **kini di-cache** (P3-HYG-3 — dulu full compute per request) |
 | `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) + scan-merge (PAKET B) |
 | `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal; payload cache base64 (P3-HYG-4) |
@@ -583,14 +583,15 @@ src/
 ├── hooks/
 │   ├── useAnalysis/               # NEW (SPLIT Batch 2): 8-file folder + barrel — index.ts + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts
 │   ├── useDashboard.ts             # Zustand store (filters + UI state + trendSelectedItem + setFocusOutlet [NEW Phase 1+2])
-│   ├── useDashboardEffects.ts      # NEW (SPLIT-PAGE): 5 useEffects (auto-select + cache warm + validate)
-│   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts
-│   ├── use-mobile.ts               # shadcn responsive viewport hook
-│   └── use-toast.ts                # shadcn toast hook
+│   ├── useDashboardEffects.ts      # NEW (SPLIT-PAGE): 2 useEffects (auto-select atomic + cache warm). H-12: menerima area/kelompok/outlet/pic untuk key-parity prefetchHeatmap
+│   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts. H-12: handleRefresh kini meng-invalidate 18 key (10 lama + price-effect, item-anomali-outlets, flip-ranking, flip-drilldown, item-trend-rank, item-search, item-peer-comparison, heatmap-cell-detail)
+│   └── use-toast.ts                # shadcn toast hook (use-mobile.ts DELETED di H-10 — zero importers)
 ├── lib/
-│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + compliance.ts [NEW PAKET E] + chronic-outlets.ts [NEW PAKET E] + shared.ts buildSqlFilters)
+│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + compliance.ts [NEW PAKET E] + chronic-outlets.ts [NEW PAKET E] + shared.ts buildSqlFilters + items/item-outlet-breakdown.ts [NEW H-12: core SQL per-item per-outlet GROUP BY dipakai bersama anomali-outlets + heatmap cell detail + flip drilldown ×2])
 │   ├── metrics/                    # 8 metric functions (deviation, benchmark, historical, growth)
 │   ├── cache-headers.ts            # HTTP Cache-Control presets
+│   ├── early-http-response.ts      # NEW (H-12): EarlyHttpResponse — 1 definisi bersama (dulu 3×: export-report + outlet-items services + item-history) — abort signal untuk computeFn dalam withCacheAndDedup (404 tidak mengisi cache)
+│   ├── outlet-code-filters.ts     # NEW (H-12): resolveOutletCodeFilters(kelompok, pic) — 1 definisi bersama (dulu copy-paste 6×: item-peer-comparison, item-trend-rank, item-anomali-outlets, flip-ranking, flip-ranking/drilldown, price-effect)
 │   ├── error-response.ts           # Sanitized error helper
 │   ├── aggregation-cache.ts        # DB-level cache (getCached/setCached/getCachedWithMeta/getCachedRawWithMeta/withCacheAndDedup/invalidateAnalysisCache — 20 routes invalidated)
 │   ├── zScoreHelpers.ts            # zScoreColor + zScoreStatus

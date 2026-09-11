@@ -15,21 +15,38 @@ import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function SourceDataModal() {
-  const { sourceModalOpen, setSourceModal, drilldown, monthLabel, currentWeek } = useDashboard(useShallow((s) => ({
+  const { sourceModalOpen, setSourceModal, drilldown, monthLabel, currentWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
     sourceModalOpen: s.sourceModalOpen,
     setSourceModal: s.setSourceModal,
     drilldown: s.drilldown,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
+    area: s.area,
+    kelompok: s.kelompok,
+    pic: s.pic,
   })));
 
+  // FIX (H-12 / drilldown queryKey mismatch): this used to omit limit +
+  // area/kelompok/pic, so "Sumber Lengkap" opened with a DIFFERENT queryKey
+  // than the drawer's (limit undefined vs 50, no filters vs filters) →
+  // TanStack treated it as a new query and re-fetched the SAME 50 rows the
+  // drawer already had (duplicate /api/drilldown round-trip), AND the modal
+  // showed UNFILTERED rows whenever a dashboard filter was active (drawer
+  // showed filtered rows — the two views could disagree).
+  // Now the params match DrillDownDrawer field-for-field → one cache entry,
+  // instant open, filter-consistent rows.
   const drill = useDrilldown({
     outletCode: drilldown.outletCode,
     itemName: drilldown.itemName,
     weekLabel: currentWeek,
     monthLabel,
-    // UI-03 FIX: Only fetch when modal is actually open — avoids redundant 500-row
-    // fetch every time the drawer opens (the drawer has its own 50-row query).
+    limit: 50,
+    area: area && area !== 'all' ? area : undefined,
+    kelompok: kelompok && kelompok !== 'all' ? kelompok : undefined,
+    pic: pic && pic !== 'all' ? pic : undefined,
+    // UI-03 FIX: Only fetch when modal is actually open — avoids redundant
+    // fetch every time the drawer opens (the drawer has its own 50-row query;
+    // with identical keys the modal now reuses the drawer's cached rows).
     enabled: sourceModalOpen,
   });
 
@@ -154,7 +171,10 @@ export function SourceDataModal() {
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
               Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
-              {records.length === 500 && ' (maks 500 — data lengkap ada di Excel sumber)'}
+              {/* H-12: the modal shares the drawer's limit-50 queryKey (see the
+                  useDrilldown call above) — the old "maks 500" hint could never
+                  fire. Full data remains traceable via the source Excel. */}
+              {records.length === 50 && ' (50 record pertama — data lengkap ada di Excel sumber)'}
             </span>
             <Badge variant="outline" className="text-[11px]">
               Dapat ditelusuri ke Excel sumber

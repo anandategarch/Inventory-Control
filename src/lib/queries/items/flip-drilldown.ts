@@ -11,46 +11,30 @@
 //  individual outlets whose signed QTY deviasi aggregated to
 //  the item-level flip pattern shown in the ranking widget.
 //
-//  Approach:
-//  - Run TWO per-outlet aggregate queries (one for P1, one for
-//    P2) in parallel via Promise.all. Each query is a single
-//    GROUP BY (outlet) — light enough to run twice in 1 round-trip.
-//  - Match the SAME WHERE clause pattern as flip-ranking.ts:
-//      `i.name = ${item}`         (exact match, NOT LIKE)
-//      `ir."weekLabel" = ${week}`  (same weekLabel as P1/P2)
-//      `ir."qtyDeviasi" IS NOT NULL`
-//  - Month matching: P1/P2 are passed as EITHER a full month
-//    label ("Juli 2026") OR a 3-char short label ("Jul").
-//    We match via `(ir."monthLabel" = ${month} OR ir."monthLabel" ILIKE ${month + '%'})`
-//    so both forms work. The short label comes from the
-//    FlipPair.period1Label (e.g. "Jul W4") — frontend passes
-//    the "Jul" prefix.
-//  - The FULL monthLabel is resolved from the DB via
-//    MAX(ir."monthLabel") and returned in the period object,
-//    so the frontend can render "Juli 2026 WEEK 4" instead of
-//    just "Jul W4".
-//  - Apply buildSqlFilters for area/kelompok/outletCode/pic.
-//  - Use withStatementTimeout (max 30s per query — matches
-//    flip-ranking.ts).
-//  - Use DIRECTION_FROM_SUM_SQL shared fragment (same as
-//    item-peer-comparison.ts) for LOSS/SURPLUS/NEUTRAL.
-//  - Sort outlets by |qtyDeviasiSigned| DESC (biggest
-//    contributor first — surface the drivers of the flip).
+//  H-12 (drilldown trio merge): the per-period SQL skeleton lives
+//  in the shared item-outlet-breakdown.ts core (exact i.name match,
+//  month prefix matching, standard JOINs incl. OutletPIC, filters
+//  with itemName stripped, withStatementTimeout). This file owns
+//  only the flip-specific parts: the qtyDeviasi IS NOT NULL guard,
+//  the SIGNED + ABS SUM aggregates, the DIRECTION_FROM_SUM_SQL
+//  derivation, and the MAX(monthLabel) label resolution.
 //
-//  Implementation notes:
-//  - Prisma.sql tagged templates (zero $queryRawUnsafe).
-//  - Coerce Decimal → Number (defensive — SUM returns Decimal).
-//  - itemName is NOT passed to buildSqlFilters (we apply an
-//    exact `i.name = ${item}` match — LIKE would over-match a
-//    substring against item names, same reason as flip-ranking.ts).
+//  Month matching: P1/P2 are passed as EITHER a full month
+//  label ("Juli 2026") OR a 3-char short label ("Jul") —
+//  handled by the core's monthMatch: 'prefix' mode. The FULL
+//  monthLabel is resolved from the DB via MAX(ir."monthLabel")
+//  and returned in the period object, so the frontend can render
+//  "Juli 2026 WEEK 4" instead of just "Jul W4".
+//
+//  Sort outlets by |qtyDeviasiSigned| DESC (biggest contributor
+//  first — surface the drivers of the flip).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import {
-  buildSqlFilters,
   DIRECTION_FROM_SUM_SQL,
-  withStatementTimeout,
   type SqlFilterOpts,
 } from '../shared';
+import { queryItemOutletAggregates, toNum } from './item-outlet-breakdown';
 
 // ------------------------------------------------------------
 //  Public types
@@ -120,12 +104,6 @@ interface FlipDrillRawRow {
 //  Helpers
 // ------------------------------------------------------------
 
-/** Coerce a possibly BigInt/Decimal numeric to a JS number. */
-function num(v: number | bigint | Prisma.Decimal | null | undefined): number {
-  if (v === null || v === undefined) return 0;
-  return Number(v);
-}
-
 /**
  * Run a per-outlet aggregate query for ONE period (month + week).
  *
@@ -140,41 +118,27 @@ async function queryPeriodOutlets(
   monthLabel: string,
   filters: SqlFilterOpts,
 ): Promise<{ monthLabel: string; outlets: FlipDrillOutlet[] }> {
-  // buildSqlFilters with `itemName: null` — we apply an EXACT match
-  // (`i.name = ${item}`) in the WHERE clause below, NOT buildSqlFilters'
-  // LIKE (which would over-match "CABAI" → "CABAI FROZEN" + "CABAI MERAH").
-  // Same pattern as item-peer-comparison.ts + flip-ranking.ts.
-  const f = buildSqlFilters({
-    area: filters.area ?? null,
-    kelompok: filters.kelompok ?? null,
-    outletCode: filters.outletCode ?? null,
-    itemName: null,
-    picOutletCodes: filters.picOutletCodes ?? null,
-  });
-
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<FlipDrillRawRow>>`
-    SELECT
-      o.code as "outletCode",
-      o.name as "outletName",
+  const rows = await queryItemOutletAggregates<FlipDrillRawRow>({
+    item,
+    month: monthLabel,
+    week: weekLabel,
+    filters,
+    // Short labels ("Jul") must match "Juli 2026" — prefix ILIKE.
+    monthMatch: 'prefix',
+    // Same WHERE clause pattern as flip-ranking.ts: qtyDeviasi present.
+    // (No leading AND — the core adds it.)
+    extraWhere: Prisma.sql`ir."qtyDeviasi" IS NOT NULL`,
+    selectAggs: Prisma.sql`
       MAX(ir.area) as "area",
-      pic.pic,
       MAX(ir."monthLabel") as "monthLabel",
       COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasiSigned",
       COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
       COALESCE(SUM(ir."absNominalDeviasi"), 0) as "absNominalDeviasi",
-      ${DIRECTION_FROM_SUM_SQL} as "direction"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
-    WHERE i.name = ${item}
-      AND ir."weekLabel" = ${weekLabel}
-      AND (ir."monthLabel" = ${monthLabel} OR ir."monthLabel" ILIKE ${monthLabel + '%'})
-      AND ir."qtyDeviasi" IS NOT NULL
-      ${f}
-    GROUP BY o.code, o.name, pic.pic
-    ORDER BY ABS(SUM(ir."qtyDeviasi")) DESC NULLS LAST
-  `);
+      ${DIRECTION_FROM_SUM_SQL} as "direction"`,
+    // Old GROUP BY: o.code, o.name, pic.pic — identical column set.
+    groupByExtra: ', pic.pic',
+    orderBy: 'ABS(SUM(ir."qtyDeviasi")) DESC NULLS LAST',
+  });
 
   // Resolve the full month label from the first matched row.
   // All rows in this query share the same monthLabel (matched via the
@@ -188,9 +152,9 @@ async function queryPeriodOutlets(
     outletName: r.outletName,
     area: r.area ?? '',
     pic: r.pic ?? null,
-    qtyDeviasiSigned: num(r.qtyDeviasiSigned),
-    nominalDeviasi: num(r.nominalDeviasi),
-    absNominalDeviasi: num(r.absNominalDeviasi),
+    qtyDeviasiSigned: toNum(r.qtyDeviasiSigned),
+    nominalDeviasi: toNum(r.nominalDeviasi),
+    absNominalDeviasi: toNum(r.absNominalDeviasi),
     direction: r.direction,
   }));
 

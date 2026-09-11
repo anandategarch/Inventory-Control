@@ -10,34 +10,19 @@
 //    Majority direction = LOSS → anomali = the 1 SURPLUS outlet.
 //    This query returns that 1 outlet.
 //
-//  Approach:
-//  - Single per-outlet aggregate query (GROUP BY outlet).
-//  - Same WHERE pattern as queryItemConsistency (top-items/by-other-metric.ts):
-//      `i.name = ${item}`        (exact match, NOT LIKE)
-//      `ir."monthLabel" = ${month}`
-//      `ir."weekLabel"  = ${week}`
-//      `ir."absNominalLossSurplus" IS NOT NULL AND > 0`
-//  - Adds a direction filter based on the `direction` param:
-//      'LOSS'   → `ir."nominalLossSurplus" < 0`
-//      'SURPLUS' → `ir."nominalLossSurplus" > 0`
-//    (Prisma.raw injection is safe — the value is constrained to two
-//    hardcoded literals, never user input.)
-//  - LEFT JOIN OutletPIC by `o.code = pic."outletCode"` to surface the
-//    staff responsible for each outlet.
-//  - Sort by ABS(SUM(ir."nominalDeviasi")) DESC (biggest nominal impact
-//    first — surface the worst offenders).
-//  - Apply buildSqlFilters for area/kelompok/outletCode/picOutletCodes.
-//  - Use withStatementTimeout (max 30s — matches sibling queries).
-//  - Use DIRECTION_FROM_SUM_SQL shared fragment for the per-outlet
-//    LOSS/SURPLUS/NEUTRAL derivation (consistent with flip-drilldown).
+//  H-12 (drilldown trio merge): the SQL skeleton lives in the shared
+//  item-outlet-breakdown.ts core (exact i.name match, standard JOINs,
+//  buildSqlFilters with itemName stripped, withStatementTimeout).
+//  This file owns only the anomali-specific parts: the direction +
+//  absNominalLossSurplus WHERE fragments and the signed SUM aggregates
+//  + DIRECTION_FROM_SUM_SQL direction derivation.
 // ============================================================
 import { Prisma } from '@prisma/client';
 import {
-  buildSqlFilters,
   DIRECTION_FROM_SUM_SQL,
-  withStatementTimeout,
   type SqlFilterOpts,
 } from '../shared';
+import { queryItemOutletAggregates, toNum } from './item-outlet-breakdown';
 
 // ------------------------------------------------------------
 //  Public types
@@ -76,16 +61,6 @@ interface AnomaliOutletRawRow {
 }
 
 // ------------------------------------------------------------
-//  Helpers
-// ------------------------------------------------------------
-
-/** Coerce a possibly BigInt/Decimal numeric to a JS number. */
-function num(v: number | bigint | Prisma.Decimal | null | undefined): number {
-  if (v === null || v === undefined) return 0;
-  return Number(v);
-}
-
-// ------------------------------------------------------------
 //  Main entry point
 // ------------------------------------------------------------
 
@@ -107,18 +82,6 @@ export async function queryItemAnomaliOutlets(opts: {
 }): Promise<AnomaliOutletsResult> {
   const { item, month, week, direction, filters } = opts;
 
-  // buildSqlFilters with `itemName: null` — we apply an EXACT match
-  // (`i.name = ${item}`) in the WHERE clause below, NOT buildSqlFilters'
-  // LIKE (which would over-match "CABAI" → "CABAI FROZEN" + "CABAI MERAH").
-  // Same pattern as item-peer-comparison.ts + flip-drilldown.ts.
-  const f = buildSqlFilters({
-    area: filters.area ?? null,
-    kelompok: filters.kelompok ?? null,
-    outletCode: filters.outletCode ?? null,
-    itemName: null,
-    picOutletCodes: filters.picOutletCodes ?? null,
-  });
-
   // Direction filter — constrained to two hardcoded literals, never user
   // input. Prisma.raw is safe here (no SQL injection vector).
   const directionFilter =
@@ -126,36 +89,32 @@ export async function queryItemAnomaliOutlets(opts: {
       ? Prisma.raw('ir."nominalLossSurplus" < 0')
       : Prisma.raw('ir."nominalLossSurplus" > 0');
 
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<AnomaliOutletRawRow>>`
-    SELECT
-      o.code as "outletCode",
-      o.name as "outletName",
+  const rows = await queryItemOutletAggregates<AnomaliOutletRawRow>({
+    item,
+    month,
+    week,
+    filters,
+    // Same WHERE pattern as queryItemConsistency (top-items/by-other-metric.ts):
+    // absNominalLossSurplus present + positive, then the minority direction sign.
+    // (No leading AND — the core adds it.)
+    extraWhere: Prisma.sql`ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0 AND ${directionFilter}`,
+    selectAggs: Prisma.sql`
       o.area,
-      pic.pic,
       COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasi",
       COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
-      ${DIRECTION_FROM_SUM_SQL} as "direction"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
-    WHERE ir."monthLabel" = ${month}
-      AND ir."weekLabel" = ${week}
-      AND i.name = ${item}
-      AND ir."absNominalLossSurplus" IS NOT NULL AND ir."absNominalLossSurplus" > 0
-      AND ${directionFilter}
-      ${f}
-    GROUP BY o.code, o.name, o.area, pic.pic
-    ORDER BY ABS(SUM(ir."nominalDeviasi")) DESC
-  `);
+      ${DIRECTION_FROM_SUM_SQL} as "direction"`,
+    // Old GROUP BY: o.code, o.name, o.area, pic.pic — identical column set.
+    groupByExtra: ', o.area, pic.pic',
+    orderBy: 'ABS(SUM(ir."nominalDeviasi")) DESC',
+  });
 
   const outlets: AnomaliOutlet[] = rows.map((r) => ({
     outletCode: r.outletCode,
     outletName: r.outletName,
     area: r.area ?? null,
     pic: r.pic ?? null,
-    qtyDeviasi: num(r.qtyDeviasi),
-    nominalDeviasi: num(r.nominalDeviasi),
+    qtyDeviasi: toNum(r.qtyDeviasi),
+    nominalDeviasi: toNum(r.nominalDeviasi),
     direction: r.direction,
   }));
 

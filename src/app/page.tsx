@@ -104,12 +104,18 @@ export default function DashboardPage() {
   // 2 useEffect hooks: combined auto-select (month+week+compare resolved in
   // ONE atomic setPeriod — PERF-1 fix) + cache warming with resolved compare.
   // Side-effect-only — no return value.
+  // H-12: filters are passed in so the heatmap prefetch key matches the
+  // heatmap card's live key (prefetchHeatmap filter mismatch fix).
   useDashboardEffects({
     status,
     monthLabel,
     currentWeek,
     comparisonWeek,
     comparisonMonth,
+    area,
+    kelompok,
+    outletCode,
+    pic,
     setPeriod,
     queryClient,
   });

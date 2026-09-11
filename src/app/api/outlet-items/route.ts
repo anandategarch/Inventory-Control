@@ -24,7 +24,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
-import { EarlyHttpResponse } from './services/types';
+import { EarlyHttpResponse } from '@/lib/early-http-response';
 import { resolveOutletAndPeriod } from './services/resolve-period';
 import { fetchRecords } from './services/fetch-records';
 import { buildRestoProfile } from './services/build-resto-profile';

@@ -4,8 +4,6 @@
 //  Extracted from the original 1120-line route.ts (Task 4-c refactor).
 //
 //  Contains:
-//    - EarlyHttpResponse class (PERF-CACHE-06 pattern — same as
-//      analysis/services/types.ts + outlet-items/services/types.ts)
 //    - PrevMetrics + ExecSummaryWithPrev (helper-types for the
 //      ExecutiveSummary._prevMetrics extension used only by this route)
 //    - ReportParams (input to fetchReportData — parsed URL params)
@@ -18,11 +16,14 @@
 //      AreaAnalysisMappedRow, TrendRow, HistCriticalItem,
 //      GrowthMetrics, GrowthComparisonWithHist)
 //
+//  H-12: the EarlyHttpResponse class moved to the shared module
+//  src/lib/early-http-response.ts (was defined verbatim 3×) — import it
+//  from there.
+//
 //  SQL query return types are imported via `Awaited<ReturnType<typeof
 //  import(...).queryX>>` — type-only, no runtime coupling. Mirrors
 //  outlet-items/services/types.ts:15 (TopDeviasiRankPromise pattern).
 // ============================================================
-import type { NextResponse } from 'next/server';
 import type { ExecutiveSummary } from '@/types/inventory';
 import type { RuntimeThresholds } from '@/lib/settings';
 import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
@@ -35,14 +36,8 @@ import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 // Without this, the computeFn's return type would be a union (NextResponse |
 // { buffer, fileName }) and the cache wrapper couldn't store the result.
 //
-// Relocated VERBATIM from route.ts:62-67. Identical pattern to analysis/services/
-// types.ts (EarlyHttpResponse) + outlet-items/services/types.ts:22.
-export class EarlyHttpResponse extends Error {
-  constructor(public response: NextResponse) {
-    super('EarlyHttpResponse');
-    this.name = 'EarlyHttpResponse';
-  }
-}
+// H-12: relocated to src/lib/early-http-response.ts — identical pattern to
+// analysis + outlet-items + item-history routes, now ONE definition.
 
 /**
  * Shape of the 6 prev-period metrics attached to ExecutiveSummary for the

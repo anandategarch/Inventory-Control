@@ -11,6 +11,11 @@ export type ParetoDimension = 'item' | 'outlet' | 'area' | 'kelompok' | 'pic';
 // FIX #42: nestedGeneralized child row shape (mirrors NestedParetoResultItem.children)
 export interface NestedChild {
   name: string;
+  // H-12 (nested-Pareto twin merge): outlet children also carry their display
+  // columns from the backend (label = outlet name, area). Optional because
+  // cache rows predating the merge don't have them.
+  label?: string | null;
+  area?: string | null;
   totalAbsNominal: number;
   nominalDeviasi: number;
   qtyDeviasi: number;

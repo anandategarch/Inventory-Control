@@ -24,7 +24,8 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { EarlyHttpResponse, type OutletLookup, type ResolvedPeriod } from './types';
+import { EarlyHttpResponse } from '@/lib/early-http-response';
+import type { OutletLookup, ResolvedPeriod } from './types';
 
 export async function resolveOutletAndPeriod(params: {
   outletCode: string;

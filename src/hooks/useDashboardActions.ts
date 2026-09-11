@@ -162,6 +162,28 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['item-trend'] });
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
+    // FIX (H-12 / refresh gap): the list above covered the Dashboard/Resto/Peer/
+    // Pareto tabs but missed every Trend-tab + shared widget key — explicit
+    // refresh served stale data up to each query's staleTime (5-10 min) after
+    // the server cache had already been cleared:
+    //   - price-effect           (PriceEffectCard, Dashboard tab)
+    //   - item-anomali-outlets   (AdvancedAnalysis expandable rows, Dashboard tab)
+    //   - flip-ranking           (FlipRanking widget, Trend tab)
+    //   - flip-drilldown         (FlipDrillPanel rows, Trend tab)
+    //   - item-trend-rank        (Rank Trend chart, Trend tab)
+    //   - item-search            (autocomplete, Trend tab)
+    //   - item-peer-comparison   (ItemPeerComparison card, Trend tab)
+    //   - heatmap-cell-detail    (AreaItemHeatmapSheet drill-down — same class
+    //                             of miss the audit's 7-key list didn't cover;
+    //                             ['area-item-heatmap'] does NOT prefix-match it)
+    queryClient.invalidateQueries({ queryKey: ['price-effect'] });
+    queryClient.invalidateQueries({ queryKey: ['item-anomali-outlets'] });
+    queryClient.invalidateQueries({ queryKey: ['flip-ranking'] });
+    queryClient.invalidateQueries({ queryKey: ['flip-drilldown'] });
+    queryClient.invalidateQueries({ queryKey: ['item-trend-rank'] });
+    queryClient.invalidateQueries({ queryKey: ['item-search'] });
+    queryClient.invalidateQueries({ queryKey: ['item-peer-comparison'] });
+    queryClient.invalidateQueries({ queryKey: ['heatmap-cell-detail'] });
     // PERF (H-8 QW4 + H-10): no ['resto-bahan-matrix'] invalidation —
     // the orphaned route was DELETED in H-10 (nothing on the frontend ever
     // called it). Note the invalidation herd

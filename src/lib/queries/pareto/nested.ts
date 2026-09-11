@@ -1,16 +1,28 @@
 // ============================================================
 //  Pareto Nested — Item → Outlet breakdown + generalized parent → child
 //  --------------------------------------------------------
-//  Two exported queries + one private helper (getDimensionExpr) used
-//  only inside this file.
+//  FIX (H-12 / nested-Pareto twin merge): there used to be TWO parallel
+//  implementations of the item→outlet drilldown — a specialized
+//  `queryParetoNestedItemOutlet` (hardcoded SQL) and the generalized
+//  `queryParetoNested('item', 'outlet')` — and /api/pareto fired BOTH
+//  when a client explicitly requested parentDim=item&childDim=outlet
+//  (the same breakdown computed twice).
 //
-//  - queryParetoNestedItemOutlet: top items (Pareto 80%) → per-item
-//    outlet breakdown (Pareto 80% within each item).
-//  - queryParetoNested: generalized version with pluggable parent
-//    and child dimensions (any combination of item/outlet/area/
-//    kelompok/pic).
+//  Now `queryParetoNested` is the SINGLE core implementation, and:
+//    - `queryParetoNestedItemOutlet` is a thin ADAPTER that calls the
+//      core with ('item','outlet') and reshapes the rows into the legacy
+//      NestedParetoItem shape (itemName + outlets[outletCode, outletName,
+//      area, ...]) consumed by the NestedItemToOutlet card. Behavior-
+//      equivalent by construction: Outlet.code is @unique, so the core's
+//      GROUP BY (parentExpr, o.code) yields exactly the rows the old
+//      specialized query grouped by (i.name, o.code, o.name, o.area) —
+//      one row per outlet — and outlet display columns (o.name, o.area)
+//      ride along via the core's childDetailCols.
+//    - `nestedItemOutletToGeneralized` is the inverse pure-JS adapter
+//      (legacy → generalized shape) used by /api/pareto when a client
+//      explicitly asks for item→outlet — ZERO extra DB work.
 //
-//  Both follow the 2-step query pattern:
+//  2-step query pattern (both queries):
 //    1. Top parents (Pareto 80% via `maxItems` cap)
 //    2. Per-parent child breakdown — ONE combined query using
 //       ROW_NUMBER() OVER (PARTITION BY parent) rn <= 20 cap
@@ -27,6 +39,10 @@ import type { NestedParetoItem, NestedParetoResultItem, ParetoDimension, Dimensi
 //  Pareto Nested: Item → Outlet breakdown (#3)
 //  For each top item (80% Pareto), returns the outlets that contribute
 //  80% of that item's total deviation.
+//
+//  H-12: thin adapter over queryParetoNested('item','outlet') — see the
+//  file header. Kept as its own export so the /api/pareto `nested`
+//  payload section + NestedItemToOutlet card keep their shape.
 // ============================================================
 export async function queryParetoNestedItemOutlet(
   week: string,
@@ -34,138 +50,83 @@ export async function queryParetoNestedItemOutlet(
   filters: SqlFilterOpts,
   maxItems: number = 10,
 ): Promise<{ items: NestedParetoItem[]; totalAbsNominal: number }> {
-  const f = buildSqlFilters(filters);
-  // Step 1: get top items (Pareto 80%)
-  const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ itemName: string; totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number; outletCount: number }>>`
-    SELECT i.name as "itemName",
-      ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-      SUM(ir."nominalDeviasi") as "nominalDeviasi",
-      SUM(ir."qtyDeviasi") as "qtyDeviasi",
-      CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      ${f}
-    GROUP BY i.name
-    HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ORDER BY "totalAbsNominal" DESC
-    LIMIT ${maxItems}
-  `);
+  const { items, totalAbsNominal } = await queryParetoNested(
+    week,
+    month,
+    filters,
+    'item',
+    'outlet',
+    maxItems,
+  );
 
-  if (topItems.length === 0) return { items: [], totalAbsNominal: 0 };
+  return {
+    totalAbsNominal,
+    items: items.map((it) => ({
+      itemName: it.name,
+      totalAbsNominal: it.totalAbsNominal,
+      nominalDeviasi: it.nominalDeviasi,
+      qtyDeviasi: it.qtyDeviasi,
+      outletCount: it.outletCount,
+      sharePct: it.sharePct,
+      cumPct: it.cumPct,
+      outlets: it.children.map((c) => ({
+        // childDim='outlet' → name IS the outlet code; label/area are the
+        // o.name/o.area display columns the core selects for outlet children.
+        outletCode: c.name,
+        outletName: c.label ?? c.name,
+        area: c.area ?? '',
+        totalAbsNominal: c.totalAbsNominal,
+        nominalDeviasi: c.nominalDeviasi,
+        qtyDeviasi: c.qtyDeviasi,
+        sharePct: c.sharePct,
+        cumPct: c.cumPct,
+      })),
+    })),
+  };
+}
 
-  const grandTotal = topItems.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
-  let itemCumPct = 0;
-
-  // FIX (AUDIT-FOLLOWUP-NESTED-N+1): single query replaces the 10 parallel
-  // per-item withStatementTimeout transactions (each call = its own
-  // interactive transaction → its own pooled connection). Same approach as
-  // the AUDIT-PERF-2 fix in by-other-metric.ts: one GROUP BY (item, outlet)
-  // query with ROW_NUMBER() capped at 20 outlets per item produces the same
-  // rows (same WHERE/HAVING, exact i.name match per BUG2-PARETO-14, top-20
-  // per item by ABS(nominalDeviasi) DESC) in ONE transaction.
-  // topItems.length >= 1 here (empty case early-returned above), so the
-  // Prisma.join IN-list always has >= 1 element.
-  const topItemNames = topItems.map((t) => t.itemName);
-  const outletRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
-    itemName: string; outletCode: string; outletName: string; area: string;
-    totalAbsNominal: number; nominalDeviasi: number; qtyDeviasi: number;
-  }>>`
-    WITH per_outlet AS (
-      SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", o.area,
-        ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi",
-        SUM(ir."qtyDeviasi") as "qtyDeviasi"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        -- Exact match (BUG2-PARETO-14): mirrors the Step-1 GROUP BY on exact i.name.
-        AND i.name IN (${Prisma.join(topItemNames)})
-        ${f}
-      GROUP BY i.name, o.code, o.name, o.area
-      HAVING ABS(SUM(ir."nominalDeviasi")) > 0
-    ),
-    ranked AS (
-      -- Top 20 outlets per item by ABS(nominalDeviasi) DESC — same cap the old
-      -- per-item query enforced via ORDER BY ... LIMIT 20. "outletCode" is a
-      -- deterministic tie-break for equal totals (old LIMIT picked ties
-      -- nondeterministically).
-      SELECT per_outlet.*,
-        ROW_NUMBER() OVER (PARTITION BY "itemName" ORDER BY "totalAbsNominal" DESC, "outletCode") AS rn
-      FROM per_outlet
-    )
-    SELECT "itemName", "outletCode", "outletName", "area", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
-    FROM ranked
-    WHERE rn <= 20
-    ORDER BY "itemName", "totalAbsNominal" DESC, "outletCode"
-  `);
-  const outletRowsByItem = new Map<string, typeof outletRows>();
-  for (const row of outletRows) {
-    const list = outletRowsByItem.get(row.itemName) ?? [];
-    list.push(row);
-    outletRowsByItem.set(row.itemName, list);
-  }
-
-  const items: NestedParetoItem[] = [];
-  for (let idx = 0; idx < topItems.length; idx++) {
-    const item = topItems[idx];
-    const itemName = item.itemName;
-    const itemTotal = Number(item.totalAbsNominal);
-    const itemNominal = Number(item.nominalDeviasi);
-    const itemQtyDeviasi = Number(item.qtyDeviasi);
-    const itemOutletCount = Number(item.outletCount);
-
-    // Map lookup (not index) — rows arrive grouped by itemName from the
-    // combined query; ordering within each item is preserved by the
-    // ORDER BY "itemName", "totalAbsNominal" DESC, "outletCode" above.
-    const outletRows = outletRowsByItem.get(itemName) ?? [];
-
-    const outletTotal = outletRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
-    let outletCumPct = 0;
-    const allOutlets = outletRows.map((r) => {
-      const sharePct = outletTotal > 0 ? (Number(r.totalAbsNominal) / outletTotal) * 100 : 0;
-      outletCumPct += sharePct;
-      return {
-        outletCode: r.outletCode,
-        outletName: r.outletName,
-        area: r.area,
-        totalAbsNominal: Number(r.totalAbsNominal),
-        nominalDeviasi: Number(r.nominalDeviasi),
-        qtyDeviasi: Number(r.qtyDeviasi),
-        sharePct: Number(sharePct.toFixed(1)),
-        cumPct: Number(outletCumPct.toFixed(1)),
-      };
-    });
-
-    // FIX: was `.filter((_, i) => i === 0 || outlets === undefined || ...)` — referenced
-    // `outlets` before initialization (TDZ error → HTTP 500). Now uses simple for-loop.
-    const filteredOutlets: typeof allOutlets = [];
-    let cum = 0;
-    for (const o of allOutlets) {
-      filteredOutlets.push(o);
-      cum = o.cumPct;
-      if (cum >= 80) break;
-    }
-
-    const itemSharePct = grandTotal > 0 ? (itemTotal / grandTotal) * 100 : 0;
-    itemCumPct += itemSharePct;
-
-    items.push({
-      itemName,
-      totalAbsNominal: itemTotal,
-      nominalDeviasi: itemNominal,
-      qtyDeviasi: itemQtyDeviasi,
-      outletCount: itemOutletCount,
-      sharePct: Number(itemSharePct.toFixed(1)),
-      cumPct: Number(itemCumPct.toFixed(1)),
-      outlets: filteredOutlets,
-    });
-  }
-
-  return { items, totalAbsNominal: grandTotal };
+/**
+ * Inverse adapter (H-12): reshape the legacy item→outlet `nested` result
+ * into the `nestedGeneralized` response shape — used by /api/pareto when
+ * a client explicitly requests parentDim=item&childDim=outlet, so the
+ * route DERIVES the generalized payload from the already-computed nested
+ * rows instead of running a second identical query.
+ *
+ * Pure JS — no DB access. Children keep their outlet display columns
+ * (label = outlet name, area) alongside name = outlet code.
+ */
+export function nestedItemOutletToGeneralized(
+  nested: { items: NestedParetoItem[]; totalAbsNominal: number },
+): {
+  items: NestedParetoResultItem[];
+  totalAbsNominal: number;
+  parentDim: 'item';
+  childDim: 'outlet';
+} {
+  return {
+    totalAbsNominal: nested.totalAbsNominal,
+    parentDim: 'item',
+    childDim: 'outlet',
+    items: nested.items.map((it) => ({
+      name: it.itemName,
+      totalAbsNominal: it.totalAbsNominal,
+      nominalDeviasi: it.nominalDeviasi,
+      qtyDeviasi: it.qtyDeviasi,
+      outletCount: it.outletCount,
+      sharePct: it.sharePct,
+      cumPct: it.cumPct,
+      children: it.outlets.map((o) => ({
+        name: o.outletCode,
+        label: o.outletName,
+        area: o.area,
+        totalAbsNominal: o.totalAbsNominal,
+        nominalDeviasi: o.nominalDeviasi,
+        qtyDeviasi: o.qtyDeviasi,
+        sharePct: o.sharePct,
+        cumPct: o.cumPct,
+      })),
+    })),
+  };
 }
 
 // ============================================================
@@ -175,7 +136,7 @@ export async function queryParetoNestedItemOutlet(
 //  lost in a force push. Restored here as `queryParetoNested` with
 //  pluggable parent/child dimensions.
 //
-//  2-step query pattern (matches `queryParetoNestedItemOutlet` above):
+//  2-step query pattern (matches the legacy item→outlet shape):
 //    1. Top parents (Pareto 80% via `maxItems` cap)
 //    2. Per-parent child breakdown — ONE combined query (ROW_NUMBER
 //       PARTITION BY parent, rn <= 20; see AUDIT-FOLLOWUP-NESTED-N+1)
@@ -247,8 +208,7 @@ function getDimensionExpr(dim: ParetoDimension): DimensionExpr {
  * Generalized nested Pareto: top parents (Pareto 80%) → per-parent child
  * breakdown (Pareto 80% within each parent).
  *
- * 2-step pattern (matches `queryParetoNestedItemOutlet` but with pluggable
- * dimensions):
+ * 2-step pattern:
  *   1. Query top N parents by |nominalDeviasi| (LIMIT maxItems)
  *   2. ONE combined query for all parents' top-20 children (ROW_NUMBER
  *      PARTITION BY parent group, rn <= 20 — AUDIT-FOLLOWUP-NESTED-N+1;
@@ -257,6 +217,13 @@ function getDimensionExpr(dim: ParetoDimension): DimensionExpr {
  * JOINs are built as a plain space-joined string + wrapped in Prisma.raw().
  * See "SQL safety" comment at top of this section for why we avoid
  * Prisma.empty interpolation.
+ *
+ * H-12: when childDim='outlet', each child row ALSO carries the outlet's
+ * display columns (label = o.name, area = o.area) so the legacy
+ * NestedParetoItem adapter can render outlet names without a third query.
+ * Non-outlet child dims emit NULL placeholders — the row shape stays
+ * uniform (static literal fragments, no parameters, no empty-fragment
+ * interpolation; follows the same Prisma.raw convention as the JOINs).
  *
  * @param week Current week label
  * @param month Current month label
@@ -300,6 +267,25 @@ export async function queryParetoNested(
   const childJoins = Prisma.raw(childJoinsRaw);
   const parentGroupExpr = Prisma.raw(parentExpr.groupExpr);
   const childGroupExpr = Prisma.raw(childExpr.groupExpr);
+
+  // H-12: outlet child display columns. Both branches are NON-empty static
+  // literals (same Prisma.raw convention as the JOINs above) so the child
+  // row shape is uniform across dimensions and no empty fragment is ever
+  // interpolated.
+  const childDetailCols = childDim === 'outlet'
+    ? Prisma.raw('o.name as "label", o.area as "area",')
+    : Prisma.raw('NULL::text as "label", NULL::text as "area",');
+  // H-12 (CRITICAL — Postgres functional dependency): the detail columns are
+  // plain (non-aggregated) SELECT columns, so they MUST be in the GROUP BY.
+  // Postgres only infers functional dependency from PRIMARY KEYs — and
+  // Outlet's PK is `id`, while `code` is merely UNIQUE — so `GROUP BY o.code`
+  // alone would raise "column o.name must appear in the GROUP BY clause".
+  // This mirrors the old specialized query's GROUP BY (i.name, o.code, o.name,
+  // o.area); since o.code is unique the grouping is unchanged (one row per
+  // outlet), and non-outlet child dims are untouched.
+  const childDetailGroupBy = childDim === 'outlet'
+    ? Prisma.raw(', o.name, o.area')
+    : Prisma.raw('');
 
   // Step 1: query top N parents by |nominalDeviasi|
   const topParents = await withStatementTimeout((tx) => tx.$queryRaw<
@@ -356,6 +342,8 @@ export async function queryParetoNested(
     Array<{
       parentName: string;
       name: string;
+      label: string | null;
+      area: string | null;
       totalAbsNominal: number;
       nominalDeviasi: number;
       qtyDeviasi: number;
@@ -363,6 +351,7 @@ export async function queryParetoNested(
   >`
     WITH per_child AS (
       SELECT ${parentGroupExpr} as "parentName", ${childGroupExpr} as "name",
+        ${childDetailCols}
         ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
         SUM(ir."qtyDeviasi") as "qtyDeviasi"
@@ -372,7 +361,7 @@ export async function queryParetoNested(
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         AND ${parentGroupExpr} IN (${Prisma.join(parentNames)})
         ${f}
-      GROUP BY ${parentGroupExpr}, ${childGroupExpr}
+      GROUP BY ${parentGroupExpr}, ${childGroupExpr}${childDetailGroupBy}
       HAVING ABS(SUM(ir."nominalDeviasi")) > 0
     ),
     ranked AS (
@@ -384,7 +373,7 @@ export async function queryParetoNested(
         ROW_NUMBER() OVER (PARTITION BY "parentName" ORDER BY "totalAbsNominal" DESC, "name") AS rn
       FROM per_child
     )
-    SELECT "parentName", "name", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
+    SELECT "parentName", "name", "label", "area", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
     FROM ranked
     WHERE rn <= 20
     ORDER BY "parentName", "totalAbsNominal" DESC, "name"
@@ -414,6 +403,8 @@ export async function queryParetoNested(
       childCumPct += sharePct;
       return {
         name: r.name,
+        label: r.label ?? null,
+        area: r.area ?? null,
         totalAbsNominal: Number(r.totalAbsNominal),
         nominalDeviasi: Number(r.nominalDeviasi),
         qtyDeviasi: Number(r.qtyDeviasi),
@@ -422,7 +413,9 @@ export async function queryParetoNested(
       };
     });
 
-    // Apply Pareto 80% cutoff to children (same pattern as queryParetoNestedItemOutlet)
+    // Apply Pareto 80% cutoff to children (same pattern as the legacy
+    // queryParetoNestedItemOutlet loop — was `.filter(...)` referencing
+    // `outlets` before initialization (TDZ error → HTTP 500); simple for-loop).
     const filteredChildren: typeof allChildren = [];
     let cum = 0;
     for (const c of allChildren) {

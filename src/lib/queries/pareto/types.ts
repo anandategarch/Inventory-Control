@@ -69,6 +69,15 @@ export interface NestedParetoResultItem {
   cumPct: number;
   children: Array<{
     name: string;
+    /**
+     * Display label for outlet children (o.name — e.g. "Bandung Setiabudhi"),
+     * filled when childDim='outlet' (H-12 nested-Pareto twin merge — lets
+     * the legacy NestedParetoItem shape derive from the generalized core
+     * without a second query). Null for every other child dimension.
+     */
+    label: string | null;
+    /** Display area for outlet children (o.area). Null for other child dims. */
+    area: string | null;
     totalAbsNominal: number;
     nominalDeviasi: number;
     qtyDeviasi: number;

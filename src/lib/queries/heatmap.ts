@@ -21,6 +21,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
+import { queryItemOutletAggregates } from './items/item-outlet-breakdown';
 
 export type HeatmapMetric =
   | 'absNominalDeviasi'
@@ -242,14 +243,24 @@ export async function queryHeatmapCellDetail(
   areaName: string,
   itemName: string,
 ): Promise<HeatmapCellDetailRow[]> {
-  const f = buildSqlFilters(filters);
+  // H-12 (drilldown trio merge): the per-item per-outlet SQL skeleton lives
+  // in the shared item-outlet-breakdown.ts core. This call keeps the exact
+  // old shape: full ABS qty + nominal aggregates + signed LSS + volume-
+  // weighted Dev/BOM, grouped per outlet × akunPenyesuaian for one area+item.
+  //
   // PERF-DB: LIMIT 1000 is a defense-in-depth cap. Bounded in production by
   // (outlets × akunPenyesuaian) for one area+item — typically <500 rows.
   // Prevents unbounded payload if the area/item filter ever becomes broader.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<HeatmapCellDetailRow[]>`
-    SELECT
-      o.code as "outletCode",
-      o.name as "outletName",
+  return queryItemOutletAggregates<HeatmapCellDetailRow>({
+    item: itemName,
+    month,
+    week,
+    filters,
+    // Cell detail surfaces outlet × akun rows — no PIC columns needed.
+    joinPIC: false,
+    // (No leading AND — the core adds it.)
+    extraWhere: Prisma.sql`ir.area = ${areaName}`,
+    selectAggs: Prisma.sql`
       ir.area,
       ir."akunPenyesuaian",
       COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
@@ -264,18 +275,10 @@ export async function queryHeatmapCellDetail(
       -- SUM(ABS(qtyBom)) — volume-weighted magnitude ratio (per PRD §5.6).
       -- Was AVG(ABS(pctQtyDeviasiToBom)) — per-row average that skewed the ratio.
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0 THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom")) ELSE 0 END as "pctQtyDeviasiToBom",
-      CAST(COUNT(*) AS INTEGER) as "recordCount"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."monthLabel" = ${month}
-      AND ir."weekLabel" = ${week}
-      AND ir.area = ${areaName}
-      AND i.name = ${itemName}
-      ${f}
-    GROUP BY o.code, o.name, ir.area, ir."akunPenyesuaian"
-    ORDER BY "nominalDeviasi" DESC
-    LIMIT 1000
-  `);
-  return rows;
+      CAST(COUNT(*) AS INTEGER) as "recordCount"`,
+    // Old GROUP BY: o.code, o.name, ir.area, ir."akunPenyesuaian" — identical column set.
+    groupByExtra: ', ir.area, ir."akunPenyesuaian"',
+    orderBy: '"nominalDeviasi" DESC',
+    limit: 1000,
+  });
 }
