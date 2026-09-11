@@ -22,8 +22,6 @@ const KPI_TOOLTIPS = {
   grossDeviation: 'Layer 1: Stok Fisik - Sistem.',
   explained: 'Layer 2: Waste + Susut + Trial.',
   netLossSurplus: 'Layer 3: Gross - Explained. Deviasi tidak terjelaskan.',
-  totalLoss: 'Total rugi (nominalLossSurplus < 0).',
-  totalSurplus: 'Total surplus (nominalLossSurplus > 0).',
   residualLoss: 'Deviasi tidak terjelaskan. >70% = critical.',
   deviationBom: 'Volume-weighted: SUM(|qtyDeviasi|) / SUM(|qtyBom|).',
 };
@@ -221,35 +219,10 @@ export const ExecutiveSummary = memo(function ExecutiveSummary({ data }: { data:
         <KPICard label="Explained (W+S+T)" value={Math.abs((s.qtyWaste.current || 0) + (s.qtySusut.current || 0) + (s.qtyTrial.current || 0))} unit="" hint="Layer 2: Waste + Susut + Trial" accent="zinc" tooltip={KPI_TOOLTIPS.explained} />
         <KPICard label="Net Loss/Surplus (QTY)" value={s.qtyLossSurplus.current} unit="" growth={s.qtyLossSurplus.growth} previous={s.qtyLossSurplus.previous} inverse hint={`Layer 3: Gross - Explained | Dev/BOM: ${fmtPct(s.deviationToBom, false)}`} accent="red" tooltip={KPI_TOOLTIPS.netLossSurplus} />
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-        <Card className="overflow-hidden relative bg-gradient-to-br from-red-50/40 to-transparent dark:from-red-950/20 border-red-200/50 dark:border-red-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
-          <div className="absolute inset-y-0 left-0 w-1 bg-red-500/70" aria-hidden />
-          <CardContent className="p-3.5 pl-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total LOSS</p>
-                <InfoTooltip content={KPI_TOOLTIPS.totalLoss} />
-              </div>
-              <TrendingDown className="h-3.5 w-3.5 text-red-500/70" />
-            </div>
-            <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Loss/Sales: <span className="font-medium tabular-nums">{fmtPct(s.lossToSales, false)}</span></p>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden relative bg-gradient-to-br from-emerald-50/40 to-transparent dark:from-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
-          <div className="absolute inset-y-0 left-0 w-1 bg-emerald-500/70" aria-hidden />
-          <CardContent className="p-3.5 pl-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
-                <InfoTooltip content={KPI_TOOLTIPS.totalSurplus} />
-              </div>
-              <TrendingUp className="h-3.5 w-3.5 text-emerald-500/70" />
-            </div>
-            <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Surplus/Sales: <span className="font-medium tabular-nums">{fmtPct(s.surplusToSales, false)}</span></p>
-          </CardContent>
-        </Card>
+      {/* H-2b (WI-3a): kartu Total LOSS + Total SURPLUS (beserta sub-line
+          Loss/Sales & Surplus/Sales) dihapus per permintaan user — tersisa
+          Residual Loss & Deviation/BOM (grid 2 kolom). */}
+      <div className="grid grid-cols-2 gap-3 pt-1">
         <Card className="overflow-hidden relative bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/20 border-amber-200/50 dark:border-amber-900/50 shadow-md shadow-black/5 dark:shadow-black/20">
           <div className="absolute inset-y-0 left-0 w-1 bg-amber-500/70" aria-hidden />
           <CardContent className="p-3.5 pl-4">
@@ -287,7 +260,6 @@ export const HealthAlert = memo(function HealthAlert({ data }: { data: AnalysisD
   const { normal, warning, abnormal, breakdown } = data.healthStatus;
   const total = normal + warning + abnormal;
   const dq = data.dqStatus;
-  const s = data.executiveSummary;
 
   // Compute health score (0-100, higher = healthier)
   const healthScore = total > 0 ? Math.round((normal / total) * 100) : 100;
@@ -459,20 +431,6 @@ export const HealthAlert = memo(function HealthAlert({ data }: { data: AnalysisD
             </div>
           </div>
         )}
-
-        {/* Quick Financial Impact Summary */}
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t">
-          <div className="rounded-md p-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total LOSS</p>
-            <p className="text-sm font-bold text-red-600 dark:text-red-400 tabular-nums">{fmtIDR(s.totalLoss)}</p>
-            <p className="text-xs text-muted-foreground tabular-nums">{fmtPct(s.lossToSales, false)} of Sales</p>
-          </div>
-          <div className="rounded-md p-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total SURPLUS</p>
-            <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtIDR(s.totalSurplus)}</p>
-            <p className="text-xs text-muted-foreground tabular-nums">{fmtPct(s.surplusToSales, false)} of Sales</p>
-          </div>
-        </div>
 
         {/* DQ status */}
         {(dq.errors > 0 || dq.warnings > 0) && (
