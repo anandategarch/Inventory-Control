@@ -78,7 +78,7 @@ export default function DashboardPage() {
   // compare setter) instead of setMonth/setWeek/setCompareWeek — the effects
   // hook only needs the atomic setter, and the old three-setter chain caused
   // the double /api/analysis fetch on every period change.
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, activeTab, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, activeTab, visitedTabs, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -90,6 +90,8 @@ export default function DashboardPage() {
     pic: s.pic,
     setPeriod: s.setPeriod,
     activeTab: s.activeTab,
+    // PERF (H-8 QUICK WIN 3): visited-tab gating — see the TabsContent blocks.
+    visitedTabs: s.visitedTabs,
     setActiveTab: s.setActiveTab,
     setDrilldown: s.setDrilldown,
     setSourceModal: s.setSourceModal,
@@ -216,40 +218,57 @@ export default function DashboardPage() {
                 does it. The animate-fade-in-up entrance animation is also gone
                 (it re-ran on every switch and stacked with the globals.css
                 tabpanel animation — double-layered 0.25s+0.3s jank). */}
+            {/* PERF (H-8 QUICK WIN 3 — visited-tab gating): on top of keep-alive,
+                each non-default tab's CONTENT only mounts on FIRST VISIT
+                (tracked in the useDashboard store via setActiveTab/setFocusOutlet).
+                Before this, force-mount eagerly mounted ALL 5 tabs on page load —
+                hidden tabs fired /api/pareto + /api/flip-ranking ×2 (including
+                the unscoped ALL-WEEKS variant — the heaviest form) and loaded
+                their lazy chunks for tabs the user may never open, competing
+                with the cold /api/analysis fetch for connections. Keep-alive
+                semantics are preserved: once visited, the subtree stays mounted. */}
             <TabsContent value="dashboard" forceMount aria-label="Dashboard tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
               <DashboardTab data={analysis.data} onRefresh={handleRefresh} />
             </TabsContent>
 
             {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
             <TabsContent value="resto" forceMount aria-label="Resto Analysis tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <Suspense fallback={<TabSkeleton />}>
-                <RestoTab data={analysis.data} />
-              </Suspense>
+              {visitedTabs.includes('resto') ? (
+                <Suspense fallback={<TabSkeleton />}>
+                  <RestoTab data={analysis.data} />
+                </Suspense>
+              ) : null}
             </TabsContent>
 
             {/* ====== PEER COMPARISON TAB ====== */}
             <TabsContent value="peer" forceMount aria-label="Peer Comparison tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <Suspense fallback={<TabSkeleton />}>
-                <PeerTab />
-              </Suspense>
+              {visitedTabs.includes('peer') ? (
+                <Suspense fallback={<TabSkeleton />}>
+                  <PeerTab />
+                </Suspense>
+              ) : null}
             </TabsContent>
 
             {/* ====== PARETO TAB (80/20 Analysis) ====== */}
             <TabsContent value="pareto" forceMount aria-label="Pareto tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <Suspense fallback={<TabSkeleton />}>
-                <ParetoTab data={analysis.data} />
-              </Suspense>
+              {visitedTabs.includes('pareto') ? (
+                <Suspense fallback={<TabSkeleton />}>
+                  <ParetoTab data={analysis.data} />
+                </Suspense>
+              ) : null}
             </TabsContent>
 
             {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
             <TabsContent value="trend" forceMount aria-label="Trend Item tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <Suspense fallback={<TabSkeleton />}>
-                <ErrorBoundary label="Trend Item">
-                  {/* Phase 1 — pass analysisData so the tab can render the
-                      Rank Badge row (item's national rank in topDeviasiRank). */}
-                  <ItemTrendTab analysisData={analysis.data} />
-                </ErrorBoundary>
-              </Suspense>
+              {visitedTabs.includes('trend') ? (
+                <Suspense fallback={<TabSkeleton />}>
+                  <ErrorBoundary label="Trend Item">
+                    {/* Phase 1 — pass analysisData so the tab can render the
+                        Rank Badge row (item's national rank in topDeviasiRank). */}
+                    <ItemTrendTab analysisData={analysis.data} />
+                  </ErrorBoundary>
+                </Suspense>
+              ) : null}
             </TabsContent>
           </Tabs>
         ) : null}

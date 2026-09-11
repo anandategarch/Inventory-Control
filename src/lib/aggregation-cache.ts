@@ -197,26 +197,46 @@ export async function getCachedRawWithMeta(
 export async function setCached(cacheKey: string, payload: unknown, awaitWrite: boolean = false): Promise<void> {
   try {
     const json = JSON.stringify(payload);
+    await setCachedRaw(cacheKey, json, awaitWrite);
+  } catch (e) {
+    // Synchronous error (JSON.stringify failed) — non-blocking
+    logger.error('[cache] setCached sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+// ============================================================
+//  PERF (H-8 QUICK WIN 5 — single stringify): setCachedRaw — store an
+//  ALREADY-serialized JSON string. The /api/analysis cold path used to pay
+//  DOUBLE serialization of the ~1MB payload: setCached() stringified the
+//  object (serialize #1, ~15-40ms), then NextResponse.json() stringified the
+//  same object again (serialize #2). The route now stringifies ONCE, stores
+//  the string via this helper, and serves the SAME string to the client —
+//  mirroring the zero-parse warm path (P3-HYG-1 getCachedRawWithMeta) on
+//  the cold path too. The stored bytes are identical to what setCached()
+//  would write, so cache-hit behavior is unchanged.
+// ============================================================
+export async function setCachedRaw(cacheKey: string, rawJson: string, awaitWrite: boolean = false): Promise<void> {
+  try {
     // upsert: insert or update if exists (cacheKey is unique)
     const writePromise = db.aggregationCache.upsert({
       where: { cacheKey },
-      create: { cacheKey, payload: json, computedAt: new Date() },
-      update: { payload: json, computedAt: new Date() },
+      create: { cacheKey, payload: rawJson, computedAt: new Date() },
+      update: { payload: rawJson, computedAt: new Date() },
     });
     if (awaitWrite) {
       // For critical caches — block until write completes so next request hits cache
       await writePromise.catch((e) => {
-        logger.error('[cache] setCached (awaited) error', { error: e instanceof Error ? e.message : String(e) });
+        logger.error('[cache] setCachedRaw (awaited) error', { error: e instanceof Error ? e.message : String(e) });
       });
     } else {
       // Fire-and-forget — non-blocking
       writePromise.catch((e) => {
-        logger.error('[cache] setCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+        logger.error('[cache] setCachedRaw error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
       });
     }
   } catch (e) {
-    // Synchronous error (JSON.stringify failed) — non-blocking
-    logger.error('[cache] setCached sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+    // Synchronous error — non-blocking
+    logger.error('[cache] setCachedRaw sync error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
   }
 }
 
@@ -477,13 +497,19 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // decomposition — reads per-item Σ|qtyDeviasi|/Σ|nominalDeviasi| for the
   // current + compare periods from InventoryRecord, so ingest/settings/
   // pic/delete mutations affect the decomposition).
+  // H-8 QUICK WIN 6a: added `item-search` (autocomplete LIKE over the current
+  // period's records — mutations change item names/records, and the 60s TTL
+  // cache must not outlive a mutation).
+  // H-8 QUICK WIN 6b: added `heatmap-cell-detail` (per-outlet drill-down for
+  // one area × item cell — reads the same InventoryRecord rows the parent
+  // heatmap route reads, so mutations affect it identically).
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
-    'price-effect',
+    'price-effect', 'item-search', 'heatmap-cell-detail',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

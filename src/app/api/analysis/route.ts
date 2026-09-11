@@ -18,9 +18,10 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { setCached } from '@/lib/aggregation-cache';
+import { setCachedRaw } from '@/lib/aggregation-cache';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { validateAndResolve } from './services/validate-and-resolve';
+import type { RawCacheHit } from './services/validate-and-resolve';
 import { fetchRecords } from './services/fetch-records';
 import { runQueries } from './services/run-queries';
 import { postProcess } from './services/post-process';
@@ -69,15 +70,32 @@ export async function GET(req: NextRequest) {
     const result = assembleResponse(params, records, queries, processed);
 
     // FIX Medium #1: Store result in DB cache.
+    // PERF (H-8 QUICK WIN 5 — single stringify): the ~1MB payload is
+    // serialized exactly ONCE. Previously setCached() stringified the object
+    // (serialize #1) and NextResponse.json() stringified it AGAIN (serialize
+    // #2) — ~30-80ms of duplicate CPU per cold compute. The string stored in
+    // AggregationCache is byte-identical to what setCached() wrote, so warm
+    // hits (getCachedRawWithMeta) behave exactly as before.
+    const json = JSON.stringify(result);
     // awaitWrite=true — blocks ~150ms to ensure DB write completes before
     // response returns. Without this, the next request (fire-and-forget
     // write still in-flight) misses cache and recomputes 10s.
-    await setCached(cacheKey, result, true);
+    await setCachedRaw(cacheKey, json, true);
 
-    // FIX M3: Resolve the in-flight Promise so concurrent requests get the result.
-    resolveComputation(result);
+    // FIX M3: Resolve the in-flight Promise so concurrent requests get the
+    // result. PERF (H-8-5): resolve with the SAME P3-HYG-1 raw marker the
+    // cache-hit path uses — concurrent awaiters then serve the string with
+    // zero-parse + zero per-awaiter re-serialization (the old object branch
+    // in validate-and-resolve re-stringified the ~1MB object for EVERY
+    // awaiting request).
+    const rawHit: RawCacheHit = { __rawJson: json, stale: false };
+    resolveComputation(rawHit);
 
-    return NextResponse.json(result, { headers: CACHE_ANALYSIS });
+    // PERF (H-8-5): serve the SAME string we just cached — no second
+    // serialization. Bytes are identical to NextResponse.json(result).
+    return new NextResponse(json, {
+      headers: { ...CACHE_ANALYSIS, 'Content-Type': 'application/json' },
+    });
   } catch (e: unknown) {
     // FIX (DEEP-AUDIT-ZEROS): reject the in-flight Promise so concurrent
     // requests awaiting it don't hang forever. Previously only resolve was

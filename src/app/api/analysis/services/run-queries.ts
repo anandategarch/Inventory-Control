@@ -5,18 +5,21 @@
 //
 //  Responsibilities:
 //    1. Fire 4 early-start promises (sqlFlags, healthRanking, variance,
-//       growthDrivers) — they run in background during Batches 1-4
-//    2. Run Batch 0 (merged KPI scan curr + exec summary prev)
-//    3. Run Batch 1 (top items nominal + devBom + ALL 4 categories in 1 scan)
-//    4. Run Batch 2 (area + topOutlets + Pareto)
-//    5. Run Batch 3 (trend + consistency + DQ groupBy)
-//    6. Run Batch 4 (deviasi + drivers + health + variance + growth)
-//    7. Map raw SQL rows into response-ready shapes
+//       growthDrivers) — kept as early fires so post-process (stage 4) can
+//       await the SAME promise objects instead of re-running queries
+//    2. Run ALL independent aggregate queries in ONE Promise.all
+//    3. Map raw SQL rows into response-ready shapes
 //
-//  PERF note (DEEP-AUDIT-SERIAL): batches are SERIAL (each awaited before
-//  the next starts) because Supabase free plan PgBouncer caps concurrent
-//  connections at ~10. Firing all 20 queries at once caused pool exhaustion.
-//  See original comment block (lines 459-468) for the full rationale.
+//  PERF note (H-8 QUICK WIN 2 — full parallel): the old 4 SERIAL batches
+//  were a workaround for Supabase free plan PgBouncer's ~10 practical
+//  connection cap (DEEP-AUDIT-SERIAL). That constraint no longer applies:
+//  src/lib/db.ts FORCES connection_limit=30 + pool_timeout=60 on the
+//  Supabase transaction pooler (which allows ~200 concurrent), and the
+//  limit was already bumped 10→20→30 by earlier fixes. Peak concurrency
+//  here is ~19 in-flight queries (18 awaited below + sqlFlagsPromise
+//  firing in the background for post-process) — comfortably under the
+//  30-connection pool. Wall-clock: cold path bounded by the SLOWEST
+//  single query instead of the SUM of 4 batch durations (~30-50% faster).
 // ============================================================
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
@@ -97,12 +100,15 @@ export interface QueryResults {
 }
 
 /**
- * Stage 3 — run all SQL aggregate queries in serial batches + map raw rows.
+ * Stage 3 — run all SQL aggregate queries in ONE parallel wave + map raw rows.
  *
- * Batches are SERIAL to stay within PgBouncer's ~10 connection cap (see
- * DEEP-AUDIT-SERIAL comment above). Early-fired promises (sqlFlags,
- * healthRanking, variance, growthDrivers) run in the background during
- * Batches 1-4 and are awaited in post-process (stage 4).
+ * PERF (H-8 QUICK WIN 2): all independent queries (formerly Groups 1-4 /
+ * Batches 1-4) run in a single Promise.all. The old serial-batch structure
+ * was a workaround for a PgBouncer ~10-connection cap that no longer exists
+ * (db.ts forces connection_limit=30; see the H-8 note in the file header).
+ * Early-fired promises (sqlFlags, healthRanking, variance, growthDrivers)
+ * still fire at t=0 and are awaited in the same wave + re-exposed via
+ * `earlyPromises` for post-process (stage 4).
  */
 export async function runQueries(params: ResolvedParams, records: FetchedRecords): Promise<QueryResults> {
   const { week, month, prevWeek, prevMonth } = params;
@@ -118,96 +124,66 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   //       existing 15 SQL aggregate queries.
   // ============================================================
 
-  // Fire these 4 promises early — they'll be awaited in the Promise.all below.
+  // Fire these 4 promises early at t=0 — awaited in the big Promise.all
+  // below AND re-exposed via `earlyPromises` so post-process (stage 4)
+  // awaits the same promise objects.
   const sqlFlagsPromise = evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds);
   const healthRankingSqlPromise = queryOutletHealthRanking(week, month, filterOpts);
   const varianceAnalysisPromise = queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts);
   const growthDriversPromise = queryGrowthDrivers(week, month, prevWeek, prevMonth, filterOpts);
 
   // ============================================================
-  //  SQL AGGREGATE QUERIES (Phase 1b/2/4 + SQL-OPTIMIZE) — PARALLEL (P0 fix)
-  //  All independent queries run via Promise.all for ~50% speedup.
-  //  Sprint 3: sqlFlagsPromise runs in parallel with these queries.
-  //  SQL-OPTIMIZE: healthRankingSqlPromise + varianceAnalysisPromise +
-  //    growthDriversPromise also run in parallel here.
+  //  PERF (PAKET B / F2 — scan merge, kept): the current exec summary,
+  //  deviation breakdown, loss-vs-surplus and cost-impact queries all
+  //  scanned the SAME filtered period separately (4 scans + 4 transactions).
+  //  queryDashboardKpis computes all of them in ONE scan; breakdown/lvs/
+  //  costImpact are derived from the merged KPI row below. Only the
+  //  PREVIOUS-period exec summary still runs standalone (different period).
+  //  The four category queries (waste/susut/trial/lossSurplus) likewise
+  //  come from ONE merged scan (queryTopItemsByAllCategories).
   // ============================================================
-
-  // Group 1: Exec summary (curr + prev) — independent, parallel
-  // PERF-FASE2-BE03: Drop sqlFlagsPromise from this await — it was blocking
-  // Batches 1-4 from starting until evaluateRulesSql (~3s) completed.
-  // sqlFlagsPromise continues firing in background during Batches 1-4,
-  // and is awaited just before post-processing (line ~562). Same pattern
-  // already used by healthRankingSql/varianceAnalysis/growthDrivers (lines 429-431).
-  // Expected: ~1-2s off cold cache path.
-  //
-  // PERF (PAKET B / F2 — scan merge): the current exec summary, deviation
-  // breakdown, loss-vs-surplus and cost-impact queries all scanned the SAME
-  // filtered period separately (4 scans + 4 transactions). queryDashboardKpis
-  // computes all of them in ONE scan; breakdown/lvs/costImpact are derived
-  // from the merged row below. Only the PREVIOUS-period exec summary still
-  // runs standalone (different period).
-  const [kpis, prevSummary] = await Promise.all([
-    queryDashboardKpis(week, month, filterOpts),
-    // prevWeek && prevMonth narrowing — if no compare period, return null
-    // so buildExecSummaryFromSql skips the prev summary entirely.
-    prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
-  ]);
-  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
-  // Single-scan derivations (field-for-field identical to the standalone queries):
-  const breakdown = kpisToBreakdown(kpis);
-  const lvs = kpisToLvs(kpis);
-  const costImpactSql = kpisToCostImpact(kpis, execSummary.sales.current);
-
-  // Group 2: All top items + breakdown + area + outlets + trend + cost + consistency + health + variance + growth
-  // P2 fix: use thresholds.TOP_N_ITEMS / TOP_N_OUTLETS instead of hardcoded 10
-  // SQL-OPTIMIZE: healthRankingSqlPromise + varianceAnalysisPromise + growthDriversPromise
-  //   were fired above; they're awaited here in serial batches.
-  //
-  // FIX (DEEP-AUDIT-SERIAL): Split the single 20-query Promise.all into 4 serial
-  // batches of ~5 queries each. Supabase free plan PgBouncer caps concurrent
-  // connections at ~10 (practical). Firing 20 queries in parallel causes pool
-  // exhaustion → 30-60s queue + "Unable to start a transaction" errors.
-  // Serial batches keep each batch within the pool cap → faster overall
-  // (no queue wait) and no timeout errors.
-  //   Batch 1 (5 queries): top items by nominal + devBom + 3 category (waste/susut/trial)
-  //   Batch 2 (5 queries): lossSurplus category + area + 2 top outlets + deviation breakdown
-  //   Batch 3 (5 queries): loss vs surplus + trend agg + cost impact + item consistency + DQ issues
-  //   Batch 4 (5 queries): deviasi rank + deviation drivers + health ranking + variance + growth
   const topNItems = thresholds.TOP_N_ITEMS || 10;
   const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
 
-  // PERF (PAKET B / F2 — scan merge): the four category queries (waste /
-  // susut / trial / lossSurplus) each scanned the same period separately;
-  // queryTopItemsByAllCategories does ONE scan and returns the union of the
-  // 4 per-category top-N sets (ranked server-side via ROW_NUMBER).
-  const [topNominal, topDevBom, topCategories] = await Promise.all([
-    queryTopItemsByNominal(week, month, filterOpts, topNItems),
-    queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
-  ]);
-  const topWasteRows = topCategories.waste;
-  const topSusutRows = topCategories.susut;
-  const topTrialRows = topCategories.trial;
-  const topLossSurplusRows = topCategories.lossSurplus;
-
-  // Batch 2: area analysis + top outlets + breakdown + Pareto DevBom
-  // (lossSurplus category now comes from the merged topCategories above;
-  //  breakdown from the merged KPI row — PERF PAKET B / F2)
-  // FIX (BUG6-1+BUG6-POOL): paretoDevBom back in Promise.all with .catch() wrapper.
+  // FIX (BUG6-1+BUG6-POOL): paretoDevBom wrapped in .catch() so a failure
+  // degrades to an empty Pareto instead of failing the whole analysis.
   const safeParetoDevBom = queryParetoByDevBom(week, month, filterOpts, 20, 0.50).catch((e: unknown) => {
     logger.error('[analysis] queryParetoByDevBom failed (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
     return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: 0.50 };
   });
-  const [areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, paretoDevBom] = await Promise.all([
+
+  // ============================================================
+  //  PERF (H-8 QUICK WIN 2 — full parallel): ONE Promise.all for ALL
+  //  independent queries. Peak concurrency ≈ 19 (18 awaited here +
+  //  sqlFlagsPromise running in background for post-process) — under
+  //  db.ts's connection_limit=30, and the transaction pooler itself
+  //  allows ~200. pool_timeout=60 guards the tail if a burst ever
+  //  exceeds the pool.
+  // ============================================================
+  const [
+    kpis, prevSummary,
+    topNominal, topDevBom, topCategories,
+    areaAnalysisRaw, topOutletsRaw, topOutletsSalesRaw, paretoDevBom,
+    trendAggRows, consistencyItems, dqIssuesRaw,
+    topDeviasiRank, deviationDriverRows,
+    healthRankingRows, varianceAnalysis, growthDrivers,
+    topGrowth,
+  ] = await Promise.all([
+    // Group 1: merged KPI scan (curr) + standalone prev exec summary
+    queryDashboardKpis(week, month, filterOpts),
+    // prevWeek && prevMonth narrowing — if no compare period, return null
+    // so buildExecSummaryFromSql skips the prev summary entirely.
+    prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
+    // Batch 1: top items by nominal + devBom + merged category scan
+    queryTopItemsByNominal(week, month, filterOpts, topNItems),
+    queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+    // Batch 2: area + top outlets + Pareto DevBom
     queryAreaAnalysis(week, month, filterOpts),
     queryTopOutlets(week, month, filterOpts, topNOutlets),
     queryTopOutletsBySales(week, month, filterOpts, topNOutlets),
     safeParetoDevBom,
-  ]);
-
-  // Batch 3: trend + consistency + DQ issues
-  // (lvs + costImpact now derived from the merged KPI row — PERF PAKET B / F2)
-  const [trendAggRows, consistencyItems, dqIssuesRaw] = await Promise.all([
+    // Batch 3: trend + consistency + DQ issues
     queryTrendAgg({ ...filterOpts, weekLabel: week }),
     queryItemConsistency(week, month, filterOpts),
     db.dQIssue.groupBy({
@@ -215,32 +191,27 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
       where: { sourceFile: { monthLabel: month } },
       _count: { _all: true },
     }),
-  ]);
-
-  // Task H-2c (CHANGE 6): Top Growth (per resto & per barang). Fired right
-  // AFTER Batch 3 (not with the t=0 early-promise burst) so its 2 internal
-  // queries (TASK H-6: per-outlet salesMode scan + the (outlet × item) BOM
-  // matrix) overlap Batch 4's 2 fresh queries — batch concurrency stays ~4,
-  // within the PgBouncer pool cap; wall-clock added ≈ 0 because it runs in
-  // parallel with Batch 4 and is resolved by the time we await it below
-  // (same overlap trick as the early promises, just delayed to avoid
-  // stacking on the t=0 burst).
-  const topGrowthPromise = queryTopGrowth(week, month, prevWeek, prevMonth, filterOpts);
-
-  // Batch 4: deviasi rank + deviation drivers + health ranking + variance + growth
-  const [topDeviasiRank, deviationDriverRows, healthRankingRows, varianceAnalysis, growthDrivers] = await Promise.all([
+    // Batch 4: deviasi rank + deviation drivers (health ranking / variance /
+    // growth drivers come from the early-fired promises above)
     queryTopItemsByDeviasiRank(week, month, filterOpts, 50),
     queryDeviationBreakdownDrivers(week, month, filterOpts),
-    // SQL-OPTIMIZE: pushed from JS (was: computeOutletHealthRanking loop over 35K records)
     healthRankingSqlPromise,
-    // SQL-OPTIMIZE: pushed from JS (was: computeVarianceAnalysis loop over 35K records)
     varianceAnalysisPromise,
-    // SQL-OPTIMIZE: pushed from JS (was: computeGrowthDrivers loop over 35K×2 records)
     growthDriversPromise,
+    // Task H-2c (CHANGE 6): Top Growth (per resto & per barang)
+    queryTopGrowth(week, month, prevWeek, prevMonth, filterOpts),
   ]);
 
-  // Top Growth promise — overlapped with Batch 4 above, resolved by now.
-  const topGrowth = await topGrowthPromise;
+  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
+  // Single-scan derivations (field-for-field identical to the standalone queries):
+  const breakdown = kpisToBreakdown(kpis);
+  const lvs = kpisToLvs(kpis);
+  const costImpactSql = kpisToCostImpact(kpis, execSummary.sales.current);
+
+  const topWasteRows = topCategories.waste;
+  const topSusutRows = topCategories.susut;
+  const topTrialRows = topCategories.trial;
+  const topLossSurplusRows = topCategories.lossSurplus;
 
   // Map results (same as before, just from parallel results)
   const topWaste = topWasteRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyWaste: r.qty, nominalWaste: r.nominal }));

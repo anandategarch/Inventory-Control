@@ -6,6 +6,13 @@
 //
 //  NOTE: cross-outlet + trend modes were removed (GlobalItemSearchModal deleted).
 //  The autocomplete mode is still used by ItemTrendTab's search bar.
+//
+//  PERF (H-8 QUICK WIN 6a): DB-level AggregationCache via withCacheAndDedup
+//  (60s TTL + in-flight dedup). The underlying query is a leading-wildcard
+//  LIKE ('%q%') that cannot use any index — every keystroke used to scan the
+//  period's ~13.5K records. Autocomplete tolerance for staleness is high, and
+//  mutations clear this cache via invalidateAnalysisCache() (route list
+//  includes 'item-search'), so a 60s TTL is safe.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,9 +24,12 @@ import { queryItemAutocomplete } from '@/lib/queries/items/global-search';
 import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+const ITEM_SEARCH_CACHE_TTL = 60 * 1000; // 60s — autocomplete staleness tolerance is high
 
 const itemSearchQuerySchema = z.object({
   mode: z.literal('autocomplete').default('autocomplete'),
@@ -51,17 +61,36 @@ export async function GET(req: NextRequest) {
     }
 
     // Resolve month label case (DB may have "AGUSTUS 2026" vs "Agustus 2026")
+    // BEFORE building the cache key — same PERF-HEATMAP fix as the heatmap route,
+    // so "Agustus 2026" and "agustus 2026" share one cache entry.
     const monthResolver = await getMonthResolver();
     const month = resolveMonthLabel(monthRaw, monthResolver) || monthRaw;
 
-    const results = await queryItemAutocomplete(week, month, q, 10);
-    return NextResponse.json({
-      success: true,
-      mode: 'autocomplete',
-      q,
-      results,
-      durationMs: Date.now() - startedAt,
-    }, { headers: CACHE_INTERACTIVE });
+    // PERF (H-8-6a): sanitize the query term for the cache key — strip control
+    // characters (incl. the \x1f delimiter used by buildCacheKey) so a crafted
+    // `q` cannot collide with a different (month, week) cache key.
+    const qKey = q.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 200);
+
+    const cacheKey = buildCacheKey({
+      route: 'item-search',
+      month, week,
+      extra: { q: qKey },
+    });
+
+    const { data: cachedOrFresh, cached } = await withCacheAndDedup<Record<string, unknown>>(cacheKey, ITEM_SEARCH_CACHE_TTL, async () => {
+      const results = await queryItemAutocomplete(week, month, q, 10);
+      return {
+        success: true,
+        mode: 'autocomplete',
+        q,
+        results,
+        durationMs: Date.now() - startedAt,
+      };
+    });
+
+    // CONVENTIONS §2: surface `cached: true` when served from cache.
+    const responsePayload = cached ? { ...cachedOrFresh, cached: true } : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_INTERACTIVE });
   } catch (e: unknown) {
     logger.error('[item-search] error:', { error: e instanceof Error ? e.message : String(e) });
     return errorResponse(e, "item-search");

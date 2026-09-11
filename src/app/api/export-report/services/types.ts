@@ -27,7 +27,6 @@ import type { ExecutiveSummary } from '@/types/inventory';
 import type { RuntimeThresholds } from '@/lib/settings';
 import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
-import type { queryTopItemsByDeviasiRank } from '@/lib/queries/items/top-items';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -245,7 +244,6 @@ export interface ReportData {
   deviationBreakdown: BreakdownEnriched;
   areaAnalysis: AreaAnalysisMappedRow[];
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
-  topDeviasiRank: Awaited<ReturnType<typeof queryTopItemsByDeviasiRank>>;
   trend: TrendRow[];
   durationMs: number;
 }

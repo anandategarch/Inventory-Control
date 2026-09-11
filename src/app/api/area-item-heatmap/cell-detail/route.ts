@@ -4,6 +4,13 @@
 //  Returns per-outlet drill-down for a specific area × item cell.
 //  Shows raw quantities (qtyBom, qtyDeviasi, qtyWaste, qtySusut, qtyTrial)
 //  and nominal values per outlet × akunPenyesuaian.
+//
+//  PERF (H-8 QUICK WIN 6b): DB-level AggregationCache via withCacheAndDedup
+//  (5-min TTL + in-flight dedup) — mirrors the parent /api/area-item-heatmap
+//  route (PERF-CACHE-08). Also parallelizes the kelompok + PIC resolver
+//  lookups (was sequential — parent route already did this via Promise.all).
+//  Added to invalidateAnalysisCache() route list ('heatmap-cell-detail') so
+//  mutations (ingest, settings, pic, data delete, migrate-direction) clear it.
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
@@ -14,9 +21,12 @@ import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { queryHeatmapCellDetail } from '@/lib/queries/heatmap';
 import { validateQuery, heatmapQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
+import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+const HEATMAP_CELL_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches the parent heatmap route
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
@@ -50,31 +60,55 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // PERF (H-8-6b): resolve month BEFORE the cache key (same fix as the
+    // parent heatmap route) so case variants share one cache entry.
     const resolver = await getMonthResolver();
     const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
     const week = rawWeek;
 
-    const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
-    if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, rows: [] }, { headers: CACHE_ANALYSIS });
-    }
-
-    const picOutletCodes = await resolvePICOutletCodes(pic);
-    if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, rows: [] }, { headers: CACHE_ANALYSIS });
-    }
-
-    const filterOpts = {
-      area: null, // area is already applied via areaName param in the query
+    const cacheKey = buildCacheKey({
+      route: 'heatmap-cell-detail',
+      month, week,
+      area: areaName,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
-      itemName: null, // itemName is already applied via itemName param
-      picOutletCodes,
-    };
+      itemName,
+      pic,
+    });
 
-    const rows = await queryHeatmapCellDetail(week, month, filterOpts, areaName, itemName);
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(cacheKey, HEATMAP_CELL_CACHE_TTL, async () => {
+      // PERF (H-8-6b): parallel resolve kelompok + PIC (was sequential).
+      const [kelompokOutletCodes, picOutletCodes] = await Promise.all([
+        resolveKelompokOutletCodes(kelompok),
+        resolvePICOutletCodes(pic),
+      ]);
+      if (kelompokOutletCodes && kelompokOutletCodes.length === 1 && kelompokOutletCodes[0] === '__NO_MATCH__') {
+        return { success: true, rows: [] };
+      }
 
-    return NextResponse.json({ success: true, rows, durationMs: Date.now() - startedAt }, { headers: CACHE_ANALYSIS });
+      if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+        return { success: true, rows: [] };
+      }
+
+      const filterOpts = {
+        area: null, // area is already applied via areaName param in the query
+        kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+        outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
+        itemName: null, // itemName is already applied via itemName param
+        picOutletCodes,
+      };
+
+      const rows = await queryHeatmapCellDetail(week, month, filterOpts, areaName, itemName);
+
+      return { success: true, rows, durationMs: Date.now() - startedAt };
+    });
+
+    // CONVENTIONS §2: surface `cached: true` when served from cache; `stale: true`
+    // when the SWR path served an expired entry (background recompute is running).
+    const responsePayload = cached
+      ? { ...cachedOrFresh, cached: true, ...(stale ? { stale: true } : {}) }
+      : cachedOrFresh;
+    return NextResponse.json(responsePayload, { headers: CACHE_ANALYSIS });
   } catch (e: unknown) {
     // FEAT-01 fix: don't leak internal error details to client
     logger.error('[area-item-heatmap/cell-detail] error:', { error: e instanceof Error ? e.message : String(e) });

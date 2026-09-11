@@ -15,6 +15,10 @@ import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 // Status is called frequently (every dashboard load) — calling cleanup here
 // (rate-limited internally to once per 10 min) prevents unbounded table growth.
 import { cleanupExpiredCache } from '@/lib/aggregation-cache';
+// H-8 QUICK WIN 6c: rate limiting — /api/status was the ONLY DB-touching GET
+// without it (an external hammer bypassed all protection and each cold
+// instance paid the 6-query batch incl. a full-table COUNT).
+import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
@@ -42,6 +46,15 @@ const EMPTY_STATE = {
 
 export async function GET(req: NextRequest) {
   try {
+    // H-8 QUICK WIN 6c: rate limit (30/min per IP — RATE_LIMITS.status was
+    // defined but never wired). The dashboard calls status once per load +
+    // once per manual refresh, so 30/min is far above legitimate use.
+    const ip = getClientIP(req);
+    const rl = rateLimit(`status:${ip}`, RATE_LIMITS.status.maxRequests, RATE_LIMITS.status.windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json({ success: false, error: 'Rate limit exceeded. Coba lagi dalam beberapa detik.' }, { status: 429 });
+    }
+
     // PERF-CACHE-07: opportunistic cleanup of expired AggregationCache rows.
     // The helper is internally rate-limited (once per 10 min) + non-throwing,
     // so this is a safe fire-and-forget on every status request. The first

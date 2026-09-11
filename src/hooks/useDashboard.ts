@@ -43,6 +43,16 @@ interface DashboardStore {
   focusOutlet: string | null;
   setFocusOutlet: (code: string | null) => void;
   activeTab: string;
+  // PERF (H-8 QUICK WIN 3 — visited-tab gating): tabs the user has ACTIVELY
+  // opened at least once. The dashboard page renders a tab's content (and
+  // therefore fires its queries — /api/pareto, /api/flip-ranking, …) only
+  // after its first visit, while keep-alive (forceMount) preserves state
+  // afterwards. This kills the eager initial-load fetches that hidden
+  // force-mounted tabs used to fire for tabs the user never opens.
+  // Tracked INSIDE setActiveTab / setFocusOutlet so every navigation path
+  // (Tabs onValueChange, keyboard shortcuts 1-5, RankingNasionalCard
+  // cross-tab link, focus-outlet flows) is covered.
+  visitedTabs: string[];
   setActiveTab: (tab: string) => void;
   // Phase 1 — Navigation Bridge: external components (e.g. RankingNasionalCard)
   // can pre-select an item in the Trend Item Tab by setting this. The Trend
@@ -83,11 +93,23 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setScorecardOutlet: (code) => set({ scorecardOutlet: code }),
   focusOutlet: null,
   setFocusOutlet: (code) => set((state) => code
-    ? { focusOutlet: code, activeTab: 'resto' }
+    ? {
+        focusOutlet: code,
+        activeTab: 'resto',
+        // H-8 QW3: focus-outlet switches to the resto tab — mark it visited.
+        visitedTabs: state.visitedTabs.includes('resto') ? state.visitedTabs : [...state.visitedTabs, 'resto'],
+      }
     : { focusOutlet: null }
   ),
   activeTab: 'dashboard',
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  // H-8 QW3: 'dashboard' is the default tab — its content renders eagerly.
+  visitedTabs: ['dashboard'],
+  setActiveTab: (tab) => set((state) => ({
+    activeTab: tab,
+    // H-8 QW3: first visit mounts the tab's subtree (queries fire);
+    // subsequent visits are no-ops (keep-alive already has it mounted).
+    visitedTabs: state.visitedTabs.includes(tab) ? state.visitedTabs : [...state.visitedTabs, tab],
+  })),
   trendSelectedItem: null,
   setTrendSelectedItem: (item) => set({ trendSelectedItem: item }),
 }));

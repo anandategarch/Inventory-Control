@@ -35,7 +35,7 @@ import { fetchRecords } from './fetch-records';
 import { runQueries } from './run-queries';
 import { postProcess } from './post-process';
 import { assembleResponse } from './assemble-response';
-import { setCached } from '@/lib/aggregation-cache';
+import { setCachedRaw } from '@/lib/aggregation-cache';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams } from './validate-and-resolve';
 
@@ -69,8 +69,10 @@ export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedPar
       const queries = await runQueries(p, records);
       const processed = await postProcess(p, records, queries);
       const result = assembleResponse(p, records, queries, processed);
-      // awaitWrite=true — block ~50-150ms so the next request hits the cache.
-      await setCached(cacheKey, result, true);
+      // PERF (H-8 QUICK WIN 5 — single stringify): serialize once and store
+      // the raw string (same pattern as the route's cold path). awaitWrite=true
+      // — block ~50-150ms so the next request hits the cache.
+      await setCachedRaw(cacheKey, JSON.stringify(result), true);
     } catch (e: unknown) {
       // Non-fatal — log and keep the stale row; the next request re-triggers.
       logger.error('[analysis] SWR background recompute failed (non-fatal)', {

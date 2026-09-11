@@ -43,8 +43,15 @@ import { ANALYSIS_PAYLOAD_SCHEMA_VERSION, hasCurrentPayloadShape } from './paylo
 //  reads analysis durationMs, and `cached:true` already conveys provenance.
 // ============================================================
 
-/** P3-HYG-1: marker resolved into the in-flight Promise on a cache HIT. */
-interface RawCacheHit {
+/**
+ * P3-HYG-1: marker resolved into the in-flight Promise on a cache HIT.
+ * PERF (H-8 QUICK WIN 5): also resolved into the in-flight Promise by the
+ * route's COLD path (route.ts) — the fresh payload is stringified once,
+ * cached as the raw string, and shared with concurrent awaiters as this
+ * same marker so they serve it zero-parse (see rawCacheResponse).
+ * Exported so route.ts can construct the marker type-safely.
+ */
+export interface RawCacheHit {
   readonly __rawJson: string;
   readonly stale: boolean;
 }

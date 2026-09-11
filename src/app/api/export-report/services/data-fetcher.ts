@@ -17,15 +17,22 @@
 //   10. 404 short-circuit (throw EarlyHttpResponse if currSlim empty)
 //   11. evaluateHistoricalRulesJs on currSlim → histFlags → topFlagByKey
 //   12. Exec summary (curr ∥ prev via queryExecSummary)
-//   13. 18-query Promise.all: topNominal / topDevBom / topWaste / topSusut
+//   13. 17-query Promise.all: topNominal / topDevBom / topWaste / topSusut
 //       / topTrial / topLossSurplus / areaAnalysis / breakdown / trendAgg
 //       / prevWaste / prevSusut / prevTrial / prevLossSurplus / histWaste
-//       / histSusut / histTrial / histLossSurplus / topDeviasiRank
+//       / histSusut / histTrial / histLossSurplus
+//       (+ queryHistoricalCriticalItems fired EARLY right after the flag
+//       merge — see the H-8 QUICK WIN 1b comment below)
 //   14. Build prev + hist lookup maps + enrich topWaste/Susut/Trial/LossSurplus
 //   15. Build breakdownEnriched + growthMetrics + multiPeriodComparison + trend
 //   16. Build histCriticalItems + historicalAnalysis + growthComparisonWithHist
-//   17. Fetch outletHealthRanking + topItemForCrossOutlet (parallel)
-//   18. Assemble ReportData + DocxContext, return both
+//   17. Assemble ReportData + DocxContext, return both
+//
+//  PERF (H-8 QUICK WIN 1): removed two DEAD queries — queryTopItemsByDeviasiRank
+//  (500-row national rank) and queryOutletHealthRanking — whose DOCX sections
+//  ("Section 13 RANKING ITEM NASIONAL" + restoPriority) were previously removed
+//  from docx-builder, leaving the data pipeline fetching 1.5-3s of data nobody
+//  renders (~500 ranked rows were also stored in the 5-min cache payload).
 //
 //  All comments preserved VERBATIM from the original route.ts (PERF-CACHE-06,
 //  PERF-FASE3-BE04, FIX FILTER-3/4, FIX BUG-PERF-4, FIX RESTORE-BACKEND-2,
@@ -45,10 +52,8 @@ import {
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
-  queryTopItemsByDeviasiRank,
   queryHistoricalCategoryAvg,
   queryAreaAnalysis,
-  queryOutletHealthRanking,
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
 import { evaluateRulesSql, evaluateHistoricalRulesJs } from '@/lib/queries/rule-evaluation';
@@ -288,6 +293,15 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       topFlagByKey.set(key, flag);
     }
   }
+
+  // PERF (H-8 QUICK WIN 1b): fire queryHistoricalCriticalItems HERE — its only
+  // input (histCriticalKeys, derived from the flag merge above) is ready — so
+  // it overlaps the KPI + big Promise.all phases below instead of running
+  // sequentially after them (~100-300ms off the cold path).
+  const histCriticalKeys = [...topFlagByKey.values()]
+    .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
+    .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
+  const histCriticalRowsPromise = queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
   // SQL queries
   // PERF (PAKET B / F2 — scan merge): current-period exec summary + deviation
   // breakdown come from ONE merged scan (queryDashboardKpis); only the
@@ -309,8 +323,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const [topNominal, topDevBom, topCategories, prevTopCategories, areaAnalysisRaw, trendAggRows,
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
-    // Top Items by Deviasi Rank (Section 13 replacement)
-    topDeviasiRank,
   ] = await Promise.all([
     queryTopItemsByNominal(week, month, filterOpts, topNItems),
     queryTopItemsByDevBom(week, month, filterOpts, topNItems),
@@ -323,8 +335,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
-    // Section 13: Top Items by Deviasi Rank (national ranking)
-    queryTopItemsByDeviasiRank(week, month, filterOpts, 500),
   ]);
   const topWasteRows = topCategories.waste;
   const topSusutRows = topCategories.susut;
@@ -400,10 +410,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // PERF-FASE3-BE04: varianceAnalysis already computed via SQL in the
   // Promise.all block above (queryVarianceAnalysis). Historical analysis
   // now uses queryHistoricalCriticalItems SQL instead of 35K-record JS loop.
-  const histCriticalKeys = [...topFlagByKey.values()]
-    .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
-    .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
-  const histCriticalRows = await queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys);
+  // (H-8 QUICK WIN 1b: the query was FIRED right after the flag merge above
+  // — awaited here after overlapping the KPI + category phases.)
+  const histCriticalRows = await histCriticalRowsPromise;
   const histCriticalItems = histCriticalRows.map(row => {
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);
@@ -427,11 +436,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 200) };
   const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
-  // FIX: fetch outlet health ranking for the report (restoPriority section).
-  // topItemForCrossOutlet + queryGlobalItemSearch were removed along with
-  // the GlobalItemSearchModal — the cross-outlet section was already removed
-  // from the report per earlier user request.
-  const outletHealthRanking = await queryOutletHealthRanking(week, month, filterOpts);
+  // (PERF H-8 QUICK WIN 1: the outletHealthRanking fetch was removed — its
+  // DOCX section (restoPriority) no longer exists, so the query was pure
+  // dead compute. topItemForCrossOutlet + queryGlobalItemSearch were removed
+  // along with the GlobalItemSearchModal — the cross-outlet section was
+  // already removed from the report per earlier user request.)
   const data: ReportData = {
     period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
     // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
@@ -444,7 +453,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     deviationBreakdown: breakdownEnriched,
     areaAnalysis: areaAnalysisRaw.map(a => ({ area: a.area, outletCount: a.outletCount, totalSales: a.totalSales, totalAbsNominal: a.totalAbsNominal, avgDevBom: a.avgDevBom, lossToSales: a.lossToSales })),
     varianceAnalysis,
-    topDeviasiRank,
     trend,
     durationMs: Date.now() - startedAt,
   };
@@ -463,12 +471,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     prevWeek,
     prevMonth,
   };
-
-  // outletHealthRanking is used in the report's restoPriority section.
-  // (topItemForCrossOutlet + queryGlobalItemSearch were removed — the
-  // cross-outlet section was already removed from the report per earlier
-  // user request.)
-  void outletHealthRanking;
 
   return { data, ctx };
 }

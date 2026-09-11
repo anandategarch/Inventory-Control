@@ -161,8 +161,13 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['area-item-heatmap'] });
     queryClient.invalidateQueries({ queryKey: ['item-trend'] });
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
-    queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
+    // PERF (H-8 QUICK WIN 4): removed the ['resto-bahan-matrix'] invalidation —
+    // no client query consumes that key (the route exists but nothing on the
+    // frontend calls it), so the call was a no-op. Note the invalidation herd
+    // itself is bounded by H-8 QW3: hidden tabs the user never opened have no
+    // active TanStack observers, so their keys are marked stale WITHOUT a
+    // refetch; only visited tabs (keep-alive mounted) refresh in background.
     toast({
       title: '🔄 Data diperbarui',
       description: 'Cache server dibersihkan — data dihitung ulang (butuh beberapa detik).',
