@@ -13,7 +13,7 @@
 //  price movement, not waste (§24: price effect is a comparison
 //  factor, never root-cause proof).
 //
-//  Self-contained fetch (pattern: Compliance.tsx / RestoRecommendationCard):
+//  Self-contained fetch (pattern: RestoRecommendationCard):
 //    - queryKey ['price-effect', month, week, compareMonth, compareWeek, filters]
 //    - staleTime 5 min + gcTime 10 min + keepPreviousData
 //    - /api/price-effect (cached server-side 5 min, SWR envelope)

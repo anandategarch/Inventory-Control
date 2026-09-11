@@ -239,7 +239,7 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
  * FIX (BUG-LIB-11): updated docstring — uses YIQ luminance approximation
  * (0.299r + 0.587g + 0.114b), not true WCAG sRGB luminance. YIQ is simpler
  * and sufficient for this use case (heatmap cells + chart backgrounds).
- * For strict WCAG AA compliance, use proper sRGB gamma decode.
+ * For strict WCAG AA conformance, use proper sRGB gamma decode.
  */
 export function autoTextColor(bgHex: string): 'text-white' | 'text-black' | 'text-foreground' {
   // FIX (BUG-LIB-08): use 'text-black' instead of 'text-foreground' for

@@ -14,7 +14,7 @@
 //  returns hasCompare:false + empty items (the card shows a hint to
 //  pick a compare period).
 //
-//  Pattern (per CONVENTIONS.md — compliance / flip-ranking precedent):
+//  Pattern (per CONVENTIONS.md — flip-ranking precedent):
 //    - force-dynamic + maxDuration=60 (2 CTE aggregations + 1 join)
 //    - Rate limiting (30 req/min per IP)
 //    - Zod validation (inline schema, strict)
@@ -37,10 +37,10 @@ import { errorResponse } from '@/lib/error-response';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const PRICE_EFFECT_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches analysis / compliance routes
+const PRICE_EFFECT_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches analysis routes
 
 // Zod schema — month + week REQUIRED, compare month/week + filters optional.
-// Same regexes as the compliance / flip-ranking family.
+// Same regexes as the flip-ranking family.
 const priceEffectQuerySchema = z.object({
   month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/),
   week: z.string().regex(/^WEEK\s+[0-9]+$/i),
@@ -54,7 +54,7 @@ const priceEffectQuerySchema = z.object({
 
 /**
  * Resolve kelompok + PIC filters into a single combined outletCodes array.
- * Same pattern as /api/compliance (resolveOutletCodeFilters).
+ * Same pattern as /api/peer-comparison (resolveOutletCodeFilters).
  */
 async function resolveOutletCodeFilters(
   kelompok: string | null,

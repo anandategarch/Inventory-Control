@@ -472,10 +472,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // each reads InventoryRecord + OutletPeriodSales for its period scope,
   // so ingest/settings/pic/migrate mutations affect them; they were
   // previously uncached AND un-invalidated).
-  // PAKET-E-GAP: added `compliance` + `chronic-outlets` (added with the
-  // Kepatuhan tab — cached via withCacheAndDedup but initially left out of
-  // this list; mutations would have served stale compliance lenses for the
-  // full 5-min TTL).
+  // H-2b: removed the two Kepatuhan-tab routes (tab deleted with its APIs).
   // PRICE-EFFECT (Task W): added `price-effect` (AVG Price Effect Bennet
   // decomposition — reads per-item Σ|qtyDeviasi|/Σ|nominalDeviasi| for the
   // current + compare periods from InventoryRecord, so ingest/settings/
@@ -486,7 +483,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
-    'compliance', 'chronic-outlets', 'price-effect',
+    'price-effect',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

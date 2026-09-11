@@ -6,12 +6,12 @@
 //  Owns:
 //    • handleExport  — fires /api/export-report, downloads the
 //      .docx, surfaces a toast. Memoized via useCallback.
-//    • handleRefresh — invalidates 6 query keys (analysis,
+//    • handleRefresh — invalidates the dashboard query keys (analysis,
 //      status, outlet-items, item-history, peer-comparison,
 //      recommendations) + fires a toast. Memoized.
 //    • isExporting   — local UI state toggled by handleExport.
 //    • Global keyboard shortcuts useEffect (Cmd/Ctrl+E, R, K,
-//      1-6, Escape).
+//      1-5, Escape).
 //
 //  Parent (DashboardPage) still owns `exportDialogOpen` +
 //  `itemSearchOpen` state because the modals
@@ -139,18 +139,14 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
     queryClient.invalidateQueries({ queryKey: ['resto-bahan-matrix'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
-    // PAKET E — Kontrol & Kepatuhan tab (same invalidation semantics:
-    // manual refresh must bypass the 5-min staleTime).
-    queryClient.invalidateQueries({ queryKey: ['compliance'] });
-    queryClient.invalidateQueries({ queryKey: ['chronic-outlets'] });
     toast({ title: '🔄 Data diperbarui' });
   }, [queryClient, toast]);
 
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
-  // 1-6 → switch tabs (Dashboard / Resto / Peer / Pareto /
-  //       Trend Item / Kepatuhan)
+  // 1-5 → switch tabs (Dashboard / Resto / Peer / Pareto /
+  //       Trend Item)
   // Escape → close any open dialog/drawer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -171,15 +167,15 @@ export function useDashboardActions({
         handleRefresh();
         return;
       }
-      // 1-6 → switch tabs (only when not typing in an input)
+      // 1-5 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
       // P3-HYG-6: the querySelector probe now runs ONLY when the key is one
       // of the tab digits — cheap constant folding for every other keypress.
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6')) {
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5')) {
         const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
         if (isDropdownOpen) return;
-        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend', '6': 'compliance' };
+        const tabMap: Record<string, string> = { '1': 'dashboard', '2': 'resto', '3': 'peer', '4': 'pareto', '5': 'trend' };
         setActiveTab(tabMap[e.key]);
         return;
       }

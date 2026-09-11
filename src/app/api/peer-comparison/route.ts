@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — peer comparison CROSS JOIN can be slow
 
 // P3-HYG-3: DB-level cache (5 min) + in-flight dedup — same AggregationCache
-// pattern as the analysis/pareto/compliance family. Previously this route
+// pattern as the analysis/pareto family. Previously this route
 // (and its /items + /trend siblings) re-ran the CROSS JOIN query on EVERY
 // request — the Peer tab re-fires all 3 on every outlet/period/filter change.
 const PEER_CACHE_TTL = 5 * 60 * 1000;
