@@ -35,8 +35,11 @@
 /**
  * v1 (implicit) = pre-Top-Growth payload (no `topGrowth` field).
  * v2 = + `topGrowth` { byOutlet, byItem } (Task H-2c).
+ * v3 = + topGrowth drill-down (`contributors` per row + `contributorLimit`)
+ *      + period provenance (`comparisonAuto`, `weekRange`,
+ *      `comparisonWeekRange`) (Task H-5).
  */
-export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 2;
+export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 3;
 
 /**
  * Top-level JSON key markers that MUST exist in a cached row for the
@@ -45,7 +48,18 @@ export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 2;
  * ALWAYS serialized; never conditionally omitted, or JSON.stringify
  * would drop the key and falsely mark fresh rows as shape-mismatched).
  */
-export const REQUIRED_PAYLOAD_MARKERS: readonly string[] = ['"topGrowth":'];
+export const REQUIRED_PAYLOAD_MARKERS: readonly string[] = [
+  '"topGrowth":',
+  // TASK H-5: topGrowth-level scalar — ALWAYS serialized (even when both
+  // lists are empty), unlike a per-row field which would vanish from a
+  // payload whose lists are empty (empty arrays serialize as [] with no
+  // row objects inside → '"contributors":' would be ABSENT from a perfectly
+  // fresh row → infinite recompute loop). Never add a per-row field as a
+  // marker; anchor markers on always-serialized scalars or the wrapper.
+  '"contributorLimit":',
+  // TASK H-5: period.comparisonAuto — boolean, always serialized.
+  '"comparisonAuto":',
+];
 
 /**
  * Cheap shape guard over the RAW cached JSON string — no JSON.parse.

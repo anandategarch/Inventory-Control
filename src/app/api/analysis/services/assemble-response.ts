@@ -17,7 +17,20 @@ import type { ProcessedData } from './post-process';
 
 export interface AnalysisResponse {
   success: true;
-  period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
+  // TASK H-5 (period clarity): + comparisonAuto (how the compare period was
+  // chosen: true = otomatis same-week previous month, false = user-selected)
+  // + weekRange/comparisonWeekRange (day-of-month bounds, cumulative weeks:
+  // W2 = tgl 1–14) — powers the explicit "periode ini vs pembanding" legend
+  // on growth cards. Always serialized (null when unresolvable).
+  period: {
+    monthLabel: string;
+    weekLabel: string;
+    comparisonWeek: string | null;
+    comparisonMonth: string | null;
+    comparisonAuto: boolean;
+    weekRange: { start: number; end: number } | null;
+    comparisonWeekRange: { start: number; end: number } | null;
+  };
   filters: {
     area: string | null;
     kelompok: string | null;
@@ -117,7 +130,20 @@ export function assembleResponse(
 
   return {
     success: true,
-    period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
+    period: {
+      monthLabel: month,
+      weekLabel: week,
+      comparisonWeek: prevWeek,
+      comparisonMonth: prevMonth,
+      // TASK H-5: compare provenance — auto when the request carried no
+      // explicit compareWeek/compareMonth (resolveComparePeriod Case 1:
+      // same weekLabel in the chronologically previous month).
+      comparisonAuto: params.compareWeek == null && params.compareMonthExplicit == null,
+      // TASK H-5: concrete day-of-month ranges (filled by fetch-records from
+      // the Week table; null-safe when the pair can't be resolved).
+      weekRange: params.weekRange ?? null,
+      comparisonWeekRange: params.compareWeekRange ?? null,
+    },
     // FIX (BUG-KELOMPOK-EMPTY): include kelompok in the response filters object
     // so the frontend can display the active filter state consistently.
     // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.

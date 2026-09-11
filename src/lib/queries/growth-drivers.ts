@@ -314,6 +314,11 @@ export async function queryGrowthDrivers(
 //    - byOutlet → per resto  (group o.name)
 //    - byItem   → per barang (group i.name)
 //
+//  Task H-5 (drill-down): each row now carries `contributors` —
+//  the top movers ONE LEVEL DEEPER that drive the row's Δ:
+//    - byOutlet rows → top barang (items) inside that resto
+//    - byItem rows   → top resto (outlets) selling that barang
+//
 //  Period semantics are IDENTICAL to queryGrowthDrivers: prevWeek/
 //  prevMonth come from the pipeline's period resolver (auto = same
 //  weekLabel in the previous month, or the user's explicit compare
@@ -322,6 +327,14 @@ export async function queryGrowthDrivers(
 //  Metric config copied verbatim from the `sales` row of the metrics
 //  table above: field 'nominalSales', ABS sum (signed=false).
 //
+//  IMPLEMENTATION (H-5): ONE (outlet × item) matrix scan replaces the
+//  two per-grain scans. SUM(ABS(x)) is additive across grouping levels
+//  (a group total = sum of its sub-group totals), and Outlet/Item are
+//  FK-constrained (onDelete: Restrict — no orphans), so summing the
+//  matrix in JS is EXACTLY the number the per-grain GROUP BY produced.
+//  One scan + one transaction instead of two, and the matrix doubles
+//  as the drill-down source — no extra query for contributors.
+//
 //  Shaping (pure JS — no extra SQL):
 //    - delta = curr − prev                (SIGNED — sacred sign)
 //    - pct   = calcGrowth(curr, prev)     (signed (curr−prev)/|prev|,
@@ -329,7 +342,23 @@ export async function queryGrowthDrivers(
 //    - isNew = no previous base (prev 0/absent)
 //    - noise filter |delta| >= 1000       (same threshold as `sales`)
 //    - sort by |delta| DESC, cap TOP_GROWTH_LIMIT rows per list
+//    - contributors: top TOP_GROWTH_CONTRIBUTOR_LIMIT by |Δ|, NO noise
+//      threshold — inside an already-ranked mover, the biggest sub-
+//      movers are the story ("penyebab growth"), even when individually
+//      below Rp1.000 (e.g. a brand-new resto built from many small items).
 // ============================================================
+export interface TopGrowthContributor {
+  name: string;
+  curr: number;
+  prev: number;
+  /** SIGNED delta = curr − prev. */
+  delta: number;
+  /** SIGNED growth (curr − prev)/|prev| — null when prev = 0 (new). */
+  pct: number | null;
+  /** No previous base — pct cannot be computed, UI shows "Baru". */
+  isNew: boolean;
+}
+
 export interface TopGrowthRow {
   name: string;
   curr: number;
@@ -340,24 +369,147 @@ export interface TopGrowthRow {
   pct: number | null;
   /** No previous base — pct cannot be computed, UI shows "Baru". */
   isNew: boolean;
+  /**
+   * TASK H-5: drill-down — top sub-grain movers driving this row's Δ
+   * (items for byOutlet rows, outlets for byItem rows). Always an
+   * array (possibly empty) so the field ALWAYS serializes into the
+   * cached payload — it doubles as a required payload-shape marker.
+   */
+  contributors: TopGrowthContributor[];
 }
 
 export interface TopGrowthResult {
   byOutlet: TopGrowthRow[];
   byItem: TopGrowthRow[];
+  /**
+   * Cap used for each row's `contributors` list (informational — the
+   * UI footnote reads it). ALWAYS serialized; required payload marker.
+   */
+  contributorLimit: number;
 }
 
 const TOP_GROWTH_DELTA_THRESHOLD = 1000;
 const TOP_GROWTH_LIMIT = 15;
+const TOP_GROWTH_CONTRIBUTOR_LIMIT = 5;
 
-function shapeTopGrowthRows(map: Map<string, { curr: number; prev: number }>): TopGrowthRow[] {
+// ------------------------------------------------------------
+//  (outlet × item) SALES matrix — curr + prev sums per pair in
+//  ONE query (FULL OUTER JOIN of the two period CTEs, same shape
+//  as aggregateMetric but grouped on BOTH grains).
+// ------------------------------------------------------------
+async function aggregateSalesMatrix(
+  week: string,
+  month: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: FilterOpts,
+): Promise<Map<string, Map<string, { curr: number; prev: number }>>> {
+  const f = buildSqlFilters(filters);
+  const hasPrev = !!(prevWeek && prevMonth);
+
+  const sums = Prisma.sql`
+    COALESCE(SUM(ABS(ir."nominalSales")), 0) as val
+  `;
+  const fromAndGroup = Prisma.sql`
+    FROM "InventoryRecord" ir
+    JOIN "Outlet" o ON ir."outletId" = o.id
+    JOIN "Item" i ON ir."itemId" = i.id
+  `;
+  const groupBy = Prisma.sql`
+    GROUP BY o.name, i.name
+  `;
+
+  const currCte = Prisma.sql`
+    SELECT o.name as "outletName", i.name as "itemName", ${sums}
+    ${fromAndGroup}
+    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+      AND ir."nominalSales" IS NOT NULL
+      ${f}
+    ${groupBy}
+  `;
+  const prevCte = hasPrev
+    ? Prisma.sql`
+      SELECT o.name as "outletName", i.name as "itemName", ${sums}
+      ${fromAndGroup}
+      WHERE ir."monthLabel" = ${prevMonth} AND ir."weekLabel" = ${prevWeek}
+        AND ir."nominalSales" IS NOT NULL
+        ${f}
+      ${groupBy}
+    `
+    : Prisma.sql`SELECT NULL::text as "outletName", NULL::text as "itemName", 0::float as val WHERE 1=0`;
+
+  // Same FULL OUTER JOIN pattern as aggregateMetric (AUDIT8-ROLLBACK-1
+  // Item 8: wrapped in withStatementTimeout — 2 CTEs over InventoryRecord).
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
+    outletName: string | null;
+    itemName: string | null;
+    curr: number | bigint | null;
+    prev: number | bigint | null;
+  }>>`
+    WITH curr_agg AS (${currCte}),
+         prev_agg AS (${prevCte})
+    SELECT
+      COALESCE(c."outletName", p."outletName") as "outletName",
+      COALESCE(c."itemName", p."itemName") as "itemName",
+      COALESCE(c.val, 0) as curr,
+      COALESCE(p.val, 0) as prev
+    FROM curr_agg c
+    FULL OUTER JOIN prev_agg p
+      ON c."outletName" = p."outletName" AND c."itemName" = p."itemName"
+  `);
+
+  // Nested map: outlet → item → {curr, prev}. Rows missing either name
+  // (FULL OUTER JOIN null edge) are skipped, mirroring aggregateMetric.
+  const matrix = new Map<string, Map<string, { curr: number; prev: number }>>();
+  for (const r of rows) {
+    if (r.outletName == null || r.itemName == null) continue;
+    let items = matrix.get(r.outletName);
+    if (!items) {
+      items = new Map<string, { curr: number; prev: number }>();
+      matrix.set(r.outletName, items);
+    }
+    items.set(r.itemName, { curr: Number(r.curr) || 0, prev: Number(r.prev) || 0 });
+  }
+  return matrix;
+}
+
+/** Shape one contributor (sub-grain mover) — same math as the row itself. */
+function shapeContributor(name: string, curr: number, prev: number): TopGrowthContributor {
+  return {
+    name,
+    curr,
+    prev,
+    delta: curr - prev,
+    pct: calcGrowth(curr, prev),
+    isNew: !prev || prev === 0,
+  };
+}
+
+/** Top-N contributors by |Δ| (no noise threshold — see header comment). */
+function topContributors(
+  m: Map<string, { curr: number; prev: number }>,
+): TopGrowthContributor[] {
+  if (m.size === 0) return [];
+  const list = [...m].map(([n, v]) => shapeContributor(n, v.curr, v.prev));
+  list.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return list.slice(0, TOP_GROWTH_CONTRIBUTOR_LIMIT);
+}
+
+function shapeTopGrowthRows(
+  sums: Map<string, { curr: number; prev: number }>,
+  // Sub-grain cells for each row name — byOutlet passes the (outlet → items)
+  // matrix itself, byItem passes the inverted (item → outlets) map. (A plain
+  // map param instead of a lookup callback: the base no-unused-vars rule
+  // flags callback-type param names — same quirk as buildWhere.)
+  subMaps: Map<string, Map<string, { curr: number; prev: number }>>,
+): TopGrowthRow[] {
   const rows: TopGrowthRow[] = [];
-  for (const [name, { curr, prev }] of map) {
+  for (const [name, { curr, prev }] of sums) {
     const delta = curr - prev;
     // Noise filter — mirrors the `sales` delta threshold above (|Δ| >= 1000).
     if (Math.abs(delta) < TOP_GROWTH_DELTA_THRESHOLD) continue;
     const isNew = !prev || prev === 0;
-    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew });
+    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew, contributors: topContributors(subMaps.get(name) ?? new Map()) });
   }
   rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return rows.slice(0, TOP_GROWTH_LIMIT);
@@ -370,14 +522,40 @@ export async function queryTopGrowth(
   prevMonth: string | null,
   filters: FilterOpts,
 ): Promise<TopGrowthResult> {
-  // Two grains of the SAME sales metric, run in parallel (2 queries —
-  // same cost as the outlet-grain half of queryGrowthDrivers).
-  const [outletMap, itemMap] = await Promise.all([
-    aggregateMetric(week, month, prevWeek, prevMonth, filters, 'outlet', 'nominalSales', false),
-    aggregateMetric(week, month, prevWeek, prevMonth, filters, 'item', 'nominalSales', false),
-  ]);
+  // ONE (outlet × item) matrix scan (H-5) — replaces the previous two
+  // per-grain aggregateMetric queries; per-grain sums are derived in JS.
+  const matrix = await aggregateSalesMatrix(week, month, prevWeek, prevMonth, filters);
+
+  // Derive both grain sums + the drill-down sub-maps from the matrix.
+  const outletSums = new Map<string, { curr: number; prev: number }>();
+  const itemSums = new Map<string, { curr: number; prev: number }>();
+  const outletsByItem = new Map<string, Map<string, { curr: number; prev: number }>>();
+  for (const [outlet, items] of matrix) {
+    let oCurr = 0;
+    let oPrev = 0;
+    for (const [item, { curr, prev }] of items) {
+      oCurr += curr;
+      oPrev += prev;
+      const isum = itemSums.get(item) ?? { curr: 0, prev: 0 };
+      isum.curr += curr;
+      isum.prev += prev;
+      itemSums.set(item, isum);
+      let outs = outletsByItem.get(item);
+      if (!outs) {
+        outs = new Map<string, { curr: number; prev: number }>();
+        outletsByItem.set(item, outs);
+      }
+      outs.set(outlet, { curr, prev });
+    }
+    outletSums.set(outlet, { curr: oCurr, prev: oPrev });
+  }
+
+  // byOutlet rows drill into that outlet's items (the matrix itself);
+  // byItem rows drill into the outlets selling that item (inverted map) —
+  // the SAME matrix serves both directions.
   return {
-    byOutlet: shapeTopGrowthRows(outletMap),
-    byItem: shapeTopGrowthRows(itemMap),
+    byOutlet: shapeTopGrowthRows(outletSums, matrix),
+    byItem: shapeTopGrowthRows(itemSums, outletsByItem),
+    contributorLimit: TOP_GROWTH_CONTRIBUTOR_LIMIT,
   };
 }

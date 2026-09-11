@@ -257,7 +257,20 @@ export interface BomCorrelationCounts {
 
 export interface AnalysisData {
   success: boolean;
-  period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
+  // TASK H-5 (period clarity): + comparisonAuto (true = pembanding otomatis:
+  // minggu sama di bulan sebelumnya; false = dipilih user) + weekRange /
+  // comparisonWeekRange (rentang tanggal kumulatif, W2 = tgl 1–14).
+  // Optional for back-compat with payloads cached before H-5 — consumers
+  // fall back to plain week/month labels when absent.
+  period: {
+    monthLabel: string;
+    weekLabel: string;
+    comparisonWeek: string | null;
+    comparisonMonth: string | null;
+    comparisonAuto?: boolean;
+    weekRange?: { start: number; end: number } | null;
+    comparisonWeekRange?: { start: number; end: number } | null;
+  };
   // FIX (AUDIT7-FE-4): backend emits 5 fields (area, kelompok, outletCode,
   // itemName, pic) in `filters` (analysis/route.ts:951) — frontend type was
   // missing `kelompok` + `pic`. Made all 5 nullable for back-compat with
@@ -346,7 +359,9 @@ export interface AnalysisData {
   // (byOutlet) & per barang (byItem) vs the compare period. Optional so
   // payloads cached before the field existed (and mock/test data) keep
   // type-checking — the card renders its empty state when absent.
-  topGrowth?: { byOutlet: TopGrowthRow[]; byItem: TopGrowthRow[] };
+  // TASK H-5: rows carry `contributors` (drill-down movers); the wrapper
+  // carries contributorLimit (informational — optional for back-compat).
+  topGrowth?: { byOutlet: TopGrowthRow[]; byItem: TopGrowthRow[]; contributorLimit?: number };
   // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
   // /api/analysis (analysis/route.ts:989-990) — were missing from the type.
   // Optional + nullable so consumers can render a no-data state when the

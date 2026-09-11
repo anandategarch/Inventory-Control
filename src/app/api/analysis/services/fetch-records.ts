@@ -26,7 +26,7 @@ import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
 import { queryHistoricalStats, queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { logger } from '@/lib/logger';
-import type { ResolvedParams } from './validate-and-resolve';
+import type { ResolvedParams, WeekDayRange } from './validate-and-resolve';
 
 // OPTIMIZE-ANALYSIS: RecWithRels is the slim record shape declared in
 // src/engine/analysis/types.ts. Both findMany queries below use `select`
@@ -59,7 +59,10 @@ export interface FetchedRecords {
   currSlim: CurrSlimRow[];
   historicalByOutletItem: Map<string, MultiMetricHistoricalStats>;
   historicalPeriodsCount: number; // number of (monthLabel,weekLabel) pairs used as historical baseline
-  weeksRaw: Array<{ weekLabel: string; monthKey: string }>;
+  // TASK H-5: + periodStart/periodEnd (day-of-month bounds) — consumed here
+  // for the payload's period ranges; downstream consumers that only read
+  // weekLabel/monthKey are unaffected (structural typing).
+  weeksRaw: Array<{ weekLabel: string; monthKey: string; periodStart: number; periodEnd: number }>;
   monthKeyByLabel: Map<string, string>;
   monthLabelByKey: Map<string, string>;
   allPeriods: Array<{ monthLabel: string; weekLabel: string; monthKey: string; sortKey: string }>;
@@ -75,16 +78,20 @@ export interface FetchedRecords {
 /**
  * Stage 2 — fetch all metadata + slim record batches.
  * Mutates `params` in place to fill prevWeek + prevMonth (resolved from
- * the allPeriods array — requires weeksRaw which is fetched here).
+ * the allPeriods array — requires weeksRaw which is fetched here) and, since
+ * TASK H-5, the current/compare week day-ranges (weekRange/compareWeekRange).
  */
 export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecords> {
   const { week, month, area, kelompok, outletCode, itemName, pic, compareWeek, compareMonthExplicit } = params;
 
   // ===== P1 fix: Pre-SQL metadata queries — ALL PARALLEL =====
   // weeks + sourceFiles + picOutlets (if pic) + thresholds — all independent
+  // TASK H-5: week select now also carries periodStart/periodEnd (day-of-month
+  // bounds, cumulative: W2 = 1–14) — same single query, two extra columns,
+  // used to give the payload's period block concrete date ranges.
   const [weeksRaw, fileMonthKeys, picOutletCodesRaw, thresholds] = await Promise.all([
     db.week.findMany({
-      select: { weekLabel: true, monthKey: true },
+      select: { weekLabel: true, monthKey: true, periodStart: true, periodEnd: true },
       distinct: ['monthKey', 'weekLabel'],
     }),
     db.sourceFile.findMany({
@@ -154,6 +161,23 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   );
   params.prevWeek = prevWeek;
   params.prevMonth = prevMonth;
+
+  // TASK H-5 (period clarity): resolve concrete day-of-month ranges for the
+  // current + compare week from the ALREADY-fetched weeksRaw (zero extra
+  // queries). Weeks are CUMULATIVE — W2 covers tgl 1–14, so "WEEK 2 Mei"
+  // alone is opaque; the range makes the compared periods self-explanatory.
+  // Null-safe by design: an unresolvable pair just omits the range (the UI
+  // falls back to week+month labels only).
+  const weekRangeOf = (wk: string | null, mLabel: string | null): WeekDayRange | null => {
+    if (!wk || !mLabel) return null;
+    const monthKey = monthKeyByLabel.get(mLabel);
+    if (!monthKey) return null;
+    const w = weeksRaw.find((row) => row.monthKey === monthKey && row.weekLabel === wk);
+    if (!w) return null;
+    return { start: w.periodStart, end: w.periodEnd };
+  };
+  params.weekRange = weekRangeOf(week, resolvedMonth);
+  params.compareWeekRange = weekRangeOf(prevWeek, prevMonth);
 
   // FIX (BUG-KELOMPOK-EMPTY): resolve kelompok → outlet codes ONCE for buildWhere.
   // The raw SQL path (buildSqlFilters) uses an inline sub-select, but Prisma's

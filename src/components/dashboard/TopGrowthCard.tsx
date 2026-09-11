@@ -8,6 +8,19 @@
 //    - Per Resto  → data.topGrowth.byOutlet (group o.name)
 //    - Per Barang → data.topGrowth.byItem   (group i.name)
 //
+//  Task H-5 (v2 — period clarity + drill-down):
+//    - PERIOD LEGEND: an explicit "Periode ini vs Pembanding" block in the
+//      header — concrete week + month + day range (weeks are cumulative:
+//      WEEK 2 = tgl 1–14) + how the compare period was chosen (otomatis =
+//      same week in the previous month, or dipilih). Answers "growth dari
+//      periode apa aja?" at a glance instead of a cryptic one-liner.
+//    - DRILL-DOWN: every row is expandable (accordion). Per Resto rows
+//      expand into the top BARANG driving that resto's Δ; Per Barang rows
+//      expand into the top RESTO driving that barang's Δ. Contributors
+//      arrive IN the /api/analysis payload (topGrowth[].contributors —
+//      computed by queryTopGrowth from the same (outlet × item) sales
+//      matrix), so expansion is pure client state: no fetch, no spinner.
+//
 //  Data comes from the /api/analysis payload (`topGrowth`, computed
 //  by queryTopGrowth) — same compare-period semantics as
 //  GrowthComparison: auto = same weekLabel in the previous month, or
@@ -18,8 +31,6 @@
 //  Sign convention (sacred): delta = curr − prev. Sales UP = good →
 //  emerald (growthColor with inverse=false — NOT growthColorClass,
 //  which is the up-is-bad variant used for deviation metrics).
-//
-//  Display-only v1 — no click-through.
 //
 //  Loading note: page.tsx gates the whole tab tree on `analysis.data`
 //  (LoadingState), so this card only ever renders with a resolved
@@ -32,15 +43,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { RefreshCw, TrendingUp } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, TrendingUp } from 'lucide-react';
 import { fmtGrowth, growthColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { AnalysisData } from '@/hooks/useAnalysis';
-import type { TopGrowthRow } from '@/lib/queries/growth-drivers';
+import type { TopGrowthContributor, TopGrowthRow } from '@/lib/queries/growth-drivers';
 
 /** Server caps each list at 15 rows (queryTopGrowth); the card shows the top 10. */
 const DISPLAY_LIMIT = 10;
+/** Server-side contributor cap (topGrowth.contributorLimit) — fallback for old payloads. */
+const CONTRIBUTOR_LIMIT_FALLBACK = 5;
 
 type Grain = 'outlet' | 'item';
 
@@ -60,6 +73,16 @@ function formatDelta(v: number): string {
 function formatDeltaSigned(v: number): string {
   // Negative sign is already emitted by formatDelta; only append "+".
   return v > 0 ? `+${formatDelta(v)}` : formatDelta(v);
+}
+
+/** "WEEK 2 · Mei 2026 · tgl 1–14" — week label + month + cumulative day range. */
+function formatPeriodLabel(
+  week: string,
+  month: string | null | undefined,
+  range: { start: number; end: number } | null | undefined,
+): string {
+  const base = month ? `${week} · ${month}` : week;
+  return range ? `${base} · tgl ${range.start}–${range.end}` : base;
 }
 
 /** Shared empty-state block (icon + copy) — pattern from GrowthComparison. */
@@ -118,6 +141,88 @@ function StalePayloadEmptyState({ onRefresh }: { onRefresh?: () => void }) {
   );
 }
 
+// ------------------------------------------------------------
+//  TASK H-5 — Period legend: the two compared periods, spelled out.
+//  Small definition-list rows: label (Kini/Pembanding) → value with the
+//  concrete week + month + day range and, for the compare row, HOW it
+//  was chosen (otomatis vs dipilih). Replaces the old cryptic one-line
+//  subtitle ("Sales WEEK 2 Mei vs WEEK 2 April — ranking |Δ|") that
+//  never made the compared periods obvious.
+// ------------------------------------------------------------
+function PeriodLegend({ data }: { data: AnalysisData }) {
+  const { monthLabel, weekLabel, comparisonWeek, comparisonMonth, comparisonAuto, weekRange, comparisonWeekRange } =
+    data.period;
+
+  const currText = formatPeriodLabel(weekLabel, monthLabel, weekRange);
+  const hasCompare = !!comparisonWeek;
+  const compareText = hasCompare
+    ? formatPeriodLabel(
+        comparisonWeek,
+        comparisonMonth && comparisonMonth !== monthLabel ? comparisonMonth : monthLabel,
+        comparisonWeekRange,
+      )
+    : null;
+
+  return (
+    <div className="ml-9 mt-1 grid grid-cols-[auto_1fr] items-baseline gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums">
+      <span className="font-medium text-muted-foreground/80">Periode ini</span>
+      <span className="font-medium text-foreground/85 truncate" title={currText}>{currText}</span>
+
+      <span className="font-medium text-muted-foreground/80">Pembanding</span>
+      {compareText ? (
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="text-amber-700 dark:text-amber-400 font-medium truncate" title={compareText}>
+            {compareText}
+          </span>
+          <Badge
+            variant="outline"
+            className="h-4 shrink-0 px-1 text-[9px] font-medium leading-none border-border/60 text-muted-foreground"
+            title={
+              comparisonAuto
+                ? 'Periode pembanding otomatis: minggu yang sama di bulan sebelumnya'
+                : 'Periode pembanding dipilih pada filter'
+            }
+          >
+            {comparisonAuto ? 'otomatis' : 'dipilih'}
+          </Badge>
+        </span>
+      ) : (
+        <span className="text-muted-foreground/60 italic">belum ada — upload minggu di bulan sebelumnya</span>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+//  TASK H-5 — one contributor line inside an expanded row. Mirrors the
+//  parent row's columns (name / signed Δ / % or "Baru") so the eye can
+//  line them up, indented one level under the row it explains.
+// ------------------------------------------------------------
+const ContributorLine = memo(function ContributorLine({ c }: { c: TopGrowthContributor }) {
+  return (
+    <div className="flex items-center gap-2 py-1 text-[11px] tabular-nums">
+      <span className="w-1.5 shrink-0 self-stretch rounded-full bg-border/70" aria-hidden="true" />
+      <span className="flex-1 min-w-0 truncate text-muted-foreground" title={c.name}>{c.name}</span>
+      <span className={`w-16 shrink-0 text-right font-semibold ${growthColor(c.delta)}`}>
+        {formatDeltaSigned(c.delta)}
+      </span>
+      <span className="w-16 shrink-0 text-right">
+        {c.isNew ? (
+          <Badge
+            variant="outline"
+            className="h-4 px-1 text-[9px] font-medium border-sky-300 text-sky-700 bg-sky-50/60 dark:border-sky-800 dark:text-sky-400 dark:bg-sky-950/30"
+            title="Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung"
+          >
+            Baru
+          </Badge>
+        ) : (
+          <span className={growthColor(c.pct ?? 0)}>{fmtGrowth(c.pct ?? 0)}</span>
+        )}
+      </span>
+    </div>
+  );
+});
+
 export const TopGrowthCard = memo(function TopGrowthCard({
   data,
   onRefresh,
@@ -127,6 +232,10 @@ export const TopGrowthCard = memo(function TopGrowthCard({
   onRefresh?: () => void;
 }) {
   const [grain, setGrain] = useState<Grain>('outlet');
+  // TASK H-5: single-open accordion — the name of the expanded row. One at a
+  // time keeps the list scannable; switching grain resets it (row names from
+  // the other grain must never inherit the open state).
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   // Pin field identities first (P3-HYG-7a lesson) so the useMemo below
   // isn't defeated by fresh fallback arrays on every render.
@@ -142,14 +251,21 @@ export const TopGrowthCard = memo(function TopGrowthCard({
     return list ? list.slice(0, DISPLAY_LIMIT) : [];
   }, [grain, byOutlet, byItem]);
 
-  // Compare-period label — same conditional as GrowthComparison's subtitle
-  // (append comparisonMonth only when it differs from the current month).
-  const { monthLabel, weekLabel, comparisonWeek, comparisonMonth } = data.period;
-  const compareLabel = comparisonWeek
-    ? `${comparisonWeek}${comparisonMonth && comparisonMonth !== monthLabel ? ` ${comparisonMonth}` : ''}`
-    : null;
+  const handleGrainChange = useCallback((v: string) => {
+    setGrain(v === 'item' ? 'item' : 'outlet');
+    setExpanded(null);
+  }, []);
+
+  const handleRowToggle = useCallback((name: string) => {
+    // Toggle this row; clicking another row closes the previous one.
+    setExpanded((prev) => (prev === name ? null : name));
+  }, []);
 
   const grainNoun = grain === 'outlet' ? 'resto' : 'barang';
+  // Contributor vocabulary flips with the grain: an outlet row's
+  // contributors are barang; an item row's contributors are resto.
+  const childNoun = grain === 'outlet' ? 'barang' : 'resto';
+  const contributorLimit = topGrowth?.contributorLimit ?? CONTRIBUTOR_LIMIT_FALLBACK;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -164,20 +280,27 @@ export const TopGrowthCard = memo(function TopGrowthCard({
             description={
               'UNTUK APA: melihat resto / barang dengan pergerakan Sales (nominal) terbesar vs periode pembanding — minggu yang sama di bulan sebelumnya (otomatis), atau pembanding yang dipilih.\n' +
               'CARA BACA: Δ = Sales sekarang − Sales pembanding (bertanda; naik = emerald, turun = merah). % = Δ / |Sales pembanding| — tidak bisa dihitung saat base pembanding nol, ditampilkan sebagai badge "Baru". Ranking berdasar |Δ|; perubahan < Rp1.000 disaring sebagai noise. Server meranking 15, kartu menampilkan 10 teratas.\n' +
+              'DRILL-DOWN (H-5): klik baris untuk membuka ' + childNoun + ' penyumbang Δ terbesar di dalamnya (top ' + contributorLimit + ', tanpa ambang noise — kontributor kecil tetap relevan saat menjelaskan Δ total).\n' +
               'CONTOH: Sales 5,3Jt → 7,4Jt: Δ = +2,1Jt, % = +39,6%.'
             }
             side="bottom"
           />
-          <InfoTooltip content="Naik = baik (Sales bertambah). Badge 'Baru' = tidak ada Sales di periode pembanding (base nol) — tetap diranking berdasar |Δ|. V1: display only, tanpa drill-down." />
+          <InfoTooltip
+            content={
+              `Naik = baik (Sales bertambah). Badge 'Baru' = tidak ada Sales di periode pembanding (base nol) — tetap diranking berdasar |Δ|. ` +
+              `Klik baris untuk drill-down: ${childNoun} penyumbang Δ terbesar. Rentang tanggal mengikuti minggu kumulatif (W2 = tgl 1–14).`
+            }
+          />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9 tabular-nums">
-          Sales {weekLabel} {monthLabel} vs {compareLabel ?? 'periode sebelumnya'} — ranking |Δ| nominal
-        </p>
+        {/* TASK H-5: explicit compared-periods legend — "growth dari periode
+            apa aja" answered visually, including HOW the compare period was
+            chosen (otomatis/dipilih badge) instead of a cryptic subtitle. */}
+        <PeriodLegend data={data} />
       </CardHeader>
       <CardContent>
         {/* Grain toggle — pattern from RestoAnalysis.tsx (TabsList grid-cols-2/3),
             state kept local: switching grain must not re-render sibling sections. */}
-        <Tabs value={grain} onValueChange={(v) => setGrain(v === 'item' ? 'item' : 'outlet')}>
+        <Tabs value={grain} onValueChange={handleGrainChange}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="outlet" className="text-xs">Per Resto</TabsTrigger>
             <TabsTrigger value="item" className="text-xs">Per Barang</TabsTrigger>
@@ -189,7 +312,7 @@ export const TopGrowthCard = memo(function TopGrowthCard({
             the next payload contains topGrowth and this branch unmounts. */}
         {!topGrowth ? (
           <StalePayloadEmptyState onRefresh={onRefresh} />
-        ) : !comparisonWeek ? (
+        ) : !data.period.comparisonWeek ? (
           // Mirrors GrowthComparison's no-compare-period branch — without a
           // compare period every group would be "Baru" (base nol), which is
           // top-sales, not growth.
@@ -199,37 +322,73 @@ export const TopGrowthCard = memo(function TopGrowthCard({
         ) : (
           <div className="mt-3 max-h-[420px] overflow-y-auto pr-1">
             <ul className="space-y-0.5">
-              {rows.map((r, i) => (
-                <li
-                  key={r.name}
-                  className="flex items-center gap-2 text-xs py-1.5 border-b border-border/40 last:border-0 last:pb-0"
-                >
-                  <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">{i + 1}</span>
-                  <span className="flex-1 min-w-0 truncate font-medium" title={r.name}>{r.name}</span>
-                  {/* Signed nominal delta — colored via growthColor (inverse=false):
-                      SALES naik = baik → emerald. */}
-                  <span className={`w-16 shrink-0 text-right tabular-nums font-semibold ${growthColor(r.delta)}`}>
-                    {formatDeltaSigned(r.delta)}
-                  </span>
-                  {/* Signed pct — or "Baru" badge when there is no prev base. */}
-                  <span className="w-16 shrink-0 text-right">
-                    {r.isNew ? (
-                      <Badge
-                        variant="outline"
-                        className="h-5 px-1.5 text-[10px] font-medium border-sky-300 text-sky-700 bg-sky-50/60 dark:border-sky-800 dark:text-sky-400 dark:bg-sky-950/30"
-                        title="Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung"
-                      >
-                        Baru
-                      </Badge>
-                    ) : (
-                      <span className={`tabular-nums ${growthColor(r.pct)}`}>{fmtGrowth(r.pct)}</span>
-                    )}
-                  </span>
-                </li>
-              ))}
+              {rows.map((r, i) => {
+                const isOpen = expanded === r.name;
+                const panelId = `topgrowth-contrib-${i}`;
+                return (
+                  <li key={r.name} className="border-b border-border/40 last:border-0 last:pb-0">
+                    {/* TASK H-5: the row itself is a button — keyboard-focusable,
+                        aria-expanded, single-open accordion. 44px-ish touch
+                        target via py-2 on the button. */}
+                    <button
+                      type="button"
+                      onClick={() => handleRowToggle(r.name)}
+                      aria-expanded={isOpen}
+                      aria-controls={panelId}
+                      className="flex w-full items-center gap-2 rounded-md py-2 text-xs text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">{i + 1}</span>
+                      {/* Chevron — right when closed, rotates down when open. */}
+                      {isOpen ? (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+                      )}
+                      <span className="flex-1 min-w-0 truncate font-medium" title={r.name}>{r.name}</span>
+                      {/* Signed nominal delta — colored via growthColor (inverse=false):
+                          SALES naik = baik → emerald. */}
+                      <span className={`w-16 shrink-0 text-right tabular-nums font-semibold ${growthColor(r.delta)}`}>
+                        {formatDeltaSigned(r.delta)}
+                      </span>
+                      {/* Signed pct — or "Baru" badge when there is no prev base. */}
+                      <span className="w-16 shrink-0 text-right">
+                        {r.isNew ? (
+                          <Badge
+                            variant="outline"
+                            className="h-5 px-1.5 text-[10px] font-medium border-sky-300 text-sky-700 bg-sky-50/60 dark:border-sky-800 dark:text-sky-400 dark:bg-sky-950/30"
+                            title="Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung"
+                          >
+                            Baru
+                          </Badge>
+                        ) : (
+                          <span className={`tabular-nums ${growthColor(r.pct)}`}>{fmtGrowth(r.pct)}</span>
+                        )}
+                      </span>
+                    </button>
+
+                    {/* TASK H-5: drill-down panel — top sub-grain movers driving
+                        this row's Δ. Data rides the payload (no fetch); the
+                        panel only mounts when open (cheap + keeps DOM small). */}
+                    {isOpen ? (
+                      <div id={panelId} className="mb-1 ml-9 border-l-2 border-border/60 pl-2">
+                        <p className="py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                          {childNoun === 'barang' ? 'Barang' : 'Resto'} penyumbang Δ (top {contributorLimit})
+                        </p>
+                        {r.contributors.length > 0 ? (
+                          r.contributors.map((c) => <ContributorLine key={c.name} c={c} />)
+                        ) : (
+                          <p className="py-1 text-[11px] italic text-muted-foreground/60">
+                            Tidak ada {childNoun} dengan pergerakan Sales di {grainNoun} ini.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
             <p className="mt-2 text-[11px] text-muted-foreground/60">
-              Top {rows.length} dari maksimal 15 mover terbesar per {grainNoun} · |Δ| ≥ Rp1.000
+              Top {rows.length} dari maksimal 15 mover terbesar per {grainNoun} · |Δ| ≥ Rp1.000 · klik baris untuk detail {childNoun} penyumbang
             </p>
           </div>
         )}

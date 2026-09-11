@@ -14,14 +14,15 @@ interface SectionOption {
   default: boolean;
 }
 
+// H-5: '5. Analisis Korelasi BOM' removed per user request (same removal
+// series as Loss-to-Sales / Kepatuhan). Variance + Trend renumbered 6/7 → 5/6.
 const SECTIONS: SectionOption[] = [
   { key: 'exec', label: '1. Rangkuman', description: 'KPI: Deviasi, BOM, Waste, Susut, Trial, Residual, Dev/BOM', default: true },
   { key: 'growth', label: '2. Perubahan (Growth)', description: 'Growth metrics: Sales, BOM, Deviasi, Nominal', default: true },
   { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
   { key: 'breakdown', label: '4. Rincian Komposisi Selisih', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },
-  { key: 'bomCorrelation', label: '5. Analisis Korelasi BOM', description: 'Cek apakah Deviasi/Waste/Susut/Trial sejalan dengan BOM + temuan ketidaksesuaian', default: true },
-  { key: 'variance', label: '6. Perubahan Item (Selisih Terbesar)', description: 'Top 10 item dengan selisih nominal terbesar vs periode sebelumnya', default: true },
-  { key: 'trend', label: '7. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, % Nominal to Sales per periode', default: true },
+  { key: 'variance', label: '5. Perubahan Item (Selisih Terbesar)', description: 'Top 10 item dengan selisih nominal terbesar vs periode sebelumnya', default: true },
+  { key: 'trend', label: '6. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, % Nominal to Sales per periode', default: true },
 ];
 
 interface ExportDialogProps {

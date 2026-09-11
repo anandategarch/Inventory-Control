@@ -93,6 +93,14 @@ export const ANALYSIS_CACHE_TTL_MS =
 
 // Resolved input parameters carried forward to stages 2-5.
 // prevWeek + prevMonth are `string | null` (null when no comparison period exists).
+// TASK H-5 (period clarity): weekRange/compareWeekRange carry the day-of-month
+// bounds of the current/compare week (from the Week table, cumulative: W2 = 1–14).
+// Optional + null until stage 2 (fetch-records) fills them — assembleResponse
+// reads them for the response's period provenance block.
+export interface WeekDayRange {
+  start: number;
+  end: number;
+}
 export interface ResolvedParams {
   month: string;
   week: string;
@@ -106,6 +114,10 @@ export interface ResolvedParams {
   itemName: string | null;
   pic: string | null;
   startedAt: number;
+  /** TASK H-5: day-of-month bounds of the CURRENT week (null = not resolvable). */
+  weekRange?: WeekDayRange | null;
+  /** TASK H-5: day-of-month bounds of the COMPARE week (null when no compare). */
+  compareWeekRange?: WeekDayRange | null;
 }
 
 // Stage-1 outcome — discriminated union so the orchestrator can short-circuit.
