@@ -28,6 +28,20 @@
 //  cache — it rides the 30-min cache / SWR / background-recompute
 //  envelope of the analysis payload.
 //
+//  TASK H-6 (correctness rework — fixes "drill down menampilkan data
+//  yang salah"): each grain now runs on a REAL per-grain source, and
+//  the Δ column's METRIC changes with the tab:
+//    - Per Resto  → ΔSALES in Rp (OutletPeriodSales.salesMode — the
+//      canonical per-outlet Sales; nominalSales is outlet-level and
+//      denormalized, so the old SUM-over-rows was Sales × rowCount).
+//      Drill-down: top barang by Δ pemakaian BOM inside the resto —
+//      the demand-side decomposition (there is no per-barang Sales).
+//    - Per Barang → Δ PEMAKAIAN BOM in the item's satuan (qtyBom is
+//      genuine per-row item data; consistent with Growth Comparison's
+//      BOM metric). Drill-down: top resto driving that item's BOM move.
+//  Qty numbers ALWAYS carry their satuan so they can never be misread
+//  as rupiah.
+//
 //  Sign convention (sacred): delta = curr − prev. Sales UP = good →
 //  emerald (growthColor with inverse=false — NOT growthColorClass,
 //  which is the up-is-bad variant used for deviation metrics).
@@ -73,6 +87,25 @@ function formatDelta(v: number): string {
 function formatDeltaSigned(v: number): string {
   // Negative sign is already emitted by formatDelta; only append "+".
   return v > 0 ? `+${formatDelta(v)}` : formatDelta(v);
+}
+
+// ------------------------------------------------------------
+//  TASK H-6 — QTY delta formatting (Per Barang grain + all drill-down
+//  contributors): "−12,5 kg". id-ID locale, max 2 decimals under 10K
+//  (BOM qtys are small), 0 decimals above. The satuan suffix makes a
+//  qty impossible to misread as rupiah.
+// ------------------------------------------------------------
+function formatQty(v: number, unit?: string | null): string {
+  const abs = Math.abs(v);
+  const num = abs >= 10_000
+    ? abs.toLocaleString('id-ID', { maximumFractionDigits: 0 })
+    : abs.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+  return unit ? `${num} ${unit}` : num;
+}
+
+function formatQtySigned(v: number, unit?: string | null): string {
+  // Negative sign is already emitted by toLocaleString; only append "+".
+  return v > 0 ? `+${formatQty(v, unit)}` : formatQty(v, unit);
 }
 
 /** "WEEK 2 · Mei 2026 · tgl 1–14" — week label + month + cumulative day range. */
@@ -197,21 +230,23 @@ function PeriodLegend({ data }: { data: AnalysisData }) {
 //  TASK H-5 — one contributor line inside an expanded row. Mirrors the
 //  parent row's columns (name / signed Δ / % or "Baru") so the eye can
 //  line them up, indented one level under the row it explains.
+//  TASK H-6: contributors are ALWAYS Δ pemakaian BOM (qty) — both drill
+//  directions rank BOM movement — so the Δ column is qty + satuan.
 // ------------------------------------------------------------
 const ContributorLine = memo(function ContributorLine({ c }: { c: TopGrowthContributor }) {
   return (
     <div className="flex items-center gap-2 py-1 text-[11px] tabular-nums">
       <span className="w-1.5 shrink-0 self-stretch rounded-full bg-border/70" aria-hidden="true" />
       <span className="flex-1 min-w-0 truncate text-muted-foreground" title={c.name}>{c.name}</span>
-      <span className={`w-16 shrink-0 text-right font-semibold ${growthColor(c.delta)}`}>
-        {formatDeltaSigned(c.delta)}
+      <span className={`w-20 shrink-0 text-right font-semibold ${growthColor(c.delta)}`}>
+        {formatQtySigned(c.delta, c.unit)}
       </span>
       <span className="w-16 shrink-0 text-right">
         {c.isNew ? (
           <Badge
             variant="outline"
             className="h-4 px-1 text-[9px] font-medium border-sky-300 text-sky-700 bg-sky-50/60 dark:border-sky-800 dark:text-sky-400 dark:bg-sky-950/30"
-            title="Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung"
+            title="Tidak ada pemakaian BOM di periode pembanding (base nol) — % tidak dapat dihitung"
           >
             Baru
           </Badge>
@@ -266,6 +301,32 @@ export const TopGrowthCard = memo(function TopGrowthCard({
   // contributors are barang; an item row's contributors are resto.
   const childNoun = grain === 'outlet' ? 'barang' : 'resto';
   const contributorLimit = topGrowth?.contributorLimit ?? CONTRIBUTOR_LIMIT_FALLBACK;
+  // TASK H-6: the Δ column's metric follows the grain — Per Resto ranks
+  // ΔSales in Rp (salesMode); Per Barang ranks Δ pemakaian BOM in the
+  // item's satuan. Copy + thresholds below branch on this.
+  const isSalesGrain = grain === 'outlet';
+  const metricCaption = isSalesGrain ? 'ΔSales per resto (Rp)' : 'Δ pemakaian BOM per barang (satuan barang)';
+  const thresholdLabel = isSalesGrain ? '|ΔSales| ≥ Rp1.000' : '|ΔBOM| ≥ 0,01 satuan';
+
+  // TASK H-6: formula + reading copy per grain. The two grains rank
+  // DIFFERENT metrics (Sales is outlet-level only; BOM usage is the
+  // per-barang demand signal) — spelling this out is what keeps the
+  // mixed-metric card unambiguous.
+  const formulaText = isSalesGrain
+    ? 'ΔSales = Sales resto (periode ini) − Sales resto (pembanding)'
+    : 'ΔBOM = Σ pemakaian BOM barang (periode ini) − Σ pemakaian BOM (pembanding)';
+  const descriptionText = isSalesGrain
+    ? 'UNTUK APA: melihat resto dengan pergerakan Sales (nominal, Rp) terbesar vs periode pembanding — minggu yang sama di bulan sebelumnya (otomatis), atau pembanding yang dipilih. Sales per resto = MODE kolom Penjualan (OutletPeriodSales) — angka yang sama dengan Ringkasan Eksekutif / Top Outlets.\n' +
+      'CARA BACA: Δ = Sales sekarang − Sales pembanding (bertanda; naik = emerald, turun = merah). % = Δ / |Sales pembanding| — tidak bisa dihitung saat base pembanding nol, ditampilkan sebagai badge "Baru". Ranking berdasar |Δ|; perubahan < Rp1.000 disaring sebagai noise. Server meranking 15, kartu menampilkan 10 teratas.\n' +
+      `DRILL-DOWN: klik baris untuk membuka barang dengan Δ pemakaian BOM terbesar di resto itu (top ${contributorLimit}). Sales adalah angka level-outlet — tidak ada Sales per barang — sehingga pemakaian BOM adalah indikator demand per barang yang terdekat.\n` +
+      'CONTOH: Sales 5,3Jt → 7,4Jt: Δ = +2,1Jt, % = +39,6%.'
+    : 'UNTUK APA: melihat barang dengan pergerakan pemakaian BOM (qty, satuan barang) terbesar vs periode pembanding — konsisten dengan metric BOM di Growth Comparison. Sales tidak bisa dipecah per barang (angka level-outlet), sehingga pemakaian BOM dipakai sebagai sinyal demand per barang.\n' +
+      'CARA BACA: Δ = pemakaian BOM sekarang − pembanding (bertanda, dalam satuan barang; naik = emerald). % = Δ / |pembanding| — "Baru" saat base pembanding nol. Ranking berdasar |Δ|; perubahan < 0,01 satuan disaring sebagai noise.\n' +
+      `DRILL-DOWN: klik baris untuk membuka resto penyumbang Δ pemakaian BOM terbesar untuk barang itu (top ${contributorLimit}).\n` +
+      'CONTOH: BOM 320 kg → 400 kg: Δ = +80 kg, % = +25%.';
+  const tooltipText = isSalesGrain
+    ? `Naik = baik (Sales bertambah). Sales per resto = MODE kolom Penjualan — konsisten dengan kartu lain. Badge "Baru" = tidak ada Sales di periode pembanding (base nol). Klik baris untuk drill-down: barang dengan Δ pemakaian BOM terbesar. Rentang tanggal mengikuti minggu kumulatif (W2 = tgl 1–14).`
+    : `Δ pemakaian BOM per barang, dalam satuan barang (naik = pemakaian bertambah — indikator demand). Klik baris untuk drill-down: resto penyumbang Δ terbesar. Rentang tanggal mengikuti minggu kumulatif (W2 = tgl 1–14).`;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -276,21 +337,11 @@ export const TopGrowthCard = memo(function TopGrowthCard({
           </span>
           Top Growth
           <FormulaInfo
-            formula="ΔSales = Σ Sales periode ini − Σ Sales periode pembanding"
-            description={
-              'UNTUK APA: melihat resto / barang dengan pergerakan Sales (nominal) terbesar vs periode pembanding — minggu yang sama di bulan sebelumnya (otomatis), atau pembanding yang dipilih.\n' +
-              'CARA BACA: Δ = Sales sekarang − Sales pembanding (bertanda; naik = emerald, turun = merah). % = Δ / |Sales pembanding| — tidak bisa dihitung saat base pembanding nol, ditampilkan sebagai badge "Baru". Ranking berdasar |Δ|; perubahan < Rp1.000 disaring sebagai noise. Server meranking 15, kartu menampilkan 10 teratas.\n' +
-              'DRILL-DOWN (H-5): klik baris untuk membuka ' + childNoun + ' penyumbang Δ terbesar di dalamnya (top ' + contributorLimit + ', tanpa ambang noise — kontributor kecil tetap relevan saat menjelaskan Δ total).\n' +
-              'CONTOH: Sales 5,3Jt → 7,4Jt: Δ = +2,1Jt, % = +39,6%.'
-            }
+            formula={formulaText}
+            description={descriptionText}
             side="bottom"
           />
-          <InfoTooltip
-            content={
-              `Naik = baik (Sales bertambah). Badge 'Baru' = tidak ada Sales di periode pembanding (base nol) — tetap diranking berdasar |Δ|. ` +
-              `Klik baris untuk drill-down: ${childNoun} penyumbang Δ terbesar. Rentang tanggal mengikuti minggu kumulatif (W2 = tgl 1–14).`
-            }
-          />
+          <InfoTooltip content={tooltipText} />
         </CardTitle>
         {/* TASK H-5: explicit compared-periods legend — "growth dari periode
             apa aja" answered visually, including HOW the compare period was
@@ -318,9 +369,20 @@ export const TopGrowthCard = memo(function TopGrowthCard({
           // top-sales, not growth.
           <GrowthEmptyState text="Tidak ada data periode pembanding. Upload beberapa minggu untuk mengaktifkan analisis growth." />
         ) : rows.length === 0 ? (
-          <GrowthEmptyState text={`Tidak ada ${grainNoun} dengan perubahan Sales signifikan (|Δ| ≥ Rp1.000) vs periode pembanding.`} />
+          <GrowthEmptyState
+            text={isSalesGrain
+              ? 'Tidak ada resto dengan perubahan Sales signifikan (|Δ| ≥ Rp1.000) vs periode pembanding.'
+              : 'Tidak ada barang dengan perubahan pemakaian BOM signifikan (|Δ| ≥ 0,01 satuan) vs periode pembanding.'}
+          />
         ) : (
-          <div className="mt-3 max-h-[420px] overflow-y-auto pr-1">
+          <>
+            {/* TASK H-6: metric caption — the Δ column's metric follows the
+                tab (ΔSales Rp vs Δ pemakaian BOM qty). One glance tells the
+                user what the numbers are BEFORE reading any row. */}
+            <p className="mt-2.5 text-[11px] font-medium text-muted-foreground">
+              {metricCaption}
+            </p>
+            <div className="mt-1.5 max-h-[420px] overflow-y-auto pr-1">
             <ul className="space-y-0.5">
               {rows.map((r, i) => {
                 const isOpen = expanded === r.name;
@@ -345,10 +407,12 @@ export const TopGrowthCard = memo(function TopGrowthCard({
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
                       )}
                       <span className="flex-1 min-w-0 truncate font-medium" title={r.name}>{r.name}</span>
-                      {/* Signed nominal delta — colored via growthColor (inverse=false):
-                          SALES naik = baik → emerald. */}
-                      <span className={`w-16 shrink-0 text-right tabular-nums font-semibold ${growthColor(r.delta)}`}>
-                        {formatDeltaSigned(r.delta)}
+                      {/* Signed delta — colored via growthColor (inverse=false):
+                          naik = baik → emerald. TASK H-6: the metric follows
+                          the grain — ΔSales (Rp compact) for Per Resto, Δ
+                          pemakaian BOM (qty + satuan) for Per Barang. */}
+                      <span className={`w-20 shrink-0 text-right tabular-nums font-semibold ${growthColor(r.delta)}`}>
+                        {isSalesGrain ? formatDeltaSigned(r.delta) : formatQtySigned(r.delta, r.unit)}
                       </span>
                       {/* Signed pct — or "Baru" badge when there is no prev base. */}
                       <span className="w-16 shrink-0 text-right">
@@ -356,7 +420,9 @@ export const TopGrowthCard = memo(function TopGrowthCard({
                           <Badge
                             variant="outline"
                             className="h-5 px-1.5 text-[10px] font-medium border-sky-300 text-sky-700 bg-sky-50/60 dark:border-sky-800 dark:text-sky-400 dark:bg-sky-950/30"
-                            title="Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung"
+                            title={isSalesGrain
+                              ? 'Tidak ada Sales di periode pembanding (base nol) — % tidak dapat dihitung'
+                              : 'Tidak ada pemakaian BOM di periode pembanding (base nol) — % tidak dapat dihitung'}
                           >
                             Baru
                           </Badge>
@@ -368,19 +434,25 @@ export const TopGrowthCard = memo(function TopGrowthCard({
 
                     {/* TASK H-5: drill-down panel — top sub-grain movers driving
                         this row's Δ. Data rides the payload (no fetch); the
-                        panel only mounts when open (cheap + keeps DOM small). */}
+                        panel only mounts when open (cheap + keeps DOM small).
+                        TASK H-6: contributors are ALWAYS Δ pemakaian BOM —
+                        Sales is outlet-level, so BOM movement is the closest
+                        item-level demand signal (stated in the panel). */}
                     {isOpen ? (
                       <div id={panelId} className="mb-1 ml-9 border-l-2 border-border/60 pl-2">
                         <p className="py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                          {childNoun === 'barang' ? 'Barang' : 'Resto'} penyumbang Δ (top {contributorLimit})
+                          {childNoun === 'barang' ? 'Barang' : 'Resto'} — Δ pemakaian BOM terbesar (top {contributorLimit})
                         </p>
                         {r.contributors.length > 0 ? (
                           r.contributors.map((c) => <ContributorLine key={c.name} c={c} />)
                         ) : (
                           <p className="py-1 text-[11px] italic text-muted-foreground/60">
-                            Tidak ada {childNoun} dengan pergerakan Sales di {grainNoun} ini.
+                            Tidak ada {childNoun} dengan pergerakan pemakaian BOM di {grainNoun} ini.
                           </p>
                         )}
+                        <p className="pb-1 text-[10px] italic text-muted-foreground/55">
+                          Sales adalah angka level-outlet — pemakaian BOM per {childNoun} adalah indikator demand terdekat.
+                        </p>
                       </div>
                     ) : null}
                   </li>
@@ -388,9 +460,10 @@ export const TopGrowthCard = memo(function TopGrowthCard({
               })}
             </ul>
             <p className="mt-2 text-[11px] text-muted-foreground/60">
-              Top {rows.length} dari maksimal 15 mover terbesar per {grainNoun} · |Δ| ≥ Rp1.000 · klik baris untuk detail {childNoun} penyumbang
+              Top {rows.length} dari maksimal 15 mover terbesar per {grainNoun} · {thresholdLabel} · klik baris untuk detail {childNoun} penyumbang
             </p>
           </div>
+          </>
         )}
       </CardContent>
     </Card>

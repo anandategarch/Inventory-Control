@@ -13,6 +13,13 @@
 //  2 → 3 and markers extended. v2-shaped rows (topGrowth WITHOUT
 //  contributorLimit) must now be treated as MISS — the same bug class
 //  H-3 fixed, one shape-generation later.
+//
+//  TASK H-6: topGrowth values changed SEMANTICS (byOutlet = salesMode
+//  ΔSales; byItem = Δ pemakaian BOM with unit; byOutletMetric/
+//  byItemMetric descriptors) → version 3 → 4 + two new markers. A v3
+//  row (drill-down with the WRONG numbers: byOutlet = Sales ×
+//  rowCount, byItem = fake per-barang "sales") must be rejected —
+//  serving it would keep showing the user-reported wrong data.
 // ============================================================
 import { describe, it, expect } from 'vitest';
 import {
@@ -21,13 +28,14 @@ import {
   hasCurrentPayloadShape,
 } from '@/app/api/analysis/services/payload-schema';
 
-describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () => {
-  it('schema version is 3 (bumped when topGrowth drill-down + period provenance were added)', () => {
+describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)', () => {
+  it('schema version is 4 (bumped when topGrowth values changed semantics — H-6)', () => {
     // v1 (implicit) = pre-Top-Growth rows. v2 = + topGrowth. v3 = +
-    // contributors/contributorLimit + comparisonAuto/weekRange. If this
+    // contributors/contributorLimit + comparisonAuto/weekRange. v4 =
+    // salesMode/BOM rework + byOutletMetric/byItemMetric + unit. If this
     // fails, the version was bumped without updating this test — update
     // BOTH together.
-    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(3);
+    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(4);
   });
 
   it('accepts a current-shape payload (contains every required marker)', () => {
@@ -43,9 +51,11 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () =>
       execSummary: { sales: { current: 1, previous: 2 } },
       growthDrivers: [],
       topGrowth: {
-        byOutlet: [{ name: 'R', curr: 5, prev: 0, delta: 5, pct: null, isNew: true, contributors: [] }],
+        byOutlet: [{ name: 'R', curr: 5, prev: 0, delta: 5, pct: null, isNew: true, unit: null, contributors: [] }],
         byItem: [],
         contributorLimit: 5,
+        byOutletMetric: 'sales',
+        byItemMetric: 'bom',
       },
     });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
@@ -59,9 +69,28 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () =>
     const raw = JSON.stringify({
       success: true,
       period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: false, weekRange: null, comparisonWeekRange: null },
-      topGrowth: { byOutlet: [], byItem: [], contributorLimit: 5 },
+      topGrowth: { byOutlet: [], byItem: [], contributorLimit: 5, byOutletMetric: 'sales', byItemMetric: 'bom' },
     });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
+  });
+
+  it('rejects v3-shaped payloads — drill-down WITHOUT metric descriptors (H-6 regression)', () => {
+    // Shape of a row cached by the H-5 code: has contributors +
+    // contributorLimit + comparisonAuto, but its byOutlet numbers are
+    // Sales × rowCount and its byItem is fake per-barang "sales" — the
+    // exact wrong data the user reported. Serving it would keep showing
+    // the bug; the missing byItemMetric/byOutletMetric markers force a
+    // recompute with the fixed code.
+    const raw = JSON.stringify({
+      success: true,
+      period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: true, weekRange: { start: 1, end: 7 }, comparisonWeekRange: null },
+      topGrowth: {
+        byOutlet: [{ name: 'R', curr: 5, prev: 0, delta: 5, pct: null, isNew: true, contributors: [{ name: 'I', curr: 1, prev: 0, delta: 1, pct: null, isNew: true }] }],
+        byItem: [],
+        contributorLimit: 5,
+      },
+    });
+    expect(hasCurrentPayloadShape(raw)).toBe(false);
   });
 
   it('rejects v2-shaped payloads — topGrowth WITHOUT contributorLimit (H-5 regression)', () => {
@@ -94,14 +123,14 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () =>
     expect(hasCurrentPayloadShape('{}')).toBe(false);
     expect(hasCurrentPayloadShape('null')).toBe(false);
     // NOTE (H-5 update): a bare '"topGrowth":' string contains only 1 of the
-    // 3 required markers → now REJECTED (under the single-marker H-3 guard
-    // it passed). Still correct: the guard answers "was the row written by
+    // required markers → REJECTED (under the single-marker H-3 guard it
+    // passed). Still correct: the guard answers "was the row written by
     // code that emits the current shape?" — envelope VALIDITY is checked
     // separately by looksLikeAnalysisEnvelope before this runs.
     expect(hasCurrentPayloadShape('"topGrowth":')).toBe(false);
-    // All three markers present (even in a bare concatenation) → passes the
-    // marker scan — same nuance as above, carried forward to v3.
-    expect(hasCurrentPayloadShape('"topGrowth":"contributorLimit":"comparisonAuto":')).toBe(true);
+    // All five markers present (even in a bare concatenation) → passes the
+    // marker scan — same nuance as above, carried forward to v4.
+    expect(hasCurrentPayloadShape('"topGrowth":"contributorLimit":"comparisonAuto":"byItemMetric":"byOutletMetric":')).toBe(true);
   });
 
   it('rejects a payload whose topGrowth value is null (field must be an object)', () => {
@@ -110,7 +139,7 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () =>
     // writes null (queryTopGrowth returns an object), and a hypothetical
     // null-valued row still parses + the client treats it as undefined →
     // empty state with the recovery button. This test documents the nuance.
-    const raw = JSON.stringify({ success: true, topGrowth: null, contributorLimit: 5, comparisonAuto: true });
+    const raw = JSON.stringify({ success: true, topGrowth: null, contributorLimit: 5, comparisonAuto: true, byItemMetric: 'bom', byOutletMetric: 'sales' });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
   });
 
@@ -125,9 +154,15 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5)', () =>
     }
   });
 
-  it('requires exactly the H-5 marker set (topGrowth + contributorLimit + comparisonAuto)', () => {
+  it('requires exactly the H-6 marker set (topGrowth + contributorLimit + comparisonAuto + both metric descriptors)', () => {
     // Documents the current contract — updating markers without intent
     // (or forgetting one) surfaces here as a diff.
-    expect(REQUIRED_PAYLOAD_MARKERS).toEqual(['"topGrowth":', '"contributorLimit":', '"comparisonAuto":']);
+    expect(REQUIRED_PAYLOAD_MARKERS).toEqual([
+      '"topGrowth":',
+      '"contributorLimit":',
+      '"comparisonAuto":',
+      '"byItemMetric":',
+      '"byOutletMetric":',
+    ]);
   });
 });

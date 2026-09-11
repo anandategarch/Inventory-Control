@@ -355,13 +355,23 @@ export interface AnalysisData {
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];
   growthDrivers?: GrowthDriverMetric[];
-  // Task H-2c (CHANGE 6): Top Growth — biggest SALES movers per resto
+  // Task H-2c (CHANGE 6): Top Growth — biggest movers per resto
   // (byOutlet) & per barang (byItem) vs the compare period. Optional so
   // payloads cached before the field existed (and mock/test data) keep
   // type-checking — the card renders its empty state when absent.
   // TASK H-5: rows carry `contributors` (drill-down movers); the wrapper
   // carries contributorLimit (informational — optional for back-compat).
-  topGrowth?: { byOutlet: TopGrowthRow[]; byItem: TopGrowthRow[]; contributorLimit?: number };
+  // TASK H-6: byOutlet = ΔSales (Rp, salesMode); byItem = Δ pemakaian BOM
+  // (qty in the item's satuan) — rows/contributors carry `unit`, and the
+  // wrapper carries byOutletMetric/byItemMetric descriptors (all optional
+  // for back-compat with pre-v4 cached payloads).
+  topGrowth?: {
+    byOutlet: TopGrowthRow[];
+    byItem: TopGrowthRow[];
+    contributorLimit?: number;
+    byOutletMetric?: 'sales';
+    byItemMetric?: 'bom';
+  };
   // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
   // /api/analysis (analysis/route.ts:989-990) — were missing from the type.
   // Optional + nullable so consumers can render a no-data state when the

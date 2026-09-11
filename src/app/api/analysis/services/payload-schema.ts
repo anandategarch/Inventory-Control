@@ -38,8 +38,14 @@
  * v3 = + topGrowth drill-down (`contributors` per row + `contributorLimit`)
  *      + period provenance (`comparisonAuto`, `weekRange`,
  *      `comparisonWeekRange`) (Task H-5).
+ * v4 = Task H-6 correctness rework — topGrowth values changed semantics:
+ *      byOutlet is now ΔSales from OutletPeriodSales.salesMode (was
+ *      SUM(nominalSales) × rowCount — the "drill down salah" bug),
+ *      byItem is now Δ pemakaian BOM (qtyBom) with `unit` (satuan) per
+ *      row/contributor, and the wrapper carries `byOutletMetric`/
+ *      `byItemMetric` descriptors. Old v3 rows must never be served.
  */
-export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 3;
+export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 4;
 
 /**
  * Top-level JSON key markers that MUST exist in a cached row for the
@@ -59,6 +65,12 @@ export const REQUIRED_PAYLOAD_MARKERS: readonly string[] = [
   '"contributorLimit":',
   // TASK H-5: period.comparisonAuto — boolean, always serialized.
   '"comparisonAuto":',
+  // TASK H-6: grain → metric descriptors — topGrowth-level scalars,
+  // always serialized. A v3 row (drill-down with the WRONG numbers:
+  // byOutlet = Sales × rowCount, byItem = fake per-barang "sales") carries
+  // neither marker → never served → guaranteed recompute with the fix.
+  '"byItemMetric":',
+  '"byOutletMetric":',
 ];
 
 /**

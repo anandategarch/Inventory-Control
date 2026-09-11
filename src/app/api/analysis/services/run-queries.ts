@@ -219,11 +219,12 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
 
   // Task H-2c (CHANGE 6): Top Growth (per resto & per barang). Fired right
   // AFTER Batch 3 (not with the t=0 early-promise burst) so its 2 internal
-  // aggregateMetric queries overlap Batch 4's 2 fresh queries — batch
-  // concurrency stays ~4, within the PgBouncer pool cap; wall-clock added ≈ 0
-  // because it runs in parallel with Batch 4 and is resolved by the time we
-  // await it below (same overlap trick as the early promises, just delayed
-  // to avoid stacking on the t=0 burst).
+  // queries (TASK H-6: per-outlet salesMode scan + the (outlet × item) BOM
+  // matrix) overlap Batch 4's 2 fresh queries — batch concurrency stays ~4,
+  // within the PgBouncer pool cap; wall-clock added ≈ 0 because it runs in
+  // parallel with Batch 4 and is resolved by the time we await it below
+  // (same overlap trick as the early promises, just delayed to avoid
+  // stacking on the t=0 burst).
   const topGrowthPromise = queryTopGrowth(week, month, prevWeek, prevMonth, filterOpts);
 
   // Batch 4: deviasi rank + deviation drivers + health ranking + variance + growth
