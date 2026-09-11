@@ -324,21 +324,38 @@ export async function queryGrowthDrivers(
 //  yang salah"): the H-5 matrix summed nominalSales at the (outlet ×
 //  item) grain, but nominalSales is an OUTLET-LEVEL denormalized
 //  field (see aggregateSalesMode's header) — every cell was
-//  Sales × rowCount(outlet,item). Contributor Δ could EXCEED the
-//  parent resto's Δ, and the per-barang "Sales" ranking was really a
-//  row-multiplicity ranking. There is NO per-barang Sales in this
-//  data model, so each grain now runs on a REAL per-grain source:
+//  Sales × rowCount(outlet,item). There is NO per-barang Sales in
+//  this data model.
 //
-//    - byOutlet (Per Resto)  → ΔSALES in Rp, from OutletPeriodSales
-//      .salesMode (canonical — matches exec summary / top outlets /
-//      peer comparison). Drill-down: top barang by Δ pemakaian BOM
-//      inside that resto — the demand-side decomposition, since Sales
-//      itself has no item-level breakdown.
-//    - byItem (Per Barang)   → Δ PEMAKAIAN BOM (SUM(ABS(qtyBom))) in
-//      the item's satuan — genuine per-row item data, numerically
-//      consistent with the `bom` metric of queryGrowthDrivers above
-//      (Growth Comparison's BOM Pareto). Drill-down: top resto
-//      driving that item's BOM movement.
+//  TASK H-7 (metric switch — user request: "Top Growth (Resto &
+//  Barang) pakai nominal deviasi sum kemudian absolute dan signed
+//  nilai asli dan drill down nya pakai kuantiti deviasi dan ada
+//  nominal juga"): BOTH grains now rank the SAME metric — the SIGNED
+//  NET NOMINAL DEVIATION:
+//
+//    - byOutlet (Per Resto) & byItem (Per Barang) → Δ SUM(nominalDeviasi)
+//      in Rp. nominalDeviasi is genuine PER-ROW data (unlike the
+//      outlet-level nominalSales that caused the H-6 bug), so the sum
+//      is a REAL total at every grouping level and ADDITIVE across
+//      grains — the per-outlet sum equals the Σ of its (outlet × item)
+//      cells, both grains derive from ONE matrix scan. Sign convention
+//      (verified from production data — metrics/deviation.ts):
+//      negative = LOSS (over-consumption), positive = SURPLUS
+//      (under-consumption) — the SAME signed convention as the
+//      Ringkasan Eksekutif "Nominal Deviasi" KPI (dashboard.ts:
+//      nominal = SUM(nominalDeviasi) signed) and health-ranking.ts
+//      (ABS(SUM) for sorting, signed SUM for display — exactly the
+//      pattern requested: |Δ| ranks the list, the SIGNED real value
+//      is displayed).
+//    - Drill-down (both directions) → contributors ranked by
+//      Δ SUM(qtyDeviasi) — KUANTITI DEVIASI, signed, in the barang's
+//      satuan — and each contributor ALSO carries Δ SUM(nominalDeviasi)
+//      in Rp ("ada nominal juga") — volume AND value side by side.
+//
+//  ONE matrix scan serves everything: the (outlet × item) cells carry
+//  both deviation sums; per-grain nominal sums are derived in JS by
+//  additivity (no second query). aggregateSalesMode stays in this
+//  module ONLY for queryGrowthDrivers' `sales` Pareto metric.
 //
 //  Period semantics are IDENTICAL to queryGrowthDrivers: prevWeek/
 //  prevMonth come from the pipeline's period resolver (auto = same
@@ -350,53 +367,60 @@ export async function queryGrowthDrivers(
 //    - pct   = calcGrowth(curr, prev)     (signed (curr−prev)/|prev|,
 //                                          null when prev = 0)
 //    - isNew = no previous base (prev 0/absent)
-//    - noise filter: |ΔSales| ≥ 1000 Rp (byOutlet) / |ΔBOM| ≥ 0.01
-//      qty (byItem — same thresholds as the sales/bom metrics above)
+//    - noise filter: |Δ nominal| ≥ 1000 Rp — BOTH grains are Rp now
+//      (same threshold as the sales/nominalDeviasi metrics above)
 //    - sort by |delta| DESC, cap TOP_GROWTH_LIMIT rows per list
-//    - contributors: top TOP_GROWTH_CONTRIBUTOR_LIMIT by |Δ|, NO noise
-//      threshold — inside an already-ranked mover, the biggest sub-
-//      movers are the story ("penyebab growth"), even when individually
-//      tiny (e.g. a brand-new resto built from many small items).
+//    - contributors: top TOP_GROWTH_CONTRIBUTOR_LIMIT by |Δ QTY
+//      deviasi|, NO noise threshold — inside an already-ranked mover,
+//      the biggest sub-movers are the story ("penyebab growth"), even
+//      when individually tiny (e.g. a brand-new resto built from many
+//      small items).
 // ============================================================
 export interface TopGrowthContributor {
+  /** Contributor name — barang (inside a resto row) or resto (inside a barang row). */
   name: string;
-  curr: number;
-  prev: number;
-  /** SIGNED delta = curr − prev. */
-  delta: number;
-  /** SIGNED growth (curr − prev)/|prev| — null when prev = 0 (new). */
-  pct: number | null;
-  /** No previous base — pct cannot be computed, UI shows "Baru". */
+  /** SUM(qtyDeviasi) current period for this cell (signed). */
+  qtyCurr: number;
+  /** SUM(qtyDeviasi) compare period for this cell (signed). */
+  qtyPrev: number;
+  /** SIGNED Δ kuantiti deviasi = qtyCurr − qtyPrev — the drill-down's RANKING key. */
+  qtyDelta: number;
+  /** SUM(nominalDeviasi) current period for this cell (signed, Rp). */
+  nominalCurr: number;
+  /** SUM(nominalDeviasi) compare period for this cell (signed, Rp). */
+  nominalPrev: number;
+  /** SIGNED Δ nominal deviasi (Rp) = nominalCurr − nominalPrev — displayed alongside the qty ("ada nominal juga"). */
+  nominalDelta: number;
+  /** No deviation base of EITHER kind in the compare period (qty & nominal prev both 0) — UI shows "Baru". */
   isNew: boolean;
   /**
-   * TASK H-6: unit label (satuan) when this contributor's Δ is a QTY
-   * (Δ pemakaian BOM); null when it is currency (ΔSales context).
+   * TASK H-7: satuan label for this contributor's QTY — byOutlet
+   * drill-down (contributor = barang) uses the barang's OWN satuan;
+   * byItem drill-down (contributor = resto) uses the ROW item's
+   * satuan, since the qty being ranked IS that item's qty.
    */
-  unit?: string | null;
+  unit: string | null;
 }
 
 export interface TopGrowthRow {
   name: string;
+  /** SUM(nominalDeviasi) current period (signed, Rp). */
   curr: number;
+  /** SUM(nominalDeviasi) compare period (signed, Rp). */
   prev: number;
-  /** SIGNED delta = curr − prev (negative = shrinking). */
+  /** SIGNED Δ nominal deviasi (Rp) = curr − prev — negative = toward LOSS, positive = toward SURPLUS. */
   delta: number;
   /** SIGNED growth (curr − prev)/|prev| — null when prev = 0 (new). */
   pct: number | null;
   /** No previous base — pct cannot be computed, UI shows "Baru". */
   isNew: boolean;
   /**
-   * TASK H-5: drill-down — top sub-grain movers driving this row's Δ
+   * Task H-5: drill-down — top sub-grain movers driving this row's Δ
    * (items for byOutlet rows, outlets for byItem rows). Always an
    * array (possibly empty) so the field ALWAYS serializes into the
    * cached payload — it doubles as a required payload-shape marker.
    */
   contributors: TopGrowthContributor[];
-  /**
-   * TASK H-6: unit label (satuan) when this row's Δ is a QTY (byItem /
-   * Δ pemakaian BOM); null for byOutlet rows (ΔSales = currency).
-   */
-  unit?: string | null;
 }
 
 export interface TopGrowthResult {
@@ -408,45 +432,66 @@ export interface TopGrowthResult {
    */
   contributorLimit: number;
   /**
-   * TASK H-6: grain → metric descriptors, ALWAYS serialized (wrapper-
-   * level scalars → payload-shape markers). byOutlet rows are ΔSales
-   * in Rp (salesMode); byItem rows are Δ pemakaian BOM in satuan.
+   * TASK H-7: grain → metric descriptors, ALWAYS serialized (wrapper-
+   * level scalars → payload-shape markers). BOTH grains rank the
+   * signed net NOMINAL deviation (Rp).
    */
-  byOutletMetric: 'sales';
-  byItemMetric: 'bom';
+  byOutletMetric: 'nominalDeviasi';
+  byItemMetric: 'nominalDeviasi';
+  /**
+   * TASK H-7: the drill-down's ranking metric — Δ kuantiti deviasi
+   * (Δ nominal displayed alongside). ALWAYS serialized; required
+   * payload marker (a v4 row lacks this key entirely → never served).
+   */
+  contributorRankMetric: 'qtyDeviasi';
 }
 
 const TOP_GROWTH_DELTA_THRESHOLD = 1000;
-const TOP_GROWTH_BOM_DELTA_THRESHOLD = 0.01;
 const TOP_GROWTH_LIMIT = 15;
 const TOP_GROWTH_CONTRIBUTOR_LIMIT = 5;
 
 // ------------------------------------------------------------
-//  (outlet × item) BOM-USAGE matrix — curr + prev SUM(ABS(qtyBom))
-//  per pair in ONE query (FULL OUTER JOIN of the two period CTEs,
-//  grouped on BOTH grains). qtyBom is genuine PER-ROW item data, so
-//  the sums are real totals at every grouping level: per-item sums
-//  feed the Per Barang grain, and the cells feed BOTH drill-down
-//  directions. `unit` = the record's satuan (MAX of the denormalized
-//  InventoryRecord.satuan — same source as the export report's
-//  Satuan column).
+//  TASK H-7: (outlet × item) DEVIATION matrix — ONE query carrying
+//  BOTH deviation sums per cell:
+//    - nd = SUM(nominalDeviasi)   SIGNED net (Rp)
+//    - qd = SUM(qtyDeviasi)       SIGNED net (qty)
+//  Both are genuine PER-ROW data (each InventoryRecord row is one
+//  outlet × item × week × akun entry), so the sums are real totals at
+//  every grouping level and ADDITIVE: per-outlet / per-item nominal
+//  sums are derived in JS from the same cells — no second query, no
+//  fan-out (contrast with nominalSales, the outlet-level denorm that
+//  caused the H-6 bug). FILTER (WHERE field IS NOT NULL) per metric —
+//  same convention as aggregateItemMetrics: a group whose rows are
+//  NULL for one field still contributes to the other field's sum.
+//  The row filter (nd IS NOT NULL OR qd IS NOT NULL) keeps groups
+//  that carry deviation data of either kind. `unit` = the record's
+//  satuan (MAX of the denormalized InventoryRecord.satuan — same
+//  source as the export report's Satuan column).
 // ------------------------------------------------------------
-async function aggregateBomMatrix(
+interface DeviationCell {
+  ndCurr: number;
+  ndPrev: number;
+  qdCurr: number;
+  qdPrev: number;
+}
+
+async function aggregateDeviationMatrix(
   week: string,
   month: string,
   prevWeek: string | null,
   prevMonth: string | null,
   filters: FilterOpts,
 ): Promise<{
-  /** outlet → item → {curr, prev} cell sums. */
-  matrix: Map<string, Map<string, { curr: number; prev: number }>>;
+  /** outlet → item → deviation cell. */
+  matrix: Map<string, Map<string, DeviationCell>>;
   /** item → satuan (first-seen; satuan is a per-item master value). */
   itemUnits: Map<string, string | null>;
 }> {
   const f = buildSqlFilters(filters);
 
   const sums = Prisma.sql`
-    COALESCE(SUM(ABS(ir."qtyBom")), 0) as val
+    COALESCE(SUM(ir."nominalDeviasi") FILTER (WHERE ir."nominalDeviasi" IS NOT NULL), 0) as nd,
+    COALESCE(SUM(ir."qtyDeviasi") FILTER (WHERE ir."qtyDeviasi" IS NOT NULL), 0) as qd
   `;
   const unitExpr = Prisma.sql`
     MAX(ir."satuan") as unit
@@ -464,7 +509,7 @@ async function aggregateBomMatrix(
     SELECT o.name as "outletName", i.name as "itemName", ${unitExpr}, ${sums}
     ${fromAndGroup}
     WHERE ir."monthLabel" = ${m} AND ir."weekLabel" = ${w}
-      AND ir."qtyBom" IS NOT NULL
+      AND (ir."nominalDeviasi" IS NOT NULL OR ir."qtyDeviasi" IS NOT NULL)
       ${f}
     ${groupBy}
   `;
@@ -472,7 +517,7 @@ async function aggregateBomMatrix(
   // Empty prev CTE when there is no compare period → every cell is "Baru".
   const prevCte = prevWeek && prevMonth
     ? cte(prevMonth, prevWeek)
-    : Prisma.sql`SELECT NULL::text as "outletName", NULL::text as "itemName", NULL::text as unit, 0::float as val WHERE 1=0`;
+    : Prisma.sql`SELECT NULL::text as "outletName", NULL::text as "itemName", NULL::text as unit, 0::float as nd, 0::float as qd WHERE 1=0`;
 
   // Same FULL OUTER JOIN pattern as aggregateSalesMode (AUDIT8-ROLLBACK-1
   // Item 8: wrapped in withStatementTimeout — 2 CTEs over InventoryRecord).
@@ -480,8 +525,10 @@ async function aggregateBomMatrix(
     outletName: string | null;
     itemName: string | null;
     unit: string | null;
-    curr: number | bigint | null;
-    prev: number | bigint | null;
+    ndCurr: number | bigint | null;
+    ndPrev: number | bigint | null;
+    qdCurr: number | bigint | null;
+    qdPrev: number | bigint | null;
   }>>`
     WITH curr_agg AS (${currCte}),
          prev_agg AS (${prevCte})
@@ -489,109 +536,100 @@ async function aggregateBomMatrix(
       COALESCE(c."outletName", p."outletName") as "outletName",
       COALESCE(c."itemName", p."itemName") as "itemName",
       COALESCE(c.unit, p.unit) as unit,
-      COALESCE(c.val, 0) as curr,
-      COALESCE(p.val, 0) as prev
+      COALESCE(c.nd, 0) as "ndCurr",
+      COALESCE(p.nd, 0) as "ndPrev",
+      COALESCE(c.qd, 0) as "qdCurr",
+      COALESCE(p.qd, 0) as "qdPrev"
     FROM curr_agg c
     FULL OUTER JOIN prev_agg p
       ON c."outletName" = p."outletName" AND c."itemName" = p."itemName"
   `);
 
-  // Nested map: outlet → item → {curr, prev}. Rows missing either name
+  // Nested map: outlet → item → cell. Rows missing either name
   // (FULL OUTER JOIN null edge) are skipped, mirroring aggregateSalesMode.
-  const matrix = new Map<string, Map<string, { curr: number; prev: number }>>();
+  const matrix = new Map<string, Map<string, DeviationCell>>();
   const itemUnits = new Map<string, string | null>();
   for (const r of rows) {
     if (r.outletName == null || r.itemName == null) continue;
     let items = matrix.get(r.outletName);
     if (!items) {
-      items = new Map<string, { curr: number; prev: number }>();
+      items = new Map<string, DeviationCell>();
       matrix.set(r.outletName, items);
     }
-    items.set(r.itemName, { curr: Number(r.curr) || 0, prev: Number(r.prev) || 0 });
+    items.set(r.itemName, {
+      ndCurr: Number(r.ndCurr) || 0,
+      ndPrev: Number(r.ndPrev) || 0,
+      qdCurr: Number(r.qdCurr) || 0,
+      qdPrev: Number(r.qdPrev) || 0,
+    });
     if (!itemUnits.has(r.itemName)) itemUnits.set(r.itemName, r.unit ?? null);
   }
   return { matrix, itemUnits };
 }
 
 /**
- * Shape one contributor (sub-grain mover) — same math as the row itself.
- * TASK H-6: carries the contributor's unit label (satuan) when its Δ is
- * a QTY (BOM drill-down); null for currency contexts.
- */
-function shapeContributor(
-  name: string,
-  curr: number,
-  prev: number,
-  unit: string | null,
-): TopGrowthContributor {
-  return {
-    name,
-    curr,
-    prev,
-    delta: curr - prev,
-    pct: calcGrowth(curr, prev),
-    isNew: !prev || prev === 0,
-    unit,
-  };
-}
-
-/**
- * Top-N contributors by |Δ| (no noise threshold — see header comment).
- * TASK H-6: plain-data unit config (no lookup callbacks — the base
- * no-unused-vars rule flags param names inside function-type
- * annotations, the same quirk buildWhere works around):
- *   - units: item → satuan map (itemUnits).
- *   - unitFromRow: false → each contributor's unit = its OWN name's
- *     satuan (byOutlet — contributors are barang); true → every
- *     contributor's unit = the ROW item's satuan (byItem — the qty
- *     being ranked is the row item's qty, wherever it moved).
+ * TASK H-7: top-N contributors by |Δ QTY deviasi| (no noise threshold —
+ * see header comment). Each contributor carries BOTH deviations:
+ * qty (signed, satuan — the ranking key) and nominal (signed, Rp —
+ * "ada nominal juga"). Unit resolution (plain-data config, no lookup
+ * callbacks — the base no-unused-vars rule flags param names inside
+ * function-type annotations, the same quirk buildWhere works around):
+ *   - unitFromRow false → each contributor's unit = its OWN name's
+ *     satuan (byOutlet — contributors are barang).
+ *   - unitFromRow true  → every contributor's unit = the ROW item's
+ *     satuan (byItem — the qty being ranked is the row item's qty,
+ *     wherever it moved).
  */
 function topContributors(
-  m: Map<string, { curr: number; prev: number }>,
+  cells: Map<string, DeviationCell>,
   units: Map<string, string | null>,
   unitFromRow: boolean,
   rowName: string,
 ): TopGrowthContributor[] {
-  if (m.size === 0) return [];
+  if (cells.size === 0) return [];
   const rowUnit = units.get(rowName) ?? null;
-  const list = [...m].map(([n, v]) =>
-    shapeContributor(n, v.curr, v.prev, unitFromRow ? rowUnit : (units.get(n) ?? null)));
-  list.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const list: TopGrowthContributor[] = [...cells].map(([n, cell]) => ({
+    name: n,
+    qtyCurr: cell.qdCurr,
+    qtyPrev: cell.qdPrev,
+    qtyDelta: cell.qdCurr - cell.qdPrev,
+    nominalCurr: cell.ndCurr,
+    nominalPrev: cell.ndPrev,
+    nominalDelta: cell.ndCurr - cell.ndPrev,
+    isNew: !cell.qdPrev && !cell.ndPrev,
+    unit: unitFromRow ? rowUnit : (units.get(n) ?? null),
+  }));
+  list.sort((a, b) => Math.abs(b.qtyDelta) - Math.abs(a.qtyDelta));
   return list.slice(0, TOP_GROWTH_CONTRIBUTOR_LIMIT);
 }
 
 function shapeTopGrowthRows(
+  // Per-row NOMINAL deviasi sums (signed) — the ranking metric for BOTH
+  // grains (derived from the matrix cells by additivity).
   sums: Map<string, { curr: number; prev: number }>,
   // Sub-grain cells for each row name — byOutlet passes the (outlet → items)
   // matrix itself, byItem passes the inverted (item → outlets) map. (Plain
   // map params instead of lookup callbacks: the base no-unused-vars rule
   // flags param names inside function-type annotations — same quirk as
   // buildWhere.)
-  subMaps: Map<string, Map<string, { curr: number; prev: number }>>,
-  opts: {
-    /** Noise floor for parent rows: |Δ| >= threshold (Rp for sales, qty for BOM). */
-    threshold: number;
-    /** Row → satuan map when the row Δ is a QTY (byItem: itemUnits); null → currency rows (byOutlet). */
-    rowUnits: Map<string, string | null> | null;
-    /** Contributor → satuan map (itemUnits — both grains rank BOM movement). */
-    contributorUnits: Map<string, string | null>;
-    /** true → contributor unit keyed by the ROW's name (byItem); false → by the contributor's own name (byOutlet). */
-    contributorUnitFromRow: boolean;
-  },
+  subCells: Map<string, Map<string, DeviationCell>>,
+  units: Map<string, string | null>,
+  /** true → contributor unit keyed by the ROW's name (byItem); false → by the contributor's own name (byOutlet). */
+  contributorUnitFromRow: boolean,
 ): TopGrowthRow[] {
   const rows: TopGrowthRow[] = [];
   for (const [name, { curr, prev }] of sums) {
     const delta = curr - prev;
-    // Noise filter — mirrors the sales/bom delta thresholds above.
-    if (Math.abs(delta) < opts.threshold) continue;
+    // Noise filter — |Δ nominal| ≥ 1000 Rp, both grains.
+    if (Math.abs(delta) < TOP_GROWTH_DELTA_THRESHOLD) continue;
     const isNew = !prev || prev === 0;
     const contributors = topContributors(
-      subMaps.get(name) ?? new Map<string, { curr: number; prev: number }>(),
-      opts.contributorUnits,
-      opts.contributorUnitFromRow,
+      subCells.get(name) ?? new Map<string, DeviationCell>(),
+      units,
+      contributorUnitFromRow,
       name,
     );
-    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew, unit: opts.rowUnits?.get(name) ?? null, contributors });
+    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew, contributors });
   }
   rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return rows.slice(0, TOP_GROWTH_LIMIT);
@@ -604,61 +642,55 @@ export async function queryTopGrowth(
   prevMonth: string | null,
   filters: FilterOpts,
 ): Promise<TopGrowthResult> {
-  // TWO scans (TASK H-6), each on a REAL per-grain source:
-  //   1. per-outlet SALES — OutletPeriodSales.salesMode (canonical;
-  //      nominalSales is outlet-level denormalized — summing it by row
-  //      was the "drill down salah" bug: every number was Sales ×
-  //      rowCount).
-  //   2. (outlet × item) BOM-usage matrix — qtyBom is per-row item
-  //      data; per-item sums feed the Per Barang grain and the cells
-  //      feed BOTH drill-down directions.
-  const [salesMap, bom] = await Promise.all([
-    aggregateSalesMode(week, month, prevWeek, prevMonth, filters),
-    aggregateBomMatrix(week, month, prevWeek, prevMonth, filters),
-  ]);
-  const { matrix, itemUnits } = bom;
+  // ONE scan (TASK H-7): nominalDeviasi + qtyDeviasi are genuine
+  // per-row data, so a single (outlet × item) matrix carries real
+  // totals at every grouping level — per-outlet and per-item NOMINAL
+  // sums are derived in JS by additivity, and the cells feed BOTH
+  // drill-down directions (qty + nominal per contributor).
+  const { matrix, itemUnits } = await aggregateDeviationMatrix(
+    week,
+    month,
+    prevWeek,
+    prevMonth,
+    filters,
+  );
 
-  // Invert the matrix (item → outlets) for the Per Barang drill-down.
+  // Derive both grains' nominal sums + the inverted (item → outlets)
+  // cell map for the Per Barang drill-down — all from the SAME matrix.
+  const outletSums = new Map<string, { curr: number; prev: number }>();
   const itemSums = new Map<string, { curr: number; prev: number }>();
-  const outletsByItem = new Map<string, Map<string, { curr: number; prev: number }>>();
+  const outletsByItem = new Map<string, Map<string, DeviationCell>>();
   for (const [outlet, items] of matrix) {
     for (const [item, cell] of items) {
+      const osum = outletSums.get(outlet) ?? { curr: 0, prev: 0 };
+      osum.curr += cell.ndCurr;
+      osum.prev += cell.ndPrev;
+      outletSums.set(outlet, osum);
       const isum = itemSums.get(item) ?? { curr: 0, prev: 0 };
-      isum.curr += cell.curr;
-      isum.prev += cell.prev;
+      isum.curr += cell.ndCurr;
+      isum.prev += cell.ndPrev;
       itemSums.set(item, isum);
       let outs = outletsByItem.get(item);
       if (!outs) {
-        outs = new Map<string, { curr: number; prev: number }>();
+        outs = new Map<string, DeviationCell>();
         outletsByItem.set(item, outs);
       }
-      outs.set(outlet, { curr: cell.curr, prev: cell.prev });
+      outs.set(outlet, cell);
     }
   }
 
   return {
-    // Per Resto — ΔSales in Rp (salesMode; rowUnits null → currency rows).
-    // Drill-down: top barang by Δ pemakaian BOM inside the resto
-    // (demand-side decomposition — Sales has no item-level breakdown in
-    // this data model). Contributor unit = each barang's own satuan.
-    byOutlet: shapeTopGrowthRows(salesMap, matrix, {
-      threshold: TOP_GROWTH_DELTA_THRESHOLD,
-      rowUnits: null,
-      contributorUnits: itemUnits,
-      contributorUnitFromRow: false,
-    }),
-    // Per Barang — Δ pemakaian BOM in the item's satuan (rowUnits =
-    // itemUnits). Drill-down: top resto driving that item's BOM
-    // movement — every contributor's unit = the row item's satuan,
-    // since the qty being ranked IS that item's qty.
-    byItem: shapeTopGrowthRows(itemSums, outletsByItem, {
-      threshold: TOP_GROWTH_BOM_DELTA_THRESHOLD,
-      rowUnits: itemUnits,
-      contributorUnits: itemUnits,
-      contributorUnitFromRow: true,
-    }),
+    // Per Resto — Δ nominal deviasi (Rp, signed). Drill-down: top barang
+    // by Δ kuantiti deviasi inside the resto, each with Δ nominal too.
+    // Contributor unit = each barang's own satuan.
+    byOutlet: shapeTopGrowthRows(outletSums, matrix, itemUnits, false),
+    // Per Barang — Δ nominal deviasi (Rp, signed). Drill-down: top resto
+    // driving that item's deviation — every contributor's unit = the row
+    // item's satuan, since the qty being ranked IS that item's qty.
+    byItem: shapeTopGrowthRows(itemSums, outletsByItem, itemUnits, true),
     contributorLimit: TOP_GROWTH_CONTRIBUTOR_LIMIT,
-    byOutletMetric: 'sales',
-    byItemMetric: 'bom',
+    byOutletMetric: 'nominalDeviasi',
+    byItemMetric: 'nominalDeviasi',
+    contributorRankMetric: 'qtyDeviasi',
   };
 }

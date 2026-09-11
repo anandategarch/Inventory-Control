@@ -10,16 +10,21 @@
 //  TASK H-5: the payload gained topGrowth drill-down fields
 //  (contributors per row + contributorLimit) + period provenance
 //  (comparisonAuto, weekRange, comparisonWeekRange) → version bumped
-//  2 → 3 and markers extended. v2-shaped rows (topGrowth WITHOUT
-//  contributorLimit) must now be treated as MISS — the same bug class
-//  H-3 fixed, one shape-generation later.
+//  2 → 3 and markers extended.
 //
 //  TASK H-6: topGrowth values changed SEMANTICS (byOutlet = salesMode
 //  ΔSales; byItem = Δ pemakaian BOM with unit; byOutletMetric/
-//  byItemMetric descriptors) → version 3 → 4 + two new markers. A v3
-//  row (drill-down with the WRONG numbers: byOutlet = Sales ×
-//  rowCount, byItem = fake per-barang "sales") must be rejected —
-//  serving it would keep showing the user-reported wrong data.
+//  byItemMetric descriptors) → version 3 → 4 + two new markers.
+//
+//  TASK H-7: topGrowth changed metrics AGAIN — both grains now rank Δ
+//  SUM(nominalDeviasi) (signed net Rp); drill-down contributors are
+//  ranked by Δ SUM(qtyDeviasi) and carry Δ nominal alongside
+//  (qtyCurr/qtyPrev/qtyDelta + nominalCurr/nominalPrev/nominalDelta);
+//  rows no longer carry `unit`; the wrapper carries the new
+//  contributorRankMetric descriptor → version 4 → 5 + one new marker.
+//  A v4 row (byOutlet = ΔSales / byItem = ΔBOM — the OLD mixed
+//  metrics) has byOutletMetric/byItemMetric but NO contributorRankMetric
+//  → must be rejected, or the user would keep seeing the old metrics.
 // ============================================================
 import { describe, it, expect } from 'vitest';
 import {
@@ -28,14 +33,15 @@ import {
   hasCurrentPayloadShape,
 } from '@/app/api/analysis/services/payload-schema';
 
-describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)', () => {
-  it('schema version is 4 (bumped when topGrowth values changed semantics — H-6)', () => {
+describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6 + H-7)', () => {
+  it('schema version is 5 (bumped when topGrowth changed metrics — H-7)', () => {
     // v1 (implicit) = pre-Top-Growth rows. v2 = + topGrowth. v3 = +
     // contributors/contributorLimit + comparisonAuto/weekRange. v4 =
-    // salesMode/BOM rework + byOutletMetric/byItemMetric + unit. If this
-    // fails, the version was bumped without updating this test — update
-    // BOTH together.
-    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(4);
+    // salesMode/BOM rework + byOutletMetric/byItemMetric + unit. v5 =
+    // nominalDeviasi metric for both grains + qtyDeviasi-ranked drill-down
+    // + contributorRankMetric. If this fails, the version was bumped
+    // without updating this test — update BOTH together.
+    expect(ANALYSIS_PAYLOAD_SCHEMA_VERSION).toBe(5);
   });
 
   it('accepts a current-shape payload (contains every required marker)', () => {
@@ -51,44 +57,62 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)',
       execSummary: { sales: { current: 1, previous: 2 } },
       growthDrivers: [],
       topGrowth: {
-        byOutlet: [{ name: 'R', curr: 5, prev: 0, delta: 5, pct: null, isNew: true, unit: null, contributors: [] }],
+        byOutlet: [{ name: 'R', curr: -900, prev: -500, delta: -400, pct: null, isNew: true, contributors: [] }],
         byItem: [],
         contributorLimit: 5,
-        byOutletMetric: 'sales',
-        byItemMetric: 'bom',
+        byOutletMetric: 'nominalDeviasi',
+        byItemMetric: 'nominalDeviasi',
+        contributorRankMetric: 'qtyDeviasi',
       },
     });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
   });
 
   it('accepts a current-shape payload even when topGrowth lists are empty (markers survive)', () => {
-    // CRITICAL H-5 nuance: with empty lists there are NO row objects, so the
-    // per-row '"contributors":' key never serializes — that is exactly why
-    // the marker anchors on the always-serialized wrapper scalar
-    // '"contributorLimit":' instead. An empty current payload must pass.
+    // CRITICAL H-5 nuance: with empty lists there are NO row objects, so
+    // per-row keys ('"contributors":', '"qtyDelta":', …) never serialize —
+    // that is exactly why markers anchor on the always-serialized wrapper
+    // scalars ('"contributorLimit":', '"contributorRankMetric":', …)
+    // instead. An empty current payload must pass.
     const raw = JSON.stringify({
       success: true,
       period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: false, weekRange: null, comparisonWeekRange: null },
-      topGrowth: { byOutlet: [], byItem: [], contributorLimit: 5, byOutletMetric: 'sales', byItemMetric: 'bom' },
+      topGrowth: { byOutlet: [], byItem: [], contributorLimit: 5, byOutletMetric: 'nominalDeviasi', byItemMetric: 'nominalDeviasi', contributorRankMetric: 'qtyDeviasi' },
     });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
+  });
+
+  it('rejects v4-shaped payloads — metric descriptors WITHOUT contributorRankMetric (H-7 regression)', () => {
+    // Shape of a row cached by the H-6 code: has byOutletMetric/
+    // byItemMetric (values 'sales'/'bom') + contributorLimit +
+    // comparisonAuto, but NO contributorRankMetric — its byOutlet rows
+    // are ΔSales and its byItem rows are Δ pemakaian BOM with per-row
+    // `unit`, i.e. the OLD mixed metrics. Serving it after the H-7
+    // metric switch would keep showing ΔSales/ΔBOM as if they were Δ
+    // nominal deviasi — the exact cache-staleness bug class H-3 fixed.
+    const raw = JSON.stringify({
+      success: true,
+      period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: true, weekRange: null, comparisonWeekRange: null },
+      topGrowth: {
+        byOutlet: [{ name: 'R', curr: 2_100_000, prev: 5_300_000, delta: -3_200_000, pct: -0.6, isNew: false, unit: null, contributors: [] }],
+        byItem: [],
+        contributorLimit: 5,
+        byOutletMetric: 'sales',
+        byItemMetric: 'bom',
+      },
+    });
+    expect(hasCurrentPayloadShape(raw)).toBe(false);
   });
 
   it('rejects v3-shaped payloads — drill-down WITHOUT metric descriptors (H-6 regression)', () => {
     // Shape of a row cached by the H-5 code: has contributors +
     // contributorLimit + comparisonAuto, but its byOutlet numbers are
     // Sales × rowCount and its byItem is fake per-barang "sales" — the
-    // exact wrong data the user reported. Serving it would keep showing
-    // the bug; the missing byItemMetric/byOutletMetric markers force a
-    // recompute with the fixed code.
+    // user-reported "drill down salah" data.
     const raw = JSON.stringify({
       success: true,
-      period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: true, weekRange: { start: 1, end: 7 }, comparisonWeekRange: null },
-      topGrowth: {
-        byOutlet: [{ name: 'R', curr: 5, prev: 0, delta: 5, pct: null, isNew: true, contributors: [{ name: 'I', curr: 1, prev: 0, delta: 1, pct: null, isNew: true }] }],
-        byItem: [],
-        contributorLimit: 5,
-      },
+      period: { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1', comparisonAuto: true, weekRange: null, comparisonWeekRange: null },
+      topGrowth: { byOutlet: [], byItem: [], contributorLimit: 5 },
     });
     expect(hasCurrentPayloadShape(raw)).toBe(false);
   });
@@ -128,9 +152,9 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)',
     // code that emits the current shape?" — envelope VALIDITY is checked
     // separately by looksLikeAnalysisEnvelope before this runs.
     expect(hasCurrentPayloadShape('"topGrowth":')).toBe(false);
-    // All five markers present (even in a bare concatenation) → passes the
-    // marker scan — same nuance as above, carried forward to v4.
-    expect(hasCurrentPayloadShape('"topGrowth":"contributorLimit":"comparisonAuto":"byItemMetric":"byOutletMetric":')).toBe(true);
+    // All six markers present (even in a bare concatenation) → passes the
+    // marker scan — same nuance as above, carried forward to v5.
+    expect(hasCurrentPayloadShape('"topGrowth":"contributorLimit":"comparisonAuto":"byItemMetric":"byOutletMetric":"contributorRankMetric":')).toBe(true);
   });
 
   it('rejects a payload whose topGrowth value is null (field must be an object)', () => {
@@ -139,7 +163,7 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)',
     // writes null (queryTopGrowth returns an object), and a hypothetical
     // null-valued row still parses + the client treats it as undefined →
     // empty state with the recovery button. This test documents the nuance.
-    const raw = JSON.stringify({ success: true, topGrowth: null, contributorLimit: 5, comparisonAuto: true, byItemMetric: 'bom', byOutletMetric: 'sales' });
+    const raw = JSON.stringify({ success: true, topGrowth: null, contributorLimit: 5, comparisonAuto: true, byItemMetric: 'nominalDeviasi', byOutletMetric: 'nominalDeviasi', contributorRankMetric: 'qtyDeviasi' });
     expect(hasCurrentPayloadShape(raw)).toBe(true);
   });
 
@@ -154,7 +178,7 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)',
     }
   });
 
-  it('requires exactly the H-6 marker set (topGrowth + contributorLimit + comparisonAuto + both metric descriptors)', () => {
+  it('requires exactly the H-7 marker set (topGrowth + contributorLimit + comparisonAuto + both metric descriptors + contributorRankMetric)', () => {
     // Documents the current contract — updating markers without intent
     // (or forgetting one) surfaces here as a diff.
     expect(REQUIRED_PAYLOAD_MARKERS).toEqual([
@@ -163,6 +187,7 @@ describe('payload-schema (analysis cache shape guard — TASK H-3 + H-5 + H-6)',
       '"comparisonAuto":',
       '"byItemMetric":',
       '"byOutletMetric":',
+      '"contributorRankMetric":',
     ]);
   });
 });

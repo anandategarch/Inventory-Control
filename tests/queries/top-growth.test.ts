@@ -1,19 +1,18 @@
 // Tests for src/lib/queries/growth-drivers.ts — queryTopGrowth
 // Mock @/lib/db (same vi.hoisted pattern as growth-drivers.test.ts).
 //
-// TASK H-6 rewrite: queryTopGrowth fires TWO scans, each on a REAL
-// per-grain source:
-//   1. aggregateSalesMode  — per-outlet ΔSales from OutletPeriodSales
-//      .salesMode (nominalSales is outlet-level denormalized; the old
-//      SUM-over-rows was Sales × rowCount — the reported bug).
-//   2. aggregateBomMatrix  — (outlet × item) SUM(ABS(qtyBom)) matrix:
-//      per-item sums feed the Per Barang grain; the cells feed BOTH
-//      drill-down directions (contributors = Δ pemakaian BOM + satuan).
+// TASK H-7 rewrite: queryTopGrowth fires ONE scan — the (outlet × item)
+// DEVIATION matrix carrying BOTH sums per cell:
+//   - nd = SUM(nominalDeviasi) SIGNED net (Rp)  → feeds BOTH grains'
+//     ranking metric (Δ nominal deviasi, |Δ| ranks, signed displayed)
+//     via JS additivity (per-outlet = Σ of its item cells; per-item =
+//     Σ of its outlet cells).
+//   - qd = SUM(qtyDeviasi) SIGNED net (qty)     → feeds the drill-down
+//     contributors' RANKING (|Δ kuantiti deviasi|), each contributor
+//     ALSO carrying its Δ nominal ("ada nominal juga").
 //
-// Mock invocation order is deterministic: Promise.all evaluates
-// aggregateSalesMode(...) first — its $queryRaw fires before
-// aggregateBomMatrix's (both are synchronous up to the mocked call).
-// So mockResolvedValueOnce queue = [salesRows, matrixRows].
+// Mock invocation: a single $queryRaw (its withStatementTimeout
+// transaction also fires 2 SET LOCAL $executeRaw calls).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { queryTopGrowth } from '@/lib/queries/growth-drivers';
 
@@ -37,225 +36,231 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 // Helper: SQL text from a recorded Prisma.Sql call. NOTE (same caveat as
-// the old test file): vitest's call recording strips the NESTED CTE
+// the previous test files): vitest's call recording strips the NESTED CTE
 // Prisma.Sql fragments — the recorded arg surfaces as the OUTER template's
-// string fragments only. Assertions must therefore anchor on outer-
-// template fragments (CTE names, COALESCE lines); nested content (table
-// names inside CTEs) is proven behaviorally by the fixture values.
+// string fragments only. Assertions anchor on outer-template fragments
+// (CTE names, COALESCE lines); nested content (the FILTER aggregates,
+// table names inside CTEs) is proven behaviorally by the fixture values.
 function sqlText(sql: unknown): string {
   if (sql == null) return '';
   if (Array.isArray(sql)) return sql.map((x) => String(x ?? '')).join('');
   return String(sql);
 }
 
-// Fixture helpers — the row shapes the two scans return.
-function salesRow(name: string, curr: number, prev: number) {
-  return { name, curr, prev };
-}
-function bomRow(outletName: string, itemName: string, curr: number, prev: number, unit: string | null) {
-  return { outletName, itemName, unit, curr, prev };
+// Fixture helper — the row shape the single deviation-matrix scan returns.
+function devRow(
+  outletName: string,
+  itemName: string,
+  ndCurr: number,
+  ndPrev: number,
+  qdCurr: number,
+  qdPrev: number,
+  unit: string | null,
+) {
+  return { outletName, itemName, unit, ndCurr, ndPrev, qdCurr, qdPrev };
 }
 
-describe('queryTopGrowth (TASK H-6 — salesMode + BOM matrix)', () => {
+describe('queryTopGrowth (TASK H-7 — nominal-deviasi ranking + qty-deviasi drill-down)', () => {
   beforeEach(() => {
     mockQueryRaw.mockReset();
     mockExecuteRaw.mockReset();
   });
 
-  it('fires TWO scans (salesMode + BOM matrix) and derives both grains + descriptors', async () => {
-    mockQueryRaw
-      .mockResolvedValueOnce([
-        salesRow('RESTO-A', 7_400_000, 5_300_000),
-      ])
-      .mockResolvedValueOnce([
-        bomRow('RESTO-A', 'AYAM', 400, 320, 'kg'),
-        bomRow('RESTO-A', 'CABAI', 12, 20, 'kg'),
-      ]);
+  it('fires ONE deviation-matrix scan and derives both grains + drill-down + descriptors', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      devRow('RESTO-A', 'AYAM', -900_000, -500_000, -90, -50, 'kg'),
+      devRow('RESTO-A', 'CABAI', 300_000, 150_000, 30, 25, 'kg'),
+      devRow('RESTO-B', 'GULA', 250_000, 240_000, 0, 0, 'gr'),
+    ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
 
-    // Two scans; each withStatementTimeout transaction = 2 SET LOCALs.
-    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
-    expect(mockExecuteRaw).toHaveBeenCalledTimes(4);
+    // ONE scan; its withStatementTimeout transaction = 2 SET LOCALs.
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
 
-    // Scan routing: call 0 = per-outlet salesMode scan (curr_sales/
-    // prev_sales CTEs in the OUTER template — vitest strips nested CTE
-    // fragments, so the OutletPeriodSales table name itself is proven
-    // behaviorally by the salesRow fixtures below); call 1 = the (outlet ×
-    // item) BOM matrix (curr_agg/prev_agg + unit coalesce in the outer
-    // template — qtyBom proven behaviorally by the bomRow fixtures).
-    const salesSql = sqlText(mockQueryRaw.mock.calls[0]?.[0]);
-    const bomSql = sqlText(mockQueryRaw.mock.calls[1]?.[0]);
-    expect(salesSql).toContain('curr_sales');
-    expect(salesSql).toContain('FULL OUTER JOIN prev_sales p ON c.name = p.name');
-    expect(bomSql).toContain('curr_agg');
-    expect(bomSql).toContain('COALESCE(c."outletName", p."outletName") as "outletName"');
-    expect(bomSql).toContain('COALESCE(c.unit, p.unit) as unit');
+    // Scan routing: the (outlet × item) deviation matrix (curr_agg/prev_agg
+    // + the nd/qd coalesce lines in the OUTER template — vitest strips
+    // nested CTE fragments, so the FILTER aggregates themselves are proven
+    // behaviorally by the devRow fixtures below).
+    const matrixSql = sqlText(mockQueryRaw.mock.calls[0]?.[0]);
+    expect(matrixSql).toContain('curr_agg');
+    expect(matrixSql).toContain('FULL OUTER JOIN prev_agg p');
+    expect(matrixSql).toContain('COALESCE(c."outletName", p."outletName") as "outletName"');
+    expect(matrixSql).toContain('COALESCE(c.nd, 0) as "ndCurr"');
+    expect(matrixSql).toContain('COALESCE(p.nd, 0) as "ndPrev"');
+    expect(matrixSql).toContain('COALESCE(c.qd, 0) as "qdCurr"');
+    expect(matrixSql).toContain('COALESCE(p.qd, 0) as "qdPrev"');
 
-    // Per Resto — ΔSales from salesMode (Rp), unit null.
-    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-A']);
+    // Per Resto — Δ nominal deviasi derived ADDITIVELY from the item cells:
+    // RESTO-A curr = −900k + 300k = −600k, prev = −500k + 150k = −350k →
+    // Δ = −250.000 SIGNED (|250k| ranks it above RESTO-B's +10.000).
+    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-A', 'RESTO-B']);
     expect(r.byOutlet[0]).toMatchObject({
-      curr: 7_400_000, prev: 5_300_000, delta: 2_100_000,
-      pct: 2_100_000 / 5_300_000, isNew: false, unit: null,
+      curr: -600_000, prev: -350_000, delta: -250_000,
+      pct: -250_000 / 350_000, isNew: false,
     });
-    // Its drill-down = top barang by Δ pemakaian BOM (qty + satuan).
-    expect(r.byOutlet[0].contributors.map((c) => c.name)).toEqual(['AYAM', 'CABAI']);
-    expect(r.byOutlet[0].contributors[0]).toMatchObject({ delta: 80, unit: 'kg', isNew: false });
-    expect(r.byOutlet[0].contributors[1]).toMatchObject({ delta: -8, unit: 'kg', isNew: false });
+    expect(r.byOutlet[1]).toMatchObject({ curr: 250_000, prev: 240_000, delta: 10_000 });
 
-    // Per Barang — Δ pemakaian BOM in the item's satuan.
-    expect(r.byItem.map((x) => x.name)).toEqual(['AYAM', 'CABAI']);
-    expect(r.byItem[0]).toMatchObject({ curr: 400, prev: 320, delta: 80, unit: 'kg', isNew: false });
-    // Its drill-down = top resto driving the item's BOM move (unit = the
-    // row item's satuan — the qty being ranked IS that item's qty).
-    expect(r.byItem[0].contributors.map((c) => c.name)).toEqual(['RESTO-A']);
-    expect(r.byItem[0].contributors[0]).toMatchObject({ delta: 80, unit: 'kg', isNew: false });
+    // Its drill-down = top barang ranked by |Δ kuantiti deviasi| (AYAM |−40|
+    // > CABAI |+5|), each ALSO carrying its Δ nominal.
+    expect(r.byOutlet[0].contributors.map((c) => c.name)).toEqual(['AYAM', 'CABAI']);
+    expect(r.byOutlet[0].contributors[0]).toMatchObject({
+      qtyCurr: -90, qtyPrev: -50, qtyDelta: -40,
+      nominalCurr: -900_000, nominalPrev: -500_000, nominalDelta: -400_000,
+      isNew: false, unit: 'kg',
+    });
+    expect(r.byOutlet[0].contributors[1]).toMatchObject({
+      qtyDelta: 5, nominalDelta: 150_000, unit: 'kg',
+    });
+
+    // Per Barang — Δ nominal deviasi summed across outlets (AYAM |−400k| >
+    // CABAI |+150k| > GULA |+10k|). No `unit` on rows — both grains are Rp.
+    expect(r.byItem.map((x) => x.name)).toEqual(['AYAM', 'CABAI', 'GULA']);
+    expect(r.byItem[0]).toMatchObject({
+      curr: -900_000, prev: -500_000, delta: -400_000,
+      pct: -400_000 / 500_000, isNew: false,
+    });
+    expect(r.byItem[0]).not.toHaveProperty('unit');
+
+    // GULA's drill-down = resto contributors; every contributor's unit is
+    // the ROW item's satuan ('gr' — GULA's), NOT the contributor's own
+    // (a resto has no satuan).
+    expect(r.byItem[2].contributors.map((c) => c.name)).toEqual(['RESTO-B']);
+    expect(r.byItem[2].contributors[0]).toMatchObject({
+      qtyDelta: 0, nominalDelta: 10_000, unit: 'gr', isNew: false,
+    });
 
     // Wrapper contract — always-serialized payload markers.
     expect(r.contributorLimit).toBe(5);
-    expect(r.byOutletMetric).toBe('sales');
-    expect(r.byItemMetric).toBe('bom');
+    expect(r.byOutletMetric).toBe('nominalDeviasi');
+    expect(r.byItemMetric).toBe('nominalDeviasi');
+    expect(r.contributorRankMetric).toBe('qtyDeviasi');
   });
 
-  it('REGRESSION (H-6 bug): byOutlet uses salesMode, NOT the row-count-inflated matrix', async () => {
-    // The reported bug: the old matrix summed the OUTLET-LEVEL nominalSales
-    // once per row → byOutlet Δ was Sales × rowCount. Fixture: salesMode
-    // says RESTO-1 sales went 100.000 → 90.000 (Δ −10.000), while the BOM
-    // matrix rows for the same resto would sum to a totally different Δ.
-    // byOutlet MUST read the salesMode numbers.
-    mockQueryRaw
-      .mockResolvedValueOnce([
-        salesRow('RESTO-1', 90_000, 100_000),
-      ])
-      .mockResolvedValueOnce([
-        bomRow('RESTO-1', 'AYAM', 120_000, 80_000, 'kg'),
-        bomRow('RESTO-1', 'GULA', 60_000, 50_000, 'kg'),
-      ]);
+  it('REGRESSION (H-7): both grains rank |Δ nominal deviasi| and expose the SIGNED real value', async () => {
+    // The requested contract: "nominal deviasi sum kemudian absolute dan
+    // signed nilai asli" — ranking by |Δ|, but the row's delta keeps the
+    // real sign (ABS is for ORDERING only, never for the displayed value).
+    // RESTO-1's items partially cancel (I1 loss reduced +300k, I2 surplus
+    // grew +150k) → outlet Δ +450k; RESTO-2 is a fresh loss −260k → ranked
+    // second and displayed NEGATIVE, not as 260.000.
+    mockQueryRaw.mockResolvedValueOnce([
+      devRow('RESTO-1', 'I1', -100_000, -400_000, -10, -40, 'kg'),
+      devRow('RESTO-1', 'I2', 200_000, 50_000, 5, 2, 'kg'),
+      devRow('RESTO-2', 'I3', -260_000, 0, -26, 0, 'kg'),
+    ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
 
-    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1']);
-    expect(r.byOutlet[0]).toMatchObject({ curr: 90_000, prev: 100_000, delta: -10_000, pct: -0.1 });
-    // The matrix-fed numbers only appear in the DRILL-DOWN (BOM), never in
-    // the parent resto row.
-    expect(r.byOutlet[0].contributors[0]).toMatchObject({ name: 'AYAM', delta: 40_000, unit: 'kg' });
-  });
-
-  it('byItem sums the BOM matrix additively across outlets (matches the bom metric grain)', async () => {
-    mockQueryRaw
-      .mockResolvedValueOnce([
-        salesRow('RESTO-1', 500_000, 400_000),
-        salesRow('RESTO-2', 300_000, 350_000),
-      ])
-      .mockResolvedValueOnce([
-        bomRow('RESTO-1', 'AYAM', 200, 100, 'kg'),
-        bomRow('RESTO-2', 'AYAM', 150, 100, 'kg'),
-        bomRow('RESTO-2', 'KEJU', 30, 30, 'pcs'),
-      ]);
-    const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
-
-    // AYAM across outlets: curr 350, prev 200 → Δ +150 (additive parity
-    // with a GROUP BY i.name scan); KEJU Δ 0 → below the 0.01 threshold →
-    // dropped from byItem.
-    expect(r.byItem.map((x) => x.name)).toEqual(['AYAM']);
-    expect(r.byItem[0]).toMatchObject({ curr: 350, prev: 200, delta: 150, unit: 'kg' });
-    // Drill-down: restos ranked by |Δ| — RESTO-1 (+100) then RESTO-2 (+50),
-    // both carrying the item's satuan.
-    expect(r.byItem[0].contributors.map((c) => c.name)).toEqual(['RESTO-1', 'RESTO-2']);
-    expect(r.byItem[0].contributors[0]).toMatchObject({ delta: 100, pct: 1, unit: 'kg', isNew: false });
-    expect(r.byItem[0].contributors[1]).toMatchObject({ delta: 50, pct: 0.5, unit: 'kg', isNew: false });
-
-    // Outlet grain independent of the matrix: RESTO-1 Δ +100.000 ranked
-    // above RESTO-2 Δ −50.000.
+    // Additive derivation: RESTO-1 curr = −100k + 200k = +100k,
+    // prev = −400k + 50k = −350k → Δ = +450k (pct = 450/350).
     expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1', 'RESTO-2']);
-    expect(r.byOutlet[0]).toMatchObject({ delta: 100_000 });
-    expect(r.byOutlet[1]).toMatchObject({ delta: -50_000 });
+    expect(r.byOutlet[0]).toMatchObject({ curr: 100_000, prev: -350_000, delta: 450_000, pct: 450_000 / 350_000 });
+    // The SIGNED real value — RESTO-2's loss deepened, delta stays negative.
+    expect(r.byOutlet[1]).toMatchObject({ delta: -260_000, isNew: true, pct: null });
+
+    // Item grain mirrors the same math per item (|Δ| ranking: I1 300k,
+    // I3 260k, I2 150k — the SIGNED deltas below keep their signs).
+    expect(r.byItem.map((x) => x.name)).toEqual(['I1', 'I3', 'I2']);
+    expect(r.byItem[0]).toMatchObject({ delta: 300_000 });
+    expect(r.byItem[1]).toMatchObject({ delta: -260_000 });
+    expect(r.byItem[2]).toMatchObject({ delta: 150_000 });
   });
 
-  it('caps contributors at 5 (top |Δ| kept), marks prev=0 contributors "Baru", Δ0 cells still listed', async () => {
-    // One outlet with 7 barang — deltas 60..1; the 6th/7th by |Δ| drop out.
-    mockQueryRaw
-      .mockResolvedValueOnce([salesRow('RESTO-1', 200_000, 100_000)])
-      .mockResolvedValueOnce([
-        bomRow('RESTO-1', 'I1', 60, 0, 'kg'),     // Δ +60 — Baru (prev 0)
-        bomRow('RESTO-1', 'I2', 50, 40, 'kg'),    // Δ +10
-        bomRow('RESTO-1', 'I3', 30, 20, 'kg'),    // Δ +10
-        bomRow('RESTO-1', 'I4', 25, 20, 'kg'),    // Δ +5
-        bomRow('RESTO-1', 'I5', 15, 12, 'kg'),    // Δ +3
-        bomRow('RESTO-1', 'I6', 10, 9, 'kg'),     // Δ +1 — 6th by |Δ| → dropped
-        bomRow('RESTO-1', 'I7', 0.5, 0.5, 'kg'),  // Δ 0 — 7th → dropped (cap)
-      ]);
+  it('contributors are ranked by |Δ QTY deviasi| (not nominal) and each carries Δ nominal + Baru semantics', async () => {
+    // "drill down nya pakai kuantiti deviasi dan ada nominal juga": BIGNOM
+    // has by far the biggest NOMINAL move (−300k) but a small qty move (+5)
+    // → it must rank BELOW BIGQTY (qty Δ −100, nominal Δ 0). NEWNOM has a
+    // nominal base but no qty base → NOT "Baru"; TRUENEW has neither →
+    // "Baru".
+    mockQueryRaw.mockResolvedValueOnce([
+      devRow('RESTO-1', 'BIGQTY', 0, 0, -100, 0, 'kg'),
+      devRow('RESTO-1', 'BIGNOM', -300_000, 0, 5, 0, 'kg'),
+      devRow('RESTO-1', 'SMALLQTY', 10_000, 5_000, 3, 1, 'kg'),
+      devRow('RESTO-1', 'NEWNOM', 0, 8_000, 0, 0, 'kg'),
+      devRow('RESTO-1', 'TRUENEW', 7_000, 0, 4, 0, 'pcs'),
+    ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
 
-    const outlet = r.byOutlet[0];
-    expect(outlet.name).toBe('RESTO-1');
-    expect(outlet.contributors.length).toBe(5);
-    expect(outlet.contributors.map((c) => c.name)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5']);
-    // prev=0 → pct null + isNew ("Baru" badge case), still the TOP contributor.
-    expect(outlet.contributors[0]).toMatchObject({ name: 'I1', delta: 60, pct: null, isNew: true, unit: 'kg' });
+    // Outlet row exists (Δ nominal −296k ≥ 1000) — the parent stays NOMINAL.
+    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1']);
+    expect(r.byOutlet[0]).toMatchObject({
+      curr: -283_000, prev: 13_000, delta: -296_000,
+    });
+
+    // Contributor order is the QTY ranking: BIGQTY(|−100|) → BIGNOM(|+5|)
+    // → TRUENEW(|+4|) → SMALLQTY(|+2|) → NEWNOM(|0|).
+    expect(r.byOutlet[0].contributors.map((c) => c.name)).toEqual([
+      'BIGQTY', 'BIGNOM', 'TRUENEW', 'SMALLQTY', 'NEWNOM',
+    ]);
+    // BIGQTY ranks FIRST on qty even though its nominal Δ is 0.
+    expect(r.byOutlet[0].contributors[0]).toMatchObject({ qtyDelta: -100, nominalDelta: 0, unit: 'kg' });
+    // BIGNOM ranks SECOND despite the biggest nominal move — and carries it.
+    expect(r.byOutlet[0].contributors[1]).toMatchObject({ qtyDelta: 5, nominalDelta: -300_000, isNew: true });
+    // "Baru" = no deviation base of EITHER kind in the compare period.
+    expect(r.byOutlet[0].contributors[2]).toMatchObject({ qtyDelta: 4, nominalDelta: 7_000, isNew: true, unit: 'pcs' });
+    expect(r.byOutlet[0].contributors[3]).toMatchObject({ qtyDelta: 2, nominalDelta: 5_000, isNew: false });
+    expect(r.byOutlet[0].contributors[4]).toMatchObject({ qtyDelta: 0, nominalDelta: -8_000, isNew: false });
   });
 
-  it('thresholds: |ΔSales| ≥ 1000 (outlet) and |ΔBOM| ≥ 0,01 (item); boundaries kept; 15-row item cap', async () => {
-    // 20 items in ONE outlet with BOM deltas 20 → 1 → item list capped at 15.
-    const matrixRows = Array.from({ length: 20 }, (_, i) =>
-      bomRow('RESTO-1', `G${String(i + 1).padStart(2, '0')}`, 20 - i, 0, 'kg'));
-    // Noise item for the ITEM grain: |Δ| = 0,005 < 0,01 → dropped.
-    matrixRows.push(bomRow('RESTO-2', 'NOISE-BOM', 0.005, 0, 'kg'));
-    // Boundary item: |Δ| exactly 0,01 → KEPT.
-    matrixRows.push(bomRow('RESTO-3', 'BOUNDARY-BOM', 0.01, 0, 'kg'));
+  it('thresholds: |Δ nominal| ≥ 1000 Rp BOTH grains; boundary kept; noise dropped; 15-row & 5-contributor caps', async () => {
+    // 14 items in RESTO-1 with nominal deltas 14jt → 1jt (qd deltas 14 → 1);
+    // BOUND-I has |Δ| exactly 1000 (boundary → KEPT in both grains);
+    // NOISE-I has |Δ| 999 (→ dropped from BOTH grains — the grains now
+    // share one metric and one threshold).
+    const rows = Array.from({ length: 14 }, (_, i) =>
+      devRow('RESTO-1', `G${String(i + 1).padStart(2, '0')}`, (14 - i) * 1_000_000, 0, 14 - i, 0, 'kg'));
+    rows.push(devRow('RESTO-BOUND', 'BOUND-I', 1_000, 0, 1, 0, 'kg'));
+    rows.push(devRow('RESTO-NOISE', 'NOISE-I', 999, 0, 1, 0, 'kg'));
 
-    mockQueryRaw
-      .mockResolvedValueOnce([
-        // Boundary outlet: |ΔSales| exactly 1000 → KEPT.
-        salesRow('RESTO-3', 1_000, 0),
-        // Noise outlet: |ΔSales| = 500 < 1000 → dropped (even though its
-        // only BOM row exists — the grains are now independent).
-        salesRow('RESTO-2', 1_500, 1_000),
-        salesRow('RESTO-1', 200_000, 100_000),
-      ])
-      .mockResolvedValueOnce(matrixRows);
+    mockQueryRaw.mockResolvedValueOnce(rows);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
 
-    // Item grain: capped at 15, ranked |Δ| DESC; BOUNDARY-BOM survives
-    // (0.01), NOISE-BOM (0.005) does not.
+    // Item grain: 15 slots = G01..G14 + BOUND-I (1000 boundary kept);
+    // NOISE-I (999) dropped by the threshold, G16+ impossible (only 14).
     expect(r.byItem.length).toBe(15);
-    expect(r.byItem[0]).toMatchObject({ name: 'G01', delta: 20, unit: 'kg' });
-    expect(r.byItem[14]).toMatchObject({ name: 'G15', delta: 6 });
-    expect(r.byItem.map((x) => x.name)).not.toContain('G16');
-    expect(r.byItem.map((x) => x.name)).not.toContain('NOISE-BOM');
-    expect(r.byItem.map((x) => x.name)).not.toContain('BOUNDARY-BOM');
-    // (15 slots: G01..G15 all have |Δ| ≥ BOUNDARY-BOM's 0.01 → they fill
-    // the cap; BOUNDARY-BOM is 16th+ by |Δ| and the cap drops it.)
+    expect(r.byItem.map((x) => x.name)).not.toContain('NOISE-I');
+    expect(r.byItem.map((x) => x.name)).toContain('BOUND-I');
+    expect(r.byItem[0]).toMatchObject({ name: 'G01', delta: 14_000_000, isNew: true, pct: null });
 
-    // Outlet grain: RESTO-1 + RESTO-3 (boundary 1000) survive; RESTO-2
-    // (|Δ| = 500) dropped — from the SALES numbers, not the matrix.
-    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1', 'RESTO-3']);
-    expect(r.byOutlet[1]).toMatchObject({ name: 'RESTO-3', delta: 1_000, pct: null, isNew: true });
+    // Outlet grain: RESTO-1 (Σ = 105jt) + RESTO-BOUND (1000 boundary);
+    // RESTO-NOISE (999) dropped.
+    expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1', 'RESTO-BOUND']);
+    expect(r.byOutlet[0]).toMatchObject({ delta: 105_000_000 });
+    expect(r.byOutlet[1]).toMatchObject({ delta: 1_000, isNew: true });
+
+    // Contributor cap: RESTO-1's 14 barang → top 5 by |Δ qty| (G01..G05).
+    expect(r.byOutlet[0].contributors.length).toBe(5);
+    expect(r.byOutlet[0].contributors.map((c) => c.name)).toEqual(['G01', 'G02', 'G03', 'G04', 'G05']);
+    expect(r.byOutlet[0].contributors[0]).toMatchObject({ qtyDelta: 14, nominalDelta: 14_000_000 });
   });
 
-  it('skips rows without names (FULL OUTER JOIN null edge) in both scans', async () => {
-    mockQueryRaw
-      .mockResolvedValueOnce([{ name: null, curr: 5_000, prev: 0 }])
-      .mockResolvedValueOnce([
-        { outletName: null, itemName: 'AYAM', unit: 'kg', curr: 5, prev: 0 },
-        { outletName: 'RESTO-1', itemName: null, unit: 'kg', curr: 5, prev: 0 },
-      ]);
+  it('skips rows without names (FULL OUTER JOIN null edge)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { outletName: null, itemName: 'AYAM', unit: 'kg', ndCurr: -500_000, ndPrev: 0, qdCurr: -5, qdPrev: 0 },
+      { outletName: 'RESTO-1', itemName: null, unit: 'kg', ndCurr: -500_000, ndPrev: 0, qdCurr: -5, qdPrev: 0 },
+    ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
     expect(r.byOutlet).toEqual([]);
     expect(r.byItem).toEqual([]);
     // Empty result still carries the always-serialized marker fields.
     expect(r.contributorLimit).toBe(5);
-    expect(r.byOutletMetric).toBe('sales');
-    expect(r.byItemMetric).toBe('bom');
+    expect(r.byOutletMetric).toBe('nominalDeviasi');
+    expect(r.byItemMetric).toBe('nominalDeviasi');
+    expect(r.contributorRankMetric).toBe('qtyDeviasi');
   });
 
-  it('no compare period → every row is "Baru" (prev 0), empty prev CTEs', async () => {
-    mockQueryRaw
-      .mockResolvedValueOnce([salesRow('RESTO-1', 5_000_000, 0)])
-      .mockResolvedValueOnce([bomRow('RESTO-1', 'AYAM', 400, 0, 'kg')]);
+  it('no compare period → every row and contributor is "Baru" (prev 0)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      devRow('RESTO-1', 'AYAM', -900_000, 0, -90, 0, 'kg'),
+    ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', null, null, {});
 
     expect(r.byOutlet.map((x) => x.name)).toEqual(['RESTO-1']);
-    expect(r.byOutlet[0]).toMatchObject({ delta: 5_000_000, pct: null, isNew: true });
+    expect(r.byOutlet[0]).toMatchObject({ delta: -900_000, pct: null, isNew: true });
     expect(r.byItem.map((x) => x.name)).toEqual(['AYAM']);
-    expect(r.byItem[0]).toMatchObject({ delta: 400, pct: null, isNew: true, unit: 'kg' });
+    expect(r.byItem[0]).toMatchObject({ delta: -900_000, pct: null, isNew: true });
+    expect(r.byItem[0].contributors[0]).toMatchObject({
+      name: 'RESTO-1', qtyDelta: -90, nominalDelta: -900_000, isNew: true,
+    });
   });
 });

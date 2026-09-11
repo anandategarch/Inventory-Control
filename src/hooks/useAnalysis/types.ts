@@ -361,16 +361,19 @@ export interface AnalysisData {
   // type-checking — the card renders its empty state when absent.
   // TASK H-5: rows carry `contributors` (drill-down movers); the wrapper
   // carries contributorLimit (informational — optional for back-compat).
-  // TASK H-6: byOutlet = ΔSales (Rp, salesMode); byItem = Δ pemakaian BOM
-  // (qty in the item's satuan) — rows/contributors carry `unit`, and the
-  // wrapper carries byOutletMetric/byItemMetric descriptors (all optional
-  // for back-compat with pre-v4 cached payloads).
+  // TASK H-7: BOTH grains rank Δ SUM(nominalDeviasi) (signed net Rp —
+  // negative = LOSS, positive = SURPLUS); drill-down contributors are
+  // ranked by Δ SUM(qtyDeviasi) (kuantiti deviasi, satuan) and carry Δ
+  // nominal alongside. The wrapper carries byOutletMetric/byItemMetric/
+  // contributorRankMetric descriptors (all optional for back-compat
+  // with pre-v5 cached payloads, which the server never serves anyway).
   topGrowth?: {
     byOutlet: TopGrowthRow[];
     byItem: TopGrowthRow[];
     contributorLimit?: number;
-    byOutletMetric?: 'sales';
-    byItemMetric?: 'bom';
+    byOutletMetric?: 'nominalDeviasi';
+    byItemMetric?: 'nominalDeviasi';
+    contributorRankMetric?: 'qtyDeviasi';
   };
   // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
   // /api/analysis (analysis/route.ts:989-990) — were missing from the type.

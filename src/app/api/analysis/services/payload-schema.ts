@@ -44,8 +44,18 @@
  *      byItem is now Δ pemakaian BOM (qtyBom) with `unit` (satuan) per
  *      row/contributor, and the wrapper carries `byOutletMetric`/
  *      `byItemMetric` descriptors. Old v3 rows must never be served.
+ * v5 = Task H-7 metric switch — BOTH grains now rank Δ SUM(nominalDeviasi)
+ *      (signed net Rp: negative = LOSS, positive = SURPLUS — same source
+ *      as the exec-summary Nominal Deviasi KPI); drill-down contributors
+ *      are ranked by Δ SUM(qtyDeviasi) (kuantiti deviasi, satuan) and
+ *      carry Δ nominal alongside (`qtyCurr/qtyPrev/qtyDelta` +
+ *      `nominalCurr/nominalPrev/nominalDelta`). Rows no longer carry
+ *      `unit` (both grains are Rp); the wrapper carries the new
+ *      `contributorRankMetric` descriptor. A v4 row (ΔSales per resto /
+ *      ΔBOM per barang) must never be served as if it were the new
+ *      metric — bump + marker below guarantee that.
  */
-export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 4;
+export const ANALYSIS_PAYLOAD_SCHEMA_VERSION = 5;
 
 /**
  * Top-level JSON key markers that MUST exist in a cached row for the
@@ -71,6 +81,15 @@ export const REQUIRED_PAYLOAD_MARKERS: readonly string[] = [
   // neither marker → never served → guaranteed recompute with the fix.
   '"byItemMetric":',
   '"byOutletMetric":',
+  // TASK H-7: the drill-down's ranking metric descriptor — topGrowth-level
+  // scalar, always serialized. A v4 row (byOutlet = ΔSales / byItem = ΔBOM
+  // — the OLD mixed metrics) carries `byItemMetric`/`byOutletMetric` but
+  // NOT this key → never served → guaranteed recompute onto the nominal-
+  // deviation metric. (Per-row markers like '"qtyDelta":' are FORBIDDEN —
+  // empty contributor lists serialize as [] with no row objects inside,
+  // which would falsely mark a fresh row as shape-mismatched → infinite
+  // recompute loop. Anchor markers on always-serialized scalars only.)
+  '"contributorRankMetric":',
 ];
 
 /**
