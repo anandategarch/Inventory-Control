@@ -44,6 +44,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import {
@@ -164,6 +165,15 @@ export async function GET(req: NextRequest) {
     const outletCode = params.outlet ?? null;
     const pic = params.pic ?? null;
 
+    // PERF (TAHAP-2 / P2-11): resolve month1 + month2 to actual DB case BEFORE
+    // the cache key AND before handing them to queryFlipDrilldown. This route
+    // never resolved months — a wrong-case month ("agustus 2026" vs DB
+    // "Agustus 2026") both forked the cache key AND made the per-period queries
+    // return empty. getMonthResolver is process-cached (~0ms after first call).
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedMonth1 = resolveMonthLabel(month1Label, monthResolverEarly) || month1Label;
+    const resolvedMonth2 = resolveMonthLabel(month2Label, monthResolverEarly) || month2Label;
+
     // 3. DB cache check — cache key includes ALL response-affecting params.
     // item + weekLabel + month1Label + month2Label + filters all uniquely
     // identify the drill-down response (different params → different entries).
@@ -171,7 +181,7 @@ export async function GET(req: NextRequest) {
     // for the SAME item+week would share one entry → cache poisoning.
     const cacheKey = buildCacheKey({
       route: 'flip-ranking-drilldown',
-      month: `${month1Label}|${month2Label}`,
+      month: `${resolvedMonth1}|${resolvedMonth2}`,
       week: weekLabel,
       itemName: item,
       area: area && area !== 'all' ? area : null,
@@ -200,8 +210,8 @@ export async function GET(req: NextRequest) {
       });
       if (noMatch) {
         return {
-          period1: emptyPeriod(month1Label),
-          period2: emptyPeriod(month2Label),
+          period1: emptyPeriod(resolvedMonth1),
+          period2: emptyPeriod(resolvedMonth2),
         };
       }
 
@@ -221,8 +231,8 @@ export async function GET(req: NextRequest) {
       const result = await queryFlipDrilldown({
         item,
         weekLabel,
-        month1Label,
-        month2Label,
+        month1Label: resolvedMonth1,
+        month2Label: resolvedMonth2,
         filters: filterOpts,
       });
 

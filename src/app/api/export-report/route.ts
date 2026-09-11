@@ -21,6 +21,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { validateQuery, exportReportQuerySchema } from '@/lib/validation';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { EarlyHttpResponse } from './services/types';
@@ -90,9 +91,19 @@ export async function GET(req: NextRequest) {
     //   identical requests (was missing — only /api/analysis had it). Critical for
     //   export-report because the compute is ~8s cold; without dedup, two concurrent
     //   identical exports would each compute + write the cache separately.
+    // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
+    // BEFORE the cache key (getMonthResolver is process-cached ~0ms). The
+    // data-fetcher re-resolves internally (idempotent no-op on the resolved
+    // value), but the KEY must not fork on input case — previously "juli 2026"
+    // vs "Juli 2026" produced two cache rows for the same report.
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedMonthParam = resolveMonthLabel(monthParam, monthResolverEarly) || monthParam;
+    const resolvedCompareMonthParam = userCompareMonth
+      ? (resolveMonthLabel(userCompareMonth, monthResolverEarly) || userCompareMonth)
+      : userCompareMonth;
     const cacheKey = buildCacheKey({
-      route: 'export-report', month: monthParam, week,
-      compareWeek: userCompareWeek, compareMonth: userCompareMonth,
+      route: 'export-report', month: resolvedMonthParam, week,
+      compareWeek: userCompareWeek, compareMonth: resolvedCompareMonthParam,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,

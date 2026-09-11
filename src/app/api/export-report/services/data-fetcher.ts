@@ -56,7 +56,8 @@ import {
   queryAreaAnalysis,
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
-import { evaluateRulesSql, evaluateHistoricalRulesJs } from '@/lib/queries/rule-evaluation';
+import { evaluateRulesSql, evaluateHistoricalRulesSql } from '@/lib/queries/rule-evaluation';
+import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { queryHistoricalStatsMultiMetric } from '@/lib/queries/historical';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -239,26 +240,37 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const historicalPeriods = allPeriods.filter(p => p.weekLabel === week && p.monthLabel !== month)
     .filter(p => { const cur = allPeriods.find(ap => ap.monthLabel === month && ap.weekLabel === week); return !cur || p.sortKey < cur.sortKey; });
 
-  // PERF-FASE3-BE04: Slim projection (5 columns × 35K rows = ~700KB) instead of
-  // full 25-column include. evaluateHistoricalRulesJs is the only consumer.
-  // Also fire evaluateRulesSql + queryVarianceAnalysis in parallel (they were
-  // previously sequential 35K-record JS loops).
-  const [currSlim, historicalByOutletItem, sqlFlags, varianceAnalysis] = await Promise.all([
-    db.inventoryRecord.findMany({
-      where: buildWhere(week, month),
-      select: {
-        outletId: true, itemId: true, akunPenyesuaian: true,
-        nominalLossSurplus: true, pctQtyDeviasiToBom: true,
-      },
-    }),
+  // PERF (TAHAP-2 / P2-7 + P2-9): the old block fetched currSlim — 5 columns
+  // × ~35K rows — solely to feed evaluateHistoricalRulesJs's JS loop. The
+  // 3 zScore rules now run as ONE SQL query (evaluateHistoricalRulesSql)
+  // INSIDE this parallel wave, so the current period only needs a COUNT for
+  // the 404 short-circuit. The queries marked "shared" below use
+  // cachedSharedQuery with the SAME queryIds as the /api/analysis pipeline —
+  // when the dashboard was just viewed, those rows are already cached and
+  // this export skips recomputing them (~4-6s of the old cold path).
+  const [currRecordCount, historicalByOutletItem, sqlFlags, varianceAnalysis, histFlags] = await Promise.all([
+    db.inventoryRecord.count({ where: buildWhere(week, month) }),
     historicalPeriods.length > 0
       ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
       : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
-    evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
-    queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
+    cachedSharedQuery(
+      'q-rules',
+      { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+      () => evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
+    ),
+    cachedSharedQuery(
+      'q-variance',
+      { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+      () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
+    ),
+    cachedSharedQuery(
+      'q-hist-rules',
+      { month, week, filters: filterOpts },
+      () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
+    ),
   ]);
 
-  if (currSlim.length === 0) {
+  if (currRecordCount === 0) {
     // BUG FIX (BUG-NORECORDS-11): include filter context in error message for debugging
     const filterSummary = [
       `month="${month}"`, `week="${week}"`,
@@ -274,14 +286,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 }));
   }
 
-  // PERF-FASE3-BE04: Historical zScore rules in JS (reads slim 5-col projection).
-  // Replaces the 35K-record evaluateRules loop — same logic, batch-processed.
-  const histFlags = evaluateHistoricalRulesJs(
-    currSlim,
-    historicalByOutletItem,
-    thresholds,
-  );
-
+  // PERF (TAHAP-2 / P2-7): the zScore hist flags arrived from SQL in the
+  // parallel wave above (evaluateHistoricalRulesSql — replaced the 35K-row
+  // currSlim fetch + evaluateHistoricalRulesJs loop).
   // Build topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian)
   // that fired at least one rule. Keeps the highest-priority flag.
   const allFlags = [...sqlFlags, ...histFlags];
@@ -306,8 +313,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // PERF (PAKET B / F2 — scan merge): current-period exec summary + deviation
   // breakdown come from ONE merged scan (queryDashboardKpis); only the
   // previous-period exec summary still runs standalone.
+  // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
+  // per-query cache (same queryIds as the analysis pipeline).
   const [kpis, prevSummary] = await Promise.all([
-    queryDashboardKpis(week, month, filterOpts),
+    cachedSharedQuery(
+      'q-kpis',
+      { month, week, filters: filterOpts },
+      () => queryDashboardKpis(week, month, filterOpts),
+    ),
     prevMonth && prevWeek ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
   ]);
   const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
@@ -326,10 +339,18 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   ] = await Promise.all([
     queryTopItemsByNominal(week, month, filterOpts, topNItems),
     queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+    cachedSharedQuery(
+      'q-topcat',
+      { month, week, filters: filterOpts, extra: { limit: topNItems } },
+      () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+    ),
     prevMonth && prevWeek ? queryTopItemsByAllCategories(prevWeek, prevMonth, filterOpts, 100) : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
     queryAreaAnalysis(week, month, filterOpts),
-    queryTrendAgg({ ...filterOpts, weekLabel: week }),
+    cachedSharedQuery(
+      'q-trend',
+      { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
+      () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
+    ),
     // Rev 2: Historical category averages
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
     queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),

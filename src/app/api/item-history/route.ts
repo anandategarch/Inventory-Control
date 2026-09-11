@@ -80,9 +80,17 @@ export async function GET(req: NextRequest) {
     // itemName + month + week. Cache hit returns in ~50ms.
     // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
     const ITEM_HISTORY_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    // PERF (TAHAP-2 / P2-11): resolve monthLabel to actual DB case BEFORE the
+    // cache key — previously "mei 2026" vs "Mei 2026" built two cache rows for
+    // the same data. The computeFn's own resolution (FIX-DEEP-1 below) is
+    // idempotent on the already-resolved value.
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedCurrentMonth = currentMonth
+      ? (resolveMonthLabel(currentMonth, monthResolverEarly) || currentMonth)
+      : null;
     const cacheKey = buildCacheKey({
       route: 'item-history',
-      month: currentMonth, week: currentWeek,
+      month: resolvedCurrentMonth, week: currentWeek,
       outletCode, itemName,
     });
 

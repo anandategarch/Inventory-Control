@@ -82,8 +82,9 @@ export async function buildHistoricalAnalysis(
   month: string,
   filterOpts: FetchedRecords['filterOpts'],
   historicalByOutletItem: FetchedRecords['historicalByOutletItem'],
-  // FX-HIST-EMPTY: new params for diagnostics
-  currSlim: FetchedRecords['currSlim'],
+  // FX-HIST-EMPTY: new params for diagnostics (currRecordCount — PERF
+  // TAHAP-2/P2-7 replaced the currSlim array with a plain count)
+  currRecordCount: number,
   historicalPeriodsCount: number,
   thresholds: FetchedRecords['thresholds'],
 ): Promise<HistoricalAnalysisResult> {
@@ -161,7 +162,7 @@ export async function buildHistoricalAnalysis(
   for (const stats of historicalByOutletItem.values()) {
     if (stats.devBom.stdDev > 0 && stats.devBom.n >= minWeeks) validStatsCount++;
   }
-  const evaluatedCount = currSlim.length;
+  const evaluatedCount = currRecordCount;
 
   // Determine the empty-state reason (NON_EMPTY if items present).
   let reason: HistoricalAnalysisMeta['reason'];

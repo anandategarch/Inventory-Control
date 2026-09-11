@@ -10,11 +10,14 @@
 //    4. Compare-period resolution (prevWeek + prevMonth) via shared helper
 //    5. Kelompok outlet-code resolution
 //    6. buildWhere closure + filterOpts object construction
-//    7. currSlim + historicalByOutletItem parallel fetch
+//    7. currRecordCount (404 probe) + historicalByOutletItem parallel fetch
 //
-//  PERF-OPT: currSlim ∥ historicalByOutletItem run together so the 404
-//  check + main Promise.all see the smaller of (currSlim, histStats).
-//  See original comment block (lines 341-375) for the full rationale.
+//  PERF (TAHAP-2 / P2-7): the old stage-2 also fetched `currSlim` — 5 columns
+//  × ~35K rows (~700KB) whose ONLY consumer was evaluateHistoricalRulesJs's
+//  JS loop. The 3 zScore rules now run as evaluateHistoricalRulesSql (SQL
+//  push-down, fired in stage 3), so the current period only needs a COUNT
+//  here: the 404 short-circuit + the payload's evaluatedCount meta read the
+//  number, and the count rides an index-only scan (monthLabel, weekLabel).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -24,25 +27,15 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import { queryHistoricalStats, queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
+import { queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams, WeekDayRange } from './validate-and-resolve';
 
 // OPTIMIZE-ANALYSIS: RecWithRels is the slim record shape declared in
-// src/engine/analysis/types.ts. Both findMany queries below use `select`
-// (not `include`) so Prisma only transfers the columns the engine reads —
-// ~10 fewer columns × ~35K rows = meaningful payload + memory reduction.
+// src/engine/analysis/types.ts. Kept as a type-level export for clarity —
+// it documents the engine's expected record shape even though the pipeline
+// no longer materializes current-period records (PERF TAHAP-2 / P2-7).
 type RecWithRels = import('@/engine/analysis/types').RecWithRels;
-
-// Shape of a single row in currSlim — 5-column slim projection.
-// (declared here so run-queries + post-process can reference it)
-export interface CurrSlimRow {
-  outletId: number;
-  itemId: number;
-  akunPenyesuaian: string | null;
-  nominalLossSurplus: number | null;
-  pctQtyDeviasiToBom: number | null;
-}
 
 // Shared filter options for SQL aggregate queries
 export interface FilterOpts {
@@ -56,8 +49,15 @@ export interface FilterOpts {
 
 // Stage-2 output — everything needed by run-queries + post-process.
 export interface FetchedRecords {
-  currSlim: CurrSlimRow[];
+  // PERF (TAHAP-2 / P2-7): replaced the 35K-row currSlim array with a COUNT —
+  // consumed by the 404 short-circuit + the historical-analysis meta's
+  // evaluatedCount. Per-record data is no longer needed in JS (zScore rules
+  // are SQL now).
+  currRecordCount: number;
   historicalByOutletItem: Map<string, MultiMetricHistoricalStats>;
+  // (monthLabel, weekLabel) baseline periods — consumed by
+  // evaluateHistoricalRulesSql (fired in stage 3) + the export pipeline.
+  historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>;
   historicalPeriodsCount: number; // number of (monthLabel,weekLabel) pairs used as historical baseline
   // TASK H-5: + periodStart/periodEnd (day-of-month bounds) — consumed here
   // for the payload's period ranges; downstream consumers that only read
@@ -225,39 +225,22 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   };
 
   // ============================================================
-  //  P1 fix: HISTORICAL STATS + SLIM CURRENT RECS — ALL PARALLEL
+  //  P1 fix: HISTORICAL STATS + CURRENT-PERIOD COUNT — ALL PARALLEL
   //  --------------------------------------------------------
-  //  SQL-OPTIMIZE: Eliminated the 35K-record load (currentRecs +
-  //  prevRecs were each ~25 columns × 35K rows = ~3MB JSON each).
-  //  Now fetching only:
-  //    1. currSlim — 5 columns × 35K rows (~700KB) for
-  //       evaluateHistoricalRulesJs (zScore-based rules still need
-  //       per-record nominalLossSurplus + pctQtyDeviasiToBom).
-  //    2. historicalByOutletItem — Map of {mean, stdDev, n} per
-  //       outlet+item (already a SQL aggregate, ~5K rows).
-  //
-  //  The heavy per-record computations are pushed to SQL:
-  //    - queryOutletHealthRanking (per-outlet aggregate)
-  //    - queryVarianceAnalysis (curr+prev JOIN)
-  //    - queryGrowthDrivers (per-metric aggregation)
-  //    - queryHistoricalCriticalItems (per-record fields for
-  //      items flagged by HISTORICAL_* rules)
-  //  These run in parallel with the existing 15 SQL aggregate queries.
+  //  PERF (TAHAP-2 / P2-7): currSlim (5 columns × ~35K rows, ~700KB) was
+  //  fetched here solely to feed evaluateHistoricalRulesJs's JS loop. The
+  //  3 zScore rules now run as ONE SQL query (evaluateHistoricalRulesSql,
+  //  fired in stage 3) with an inline historical-baseline CTE, so the
+  //  current period only needs a COUNT for the 404 short-circuit —
+  //  index-driven, 1 row egress. historicalByOutletItem stays:
+  //  buildHistoricalAnalysis still merges its 5-metric stats into the
+  //  critical-items payload (that query is also the baseline the export
+  //  pipeline reuses).
   //
   //  FIX: Historical periods now filter by SAME weekLabel only.
   //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline
   //  must compare W4 vs W4 (prev months), NOT W4 vs W1+W2+W4 (mixed).
   //  Mixed weeks inflate mean (W1 is smaller) → false positive Z-Score.
-  //
-  //  PERF-OPT (verified): historicalByOutletItem is ALREADY in a
-  //  Promise.all with currSlim — they run fully parallel. It CANNOT
-  //  be merged into the main Promise.all below because:
-  //    (a) the 404 check at line ~380 needs currSlim first, and
-  //    (b) moving it after the 404 check would serialize it
-  //        (currSlim → 404 check → big Promise.all), losing the
-  //        currSlim ∥ historicalByOutletItem overlap.
-  //  Current structure: max(currSlim, historicalByOutletItem) → 404
-  //  check → big Promise.all. This is the optimal parallel shape.
   // ============================================================
   const historicalPeriods = allPeriods.filter(
     (p) => p.weekLabel === week && p.monthLabel !== resolvedMonth
@@ -266,26 +249,19 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
     return !current || p.sortKey < current.sortKey;
   });
 
-  const [currSlimRaw, historicalByOutletItem] = await Promise.all([
-    // SQL-OPTIMIZE: 5-column slim projection (was 25-column full select).
-    // evaluateHistoricalRulesJs is the only consumer — it reads just
-    // (outletId, itemId, akunPenyesuaian, nominalLossSurplus,
-    // pctQtyDeviasiToBom) per record.
-    db.inventoryRecord.findMany({
-      where: buildWhere(week, resolvedMonth),
-      select: {
-        outletId: true, itemId: true, akunPenyesuaian: true,
-        nominalLossSurplus: true, pctQtyDeviasiToBom: true,
-      },
-    }),
+  const [currRecordCount, historicalByOutletItem] = await Promise.all([
+    // PERF (TAHAP-2 / P2-7): COUNT replaces the 35K-row slim findMany —
+    // the 404 probe + the payload's evaluatedCount meta only need the number.
+    db.inventoryRecord.count({ where: buildWhere(week, resolvedMonth) }),
     historicalPeriods.length > 0
       ? queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts)
       : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
   ]);
 
   return {
-    currSlim: currSlimRaw as CurrSlimRow[],
+    currRecordCount,
     historicalByOutletItem,
+    historicalPeriods,
     historicalPeriodsCount: historicalPeriods.length,
     weeksRaw,
     monthKeyByLabel,
@@ -302,6 +278,6 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
 }
 
 // Avoid unused-import lint (RecWithRels kept as a type-level import for clarity
-// — it documents the engine's expected record shape even though currSlim is now
-// a narrower projection. See OPTIMIZE-ANALYSIS comment above.)
+// — it documents the engine's expected record shape. See OPTIMIZE-ANALYSIS
+// comment above.)
 export type { RecWithRels };

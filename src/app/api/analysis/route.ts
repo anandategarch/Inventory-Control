@@ -49,7 +49,10 @@ export async function GET(req: NextRequest) {
     // 404 short-circuit (FIX BUG-PERF-1): MUST reject the in-flight computation
     // Promise before returning 404 — otherwise the Promise stays pending and
     // concurrent requests for the same cache key hang forever.
-    if (records.currSlim.length === 0) {
+    // PERF (TAHAP-2 / P2-7): the probe is a COUNT (index-only scan) — the old
+    // 35K-row currSlim findMany was only needed for the JS zScore loop, which
+    // is now evaluateHistoricalRulesSql.
+    if (records.currRecordCount === 0) {
       const notFoundResponse = {
         success: false,
         message: `No records found for ${params.month} / ${params.week} with given filters.`,

@@ -94,14 +94,15 @@ export async function queryTopOutletsBySales(
   // outletCode/picOutletCodes/itemName) is applied via the same InventoryRecord
   // subquery pattern — preserves the original semantics where only outlets
   // matching `f` are returned.
+  //
+  // PERF (TAHAP-2 / P2-10): the old query had TWO CTEs over the same filtered
+  // period — filtered_outlets (DISTINCT outletId) + outlet_nominal (GROUP BY
+  // outletId with the SUMs). The GROUP BY's row set IS the DISTINCT outlet set
+  // (an outlet appears iff it has ≥1 matching record), so the inner JOIN on
+  // outlet_nominal alone restricts ops to exactly the outlets `f` matches —
+  // one scan instead of two, same result set.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ outletCode: string; outletName: string; area: string; sales: number; absNominal: number; nominalDeviasi: number }[]>`
-    WITH filtered_outlets AS (
-      SELECT DISTINCT ir."outletId"
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        ${f}
-    ),
-    outlet_nominal AS (
+    WITH outlet_nominal AS (
       SELECT ir."outletId",
         -- FIX (MASTER-CONTEXT): ABS(SUM(nominalDeviasi)) — ABS of sum, not sum of per-item ABS
         ABS(SUM(ir."nominalDeviasi")) as "absNominal",
@@ -119,8 +120,7 @@ export async function queryTopOutletsBySales(
       o.area
     FROM "OutletPeriodSales" ops
     JOIN "Outlet" o ON ops."outletId" = o.id
-    JOIN filtered_outlets fo ON ops."outletId" = fo."outletId"
-    LEFT JOIN outlet_nominal on2 ON ops."outletId" = on2."outletId"
+    JOIN outlet_nominal on2 ON ops."outletId" = on2."outletId"
     WHERE ops."monthLabel" = ${month} AND ops."weekLabel" = ${week}
     ORDER BY ops."salesMode" DESC
     LIMIT ${limit}

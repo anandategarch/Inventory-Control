@@ -42,6 +42,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import {
@@ -161,6 +162,14 @@ export async function GET(req: NextRequest) {
     // Zod schema enforces 1..50 with default 20 — always a valid positive int.
     const limit = params.limit;
 
+    // PERF (TAHAP-2 / P2-11): resolve month to actual DB case BEFORE the cache
+    // key AND before handing it to queryFlipRanking. This route never resolved
+    // month at all — a wrong-case month ("agustus 2026" vs DB "Agustus 2026")
+    // both forked the cache key AND returned an empty result for the query.
+    // getMonthResolver is process-cached (~0ms after first call).
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedMonth = month ? (resolveMonthLabel(month, monthResolverEarly) || month) : month;
+
     // 3. DB cache check — cache key includes ALL response-affecting params.
     // FIX (USER-REQ): month IS now in the cache key — when set, only flip pairs
     // involving that month are counted (different month = different result).
@@ -170,7 +179,7 @@ export async function GET(req: NextRequest) {
     // requests with different limits would share one entry (cache poisoning).
     const cacheKey = buildCacheKey({
       route: 'flip-ranking',
-      month: month || 'ALL',
+      month: resolvedMonth || 'ALL',
       week: week || 'ALL',
       itemName: 'ALL',
       area: area && area !== 'all' ? area : null,
@@ -214,7 +223,7 @@ export async function GET(req: NextRequest) {
         picOutletCodes: outletCodes,
       };
 
-      const result = await queryFlipRanking(filterOpts, week || null, month || null, limit);
+      const result = await queryFlipRanking(filterOpts, week || null, resolvedMonth || null, limit);
 
       return {
         items: result.items,

@@ -65,7 +65,9 @@ export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedPar
       const records = await fetchRecords(p);
       // Data gone (deleted since the stale row was cached) — leave the stale
       // row in place; the next explicit request takes the miss path and 404s.
-      if (records.currSlim.length === 0) return;
+      // PERF (TAHAP-2 / P2-7): currRecordCount is a COUNT probe (the old
+      // currSlim array + JS zScore loop is now evaluateHistoricalRulesSql).
+      if (records.currRecordCount === 0) return;
       const queries = await runQueries(p, records);
       const processed = await postProcess(p, records, queries);
       const result = assembleResponse(p, records, queries, processed);

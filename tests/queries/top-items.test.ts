@@ -155,38 +155,35 @@ describe('queryParetoByDevBom', () => {
     mockExecuteRaw.mockReset();
   });
 
-  it('returns empty result without firing the outlet query when no items exceed the threshold', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]); // topItems query → empty
+  it('returns empty result when no (item, outlet) pairs exceed the threshold', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]); // merged per-outlet scan → empty
     const r = await queryParetoByDevBom('WEEK 1', 'Agustus 2026', {}, 20, 0.5);
     expect(r.drivers).toEqual([]);
     expect(r.totalCount).toBe(0);
     expect(r.totalAbsNominal).toBe(0);
     expect(r.thresholdPct).toBe(0.5);
-    // Early return — the per-outlet breakdown query must NOT fire
+    // ONE query total — no second scan, no per-item N+1
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('builds drivers + outlet breakdown from ONE combined outlet query (no per-item N+1) — FIX AUDIT-PERF-2', async () => {
-    // Step 1 (topItems): two items, absNominal 100 + 50 (grandTotal = 150)
+  it('derives drivers + outlet breakdown from ONE combined (item, outlet) scan — PERF TAHAP-2/P2-10', async () => {
+    // ONE query returns ALL threshold-passing (item, outlet) rows, pre-sorted
+    // by (itemName, absNominal DESC, outletCode) — the item level is derived
+    // in JS from the same expressions the old topItems scan used.
     mockQueryRaw.mockResolvedValueOnce([
-      { itemName: 'Item A', outletCount: 2, devBom: 0.6, devBomAbs: 0.7, nominalDeviasi: -100, absNominal: 100 },
-      { itemName: 'Item B', outletCount: 1, devBom: 0.9, devBomAbs: 0.9, nominalDeviasi: 50, absNominal: 50 },
-    ]);
-    // Step 2 (single combined outlet query): rows for BOTH items in ONE result —
-    // grouped by (itemName, outletCode) with the ROW_NUMBER top-20-per-item cap.
-    mockQueryRaw.mockResolvedValueOnce([
-      { itemName: 'Item A', outletCode: '1030.BDG1', outletName: 'Outlet BDG 1', area: 'JAWA BARAT', devBom: 0.6, devBomAbs: 0.7, nominalDeviasi: -80, absNominal: 80 },
-      { itemName: 'Item A', outletCode: '1031.BDG2', outletName: 'Outlet BDG 2', area: 'JAWA BARAT', devBom: 0.8, devBomAbs: 0.8, nominalDeviasi: -20, absNominal: 20 },
-      { itemName: 'Item B', outletCode: '1040.MLG1', outletName: 'Outlet MLG 1', area: 'JAWA TIMUR', devBom: 0.9, devBomAbs: 0.9, nominalDeviasi: 50, absNominal: 50 },
+      // Item A outlets (absNominal 100 total via -80 + -20)
+      { itemName: 'Item A', outletCode: '1030.BDG1', outletName: 'Outlet BDG 1', area: 'JAWA BARAT', devBom: 0.6, devBomAbs: 0.7, nominalDeviasi: -80, absNominal: 80, totalQtyDeviasi: -60, totalQtyBom: 100 },
+      { itemName: 'Item A', outletCode: '1031.BDG2', outletName: 'Outlet BDG 2', area: 'JAWA BARAT', devBom: 0.8, devBomAbs: 0.8, nominalDeviasi: -20, absNominal: 20, totalQtyDeviasi: -25, totalQtyBom: 30 },
+      // Item B outlet (absNominal 50)
+      { itemName: 'Item B', outletCode: '1040.MLG1', outletName: 'Outlet MLG 1', area: 'JAWA TIMUR', devBom: 0.9, devBomAbs: 0.9, nominalDeviasi: 50, absNominal: 50, totalQtyDeviasi: 45, totalQtyBom: 50 },
     ]);
     const r = await queryParetoByDevBom('WEEK 1', 'Agustus 2026', {}, 20, 0.5);
-    // ONE topItems query + ONE combined outlet query (old code fired one
-    // transaction PER top item — 2 items = 2 extra transactions, 20 items = 20)
-    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+    // ONE combined scan total (old flow: topItems scan + outlet scan = 2)
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
     expect(r.totalCount).toBe(2);
     expect(r.totalAbsNominal).toBe(150);
     expect(r.drivers).toHaveLength(2);
-    // Driver-level share/cum math unchanged (same as the old per-item path)
+    // Driver-level share/cum math unchanged
     expect(r.drivers[0].itemName).toBe('Item A');
     expect(r.drivers[0].sharePct).toBe(66.7);
     expect(r.drivers[0].cumPct).toBe(66.7);
@@ -203,12 +200,40 @@ describe('queryParetoByDevBom', () => {
     expect(r.drivers[1].outlets).toHaveLength(1);
     expect(r.drivers[1].outlets[0].outletCode).toBe('1040.MLG1');
     expect(r.drivers[1].outlets[0].sharePct).toBe(100);
-    // Query shape: single GROUP BY (item, outlet) query with ROW_NUMBER top-20 cap
-    const call = mockQueryRaw.mock.calls[1][0];
+    // Item-level derivation from the outlet rows: outletCount = rows per item,
+    // devBom = Σ qtyDeviasi / Σ|qtyBom| (Item A: (-60 + -25) / (100 + 30))
+    expect(r.drivers[0].outletCount).toBe(2);
+    expect(r.drivers[0].devBom).toBeCloseTo(-85 / 130, 10);
+    expect(r.drivers[0].absNominal).toBe(100);
+    expect(r.drivers[1].outletCount).toBe(1);
+    expect(r.drivers[1].devBom).toBeCloseTo(45 / 50, 10);
+    // Query shape: ONE GROUP BY (item, outlet) scan with the HAVING threshold
+    const call = mockQueryRaw.mock.calls[0][0];
     const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
     expect(sqlText).toContain('WITH per_outlet AS');
-    expect(sqlText).toContain('ROW_NUMBER() OVER (PARTITION BY "itemName"');
-    expect(sqlText).toContain('WHERE rn <= 20');
-    expect(sqlText).toContain('i.name IN ('); // parameterized IN-list (Prisma.join)
+    expect(sqlText).toContain('GROUP BY i.name, o.code, o.name, o.area');
+    expect(sqlText).toContain('END > '); // HAVING threshold expression
+    expect(sqlText).not.toContain('i.name IN ('); // no second top-items IN-list scan
+  });
+
+  it('caps drivers at maxDrivers and outlets at 20 per item (JS caps replacing SQL LIMIT/ROW_NUMBER)', async () => {
+    // 3 items with absNominal 30 / 20 / 10 → maxDrivers=2 keeps the top 2
+    const rows = [
+      { itemName: 'I1', outletCode: 'A', outletName: 'A', area: 'X', devBom: 0.6, devBomAbs: 0.6, nominalDeviasi: -30, absNominal: 30, totalQtyDeviasi: -1, totalQtyBom: 2 },
+      { itemName: 'I2', outletCode: 'A', outletName: 'A', area: 'X', devBom: 0.6, devBomAbs: 0.6, nominalDeviasi: -20, absNominal: 20, totalQtyDeviasi: -1, totalQtyBom: 2 },
+      { itemName: 'I3', outletCode: 'A', outletName: 'A', area: 'X', devBom: 0.6, devBomAbs: 0.6, nominalDeviasi: -10, absNominal: 10, totalQtyDeviasi: -1, totalQtyBom: 2 },
+    ];
+    // 25 outlets for I1 → capped at 20 in the JS derivation
+    for (let i = 0; i < 24; i++) {
+      rows.push({ itemName: 'I1', outletCode: `O${String(i).padStart(2, '0')}`, outletName: `O${i}`, area: 'X', devBom: 0.6, devBomAbs: 0.6, nominalDeviasi: -1, absNominal: 1, totalQtyDeviasi: -1, totalQtyBom: 2 });
+    }
+    mockQueryRaw.mockResolvedValueOnce(rows);
+    const r = await queryParetoByDevBom('WEEK 1', 'Agustus 2026', {}, 2, 0.5);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(r.drivers).toHaveLength(2);
+    expect(r.drivers.map((d) => d.itemName)).toEqual(['I1', 'I2']);
+    expect(r.drivers[0].outlets).toHaveLength(20); // 25 rows → capped at 20
+    // outletCount reflects ALL threshold-passing outlets (25), not the capped 20
+    expect(r.drivers[0].outletCount).toBe(25);
   });
 });

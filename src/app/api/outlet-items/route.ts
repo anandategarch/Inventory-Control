@@ -20,6 +20,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { validateQuery, outletItemsQuerySchema } from '@/lib/validation';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
@@ -68,12 +69,22 @@ export async function GET(req: NextRequest) {
     // month + week + compareWeek + compareMonth. Cache hit returns in ~50ms.
     // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
     const OUTLET_ITEMS_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
+    // BEFORE building the cache key (getMonthResolver is process-cached ~0ms).
+    // Previously "juli 2026" vs "Juli 2026" built two cache rows for the same
+    // data. The computeFn re-resolves internally — idempotent no-op on the
+    // already-resolved value.
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedMonth = month ? (resolveMonthLabel(month, monthResolverEarly) || month) : month;
+    const resolvedCompareMonth = compareMonthRaw
+      ? (resolveMonthLabel(compareMonthRaw, monthResolverEarly) || compareMonthRaw)
+      : compareMonthRaw;
     const cacheKey = buildCacheKey({
       route: 'outlet-items',
-      month, week,
+      month: resolvedMonth, week,
       outletCode,
       compareWeek,
-      compareMonth: compareMonthRaw,
+      compareMonth: resolvedCompareMonth,
     });
 
     const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<Record<string, unknown>>(

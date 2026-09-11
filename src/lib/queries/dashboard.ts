@@ -47,25 +47,67 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
   // weekLabel) tuples is identical between the two tables (OutletPeriodSales is
   // populated from InventoryRecord at ingest time), but OutletPeriodSales is
   // 70× smaller → eliminates a parallel seq scan of InventoryRecord.
-  // When ANY filter that requires InventoryRecord is set, fall back to the
-  // original ir-based filtered_periods so `f` (which references `ir.`) can apply.
-  // Verified via EXPLAIN: trend query drops from 3.5s → 0.4s on unfiltered calls.
-  const hasIrFilter = !!(filters.area || filters.kelompok || filters.outletCode || filters.itemName ||
-    (filters.picOutletCodes && filters.picOutletCodes.length > 0));
-  const filteredPeriodsSql = hasIrFilter
-    ? Prisma.sql`
-        SELECT DISTINCT ir."outletId", ir."monthLabel", ir."weekLabel"
-        FROM "InventoryRecord" ir
-        WHERE 1=1
-          ${f}
-          ${weekFilter}
-      `
-    : Prisma.sql`
-        SELECT DISTINCT "outletId", "monthLabel", "weekLabel"
-        FROM "OutletPeriodSales" ops
-        WHERE 1=1
-          ${weekFilterOps}
-      `;
+  //
+  // PERF (TAHAP-2 / P2-8): the same ops-based derivation now ALSO applies when
+  // the filter set is OUTLET-RESOLVABLE ONLY (kelompok / outletCode / pic) —
+  // those filters were already expressed as `outletId IN (SELECT id FROM Outlet
+  // WHERE ...)` subqueries by buildSqlFilters, so restricting OutletPeriodSales
+  // by the SAME subquery yields the identical tuple set WITHOUT the fallback's
+  // DISTINCT scan over InventoryRecord. That fallback was the "outlet filter →
+  // 40-60s tail" hot spot: with no month predicate on the trend's all-period
+  // scope, the planner had no usable leading index for the outletId-subquery
+  // form and seq-scanned the whole 280K-row table.
+  //   - itemName → still the ir fallback (the item dimension only exists on
+  //     InventoryRecord; OutletPeriodSales has no item column).
+  //   - area → still the ir fallback (ir.area is the per-row stamped value; the
+  //     (area, monthLabel, weekLabel) index keeps that DISTINCT scan cheap
+  //     — ~1/19th of the table, index-driven).
+  const hasIrOnlyFilter = !!(filters.area || filters.itemName);
+  const hasOutletResolvableFilter = !!(
+    filters.kelompok ||
+    filters.outletCode ||
+    (filters.picOutletCodes && filters.picOutletCodes.length > 0)
+  );
+  let filteredPeriodsSql: Prisma.Sql;
+  if (hasIrOnlyFilter) {
+    filteredPeriodsSql = Prisma.sql`
+      SELECT DISTINCT ir."outletId", ir."monthLabel", ir."weekLabel"
+      FROM "InventoryRecord" ir
+      WHERE 1=1
+        ${f}
+        ${weekFilter}
+    `;
+  } else if (hasOutletResolvableFilter) {
+    // Same Outlet predicates buildSqlFilters generates (kelompok / outletCode /
+    // pic), applied to the 4.4K-row OutletPeriodSales instead of InventoryRecord.
+    const outletPreds: Prisma.Sql[] = [];
+    if (filters.kelompok) {
+      outletPreds.push(Prisma.sql`LEFT(SUBSTRING(code FROM '[^.]+$'), 3) = UPPER(${filters.kelompok})`);
+    }
+    if (filters.outletCode) {
+      outletPreds.push(Prisma.sql`code = ${filters.outletCode}`);
+    }
+    if (filters.picOutletCodes && filters.picOutletCodes.length > 0) {
+      // Empty-PIC sentinel ('__NO_MATCH__') flows through as a non-matching code
+      // set — same empty result the ir fallback produced.
+      outletPreds.push(Prisma.sql`code IN (${Prisma.join(filters.picOutletCodes)})`);
+    }
+    const outletWhere = Prisma.join(outletPreds, ' AND ');
+    filteredPeriodsSql = Prisma.sql`
+      SELECT DISTINCT ops."outletId", ops."monthLabel", ops."weekLabel"
+      FROM "OutletPeriodSales" ops
+      WHERE 1=1
+        ${weekFilterOps}
+        AND ops."outletId" IN (SELECT id FROM "Outlet" WHERE ${outletWhere})
+    `;
+  } else {
+    filteredPeriodsSql = Prisma.sql`
+      SELECT DISTINCT "outletId", "monthLabel", "weekLabel"
+      FROM "OutletPeriodSales" ops
+      WHERE 1=1
+        ${weekFilterOps}
+    `;
+  }
   // FIX H4 (AUDIT-7): wrap in withStatementTimeout — trend query scans all periods.
   // DB-06: sales_counts → ranked_sales → sales_per_period CTE pipeline replaced
   // with pre-computed OutletPeriodSales table. The `f` filter (which can include

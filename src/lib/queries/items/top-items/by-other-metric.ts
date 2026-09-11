@@ -416,66 +416,24 @@ export async function queryParetoByDevBom(
 ): Promise<ParetoDevBomResult> {
   const f = buildSqlFilters(filters);
 
-  const topItems = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
-    itemName: string; outletCount: number; devBom: number; devBomAbs: number;
-    nominalDeviasi: number; absNominal: number;
-  }>>`
-    WITH abnormal_item_outlets AS (
-      SELECT i.name as "itemName", ir."outletId",
-        SUM(ir."nominalDeviasi") as "nominalDeviasi",
-        ABS(SUM(ir."nominalDeviasi")) as "absNominal",
-        SUM(ir."qtyDeviasi") as "totalQtyDeviasi",
-        SUM(ABS(ir."qtyBom")) as "totalQtyBom",
-        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-          ELSE 0 END as "devBomAbs"
-      FROM "InventoryRecord" ir
-      JOIN "Item" i ON ir."itemId" = i.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
-        ${f}
-      GROUP BY i.name, ir."outletId"
-      HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-          ELSE 0 END > ${threshold}
-    )
-    SELECT "itemName",
-      CAST(COUNT(DISTINCT "outletId") AS INTEGER) as "outletCount",
-      CASE WHEN SUM("totalQtyBom") > 0
-        THEN SUM("totalQtyDeviasi") / SUM("totalQtyBom") ELSE 0 END as "devBom",
-      CASE WHEN SUM("totalQtyBom") > 0
-        THEN SUM(ABS("totalQtyDeviasi")) / SUM("totalQtyBom") ELSE 0 END as "devBomAbs",
-      SUM("nominalDeviasi") as "nominalDeviasi",
-      ABS(SUM("nominalDeviasi")) as "absNominal"
-    FROM abnormal_item_outlets
-    GROUP BY "itemName"
-    ORDER BY "absNominal" DESC
-    LIMIT ${maxDrivers}
-  `);
-
-  if (topItems.length === 0) {
-    return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: threshold };
-  }
-
-  const grandTotal = topItems.reduce((s, r) => s + Number(r.absNominal), 0);
-  let cumPct = 0;
-
-  // FIX (AUDIT-PERF-2): single query with ROW_NUMBER cap replaces 20 per-item
-  // transactions (pool exhaustion). The old code fired ONE withStatementTimeout
-  // transaction PER top item (up to 20 parallel full-period scans → ~32
-  // concurrent connections vs connection_limit=30 → intermittent pool
-  // exhaustion / ECHECKOUTRETRIES stalls, which the frontend then retried,
-  // amplifying the problem). This single GROUP BY (item, outlet) query produces
-  // the same per-item outlet rows (same WHERE/HAVING expressions, same top-20
-  // per item by ABS(nominalDeviasi) DESC) in ONE transaction.
-  // topItems.length >= 1 here (empty case early-returned above), so the
-  // Prisma.join IN-list always has >= 1 element.
-  const topItemNames = topItems.map((t) => t.itemName);
+  // PERF (TAHAP-2 / P2-10): previously TWO sequential scans of the same
+  // filtered period — (1) GROUP BY (item, outletId) → item-level top-20,
+  // then (2) GROUP BY (item, outlet) again with outlet columns + i.name IN
+  // (top items) for the drill-down rows. Both scans shared the same WHERE /
+  // HAVING / (item × outlet) grouping, so this now runs ONE scan that returns
+  // ALL threshold-passing (item, outlet) rows (with the sums needed to
+  // re-derive the item level in JS — the same expressions scan 1 used:
+  // outletCount = COUNT(DISTINCT outletId) → rows per item;
+  // devBom = Σ qtyDeviasi / Σ |qtyBom|; devBomAbs = Σ |Σ qtyDeviasi| / Σ |qtyBom|;
+  // absNominal = ABS(Σ nominalDeviasi)).
+  // Row volume is bounded by (item × outlet) pairs above the 50% threshold —
+  // typically a few hundred rows, far below the period itself.
+  // The per-item top-20 outlet cap (old ROW_NUMBER rn <= 20) is a JS sort by
+  // (absNominal DESC, outletCode) + slice — same deterministic tie-break.
   const outletRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
     itemName: string; outletCode: string; outletName: string; area: string;
     devBom: number; devBomAbs: number; nominalDeviasi: number; absNominal: number;
+    totalQtyDeviasi: number; totalQtyBom: number;
   }>>`
     WITH per_outlet AS (
       SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", o.area,
@@ -486,48 +444,86 @@ export async function queryParetoByDevBom(
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBomAbs",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
-        ABS(SUM(ir."nominalDeviasi")) as "absNominal"
+        ABS(SUM(ir."nominalDeviasi")) as "absNominal",
+        SUM(ir."qtyDeviasi") as "totalQtyDeviasi",
+        SUM(ABS(ir."qtyBom")) as "totalQtyBom"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
-        AND i.name IN (${Prisma.join(topItemNames)})
         ${f}
       GROUP BY i.name, o.code, o.name, o.area
       HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END > ${threshold}
-    ),
-    ranked AS (
-      -- Top 20 outlets per item by ABS(nominalDeviasi) DESC — same cap the old
-      -- per-item query enforced via ORDER BY ... LIMIT 20. "outletCode" is a
-      -- deterministic tie-break for equal absNominal (old query's LIMIT
-      -- picked ties nondeterministically).
-      SELECT per_outlet.*,
-        ROW_NUMBER() OVER (PARTITION BY "itemName" ORDER BY "absNominal" DESC, "outletCode") AS rn
-      FROM per_outlet
     )
-    SELECT "itemName", "outletCode", "outletName", "area", "devBom", "devBomAbs", "nominalDeviasi", "absNominal"
-    FROM ranked
-    WHERE rn <= 20
+    SELECT "itemName", "outletCode", "outletName", "area", "devBom", "devBomAbs",
+      "nominalDeviasi", "absNominal", "totalQtyDeviasi", "totalQtyBom"
+    FROM per_outlet
     ORDER BY "itemName", "absNominal" DESC, "outletCode"
   `);
-  const outletRowsByItem = new Map<string, typeof outletRows>();
+
+  // Group rows per item (SQL order gives per-item absNominal DESC + outletCode
+  // tie-break — the same order the old ROW_NUMBER cap used).
+  const rowsByItem = new Map<string, typeof outletRows>();
   for (const row of outletRows) {
-    const list = outletRowsByItem.get(row.itemName) ?? [];
+    const list = rowsByItem.get(row.itemName) ?? [];
     list.push(row);
-    outletRowsByItem.set(row.itemName, list);
+    rowsByItem.set(row.itemName, list);
   }
 
+  // Item-level derivation (same expressions the old topItems scan used).
+  interface ItemAgg {
+    itemName: string;
+    outletCount: number;
+    devBom: number;
+    devBomAbs: number;
+    nominalDeviasi: number;
+    absNominal: number;
+    rows: typeof outletRows;
+  }
+  const itemAggs: ItemAgg[] = [];
+  for (const [itemName, rows] of rowsByItem) {
+    let sumQtyDeviasi = 0, sumAbsQtyDeviasi = 0, sumQtyBom = 0, sumNominalDeviasi = 0;
+    for (const r of rows) {
+      sumQtyDeviasi += Number(r.totalQtyDeviasi) || 0;
+      sumAbsQtyDeviasi += Math.abs(Number(r.totalQtyDeviasi) || 0);
+      sumQtyBom += Number(r.totalQtyBom) || 0;
+      sumNominalDeviasi += Number(r.nominalDeviasi) || 0;
+    }
+    itemAggs.push({
+      itemName,
+      outletCount: rows.length,
+      devBom: sumQtyBom > 0 ? sumQtyDeviasi / sumQtyBom : 0,
+      devBomAbs: sumQtyBom > 0 ? sumAbsQtyDeviasi / sumQtyBom : 0,
+      nominalDeviasi: sumNominalDeviasi,
+      absNominal: Math.abs(sumNominalDeviasi),
+      rows,
+    });
+  }
+
+  if (itemAggs.length === 0) {
+    return { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0, thresholdPct: threshold };
+  }
+
+  // Top items by absNominal DESC (itemName tie-break for determinism), capped
+  // at maxDrivers — same cap + order as the old scan-1 LIMIT.
+  const topItems = itemAggs
+    .sort((a, b) => (b.absNominal - a.absNominal) || a.itemName.localeCompare(b.itemName))
+    .slice(0, maxDrivers);
+
+  const grandTotal = topItems.reduce((s, r) => s + r.absNominal, 0);
+  let cumPct = 0;
+
   const drivers: ParetoDevBomRow[] = topItems.map((item) => {
-    const itemName = item.itemName;
-    const itemAbsNominal = Number(item.absNominal);
-    const sharePct = grandTotal > 0 ? (itemAbsNominal / grandTotal) * 100 : 0;
+    const sharePct = grandTotal > 0 ? (item.absNominal / grandTotal) * 100 : 0;
     cumPct += sharePct;
 
-    const outletRows = outletRowsByItem.get(itemName) ?? [];
+    // Top 20 outlets per item (old rn <= 20 cap) — rows arrive pre-sorted by
+    // (absNominal DESC, outletCode) from the SQL ORDER BY.
+    const outletRows = item.rows.slice(0, 20);
     const outletTotal = outletRows.reduce((s, r) => s + Number(r.absNominal), 0);
     let outletCum = 0;
     const outlets: ParetoDevBomOutletRow[] = outletRows.map((r) => {
@@ -547,12 +543,12 @@ export async function queryParetoByDevBom(
     });
 
     return {
-      itemName,
-      outletCount: Number(item.outletCount),
+      itemName: item.itemName,
+      outletCount: item.outletCount,
       devBom: Number(item.devBom) || 0,
       devBomAbs: Number(item.devBomAbs) || 0,
       nominalDeviasi: Number(item.nominalDeviasi) || 0,
-      absNominal: itemAbsNominal,
+      absNominal: item.absNominal,
       sharePct: Number(sharePct.toFixed(1)),
       cumPct: Number(cumPct.toFixed(1)),
       outlets,

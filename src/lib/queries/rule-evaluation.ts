@@ -1,7 +1,6 @@
 // ============================================================
-//  SQL Rule Evaluation — pushes 16 rule checks to PostgreSQL
-//  (3 zScore-based rules evaluated via JS post-process below).
-//  Production total: 16 SQL + 3 JS post-process = 19 rules.
+//  SQL Rule Evaluation — pushes 16 rule checks to PostgreSQL.
+//  Production total: 16 SQL + 3 zScore SQL = 19 rules.
 //
 //  Returns: array of { outletId, itemId, akunPenyesuaian, ruleCode,
 //    severity, category, priority } — one row per fired rule per record.
@@ -254,70 +253,141 @@ export async function evaluateRulesSql(
 }
 
 // ============================================================
-//  Post-process: evaluate zScore-based rules in JS.
-//  These rules need the historicalByOutletItem map (pre-fetched
-//  SQL aggregate) which can't be easily inlined in the main query.
+//  HISTO (P2-7): zScore rules — SQL push-down
+//  --------------------------------------------------------
+//  Replaces evaluateHistoricalRulesJs, which required fetching the ENTIRE
+//  current period as currSlim (5 columns × ~35K rows ≈ 700KB to Node) just
+//  to loop over it in JS and look up pre-fetched stats in a Map. Only 3
+//  rules consumed that data (HISTORICAL_ABNORMAL / _SURPLUS / WARNING) —
+//  now they are computed in ONE SQL query that joins the current period
+//  against an inline historical-baseline CTE (same weekly_dev structure
+//  as queryHistoricalStatsMultiMetric, devBom metric only).
 //
-//  Returns additional flags for 3 rules: HISTORICAL_ABNORMAL,
-//  HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING.
+//  Semantics parity with the old JS loop:
+//    - baseline = per (outlet, item) mean/stdDev/n of the WEEKLY
+//      devBom ratio over `historicalPeriods` (same weekLabel, prior months),
+//      with the same filters `f` applied — identical to the stats map that
+//      queryHistoricalStatsMultiMetric produced (AVG ignores NULL weeks;
+//      variance = GREATEST(0, (sumSq - n·mean²)/(n-1)) with n>1, else 0 —
+//      the same formula computeStats used, evaluated server-side).
+//    - a record is evaluated when: pctQtyDeviasiToBom IS NOT NULL
+//      (ZS-05), stdDev > 0 and n >= HISTORICAL_MIN_WEEKS.
+//    - zScore = (ABS(pctQtyDeviasiToBom) - mean) / stdDev (signed z, only
+//      positive z fires — "current worse than historical").
+//    - HISTORICAL_ABNORMAL       : COALESCE(nls,0) < 0 AND z > zHigh
+//    - HISTORICAL_ABNORMAL_SURPLUS: COALESCE(nls,0) > 0 AND z > zHigh
+//    - HISTORICAL_WARNING        : z > zWarn AND z <= zHigh
+//      (EVAL-10 defaults: warn 1.5, high 2, minWeeks 4 — same fallbacks.)
+//  Only flagged rows egress (typically tens — vs the 35K the JS loop needed).
 //
-//  NOTE: BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK were removed
-//  in Phase A-2 (duplicate of HISTORICAL_WARNING/HIGH). YAML config
-//  entries deleted in FIX-RULE-CONFIG.
+//  NOTE: float addition order inside SUM can differ between this query and
+//  the stats-map query (different GROUP BY shapes) — a zScore may differ in
+//  the ~1e-15 relative range, which can only matter at an exact threshold
+//  boundary. Accepted (documented) deviation from the JS path.
 // ============================================================
-export function evaluateHistoricalRulesJs(
-  currentRecs: Array<{
+export async function evaluateHistoricalRulesSql(
+  week: string,
+  month: string,
+  historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
+  filters: SqlFilterOpts,
+  thresholds: RuntimeThresholds,
+): Promise<SqlRuleFlag[]> {
+  if (historicalPeriods.length === 0) return [];
+
+  const f = buildSqlFilters(filters);
+  // EVAL-10 FIX defaults — identical to the old JS fallbacks.
+  const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
+  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 1.5;
+  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 2;
+
+  const periodConditions = historicalPeriods.map((p) =>
+    Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`
+  );
+  const periodFilter = Prisma.join(periodConditions, ' OR ');
+
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
     outletId: number;
     itemId: number;
     akunPenyesuaian: string | null;
-    nominalLossSurplus: number | null;
-    pctQtyDeviasiToBom: number | null;
-  }>,
-  historicalByOutletItem: Map<string, { devBom: { mean: number; stdDev: number; n: number } }>,
-  thresholds: RuntimeThresholds,
-): SqlRuleFlag[] {
-  const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
-  // EVAL-10 FIX: zScore fallback defaults must align with PRD §5.2 (warn=1.5, high=2).
-  // Previously `?? 2` / `?? 3` over-flagged when settings table row was missing.
-  const zWarn = thresholds.HISTORICAL_ZSCORE_WARN ?? 1.5;
-  const zHigh = thresholds.HISTORICAL_ZSCORE_HIGH ?? 2;
+    f_hist_abnormal: number;
+    f_hist_abnormal_surplus: number;
+    f_hist_warning: number;
+  }>>`
+    WITH weekly_dev AS (
+      SELECT ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+          ELSE NULL END as "weeklyDevBom"
+      FROM "InventoryRecord" ir
+      WHERE (${periodFilter})
+        ${f}
+      GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel"
+    ),
+    hist AS (
+      SELECT "outletId", "itemId",
+        AVG("weeklyDevBom") as "mean",
+        SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
+        CAST(COUNT("weeklyDevBom") AS INTEGER) as n
+      FROM weekly_dev
+      GROUP BY "outletId", "itemId"
+    ),
+    stats AS (
+      SELECT "outletId", "itemId", "mean", n,
+        CASE WHEN n > 1
+          THEN SQRT(GREATEST(0, ("sumSq" - n * "mean" * "mean") / (n - 1)))
+          ELSE 0 END as "stdDev"
+      FROM hist
+    ),
+    curr AS (
+      SELECT ir."outletId", ir."itemId", ir."akunPenyesuaian",
+        ir."nominalLossSurplus", ir."pctQtyDeviasiToBom"
+      FROM "InventoryRecord" ir
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        ${f}
+    ),
+    z AS (
+      SELECT c."outletId", c."itemId", c."akunPenyesuaian",
+        (ABS(c."pctQtyDeviasiToBom") - s."mean") / s."stdDev" as "zScore",
+        COALESCE(c."nominalLossSurplus", 0) as "nls"
+      FROM curr c
+      JOIN stats s
+        ON s."outletId" = c."outletId" AND s."itemId" = c."itemId"
+      WHERE c."pctQtyDeviasiToBom" IS NOT NULL
+        AND s."stdDev" > 0
+        AND s.n >= ${minWeeks}
+    )
+    SELECT "outletId", "itemId", "akunPenyesuaian",
+      CASE WHEN "nls" < 0 AND "zScore" > ${zHigh} THEN 1 ELSE 0 END as "f_hist_abnormal",
+      CASE WHEN "nls" > 0 AND "zScore" > ${zHigh} THEN 1 ELSE 0 END as "f_hist_abnormal_surplus",
+      CASE WHEN "zScore" > ${zWarn} AND "zScore" <= ${zHigh} THEN 1 ELSE 0 END as "f_hist_warning"
+    FROM z
+    WHERE (CASE WHEN "nls" < 0 AND "zScore" > ${zHigh} THEN 1 ELSE 0 END)
+      + (CASE WHEN "nls" > 0 AND "zScore" > ${zHigh} THEN 1 ELSE 0 END)
+      + (CASE WHEN "zScore" > ${zWarn} AND "zScore" <= ${zHigh} THEN 1 ELSE 0 END) > 0
+    ORDER BY "outletId", "itemId"
+  `);
+
+  const HIST_RULE_MAP: Array<{ col: 'f_hist_abnormal' | 'f_hist_abnormal_surplus' | 'f_hist_warning'; code: string; severity: string; priority: number }> = [
+    { col: 'f_hist_abnormal', code: 'HISTORICAL_ABNORMAL', severity: 'ABNORMAL', priority: 78 },
+    { col: 'f_hist_abnormal_surplus', code: 'HISTORICAL_ABNORMAL_SURPLUS', severity: 'ABNORMAL', priority: 77 },
+    { col: 'f_hist_warning', code: 'HISTORICAL_WARNING', severity: 'WARNING', priority: 58 },
+  ];
+
   const flags: SqlRuleFlag[] = [];
-
-  for (const curr of currentRecs) {
-    const stats = historicalByOutletItem.get(`${curr.outletId}|${curr.itemId}`);
-    if (!stats || stats.devBom.stdDev <= 0 || stats.devBom.n < minWeeks) continue;
-
-    // ZS-05 FIX: Skip if pctQtyDeviasiToBom is null (don't coerce to 0)
-    if (curr.pctQtyDeviasiToBom == null) continue;
-
-    // SIGNED Z-Score: positive = above historical mean (worse), negative = below (better)
-    // Only POSITIVE zScore triggers rules (current worse than historical is anomalous)
-    const zScore = (Math.abs(curr.pctQtyDeviasiToBom) - stats.devBom.mean) / stats.devBom.stdDev;
-    if (zScore == null || isNaN(zScore)) continue;
-
-    const isLoss = (curr.nominalLossSurplus ?? 0) < 0;
-    const isSurplus = (curr.nominalLossSurplus ?? 0) > 0;
-
-    // HISTORICAL_ABNORMAL (LOSS direction + zScore > high — current worse than historical)
-    if (isLoss && zScore > zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_ABNORMAL', severity: 'ABNORMAL', category: 'HISTORICAL', priority: 78 });
+  for (const row of rows) {
+    for (const rule of HIST_RULE_MAP) {
+      if (Number(row[rule.col]) === 1) {
+        flags.push({
+          outletId: row.outletId,
+          itemId: row.itemId,
+          akunPenyesuaian: row.akunPenyesuaian,
+          ruleCode: rule.code,
+          severity: rule.severity,
+          category: 'HISTORICAL',
+          priority: rule.priority,
+        });
+      }
     }
-
-    // HISTORICAL_ABNORMAL_SURPLUS (SURPLUS direction + zScore > high)
-    if (isSurplus && zScore > zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_ABNORMAL_SURPLUS', severity: 'ABNORMAL', category: 'HISTORICAL', priority: 77 });
-    }
-
-    // HISTORICAL_WARNING (zScore > warn, <= high — only positive, current worse than historical)
-    if (zScore > zWarn && zScore <= zHigh) {
-      flags.push({ outletId: curr.outletId, itemId: curr.itemId, akunPenyesuaian: curr.akunPenyesuaian, ruleCode: 'HISTORICAL_WARNING', severity: 'WARNING', category: 'HISTORICAL', priority: 58 });
-    }
-
-    // Phase A-2 FIX: Removed BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK duplicates.
-    // These were firing on the SAME zScore condition as HISTORICAL_WARNING/HIGH,
-    // producing duplicate flags with different rule codes. They should compare
-    // against area/network avg (not historical), but that's a separate feature.
   }
-
   return flags;
 }

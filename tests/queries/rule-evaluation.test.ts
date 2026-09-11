@@ -1,8 +1,9 @@
 // Tests for src/lib/queries/rule-evaluation.ts
-// evaluateHistoricalRulesJs is a pure JS function (no DB) — tested directly.
-// evaluateRulesSql uses $queryRaw via withStatementTimeout — tested with mocked db.
+// evaluateHistoricalRulesSql + evaluateRulesSql both use $queryRaw via
+// withStatementTimeout — tested with mocked db (the SQL flag-expansion
+// contract is what matters; the guards live inside the SQL text).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { evaluateRulesSql, evaluateHistoricalRulesJs } from '@/lib/queries/rule-evaluation';
+import { evaluateRulesSql, evaluateHistoricalRulesSql } from '@/lib/queries/rule-evaluation';
 import type { RuntimeThresholds } from '@/lib/settings';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
@@ -58,125 +59,88 @@ function baseThresholds(over: Partial<RuntimeThresholds> = {}): RuntimeThreshold
   } as RuntimeThresholds;
 }
 
-describe('evaluateHistoricalRulesJs', () => {
-  it('returns empty flags when historicalByOutletItem map is empty', () => {
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
-      new Map(),
-      baseThresholds(),
-    );
+describe('evaluateHistoricalRulesSql', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+  });
+
+  const HIST_PERIODS = [
+    { monthLabel: 'Mei 2026', weekLabel: 'WEEK 1' },
+    { monthLabel: 'Juni 2026', weekLabel: 'WEEK 1' },
+    { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1' },
+    { monthLabel: 'Agustus 2026', weekLabel: 'WEEK 1' },
+  ];
+
+  it('returns [] without hitting the DB when historicalPeriods is empty', async () => {
+    const flags = await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', [], {}, baseThresholds());
+    expect(flags).toEqual([]);
+    expect(mockQueryRaw).not.toHaveBeenCalled();
+  });
+
+  it('expands f_hist_abnormal rows (LOSS direction + z > high)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { outletId: 1, itemId: 10, akunPenyesuaian: null, f_hist_abnormal: 1, f_hist_abnormal_surplus: 0, f_hist_warning: 0 },
+    ]);
+    const flags = await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', HIST_PERIODS, {}, baseThresholds());
+    expect(flags).toHaveLength(1);
+    expect(flags[0].ruleCode).toBe('HISTORICAL_ABNORMAL');
+    expect(flags[0].severity).toBe('ABNORMAL');
+    expect(flags[0].category).toBe('HISTORICAL');
+    expect(flags[0].priority).toBe(78);
+  });
+
+  it('expands f_hist_abnormal_surplus rows (SURPLUS direction + z > high)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { outletId: 2, itemId: 20, akunPenyesuaian: 'AKUN_X', f_hist_abnormal: 0, f_hist_abnormal_surplus: 1, f_hist_warning: 0 },
+    ]);
+    const flags = await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', HIST_PERIODS, {}, baseThresholds());
+    expect(flags).toHaveLength(1);
+    expect(flags[0].ruleCode).toBe('HISTORICAL_ABNORMAL_SURPLUS');
+    expect(flags[0].severity).toBe('ABNORMAL');
+    expect(flags[0].priority).toBe(77);
+    expect(flags[0].akunPenyesuaian).toBe('AKUN_X');
+  });
+
+  it('expands f_hist_warning rows (warn < z <= high)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { outletId: 3, itemId: 30, akunPenyesuaian: null, f_hist_abnormal: 0, f_hist_abnormal_surplus: 0, f_hist_warning: 1 },
+    ]);
+    const flags = await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', HIST_PERIODS, {}, baseThresholds());
+    expect(flags).toHaveLength(1);
+    expect(flags[0].ruleCode).toBe('HISTORICAL_WARNING');
+    expect(flags[0].severity).toBe('WARNING');
+    expect(flags[0].priority).toBe(58);
+  });
+
+  it('returns [] when the DB returns no flagged rows', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    const flags = await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', HIST_PERIODS, {}, baseThresholds());
     expect(flags).toEqual([]);
   });
 
-  it('skips records when stats.stdDev <= 0', () => {
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
-      map,
-      baseThresholds(),
-    );
-    expect(flags).toEqual([]);
-  });
-
-  it('skips records when stats.n < minWeeks', () => {
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 3 } }], // n=3 < 4
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
-      map,
-      baseThresholds({ HISTORICAL_MIN_WEEKS: 4 }),
-    );
-    expect(flags).toEqual([]);
-  });
-
-  it('fires HISTORICAL_ABNORMAL when LOSS direction + zScore > high', () => {
-    // mean=0.2, stdDev=0.05, current=0.5 (|.|) → z = (0.5 - 0.2) / 0.05 = 6 > 3
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
-      map,
-      baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
-    );
-    expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(true);
-    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
-  });
-
-  it('fires HISTORICAL_ABNORMAL_SURPLUS when SURPLUS direction + zScore > high', () => {
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: 1000, pctQtyDeviasiToBom: 0.5 }],
-      map,
-      baseThresholds({ HISTORICAL_ZSCORE_HIGH: 3 }),
-    );
-    expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS')).toBe(true);
-    // Phase A-2: BENCHMARK_ABOVE_NETWORK removed (duplicate of HISTORICAL_ABNORMAL)
-  });
-
-  it('fires HISTORICAL_WARNING when zScore between warn and high', () => {
-    // mean=0.2, stdDev=0.05, current=0.35 → z = (0.35 - 0.2) / 0.05 = 3 → at boundary (high)
-    // Use current=0.32 → z = 2.4 → between warn(2) and high(3)
-    // CONFIG-13: title corrected — previously claimed to also fire BENCHMARK_ABOVE_AREA,
-    // but BENCHMARK rules were removed in Phase A-2 (duplicate of HISTORICAL_WARNING).
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.32 }],
-      map,
-      baseThresholds({ HISTORICAL_ZSCORE_WARN: 2, HISTORICAL_ZSCORE_HIGH: 3 }),
-    );
-    expect(flags.some((f) => f.ruleCode === 'HISTORICAL_WARNING')).toBe(true);
-    // Phase A-2: BENCHMARK_ABOVE_AREA removed (duplicate of HISTORICAL_WARNING)
-    // Should NOT fire ABNORMAL (zScore not > high)
-    expect(flags.some((f) => f.ruleCode === 'HISTORICAL_ABNORMAL')).toBe(false);
-  });
-
-  it('fires no historical rules when zScore <= warn', () => {
-    // mean=0.2, stdDev=0.05, current=0.25 → z = 1 → below warn(2)
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.25 }],
-      map,
-      baseThresholds({ HISTORICAL_ZSCORE_WARN: 2, HISTORICAL_ZSCORE_HIGH: 3 }),
-    );
-    expect(flags).toEqual([]);
-  });
-
-  it('uses akunPenyesuaian as part of the key lookup', () => {
-    // Even with same outletId + itemId, different akunPenyesuaian → same map entry
-    // (the map is keyed only on outletId|itemId — akun is for downstream filtering)
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: 'AKUN_X', nominalLossSurplus: -1000, pctQtyDeviasiToBom: 0.5 }],
-      map,
-      baseThresholds(),
-    );
-    expect(flags.length).toBeGreaterThan(0);
-    expect(flags.every((f) => f.akunPenyesuaian === 'AKUN_X')).toBe(true);
-  });
-
-  it('handles null pctQtyDeviasiToBom (uses 0 fallback)', () => {
-    const map = new Map([
-      ['1|1', { devBom: { mean: 0.2, stdDev: 0.05, n: 5 } }],
-    ]);
-    const flags = evaluateHistoricalRulesJs(
-      [{ outletId: 1, itemId: 1, akunPenyesuaian: null, nominalLossSurplus: -1000, pctQtyDeviasiToBom: null }],
-      map,
-      baseThresholds(),
-    );
-    // z = (0 - 0.2) / 0.05 = -4 → no flags fire (z < warn)
-    expect(flags).toEqual([]);
+  it('SQL: inline weekly_dev/hist/stats baseline + curr + z guards (ZS-05, stdDev, minWeeks)', async () => {
+    // PERF (TAHAP-2 / P2-7) regression guard: the query must inline the
+    // historical baseline (same weekly_dev shape as queryHistoricalStatsMultiMetric)
+    // and enforce the JS loop's skip conditions in SQL.
+    mockQueryRaw.mockResolvedValueOnce([]);
+    await evaluateHistoricalRulesSql('WEEK 1', 'September 2026', HIST_PERIODS, {}, baseThresholds({ HISTORICAL_MIN_WEEKS: 4, HISTORICAL_ZSCORE_WARN: 1.5, HISTORICAL_ZSCORE_HIGH: 2 }));
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    const call = mockQueryRaw.mock.calls[0][0];
+    const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
+    // Baseline pipeline mirrors queryHistoricalStatsMultiMetric (devBom metric)
+    expect(sqlText).toContain('WITH weekly_dev AS');
+    expect(sqlText).toContain('SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))');
+    // Same sample-variance formula computeStats used, clamped at 0
+    expect(sqlText).toContain('SQRT(GREATEST(0, ("sumSq" - n * "mean" * "mean") / (n - 1)))');
+    // Guards: pct NOT NULL (ZS-05) + stdDev > 0 + n >= minWeeks
+    expect(sqlText).toContain('c."pctQtyDeviasiToBom" IS NOT NULL');
+    expect(sqlText).toContain('s."stdDev" > 0');
+    expect(sqlText).toContain('s.n >=');
+    // zScore = (ABS(pct) - mean) / stdDev
+    expect(sqlText).toContain('(ABS(c."pctQtyDeviasiToBom") - s."mean") / s."stdDev"');
+    // Signed z + only-flagged rows egress
+    expect(sqlText).toContain('> 0');
+    expect(sqlText).toContain('ORDER BY "outletId", "itemId"');
   });
 });
 

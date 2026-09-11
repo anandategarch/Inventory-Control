@@ -4,27 +4,26 @@
 //  Extracted from src/app/api/analysis/services/post-process.ts (Task 3-b).
 //
 //  Responsibilities:
-//    1. Evaluate 5 zScore-based rules in JS (uses currSlim — 5 cols × 35K rows)
-//    2. Merge SQL + JS flags → topFlagByKey (key → highest-priority flag)
+//    1. Await the two SQL rule-flag promises (16 SQL rules + 3 zScore
+//       rules — PERF TAHAP-2/P2-7 moved the zScore evaluation from a
+//       35K-row JS loop over currSlim to evaluateHistoricalRulesSql)
+//    2. Merge SQL + hist flags → topFlagByKey (key → highest-priority flag)
 //    3. Compute per-outlet + global severity counts from topFlagByKey +
 //       healthRankingRows (zeroDev / nonZeroDev counts per outlet)
 //
 //  Returns topFlagByKey + per-outlet severity counts (SeverityMaps) +
 //  global normal/warning/abnormal.
 // ============================================================
-import { evaluateHistoricalRulesJs, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
-import type { FetchedRecords } from './fetch-records';
+import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import type { QueryResults } from './run-queries';
 import type { SeverityMaps } from './post-process-types';
 
 /**
- * Sub-step 1 — evaluate JS historical rules + merge with SQL flags.
+ * Sub-step 1 — merge the SQL rule flags + SQL historical (zScore) flags.
  * Returns topFlagByKey + per-outlet severity counts + global normal/warning/abnormal.
  */
 export async function evaluateAndMergeFlags(
-  currSlim: FetchedRecords['currSlim'],
-  historicalByOutletItem: FetchedRecords['historicalByOutletItem'],
-  thresholds: FetchedRecords['thresholds'],
+  histFlagsSqlPromise: Promise<SqlRuleFlag[]>,
   sqlFlagsPromise: Promise<SqlRuleFlag[]>,
   healthRankingRows: QueryResults['healthRankingRows'],
 ): Promise<{
@@ -36,19 +35,19 @@ export async function evaluateAndMergeFlags(
   ruleBreakdown: { byCategory: Record<string, number>; byRule: Record<string, number> };
 }> {
   // ============================================================
-  //  POST-PROCESS RULE FLAGS (Sprint 3 + SQL-OPTIMIZE)
+  //  POST-PROCESS RULE FLAGS (Sprint 3 + SQL-OPTIMIZE + TAHAP-2/P2-7)
   //  --------------------------------------------------------
-  //  1. Evaluate 5 zScore-based rules in JS (uses currSlim — 5 cols × 35K rows)
-  //  2. Merge SQL + JS flags → topFlagByKey (key → highest-priority flag)
+  //  1. Both flag sets are SQL now: the 16 rule flags (evaluateRulesSql)
+  //     + the 3 zScore hist flags (evaluateHistoricalRulesSql). Both have
+  //     been running in parallel since stage 3 fired them at t=0.
+  //  2. Merge → topFlagByKey (key → highest-priority flag)
   //  3. Compute per-outlet + global severity counts from topFlagByKey +
   //     healthRankingRows (zeroDev / nonZeroDev counts per outlet)
   // ============================================================
-  const histFlags = evaluateHistoricalRulesJs(currSlim, historicalByOutletItem, thresholds);
-
   // PERF-FASE2-BE03: Await sqlFlagsPromise here (not in Group 1) — by now
-  // Batches 1-4 have finished, and evaluateRulesSql has been running in
+  // the parallel wave has finished, and evaluateRulesSql has been running in
   // parallel the whole time. If it's already resolved, this await is ~0ms.
-  const sqlFlags = await sqlFlagsPromise;
+  const [sqlFlags, histFlags] = await Promise.all([sqlFlagsPromise, histFlagsSqlPromise]);
 
   // topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian) record
   // that fired at least one rule. Keeps the highest-priority flag.

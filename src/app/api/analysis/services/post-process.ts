@@ -8,7 +8,7 @@
 //  All sub-functions + types are re-exported here so existing callers
 //  (`@/app/api/analysis/services/post-process`) keep resolving.
 //
-//    1. evaluateAndMergeFlags   — JS hist rules + merge with SQL flags    → post-process-flags.ts
+//    1. evaluateAndMergeFlags   — SQL hist rules + merge with SQL flags    → post-process-flags.ts
 //    2. buildGrowthMetrics      — growth metrics + DQ counts + trend      → post-process-growth.ts
 //    3. buildOutletHealthRanking — Metric Engine health score per outlet  → post-process-health-ranking.ts
 //    4. buildHistoricalAnalysis — zScore-ranked critical items (top 200)  → post-process-historical.ts
@@ -57,7 +57,7 @@ import { mapTopOutlets } from './post-process-top-outlets';
  */
 export async function postProcess(params: ResolvedParams, records: FetchedRecords, queries: QueryResults): Promise<ProcessedData> {
   const { week, month, prevWeek, prevMonth } = params;
-  const { currSlim, historicalByOutletItem, historicalPeriodsCount, thresholds, monthKeyByLabel, filterOpts } = records;
+  const { currRecordCount, historicalByOutletItem, historicalPeriodsCount, thresholds, monthKeyByLabel, filterOpts } = records;
   const {
     earlyPromises,
     execSummary,
@@ -75,9 +75,10 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   // NOTE: varianceAnalysis is NOT destructured here — post-process doesn't
   // transform it. assemble-response reads it directly from `queries.varianceAnalysis`.
 
-  // Sub-step 1: rule flag evaluation + merge (also awaits sqlFlagsPromise internally).
+  // Sub-step 1: rule flag evaluation + merge (awaits the SQL rules + SQL
+  // hist-rules promises fired in stage 3 — PERF TAHAP-2/P2-7).
   const { topFlagByKey, severityMaps, normal, warning, abnormal, ruleBreakdown } = await evaluateAndMergeFlags(
-    currSlim, historicalByOutletItem, thresholds, earlyPromises.sqlFlagsPromise, healthRankingRows,
+    earlyPromises.histFlagsSqlPromise, earlyPromises.sqlFlagsPromise, healthRankingRows,
   );
 
   // PERF-API-04 (Task PERF-API): run Sub-step 1b (BOM correlation findings) and
@@ -97,11 +98,11 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
       month,
       filterOpts,
       historicalByOutletItem,
-      // FX-HIST-EMPTY: pass currSlim + historicalPeriodsCount + thresholds so
-      // buildHistoricalAnalysis can compute a meta block for the frontend
-      // empty state. Without these the card always shows the misleading
+      // FX-HIST-EMPTY: pass currRecordCount + historicalPeriodsCount +
+      // thresholds so buildHistoricalAnalysis can compute a meta block for the
+      // frontend empty state. Without these the card always shows the misleading
       // "minimal 4 bulan data" tip regardless of the real reason.
-      currSlim,
+      currRecordCount,
       historicalPeriodsCount,
       thresholds,
     ),

@@ -83,59 +83,55 @@ export async function queryOutletHealthRanking(
   // to OutletPeriodSales naturally yields NULL (→ COALESCE 0) for outlets
   // with no sales records — same behaviour as the original LEFT JOIN to
   // sales_mode.
+  //
+  // PERF (TAHAP-2 / P2-10): the old query scanned the filtered period TWICE —
+  // outlet_counts (counts over ALL rows) + outlet_aggs (sums over non-zero-dev
+  // rows) — two CTEs, two aggregate passes, two sorts. Both are now ONE scan:
+  // counts via COUNT(*) FILTER and sums via SUM(...) FILTER (WHERE NOT zeroDev),
+  // which is row-for-row the same partitioning the two CTEs produced.
+  // The HAVING clause keeps the final row set identical to the old FROM
+  // outlet_aggs driver: only outlets with ≥1 non-zero-dev record appear.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<OutletHealthRow[]>`
-    WITH -- Per-outlet counts of zero-dev vs non-zero-dev records (over ALL records,
-    -- not just non-zero-dev — zeroDevCount needs the unfiltered count).
-    outlet_counts AS (
+    WITH outlet_stats AS (
       SELECT ir."outletId",
         COUNT(*) FILTER (WHERE ${zeroDevExpr}) as "zeroDevCount",
-        COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) as "nonZeroDevCount"
+        COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) as "nonZeroDevCount",
+        SUM(ir."nominalDeviasi") FILTER (WHERE NOT ${zeroDevExpr}) as "nominalDeviasi",
+        SUM(ABS(ir."qtyDeviasi")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyDeviasi",
+        SUM(ABS(ir."qtyBom")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyBom",
+        SUM(ABS(ir."qtyWaste")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyWaste",
+        SUM(ABS(ir."qtySusut")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtySusut",
+        SUM(ABS(ir."qtyTrial")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyTrial",
+        SUM(ABS(ir."residualQty")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalResidualQty",
+        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) FILTER (WHERE NOT ${zeroDevExpr}) as "lossNominal"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
       GROUP BY ir."outletId"
-    ),
-    -- Per-outlet aggregate over NON-zero-dev records only (matches existing JS
-    -- which iterates recsWithFlags, an array that excludes zero-dev).
-    outlet_aggs AS (
-      SELECT ir."outletId",
-        COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
-        SUM(ABS(ir."qtyDeviasi")) as "totalQtyDeviasi",
-        SUM(ABS(ir."qtyBom")) as "totalQtyBom",
-        SUM(ABS(ir."qtyWaste")) as "totalQtyWaste",
-        SUM(ABS(ir."qtySusut")) as "totalQtySusut",
-        SUM(ABS(ir."qtyTrial")) as "totalQtyTrial",
-        SUM(ABS(ir."residualQty")) as "totalResidualQty",
-        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "lossNominal"
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        AND NOT ${zeroDevExpr}
-        ${f}
-      GROUP BY ir."outletId"
+      HAVING COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) > 0
     )
-    SELECT oa."outletId",
+    SELECT os."outletId",
       o.code as "outletCode",
       o.name as "outletName",
       o.area,
-      ABS(oa."nominalDeviasi") as "absNominal",
-      oa."nominalDeviasi",
-      COALESCE(oa."totalQtyDeviasi", 0) as "totalQtyDeviasi",
-      COALESCE(oa."totalQtyBom", 0) as "totalQtyBom",
-      COALESCE(oa."totalQtyWaste", 0) as "totalQtyWaste",
-      COALESCE(oa."totalQtySusut", 0) as "totalQtySusut",
-      COALESCE(oa."totalQtyTrial", 0) as "totalQtyTrial",
-      COALESCE(oa."totalResidualQty", 0) as "totalResidualQty",
-      COALESCE(oa."lossNominal", 0) as "lossNominal",
+      ABS(os."nominalDeviasi") as "absNominal",
+      os."nominalDeviasi",
+      COALESCE(os."totalQtyDeviasi", 0) as "totalQtyDeviasi",
+      COALESCE(os."totalQtyBom", 0) as "totalQtyBom",
+      COALESCE(os."totalQtyWaste", 0) as "totalQtyWaste",
+      COALESCE(os."totalQtySusut", 0) as "totalQtySusut",
+      COALESCE(os."totalQtyTrial", 0) as "totalQtyTrial",
+      COALESCE(os."totalResidualQty", 0) as "totalResidualQty",
+      COALESCE(os."lossNominal", 0) as "lossNominal",
       COALESCE(ops."salesMode", 0) as sales,
-      COALESCE(oc."zeroDevCount", 0) as "zeroDevCount",
-      COALESCE(oc."nonZeroDevCount", 0) as "nonZeroDevCount"
-    FROM outlet_aggs oa
-    JOIN "Outlet" o ON oa."outletId" = o.id
+      COALESCE(os."zeroDevCount", 0) as "zeroDevCount",
+      COALESCE(os."nonZeroDevCount", 0) as "nonZeroDevCount"
+    FROM outlet_stats os
+    JOIN "Outlet" o ON os."outletId" = o.id
     LEFT JOIN "OutletPeriodSales" ops
-      ON ops."outletId" = oa."outletId"
+      ON ops."outletId" = os."outletId"
       AND ops."monthLabel" = ${month}
       AND ops."weekLabel" = ${week}
-    LEFT JOIN outlet_counts oc ON oa."outletId" = oc."outletId"
     ORDER BY "absNominal" DESC
   `);
 

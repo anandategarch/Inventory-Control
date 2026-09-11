@@ -503,6 +503,11 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // H-8 QUICK WIN 6b: added `heatmap-cell-detail` (per-outlet drill-down for
   // one area × item cell — reads the same InventoryRecord rows the parent
   // heatmap route reads, so mutations affect it identically).
+  // TAHAP-2 / P2-9: added the shared per-query cache routes used by BOTH the
+  // analysis + export pipelines (q-rules = evaluateRulesSql, q-hist-rules =
+  // evaluateHistoricalRulesSql, q-variance, q-kpis, q-topcat, q-trend). A
+  // mutation that invalidates the analysis payload must invalidate these too
+  // — otherwise export could read a pre-mutation query row.
   const routes = [
     'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
@@ -510,6 +515,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
     'price-effect', 'item-search', 'heatmap-cell-detail',
+    'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

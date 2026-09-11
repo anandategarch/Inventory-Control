@@ -52,7 +52,8 @@ import type {
   queryLossVsSurplus,
   queryCostImpact,
 } from '@/lib/queries';
-import { evaluateRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
+import { evaluateRulesSql, evaluateHistoricalRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
+import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { buildExecSummaryFromSql } from './exec-summary';
 import type { FetchedRecords, FilterOpts } from './fetch-records';
 import type { ResolvedParams } from './validate-and-resolve';
@@ -61,6 +62,10 @@ import type { ResolvedParams } from './validate-and-resolve';
 // can `await` them just before consuming (PERF-FASE2-BE03 optimization).
 export interface EarlyPromises {
   sqlFlagsPromise: Promise<SqlRuleFlag[]>;
+  // PERF (TAHAP-2 / P2-7): the 3 zScore rules now run as ONE SQL query with an
+  // inline historical-baseline CTE (replaces the 35K-row currSlim fetch + JS
+  // loop). Fired early like sqlFlags so post-process awaits the same promise.
+  histFlagsSqlPromise: Promise<SqlRuleFlag[]>;
   healthRankingSqlPromise: ReturnType<typeof queryOutletHealthRanking>;
   varianceAnalysisPromise: ReturnType<typeof queryVarianceAnalysis>;
   growthDriversPromise: ReturnType<typeof queryGrowthDrivers>;
@@ -112,24 +117,45 @@ export interface QueryResults {
  */
 export async function runQueries(params: ResolvedParams, records: FetchedRecords): Promise<QueryResults> {
   const { week, month, prevWeek, prevMonth } = params;
-  const { filterOpts, thresholds } = records;
+  const { filterOpts, thresholds, historicalPeriods } = records;
 
   // ============================================================
   //  RULE EVALUATION + SQL AGGREGATES — ALL PARALLEL (Sprint 3 + SQL-OPTIMIZE)
   //  --------------------------------------------------------
   //  Old: 35K-record JS loop calling evaluateRules() per record
-  //  New: SQL flags (12 rules) + JS hist flags (5 zScore rules)
+  //  New: SQL flags (16 rules) + SQL hist flags (3 zScore rules)
   //       + queryOutletHealthRanking + queryVarianceAnalysis +
   //       queryGrowthDrivers — all running in parallel with the
   //       existing 15 SQL aggregate queries.
+  //
+  //  PERF (TAHAP-2 / P2-9): the 6 heaviest queries shared with the
+  //  /api/export-report pipeline (rule flags, hist-rule flags, variance,
+  //  merged KPIs, category tops, trend) are wrapped in cachedSharedQuery —
+  //  a per-query AggregationCache row keyed by period+filters. Export uses
+  //  the SAME queryIds, so "view dashboard → export report" skips recomputing
+  //  them (~4-6s of the export cold path). TTL 30 min + mutation-triggered
+  //  invalidation via invalidateAnalysisCache (see aggregation-cache.ts).
   // ============================================================
 
-  // Fire these 4 promises early at t=0 — awaited in the big Promise.all
+  // Fire these 5 promises early at t=0 — awaited in the big Promise.all
   // below AND re-exposed via `earlyPromises` so post-process (stage 4)
   // awaits the same promise objects.
-  const sqlFlagsPromise = evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds);
+  const sqlFlagsPromise = cachedSharedQuery(
+    'q-rules',
+    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+    () => evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
+  );
+  const histFlagsSqlPromise = cachedSharedQuery(
+    'q-hist-rules',
+    { month, week, filters: filterOpts },
+    () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
+  );
   const healthRankingSqlPromise = queryOutletHealthRanking(week, month, filterOpts);
-  const varianceAnalysisPromise = queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts);
+  const varianceAnalysisPromise = cachedSharedQuery(
+    'q-variance',
+    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+    () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
+  );
   const growthDriversPromise = queryGrowthDrivers(week, month, prevWeek, prevMonth, filterOpts);
 
   // ============================================================
@@ -144,6 +170,24 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   // ============================================================
   const topNItems = thresholds.TOP_N_ITEMS || 10;
   const topNOutlets = thresholds.TOP_N_OUTLETS || 10;
+
+  // PERF (TAHAP-2 / P2-9): cachedSharedQuery wraps the export-shared queries
+  // (see the early-fire block above for the rationale).
+  const kpisPromise = cachedSharedQuery(
+    'q-kpis',
+    { month, week, filters: filterOpts },
+    () => queryDashboardKpis(week, month, filterOpts),
+  );
+  const topCategoriesPromise = cachedSharedQuery(
+    'q-topcat',
+    { month, week, filters: filterOpts, extra: { limit: topNItems } },
+    () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+  );
+  const trendAggPromise = cachedSharedQuery(
+    'q-trend',
+    { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
+    () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
+  );
 
   // FIX (BUG6-1+BUG6-POOL): paretoDevBom wrapped in .catch() so a failure
   // degrades to an empty Pareto instead of failing the whole analysis.
@@ -170,21 +214,21 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     topGrowth,
   ] = await Promise.all([
     // Group 1: merged KPI scan (curr) + standalone prev exec summary
-    queryDashboardKpis(week, month, filterOpts),
+    kpisPromise,
     // prevWeek && prevMonth narrowing — if no compare period, return null
     // so buildExecSummaryFromSql skips the prev summary entirely.
     prevWeek && prevMonth ? queryExecSummary(prevWeek, prevMonth, filterOpts) : Promise.resolve(null),
     // Batch 1: top items by nominal + devBom + merged category scan
     queryTopItemsByNominal(week, month, filterOpts, topNItems),
     queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+    topCategoriesPromise,
     // Batch 2: area + top outlets + Pareto DevBom
     queryAreaAnalysis(week, month, filterOpts),
     queryTopOutlets(week, month, filterOpts, topNOutlets),
     queryTopOutletsBySales(week, month, filterOpts, topNOutlets),
     safeParetoDevBom,
     // Batch 3: trend + consistency + DQ issues
-    queryTrendAgg({ ...filterOpts, weekLabel: week }),
+    trendAggPromise,
     queryItemConsistency(week, month, filterOpts),
     db.dQIssue.groupBy({
       by: ['severity'],
@@ -227,7 +271,7 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   // enrichment inline if needed.
 
   return {
-    earlyPromises: { sqlFlagsPromise, healthRankingSqlPromise, varianceAnalysisPromise, growthDriversPromise },
+    earlyPromises: { sqlFlagsPromise, histFlagsSqlPromise, healthRankingSqlPromise, varianceAnalysisPromise, growthDriversPromise },
     execSummary,
     topNominal,
     topDevBom,

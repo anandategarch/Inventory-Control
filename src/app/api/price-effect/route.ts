@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
+import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { queryPriceEffect, type PriceEffectResult } from '@/lib/queries/price-effect';
@@ -124,12 +125,23 @@ export async function GET(req: NextRequest) {
     const outletCode = params.outlet ?? null;
     const pic = params.pic ?? null;
 
+    // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
+    // BEFORE the cache key AND before handing them to queryPriceEffect. This
+    // route never resolved month at all — a wrong-case month both forked the
+    // cache key AND made the query return empty/incorrect comparisons.
+    // getMonthResolver is process-cached (~0ms after first call).
+    const monthResolverEarly = await getMonthResolver();
+    const resolvedMonth = resolveMonthLabel(month, monthResolverEarly) || month;
+    const resolvedCompareMonth = compareMonth
+      ? (resolveMonthLabel(compareMonth, monthResolverEarly) || compareMonth)
+      : compareMonth;
+
     // 3. DB cache key — includes ALL response-affecting params (compare too!)
     const cacheKey = buildCacheKey({
       route: 'price-effect',
-      month,
+      month: resolvedMonth,
       week,
-      compareMonth,
+      compareMonth: resolvedCompareMonth,
       compareWeek,
       area: area && area !== 'all' ? area : null,
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
@@ -148,7 +160,7 @@ export async function GET(req: NextRequest) {
         );
         if (noMatch) {
           // Filters matched zero outlets — empty but well-formed result
-          return queryPriceEffect(week, month, null, null, {
+          return queryPriceEffect(week, resolvedMonth, null, null, {
             area: null, kelompok: null, outletCode: null,
             itemName: null, picOutletCodes: null,
           });
@@ -156,9 +168,9 @@ export async function GET(req: NextRequest) {
 
         return queryPriceEffect(
           week,
-          month,
+          resolvedMonth,
           compareWeek,
-          compareMonth,
+          resolvedCompareMonth,
           {
             area: area && area !== 'all' ? area : null,
             kelompok: null, // already resolved to outletCodes above
