@@ -17,6 +17,9 @@ import type { ExecutiveSummary } from '@/types/inventory';
 // computed + sent but never typed — dead data per worklog FORECAST-3.
 import type { TrendProjection } from '@/lib/metrics/forecast';
 import type { PatternDetection } from '@/engine/analysis/patternEngine';
+// Task H-2c (CHANGE 6): Top Growth row shape — type-only import from the
+// server query module (erased at compile time, no runtime bundle impact).
+import type { TopGrowthRow } from '@/lib/queries/growth-drivers';
 
 /** Top items by nominal deviation. */
 export interface TopItemByNominal {
@@ -339,6 +342,11 @@ export interface AnalysisData {
   itemConsistencyAnalysis?: ItemConsistencyResult;
   netCostTrend?: NetCostTrendPoint[];
   growthDrivers?: GrowthDriverMetric[];
+  // Task H-2c (CHANGE 6): Top Growth — biggest SALES movers per resto
+  // (byOutlet) & per barang (byItem) vs the compare period. Optional so
+  // payloads cached before the field existed (and mock/test data) keep
+  // type-checking — the card renders its empty state when absent.
+  topGrowth?: { byOutlet: TopGrowthRow[]; byItem: TopGrowthRow[] };
   // FIX (AUDIT7-FE-5): trend projection + pattern detection emitted by
   // /api/analysis (analysis/route.ts:989-990) — were missing from the type.
   // Optional + nullable so consumers can render a no-data state when the

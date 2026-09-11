@@ -23,6 +23,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, computePareto8020, withStatementTimeout, type SqlFilterOpts } from './shared';
+import { calcGrowth } from '@/lib/metrics/growth';
 
 export interface DriverEntry {
   item: string;
@@ -303,4 +304,80 @@ export async function queryGrowthDrivers(
       down: computePareto(negative),
     };
   });
+}
+
+// ============================================================
+//  Top Growth — Top-N SALES movers per resto & per barang
+//  --------------------------------------------------------
+//  Task H-2c (CHANGE 6): ranking of the biggest nominal SALES
+//  movers vs the compare period, in TWO grains:
+//    - byOutlet → per resto  (group o.name)
+//    - byItem   → per barang (group i.name)
+//
+//  Period semantics are IDENTICAL to queryGrowthDrivers: prevWeek/
+//  prevMonth come from the pipeline's period resolver (auto = same
+//  weekLabel in the previous month, or the user's explicit compare
+//  period) — the caller passes whatever it resolved for growth.
+//
+//  Metric config copied verbatim from the `sales` row of the metrics
+//  table above: field 'nominalSales', ABS sum (signed=false).
+//
+//  Shaping (pure JS — no extra SQL):
+//    - delta = curr − prev                (SIGNED — sacred sign)
+//    - pct   = calcGrowth(curr, prev)     (signed (curr−prev)/|prev|,
+//                                          null when prev = 0)
+//    - isNew = no previous base (prev 0/absent)
+//    - noise filter |delta| >= 1000       (same threshold as `sales`)
+//    - sort by |delta| DESC, cap TOP_GROWTH_LIMIT rows per list
+// ============================================================
+export interface TopGrowthRow {
+  name: string;
+  curr: number;
+  prev: number;
+  /** SIGNED delta = curr − prev (negative = sales shrinking). */
+  delta: number;
+  /** SIGNED growth (curr − prev)/|prev| — null when prev = 0 (new). */
+  pct: number | null;
+  /** No previous base — pct cannot be computed, UI shows "Baru". */
+  isNew: boolean;
+}
+
+export interface TopGrowthResult {
+  byOutlet: TopGrowthRow[];
+  byItem: TopGrowthRow[];
+}
+
+const TOP_GROWTH_DELTA_THRESHOLD = 1000;
+const TOP_GROWTH_LIMIT = 15;
+
+function shapeTopGrowthRows(map: Map<string, { curr: number; prev: number }>): TopGrowthRow[] {
+  const rows: TopGrowthRow[] = [];
+  for (const [name, { curr, prev }] of map) {
+    const delta = curr - prev;
+    // Noise filter — mirrors the `sales` delta threshold above (|Δ| >= 1000).
+    if (Math.abs(delta) < TOP_GROWTH_DELTA_THRESHOLD) continue;
+    const isNew = !prev || prev === 0;
+    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew });
+  }
+  rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return rows.slice(0, TOP_GROWTH_LIMIT);
+}
+
+export async function queryTopGrowth(
+  week: string,
+  month: string,
+  prevWeek: string | null,
+  prevMonth: string | null,
+  filters: FilterOpts,
+): Promise<TopGrowthResult> {
+  // Two grains of the SAME sales metric, run in parallel (2 queries —
+  // same cost as the outlet-grain half of queryGrowthDrivers).
+  const [outletMap, itemMap] = await Promise.all([
+    aggregateMetric(week, month, prevWeek, prevMonth, filters, 'outlet', 'nominalSales', false),
+    aggregateMetric(week, month, prevWeek, prevMonth, filters, 'item', 'nominalSales', false),
+  ]);
+  return {
+    byOutlet: shapeTopGrowthRows(outletMap),
+    byItem: shapeTopGrowthRows(itemMap),
+  };
 }

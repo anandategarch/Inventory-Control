@@ -25,7 +25,7 @@
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
-import { BarChart3, Calendar, History, MapPin, Tags } from 'lucide-react';
+import { BarChart3, Calendar, History, MapPin, Tags, TrendingUp } from 'lucide-react';
 import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
 import { TopItemsByNominal, TopItemsByDevBom, TopOutlets } from '@/components/dashboard/TopItems';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
@@ -34,6 +34,7 @@ import {
 } from '@/components/dashboard/AdvancedAnalysis';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PriceEffectCard } from '@/components/dashboard/PriceEffectCard';
+import { TopGrowthCard } from '@/components/dashboard/TopGrowthCard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import {
   LoadingChart, SectionHeader,
@@ -105,6 +106,22 @@ export const DashboardTab = memo(function DashboardTab({ data }: DashboardTabPro
         </ErrorBoundary>
         <ErrorBoundary label="Deviation Breakdown">
           <DeviationBreakdownChart data={data} />
+        </ErrorBoundary>
+      </section>
+
+      {/* Section: Top Growth (per resto & per barang)
+          Task H-2c (CHANGE 6): biggest SALES movers vs the compare period,
+          toggleable Per Resto / Per Barang. Placed right below the Health +
+          Growth section so the growth context (GrowthComparison's aggregate
+          bars) flows straight into WHO/WHAT moved — same compare-period
+          semantics. Display-only v1. */}
+      <section>
+        <SectionHeader
+          icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
+          title="Top Growth (Resto & Barang)"
+        />
+        <ErrorBoundary label="Top Growth">
+          <TopGrowthCard data={data} />
         </ErrorBoundary>
       </section>
 

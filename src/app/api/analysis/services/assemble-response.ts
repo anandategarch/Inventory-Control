@@ -40,6 +40,9 @@ export interface AnalysisResponse {
   topOutlets: unknown;
   topOutletsBySales: unknown;
   growthDrivers: unknown;
+  // Task H-2c (CHANGE 6): Top Growth — biggest SALES movers per resto &
+  // per barang vs the compare period ({ byOutlet, byItem } arrays).
+  topGrowth: unknown;
   deviationDrivers: unknown;
   topItemsByWaste: unknown;
   topItemsBySusut: unknown;
@@ -88,6 +91,7 @@ export function assembleResponse(
     topDeviasiRank,
     varianceAnalysis,
     growthDrivers,
+    topGrowth,
   } = queries;
   const {
     normal,
@@ -134,6 +138,10 @@ export function assembleResponse(
     topOutlets: topOut,
     topOutletsBySales: topOutletsSales,
     growthDrivers, // FIX: Pareto 80% drivers per metric
+    // Task H-2c (CHANGE 6): Top Growth per resto & per barang (SALES movers
+    // vs compare period) — rides the same 30-min cache / SWR / background
+    // recompute envelope as the rest of this payload.
+    topGrowth,
     deviationDrivers, // NEW: 80% Pareto per deviation category (waste/susut/trial/residual)
     topItemsByWaste: topWaste,
     topItemsBySusut: topSusut,

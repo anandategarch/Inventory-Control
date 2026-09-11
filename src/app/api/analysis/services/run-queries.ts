@@ -40,7 +40,7 @@ import {
   queryVarianceAnalysis,
   queryParetoByDevBom,
 } from '@/lib/queries';
-import { queryGrowthDrivers } from '@/lib/queries/growth-drivers';
+import { queryGrowthDrivers, queryTopGrowth } from '@/lib/queries/growth-drivers';
 // Type-only: the standalone KPI queries are no longer CALLED by this pipeline
 // (replaced by the merged queryDashboardKpis scan), but their return types
 // still shape the QueryResults interface below (consumed by post-process).
@@ -90,6 +90,10 @@ export interface QueryResults {
   healthRankingRows: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
   growthDrivers: Awaited<ReturnType<typeof queryGrowthDrivers>>;
+  // Task H-2c (CHANGE 6): Top Growth — biggest SALES movers per resto &
+  // per barang vs the compare period (same prev-period semantics as
+  // growthDrivers above).
+  topGrowth: Awaited<ReturnType<typeof queryTopGrowth>>;
 }
 
 /**
@@ -213,6 +217,15 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     }),
   ]);
 
+  // Task H-2c (CHANGE 6): Top Growth (per resto & per barang). Fired right
+  // AFTER Batch 3 (not with the t=0 early-promise burst) so its 2 internal
+  // aggregateMetric queries overlap Batch 4's 2 fresh queries — batch
+  // concurrency stays ~4, within the PgBouncer pool cap; wall-clock added ≈ 0
+  // because it runs in parallel with Batch 4 and is resolved by the time we
+  // await it below (same overlap trick as the early promises, just delayed
+  // to avoid stacking on the t=0 burst).
+  const topGrowthPromise = queryTopGrowth(week, month, prevWeek, prevMonth, filterOpts);
+
   // Batch 4: deviasi rank + deviation drivers + health ranking + variance + growth
   const [topDeviasiRank, deviationDriverRows, healthRankingRows, varianceAnalysis, growthDrivers] = await Promise.all([
     queryTopItemsByDeviasiRank(week, month, filterOpts, 50),
@@ -224,6 +237,9 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     // SQL-OPTIMIZE: pushed from JS (was: computeGrowthDrivers loop over 35K×2 records)
     growthDriversPromise,
   ]);
+
+  // Top Growth promise — overlapped with Batch 4 above, resolved by now.
+  const topGrowth = await topGrowthPromise;
 
   // Map results (same as before, just from parallel results)
   const topWaste = topWasteRows.map(r => ({ itemName: r.itemName, outletCode: r.outletCode, qtyWaste: r.qty, nominalWaste: r.nominal }));
@@ -262,6 +278,7 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     healthRankingRows,
     varianceAnalysis,
     growthDrivers,
+    topGrowth,
   };
 }
 
