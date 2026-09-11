@@ -24,13 +24,14 @@ export async function queryTopItemsByNominal(
   month: string,
   filters: SqlFilterOpts,
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }>> {
+): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string }>> {
   const f = buildSqlFilters(filters);
   // Rev 3: Sort by ABS(nominalDeviasi), but return signed nominalDeviasi for display.
   // Previous version sorted/displayed absNominalLossSurplus (NET) — user wants nominalDeviasi (GROSS).
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; absNominal: number; nominalDeviasi: number; direction: string }[]>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
+      MAX(ir."satuan") as "satuan",
       ABS(SUM(ir."nominalDeviasi")) as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       -- FIX VERIFY3-8: direction derived from SUM(nominalLossSurplus) with qtyDeviasi NULL fallback
@@ -54,13 +55,14 @@ export async function queryTopItemsByDevBom(
   month: string,
   filters: SqlFilterOpts,
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }>> {
+): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null }>> {
   const f = buildSqlFilters(filters);
   // Rev 4: Sort by ABS(devBom), but return signed devBom for display.
   // Signed devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) — can be negative (SURPLUS) or positive (LOSS).
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
+      MAX(ir."satuan") as "satuan",
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBom",
@@ -157,6 +159,8 @@ export async function queryTopItemsByCategory(
 export interface TopItemsCategoryRow {
   itemName: string;
   outletCode: string;
+  /** H-2b: unit-of-measure for the item (denormalized on InventoryRecord; MAX per group — nullable, GROUP BY-safe). */
+  satuan: string | null;
   qty: number;
   nominal: number;
   direction: string;
@@ -187,6 +191,7 @@ function directionFromSums(nls: number | null, qd: number | null): string {
 interface WideCategoryRow {
   itemName: string;
   outletCode: string;
+  satuan: string | null;
   wasteQty: number; wasteNominal: number; wasteNls: number | null; wasteQd: number | null; rw: number;
   susutQty: number; susutNominal: number; susutNls: number | null; susutQd: number | null; rs: number;
   trialQty: number; trialNominal: number; trialNls: number | null; trialQd: number | null; rt: number;
@@ -222,13 +227,14 @@ export async function queryTopItemsByAllCategories(
   const ls = catFrag('lossSurplus');
 
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<WideCategoryRow[]>`
-    SELECT "itemName", "outletCode",
+    SELECT "itemName", "outletCode", "satuan",
       "wasteQty", "wasteNominal", "wasteNls", "wasteQd", "rw",
       "susutQty", "susutNominal", "susutNls", "susutQd", "rs",
       "trialQty", "trialNominal", "trialNls", "trialQd", "rt",
       "lsQty", "lsNominal", "lsNls", "lsQd", "rl"
     FROM (
       SELECT i.name as "itemName", o.code as "outletCode",
+        MAX(ir."satuan") as "satuan",
         ${waste.select},
         ${susut.select},
         ${trial.select},
@@ -255,6 +261,7 @@ export async function queryTopItemsByAllCategories(
       .map((r) => ({
         itemName: r.itemName,
         outletCode: r.outletCode,
+        satuan: r.satuan,
         qty: Number(r[`${c.tag}Qty` as keyof WideCategoryRow]) || 0,
         nominal: Number(r[`${c.tag}Nominal` as keyof WideCategoryRow]) || 0,
         direction: directionFromSums(

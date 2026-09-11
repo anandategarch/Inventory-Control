@@ -15,7 +15,7 @@ interface SectionOption {
 }
 
 const SECTIONS: SectionOption[] = [
-  { key: 'exec', label: '1. Rangkuman', description: 'KPI: Deviasi, BOM, Waste, Susut, Trial, Loss/Surplus, Dev/BOM', default: true },
+  { key: 'exec', label: '1. Rangkuman', description: 'KPI: Deviasi, BOM, Waste, Susut, Trial, Residual, Dev/BOM', default: true },
   { key: 'growth', label: '2. Perubahan (Growth)', description: 'Growth metrics: Sales, BOM, Deviasi, Nominal', default: true },
   { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
   { key: 'breakdown', label: '4. Rincian Komposisi Selisih', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },

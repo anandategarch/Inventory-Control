@@ -351,25 +351,26 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevWasteMap.get(key);
     const hist = histWasteMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, qtyWaste: r.qty, nominalWaste: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    // H-2b: pass satuan through for the "Satuan" column in the docx table.
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyWaste: r.qty, nominalWaste: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
   const topSusut = topSusutRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevSusutMap.get(key);
     const hist = histSusutMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, qtySusut: r.qty, nominalSusut: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtySusut: r.qty, nominalSusut: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
   const topTrial = topTrialRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevTrialMap.get(key);
     const hist = histTrialMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, qtyTrial: r.qty, nominalTrial: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyTrial: r.qty, nominalTrial: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
   const topLossSurplus = topLossSurplusRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevLossSurplusMap.get(key);
     const hist = histLossSurplusMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
 
   const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);

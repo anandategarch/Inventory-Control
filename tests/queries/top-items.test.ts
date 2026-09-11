@@ -28,13 +28,17 @@ describe('queryTopItemsByNominal', () => {
   });
 
   it('returns rows sorted by absNominal (passes through)', async () => {
+    // H-2b: fixtures now include `satuan` (MAX(ir."satuan") — nullable) so the
+    // pass-through of the new unit-of-measure column is covered.
     mockQueryRaw.mockResolvedValueOnce([
-      { itemName: 'Item A', outletCode: 'A.B1', absNominal: 1_000_000, nominalDeviasi: -1_000_000, direction: 'LOSS' },
-      { itemName: 'Item B', outletCode: 'B.C2', absNominal: 500_000, nominalDeviasi: 500_000, direction: 'SURPLUS' },
+      { itemName: 'Item A', outletCode: 'A.B1', satuan: 'PCS', absNominal: 1_000_000, nominalDeviasi: -1_000_000, direction: 'LOSS' },
+      { itemName: 'Item B', outletCode: 'B.C2', satuan: null, absNominal: 500_000, nominalDeviasi: 500_000, direction: 'SURPLUS' },
     ]);
     const r = await queryTopItemsByNominal('WEEK 1', 'Agustus 2026', {}, 10);
     expect(r.length).toBe(2);
     expect(r[0].itemName).toBe('Item A');
+    expect(r[0].satuan).toBe('PCS');
+    expect(r[1].satuan).toBe(null);
     expect(r[0].direction).toBe('LOSS');
     expect(r[1].direction).toBe('SURPLUS');
   });
@@ -79,6 +83,7 @@ describe('queryTopItemsByNominal', () => {
     expect(sqlText).toContain('"InventoryRecord"');
     expect(sqlText).toContain('as direction'); // DIRECTION_FROM_SUM_SQL is interpolated here
     expect(sqlText).toContain('$PARAM$'); // confirm placeholder for nested SQL fragment
+    expect(sqlText).toContain('MAX(ir."satuan")'); // H-2b: satuan column for the export
   });
 });
 
@@ -88,10 +93,12 @@ describe('queryTopItemsByDevBom', () => {
   });
 
   it('returns rows with devBom + devBomAbs + tolerance', async () => {
+    // H-2b: fixtures include `satuan` (MAX(ir."satuan") — nullable).
     mockQueryRaw.mockResolvedValueOnce([
       {
         itemName: 'Item A',
         outletCode: 'A.B1',
+        satuan: 'GR',
         devBom: -0.15, // signed (LOSS)
         devBomAbs: 0.15,
         tolerance: 0.05,
@@ -99,6 +106,7 @@ describe('queryTopItemsByDevBom', () => {
       {
         itemName: 'Item B',
         outletCode: 'B.C2',
+        satuan: null,
         devBom: 0.20, // signed (SURPLUS)
         devBomAbs: 0.20,
         tolerance: null,
@@ -107,6 +115,8 @@ describe('queryTopItemsByDevBom', () => {
     const r = await queryTopItemsByDevBom('WEEK 1', 'Agustus 2026', {}, 10);
     expect(r.length).toBe(2);
     expect(r[0].itemName).toBe('Item A');
+    expect(r[0].satuan).toBe('GR');
+    expect(r[1].satuan).toBe(null);
     expect(r[0].devBom).toBe(-0.15);
     expect(r[0].devBomAbs).toBe(0.15);
     expect(r[0].tolerance).toBe(0.05);
@@ -135,6 +145,7 @@ describe('queryTopItemsByDevBom', () => {
     const call = mockQueryRaw.mock.calls[0][0];
     const sqlText = Array.isArray(call) ? call.join('$') : String(call);
     expect(sqlText).toContain('"qtyBom"');
+    expect(sqlText).toContain('MAX(ir."satuan")'); // H-2b: satuan column for the export
   });
 });
 

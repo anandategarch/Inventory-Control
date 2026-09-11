@@ -91,18 +91,22 @@ export interface ReportParams {
 
 // queryTopItemsByNominal return shape (explicit Promise<...> signature in
 // src/lib/queries/items/top-items/by-other-metric.ts:27).
+// H-2b: `satuan` (MAX(ir."satuan") — nullable, GROUP BY-safe) flows through
+// for the "Satuan" column in the docx top-item tables.
 export interface TopItemByNominalRow {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   absNominal: number;
   nominalDeviasi: number;
   direction: string;
 }
 
-// queryTopItemsByDevBom return shape (by-other-metric.ts:57).
+// queryTopItemsByDevBom return shape (by-other-metric.ts:57). H-2b: satuan.
 export interface TopItemByDevBomRow {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   devBom: number;
   devBomAbs: number;
   tolerance: number | null;
@@ -110,9 +114,11 @@ export interface TopItemByDevBomRow {
 
 // Derived from queryTopItemsByCategory(..., 'waste', ...) output via the
 // .map() at route.ts:556-561 — adds prevQty + histAvgQty from lookup maps.
+// H-2b: satuan (unit of measure) for the "Satuan" column in the docx table.
 export interface TopCatItemWaste {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   qtyWaste: number;
   nominalWaste: number;
   prevQty: number | null;
@@ -122,6 +128,7 @@ export interface TopCatItemWaste {
 export interface TopCatItemSusut {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   qtySusut: number;
   nominalSusut: number;
   prevQty: number | null;
@@ -131,6 +138,7 @@ export interface TopCatItemSusut {
 export interface TopCatItemTrial {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   qtyTrial: number;
   nominalTrial: number;
   prevQty: number | null;
@@ -140,6 +148,7 @@ export interface TopCatItemTrial {
 export interface TopCatItemLossSurplus {
   itemName: string;
   outletCode: string;
+  satuan?: string | null;
   qtyLossSurplus: number;
   nominalLossSurplus: number;
   direction: string;

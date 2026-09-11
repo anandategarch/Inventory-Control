@@ -90,10 +90,14 @@ interface CellOpts {
   align?: 'left' | 'right';
   isHeader?: boolean;
   isZebra?: boolean;
+  /** H-2b (WI-2): body-cell fill override — wins over the zebra stripe (period-group coloring). */
+  fill?: string;
+  /** H-2b (WI-2): header-cell fill override — wins over COLOR.PRIMARY (period-group coloring). */
+  headerFill?: string;
 }
 
 function tableCell(text: string, opts: CellOpts = {}): TableCell {
-  const { bold = false, align = 'left', isHeader = false, isZebra = false } = opts;
+  const { bold = false, align = 'left', isHeader = false, isZebra = false, fill, headerFill } = opts;
   const safeText = text == null ? '' : String(text);
   // Negative numbers in red (but not em-dash null indicator)
   const isNegative = safeText.startsWith('-') && safeText !== '—' && !safeText.startsWith('—');
@@ -101,14 +105,18 @@ function tableCell(text: string, opts: CellOpts = {}): TableCell {
   const isIncrease = safeText.startsWith('↑');
   const isDecrease = safeText.startsWith('↓');
 
-  // Header: white text on primary bg
+  // Header: white text on primary bg (headerFill — H-2b period-group override)
   // Zebra row: light blue bg
   // Normal: white bg
+  // H-2b (WI-2): a per-column `fill` (period-group color) wins over the zebra
+  // stripe so the whole period column reads as one colored group.
   const shadingFill = isHeader
-    ? { fill: COLOR.PRIMARY, type: ShadingType.CLEAR, color: 'auto' }
-    : isZebra
-      ? { fill: COLOR.PRIMARY_LIGHT, type: ShadingType.CLEAR, color: 'auto' }
-      : undefined;
+    ? { fill: headerFill ?? COLOR.PRIMARY, type: ShadingType.CLEAR, color: 'auto' }
+    : fill
+      ? { fill, type: ShadingType.CLEAR, color: 'auto' }
+      : isZebra
+        ? { fill: COLOR.PRIMARY_LIGHT, type: ShadingType.CLEAR, color: 'auto' }
+        : undefined;
 
   const textColor = isHeader
     ? COLOR.PRIMARY_TEXT
@@ -148,16 +156,41 @@ function fmtVsHist(current: number | null, histAvg: number | null): string {
   return '= 0%';
 }
 
-function makeTable(headers: string[], rows: string[][]): Table {
+// ============================================================
+//  H-2b (WI-2) — per-column table options + period-group colors
+//  --------------------------------------------------------
+//  makeTable() accepts an optional `colOpts` array (one entry per column
+//  index; undefined entries keep the current default styling EXACTLY):
+//    - fill:       body-cell fill — WINS OVER the zebra stripe on that column
+//    - headerFill: header-cell fill — WINS OVER COLOR.PRIMARY on that column
+//    - align:      WINS OVER the default (i > 0 → right)
+//  Period-group rule (applied to every table with period columns):
+//    - current-period columns (header embeds currLabel): neutral (default)
+//    - prev-period columns (header embeds prevLabel): amber group
+//    - Hist columns (header is histLabel): emerald group
+//    - derived columns ('Perubahan', 'vs Hist', 'Selisih', 'Growth') and
+//      non-period columns ('#', 'Item', 'Resto', 'Satuan', 'Metrik'): neutral
+// ============================================================
+interface ColumnOpts {
+  fill?: string;
+  headerFill?: string;
+  align?: 'left' | 'right';
+}
+
+const PERIOD_COL_PREV: ColumnOpts = { headerFill: 'D97706', fill: 'FEF3C7' }; // amber — periode pembanding (prev)
+const PERIOD_COL_HIST: ColumnOpts = { headerFill: '047857', fill: 'D1FAE5' }; // emerald — rata-rata historis (Hist)
+
+function makeTable(headers: string[], rows: string[][], colOpts?: Array<ColumnOpts | undefined>): Table {
+  const colAlign = (i: number): 'left' | 'right' => colOpts?.[i]?.align ?? (i > 0 ? 'right' : 'left');
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({
         tableHeader: true,
-        children: headers.map((l, i) => tableCell(l, { bold: true, align: i > 0 ? 'right' : 'left', isHeader: true })),
+        children: headers.map((l, i) => tableCell(l, { bold: true, align: colAlign(i), isHeader: true, headerFill: colOpts?.[i]?.headerFill })),
       }),
       ...rows.map((r, idx) => new TableRow({
-        children: r.map((v, i) => tableCell(v, { align: i > 0 ? 'right' : 'left', isZebra: idx % 2 === 1 })),
+        children: r.map((v, i) => tableCell(v, { align: colAlign(i), isZebra: idx % 2 === 1, fill: colOpts?.[i]?.fill })),
       })),
     ],
   });
@@ -250,12 +283,10 @@ export async function buildDocxReport(
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
       ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), s._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, s._prevMetrics.deviationToBom), true) : '—', s._prevMetrics?.deviationToBom != null ? fmtPct(s._prevMetrics.deviationToBom, false) : '—'],
-      ['Loss To Sales', fmtPct(s.lossToSales, false), s._prevMetrics?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, s._prevMetrics.lossToSales), true) : '—', s._prevMetrics?.lossToSales != null ? fmtPct(s._prevMetrics.lossToSales, false) : '—'],
-      ['Total LOSS', fmtIDR(s.totalLoss), s._prevMetrics?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, s._prevMetrics.totalLoss), true) : '—', s._prevMetrics?.totalLoss != null ? fmtIDR(s._prevMetrics.totalLoss) : '—'],
-      ['Total SURPLUS', fmtIDR(s.totalSurplus), s._prevMetrics?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, s._prevMetrics.totalSurplus), true) : '—', s._prevMetrics?.totalSurplus != null ? fmtIDR(s._prevMetrics.totalSurplus) : '—'],
+      // H-2b (WI-3b): 'Loss To Sales' / 'Total LOSS' / 'Total SURPLUS' rows removed per user request.
       ['Loss/Surplus Qty', fmtNum(s.residualLossQty), s._prevMetrics?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, s._prevMetrics.residualLossQty), true) : '—', s._prevMetrics?.residualLossQty != null ? fmtNum(s._prevMetrics.residualLossQty) : '—'],
       ['Loss/Surplus %', fmtPct(s.residualLossPct, false), s._prevMetrics?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, s._prevMetrics.residualLossPct), true) : '—', s._prevMetrics?.residualLossPct != null ? fmtPct(s._prevMetrics.residualLossPct, false) : '—'],
-    ]));
+    ], [undefined, undefined, undefined, PERIOD_COL_PREV]));
 
   }
   if (hasSection('growth')) {
@@ -273,21 +304,46 @@ export async function buildDocxReport(
   if (hasSection('topItems')) {
     children.push(heading('3. Item Prioritas (Top Items)'));
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
+    // H-2b (WI-1c): kolom "Satuan" disisipkan setelah "Item" di tabel 4.3-4.6 (unit of
+    // measure per item — MAX(ir."satuan") dari query, nullable → '—').
+    // H-2b (WI-2b): colOpts untuk tabel 4.3-4.6 (9 kolom): Satuan left-align,
+    // kolom prev (amber) + kolom Hist (emerald); kolom current & derived netral.
+    const TOP_CAT_COL_OPTS: Array<ColumnOpts | undefined> = [
+      undefined,          // '#'
+      undefined,          // 'Item'
+      { align: 'left' },  // 'Satuan' — teks, left-align (default i>0 = right)
+      undefined,          // 'Resto'
+      undefined,          // `QTY <metrik> ${currLabel}` — periode berjalan → netral
+      PERIOD_COL_PREV,    // `QTY ${prevLabel}` — periode pembanding → amber
+      PERIOD_COL_HIST,    // histLabel — rata-rata historis → emerald
+      undefined,          // 'vs Hist' — derived → netral
+      undefined,          // `Nominal <metrik> ${currLabel}` — periode berjalan → netral
+    ];
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
+      { title: `4.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
-      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      { title: `4.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
-      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
-      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
-      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
+      { title: `4.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
+      { title: `4.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
+      { title: `4.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
+      { title: `4.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
     ];
+    // H-2b (WI-2c): satu baris keterangan warna sebelum tabel 4.3 pertama yang
+    // memakai pewarnaan kolom periode (ditempatkan setelah judul sub-section).
+    let periodColorLegendAdded = false;
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
         children.push(paragraph(sec.title, true));
-        children.push(makeTable(sec.cols, sec.items.map(sec.map)));
+        if (!periodColorLegendAdded && sec.colOpts) {
+          periodColorLegendAdded = true;
+          children.push(new Paragraph({
+            children: [new TextRun({ text: 'Warna kolom: kuning = periode pembanding (prev), hijau = rata-rata historis (Hist).', italics: true, size: 16, color: COLOR.MUTED })],
+            spacing: { after: 80 },
+          }));
+        }
+        children.push(makeTable(sec.cols, sec.items.map(sec.map), sec.colOpts));
         children.push(paragraph(''));
       }
     }
@@ -360,7 +416,7 @@ export async function buildDocxReport(
         (bomUp && susutUp) || (bomDown && susutDown) ? '✓ Ya' : '⚠ Tidak'],
       ['QTY Trial', fmtNum(s.qtyTrial.current), fmtPct(s.qtyTrial.growth, true), fmtNum(s.qtyTrial.previous),
         (bomUp && trialUp) || (bomDown && trialDown) ? '✓ Ya' : '⚠ Tidak'],
-    ]));
+    ], [undefined, undefined, undefined, PERIOD_COL_PREV, undefined]));
     for (const f of findings) children.push(paragraph(f));
 
     // ==========================================================
@@ -560,7 +616,8 @@ export async function buildDocxReport(
     if ((va.topWorsened || []).length > 0) {
       children.push(heading('6. Perubahan Item (Selisih Terbesar)'));
       children.push(makeTable(['Item', 'Resto', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
-        va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)])));
+        va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
+        [undefined, undefined, undefined, PERIOD_COL_PREV, undefined]));
       children.push(divider());
     }
 
