@@ -119,7 +119,6 @@ export function DashboardHeader({
                 <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">4</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Trend Item</span><kbd className="font-mono">5</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Kepatuhan</span><kbd className="font-mono">6</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
               </ul>
             </TooltipContent>

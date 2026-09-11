@@ -111,7 +111,7 @@ export interface TopItemByDevBomRow {
   tolerance: number | null;
 }
 
-// Derived from queryTopItemsByCategory(..., 'waste', ...) output via the
+// Derived from queryTopItemsByAllCategories('waste') output via the
 // .map() at route.ts:556-561 — adds prevQty + histAvgQty from lookup maps.
 // H-2b: satuan (unit of measure) for the "Satuan" column in the docx table.
 export interface TopCatItemWaste {

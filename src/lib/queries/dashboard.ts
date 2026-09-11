@@ -238,30 +238,6 @@ export async function queryExecSummary(
 }
 
 // ============================================================
-//  Deviation Breakdown — single row (Phase 2)
-// ============================================================
-export async function queryDeviationBreakdown(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts
-): Promise<{ waste: number; susut: number; trial: number; residual: number; total: number }> {
-  const f = buildSqlFilters(filters);
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ waste: number; susut: number; trial: number; residual: number; total: number }[]>`
-    SELECT
-      COALESCE(SUM(ABS(ir."qtyWaste")), 0) as waste,
-      COALESCE(SUM(ABS(ir."qtySusut")), 0) as susut,
-      COALESCE(SUM(ABS(ir."qtyTrial")), 0) as trial,
-      COALESCE(SUM(ABS(ir."residualQty")), 0) as residual,
-      COALESCE(SUM(ir."absQtyDeviasi"), 0) as total
-    FROM "InventoryRecord" ir
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      ${f}
-  `);
-  return rows[0] || { waste: 0, susut: 0, trial: 0, residual: 0, total: 0 };
-}
-
-// ============================================================
 //  Deviation Breakdown Drivers — per-item aggregates across
 //  4 categories (waste / susut / trial / residual) in a single
 //  query. Used by the Deviation Breakdown card to power the
@@ -315,72 +291,16 @@ export async function queryDeviationBreakdownDrivers(
 }
 
 // ============================================================
-//  Loss vs Surplus — single row (Phase 2)
-// ============================================================
-export async function queryLossVsSurplus(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts
-): Promise<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }> {
-  const f = buildSqlFilters(filters);
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ loss: number; surplus: number; lossNominal: number; surplusNominal: number }[]>`
-    SELECT
-      -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
-      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" < 0 THEN 1 END) AS INTEGER) as loss,
-      CAST(COUNT(CASE WHEN ir."nominalLossSurplus" > 0 THEN 1 END) AS INTEGER) as surplus,
-      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "lossNominal",
-      COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "surplusNominal"
-    FROM "InventoryRecord" ir
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      ${f}
-  `);
-  return rows[0] || { loss: 0, surplus: 0, lossNominal: 0, surplusNominal: 0 };
-}
-
-// ============================================================
-//  Cost Impact — single row (Phase 2)
-// ============================================================
-export async function queryCostImpact(
-  week: string,
-  month: string,
-  salesTotal: number,
-  filters: SqlFilterOpts
-): Promise<{
-  wasteCost: number; susutCost: number; trialCost: number; residualCost: number; totalCost: number;
-  wastePct: number; susutPct: number; trialPct: number; residualPct: number;
-  wasteToSales: number; susutToSales: number; trialToSales: number; residualToSales: number; totalCostToSales: number;
-}> {
-  const f = buildSqlFilters(filters);
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
-    wasteCost: number; susutCost: number; trialCost: number; residualCost: number; totalCost: number;
-  }[]>`
-    SELECT
-      COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "wasteCost",
-      COALESCE(SUM(ABS(ir."nominalSusut")), 0) as "susutCost",
-      COALESCE(SUM(ABS(ir."nominalTrial")), 0) as "trialCost",
-      COALESCE(SUM(ABS(ir."residualNominal")), 0) as "residualCost",
-      COALESCE(SUM(ABS(ir."nominalWaste")), 0)
-        + COALESCE(SUM(ABS(ir."nominalSusut")), 0)
-        + COALESCE(SUM(ABS(ir."nominalTrial")), 0)
-        + COALESCE(SUM(ABS(ir."residualNominal")), 0) as "totalCost"
-    FROM "InventoryRecord" ir
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      ${f}
-  `);
-  const r = rows[0] || { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0 };
-  return costImpactRatios(r, salesTotal);
-}
-
-// ============================================================
 //  PERF (PAKET B / F2 — scan merge): queryDashboardKpis
 //  --------------------------------------------------------
-//  queryExecSummary + queryDeviationBreakdown + queryLossVsSurplus +
-//  queryCostImpact each scanned the SAME filtered period
-//  (WHERE monthLabel/weekLabel/f) separately — 4 scans + 4 transactions
-//  for what is one logical "current-period KPI" read. This function does
-//  it in ONE scan + ONE transaction.
+//  Previously queryExecSummary + queryDeviationBreakdown +
+//  queryLossVsSurplus + queryCostImpact each scanned the SAME filtered
+//  period separately — 4 scans + 4 transactions for one logical
+//  "current-period KPI" read. This function does it in ONE scan + ONE
+//  transaction.
+//  H-10 dead-code cleanup: the 3 standalone breakdown/lvs/cost queries
+//  were removed (zero production callers since this merge landed); the
+//  shapes live on via the kpisTo* mappers below.
 //
 //  Field-for-field identical to the four originals:
 //    - exec:      sales (sales_mode CTE) + the 13 aggs expressions
@@ -390,8 +310,6 @@ export async function queryCostImpact(
 //    - lvs:       lossNominal/surplusNominal = totalLoss/totalSurplus
 //                 (identical expressions); loss/surplus counts = NEW
 //    - cost:      the 5 nominal aggregates (identical expressions)
-//  The individual functions are kept (tested + used by export-report);
-//  the analysis pipeline + export-report now use this merged query.
 // ============================================================
 export interface DashboardKpisRow extends ExecSummaryRow {
   // queryDeviationBreakdown extras
@@ -407,7 +325,7 @@ export interface DashboardKpisRow extends ExecSummaryRow {
   totalCost: number;
 }
 
-/** Shared ratio math — used by both queryCostImpact and kpisToCostImpact. */
+/** Shared ratio math — used by kpisToCostImpact (merged-KPI derivation). */
 function costImpactRatios(
   r: Pick<DashboardKpisRow, 'wasteCost' | 'susutCost' | 'trialCost' | 'residualCost' | 'totalCost'>,
   salesTotal: number,

@@ -145,7 +145,7 @@ export function useDashboardActions({
   // Non-fatal by design: if /api/refresh fails (429 rate limit — 30/min —
   // or transient network), we still invalidate the client queries; the
   // refetch then serves whatever the server has (same as the old behavior).
-  // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, resto-bahan-matrix, pareto)
+  // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, pareto)
   const handleRefresh = useCallback(async () => {
     try {
       await fetch('/api/refresh', { method: 'POST' });
@@ -162,9 +162,9 @@ export function useDashboardActions({
     queryClient.invalidateQueries({ queryKey: ['item-trend'] });
     queryClient.invalidateQueries({ queryKey: ['drilldown'] });
     queryClient.invalidateQueries({ queryKey: ['pareto'] });
-    // PERF (H-8 QUICK WIN 4): removed the ['resto-bahan-matrix'] invalidation —
-    // no client query consumes that key (the route exists but nothing on the
-    // frontend calls it), so the call was a no-op. Note the invalidation herd
+    // PERF (H-8 QW4 + H-10): no ['resto-bahan-matrix'] invalidation —
+    // the orphaned route was DELETED in H-10 (nothing on the frontend ever
+    // called it). Note the invalidation herd
     // itself is bounded by H-8 QW3: hidden tabs the user never opened have no
     // active TanStack observers, so their keys are marked stale WITHOUT a
     // refetch; only visited tabs (keep-alive mounted) refresh in background.

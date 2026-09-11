@@ -121,12 +121,13 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/pic/import` | ❌ | ✅ | ✅ | Protected (maxDuration 60 — PAKET C DEPLOY-3) |
 | `/api/price-effect` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW Task W — dekomposisi Bennet efek harga vs kuantitas) |
 | `/api/recommendations` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
-| `/api/resto-bahan-matrix` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/settings` | ❌ | ✅ | ✅ | Protected |
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 34/36 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` + root `/api/route.ts` health stub skip Zod) · **21 routes use DB cache** (analysis, pareto, recommendations, resto-bahan-matrix, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, compliance, chronic-outlets, price-effect) — all 21 prefixes invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
+**Totals:** 34/36 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` skips Zod) · **20 route prefixes use DB cache** (analysis, pareto, recommendations, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, price-effect, item-search, heatmap-cell-detail) — all invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
+
+**REMOVED (H-10 dead-code cleanup):** `/api/resto-bahan-matrix` route (330 LOC — zero frontend consumers since H-8) + root `/api/route.ts` health stub ("Hello, world!") — both deleted; `invalidateAnalysisCache()` route list updated. (Earlier removals: `/api/audit-log` + `AuditLog` model, DEL-AUDIT; `/api/compliance` + `/api/chronic-outlets`, H-2b Kepatuhan-tab deletion.)
 
 **REMOVED (DEL-AUDIT):** `/api/audit-log` route + `AuditLog` Prisma model — entire audit log feature deleted (model, route, dialog, 14 write sites, button, state, middleware entry). 0 dangling references verified.
 
@@ -142,27 +143,26 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `GET /api/flip-ranking?week=&month=&area=&kelompok=&outlet=&pic=&limit=` — Cross-item flip risk ranking. Scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY monthLabel, weekLabel, i.name. Risk score = `min(100, sempurnaCount*30 + flipCount*10)` (formula post-BUG2-FLIP-05 — sempurna = flip pair with disparity < 10%, dominan < 40%, parsial ≥ 40%). Risk level: `sempurnaCount>0 ? high : flipCount>0 ? moderate : low` (aligned FE+BE in BUG2-FLIP-05 fix). 5-min DB cache + SWR. Phase C.
 - `GET /api/flip-ranking/drilldown?item=&week=&month1=&month2=` — Per-outlet breakdown for ONE flip pair. Returns outlet × P1 QTY + P2 QTY + Δ QTY + Net + flip% (disparityPct = |net| / MAX(|P1|,|P2|) × 100). Sorted by flip% ASC (most balanced at top). Filtered to flip-only outlets. Satuan-aware (dynamic unit, not hardcoded `kg`). 5-min DB cache + SWR. Phase C.
 
-**20 cached routes** (19 pakai `withCacheAndDedup` SWR + `/api/analysis` pipeline bespoke dengan raw-JSON passthrough — P3-HYG-1):
+**19 cached routes** (18 pakai `withCacheAndDedup` SWR + `/api/analysis` pipeline bespoke dengan raw-JSON passthrough — P3-HYG-1):
 1. `/api/analysis` (SWR 30 mnt TTL via `getCachedRawWithMeta` + background-recompute + **raw-JSON passthrough** — cache hit menyajikan string JSON tersimpan langsung, flag `cached`/`stale` di-inject via string surgery, NOL JSON.parse/stringify)
 2. `/api/pareto`
 3. `/api/recommendations`
-4. `/api/resto-bahan-matrix`
-5. `/api/export-report` (binary docx — payload cache **base64** sejak P3-HYG-4, 1.33× ukuran biner vs 4× number[] lama)
-6. `/api/outlet-items`
-7. `/api/item-history`
-8. `/api/drilldown`
-9. `/api/area-item-heatmap`
-10. `/api/item-trend` (per-item QTY fluctuation across periods)
-11. `/api/item-peer-comparison` (Phase 2 — target + peers BOM ±50% + averages; auto-selects worst outlet)
-12. `/api/item-trend-rank` (Phase 3 — per-period national rank by ABS(nominalDeviasi); RANK() window function)
-13. `/api/flip-ranking` (Phase C — cross-item flip risk ranking; sempurna/dominan/parsial categories)
-14. `/api/flip-ranking/drilldown` (Phase C — per-outlet flip breakdown; sorted by flip% ASC)
-15. `/api/item-anomali-outlets` (per-outlet drill-down MINORITY direction)
-16. `/api/peer-comparison` (P3-HYG-3)
-17. `/api/peer-comparison/items` (P3-HYG-3)
-18. `/api/peer-comparison/trend` (P3-HYG-3)
-19. `/api/compliance` (PAKET E)
-20. `/api/chronic-outlets` (PAKET E)
+4. `/api/export-report` (binary docx — payload cache **base64** sejak P3-HYG-4, 1.33× ukuran biner vs 4× number[] lama)
+5. `/api/outlet-items`
+6. `/api/item-history`
+7. `/api/drilldown`
+8. `/api/area-item-heatmap`
+9. `/api/item-trend` (per-item QTY fluctuation across periods)
+10. `/api/item-peer-comparison` (Phase 2 — target + peers BOM ±50% + averages; auto-selects worst outlet)
+11. `/api/item-trend-rank` (Phase 3 — per-period national rank by ABS(nominalDeviasi); RANK() window function)
+12. `/api/flip-ranking` (Phase C — cross-item flip risk ranking; sempurna/dominan/parsial categories)
+13. `/api/flip-ranking/drilldown` (Phase C — per-outlet flip breakdown; sorted by flip% ASC)
+14. `/api/item-anomali-outlets` (per-outlet drill-down MINORITY direction)
+15. `/api/peer-comparison` (P3-HYG-3)
+16. `/api/peer-comparison/items` (P3-HYG-3)
+17. `/api/peer-comparison/trend` (P3-HYG-3)
+18. `/api/price-effect` (Task W)
+19. H-10 note: `/api/item-search` + `/api/area-item-heatmap/cell-detail` pakai cache 60 dtk (bukan SWR 5 mnt)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query — small result set, low latency, user-initiated drill-down).
 >
@@ -410,8 +410,8 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 ### Caching
 - **DB-level `AggregationCache`** (TTL: 5 mnt default; `/api/analysis` 30 mnt via `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi, mutasi selalu invalidate; `awaitWrite` pattern)
   - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (returns `{ data, stale }` without deleting expired row, for SWR pattern), `getCachedRawWithMeta()` (NEW P3-HYG-1 — returns `{ raw, stale }` RAW JSON string tanpa parse, untuk raw passthrough)
-  - **20 cached routes**: `analysis`, `pareto`, `recommendations`, `resto-bahan-matrix`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `compliance` + `chronic-outlets` (PAKET E)
-  - `invalidateAnalysisCache()` clears ALL 20 prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
+  - **20 cached route prefixes**: `analysis`, `pareto`, `recommendations`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `price-effect` (Task W), `item-search` + `heatmap-cell-detail` (H-8 QW6, 60 dtk) — plus 7 `q-*` shared-query prefixes (P2-9 ×6 + `q-outlet-agg` H-10: shared per-outlet scan untuk health-ranking + recommendations)
+  - `invalidateAnalysisCache()` clears ALL of those prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
 - **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01 + AUDIT-PERF-5): `withCacheAndDedup()` implements SWR on top of `getCachedWithMeta`:
   - Fresh hit → return immediately
   - Stale hit → return stale data in <50ms + fire-and-forget background recompute (writes fresh cache via `setCached(awaitWrite=true)`, resolves in-flight Promise so concurrent requests get fresh data)
@@ -458,11 +458,8 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 |-------|------|-------------|-------|
 | `/api/analysis` | ~0.5s (pasca scan-merge PAKET B) | **<100ms, zero-parse** (raw passthrough P3-HYG-1) | DB cache 30 mnt + SWR background-recompute + in-flight dedup |
 | `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms; nested-Pareto N+1 (10 tx) → 1 query ROW_NUMBER (f6a126b) |
-| `/api/compliance` | ~1 scan periode | <100ms | 9 lensa dari 1 scan + cache 5 mnt (PAKET E) |
-| `/api/chronic-outlets` | ~1 scan bulan | <100ms | Cache 5 mnt reusable antar minggu (keyed month-only) |
 | `/api/peer-comparison` ×3 | CROSS JOIN multi-CTE | <100ms | **kini di-cache** (P3-HYG-3 — dulu full compute per request) |
 | `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) + scan-merge (PAKET B) |
-| `/api/resto-bahan-matrix` | 0.3s | 0.2s | SWR |
 | `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal; payload cache base64 (P3-HYG-4) |
 | `/api/outlet-items` | 2.17s | 0.006s | cached (PERF-API-01) — 157× warm speedup |
 | `/api/item-history` | 1.37s | 0.006s | cached (PERF-API-02) — 83× warm speedup |

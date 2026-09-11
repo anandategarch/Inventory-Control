@@ -1,6 +1,12 @@
 // Tests for src/lib/queries/health-ranking.ts
 // Covers: queryOutletHealthRanking, queryVarianceAnalysis, queryHistoricalCriticalItems
 // Mock @/lib/db; verify SQL invocation + result transformation.
+//
+// H-10 (G1 scan-share): queryOutletHealthRanking now derives from the shared
+// queryOutletAggregateScan (q-outlet-agg) — its raw SQL returns the SUPERSET
+// row shape (f-prefixed FILTER columns + unfiltered columns), and health
+// shapes/filters/sorts in JS. The aggregation-cache is mocked as a passthrough
+// so the scan's SQL still runs against the mocked db.$queryRaw.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   queryOutletHealthRanking,
@@ -27,38 +33,105 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
+// Passthrough for cachedSharedQuery — the scan's computeFn runs verbatim.
+vi.mock('@/lib/aggregation-cache', () => ({
+  buildCacheKey: (parts: { route: string; [k: string]: unknown }) =>
+    `${parts.route}\x1f${JSON.stringify(parts)}`,
+  withCacheAndDedup: async (_key: string, _ttl: number, compute: () => Promise<unknown>) =>
+    ({ data: await compute(), cached: false, stale: false }),
+}));
+
+vi.mock('@/lib/settings', () => ({
+  getRuntimeThresholds: async () => ({ HIGH_LOSS_NOMINAL_THRESHOLD: 50_000_000 }),
+}));
+
 describe('queryOutletHealthRanking', () => {
   beforeEach(() => {
     mockQueryRaw.mockReset();
   });
 
-  it('returns outlet health rows with all expected fields', async () => {
+  it('shapes health rows from the shared superset scan (f-columns + filter + sort)', async () => {
     mockQueryRaw.mockResolvedValueOnce([
       {
+        // Superset row — unfiltered + f-prefixed FILTER columns (raw SQL shape)
         outletId: 1,
         outletCode: 'JKT-001',
         outletName: 'Outlet Jakarta 1',
         area: 'JAKARTA',
-        absNominal: 5_000_000,
-        nominalDeviasi: -3_000_000,
-        totalQtyDeviasi: 100,
-        totalQtyBom: 1000,
-        totalQtyWaste: 20,
-        totalQtySusut: 10,
-        totalQtyTrial: 5,
-        totalResidualQty: 50,
-        lossNominal: 2_000_000,
         sales: 50_000_000,
+        fNominalDeviasi: -3_000_000,
+        fTotalQtyDeviasi: 100,
+        fTotalQtyBom: 1000,
+        fTotalQtyWaste: 20,
+        fTotalQtySusut: 10,
+        fTotalQtyTrial: 5,
+        fTotalResidualQty: 50,
+        fLossNominal: 2_000_000,
         zeroDevCount: 5,
         nonZeroDevCount: 80,
+        // Unfiltered columns (recommendation variants) — ignored by health
+        nominalDeviasi: -3_100_000,
+        devBom: 0.1,
+        direction: 'LOSS',
+        topItem: 'Ayam Fillet',
+      },
+      {
+        // Larger |fNominalDeviasi| — must sort FIRST (absNominal DESC)
+        outletId: 2,
+        outletCode: 'JKT-002',
+        outletName: 'Outlet Jakarta 2',
+        area: 'JAKARTA',
+        sales: 60_000_000,
+        fNominalDeviasi: -7_000_000,
+        fTotalQtyDeviasi: 200,
+        fTotalQtyBom: 2000,
+        fTotalQtyWaste: 30,
+        fTotalQtySusut: 15,
+        fTotalQtyTrial: 8,
+        fTotalResidualQty: 60,
+        fLossNominal: 5_000_000,
+        zeroDevCount: 2,
+        nonZeroDevCount: 90,
+        nominalDeviasi: -7_100_000,
+        devBom: 0.12,
+        direction: 'LOSS',
+        topItem: 'Bawang',
+      },
+      {
+        // All-zero-dev outlet — must be FILTERED OUT (old HAVING clause)
+        outletId: 3,
+        outletCode: 'JKT-003',
+        outletName: 'Outlet Jakarta 3',
+        area: 'JAKARTA',
+        sales: 0,
+        fNominalDeviasi: 0,
+        fTotalQtyDeviasi: 0,
+        fTotalQtyBom: 500,
+        fTotalQtyWaste: 0,
+        fTotalQtySusut: 0,
+        fTotalQtyTrial: 0,
+        fTotalResidualQty: 0,
+        fLossNominal: 0,
+        zeroDevCount: 40,
+        nonZeroDevCount: 0,
+        nominalDeviasi: 0,
+        devBom: 0,
+        direction: 'NEUTRAL',
+        topItem: null,
       },
     ]);
     const r = await queryOutletHealthRanking('WEEK 1', 'Agustus 2026', {});
-    expect(r.length).toBe(1);
-    expect(r[0].outletCode).toBe('JKT-001');
-    expect(r[0].absNominal).toBe(5_000_000);
-    expect(r[0].zeroDevCount).toBe(5);
-    expect(r[0].nonZeroDevCount).toBe(80);
+    expect(r.length).toBe(2); // zero-dev outlet dropped
+    expect(r[0].outletCode).toBe('JKT-002'); // |−7M| > |−3M| → sorted first
+    expect(r[0].absNominal).toBe(7_000_000);
+    expect(r[1].outletCode).toBe('JKT-001');
+    expect(r[1].absNominal).toBe(3_000_000);
+    expect(r[1].nominalDeviasi).toBe(-3_000_000); // f-column, NOT unfiltered −3.1M
+    expect(r[1].totalQtyDeviasi).toBe(100);
+    expect(r[1].zeroDevCount).toBe(5);
+    expect(r[1].nonZeroDevCount).toBe(80);
+    expect(r[1].lossNominal).toBe(2_000_000);
+    expect(r[1].sales).toBe(50_000_000);
   });
 
   it('returns empty array when DB returns no rows', async () => {

@@ -234,8 +234,9 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   //  current period only needs a COUNT for the 404 short-circuit —
   //  index-driven, 1 row egress. historicalByOutletItem stays:
   //  buildHistoricalAnalysis still merges its 5-metric stats into the
-  //  critical-items payload (that query is also the baseline the export
-  //  pipeline reuses).
+  //  critical-items payload. (The export pipeline calls the same query
+  //  function but recomputes it — not yet q-* cache-shared; see H-10
+  //  follow-up candidates.)
   //
   //  FIX: Historical periods now filter by SAME weekLabel only.
   //  Weeks are cumulative (W1=1-7, W2=1-14, W4=1-25). Z-Score baseline

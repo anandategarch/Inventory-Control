@@ -6,7 +6,7 @@
 //  MONTH_NAMES array had drifted from the server-side MONTH_MAP (src/lib/excel.ts)
 //  causing AUDIT-RENAME-9 (client ✓ then server 400). Centralising here:
 //    - makes the month list a single source of truth on the client side
-//    - lets other dialogs (CsvUploadDialog, DriveImportDialog) reuse the same
+//    - lets other dialogs (DriveImportDialog) reuse the same
 //      validation logic instead of re-implementing it inline (FilterBar.tsx
 //      already has its own partial copy that should also be migrated).
 //    - renameModeDefault is shared between FileUploadDialog's useState init

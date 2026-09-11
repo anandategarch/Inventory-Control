@@ -30,9 +30,22 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
+import { queryOutletAggregateScan } from './outlets/outlet-agg-scan';
 
 // ============================================================
 //  Outlet Health Ranking — per-outlet aggregate (GROUP BY outlet)
+//  --------------------------------------------------------
+//  H-10 (G1 scan-share): the bespoke SQL scan was replaced by the
+//  shared queryOutletAggregateScan (q-outlet-agg) — a superset scan
+//  that also feeds queryRestoRecommendations. This function now only
+//  SHAPES the health projection from the scan rows:
+//    - keeps only outlets with ≥1 non-zero-dev record (the old
+//      HAVING COUNT(*) FILTER (WHERE NOT zeroDevExpr) > 0);
+//    - uses the f-prefixed FILTER (WHERE NOT zeroDev) columns, so the
+//      payload is byte-identical to the previous standalone query;
+//    - re-sorts by |filtered nominalDeviasi| DESC in JS (≤ ~333 rows).
+//  Net effect: the analysis cold path and /api/recommendations share
+//  ONE cached scan instead of scanning the ~280K-row period twice.
 // ============================================================
 export interface OutletHealthRow {
   outletId: number;
@@ -57,103 +70,31 @@ export async function queryOutletHealthRanking(
   week: string,
   month: string,
   filters: SqlFilterOpts,
+  highLossThreshold?: number,
 ): Promise<OutletHealthRow[]> {
-  const f = buildSqlFilters(filters);
+  const rows = await queryOutletAggregateScan(week, month, filters, highLossThreshold);
 
-  // Zero-dev classification matches the existing JS check exactly:
-  //   zeroDev = (qtyDeviasi IS NULL OR = 0) AND (absNominalDeviasi IS NULL OR = 0)
-  const zeroDevExpr = Prisma.sql`(
-    (ir."qtyDeviasi" IS NULL OR ir."qtyDeviasi" = 0)
-    AND (ir."absNominalDeviasi" IS NULL OR ir."absNominalDeviasi" = 0)
-  )`;
-
-  // Sales MODE per outlet (sub-CTE — same pattern as outlets.ts queryTopOutlets)
-  // NOTE: we apply the zero-dev filter here too to match the existing JS
-  // `dedupSalesByOutlet(recsWithFlags.map(r => r.curr))` which only considers
-  // non-zero-dev records. (Sales is outlet-level denormalized so the MODE
-  // is the same regardless, but we match the existing behaviour exactly.)
-  // DEEP-AUDIT-BACKEND C4: wrap in withStatementTimeout — 3 CTEs with window funcs
-  // can hang under PgBouncer tx mode.
-  //
-  // DB-06: sales_counts → ranked_sales → sales_mode CTE pipeline replaced
-  // with pre-computed OutletPeriodSales table. Per the comment above (and
-  // the INVESTIGATE report's edge-case analysis), nominalSales is outlet-level
-  // denormalized so the precomputed MODE matches the inline CTE output even
-  // when the inline CTE applied the `NOT zeroDevExpr` filter. The LEFT JOIN
-  // to OutletPeriodSales naturally yields NULL (→ COALESCE 0) for outlets
-  // with no sales records — same behaviour as the original LEFT JOIN to
-  // sales_mode.
-  //
-  // PERF (TAHAP-2 / P2-10): the old query scanned the filtered period TWICE —
-  // outlet_counts (counts over ALL rows) + outlet_aggs (sums over non-zero-dev
-  // rows) — two CTEs, two aggregate passes, two sorts. Both are now ONE scan:
-  // counts via COUNT(*) FILTER and sums via SUM(...) FILTER (WHERE NOT zeroDev),
-  // which is row-for-row the same partitioning the two CTEs produced.
-  // The HAVING clause keeps the final row set identical to the old FROM
-  // outlet_aggs driver: only outlets with ≥1 non-zero-dev record appear.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<OutletHealthRow[]>`
-    WITH outlet_stats AS (
-      SELECT ir."outletId",
-        COUNT(*) FILTER (WHERE ${zeroDevExpr}) as "zeroDevCount",
-        COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) as "nonZeroDevCount",
-        SUM(ir."nominalDeviasi") FILTER (WHERE NOT ${zeroDevExpr}) as "nominalDeviasi",
-        SUM(ABS(ir."qtyDeviasi")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyDeviasi",
-        SUM(ABS(ir."qtyBom")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyBom",
-        SUM(ABS(ir."qtyWaste")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyWaste",
-        SUM(ABS(ir."qtySusut")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtySusut",
-        SUM(ABS(ir."qtyTrial")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalQtyTrial",
-        SUM(ABS(ir."residualQty")) FILTER (WHERE NOT ${zeroDevExpr}) as "totalResidualQty",
-        SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) FILTER (WHERE NOT ${zeroDevExpr}) as "lossNominal"
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        ${f}
-      GROUP BY ir."outletId"
-      HAVING COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) > 0
-    )
-    SELECT os."outletId",
-      o.code as "outletCode",
-      o.name as "outletName",
-      o.area,
-      ABS(os."nominalDeviasi") as "absNominal",
-      os."nominalDeviasi",
-      COALESCE(os."totalQtyDeviasi", 0) as "totalQtyDeviasi",
-      COALESCE(os."totalQtyBom", 0) as "totalQtyBom",
-      COALESCE(os."totalQtyWaste", 0) as "totalQtyWaste",
-      COALESCE(os."totalQtySusut", 0) as "totalQtySusut",
-      COALESCE(os."totalQtyTrial", 0) as "totalQtyTrial",
-      COALESCE(os."totalResidualQty", 0) as "totalResidualQty",
-      COALESCE(os."lossNominal", 0) as "lossNominal",
-      COALESCE(ops."salesMode", 0) as sales,
-      COALESCE(os."zeroDevCount", 0) as "zeroDevCount",
-      COALESCE(os."nonZeroDevCount", 0) as "nonZeroDevCount"
-    FROM outlet_stats os
-    JOIN "Outlet" o ON os."outletId" = o.id
-    LEFT JOIN "OutletPeriodSales" ops
-      ON ops."outletId" = os."outletId"
-      AND ops."monthLabel" = ${month}
-      AND ops."weekLabel" = ${week}
-    ORDER BY "absNominal" DESC
-  `);
-
-  // Coerce BigInt → Number (PostgreSQL COUNT returns bigint; SUM returns numeric)
-  return rows.map((r) => ({
-    outletId: Number(r.outletId),
-    outletCode: r.outletCode,
-    outletName: r.outletName,
-    area: r.area,
-    absNominal: Number(r.absNominal) || 0,
-    nominalDeviasi: Number(r.nominalDeviasi) || 0,
-    totalQtyDeviasi: Number(r.totalQtyDeviasi) || 0,
-    totalQtyBom: Number(r.totalQtyBom) || 0,
-    totalQtyWaste: Number(r.totalQtyWaste) || 0,
-    totalQtySusut: Number(r.totalQtySusut) || 0,
-    totalQtyTrial: Number(r.totalQtyTrial) || 0,
-    totalResidualQty: Number(r.totalResidualQty) || 0,
-    lossNominal: Number(r.lossNominal) || 0,
-    sales: Number(r.sales) || 0,
-    zeroDevCount: Number(r.zeroDevCount) || 0,
-    nonZeroDevCount: Number(r.nonZeroDevCount) || 0,
-  }));
+  return rows
+    .filter((r) => r.nonZeroDevCount > 0)
+    .map((r) => ({
+      outletId: r.outletId,
+      outletCode: r.outletCode,
+      outletName: r.outletName,
+      area: r.area,
+      absNominal: Math.abs(r.fNominalDeviasi),
+      nominalDeviasi: r.fNominalDeviasi,
+      totalQtyDeviasi: r.fTotalQtyDeviasi,
+      totalQtyBom: r.fTotalQtyBom,
+      totalQtyWaste: r.fTotalQtyWaste,
+      totalQtySusut: r.fTotalQtySusut,
+      totalQtyTrial: r.fTotalQtyTrial,
+      totalResidualQty: r.fTotalResidualQty,
+      lossNominal: r.fLossNominal,
+      sales: r.sales,
+      zeroDevCount: r.zeroDevCount,
+      nonZeroDevCount: r.nonZeroDevCount,
+    }))
+    .sort((a, b) => b.absNominal - a.absNominal);
 }
 
 // ============================================================

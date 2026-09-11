@@ -177,8 +177,9 @@ export function calcZScoreFromStats(
 /**
  * SQL template for historical stats query (REFERENCE ONLY)
  *
- * NOTE: The actual implementation is in src/lib/queries.ts queryHistoricalStats(),
- * which uses a two-level CTE: weekly_dev (per-week aggregate) → final stats.
+ * NOTE: The actual implementation is queryHistoricalStatsMultiMetric() in
+ * src/lib/queries/historical.ts, which uses a two-level CTE: weekly_dev
+ * (per-week aggregate) → final stats.
  * This template is kept for documentation but NOT used — it shows the
  * correct per-week aggregation pattern.
  *

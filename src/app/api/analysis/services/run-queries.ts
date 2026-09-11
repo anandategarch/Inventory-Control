@@ -44,14 +44,6 @@ import {
   queryParetoByDevBom,
 } from '@/lib/queries';
 import { queryGrowthDrivers, queryTopGrowth } from '@/lib/queries/growth-drivers';
-// Type-only: the standalone KPI queries are no longer CALLED by this pipeline
-// (replaced by the merged queryDashboardKpis scan), but their return types
-// still shape the QueryResults interface below (consumed by post-process).
-import type {
-  queryDeviationBreakdown,
-  queryLossVsSurplus,
-  queryCostImpact,
-} from '@/lib/queries';
 import { evaluateRulesSql, evaluateHistoricalRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { buildExecSummaryFromSql } from './exec-summary';
@@ -84,11 +76,13 @@ export interface QueryResults {
   areaAnalysisRaw: Awaited<ReturnType<typeof queryAreaAnalysis>>;
   topOutletsRaw: Awaited<ReturnType<typeof queryTopOutlets>>;
   topOutletsSalesRaw: Awaited<ReturnType<typeof queryTopOutletsBySales>>;
-  breakdown: Awaited<ReturnType<typeof queryDeviationBreakdown>>;
+  // H-10: standalone KPI queries removed — shapes now derive from the
+  // kpisTo* mappers (field-for-field identical to the old standalone queries).
+  breakdown: ReturnType<typeof kpisToBreakdown>;
   paretoDevBom: Awaited<ReturnType<typeof queryParetoByDevBom>>;
-  lvs: Awaited<ReturnType<typeof queryLossVsSurplus>>;
+  lvs: ReturnType<typeof kpisToLvs>;
   trendAggRows: Awaited<ReturnType<typeof queryTrendAgg>>;
-  costImpactSql: Awaited<ReturnType<typeof queryCostImpact>>;
+  costImpactSql: ReturnType<typeof kpisToCostImpact>;
   consistencyItems: Awaited<ReturnType<typeof queryItemConsistency>>;
   // dqIssuesRaw: result of db.dQIssue.groupBy with { by: ['severity'], _count: { _all: true } }
   // — narrowed type so post-process can safely access d._count._all.
@@ -150,7 +144,12 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     { month, week, filters: filterOpts },
     () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
   );
-  const healthRankingSqlPromise = queryOutletHealthRanking(week, month, filterOpts);
+  // H-10 (G1 scan-share): health ranking now goes through the shared
+  // q-outlet-agg scan (superset also consumed by /api/recommendations) —
+  // one cached period scan feeds both the analysis payload and the Resto
+  // tab's recommendations. Threshold passed explicitly so the cache key
+  // matches the one the recommendations route builds.
+  const healthRankingSqlPromise = queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD);
   const varianceAnalysisPromise = cachedSharedQuery(
     'q-variance',
     { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },

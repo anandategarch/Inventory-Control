@@ -390,8 +390,8 @@ export interface AnalysisData {
   // PERF-CACHE-09 (SWR): present when the response was served from an expired
   // DB cache entry (stale-while-revalidate). The client MAY use this to show a
   // "data might be stale" indicator or trigger a sooner refetch. Currently set
-  // by withCacheAndDedup on the 7 routes that use it (pareto, recommendations,
-  // resto-bahan-matrix, outlet-items, item-history, drilldown, heatmap).
+  // by withCacheAndDedup on the routes that use it (pareto, recommendations,
+  // outlet-items, item-history, drilldown, heatmap).
   // /api/analysis has its own pipeline (not using withCacheAndDedup yet) so it
   // does not set this flag — added here for type-safety + future use.
   stale?: boolean;

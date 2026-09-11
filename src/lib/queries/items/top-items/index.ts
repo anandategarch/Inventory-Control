@@ -17,8 +17,8 @@
 //                         + queryTopItemsByDeviasiRankForOutlet
 //                         (per-outlet top-N with national rank)
 //    ./by-other-metric  — queryTopItemsByNominal, queryTopItemsByDevBom,
-//                         queryTopItemsByCategory (waste/susut/trial/
-//                         lossSurplus), queryHistoricalCategoryAvg,
+//                         queryTopItemsByAllCategories (waste/susut/trial/
+//                         lossSurplus in one scan), queryHistoricalCategoryAvg,
 //                         queryItemConsistency, queryParetoByDevBom
 // ============================================================
 export * from './types';

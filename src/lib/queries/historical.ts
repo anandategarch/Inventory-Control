@@ -31,25 +31,9 @@ export interface MultiMetricHistoricalStats {
   trial: MetricStats;
 }
 
-// Legacy type for backward compat (analysis route still uses single-metric)
-export type HistoricalStatsMap = Map<string, { mean: number; stdDev: number; n: number }>;
-
 function computeStats(n: number, mean: number, sumSq: number): MetricStats {
   const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
   return { mean: mean || 0, stdDev: Math.sqrt(variance), n };
-}
-
-export async function queryHistoricalStats(
-  historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
-  filters: SqlFilterOpts
-): Promise<HistoricalStatsMap> {
-  const multi = await queryHistoricalStatsMultiMetric(historicalPeriods, filters);
-  // Convert to legacy single-metric format (devBom only) for backward compat
-  const map: HistoricalStatsMap = new Map();
-  for (const [key, val] of multi) {
-    map.set(key, val.devBom);
-  }
-  return map;
 }
 
 export async function queryHistoricalStatsMultiMetric(

@@ -1,13 +1,16 @@
-// Tests for src/lib/queries/dashboard.ts — queryExecSummary, queryDeviationBreakdown,
-// queryLossVsSurplus, queryCostImpact, queryTrendAgg.
+// Tests for src/lib/queries/dashboard.ts — queryExecSummary, kpisToCostImpact,
+// queryTrendAgg.
+// H-10: the standalone queryDeviationBreakdown / queryLossVsSurplus /
+// queryCostImpact were removed (dead code — zero production callers); the
+// cost-impact ratio tests now cover kpisToCostImpact (the merged-scan
+// derivation used by the live pipeline).
 // Mock @/lib/db; verify SQL invocation + result transformation + edge cases.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   queryExecSummary,
-  queryDeviationBreakdown,
-  queryLossVsSurplus,
-  queryCostImpact,
+  kpisToCostImpact,
   queryTrendAgg,
+  type DashboardKpisRow,
 } from '@/lib/queries/dashboard';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
@@ -76,82 +79,25 @@ describe('queryExecSummary', () => {
   });
 });
 
-describe('queryDeviationBreakdown', () => {
-  beforeEach(() => {
-    mockQueryRaw.mockReset();
-  });
+// Helper: build a full DashboardKpisRow with all-zero defaults (mirrors
+// the ZERO_KPIS constant in dashboard.ts, which is not exported).
+function kpisRow(over: Partial<DashboardKpisRow> = {}): DashboardKpisRow {
+  return {
+    sales: 0, nominalDeviasi: 0, qtyBom: 0, qtyDeviasi: 0, qtyWaste: 0,
+    qtySusut: 0, qtyTrial: 0, qtyLossSurplus: 0, totalLoss: 0, totalSurplus: 0,
+    residualLossQty: 0, residualLossNominal: 0, qtyDeviasiLoss: 0,
+    residualQtyAbs: 0, lossCount: 0, surplusCount: 0,
+    wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0,
+    ...over,
+  };
+}
 
-  it('returns first row with waste/susut/trial/residual/total', async () => {
-    mockQueryRaw.mockResolvedValueOnce([
-      { waste: 100, susut: 50, trial: 25, residual: 200, total: 375 },
-    ]);
-    const r = await queryDeviationBreakdown('WEEK 1', 'Agustus 2026', {});
-    expect(r).toEqual({ waste: 100, susut: 50, trial: 25, residual: 200, total: 375 });
-  });
-
-  it('returns zero-filled object when DB returns no rows', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    const r = await queryDeviationBreakdown('WEEK 1', 'M', {});
-    expect(r).toEqual({ waste: 0, susut: 0, trial: 0, residual: 0, total: 0 });
-  });
-
-  it('aggregates ABS values for each component', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryDeviationBreakdown('WEEK 1', 'M', {});
-    const call = mockQueryRaw.mock.calls[0][0];
-    const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
-    expect(sqlText).toContain('SUM(ABS(ir."qtyWaste"))');
-    expect(sqlText).toContain('SUM(ABS(ir."qtySusut"))');
-    expect(sqlText).toContain('SUM(ABS(ir."qtyTrial"))');
-    expect(sqlText).toContain('SUM(ABS(ir."residualQty"))');
-  });
-});
-
-describe('queryLossVsSurplus', () => {
-  beforeEach(() => {
-    mockQueryRaw.mockReset();
-  });
-
-  it('returns counts + nominal totals for loss vs surplus', async () => {
-    mockQueryRaw.mockResolvedValueOnce([
-      { loss: 10, surplus: 5, lossNominal: 2_000_000, surplusNominal: 500_000 },
-    ]);
-    const r = await queryLossVsSurplus('WEEK 1', 'Agustus 2026', {});
-    expect(r).toEqual({ loss: 10, surplus: 5, lossNominal: 2_000_000, surplusNominal: 500_000 });
-  });
-
-  it('returns zero-filled object when DB returns no rows', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    const r = await queryLossVsSurplus('WEEK 1', 'M', {});
-    expect(r).toEqual({ loss: 0, surplus: 0, lossNominal: 0, surplusNominal: 0 });
-  });
-
-  it('uses Excel convention: LOSS = negative nominalLossSurplus', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryLossVsSurplus('WEEK 1', 'M', {});
-    const call = mockQueryRaw.mock.calls[0][0];
-    const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
-    expect(sqlText).toContain('"nominalLossSurplus" < 0');
-    expect(sqlText).toContain('"nominalLossSurplus" > 0');
-  });
-});
-
-describe('queryCostImpact', () => {
-  beforeEach(() => {
-    mockQueryRaw.mockReset();
-  });
-
-  it('returns cost components + computes pct + toSales ratios', async () => {
-    mockQueryRaw.mockResolvedValueOnce([
-      {
-        wasteCost: 100_000,
-        susutCost: 50_000,
-        trialCost: 25_000,
-        residualCost: 200_000,
-        totalCost: 375_000,
-      },
-    ]);
-    const r = await queryCostImpact('WEEK 1', 'Agustus 2026', 1_000_000, {});
+describe('kpisToCostImpact', () => {
+  it('computes cost components + pct + toSales ratios from a merged KPI row', () => {
+    const r = kpisToCostImpact(
+      kpisRow({ wasteCost: 100_000, susutCost: 50_000, trialCost: 25_000, residualCost: 200_000, totalCost: 375_000 }),
+      1_000_000,
+    );
     expect(r.wasteCost).toBe(100_000);
     expect(r.totalCost).toBe(375_000);
     // wastePct = 100000/375000 = 0.2666...
@@ -162,19 +108,15 @@ describe('queryCostImpact', () => {
     expect(r.totalCostToSales).toBeCloseTo(0.375, 3);
   });
 
-  it('returns zeros when DB returns no rows', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    const r = await queryCostImpact('WEEK 1', 'M', 0, {});
+  it('returns zeros for a null KPI row (no data for the period)', () => {
+    const r = kpisToCostImpact(null, 0);
     expect(r.totalCost).toBe(0);
     expect(r.wastePct).toBe(0); // safeDiv guard
     expect(r.totalCostToSales).toBe(0);
   });
 
-  it('returns zero percentages when totalCost = 0 (safeDiv guard)', async () => {
-    mockQueryRaw.mockResolvedValueOnce([
-      { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0 },
-    ]);
-    const r = await queryCostImpact('WEEK 1', 'M', 1_000_000, {});
+  it('returns zero percentages when totalCost = 0 (safeDiv guard)', () => {
+    const r = kpisToCostImpact(kpisRow(), 1_000_000);
     expect(r.wastePct).toBe(0);
     expect(r.susutPct).toBe(0);
     expect(r.trialPct).toBe(0);

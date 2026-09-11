@@ -47,8 +47,8 @@ const inflightPromises = new Map<string, Promise<unknown>>();
  *
  * PERF-CACHE-01..04: `extra` field for route-specific params that affect the
  * response but aren't part of the standard filter set (e.g. pareto's parentDim/
- * childDim, recommendations' limit, resto-bahan-matrix's priority+limit,
- * export-report's sections, heatmap's metric+itemLimit+mode). Omitting these
+ * childDim, recommendations' limit, export-report's sections, heatmap's
+ * metric+itemLimit+mode). Omitting these
  * from the key caused cache poisoning (two requests with different params
  * sharing one cache entry → wrong response served).
  */
@@ -269,9 +269,9 @@ export function setInflight<T>(cacheKey: string, promise: Promise<T>): Promise<T
 
 // ============================================================
 //  PERF-CACHE-06: withCacheAndDedup — combines DB cache lookup + in-flight
-//  Promise dedup + compute into a single helper. Used by the 4 cached routes
+//  Promise dedup + compute into a single helper. Used by the cached routes
 //  that previously lacked in-flight dedup (pareto, recommendations,
-//  resto-bahan-matrix, export-report) + the newly-cached heatmap route.
+//  export-report) + the newly-cached heatmap route.
 //  /api/analysis keeps its bespoke pipeline (multi-stage with 404 short-circuit)
 //  — see validate-and-resolve.ts.
 //
@@ -462,7 +462,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // CACHE-01 FIX: Invalidate ALL cached routes — not just analysis.
   // Mutations (ingest, settings, pic, data delete, migrate-direction) affect
   // ALL cached data, not just /api/analysis. Without this, pareto/recommendations/
-  // resto-bahan-matrix/export-report serve stale data for 5 min after mutation.
+  // export-report serve stale data for 5 min after mutation.
   //
   // PERF-CACHE-08: also invalidate `heatmap` (added in this task — Area × Item
   // matrix reads from the same InventoryRecord table that mutations affect).
@@ -508,14 +508,18 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // evaluateHistoricalRulesSql, q-variance, q-kpis, q-topcat, q-trend). A
   // mutation that invalidates the analysis payload must invalidate these too
   // — otherwise export could read a pre-mutation query row.
+  // H-10 (G1): added q-outlet-agg — the shared per-outlet aggregate scan fed by
+  // BOTH queryOutletHealthRanking (analysis payload) and queryRestoRecommendations
+  // (/api/recommendations). Same invalidation rule as the q-* above.
   const routes = [
-    'analysis', 'pareto', 'recommendations', 'resto-bahan-matrix',
+    'analysis', 'pareto', 'recommendations',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
     'price-effect', 'item-search', 'heatmap-cell-detail',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
+    'q-outlet-agg',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

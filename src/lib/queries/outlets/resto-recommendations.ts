@@ -5,6 +5,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import { queryOutletAggregateScan } from './outlet-agg-scan';
 
 // ============================================================
 //  Resto Recommendation Engine — rank all outlets by priority
@@ -73,39 +74,13 @@ export async function queryRestoRecommendations(
   // FIX (AUDIT8-ROLLBACK-1, Item 8): each raw SQL is wrapped in withStatementTimeout
   // so a hung query in one Promise.all branch is killed at 30s rather than blocking
   // the whole batch indefinitely.
-  // Row shape returned by the SELECT in the curr CTE. Used by both the
-  // `currRows.map(...)` reduction and for prevMap / histMap typing below.
-  interface RestoRecCurrRow {
-    outletCode: string;
-    outletName: string;
-    area: string;
-    sales: number | bigint;
-    nominalDeviasi: number | bigint;
-    devBom: number | bigint;
-    totalLoss: number | bigint;
-    totalSurplus: number | bigint;
-    residualQty: number | bigint;
-    qtyLossSurplus: number | bigint;
-    itemCount: number | bigint;
-    deviatingItems: number | bigint;
-    totalQtyDeviasi: number | bigint;
-    totalQtyBom: number | bigint;
-    grossAbsNominal: number | bigint;
-    qtyDeviasiLoss: number | bigint;
-    residualNominal: number | bigint;
-    toleranceBreachCount: number | bigint;
-    toleranceBreachHighCount: number | bigint;
-    zScoreAbnormalCount: number | bigint;
-    zScoreWarningCount: number | bigint;
-    benchmarkHighCount: number | bigint;
-    benchmarkWarningCount: number | bigint;
-    overExplainedCount: number | bigint;
-    hasNoTolerance: number | bigint;
-    highLossItem: number | bigint;
-    direction: string;
-    topItem: string | null;
-    topItemNominal: number | bigint;
-  }
+  //
+  // H-10 (G1 scan-share): the `curr` CTE's bespoke SQL scan was replaced by the
+  // shared queryOutletAggregateScan (q-outlet-agg superset, cachedSharedQuery-wrapped).
+  // Its unfiltered-aggregate columns carry the same names as the old `curr` CTE
+  // output, so the scoring code below consumes them unchanged. The analysis
+  // pipeline's queryOutletHealthRanking uses the same scan — whichever runs first
+  // pays the period scan, the other reads the cached row (~5-15ms).
   interface RestoRecPrevRow {
     outletCode: string;
     prevNominalDeviasi: number | bigint;
@@ -118,115 +93,7 @@ export async function queryRestoRecommendations(
     histPeriodCount: number | bigint;
   }
   const [currRows, prevRows, histRows] = await Promise.all([
-    withStatementTimeout((tx) => tx.$queryRaw<RestoRecCurrRow[]>`
-      WITH outlet_aggs AS (
-        SELECT
-          ir."outletId",
-          SUM(ir."nominalDeviasi") as "nominalDeviasi",
-          CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-            ELSE 0 END as "devBom",
-          SUM(ABS(ir."qtyBom")) as "qtyBom",
-          SUM(ABS(ir."qtyDeviasi")) as "qtyDeviasi",
-          SUM(ABS(ir."qtyWaste")) as "qtyWaste",
-          SUM(ABS(ir."qtySusut")) as "qtySusut",
-          SUM(ABS(ir."qtyTrial")) as "qtyTrial",
-          SUM(ir."absQtyLossSurplus") as "qtyLossSurplus",
-          -- FIX Bug 1A: grossAbsNominal = SUM(ABS(nominalDeviasi)) for correct itemConcentration denominator
-          SUM(ir."absNominalDeviasi") as "grossAbsNominal",
-          -- FIX CALC-4: Excel convention: LOSS = negative nominalLossSurplus
-          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "totalLoss",
-          SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END) as "totalSurplus",
-          -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
-          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
-          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END) as "residualNominal",
-          -- FIX CALC2-2: qtyDeviasiLoss = SUM(ABS(qtyDeviasi) WHERE LOSS) — for correct residualRatio (LOSS/LOSS)
-          SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."absQtyDeviasi" ELSE 0 END) as "qtyDeviasiLoss",
-          COUNT(DISTINCT ir."itemId") as "itemCount",
-          COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
-          -- FIX CALC-2: use ABS() on both sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
-          -- (both negative for LOSS items). Without ABS, -0.11 > -0.005 is FALSE even though magnitude is larger.
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN 1 END) as "toleranceBreachCount",
-          COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN 1 END) as "toleranceBreachHighCount",
-          -- zScore and benchmarkFlag are NOT in InventoryRecord table — they're in PeriodComparison.
-          -- FIX: threshold changed from 0.20 to 0.50 per user request
-          -- Use ABS(pctQtyDeviasiToBom) > 0.50 as proxy for "abnormal" (high deviation ratio vs BOM)
-          -- FIX CALC-2: ABS() needed because pctQtyDeviasiToBom is SIGNED (negative for LOSS)
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "zScoreAbnormalCount",
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.25 THEN 1 END) as "zScoreWarningCount",
-          -- benchmarkFlag not available — use high devBom as proxy
-          -- FIX: threshold changed from 0.30 to 0.50 per user request
-          COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "benchmarkHighCount",
-          0 as "benchmarkWarningCount",
-          COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
-          -- FIX REC-1: was MAX() returning 0/1; now COUNT() returns actual number of items without tolerance
-          COUNT(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 END) as "hasNoTolerance",
-          -- FIX CALC-4: LOSS = negative nominalLossSurplus. High loss = < -threshold
-          -- FIX (AUDIT7-CALC-11): was hardcoded -10000000 (10jt) — diverged from
-          -- the actual HIGH_LOSS_NOMINAL rule (50jt default, runtime-configurable
-          -- via Settings UI). Now uses the highLossThreshold parameter so
-          -- Settings changes propagate to Signal 11 priority score (5% weight).
-          COUNT(CASE WHEN ir."nominalLossSurplus" < -${highLossThreshold} THEN 1 END) as "highLossItem",
-          -- FIX CALC-5: compute outlet direction from net nominalLossSurplus (Excel convention: < 0 = LOSS)
-          -- FIX VERIFY3-8: add qtyDeviasi NULL fallback
-          -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
-          ${DIRECTION_FROM_SUM_SQL} as "outletDirection"
-        FROM "InventoryRecord" ir
-        WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-          ${f}
-        GROUP BY ir."outletId"
-      ),
-      top_items AS (
-        SELECT "outletId", "topItem", "topItemNominal" FROM (
-          SELECT
-            ir."outletId",
-            i.name as "topItem",
-            ir."absNominalDeviasi" as "topItemNominal",
-            ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY ir."absNominalDeviasi" DESC) as rn
-          FROM "InventoryRecord" ir
-          JOIN "Item" i ON ir."itemId" = i.id
-          WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-            ${f}
-            AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-        ) ranked WHERE rn = 1
-      )
-      SELECT
-        o.code as "outletCode", o.name as "outletName", o.area,
-        COALESCE(ops."salesMode", 0) as "sales",
-        COALESCE(oa."nominalDeviasi", 0) as "nominalDeviasi",
-        COALESCE(oa."devBom", 0) as "devBom",
-        COALESCE(oa."totalLoss", 0) as "totalLoss",
-        COALESCE(oa."totalSurplus", 0) as "totalSurplus",
-        COALESCE(oa."residualQty", 0) as "residualQty",
-        COALESCE(oa."qtyLossSurplus", 0) as "qtyLossSurplus",
-        COALESCE(oa."itemCount", 0) as "itemCount",
-        COALESCE(oa."deviatingItems", 0) as "deviatingItems",
-        COALESCE(oa."qtyDeviasi", 0) as "totalQtyDeviasi",
-        COALESCE(oa."qtyBom", 0) as "totalQtyBom",
-        COALESCE(oa."grossAbsNominal", 0) as "grossAbsNominal",
-        COALESCE(oa."qtyDeviasiLoss", 0) as "qtyDeviasiLoss",
-        COALESCE(oa."residualNominal", 0) as "residualNominal",
-        COALESCE(oa."toleranceBreachCount", 0) as "toleranceBreachCount",
-        COALESCE(oa."toleranceBreachHighCount", 0) as "toleranceBreachHighCount",
-        COALESCE(oa."zScoreAbnormalCount", 0) as "zScoreAbnormalCount",
-        COALESCE(oa."zScoreWarningCount", 0) as "zScoreWarningCount",
-        COALESCE(oa."benchmarkHighCount", 0) as "benchmarkHighCount",
-        COALESCE(oa."benchmarkWarningCount", 0) as "benchmarkWarningCount",
-        COALESCE(oa."overExplainedCount", 0) as "overExplainedCount",
-        COALESCE(oa."hasNoTolerance", 0) as "hasNoTolerance",
-        COALESCE(oa."highLossItem", 0) as "highLossItem",
-        oa."outletDirection" as "direction",
-        ti."topItem",
-        COALESCE(ti."topItemNominal", 0) as "topItemNominal"
-      FROM outlet_aggs oa
-      JOIN "Outlet" o ON oa."outletId" = o.id
-      LEFT JOIN "OutletPeriodSales" ops
-        ON ops."outletId" = oa."outletId"
-        AND ops."monthLabel" = ${month}
-        AND ops."weekLabel" = ${week}
-      LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
-      ORDER BY ABS(COALESCE(oa."nominalDeviasi", 0)) DESC
-    `),
+    queryOutletAggregateScan(week, month, filters, highLossThreshold),
     prevWeek && prevMonth
       ? withStatementTimeout((tx) => tx.$queryRaw<RestoRecPrevRow[]>`
         SELECT

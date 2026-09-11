@@ -135,7 +135,8 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   // Cost Impact — only the 4 fields consumed by InsightsPanel + CostImpact type.
   // (wasteCost/susutCost/trialCost/residualCost and their *ToSales ratios were
   // only read by the now-removed CostAccounting tab — dropped to slim the
-  // response payload. queryCostImpact still runs because totalCost is needed.)
+  // response payload. totalCost comes from the merged queryDashboardKpis scan
+  // via kpisToCostImpact.)
   const costImpact = {
     totalCost: costImpactSql.totalCost,
     pctOfSales: execSummary.sales.current > 0 ? costImpactSql.totalCost / execSummary.sales.current : null,

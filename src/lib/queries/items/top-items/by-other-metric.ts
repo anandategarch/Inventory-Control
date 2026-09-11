@@ -1,16 +1,18 @@
 // ============================================================
 //  Top Items — Other Metric Queries
 //  --------------------------------------------------------
-//  Six query functions covering all top-item aggregations EXCEPT
+//  Five query functions covering all top-item aggregations EXCEPT
 //  the deviasi-rank pair (which lives in ./by-deviasi-rank.ts
 //  because it shares a CTE structure):
 //
 //    1. queryTopItemsByNominal     — top by ABS(nominalDeviasi)
 //    2. queryTopItemsByDevBom      — top by ABS(qtyDeviasi / qtyBom)
-//    3. queryTopItemsByCategory    — top by Waste/Susut/Trial/LossSurplus
-//    4. queryHistoricalCategoryAvg — historical avg per (item,outlet)
-//    5. queryItemConsistency       — per-item outlet-count + consistency tier
-//    6. queryParetoByDevBom        — Pareto 80/20 for items with |Dev/BOM| > threshold
+//    3. queryHistoricalCategoryAvg — historical avg per (item,outlet)
+//    4. queryItemConsistency       — per-item outlet-count + consistency tier
+//    5. queryParetoByDevBom        — Pareto 80/20 for items with |Dev/BOM| > threshold
+//
+//  (H-10: the standalone queryTopItemsByCategory was removed — zero
+//  production callers since queryTopItemsByAllCategories landed.)
 //
 //  Source: split out of src/lib/queries/items/top-items.ts (722 LOC,
 //  Task 1-d). All SQL + comments preserved verbatim — pure relocation.
@@ -88,51 +90,6 @@ export async function queryTopItemsByDevBom(
 }
 
 // ============================================================
-//  Top Items by Waste/Susut/Trial/LossSurplus (Phase 2)
-// ============================================================
-export async function queryTopItemsByCategory(
-  week: string,
-  month: string,
-  filters: SqlFilterOpts,
-  category: 'waste' | 'susut' | 'trial' | 'lossSurplus',
-  limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }>> {
-  const f = buildSqlFilters(filters);
-  const qtyCol = category === 'waste' ? 'qtyWaste'
-    : category === 'susut' ? 'qtySusut'
-    : category === 'trial' ? 'qtyTrial'
-    : 'qtyLossSurplus';
-  const nomCol = category === 'waste' ? 'nominalWaste'
-    : category === 'susut' ? 'nominalSusut'
-    : category === 'trial' ? 'nominalTrial'
-    : 'nominalLossSurplus';
-
-  // Build column reference safely
-  const qtyRef = Prisma.raw(`ir."${qtyCol}"`);
-  const nomRef = Prisma.raw(`ir."${nomCol}"`);
-
-  // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; qty: number; nominal: number; direction: string }[]>`
-    SELECT i.name as "itemName", o.code as "outletCode",
-      SUM(ABS(${qtyRef})) as qty,
-      SUM(ABS(${nomRef})) as nominal,
-      -- FIX VERIFY3-8: direction derived from SUM(nominalLossSurplus) with qtyDeviasi NULL fallback
-      -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
-      ${DIRECTION_FROM_SUM_SQL} as direction
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-      AND ${qtyRef} IS NOT NULL AND ${qtyRef} != 0
-      ${f}
-    GROUP BY i.name, o.code
-    ORDER BY qty DESC
-    LIMIT ${limit}
-  `);
-  return rows;
-}
-
-// ============================================================
 //  PERF (PAKET B / F2 — scan merge): queryTopItemsByAllCategories
 //  --------------------------------------------------------
 //  The pipeline called queryTopItemsByCategory 4× (waste/susut/trial/
@@ -153,8 +110,9 @@ export async function queryTopItemsByCategory(
 //      SUM(qtyDeviasi) FILTER fallback) — see directionFromSums below.
 //    - top-N per category = ROW_NUMBER() over the category qty DESC,
 //      ties are nondeterministic in both variants.
-//  The individual queryTopItemsByCategory is kept (tested; used by
-//  other callers); the analysis pipeline + export-report now use this.
+//  H-10 dead-code cleanup: the standalone queryTopItemsByCategory was
+//  REMOVED (zero production callers — this merged query is the only
+//  consumer of the 4-category ranking in both pipelines).
 // ============================================================
 export interface TopItemsCategoryRow {
   itemName: string;
