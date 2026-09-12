@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 // pulls pg+dns into client bundle causing build error) with API call
 // to /api/refresh which does the same invalidation server-side.
 import { useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 
 interface DriveImportResult {
   fileName: string;
@@ -85,13 +86,10 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
         // FIX: call /api/refresh to invalidate server-side caches
         // (was: await invalidateAnalysisCache() — direct import pulled pg into client bundle)
         await fetch('/api/refresh', { method: 'POST' }).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ['status'] });
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        // FIX (BUG-HUNT-RECENT P1): invalidate ALL data-dependent queries (was only 2)
-        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ['item-history'] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+        // FIX (H-14/T3): full 18-key invalidation via shared helper — the old
+        // 6-key subset left pareto/heatmap/trend/flip/drilldown/price-effect
+        // keys stale in keep-alive tabs after a Drive import.
+        invalidateAllData(queryClient);
         onImported?.();
         toast({ title: '✅ Import berhasil', description: `${ingestResults.filter((r: DriveImportResult) => r.status === 'INGESTED').length} file diimpor` });
       }

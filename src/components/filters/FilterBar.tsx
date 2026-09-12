@@ -20,6 +20,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 
 // Lazy-loaded dialogs (code-split — only loaded when first opened)
 const SettingsDialog = dynamic(
@@ -34,14 +35,13 @@ const PicManagementDialog = dynamic(
   () => import('@/components/filters/PicManagementDialog').then(m => ({ default: m.PicManagementDialog })),
   { ssr: false, loading: () => null },
 );
-const FileUploadDialog = dynamic(
-  () => import('@/components/filters/FileUploadDialog').then(m => ({ default: m.FileUploadDialog })),
-  { ssr: false, loading: () => null },
-);
-const DriveImportDialog = dynamic(
-  () => import('@/components/filters/DriveImportDialog').then(m => ({ default: m.DriveImportDialog })),
-  { ssr: false, loading: () => null },
-);
+// FIX (H-14/T1): FileUploadDialog + DriveImportDialog moved to page.tsx.
+// FilterBar is only mounted when hasData (DashboardHeader gates it) — exactly
+// the INVERSE of when EmptyState (whose CTAs dispatch open-upload-dialog /
+// open-drive-dialog) is visible, so on a fresh DB the CTAs were dead. The
+// dialogs + their single event listener now live at page level; the buttons
+// below dispatch the same events so there is exactly ONE listener and ONE
+// dialog mount app-wide (no double-open race from ErrorState's CTA).
 
 export function FilterBar() {
   // FIX (PERF-1 / AUDIT-FE): setPeriod replaces setMonth/setWeek in the month/week
@@ -71,10 +71,6 @@ export function FilterBar() {
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
 
-  // Drive dialog open state (the DriveImportDialog component manages its own internal state)
-  const [driveDialogOpen, setDriveDialogOpen] = useState(false);
-  // Local file upload dialog
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // Settings dialog state
@@ -83,19 +79,6 @@ export function FilterBar() {
   // Data management & PIC management dialog state
   const [dataMgmtOpen, setDataMgmtOpen] = useState(false);
   const [picMgmtOpen, setPicMgmtOpen] = useState(false);
-
-  // UI-BEAUTIFY-R2: listen for custom events from EmptyState CTAs in page.tsx
-  // so the "Upload File" / "Import dari Drive" buttons in the empty state actually open the dialogs.
-  useEffect(() => {
-    const openUpload = () => setUploadDialogOpen(true);
-    const openDrive = () => { setDriveDialogOpen(true); };
-    document.addEventListener('open-upload-dialog', openUpload);
-    document.addEventListener('open-drive-dialog', openDrive);
-    return () => {
-      document.removeEventListener('open-upload-dialog', openUpload);
-      document.removeEventListener('open-drive-dialog', openDrive);
-    };
-  }, []);
 
   // FIX (BUG-FE-9): After data upload/import, the status query invalidates and
   // refetches. If the new dataset doesn't have the currently-selected kelompok
@@ -185,13 +168,10 @@ export function FilterBar() {
         const skipped = d.results.filter((r: any) => r.status === 'SKIPPED');
         const errors = d.results.filter((r: any) => r.status === 'ERROR');
         setIngestMsg(`Ingested: ${ingested.length}, Skipped: ${skipped.length}, Errors: ${errors.length}`);
-        queryClient.invalidateQueries({ queryKey: ['status'] });
-        // FIX: Invalidate ALL data-dependent queries after ingest
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-3
+        // FIX (H-14/T3): full 18-key invalidation via shared helper — the old
+        // 6-key subset left pareto/heatmap/trend/flip/drilldown/price-effect
+        // keys stale in keep-alive tabs after an ingest.
+        invalidateAllData(queryClient);
       } else {
         // UI-04 FIX: Show error to user instead of silent failure
         setIngestMsg(`Error: ${d.error || 'Unknown server error'}`);
@@ -501,7 +481,7 @@ export function FilterBar() {
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
-            onClick={() => { setDriveDialogOpen(true); }}
+            onClick={() => document.dispatchEvent(new CustomEvent('open-drive-dialog'))}
           >
             <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
             <span className="hidden md:inline">Import Drive</span>
@@ -510,7 +490,7 @@ export function FilterBar() {
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
-            onClick={() => setUploadDialogOpen(true)}
+            onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
           >
             <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
             <span className="hidden md:inline">Upload File</span>
@@ -540,8 +520,6 @@ export function FilterBar() {
 
       {/* Google Drive Import Dialog — with Folder/File/Sheets tabs */}
       {/* Drive Import Dialog — extracted to separate component */}
-      <DriveImportDialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen} />
-      {/* Settings Dialog */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Data Management Dialog */}
@@ -550,8 +528,8 @@ export function FilterBar() {
       {/* PIC Management Dialog */}
       <PicManagementDialog open={picMgmtOpen} onOpenChange={setPicMgmtOpen} />
 
-      {/* Local File Upload Dialog — alternative to Drive import, with rename + confirmation */}
-      <FileUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
+      {/* Local File Upload + Drive Import dialogs: hosted at PAGE level
+          since H-14/T1 (see note at the dynamic imports above). */}
     </>
   );
 }

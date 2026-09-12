@@ -149,6 +149,11 @@ export function ErrorState({ message }: { message: string }) {
   const queryClient = useQueryClient();
   const handleRetry = () => {
     queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    // FIX (H-14/T2): retry must also work when the STATUS query itself
+    // failed (status-error branch in page.tsx) — without this, the button
+    // was a no-op there. Harmless for analysis errors (status refetch is
+    // a cheap lightweight call).
+    queryClient.invalidateQueries({ queryKey: ['status'] });
   };
   return (
     <Card className={isNoData

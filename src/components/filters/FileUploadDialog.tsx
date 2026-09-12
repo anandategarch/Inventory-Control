@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X, Pencil, ArrowRight, Wand2, Keyboard } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 // FIX (AUDIT8-ROLLBACK-1, Item 7): extract shared upload helpers to a sibling
 // module so MONTH_NAMES stays in sync with the server-side MONTH_MAP (was the
@@ -468,12 +469,10 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
 
       setStatusLog(prev => [...prev, `✅ Total: ${totalInserted.toLocaleString()} rows inserted`]);
 
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-      queryClient.invalidateQueries({ queryKey: ['analysis'] });
-      queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-      queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX INT-2
+      // FIX (H-14/T3): full 18-key invalidation via shared helper — the old
+      // 6-key subset here left pareto/heatmap/trend/flip/drilldown/price-effect
+      // keys stale in keep-alive tabs after an upload.
+      invalidateAllData(queryClient);
       toast({
         title: '✅ Import berhasil',
         description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,

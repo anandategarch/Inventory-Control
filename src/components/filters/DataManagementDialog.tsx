@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb, ChevronDown, ChevronRight, Bug } from 'lucide-react';
 import React, { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
@@ -186,13 +187,13 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
   // Invalidate queries after any successful mutation
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ['data-mgmt'] });
-    queryClient.invalidateQueries({ queryKey: ['status'] });
-    // FIX: Invalidate ALL data-dependent queries, not just analysis
-    queryClient.invalidateQueries({ queryKey: ['analysis'] });
-    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX INT-2
+    // Dialog-local per-file DQ rows (['dq-issues', fileId]) — refetch them too
+    // so DQ counts stay consistent with the deleted/uploaded dataset.
+    queryClient.invalidateQueries({ queryKey: ['dq-issues'] });
+    // FIX (H-14/T3): full 18-key dashboard invalidation via shared helper —
+    // the old 6-key subset left pareto/heatmap/trend/flip/drilldown/
+    // price-effect keys stale in keep-alive tabs after a delete/reset.
+    invalidateAllData(queryClient);
   }
 
   // Wrap mutations to invalidate after settle

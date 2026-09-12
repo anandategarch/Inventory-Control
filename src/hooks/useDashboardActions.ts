@@ -23,6 +23,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
+import { invalidateAllData } from '@/lib/query-invalidation';
 
 // P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-5 tab
 // shortcuts — hoisted to module scope + only evaluated inside that branch
@@ -146,50 +147,23 @@ export function useDashboardActions({
   // or transient network), we still invalidate the client queries; the
   // refetch then serves whatever the server has (same as the old behavior).
   // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, pareto)
+  // FIX FE-08 + H-12: the invalidation herd now lives in ONE place —
+  // src/lib/query-invalidation.ts (18 keys: core dashboard payload +
+  // heatmap incl. cell-detail + Trend tab incl. flip/rank/search + Pareto
+  // + drilldown + price-effect + item-anomali-outlets). H-14/T3 extended
+  // the same call to the six other mutation handlers (upload/delete/
+  // reset/drive/ingest/settings/pic) which previously carried older
+  // 5-6-key subsets — the missed keys stayed stale in keep-alive tabs.
   const handleRefresh = useCallback(async () => {
     try {
       await fetch('/api/refresh', { method: 'POST' });
     } catch {
       // Non-fatal — proceed to client-side invalidation regardless.
     }
-    queryClient.invalidateQueries({ queryKey: ['analysis'] });
-    queryClient.invalidateQueries({ queryKey: ['status'] });
-    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ['item-history'] });
-    queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-    queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-    queryClient.invalidateQueries({ queryKey: ['area-item-heatmap'] });
-    queryClient.invalidateQueries({ queryKey: ['item-trend'] });
-    queryClient.invalidateQueries({ queryKey: ['drilldown'] });
-    queryClient.invalidateQueries({ queryKey: ['pareto'] });
-    // FIX (H-12 / refresh gap): the list above covered the Dashboard/Resto/Peer/
-    // Pareto tabs but missed every Trend-tab + shared widget key — explicit
-    // refresh served stale data up to each query's staleTime (5-10 min) after
-    // the server cache had already been cleared:
-    //   - price-effect           (PriceEffectCard, Dashboard tab)
-    //   - item-anomali-outlets   (AdvancedAnalysis expandable rows, Dashboard tab)
-    //   - flip-ranking           (FlipRanking widget, Trend tab)
-    //   - flip-drilldown         (FlipDrillPanel rows, Trend tab)
-    //   - item-trend-rank        (Rank Trend chart, Trend tab)
-    //   - item-search            (autocomplete, Trend tab)
-    //   - item-peer-comparison   (ItemPeerComparison card, Trend tab)
-    //   - heatmap-cell-detail    (AreaItemHeatmapSheet drill-down — same class
-    //                             of miss the audit's 7-key list didn't cover;
-    //                             ['area-item-heatmap'] does NOT prefix-match it)
-    queryClient.invalidateQueries({ queryKey: ['price-effect'] });
-    queryClient.invalidateQueries({ queryKey: ['item-anomali-outlets'] });
-    queryClient.invalidateQueries({ queryKey: ['flip-ranking'] });
-    queryClient.invalidateQueries({ queryKey: ['flip-drilldown'] });
-    queryClient.invalidateQueries({ queryKey: ['item-trend-rank'] });
-    queryClient.invalidateQueries({ queryKey: ['item-search'] });
-    queryClient.invalidateQueries({ queryKey: ['item-peer-comparison'] });
-    queryClient.invalidateQueries({ queryKey: ['heatmap-cell-detail'] });
-    // PERF (H-8 QW4 + H-10): no ['resto-bahan-matrix'] invalidation —
-    // the orphaned route was DELETED in H-10 (nothing on the frontend ever
-    // called it). Note the invalidation herd
-    // itself is bounded by H-8 QW3: hidden tabs the user never opened have no
-    // active TanStack observers, so their keys are marked stale WITHOUT a
-    // refetch; only visited tabs (keep-alive mounted) refresh in background.
+    invalidateAllData(queryClient);
+    // PERF (H-8 QW3): hidden tabs the user never opened have no active
+    // TanStack observers, so their keys are marked stale WITHOUT a refetch;
+    // only visited tabs (keep-alive mounted) refresh in background.
     toast({
       title: '🔄 Data diperbarui',
       description: 'Cache server dibersihkan — data dihitung ulang (butuh beberapa detik).',

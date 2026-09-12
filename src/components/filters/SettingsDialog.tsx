@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 import { Loader2, Save, RotateCcw, CheckCircle2, AlertCircle, Info, Database } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
@@ -131,12 +132,10 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         setHasEdits(false);
         setEditValues({});
         queryClient.invalidateQueries({ queryKey: ['settings'] });
-        // FIX (BUG 3): Invalidate ALL threshold-dependent queries, not just analysis
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ["item-history"] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-5
+        // FIX (H-14/T3): full 18-key invalidation via shared helper — threshold
+        // changes also affect pareto/heatmap/trend/flip/price-effect widgets,
+        // which the old 5-key subset left stale in keep-alive tabs.
+        invalidateAllData(queryClient);
       } else {
         toast({
           title: '❌ Gagal menyimpan',
@@ -166,12 +165,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         description: key ? `Reset ${key}` : 'Semua pengaturan direset ke default',
       });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
-      // FIX (BUG 3): Invalidate ALL threshold-dependent queries
-      queryClient.invalidateQueries({ queryKey: ['analysis'] });
-      queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-      queryClient.invalidateQueries({ queryKey: ["item-history"] });
-      queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-      queryClient.invalidateQueries({ queryKey: ['recommendations'] }); // FIX FLOW-5
+      // FIX (H-14/T3): same shared 18-key invalidation as save (reset changes
+      // the same threshold-dependent data).
+      invalidateAllData(queryClient);
     },
   });
 
@@ -212,11 +208,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             : 'Data sudah benar — 0 record perlu diperbaiki.',
         });
         // Invalidate all queries that depend on direction
-        queryClient.invalidateQueries({ queryKey: ['analysis'] });
-        queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-        queryClient.invalidateQueries({ queryKey: ['recommendations'] });
-        queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-        queryClient.invalidateQueries({ queryKey: ['item-history'] }); // FIX FLOW-4
+        // FIX (H-14/T3): flip-ranking/flip-drilldown/item-anomali-outlets are
+        // direction-dependent and were missed by the old 5-key list.
+        invalidateAllData(queryClient);
       } else {
         toast({
           title: '✗ Migration gagal',

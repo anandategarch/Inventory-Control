@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateAllData } from '@/lib/query-invalidation';
 import {
   Loader2, Save, X, Search, Users, Upload, Pencil, Check, Trash2, FileSpreadsheet,
 } from 'lucide-react';
@@ -220,11 +221,9 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
     // 2. Invalidate ALL data-dependent queries — PIC change affects filters.
     //    These use DB-level AggregationCache (properly cleared by /api/pic POST
     //    via invalidateAnalysisCache), so invalidateQueries triggers a real refetch.
-    queryClient.invalidateQueries({ queryKey: ['analysis'] });
-    queryClient.invalidateQueries({ queryKey: ['outlet-items'] });
-    queryClient.invalidateQueries({ queryKey: ['item-history'] });
-    queryClient.invalidateQueries({ queryKey: ['peer-comparison'] });
-    queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+    //    FIX (H-14/T3): shared 18-key helper — the old 5-key subset left
+    //    pareto/heatmap/trend/flip keys stale in keep-alive tabs.
+    invalidateAllData(queryClient);
   }
 
   // ---------- Handlers ----------

@@ -22,7 +22,7 @@
 //    • shared/index.tsx     — LoadingChart, SectionHeader, EmptyState, etc.
 // ============================================================
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { useDashboard } from '@/hooks/useDashboard';
@@ -44,6 +44,22 @@ const ItemTrendTab = lazy(() => import('@/components/dashboard/tabs/ItemTrendTab
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
+
+// FIX (H-14/T1): upload + drive-import dialogs hosted at PAGE level. Their
+// old host (FilterBar) is only mounted when hasData — exactly the inverse of
+// when EmptyState (whose CTA buttons dispatch open-upload-dialog /
+// open-drive-dialog) is visible, so on a fresh DB the CTAs were dead. A single
+// listener + a single dialog mount here (FilterBar's own buttons now dispatch
+// the same events) — no double-open race from ErrorState's CTA either.
+// Still dynamic/lazy (same as in FilterBar) to keep them out of the main bundle.
+const FileUploadDialog = dynamic(
+  () => import('@/components/filters/FileUploadDialog').then(m => ({ default: m.FileUploadDialog })),
+  { ssr: false, loading: () => null },
+);
+const DriveImportDialog = dynamic(
+  () => import('@/components/filters/DriveImportDialog').then(m => ({ default: m.DriveImportDialog })),
+  { ssr: false, loading: () => null },
+);
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import {
@@ -98,7 +114,7 @@ export default function DashboardPage() {
     setDeepDiveItem: s.setDeepDiveItem,
   })));
 
-  const { data: status } = useStatus();
+  const { data: status, error: statusError } = useStatus();
   const queryClient = useQueryClient();
 
   // 2 useEffect hooks: combined auto-select (month+week+compare resolved in
@@ -135,6 +151,21 @@ export default function DashboardPage() {
   // Modal/drawer state lives at page level so the keyboard-shortcut
   // hook can reach the setters AND so the modals can render here.
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+
+  // H-14/T1: the ONLY listener pair for the EmptyState/ErrorState CTA events
+  // (see the dynamic-import note above for why this lives here, not FilterBar).
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [driveDialogOpen, setDriveDialogOpen] = useState(false);
+  useEffect(() => {
+    const openUpload = () => setUploadDialogOpen(true);
+    const openDrive = () => setDriveDialogOpen(true);
+    document.addEventListener('open-upload-dialog', openUpload);
+    document.addEventListener('open-drive-dialog', openDrive);
+    return () => {
+      document.removeEventListener('open-upload-dialog', openUpload);
+      document.removeEventListener('open-drive-dialog', openDrive);
+    };
+  }, []);
 
   // TASK H-3: handleRefresh is now ALSO consumed by the DashboardTab tree
   // (TopGrowthCard's stale-payload recovery button) — previously it was only
@@ -186,7 +217,14 @@ export default function DashboardPage() {
           plugin/config — breakpoints @xl/main (576px) etc. map to the
           main element's bounding box, not the window. */}
       <main id="main-content" aria-label="Dashboard Inventory Control" className="@container/main flex-1 px-3 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
-        {!statusLoaded ? (
+        {statusError ? (
+          // FIX (H-14/T2): /api/status failure used to render an infinite fake
+          // loading screen (error field was never read; retry is disabled and
+          // refetchOnWindowFocus is off, so nothing would ever recover). Show
+          // the real error + a retry instead. ErrorState's retry now also
+          // invalidates ['status'] so the button actually works here.
+          <ErrorState message={statusError instanceof Error ? statusError.message : 'Gagal memuat status server.'} />
+        ) : !statusLoaded ? (
           <LoadingState />
         ) : !hasData ? (
           <EmptyState />
@@ -292,6 +330,10 @@ export default function DashboardPage() {
         onExport={handleExport}
         isExporting={isExporting}
       />
+
+      {/* H-14/T1: upload + drive dialogs — page-level host (single listener) */}
+      <FileUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
+      <DriveImportDialog open={driveDialogOpen} onOpenChange={setDriveDialogOpen} />
 
       {/* Fix #10: Scroll to Top button */}
       <ScrollToTop />
