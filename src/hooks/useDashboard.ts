@@ -50,14 +50,15 @@ interface DashboardStore {
   // afterwards. This kills the eager initial-load fetches that hidden
   // force-mounted tabs used to fire for tabs the user never opens.
   // Tracked INSIDE setActiveTab / setFocusOutlet so every navigation path
-  // (Tabs onValueChange, keyboard shortcuts 1-5, RankingNasionalCard
+  // (Tabs onValueChange, keyboard shortcuts 1-7, RankingNasionalCard
   // cross-tab link, focus-outlet flows) is covered.
   visitedTabs: string[];
   setActiveTab: (tab: string) => void;
   // Phase 1 — Navigation Bridge: external components (e.g. RankingNasionalCard)
-  // can pre-select an item in the Trend Item Tab by setting this. The Trend
-  // Item Tab reads it as its `selectedItem` (replaces local useState) so the
-  // selection survives tab switches + persists across page renders.
+  // can pre-select an item in the item trend view by setting this (VH-2: the
+  // trend tab merged into the 'item' tab). The trend section reads it as its
+  // `selectedItem` (replaces local useState) so the selection survives tab
+  // switches + persists across page renders.
   trendSelectedItem: string | null;
   setTrendSelectedItem: (item: string | null) => void;
 }
@@ -101,9 +102,12 @@ export const useDashboard = create<DashboardStore>((set) => ({
       }
     : { focusOutlet: null }
   ),
-  activeTab: 'dashboard',
-  // H-8 QW3: 'dashboard' is the default tab — its content renders eagerly.
-  visitedTabs: ['dashboard'],
+  // VH-2 (spec §8 derived decision): 'area' is the default tab — its
+  // content (AreaComparison + OutletHealthRanking) renders from the
+  // already-fetched /api/analysis payload, so eager mounting costs no
+  // extra request. Its content renders eagerly.
+  activeTab: 'area',
+  visitedTabs: ['area'],
   setActiveTab: (tab) => set((state) => ({
     activeTab: tab,
     // H-8 QW3: first visit mounts the tab's subtree (queries fire);

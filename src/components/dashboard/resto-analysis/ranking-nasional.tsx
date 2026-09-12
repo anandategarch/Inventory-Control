@@ -9,8 +9,9 @@
 //
 //  Phase 1 — Navigation Bridge:
 //    Each table row is clickable. Clicking sets `trendSelectedItem`
-//    in the Zustand store + switches to the Trend Item tab, so the
-//    user can immediately see the per-period trend for that item.
+//    in the Zustand store + switches to the Item tab (VH-2: the trend
+//    view merged into it), so the user can immediately see the
+//    per-period trend for that item.
 //    Hover hint shown at the top of the card body.
 // ============================================================
 
@@ -34,11 +35,12 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
   analysisData?: AnalysisData;
   outletDeviasiRank?: DeviasiRankItem[];
 }) {
-  // Phase 1 — Navigation Bridge: row click sets the trend tab's
+  // Phase 1 — Navigation Bridge: row click sets the item tab's
   // `selectedItem` (via the shared Zustand store) + switches to
-  // the Trend Item tab. The Trend Item tab reads `trendSelectedItem`
-  // as its selected item (replacing local useState), so this
-  // transparently pre-selects the item without any prop drilling.
+  // the Item tab (VH-2: the trend view merged into it). The trend
+  // section reads `trendSelectedItem` as its selected item
+  // (replacing local useState), so this transparently pre-selects
+  // the item without any prop drilling.
   const { setTrendSelectedItem, setActiveTab } = useDashboard(useShallow((s) => ({
     setTrendSelectedItem: s.setTrendSelectedItem,
     setActiveTab: s.setActiveTab,
@@ -46,7 +48,7 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
 
   const handleRowClick = (itemName: string) => {
     setTrendSelectedItem(itemName);
-    setActiveTab('trend');
+    setActiveTab('item');
   };
 
   // Primary source: per-outlet top 30 (from /api/outlet-items — fired when

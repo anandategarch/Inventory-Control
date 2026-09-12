@@ -13,10 +13,11 @@
 //  imports keep working unchanged.
 //
 //  P3-HYG-5: TrendChart export REMOVED — the component was dropped from
-//  DashboardTab (see DashboardTab.tsx comment) but the barrel still shipped
-//  it, bloating the lazy Charts chunk with a component nobody rendered.
-//  File TrendChart.tsx deleted. PeerComparison's TrendChartCard is a
-//  different component (peer-comparison/trend-chart.tsx) — unaffected.
+//  the dashboard overview (DashboardTab, since removed by VH-2) but the
+//  barrel still shipped it, bloating the lazy Charts chunk with a component
+//  nobody rendered. File TrendChart.tsx deleted. PeerComparison's
+//  TrendChartCard is a different component (peer-comparison/trend-chart.tsx)
+//  — unaffected.
 // ============================================================
 
 export { GrowthComparison } from './GrowthComparison';

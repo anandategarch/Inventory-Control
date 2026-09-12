@@ -42,7 +42,8 @@
 //  State ownership (Phase 1 — Navigation Bridge):
 //    `selectedItem` lives in the Zustand store (`trendSelectedItem`)
 //    so external components (e.g. RankingNasionalCard) can pre-select
-//    an item via `setTrendSelectedItem` + `setActiveTab('trend')`.
+//    an item via `setTrendSelectedItem` + `setActiveTab('item')`
+//    (VH-2: the trend view merged into the 'item' tab).
 //    This replaces the previous local useState, but the API is
 //    unchanged from the SearchBar's perspective (still receives
 //    `selectedItem` + `setSelectedItem` as props).

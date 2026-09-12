@@ -145,11 +145,15 @@ export function DashboardHeader({
               <ul className="space-y-1 text-[11px]">
                 <li className="flex items-center justify-between gap-3"><span>Export Word</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Refresh data</span><kbd className="font-mono">⌘/Ctrl + R</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Dashboard</span><kbd className="font-mono">1</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Resto Analysis</span><kbd className="font-mono">2</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Peer Comparison</span><kbd className="font-mono">3</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">4</kbd></li>
-                <li className="flex items-center justify-between gap-3"><span>Tab Trend Item</span><kbd className="font-mono">5</kbd></li>
+                {/* VH-2: 7 deep-analysis tabs — remapped from the old 1-5
+                    (spec §6.8: keyboard 1-7 + tooltip updated to match). */}
+                <li className="flex items-center justify-between gap-3"><span>Tab Area</span><kbd className="font-mono">1</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Resto</span><kbd className="font-mono">2</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Item</span><kbd className="font-mono">3</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Peer</span><kbd className="font-mono">4</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">5</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Historical</span><kbd className="font-mono">6</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Heatmap</span><kbd className="font-mono">7</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
               </ul>
             </TooltipContent>
