@@ -28,17 +28,32 @@ export interface LayerHeaderProps {
   title: string;
   /** Optional id — pass the value used by the section's aria-labelledby. */
   id?: string;
+  /**
+   * VH-6 (Superset "Name with Purpose" / Grafana "tell a story"): optional
+   * one-line question-oriented caption BELOW the eyebrow. Rendered in a
+   * <p> OUTSIDE the h2 so the heading outline (VH-4 a11y work) stays clean —
+   * the description answers "what question does this layer answer?" for
+   * first-time viewers without adding cognitive load for repeat users.
+   */
+  description?: string;
 }
 
-export function LayerHeader({ number, title, id }: LayerHeaderProps) {
+export function LayerHeader({ number, title, id, description }: LayerHeaderProps) {
   return (
-    <h2
-      id={id}
-      className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground flex items-center gap-3 w-full"
-    >
-      <span className="tabular-nums text-foreground/40">{number}</span>
-      <span>{title}</span>
-      <span className="h-px flex-1 bg-border" aria-hidden="true" />
-    </h2>
+    <div className="w-full">
+      <h2
+        id={id}
+        className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground flex items-center gap-3 w-full"
+      >
+        <span className="tabular-nums text-foreground/40">{number}</span>
+        <span>{title}</span>
+        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      </h2>
+      {description && (
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground/70">
+          {description}
+        </p>
+      )}
+    </div>
   );
 }

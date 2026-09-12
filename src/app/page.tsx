@@ -29,7 +29,7 @@
 //    • shared/index.tsx     — LoadingChart, SectionHeader, LayerHeader, EmptyState, etc.
 // ============================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { useDashboard } from '@/hooks/useDashboard';
@@ -171,6 +171,31 @@ export default function DashboardPage() {
   // (see the dynamic-import note above for why this lives here, not FilterBar).
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
+
+  // VH-6 (Grafana/Metabase/Superset — shareable URL state): deep-linkable
+  // deep-analysis tab. Every BI tool syncs dashboard state into the URL;
+  // ours lived only in Zustand memory — a page reload or a shared link lost
+  // the tab. Read once on mount (whitelist-valid values only), then keep
+  // ?tab= in sync via history.replaceState (no router navigation → no
+  // re-render churn, no scroll reset). 'area' (the default) is REMOVED from
+  // the URL so canonical links stay clean.
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  useEffect(() => {
+    const VALID_TABS = ['area', 'resto', 'item', 'peer', 'pareto', 'historical', 'heatmap'];
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t && t !== 'area' && VALID_TABS.includes(t) && t !== activeTabRef.current) {
+      setActiveTab(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once read
+  }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (activeTab === 'area') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', activeTab);
+    window.history.replaceState(null, '', url.toString());
+  }, [activeTab]);
+
   useEffect(() => {
     const openUpload = () => setUploadDialogOpen(true);
     const openDrive = () => setDriveDialogOpen(true);
@@ -221,7 +246,9 @@ export default function DashboardPage() {
         isExporting={isExporting}
         analysisFetching={analysis.isFetching}
         analysisData={analysis.data}
+        dataUpdatedAt={analysis.dataUpdatedAt}
         onExportClick={() => setExportDialogOpen(true)}
+        onRefreshClick={() => { void handleRefresh(); }}
       />
 
       {/* Main content */}
@@ -261,7 +288,7 @@ export default function DashboardPage() {
                 -mx-3/px-3 sm:-mx-6/px-6 breaks out of main's horizontal
                 padding so the band spans the content column edge-to-edge. */}
             <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-32">
-              <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" />
+              <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan heatmap." />
               <div className="-mx-3 px-3 sm:-mx-6 sm:px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
                 {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden
                     = keep-alive tabs. Previously Radix unmounted every tab on

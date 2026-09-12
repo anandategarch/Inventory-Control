@@ -22,7 +22,7 @@ import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity, Boxes, FileDown, Keyboard, Loader2,
+  Activity, Boxes, Clock3, FileDown, Keyboard, Loader2, RefreshCw,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -34,7 +34,16 @@ export interface DashboardHeaderProps {
   isExporting: boolean;
   analysisFetching: boolean;
   analysisData: AnalysisData | undefined;
+  /** VH-6 (Grafana/Metabase/Superset pattern): TanStack Query's
+   *  dataUpdatedAt — epoch-ms of when the analysis payload last resolved.
+   *  Drives the "Diperbarui HH.MM" freshness badge (Metabase-style
+   *  "Updated X ago"). 0 = not fetched yet (badge hidden). */
+  dataUpdatedAt: number;
   onExportClick: () => void;
+  /** VH-6: true refresh (POST /api/refresh + invalidateAllData — the
+   *  same flow as ⌘/Ctrl+R) — finally has a VISIBLE affordance like every
+   *  BI tool's refresh control next to the time picker. */
+  onRefreshClick: () => void;
 }
 
 export function DashboardHeader({
@@ -43,7 +52,9 @@ export function DashboardHeader({
   isExporting,
   analysisFetching,
   analysisData,
+  dataUpdatedAt,
   onExportClick,
+  onRefreshClick,
 }: DashboardHeaderProps) {
   // VH-1 (spec §4 L0): the global period label reads the period straight
   // from the store (same leaf-component subscription pattern as FilterBar
@@ -121,6 +132,21 @@ export function DashboardHeader({
               <span className="hidden sm:inline">Memperbarui...</span>
             </Badge>
           )}
+          {analysisData && dataUpdatedAt > 0 && (
+            <Badge
+              variant="outline"
+              // VH-6 (Metabase "Updated X ago" / Grafana last-refresh):
+              // data-freshness indicator — "as of when is what I'm looking?".
+              // Full timestamp on hover via native title. Rendered only after
+              // the client fetch resolves (dataUpdatedAt===0 during prerender
+              // → no hydration mismatch possible).
+              title={`Data analisis terakhir diperbarui: ${new Date(dataUpdatedAt).toLocaleString('id-ID')}`}
+              className="text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground tabular-nums shrink-0"
+            >
+              <Clock3 className="h-3 w-3" />
+              Diperbarui {new Date(dataUpdatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+            </Badge>
+          )}
           {analysisData && (
             <Badge
               variant="outline"
@@ -155,6 +181,27 @@ export function DashboardHeader({
                 <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export</span></>
               )}
             </Button>
+          )}
+          {/* VH-6 (Grafana/Metabase/Superset): visible TRUE-refresh control.
+              Previously the only affordance was the hidden ⌘/Ctrl+R shortcut
+              (FilterBar's "Refresh Data" is a server re-ingest, not a display
+              refresh). Icon-button, same visual language as the keyboard-help
+              button next to it — refresh is a frequent action but shouldn't
+              compete with Export (the primary amber CTA). */}
+          {analysisData && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onRefreshClick}
+                  aria-label="Muat ulang data"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">Muat Ulang Data (⌘/Ctrl+R)</TooltipContent>
+            </Tooltip>
           )}
           {/* UX-ENHANCE: Keyboard shortcuts help tooltip */}
           <Tooltip>

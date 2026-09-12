@@ -10,7 +10,7 @@
 import dynamic from 'next/dynamic';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, Settings, Users, Upload } from 'lucide-react';
+import { RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, Settings, Users, Upload } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
@@ -514,16 +514,31 @@ export function FilterBar() {
             <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
             <span className="hidden md:inline">Upload File</span>
           </Button>
-          <Button
-            variant="default"
-            size="sm"
-            className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
-            onClick={handleIngest}
-            disabled={ingesting}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Refresh Data'}</span>
-          </Button>
+          {/* VH-6 (Superset "Name with Purpose"): this button RE-SCANS the
+              Excel files in the server's data directory (POST /api/ingest) —
+              it is NOT a display refresh. Renamed from "Refresh Data"
+              (misleading — audit H-14-b found users expected a refresh;
+              the true display refresh now lives in the header as
+              "Muat Ulang"). RotateCcw = re-scan semantics, outline variant
+              de-emphasizes an infrequent admin action. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+                onClick={handleIngest}
+                disabled={ingesting}
+              >
+                <RotateCcw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Sinkron File'}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              Baca ulang file Excel di folder server (re-ingest) — untuk data baru yang sudah diunggah ke server.
+              Untuk memperbarui tampilan, gunakan tombol Muat Ulang di header (⌘/Ctrl+R).
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
 

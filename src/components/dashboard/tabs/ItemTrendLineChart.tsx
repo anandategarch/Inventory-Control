@@ -380,13 +380,20 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
             textAnchor="end"
             height={50}
           />
-          {/* Left Y axis — QTY value */}
+          {/* Left Y axis — QTY value
+              VH-6 (Grafana "Always include units" + consistency): use the
+              GLOBAL abbreviation convention from src/lib/format.ts
+              (M = Miliar, Jt = Juta, Rb = Ribu). The old formatter used
+              "M"=juta / "K"=ribu (international convention) — the same
+              glyph "M" meant a THOUSAND-FOLD different amount elsewhere in
+              the app. Display-only change, numbers untouched. */}
           <YAxis
             yAxisId="left"
             tickFormatter={(v: number) => {
               const abs = Math.abs(v);
-              if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-              if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+              if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}M`;
+              if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}Jt`;
+              if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
               return v.toFixed(0);
             }}
             fontSize={10}
