@@ -6,6 +6,11 @@
 > tech stack, architecture, database schema, API routes, components, business
 > rules, performance benchmarks, security model, and current state.
 >
+> **Companion doc (v1.0 — approved):** `MASTER-CONTEXT-VISUAL-HIERARCHY.md` —
+> single source of truth untuk urutan, bobot, dan perilaku visual seluruh section
+> analisa dashboard (struktur L0-L7, token, aturan interaksi, peta migrasi modul).
+> WAJIB dibaca sebelum tugas UI/appearance apa pun.
+>
 > **Last updated:** Session AUDIT-INTENSIF (Full code audit → AUDIT-REPORT.md + 6 paket perbaikan: PAKET UPLOAD/DELETE (upload 3× lebih cepat + chunk paralel + delete TRUNCATE atomik), PAKET A (interaksi FE: tab keep-alive `forceMount` + refetch storm dibunuh + debounce autocomplete + dashboard tidak terkunci saat refresh), PAKET B (backend scan-merge: 4 KPI 1-scan, kategori 1 query, import 3-pass bulk ±446→±4-8 round-trip), PAKET C (deploy: Fluid Compute + vercel.json bersih + bun.lock satu-satunya lockfile), PAKET E (tab **Kepatuhan** — 11 lensa kontrol dari 2 scan: 9 lensa period + 2 lensa month-grain; route `/api/compliance` + `/api/chronic-outlets`), PAKET F (P3 hygiene: cache hit analysis zero-parse via raw-JSON passthrough, 3 route peer-comparison kini di-cache, docx cache base64, index `[direction]` dead dihapus, TrendChart mati dihapus, 3 render pipeline di-memo); BUG-3/4/5 ingest integrity + purge git-history password; LOC 52,661 → 57,861; cached routes 14 → 20; routes 27 → 35; tests 435 → 438)
 > **Previously:** Session TREMOR (Dashboard Component Patterns: 6 new tremor components — Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine + 3 evidence-dev patterns documented — Format Presets System (33 presets in lib/format.ts), TargetComparison component, Diverging Color Scale (lib/colorScale.ts); KPICard + Callout applied); Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1+2)
 > **Maintainer:** Z.ai Code
