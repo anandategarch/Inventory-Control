@@ -22,8 +22,11 @@ export function toNum(v: unknown): number | null {
   return (isNaN(n) || !isFinite(n)) ? null : n;
 }
 
-// Format number with Indonesian decimal separator
-function fmtDecimal(n: number, digits: number): string {
+// Format number with Indonesian decimal separator.
+// VH-7: exported for display-side comma normalization across the DEEP
+// ANALYSIS tabs (backlog "SEDANG-1" number-format items) — display only,
+// never used for data/math.
+export function fmtDecimal(n: number, digits: number): string {
   return n.toFixed(digits).replace('.', ',');
 }
 
@@ -144,7 +147,8 @@ export function priorityColor(p: string): string {
  */
 export function fmtGrowth(v: number | null | undefined): string {
   if (v == null) return '—';
-  const pct = (v * 100).toFixed(1);
+  // VH-7: honor the docstring — comma decimal (was dot, "+12.3%").
+  const pct = fmtDecimal(v * 100, 1);
   return v > 0 ? `+${pct}%` : `${pct}%`;
 }
 

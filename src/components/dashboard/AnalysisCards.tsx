@@ -5,7 +5,7 @@
 import { memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtDecimal } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { Calendar } from 'lucide-react';
 import {
@@ -62,7 +62,7 @@ export const MultiPeriodComparisonCard = memo(function MultiPeriodComparisonCard
               <ComposedChart data={multi} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" className="opacity-60" />
                 <XAxis dataKey="period" fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString()} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}Jt` : v.toLocaleString('id-ID')} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                 <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
                 <Tooltip
                   cursor={{ fill: 'var(--muted)', opacity: 0.4 }}
@@ -73,7 +73,7 @@ export const MultiPeriodComparisonCard = memo(function MultiPeriodComparisonCard
                           <p className="font-semibold border-b pb-1 mb-1">{label}</p>
                           {payload.map((p, i) => (
                             <p key={i} className="text-muted-foreground tabular-nums">
-                              <span className="font-medium text-foreground">{p.name}</span>: {p.name === 'Growth' ? `${((Number(p.value) * 100).toFixed(1))}%` : fmtIDR(Number(p.value))}
+                              <span className="font-medium text-foreground">{p.name}</span>: {p.name === 'Growth' ? `${fmtDecimal(Number(p.value) * 100, 1)}%` : fmtIDR(Number(p.value))}
                             </p>
                           ))}
                         </div>

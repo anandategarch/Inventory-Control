@@ -18,8 +18,9 @@
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
+import { History } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { LoadingChart } from '@/components/dashboard/shared';
+import { LoadingChart, SectionHeader } from '@/components/dashboard/shared';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 
 // Phase 4: Lazy-load heavy chart components (Recharts = 5.4MB)
@@ -35,6 +36,14 @@ export interface HistoricalTabProps {
 export const HistoricalTab = memo(function HistoricalTab({ data }: HistoricalTabProps) {
   return (
     <div className="space-y-4 min-w-0">
+      {/* VH-7: section header — the tab interior opens with the question the
+          three historical modules answer ("Enrich with Context"). */}
+      <SectionHeader
+        icon={<History className="h-4 w-4 text-muted-foreground" />}
+        title="Analisa vs Baseline Historis"
+        description="Apakah kondisi periode ini abnormal dibanding baseline historisnya sendiri (same-week lintas bulan)?"
+      />
+
       {/* Section: Historical Z-Score (replaces Area Trend) */}
       <ErrorBoundary label="Historical Z-Score">
         <HistoricalZScoreCard data={data} />

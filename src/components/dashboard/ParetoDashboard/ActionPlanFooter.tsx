@@ -28,30 +28,30 @@ export function ActionPlanFooter({ paretoData }: { paretoData: ParetoData }) {
               <div className="flex items-center gap-1.5 text-xs">
                 <Package className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-amber-700 dark:text-amber-400">
-                  <strong>{paretoData.byItem?.drivers.length || 0}</strong> item = 80% deviation
+                  <strong>{paretoData.byItem?.drivers.length || 0}</strong> item = 80% deviasi
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs">
-                <Store className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <Store className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-amber-700 dark:text-amber-400">
-                  <strong>{paretoData.byOutlet?.drivers.length || 0}</strong> outlet = 80% masalah
+                  <strong>{paretoData.byOutlet?.drivers.length || 0}</strong> outlet = 80% deviasi
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs">
-                <Boxes className="h-3 w-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                <Boxes className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-amber-700 dark:text-amber-400">
-                  <strong>{paretoData.byKelompok?.drivers.length || 0}</strong> kelompok = 80% deviation
+                  <strong>{paretoData.byKelompok?.drivers.length || 0}</strong> kelompok = 80% deviasi
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs">
-                <Users className="h-3 w-3 text-red-600 dark:text-red-400 shrink-0" />
+                <Users className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-amber-700 dark:text-amber-400">
-                  <strong>{paretoData.byPIC?.drivers.length || 0}</strong> PIC = 80% deviation
+                  <strong>{paretoData.byPIC?.drivers.length || 0}</strong> PIC = 80% deviasi
                 </span>
               </div>
             </div>
             <p className="text-[11px] text-amber-600/70 dark:text-amber-400/60 pt-1">
-              Fokus ke item di atas untuk eliminasi 80% total deviation dengan efisien.
+              Fokus ke item di atas untuk eliminasi 80% total deviasi dengan efisien.
             </p>
           </div>
         </div>

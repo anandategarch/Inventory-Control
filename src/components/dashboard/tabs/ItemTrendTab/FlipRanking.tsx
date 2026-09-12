@@ -50,7 +50,7 @@ import {
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
-import { fmtNum } from '@/lib/format';
+import { fmtNum, fmtDecimal } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 // H-11 / #4c: per-outlet flip formulas come from the SINGLE shared module
 // (same one the backend flip-ranking query + flipHelpers use).
@@ -340,7 +340,7 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
         <span className="text-muted-foreground">·</span>
         <span className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium ${cb.className}`}>
           <span aria-hidden>{cb.emoji}</span>
-          Disparity {flip.disparityPct.toFixed(1)}% ({categoryDisplay})
+          Disparity {fmtDecimal(flip.disparityPct, 1)}% ({categoryDisplay})
         </span>
       </div>
 
@@ -488,7 +488,7 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
                         {/* Flip % — sort key (ASC = most balanced at top) */}
                         <TableCell className="text-right py-1.5">
                           <Badge variant="outline" className={`text-[9px] h-4 px-1 font-medium tabular-nums ${flipBadgeClass}`}>
-                            {flipPct.toFixed(1)}%
+                            {fmtDecimal(flipPct, 1)}%
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -759,7 +759,7 @@ export const FlipRanking = memo(function FlipRanking() {
                           {item.sempurnaCount > 0 ? item.sempurnaCount : '—'}
                         </TableCell>
                         <TableCell className="text-right text-xs py-2 tabular-nums text-muted-foreground">
-                          {item.flipCount > 0 ? `${(item.avgDisparity * 100).toFixed(1)}%` : '—'}
+                          {item.flipCount > 0 ? `${fmtDecimal(item.avgDisparity * 100, 1)}%` : '—'}
                         </TableCell>
                         <TableCell className="text-right py-2">
                           <div className="flex items-center justify-end gap-1.5">
@@ -798,7 +798,7 @@ export const FlipRanking = memo(function FlipRanking() {
                                   <div className="flex items-center gap-1 cursor-help">
                                     <span className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium ${cb.className}`}>
                                       <span aria-hidden>{cb.emoji}</span>
-                                      <span className="tabular-nums">{topFlip.disparityPct.toFixed(1)}%</span>
+                                      <span className="tabular-nums">{fmtDecimal(topFlip.disparityPct, 1)}%</span>
                                     </span>
                                     <span className="text-muted-foreground text-[10px] tabular-nums">
                                       {topFlip.period1Label} → {topFlip.period2Label}
@@ -828,7 +828,7 @@ export const FlipRanking = memo(function FlipRanking() {
                                     </div>
                                     <div className="flex justify-between gap-4">
                                       <span className="text-muted-foreground">Disparity:</span>
-                                      <span className="font-bold tabular-nums">{topFlip.disparityPct.toFixed(1)}%</span>
+                                      <span className="font-bold tabular-nums">{fmtDecimal(topFlip.disparityPct, 1)}%</span>
                                     </div>
                                     <p className="text-muted-foreground text-[10px] pt-1 border-t">
                                       💡 Klik <ChevronRight className="h-3 w-3 inline" /> untuk per-outlet breakdown

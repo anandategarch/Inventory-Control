@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Target, TrendingUp } from 'lucide-react';
 import { fmtIDR, fmtNum } from './helpers';
+import { fmtDecimal } from '@/lib/format';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -133,7 +134,7 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                   {/* pctLossSurplusToBom is always ≥0 (SQL uses ABS). Color by
                       nominalDeviasi sign: negative = LOSS (red), positive = SURPLUS (green). */}
                   <TableCell className={`text-right text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {it.pctLossSurplusToBom != null ? `${Math.abs(it.pctLossSurplusToBom * 100).toFixed(2)}%` : '—'}
+                    {it.pctLossSurplusToBom != null ? `${fmtDecimal(Math.abs(it.pctLossSurplusToBom * 100), 2)}%` : '—'}
                   </TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyBom)}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground tabular-nums">

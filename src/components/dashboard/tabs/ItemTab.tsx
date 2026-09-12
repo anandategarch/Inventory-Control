@@ -19,7 +19,7 @@
 // ============================================================
 
 import { memo } from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, LineChart } from 'lucide-react';
 import { TopItemsByNominal, TopItemsByDevBom } from '@/components/dashboard/TopItems';
 import { ItemConsistencyAnalysis } from '@/components/dashboard/AdvancedAnalysis';
 import { ItemTrendTab } from '@/components/dashboard/tabs/ItemTrendTab';
@@ -47,6 +47,7 @@ export const ItemTab = memo(function ItemTab({ data }: ItemTabProps) {
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
           title="Item Prioritas"
+          description="Item mana yang paling memengaruhi deviasi — secara nominal maupun rasio terhadap BOM?"
         />
         {/* FIX (UI-05): min-w-0 on grid wrapper prevents overflow.
             H-11 (#4a): 3→2 columns after the TopOutlets card removal. */}
@@ -60,16 +61,26 @@ export const ItemTab = memo(function ItemTab({ data }: ItemTabProps) {
 
       {/* ====== TREND ITEM (per-item QTY timeline + Z-Score) ====== */}
       {/* Phase 1 — pass analysisData so the tab can render the Rank Badge
-          row (item's national rank in topDeviasiRank). */}
-      <ErrorBoundary label="Trend Item">
-        <ItemTrendTab analysisData={data} />
-      </ErrorBoundary>
+          row (item's national rank in topDeviasiRank).
+          VH-7: wrapped in its own section + SectionHeader (tab interior
+          rhythm parity with the other sections). */}
+      <section>
+        <SectionHeader
+          icon={<LineChart className="h-4 w-4 text-muted-foreground" />}
+          title="Trend Item"
+          description="Bagaimana perilaku satu item lintas periode — normal, abnormal, atau flip LOSS↔SURPLUS?"
+        />
+        <ErrorBoundary label="Trend Item">
+          <ItemTrendTab analysisData={data} />
+        </ErrorBoundary>
+      </section>
 
       {/* Section: Item Consistency */}
       <section>
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
           title="Pola Item (Massal / Regional / Lokal)"
+          description="Apakah deviasi item terkonsentrasi massal di banyak outlet, regional per area, atau lokal di satu outlet?"
         />
         <ErrorBoundary label="Item Consistency Analysis">
           <ItemConsistencyAnalysis data={data} />

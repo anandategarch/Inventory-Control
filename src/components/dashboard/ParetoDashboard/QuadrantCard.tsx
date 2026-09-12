@@ -9,7 +9,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtDecimal, numberColor } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { countSuffix } from './constants';
 import type { ParetoResult } from './types';
@@ -69,8 +69,8 @@ export function QuadrantCard({ title, icon, data, color, barColor, tooltip }: { 
                     </TableCell>
                     <TableCell className={`text-right text-xs tabular-nums font-medium p-1 hidden xl:table-cell ${
                       d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
-                    }`} title={d.zScore != null ? `Z-score: ${d.zScore.toFixed(2)} (${d.histN} periode)` : ''}>
-                      {d.zScore != null ? (d.zScore > 0 ? '+' : '') + d.zScore.toFixed(1) : '—'}
+                    }`} title={d.zScore != null ? `Z-score: ${fmtDecimal(d.zScore, 2)} (${d.histN} periode)` : ''}>
+                      {d.zScore != null ? (d.zScore > 0 ? '+' : '') + fmtDecimal(d.zScore, 1) : '—'}
                     </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1">{d.sharePct.toFixed(0)}%</TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground/60 p-1">{d.cumPct.toFixed(0)}%</TableCell>

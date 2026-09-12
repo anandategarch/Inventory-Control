@@ -19,6 +19,7 @@ import {
   fmtGrowth, growthColor, priorityColor, directionColor,
   Row, SummaryCard,
 } from './helpers';
+import { fmtDecimal } from '@/lib/format';
 
 export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
   outletCode: string; itemName: string; month: string; week: string; onClose: () => void;
@@ -72,7 +73,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
           <div className="space-y-4">
             {/* Summary Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${data.historical.zScore.toFixed(2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600' : ''} />
+              <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${fmtDecimal(data.historical.zScore, 2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600' : ''} />
               <SummaryCard label="Nominal" value={fmtIDR(data.current?.nominalLossSurplus)} color={directionColor(data.current?.direction || '')} />
               <SummaryCard label="Residual%" value={fmtPct(data.current?.residualRatio)} sub={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'TINGGI' : ''} color={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'text-red-600' : ''} />
               <SummaryCard label="Trend" value={data.historical?.trend || '—'} color={data.historical?.trend === 'DETERIORATING' ? 'text-red-600' : data.historical?.trend === 'IMPROVING' ? 'text-emerald-600' : ''} />
@@ -86,8 +87,8 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                 <Row label="Area Avg Dev/BOM" value={fmtPct(data.benchmark?.areaAvgDevBom)} />
                 <Row label="Semua Resto Avg" value={fmtPct(data.benchmark?.allRestoAvgDevBom)} />
                 <Row label="Best Outlet" value={fmtPct(data.benchmark?.bestDevBom)} />
-                <Row label="Area Multiplier" value={data.benchmark?.areaMultiplier != null ? `${data.benchmark.areaMultiplier.toFixed(2)}×` : '—'} />
-                <Row label="Semua Resto Multiplier" value={data.benchmark?.allRestoMultiplier != null ? `${data.benchmark.allRestoMultiplier.toFixed(2)}×` : '—'} />
+                <Row label="Area Multiplier" value={data.benchmark?.areaMultiplier != null ? `${fmtDecimal(data.benchmark.areaMultiplier, 2)}×` : '—'} />
+                <Row label="Semua Resto Multiplier" value={data.benchmark?.allRestoMultiplier != null ? `${fmtDecimal(data.benchmark.allRestoMultiplier, 2)}×` : '—'} />
                 <Row label="Area Outlets" value={String(data.benchmark?.areaOutletCount ?? 0)} />
                 <Row label="Total Resto" value={String(data.benchmark?.allRestoOutletCount ?? 0)} />
               </CardContent>
@@ -137,7 +138,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                   </Table>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Historical mean: {fmtPct(data.historical?.mean)} · StdDev: {fmtPct(data.historical?.stdDev)} · zScore: {data.historical?.zScore?.toFixed(2) || '—'} · Sample: {data.historical?.sampleSize || 0} periods
+                  Historical mean: {fmtPct(data.historical?.mean)} · StdDev: {fmtPct(data.historical?.stdDev)} · zScore: {data.historical?.zScore != null ? fmtDecimal(data.historical.zScore, 2) : '—'} · Sample: {data.historical?.sampleSize || 0} periods
                 </p>
               </CardContent>
             </Card>

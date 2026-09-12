@@ -8,7 +8,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { HistoricalAnalysisMeta } from '@/hooks/useAnalysis/types';
-import { fmtIDR, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtPctAbs, fmtDecimal } from '@/lib/format';
 import { zScoreColor } from '@/lib/zScoreHelpers';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown, AlertTriangle, Database, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
@@ -405,7 +405,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                                   style={{ width: `${Math.min(Math.abs(activeZ) / 5 * 100, 100)}%` }}
                                 />
                               </div>
-                              {activeZ > 0 ? `+${activeZ.toFixed(2)}` : activeZ.toFixed(2)}
+                              {activeZ > 0 ? `+${fmtDecimal(activeZ, 2)}` : fmtDecimal(activeZ, 2)}
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="left" className="text-xs p-3 max-w-xs">
@@ -415,16 +415,16 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                                 <>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current QTY Deviasi:</span><span className={`font-medium tabular-nums ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentQtyDeviasi.toLocaleString('id-ID')}</span></div>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg (|weekly|):</span><span className="font-medium tabular-nums">{item.qtyDeviasiHistoricalAvg.toLocaleString('id-ID')}</span></div>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Current| vs Avg:</span><span className="font-medium tabular-nums">{(Math.abs(item.currentQtyDeviasi) / (item.qtyDeviasiHistoricalAvg || 1)).toFixed(2)}×</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Current| vs Avg:</span><span className="font-medium tabular-nums">{fmtDecimal(Math.abs(item.currentQtyDeviasi) / (item.qtyDeviasiHistoricalAvg || 1), 2)}×</span></div>
                                 </>
                               ) : (
                                 <>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{((item.currentDevBom - item.historicalAvg) * 100).toFixed(1)}pp</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{fmtDecimal((item.currentDevBom - item.historicalAvg) * 100, 1)}pp</span></div>
                                 </>
                               )}
-                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(activeZ)}`}>{activeZ.toFixed(2)} ({badge.label})</span></div>
+                              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(activeZ)}`}>{fmtDecimal(activeZ, 2)} ({badge.label})</span></div>
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Nominal|:</span><span className="font-medium tabular-nums">{fmtIDR(item.absNominal)}</span></div>
                             </div>
                           </TooltipContent>

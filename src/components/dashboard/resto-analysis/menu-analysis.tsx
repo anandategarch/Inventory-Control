@@ -14,6 +14,7 @@ import { Utensils } from 'lucide-react';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { fmtNum, fmtPct, directionColor } from './helpers';
+import { fmtDecimal } from '@/lib/format';
 import type { OutletItemsResponse } from './types';
 import type { OutletItem } from '@/components/dashboard/PrioritySummaryCard';
 
@@ -148,7 +149,7 @@ export const MenuAnalysis = memo(function MenuAnalysis({ outletCode, monthLabel,
                         </span>
                         {item.outlierMultiple != null && item.outlierMultiple > 1 && (
                           <span className={`text-xs tabular-nums ${item.isOutlier ? 'text-red-600 dark:text-red-400 font-bold' : 'text-muted-foreground'}`}>
-                            {item.outlierMultiple.toFixed(1)}× avg
+                            {fmtDecimal(item.outlierMultiple, 1)}× avg
                           </span>
                         )}
                         <span className={`text-xs ${directionColor(item.direction)}`}>{item.direction === 'LOSS' ? 'L' : 'S'}</span>

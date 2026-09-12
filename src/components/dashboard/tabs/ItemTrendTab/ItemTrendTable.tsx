@@ -39,7 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtDecimal } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { zScoreColor, zScoreStatus } from './zScoreHelpers';
 import { periodShortLabel } from './periodHelpers';
@@ -279,7 +279,7 @@ export function ItemTrendTable({
                             />
                           </div>
                         )}
-                        {z == null ? '—' : z > 0 ? `+${z.toFixed(2)}` : z.toFixed(2)}
+                        {z == null ? '—' : z > 0 ? `+${fmtDecimal(z, 2)}` : fmtDecimal(z, 2)}
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="left" className="text-xs p-3 max-w-xs">
@@ -305,7 +305,7 @@ export function ItemTrendTable({
                           <div className="flex justify-between gap-4">
                             <span className="text-muted-foreground">Z-Score:</span>
                             <span className={`font-bold tabular-nums ${zScoreColor(z)}`}>
-                              {z > 0 ? '+' : ''}{z.toFixed(2)} ({status.label})
+                              {z > 0 ? '+' : ''}{fmtDecimal(z, 2)} ({status.label})
                             </span>
                           </div>
                         )}

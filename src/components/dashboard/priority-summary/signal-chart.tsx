@@ -9,7 +9,7 @@
 // ============================================================
 
 import { memo } from 'react';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtDecimal } from '@/lib/format';
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -43,10 +43,10 @@ function fmtNominalLabel(v: number | string): string {
   const n = Number(v);
   if (isNaN(n)) return '';
   return Math.abs(n) >= 1000000
-    ? `${(Math.abs(n) / 1000000).toFixed(1)}jt`
+    ? `${fmtDecimal(Math.abs(n) / 1000000, 1)}Jt`
     : Math.abs(n) >= 1000
-      ? `${(Math.abs(n) / 1000).toFixed(0)}rb`
-      : n.toFixed(1);
+      ? `${(Math.abs(n) / 1000).toFixed(0)}Rb`
+      : fmtDecimal(n, 1);
 }
 
 // ============================================================
@@ -81,7 +81,7 @@ export const SignalChart = memo(function SignalChart({ name, r, items }: { name:
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" />
             <YAxis tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${fmtDecimal(v * 100, 1)}%`} />
             <ReferenceLine y={0} stroke="#52525b" strokeOpacity={0.4} />
             <Line type="monotone" dataKey="actual" stroke={CHART.amber} strokeWidth={2} dot={{ r: 3, fill: CHART.amber }} connectNulls={false} name="Aktual" />
             <Line type="monotone" dataKey="projected" stroke={CHART.red} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Proyeksi" />
@@ -98,7 +98,7 @@ export const SignalChart = memo(function SignalChart({ name, r, items }: { name:
             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.15} className="text-zinc-400" vertical={false} />
             <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" />
             <YAxis tick={{ fontSize: 10, fill: '#52525b' }} stroke="#52525b" tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${(v * 100).toFixed(1)}%`} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => v == null ? '—' : `${fmtDecimal(v * 100, 1)}%`} />
             <Line type="monotone" dataKey="actual" stroke={CHART.red} strokeWidth={2} dot={{ r: 3, fill: CHART.red }} connectNulls={false} name="Aktual" />
             <Line type="monotone" dataKey="projected" stroke={CHART.redDark} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CHART.redDark }} connectNulls={false} name="Proyeksi" />
             <Legend wrapperStyle={{ fontSize: '9px', color: '#52525b' }} iconType="line" />
@@ -304,7 +304,7 @@ export const SignalChart = memo(function SignalChart({ name, r, items }: { name:
             <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(82,82,91,0.1)' }} formatter={(v: number) => fmtIDR(v)} />
             <ReferenceLine y={threshold} stroke={CHART.red} strokeDasharray="4 3" label={{ value: 'Rp 10Jt', fontSize: 9, fill: CHART.red, position: 'right' }} />
             <Bar dataKey="value" fill={CHART.red} radius={[3, 3, 0, 0]}>
-              <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${(Math.abs(n)/1000000).toFixed(1)}jt` : `${n}`; }} />
+              <LabelList dataKey="value" position="top" fill="#52525b" fontSize={9} formatter={(v: number | string) => { const n = Number(v); if (isNaN(n)) return ""; return Math.abs(n) >= 1000000 ? `${fmtDecimal(Math.abs(n)/1000000, 1)}Jt` : `${n}`; }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

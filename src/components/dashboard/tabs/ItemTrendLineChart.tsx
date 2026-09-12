@@ -23,7 +23,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   ReferenceLine,
 } from 'recharts';
-import { fmtIDR, fmtNum } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtDecimal } from '@/lib/format';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { getFlipsForPeriod, periodKey as flipPeriodKey, type FlipAnalysis } from './ItemTrendTab/flipHelpers';
 // SHADCN-PATTERNS (Pattern 1) — ChartContainer + ChartConfig system
@@ -200,7 +200,7 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">Z-Score:</span>
         <span className={`font-bold tabular-nums ${zColorClass}`}>
-          {z == null ? '— (n<4)' : `${z > 0 ? '+' : ''}${z.toFixed(2)}`}
+          {z == null ? '— (n<4)' : `${z > 0 ? '+' : ''}${fmtDecimal(z, 2)}`}
         </span>
       </div>
       <div className="flex justify-between gap-4">
@@ -391,8 +391,8 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
             yAxisId="left"
             tickFormatter={(v: number) => {
               const abs = Math.abs(v);
-              if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}M`;
-              if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}Jt`;
+              if (abs >= 1_000_000_000) return `${fmtDecimal(v / 1_000_000_000, 1)}M`;
+              if (abs >= 1_000_000) return `${fmtDecimal(v / 1_000_000, 1)}Jt`;
               if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
               return v.toFixed(0);
             }}

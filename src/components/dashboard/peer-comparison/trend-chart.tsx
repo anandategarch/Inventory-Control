@@ -14,6 +14,7 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, TrendingUp } from 'lucide-react';
+import { fmtDecimal } from '@/lib/format';
 import type { TrendResponse } from './types';
 
 export const TrendChartCard = memo(function TrendChartCard({
@@ -83,7 +84,7 @@ export const TrendChartCard = memo(function TrendChartCard({
                         <div className="font-semibold mb-1 border-b pb-1">{label}</div>
                         {payload.map((pl, i) => (
                           <div key={i} style={{ color: pl.color }} className="tabular-nums">
-                            {pl.name}: {(pl.value as number).toFixed(2)}%
+                            {pl.name}: {fmtDecimal(pl.value as number, 2)}%
                           </div>
                         ))}
                       </div>

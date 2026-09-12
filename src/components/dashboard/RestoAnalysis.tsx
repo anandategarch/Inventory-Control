@@ -19,8 +19,9 @@ import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Activi
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { clickableRowProps } from '@/lib/a11y';
-import { fmtIDR, fmtNum, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, fmtDecimal } from '@/lib/format';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
+import { SectionHeader } from '@/components/dashboard/shared';
 import { useState } from 'react';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useRecommendations, useSharedRecommendationForOutlet } from '@/hooks/useRecommendations';
@@ -238,6 +239,13 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       <PrioritySummaryCard recommendation={recommendation} outletItems={data?.allItems || []} />
 
       {/* Resto Profile — 6 Sections */}
+      {/* VH-7: section header — the tab interior tells a story per section
+          (Metabase "a tab = a set of related questions"). */}
+      <SectionHeader
+        icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
+        title="Profil Outlet"
+        description="Bagaimana kondisi outlet terpilih — performa, perilaku, historis, benchmark, dan risiko item?"
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* 1. Performance */}
         <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -294,7 +302,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
             <Row label="Outlet Dev/BOM" value={fmtPct(profile.benchmark.outletDevBom)} />
             <Row label="Area Avg Dev/BOM" value={fmtPct(profile.benchmark.areaAvgDevBom)} />
             <Row label="Semua Resto Avg Dev/BOM" value={fmtPct(profile.benchmark.allRestoAvgDevBom)} />
-            <Row label="Area Multiplier" value={profile.benchmark.areaMultiplier != null ? `${profile.benchmark.areaMultiplier.toFixed(2)}×` : '—'} />
+            <Row label="Area Multiplier" value={profile.benchmark.areaMultiplier != null ? `${fmtDecimal(profile.benchmark.areaMultiplier, 2)}×` : '—'} />
           </CardContent>
         </Card>
 

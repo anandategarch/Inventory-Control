@@ -72,6 +72,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useItemTrend, type ItemTrendMetric, type ItemTrendPeriod } from '@/hooks/useAnalysis';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
+import { fmtDecimal } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { Callout } from '@/components/ui/callout';
 import { Tracker } from '@/components/dashboard/shared/Tracker';
@@ -825,7 +826,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
                     const z = p.zScore;
                     return {
                       color: z == null ? 'zinc' : z < -1 ? 'emerald' : z > 1 ? 'red' : 'amber',
-                      tooltip: `${p.monthLabel} ${p.weekLabel}: Z-Score ${z != null ? z.toFixed(2) : '—'}`,
+                      tooltip: `${p.monthLabel} ${p.weekLabel}: Z-Score ${z != null ? fmtDecimal(z, 2) : '—'}`,
                     };
                   })}
                 />

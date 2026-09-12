@@ -44,7 +44,7 @@ export function GeneralizedNested({
               <ChevronDown className="h-3.5 w-3.5" />
             </span>
             {DIM_LABELS[parentDim]} → {DIM_LABELS[childDim]} Breakdown
-            <InfoTooltip content={`Top 10 ${DIM_LABELS[parentDim].toLowerCase()} by |nominalDeviasi|, with per-parent ${DIM_LABELS[childDim].toLowerCase()} breakdown (80% cutoff).`} />
+            <InfoTooltip content={`Top 10 ${DIM_LABELS[parentDim].toLowerCase()} berdasarkan |nominalDeviasi|, dengan breakdown per ${DIM_LABELS[childDim].toLowerCase()} (cutoff 80%).`} />
           </CardTitle>
           <Badge variant="secondary" className="text-[10px]">Klik untuk expand</Badge>
         </div>

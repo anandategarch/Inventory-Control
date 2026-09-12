@@ -7,7 +7,7 @@
 import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lightbulb } from 'lucide-react';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtDecimal } from '@/lib/format';
 import type { PeerRow, PeerAverages } from './types';
 
 interface Insight {
@@ -32,10 +32,10 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     // 1. Outlier detection: Dev/BOM > 1.5× peer avg
     const devBomRatio = safeRatio(target.devBom, avgVal('devBom'));
     if (devBomRatio > 1.5) {
-      const pctAbove = ((devBomRatio - 1) * 100).toFixed(0);
+      const pctAbove = fmtDecimal((devBomRatio - 1) * 100, 0);
       out.push({
         type: 'warn',
-        text: `Dev/BOM ${(target.devBom * 100).toFixed(1)}% adalah ${pctAbove}% di atas peer average — outlier.`,
+        text: `Dev/BOM ${fmtDecimal(target.devBom * 100, 1)}% adalah ${pctAbove}% di atas peer average — outlier.`,
       });
     }
 
@@ -44,7 +44,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
       const bestPeer = peers.reduce((best, p) => (p.devBom < best.devBom ? p : best), peers[0]);
       out.push({
         type: 'info',
-        text: `${bestPeer.outletName} adalah best practice: Dev/BOM ${(bestPeer.devBom * 100).toFixed(1)}% (terendah di peer group).`,
+        text: `${bestPeer.outletName} adalah best practice: Dev/BOM ${fmtDecimal(bestPeer.devBom * 100, 1)}% (terendah di peer group).`,
       });
     }
 
@@ -64,7 +64,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (residualRatio > 2) {
       out.push({
         type: 'warn',
-        text: `Residual ${target.residualQty} adalah ${residualRatio.toFixed(1)}× peer average — potensi data entry error atau fraud.`,
+        text: `Residual ${target.residualQty} adalah ${fmtDecimal(residualRatio, 1)}× peer average — potensi data entry error atau fraud.`,
       });
     }
 
@@ -73,7 +73,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (lossRatio > 1.5) {
       out.push({
         type: 'warn',
-        text: `Total LOSS ${fmtIDR(target.totalLoss)} adalah ${((lossRatio - 1) * 100).toFixed(0)}% di atas peer average — investigasi penyebab utama.`,
+        text: `Total LOSS ${fmtIDR(target.totalLoss)} adalah ${fmtDecimal((lossRatio - 1) * 100, 0)}% di atas peer average — investigasi penyebab utama.`,
       });
     }
 
@@ -82,7 +82,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (salesRatio < 0.9 && salesRatio > 0) {
       out.push({
         type: 'info',
-        text: `Sales ${fmtIDR(target.sales)} adalah ${((1 - salesRatio) * 100).toFixed(0)}% di bawah peer average — walaupun dalam ±10% band, target ada di sisi bawah.`,
+        text: `Sales ${fmtIDR(target.sales)} adalah ${fmtDecimal((1 - salesRatio) * 100, 0)}% di bawah peer average — walaupun dalam ±10% band, target ada di sisi bawah.`,
       });
     }
 

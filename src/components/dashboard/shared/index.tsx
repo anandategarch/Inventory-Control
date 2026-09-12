@@ -226,17 +226,28 @@ export function ErrorState({ message }: { message: string }) {
 
 
 
-export function SectionHeader({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
+// VH-7 — description (VH-6 LayerHeader parity, "Enrich with Context" per
+// Superset/Metabase: every section answers a question, not just a label) +
+// action slot (right-aligned controls, e.g. Pareto dimension selectors).
+// Behavior-compatible with existing call sites: both props optional;
+// mb-3/border rhythm preserved.
+export function SectionHeader({ icon, title, badge, description, action }: { icon: React.ReactNode; title: string; badge?: string; description?: string; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2.5 mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
-        {icon}
-      </span>
-      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-      {badge && (
-        <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground/80 h-5">
-          {badge}
-        </Badge>
+    <div className="w-full mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+          {icon}
+        </span>
+        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        {badge && (
+          <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground/80 h-5">
+            {badge}
+          </Badge>
+        )}
+        {action && <div className="ml-auto min-w-0 flex items-center gap-2">{action}</div>}
+      </div>
+      {description && (
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground/70">{description}</p>
       )}
     </div>
   );

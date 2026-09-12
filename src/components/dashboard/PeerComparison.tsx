@@ -17,12 +17,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Users, Loader2, BarChart3, RotateCcw } from 'lucide-react';
+import { Users, Loader2, BarChart3, RotateCcw, Scale } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+import { SectionHeader } from '@/components/dashboard/shared';
 
 import type {
   PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
@@ -369,6 +370,7 @@ export function PeerComparison() {
             </div>
             <p className="text-sm font-medium text-muted-foreground">Pilih outlet untuk melihat Peer Comparison</p>
             <p className="text-xs text-muted-foreground/60 mt-1">Sistem akan mencari resto dengan sales ±10% sebagai peer group</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Pilih lewat filter Outlet di bilah atas, atau klik baris outlet di tab Resto / Area.</p>
           </div>
         </CardContent>
       </Card>
@@ -402,6 +404,13 @@ export function PeerComparison() {
       </Card>
 
       {/* ============ 2-5. ANALYSIS CARDS (grid 2 cols on desktop) ============ */}
+      {/* VH-7: section header — "Enrich with Context" (Superset/Metabase):
+          the analysis grid opens with the question it answers. */}
+      <SectionHeader
+        icon={<Scale className="h-4 w-4 text-muted-foreground" />}
+        title="Ringkasan Target vs Peer"
+        description="Seberapa baik outlet terpilih dibanding peer group (resto dengan sales ±10%)?"
+      />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {targetRow && otherPeers.length > 0 && (
           <EfficiencyScoreCard
