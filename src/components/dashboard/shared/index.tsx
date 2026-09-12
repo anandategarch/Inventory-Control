@@ -3,9 +3,13 @@
 // ============================================================
 //  Shared dashboard components — extracted from page.tsx
 //  (architecture split: reduce page.tsx size)
+//  VH-1: LayerHeader (narrative-layer eyebrow) lives in
+//  ./LayerHeader and is re-exported here for convenience.
 // ============================================================
 
 import { useState, useEffect, memo } from 'react';
+export { LayerHeader } from './LayerHeader';
+export type { LayerHeaderProps } from './LayerHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 // QW hygiene: Button import removed — every CTA here is a raw <button>

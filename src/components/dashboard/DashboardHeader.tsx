@@ -5,6 +5,12 @@
 //  --------------------------------------------------------
 //  Tier 1: logo + title + action buttons (Export / Cari Item /
 //          Keyboard shortcuts tooltip) + status badges
+//  Tier 1.5 (VH-1, spec §4 L0): global period label — one line
+//          summarizing the active filter period, promoted from
+//          the ExecutiveSummary badge so the period is visible
+//          without scrolling into the analysis. Built ONLY from
+//          the store's existing period strings (no new date
+//          formatting).
 //  Tier 2: FilterBar (bare, no Card wrapper) — only when hasData
 // ============================================================
 
@@ -17,6 +23,8 @@ import {
 import {
   Activity, Boxes, FileDown, Keyboard, Loader2,
 } from 'lucide-react';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 
 export interface DashboardHeaderProps {
@@ -36,6 +44,29 @@ export function DashboardHeader({
   analysisData,
   onExportClick,
 }: DashboardHeaderProps) {
+  // VH-1 (spec §4 L0): the global period label reads the period straight
+  // from the store (same leaf-component subscription pattern as FilterBar
+  // / RankingNasionalCard). page.tsx already subscribes to these fields
+  // for useAnalysis — a local selector here keeps the header in sync even
+  // during period transitions without extra prop threading.
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard(useShallow((s) => ({
+    monthLabel: s.monthLabel,
+    currentWeek: s.currentWeek,
+    comparisonWeek: s.comparisonWeek,
+    comparisonMonth: s.comparisonMonth,
+  })));
+
+  // Single line "{month} · {week} · vs {compareWeek || compareMonth}" —
+  // built from the store's existing strings AS-IS (spec forbids new date
+  // formatting). Segments only render when their value exists, so the
+  // pre-auto-select transient (nulls) never shows "· · vs".
+  const compareLabel = comparisonWeek || comparisonMonth;
+  const periodParts: string[] = [];
+  if (monthLabel) periodParts.push(monthLabel);
+  if (currentWeek) periodParts.push(currentWeek);
+  if (compareLabel) periodParts.push(`vs ${compareLabel}`);
+  const showPeriodLabel = hasData && periodParts.length > 0;
+
   return (
     <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
       {/* Tier 1: Brand + actions */}
@@ -125,6 +156,18 @@ export function DashboardHeader({
           </Tooltip>
         </div>
       </div>
+
+      {/* Tier 1.5 (VH-1): global period label — spec §4 L0
+          ("text-xs font-medium text-muted-foreground tracking-wide
+          tabular-nums"). Rendered only when a period is resolved and data
+          exists; changing the filter updates it without scrolling. */}
+      {showPeriodLabel && (
+        <div className="px-3 sm:px-6 max-w-[1600px] mx-auto">
+          <p className="text-xs font-medium text-muted-foreground tracking-wide tabular-nums">
+            {periodParts.join(' · ')}
+          </p>
+        </div>
+      )}
 
       {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists */}
       {hasData && (

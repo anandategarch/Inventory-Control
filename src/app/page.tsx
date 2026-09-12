@@ -10,16 +10,19 @@
 //  to be visible to multiple children.
 //
 //  Module map:
-//    • DashboardHeader      — sticky header (logo, actions, FilterBar)
+//    • DashboardHeader      — sticky header (logo, period label, actions, FilterBar)
 //    • DashboardFooter      — sticky footer (stats + drill hint)
-//    • tabs/DashboardTab    — main overview (10+ sections, lazy charts)
+//    • narrative/DashboardNarrative — L2-L5 layers ABOVE the tab strip
+//      (executive status → attention → why → diagnosis) — VH-1
+//    • tabs/DashboardTab    — remaining deep-analysis sections (interim —
+//      VH-2 promotes them into the Area/Item/Historical/Heatmap tabs)
 //    • tabs/RestoTab        — per-outlet deep dive (lazy RestoAnalysis)
 //    • tabs/PeerTab         — peer comparison (lazy)
 //    • tabs/ParetoTab       — 80/20 Pareto analysis
 //    • tabs/ItemTrendTab    — per-item QTY timeline + Z-Score (NEW — TREND-FRONTEND)
 //    • useDashboardEffects  — 2 useEffects (atomic auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
-//    • shared/index.tsx     — LoadingChart, SectionHeader, EmptyState, etc.
+//    • shared/index.tsx     — LoadingChart, SectionHeader, LayerHeader, EmptyState, etc.
 // ============================================================
 
 import { useState, useEffect } from 'react';
@@ -32,6 +35,12 @@ import { useDashboardEffects } from '@/hooks/useDashboardEffects';
 import { useDashboardActions } from '@/hooks/useDashboardActions';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardFooter } from '@/components/dashboard/DashboardFooter';
+// VH-1 (Visual Hierarchy): the L2-L5 narrative layers render ABOVE the
+// tab strip, OUTSIDE <Tabs> — switching a deep-analysis tab never remounts
+// them and the narrative scroll position survives (spec §3 principle 1).
+// React.memo'd (same reason as DashboardTab: skip re-render on unrelated
+// Zustand state changes at page level).
+import { DashboardNarrative } from '@/components/dashboard/narrative/DashboardNarrative';
 // PERF-FIX: DashboardTab is the DEFAULT tab — statically import so recharts
 // chunk is bundled upfront (no lazy delay on first render).
 // Other tabs stay lazy (user navigates to them explicitly).
@@ -233,88 +242,99 @@ export default function DashboardPage() {
         ) : analysis.error ? (
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
-            <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20">
-              <TabsTrigger value="dashboard" className={tabTriggerClass}>
-                <BarChart3 className="h-3.5 w-3.5" /> Dashboard
-              </TabsTrigger>
-              <TabsTrigger value="resto" className={tabTriggerClass}>
-                <Store className="h-3.5 w-3.5" /> Resto Analysis
-              </TabsTrigger>
-              <TabsTrigger value="peer" className={tabTriggerClass}>
-                <Activity className="h-3.5 w-3.5" /> Peer Comparison
-              </TabsTrigger>
-              <TabsTrigger value="pareto" className={tabTriggerClass}>
-                <TrendingDown className="h-3.5 w-3.5" /> Pareto
-              </TabsTrigger>
-              <TabsTrigger value="trend" className={tabTriggerClass}>
-                <TrendingUp className="h-3.5 w-3.5" /> Trend Item
-              </TabsTrigger>
-            </TabsList>
+          <div className="space-y-8 md:space-y-10 min-w-0">
+            {/* VH-1: inter-layer rhythm — narrative layers above, deep-analysis
+                tabs below, separated by space-y-8 md:space-y-10 (spec §5.3:
+                layer gap ≥ 2× the 16px card gap). */}
+            <DashboardNarrative data={analysis.data} onRefresh={handleRefresh} />
 
-            {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
-            {/* DashboardTab is statically imported (default tab) — no Suspense needed. */}
-            {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden = keep-alive
-                tabs. Previously Radix unmounted every tab on switch → the whole
-                subtree (charts, tables, local state like the selected peer outlet)
-                was rebuilt from scratch on every tab change. Radix does NOT hide
-                force-mounted inactive content by itself — the Tailwind variant
-                does it. The animate-fade-in-up entrance animation is also gone
-                (it re-ran on every switch and stacked with the globals.css
-                tabpanel animation — double-layered 0.25s+0.3s jank). */}
-            {/* PERF (H-8 QUICK WIN 3 — visited-tab gating): on top of keep-alive,
-                each non-default tab's CONTENT only mounts on FIRST VISIT
-                (tracked in the useDashboard store via setActiveTab/setFocusOutlet).
-                Before this, force-mount eagerly mounted ALL 5 tabs on page load —
-                hidden tabs fired /api/pareto + /api/flip-ranking ×2 (including
-                the unscoped ALL-WEEKS variant — the heaviest form) and loaded
-                their lazy chunks for tabs the user may never open, competing
-                with the cold /api/analysis fetch for connections. Keep-alive
-                semantics are preserved: once visited, the subtree stays mounted. */}
-            <TabsContent value="dashboard" forceMount aria-label="Dashboard tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              <DashboardTab data={analysis.data} onRefresh={handleRefresh} />
-            </TabsContent>
+            {/* ====== L6 — DEEP ANALYSIS band ====== */}
+            {/* Commit 1 interim: the old Tabs strip still renders below the
+                narrative (full band treatment — LayerHeader + full-bleed
+                muted background — lands in VH-2). */}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
+              <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20">
+                <TabsTrigger value="dashboard" className={tabTriggerClass}>
+                  <BarChart3 className="h-3.5 w-3.5" /> Dashboard
+                </TabsTrigger>
+                <TabsTrigger value="resto" className={tabTriggerClass}>
+                  <Store className="h-3.5 w-3.5" /> Resto Analysis
+                </TabsTrigger>
+                <TabsTrigger value="peer" className={tabTriggerClass}>
+                  <Activity className="h-3.5 w-3.5" /> Peer Comparison
+                </TabsTrigger>
+                <TabsTrigger value="pareto" className={tabTriggerClass}>
+                  <TrendingDown className="h-3.5 w-3.5" /> Pareto
+                </TabsTrigger>
+                <TabsTrigger value="trend" className={tabTriggerClass}>
+                  <TrendingUp className="h-3.5 w-3.5" /> Trend Item
+                </TabsTrigger>
+              </TabsList>
 
-            {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
-            <TabsContent value="resto" forceMount aria-label="Resto Analysis tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              {visitedTabs.includes('resto') ? (
-                <Suspense fallback={<TabSkeleton />}>
-                  <RestoTab data={analysis.data} />
-                </Suspense>
-              ) : null}
-            </TabsContent>
+              {/* ====== DASHBOARD TAB (Overview + Network) ====== */}
+              {/* DashboardTab is statically imported (default tab) — no Suspense needed. */}
+              {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden = keep-alive
+                  tabs. Previously Radix unmounted every tab on switch → the whole
+                  subtree (charts, tables, local state like the selected peer outlet)
+                  was rebuilt from scratch on every tab change. Radix does NOT hide
+                  force-mounted inactive content by itself — the Tailwind variant
+                  does it. The animate-fade-in-up entrance animation is also gone
+                  (it re-ran on every switch and stacked with the globals.css
+                  tabpanel animation — double-layered 0.25s+0.3s jank). */}
+              {/* PERF (H-8 QUICK WIN 3 — visited-tab gating): on top of keep-alive,
+                  each non-default tab's CONTENT only mounts on FIRST VISIT
+                  (tracked in the useDashboard store via setActiveTab/setFocusOutlet).
+                  Before this, force-mount eagerly mounted ALL 5 tabs on page load —
+                  hidden tabs fired /api/pareto + /api/flip-ranking ×2 (including
+                  the unscoped ALL-WEEKS variant — the heaviest form) and loaded
+                  their lazy chunks for tabs the user may never open, competing
+                  with the cold /api/analysis fetch for connections. Keep-alive
+                  semantics are preserved: once visited, the subtree stays mounted. */}
+              <TabsContent value="dashboard" forceMount aria-label="Dashboard tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                <DashboardTab data={analysis.data} />
+              </TabsContent>
 
-            {/* ====== PEER COMPARISON TAB ====== */}
-            <TabsContent value="peer" forceMount aria-label="Peer Comparison tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              {visitedTabs.includes('peer') ? (
-                <Suspense fallback={<TabSkeleton />}>
-                  <PeerTab />
-                </Suspense>
-              ) : null}
-            </TabsContent>
+              {/* ====== RESTO ANALYSIS TAB (Deep Dive per Resto) ====== */}
+              <TabsContent value="resto" forceMount aria-label="Resto Analysis tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                {visitedTabs.includes('resto') ? (
+                  <Suspense fallback={<TabSkeleton />}>
+                    <RestoTab data={analysis.data} />
+                  </Suspense>
+                ) : null}
+              </TabsContent>
 
-            {/* ====== PARETO TAB (80/20 Analysis) ====== */}
-            <TabsContent value="pareto" forceMount aria-label="Pareto tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              {visitedTabs.includes('pareto') ? (
-                <Suspense fallback={<TabSkeleton />}>
-                  <ParetoTab data={analysis.data} />
-                </Suspense>
-              ) : null}
-            </TabsContent>
+              {/* ====== PEER COMPARISON TAB ====== */}
+              <TabsContent value="peer" forceMount aria-label="Peer Comparison tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                {visitedTabs.includes('peer') ? (
+                  <Suspense fallback={<TabSkeleton />}>
+                    <PeerTab />
+                  </Suspense>
+                ) : null}
+              </TabsContent>
 
-            {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
-            <TabsContent value="trend" forceMount aria-label="Trend Item tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-              {visitedTabs.includes('trend') ? (
-                <Suspense fallback={<TabSkeleton />}>
-                  <ErrorBoundary label="Trend Item">
-                    {/* Phase 1 — pass analysisData so the tab can render the
-                        Rank Badge row (item's national rank in topDeviasiRank). */}
-                    <ItemTrendTab analysisData={analysis.data} />
-                  </ErrorBoundary>
-                </Suspense>
-              ) : null}
-            </TabsContent>
-          </Tabs>
+              {/* ====== PARETO TAB (80/20 Analysis) ====== */}
+              <TabsContent value="pareto" forceMount aria-label="Pareto tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                {visitedTabs.includes('pareto') ? (
+                  <Suspense fallback={<TabSkeleton />}>
+                    <ParetoTab data={analysis.data} />
+                  </Suspense>
+                ) : null}
+              </TabsContent>
+
+              {/* ====== TREND ITEM TAB (Per-item QTY timeline + Z-Score) ====== */}
+              <TabsContent value="trend" forceMount aria-label="Trend Item tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                {visitedTabs.includes('trend') ? (
+                  <Suspense fallback={<TabSkeleton />}>
+                    <ErrorBoundary label="Trend Item">
+                      {/* Phase 1 — pass analysisData so the tab can render the
+                          Rank Badge row (item's national rank in topDeviasiRank). */}
+                      <ItemTrendTab analysisData={analysis.data} />
+                    </ErrorBoundary>
+                  </Suspense>
+                ) : null}
+              </TabsContent>
+            </Tabs>
+          </div>
         ) : null}
       </main>
 
