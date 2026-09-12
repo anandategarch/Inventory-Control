@@ -230,6 +230,13 @@ Mapping tab usulan → isi as-is (basis VH-1-b):
   (pola `after:h-0.5 after:bg-amber-500` existing dipertahankan); `min-h-9` desktop;
   sticky saat scroll `sticky top-[offset-header] z-30` + `bg-background/85 backdrop-blur`
   (offset diukur dari tinggi aktual header+filter; → D7).
+- **Interior tab (VH-7, diikat aturan)**: setiap klaster konten di dalam tab L6 wajib
+  ber-label lewat `SectionHeader` (h2) — kini dengan `description` pertanyaan satu-baris
+  (paritas LayerHeader) dan slot `action` kanan untuk kontrol. Modul dengan judul kartu
+  kuat (Menu/Bahan/Ranking/Peer Table/dst.) cukup memakai judulnya sendiri; klaster anonim
+  wajib diberi header. Warna ikon/aksen kuadran & summary = satu keluarga (amber/netral)
+  per ukuran yang sama — dilarang rainbow dekoratif (IBCS §11.2); format angka satu
+  konvensi koma-desimal via `lib/format` (`fmtDecimal`/`fmtGrowth`/`fmtIDR`/`fmtPct`).
 - Keep-alive `forceMount + data-[state=inactive]:hidden` + gating `visitedTabs`
   dipertahankan (pola teruji PAKET A + H-8).
 - Shortcut keyboard 1-6 (+7 bila Peer) — remap dari 1-5; E (export), R (refresh) tetap.
@@ -479,3 +486,14 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   turunan: tab default = AREA. Dipromosikan ke repo sebagai
   `MASTER-CONTEXT-VISUAL-HIERARCHY.md`, dirujuk oleh `MASTER_CONTEXT.md`, diikat ke
   gerbang review setiap PR UI. Implementasi §13 dieksekusi (commit VH-1..VH-4).
+- **v1.1 (pasca-VH-6 + VH-7 — polish referensi BI + interior tab)**: (a) VH-6 polish
+  lapisan naratif dari referensi Superset/Metabase/Grafana — tombol Muat Ulang di header,
+  badge kesegaran "Diperbarui HH.MM", deep-link `?tab=` dua arah, caption pertanyaan di
+  LayerHeader, "Sinkron File" (penamaan jujur), sumbu Y M/Jt/Rb. (b) VH-7 interior 5 tab
+  DEEP ANALYSIS sesuai permintaan user ("Tab Resto, Item, Peer, Pareto dan Historical juga
+  aku pengen agar sesuai Visual Hierarchy") — SectionHeader `description`+`action` baru;
+  header seksi per tab (Profil Outlet / Trend Item / Ringkasan Target vs Peer /
+  Breakdown Bertingkat / Analisa vs Baseline Historis); rainbow 5 kuadran Pareto →
+  keluarga amber tunggal; copy EN/ID disatukan; normalisasi koma-desimal seluruh display
+  di pohon 5 tab (`fmtDecimal` diekspor, `fmtGrowth` akhirnya sesuai docstring). Tetap
+  NOL perubahan perhitungan/API/query-key. Aturan interior tab ditambahkan ke §4 L6.

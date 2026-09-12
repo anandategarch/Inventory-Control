@@ -353,7 +353,22 @@ Baru: `narrative/{DashboardNarrative,ExecutiveStatus,ItemPriorityPanel}.tsx`, `s
 4 gerbang: `tsc` 0 · vitest **446/446** · eslint 0 err/351 warn (= baseline) · `next build` sukses — di tiap commit VH-1..VH-4. **Browser end-to-end via agent-browser + mock API jaringan** (patch `window.fetch` untuk status/analysis/recommendations/price-effect — DB tidak dibutuhkan): struktur L0-L7 render; KPI `<dl>` + kaskade; toggle + expander; **keep-alive terbukti** (state expand bertahan lintas ganti tab); shortcut 1-7; sticky tablist dock tepat 141px (tinggi header terukur) + footer sticky; 375px tanpa overflow horizontal; **nol console/hydration error**.
 
 ### Backlog tersisa (tidak berubah dari H-14)
-SEDANG-1 dsb. di seksi H-14 tetap terbuka — VH-3 hanya menormalisasi komponen yang diangkat; `fmtGrowth`, ItemTrendLineChart, FlipRanking, correlation-insight-card, signal-chart, ranking-nasional, trend-chart masih dot-desimal (backlog paket berikutnya).
+SEDANG-1 dsb. di seksi H-14 tetap terbuka — ~~`fmtGrowth`, ItemTrendLineChart, FlipRanking, correlation-insight-card, signal-chart, ranking-nasional, trend-chart masih dot-desimal~~ **→ seluruh daftar dot-desimal tersebut DINORMALISASI di VH-7** (lihat bawah); sisa backlog SEDANG/RENDAH H-14 lain tetap terbuka.
+
+### VH-6 — polish piramida dari referensi BI (Superset/Metabase/Grafana) — `ef905c2`
+Riset ulang pola standar BI tools (dokumentasi resmi Grafana, Metabase, Preset/Superset BI best practices) → 6 fix presentasi/copy/state-sync, NOL perubahan logika: tombol **Muat Ulang** di header (affordance refresh terlihat; alur sama dengan ⌘/Ctrl+R) · badge kesegaran **"Diperbarui HH.MM"** dari `dataUpdatedAt` · **deep-link `?tab=`** dua arah (whitelist 7 tab, `replaceState`) · caption pertanyaan di 5 LayerHeader · "Refresh Data" FilterBar → **"Sinkron File"** (penamaan jujur: re-ingest, bukan refresh) · sumbu Y ItemTrendLineChart → konvensi M/Jt/Rb.
+
+### VH-7 — interior 5 tab DEEP ANALYSIS (Resto · Item · Peer · Pareto · Historical)
+Melengkapi VH-1..VH-6 (yang menyentuh layer naratif L0-L5): kini **interior tab** ikut patuh visual hierarchy. Riset lanjutan (Metabase "tab = set of related questions", Grafana rows/panel-descriptions, Superset "Enrich with Context", IBCS "title+message per chart", progressive disclosure, F-pattern). Perubahan murni presentasi/copy — NOL perubahan perhitungan/API/query-key:
+- **`SectionHeader` + prop `description` & `action`** (paritas dengan LayerHeader VH-6): deskripsi pertanyaan di bawah judul seksi; slot aksi kanan (selektor dimensi Pareto).
+- **RESTO**: SectionHeader "Profil Outlet" di atas grid 6 kartu profil (dulu klaster anonim).
+- **ITEM**: SectionHeader baru "Trend Item" (mega-card dulu yatim tanpa label) + deskripsi 3 seksi.
+- **PEER**: SectionHeader "Ringkasan Target vs Peer" di atas grid 4 kartu + hint cara memilih outlet di empty-state.
+- **PARETO**: header hand-rolled `h2` → SectionHeader (selektor dimensi dipindah ke slot `action`, isi Select byte-identik); **normalisasi rainbow 5 kuadran → keluarga amber tunggal** (IBCS: satu ukuran = satu warna; warna = data, bukan dekorasi) + "Breakdown Bertingkat" header; copy EN/ID disatukan ("deviation" → "deviasi").
+- **HISTORICAL**: SectionHeader payung "Analisa vs Baseline Historis" untuk klaster 3 kartu.
+- **Normalisasi koma-desimal** (menutup backlog SEDANG-1 sisa): `fmtDecimal` diekspor dari `lib/format` + **`fmtGrowth` akhirnya sesuai docstring-nya sendiri** ("+12.3%" → "+12,3%"); seluruh display dot-desimal di pohon 5 tab dikonversi (FlipRanking ×5, ItemTrendTable z, ItemTrendLineChart z+axis, Tracker tooltip, trend-chart tooltip, correlation-insight ×6, ranking-nasional, menu-analysis, item-detail-modal ×4, signal-chart jt/rb→Jt/Rb, QuadrantCard z, HistoricalZScoreCard ×4, AnalysisCards tooltip+locale id-ID eksplisit).
+
+**Verifikasi VH-7**: 4 gerbang (`tsc` 0 · vitest 446/446 · eslint 0 err/299 warn = baseline · `next build` sukses) + **browser end-to-end 37/37 asersi** (mock `window.fetch` 17 endpoint, bootstrap ErrorState→retry): header seksi + deskripsi + koma desimal terbukti di kelima tab; selektor dimensi Pareto berfungsi; keyboard 1-7 utuh; footer sticky; 375px tanpa overflow; **nol console/page error**; review visual VLM 2 screenshot (Pareto + Resto): tanpa defect.
 
 ---
 
