@@ -336,6 +336,27 @@ Review UI/UX menyeluruh pertama (Fase A statis 2 reviewer paralel atas 103 kompo
 
 ---
 
+## 🗂️ VISUAL HIERARCHY — IMPLEMENTASI VH-0..VH-4 (2026-09-12)
+
+Restrukturisasi presentation layer sesuai **`MASTER-CONTEXT-VISUAL-HIERARCHY.md` v1.0** (approved user; D1-D10 diputuskan mengikuti rekomendasi). NOL perubahan API/query/logika bisnis — murni urutan, bobot, dan struktur visual.
+
+### Struktur to-be (dipasang)
+- **L0 Header**: + label periode global `Juli 2026 · W4 · vs W4 Juni 2026` (dipromosikan dari badge ExecutiveSummary lama) + `--dashboard-header-h` (ResizeObserver) untuk sticky berjenjang.
+- **L2-L5 di LUAR `<Tabs>`** (`narrative/DashboardNarrative.tsx`): `01 EXECUTIVE STATUS` (4 KPI + strip kaskade GROSS→W/S/T→NET, `<dl>` semantics) → `02 WHAT NEEDS ATTENTION` (resto top-3 adaptif + item toggle Nominal/Dev/BOM) → `03 WHY IT HAPPENED` (insight ≤5 callout) → `04 DIAGNOSIS` (growth/breakdown/price-effect + top-growth/loss-surplus ringkas). Ganti tab **tidak pernah** me-remount layer naratif.
+- **L6 band full-bleed** `05 DEEP ANALYSIS`: 7 tab **AREA · RESTO · ITEM · PEER · PARETO · HISTORICAL · HEATMAP** (tab `dashboard` dihapus; DashboardTab.tsx dissolved). Default tab = `area` (termurah — konten dari payload yang sudah ada). Shortcut keyboard 1-7 diremap; RankingNasional kini melompat ke tab `item`.
+- **A11y**: CardTitle kini `<h3>` (heading order h1→h2→h3 tanpa lompatan); ErrorState/EmptyState h2; anchor `l1-filter…l6-deep` + `scroll-mt-32`; sticky tab strip `top-[var(--dashboard-header-h)]` z-30.
+
+### File inti
+Baru: `narrative/{DashboardNarrative,ExecutiveStatus,ItemPriorityPanel}.tsx`, `shared/LayerHeader.tsx`, `tabs/{AreaTab,ItemTab,HistoricalTab,HeatmapTab}.tsx`. Dihapus: `tabs/DashboardTab.tsx`, `ExecutiveSummary.tsx` (diserap ExecutiveStatus). Reskin: RestoRecommendationCard (top-3+expand+footer coverage), InsightsPanel (callout ≤5), PriceEffectCard (tabel Bennet collapsible), Growth/Breakdown/LossSurplus/TopGrowth (normalisasi format — semua `.toFixed` dot di file yang diangkat diganti helper `lib/format` koma-ID).
+
+### Verifikasi (upgrade dari H-14: kini ADA verifikasi dinamis)
+4 gerbang: `tsc` 0 · vitest **446/446** · eslint 0 err/351 warn (= baseline) · `next build` sukses — di tiap commit VH-1..VH-4. **Browser end-to-end via agent-browser + mock API jaringan** (patch `window.fetch` untuk status/analysis/recommendations/price-effect — DB tidak dibutuhkan): struktur L0-L7 render; KPI `<dl>` + kaskade; toggle + expander; **keep-alive terbukti** (state expand bertahan lintas ganti tab); shortcut 1-7; sticky tablist dock tepat 141px (tinggi header terukur) + footer sticky; 375px tanpa overflow horizontal; **nol console/hydration error**.
+
+### Backlog tersisa (tidak berubah dari H-14)
+SEDANG-1 dsb. di seksi H-14 tetap terbuka — VH-3 hanya menormalisasi komponen yang diangkat; `fmtGrowth`, ItemTrendLineChart, FlipRanking, correlation-insight-card, signal-chart, ranking-nasional, trend-chart masih dot-desimal (backlog paket berikutnya).
+
+---
+
 ## 🔒 SECURITY (ringkas)
 
 | # | Severity | Temuan | Fix |
