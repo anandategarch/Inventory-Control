@@ -36,7 +36,10 @@ export const AreaTab = memo(function AreaTab({ data }: AreaTabProps) {
       {/* Section: Area Comparison + Outlet Health Ranking */}
       {/* FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
       <section className="grid lg:grid-cols-2 gap-4 min-w-0">
-        <div>
+        {/* FIX (BUG-HUNT A1): grid items must carry min-w-0 — without it the
+            item min-width resolves to the table's min-content (~731px with
+            realistic data) and blows the 375px viewport out to ~745px. */}
+        <div className="min-w-0">
           <SectionHeader
             icon={<MapPin className="h-4 w-4 text-muted-foreground" />}
             title="Perbandingan Area"
@@ -45,7 +48,7 @@ export const AreaTab = memo(function AreaTab({ data }: AreaTabProps) {
             <AreaComparison data={data} />
           </ErrorBoundary>
         </div>
-        <div>
+        <div className="min-w-0">
           <SectionHeader
             icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
             title="Ranking Kondisi Outlet"

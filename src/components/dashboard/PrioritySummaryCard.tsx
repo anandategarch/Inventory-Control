@@ -202,12 +202,12 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
           )}
           {r.signals.noToleranceItems > 0 && (
             <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-              No Tol: {r.signals.noToleranceItems}
+              Tanpa Tol: {r.signals.noToleranceItems}
             </Badge>
           )}
           {r.signals.benchmarkHighCount > 0 && (
             <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-              Bench High: {r.signals.benchmarkHighCount}
+              Bench Tinggi: {r.signals.benchmarkHighCount}
             </Badge>
           )}
           {r.signals.highDevBomCount > 0 && (
@@ -238,6 +238,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
             {/* Toggle button */}
             <button
               onClick={() => setShowBreakdown(!showBreakdown)}
+              aria-expanded={showBreakdown}
               className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
             >
               {showBreakdown ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -252,11 +253,11 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
                   ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal. Klik sinyal untuk melihat visualisasi.
                 </p>
 
-                {/* ---- Top Contributors Highlight ---- */}
+                {/* ---- Kontributor Teratas Highlight ---- */}
                 {topContributors.length > 0 && (
                   <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1">
-                      <Trophy className="h-3 w-3" /> Top Contributors
+                      <Trophy className="h-3 w-3" /> Kontributor Teratas
                     </p>
                     <div className="space-y-1.5">
                       {topContributors.map((c, i) => (
@@ -315,6 +316,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
                               {/* Collapsed row */}
                               <button
                                 onClick={() => toggleExpand(s.name)}
+                                aria-expanded={isExpanded}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-left"
                               >
                                 {/* Expand chevron */}

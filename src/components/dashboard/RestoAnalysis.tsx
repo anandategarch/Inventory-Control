@@ -310,8 +310,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 shrink-0"><AlertTriangle className="h-3 w-3" /></span>Top Risk (by Dev/BOM)</CardTitle></CardHeader>
           <CardContent className="space-y-1 text-xs pt-3">
-            {profile.topRisk.byDevBom.slice(0, 5).map((r, i) => (
-              <div key={i} className="flex justify-between items-center gap-2">
+            {/* FIX (BUG-HUNT C8/B2-15): index keys on a dynamic list — itemName
+                is the stable identity here (unique per outlet slice). */}
+            {profile.topRisk.byDevBom.slice(0, 5).map((r) => (
+              <div key={r.itemName} className="flex justify-between items-center gap-2">
                 <span className="break-words leading-tight max-w-[180px]" title={r.itemName}>{r.itemName}</span>
                 <span className="font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums shrink-0">{fmtPct(r.value)}</span>
               </div>
@@ -407,7 +409,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                         <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">
                           {r.areaMultiplier != null ? (
                             <span className={r.areaMultiplier > 1.5 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}>
-                              {r.areaMultiplier.toFixed(1)}×
+                              {/* FIX (BUG-HUNT B13/B2-04): leftover dot-decimal — the same
+                                  metric shows "1,92×" (comma) in the Benchmark card above;
+                                  one metric, one separator (SEDANG-1 convention). */}
+                              {fmtDecimal(r.areaMultiplier, 1)}×
                             </span>
                           ) : '—'}
                         </TableCell>

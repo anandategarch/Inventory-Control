@@ -307,7 +307,7 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
         <div className="border-b">
           <div className="px-3 pt-3 pb-2">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Alignment Aggregate
+              Agregasi Alignment
             </h4>
             <p className="text-[10px] text-muted-foreground/70 mt-0.5">
               Arah growth vs week pembanding

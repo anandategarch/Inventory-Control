@@ -30,11 +30,14 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
   const total = b.total || 1;
   const chartData = [
     { name: 'Waste', value: b.waste, pct: (b.waste / total) * 100, color: 'var(--chart-waste)', key: 'waste' },
-    // FIX L1 (AUDIT-1): Susut was #a16207 (amber variant) — too similar to Waste #f59e0b.
-    // Changed to violet #7c3aed for color-blind accessibility (distinct hue).
-    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: '#7c3aed', key: 'susut' },
-    { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: '#65a30d', key: 'trial' },
-    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? 'var(--chart-loss)' : '#71717a', key: 'residual' },
+    // FIX (BUG-HUNT B7/BUG-3-03): FIX #23 established --chart-susut (#0891b2 cyan)
+    // and --chart-trial (#ca8a04 amber-600) as the official tokens, but zero
+    // components consumed them — this chart still hardcoded the pre-FIX-#23
+    // violet #7c3aed / lime #65a30d. Swap to the tokens (§5.4: chart colors
+    // come from --chart-* vars only).
+    { name: 'Susut', value: b.susut, pct: (b.susut / total) * 100, color: 'var(--chart-susut)', key: 'susut' },
+    { name: 'Trial', value: b.trial, pct: (b.trial / total) * 100, color: 'var(--chart-trial)', key: 'trial' },
+    { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? 'var(--chart-loss)' : 'var(--chart-residual)', key: 'residual' },
   ];
 
   // VH-3: local formatters delegate to lib/format (Indonesian suffixes +
@@ -143,7 +146,7 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
           const cd = drivers.find(d => d.category === expanded);
           if (!cd) return null;
           const catRow = chartData.find(c => c.key === expanded);
-          const catColor = catRow?.color || '#71717a';
+          const catColor = catRow?.color || 'var(--chart-residual)';
           const panelId = `devbreak-pareto-${expanded}`;
           return (
             <div id={panelId} role="region" aria-label={`${cd.label} Pareto 80% detail`} className="mt-3 rounded-lg border p-3 space-y-2 bg-muted/20">

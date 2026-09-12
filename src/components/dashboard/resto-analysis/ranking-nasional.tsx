@@ -26,6 +26,7 @@ import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { SparkLine } from '@/components/dashboard/shared/SparkLine';
+import { clickableRowProps } from '@/lib/a11y';
 
 export const RankingNasionalCard = memo(function RankingNasionalCard({
   focusOutlet,
@@ -85,7 +86,9 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
             className="text-[10px] font-normal text-amber-600 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5 gap-1"
           >
             <TrendingUp className="h-3 w-3" />
-            Klik baris untuk lihat trend item di Tab Trend Item
+            {/* FIX (BUG-HUNT C5/B2-09): the standalone "Trend Item" tab no longer
+                exists (merged into the Item tab in VH-2) — stale copy. */}
+            Klik baris untuk lihat trend item di tab Item
           </Badge>
         </div>
       </CardHeader>
@@ -120,8 +123,8 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                 <TableRow
                   key={`${it.itemName}-${it.outletCode}-${i}`}
                   className={`hover:bg-amber-50/60 dark:hover:bg-amber-950/20 hover:cursor-pointer transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
-                  onClick={() => handleRowClick(it.itemName)}
-                  title={`Klik untuk lihat trend ${it.itemName} di Tab Trend Item`}
+                  title={`Klik untuk lihat trend ${it.itemName} di tab Item`}
+                  {...clickableRowProps(() => handleRowClick(it.itemName))}
                 >
                   <TableCell className="text-center text-xs font-bold tabular-nums">{it.rankNominal}</TableCell>
                   <TableCell className="text-center text-xs text-muted-foreground tabular-nums">{it.rankBom != null && it.rankBom > 0 ? it.rankBom : '—'}</TableCell>
@@ -129,14 +132,18 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
-                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyWaste < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyWaste)}</TableCell>
+                  {/* FIX (BUG-HUNT B11/B2-06): QTY Waste / QTY BOM are non-negative volume
+                      columns — the LOSS/SURPLUS sign coloring was a copy-paste from the
+                      Deviasi column and painted waste counts emerald ("membaik") even when
+                      large. Neutral muted now; sign coloring stays on Deviasi/LS/%LS/Nominal. */}
+                  <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(it.qtyWaste)}</TableCell>
                   <TableCell className={`text-right text-xs tabular-nums ${it.qtyLossSurplus < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
                   {/* pctLossSurplusToBom is always ≥0 (SQL uses ABS). Color by
                       nominalDeviasi sign: negative = LOSS (red), positive = SURPLUS (green). */}
                   <TableCell className={`text-right text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {it.pctLossSurplusToBom != null ? `${fmtDecimal(Math.abs(it.pctLossSurplusToBom * 100), 2)}%` : '—'}
                   </TableCell>
-                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyBom < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyBom)}</TableCell>
+                  <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(it.qtyBom)}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
                     {it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—'}
                   </TableCell>

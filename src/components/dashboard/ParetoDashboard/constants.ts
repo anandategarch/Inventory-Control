@@ -20,7 +20,7 @@ export function countSuffix(title: string): string {
   const t = title.toLowerCase();
   if (t.includes('kelompok')) return 'klp';
   if (t.includes('pic')) return 'pic';
-  if (t.includes('outlet')) return 'out';
+  if (t.includes('outlet')) return 'resto';
   if (t.includes('area')) return 'area';
   return ''; // items have no count suffix
 }

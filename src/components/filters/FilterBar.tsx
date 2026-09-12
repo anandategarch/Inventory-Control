@@ -10,7 +10,7 @@
 import dynamic from 'next/dynamic';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RotateCcw, Database, AlertTriangle, CloudDownload, Loader2, Settings, Users, Upload } from 'lucide-react';
+import { RotateCcw, Database, AlertTriangle, CloudDownload, FolderSync, Loader2, Settings, Users, Upload } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
@@ -493,7 +493,7 @@ export function FilterBar() {
             <TooltipContent side="bottom">Kelola PIC</TooltipContent>
           </Tooltip>
 
-          {/* Primary actions — Import dari Drive, Upload File, Refresh Data */}
+          {/* Primary actions — Import dari Drive, Upload File, Sinkron File */}
           <div className="h-5 w-px bg-border/60 mx-0.5 hidden sm:block" aria-hidden />
 
           <Button
@@ -519,8 +519,10 @@ export function FilterBar() {
               it is NOT a display refresh. Renamed from "Refresh Data"
               (misleading — audit H-14-b found users expected a refresh;
               the true display refresh now lives in the header as
-              "Muat Ulang"). RotateCcw = re-scan semantics, outline variant
-              de-emphasizes an infrequent admin action. */}
+              "Muat Ulang"). FIX (BUG-HUNT C1/B1): icon was RotateCcw — the
+              SAME glyph as the Reset-filters button visible in this toolbar
+              (two identical icons, two different actions). FolderSync =
+              folder re-scan semantics; RotateCcw stays exclusive to Reset. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -530,7 +532,7 @@ export function FilterBar() {
                 onClick={handleIngest}
                 disabled={ingesting}
               >
-                <RotateCcw className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
+                <FolderSync className={`h-3.5 w-3.5 ${ingesting ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">{ingesting ? 'Memproses...' : 'Sinkron File'}</span>
               </Button>
             </TooltipTrigger>

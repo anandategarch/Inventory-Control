@@ -51,7 +51,9 @@ export function GeneralizedNested({
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground mb-2">
-          Top 10 {DIM_LABELS[parentDim].toLowerCase()} by deviation. Klik untuk lihat {DIM_LABELS[childDim].toLowerCase()} mana yang menyumbang 80% per parent.
+          {/* FIX (BUG-HUNT B14/B2-05): leftover EN "by deviation" — the InfoTooltip
+              one card-width away already says "berdasarkan |nominalDeviasi|". */}
+          Top 10 {DIM_LABELS[parentDim].toLowerCase()} berdasarkan deviasi. Klik untuk lihat {DIM_LABELS[childDim].toLowerCase()} mana yang menyumbang 80% per parent.
         </p>
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
           <span className="w-5 shrink-0">#</span>

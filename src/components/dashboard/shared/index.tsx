@@ -234,11 +234,15 @@ export function ErrorState({ message }: { message: string }) {
 export function SectionHeader({ icon, title, badge, description, action }: { icon: React.ReactNode; title: string; badge?: string; description?: string; action?: React.ReactNode }) {
   return (
     <div className="w-full mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
-      <div className="flex items-center gap-2.5">
+      {/* FIX (BUG-HUNT B2): flex-wrap restored (lost in the VH-7 header swap).
+          Without it the Pareto action slot (2× w-[120px] Selects) overflows
+          the row at ≤375px and pushes page scrollWidth to ~454px; with it the
+          action wraps under the title instead. Desktop (≥520px) unaffected. */}
+      <div className="flex flex-wrap items-center gap-2.5">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
           {icon}
         </span>
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        <h2 className="text-base font-semibold tracking-tight min-w-0">{title}</h2>
         {badge && (
           <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground/80 h-5">
             {badge}

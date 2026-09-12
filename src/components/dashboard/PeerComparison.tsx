@@ -430,7 +430,7 @@ export function PeerComparison() {
             items={rankData.items}
             subtitle={
               <>
-                <span className="font-medium text-foreground">{targetRow.outletName}</span> ranked di antara{' '}
+                <span className="font-medium text-foreground">{targetRow.outletName}</span> berperingkat di antara{' '}
                 <span className="font-medium tabular-nums">{rankData.total}</span> resto (1 = terbaik,{' '}
                 <span className="tabular-nums">{rankData.total}</span> = terburuk).
               </>

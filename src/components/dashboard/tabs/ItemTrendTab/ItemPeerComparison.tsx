@@ -47,6 +47,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Target, Info, Loader2, AlertCircle, Store } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPctAbs } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import {
   EfficiencyScoreCard,
   GapAnalysisCard,
@@ -185,7 +186,7 @@ function ItemPeerComparisonImpl({
   pic,
   onOutletClick,
 }: ItemPeerComparisonProps) {
-  const { data, isLoading, error } = useQuery<ItemPeerComparisonResponse>({
+  const { data, isLoading, error, refetch } = useQuery<ItemPeerComparisonResponse>({
     queryKey: [
       'item-peer-comparison',
       itemName,
@@ -232,6 +233,15 @@ function ItemPeerComparisonImpl({
           <AlertCircle className="h-6 w-6 text-red-500 mb-2" />
           <p className="text-sm text-red-600 dark:text-red-400">Gagal memuat peer comparison</p>
           <p className="text-xs text-muted-foreground mt-1">{error.message}</p>
+          {/* FIX (BUG-HUNT C20/B2-13): retry affordance — parity with the peer
+              table / ParetoDashboard error states. */}
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-red-700"
+          >
+            Coba Lagi
+          </button>
         </CardContent>
       </Card>
     );
@@ -396,7 +406,7 @@ function ItemPeerComparisonImpl({
           <span className="text-xs text-muted-foreground">{month} {week}</span>
           {data.autoSelected && (
             <Badge variant="outline" className="text-[10px] font-normal text-amber-600 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5">
-              Auto-selected: worst outlet
+              Terpilih otomatis: outlet terburuk
             </Badge>
           )}
         </CardTitle>
@@ -540,6 +550,9 @@ const PeerTableRow = memo(function PeerTableRow({
     [row, peerAvg],
   );
   return (
+    /* FIX (BUG-HUNT B10/B2-02): rows advertise "Klik baris untuk deep dive
+       ke Resto Analysis" but had no keyboard/AT access — spread the shared
+       helper only when the row is actually interactive. */
     <TableRow
       className={`transition-colors border-b ${
         onOutletClick ? 'cursor-pointer' : ''
@@ -548,7 +561,7 @@ const PeerTableRow = memo(function PeerTableRow({
           ? 'bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30 border-l-4 border-l-amber-500'
           : 'hover:bg-muted/40'
       }`}
-      onClick={onOutletClick ? () => onOutletClick(row.outletCode) : undefined}
+      {...(onOutletClick ? clickableRowProps(() => onOutletClick(row.outletCode)) : {})}
     >
       <TableCell className="text-xs px-3 py-2">
         <div className="flex items-center gap-1.5">

@@ -86,7 +86,7 @@ export const MultiPeriodComparisonCard = memo(function MultiPeriodComparisonCard
                     replays on every Radix tab re-entry (tab content unmounts) and on every
                     period-change refetch; the double-fetch fix removed the second replay. */}
                 <Bar yAxisId="left" dataKey="sales" name="Sales" fill="var(--chart-surplus)" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
-                <Bar yAxisId="left" dataKey="bom" name="BOM" fill="#71717a" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+                <Bar yAxisId="left" dataKey="bom" name="BOM" fill="var(--chart-residual)" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
                 <Bar yAxisId="left" dataKey="deviation" name="Deviasi" fill="var(--chart-waste)" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
                 <Line yAxisId="right" type="monotone" dataKey="growthPct" name="Growth" stroke="var(--chart-loss)" strokeWidth={2} dot={{ r: 3, fill: 'var(--chart-loss)' }} activeDot={{ r: 5 }} isAnimationActive={false} />
               </ComposedChart>

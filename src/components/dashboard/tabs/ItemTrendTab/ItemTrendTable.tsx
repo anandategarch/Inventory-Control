@@ -40,7 +40,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { fmtIDR, fmtNum, fmtDecimal } from '@/lib/format';
-import { clickableRowProps } from '@/lib/a11y';
+import { clickableRowProps, sortableHeaderProps } from '@/lib/a11y';
 import { zScoreColor, zScoreStatus } from './zScoreHelpers';
 import { periodShortLabel } from './periodHelpers';
 import {
@@ -140,22 +140,21 @@ export function ItemTrendTable({
   // for non-KG items like PCS, LTR, etc.
   const unitLabel = satuan || '';
 
-  // FIX (UI2-01 P1): sortable headers must be keyboard-accessible.
-  // Wrap toggleSort with role/tabIndex/onKeyDown so keyboard + screen reader
-  // users can sort via Enter/Space. Returns spread props for <TableHead>.
-  const sortHeaderProps = (key: SortKey) => ({
-    role: 'button' as const,
-    tabIndex: 0,
-    'aria-label': `Sort by ${key}`,
-    'aria-sort': (sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') as 'ascending' | 'descending' | 'none',
-    onClick: () => toggleSort(key),
-    onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleSort(key);
-      }
-    },
-  });
+  // FIX (UI2-01 P1 + BUG-HUNT B12/B2-14): sortable headers are keyboard-accessible
+  // via the shared helper — kept as a thin local wrapper for the 7 call sites.
+  // role="button" removed: it overrode the th's columnheader semantics and made
+  // aria-sort meaningless; labels localized to Indonesian.
+  const SORT_LABELS: Record<SortKey, string> = {
+    period: 'Periode',
+    qtyBom: 'QTY BOM',
+    qtyDeviasiSigned: 'QTY Deviasi',
+    zScore: 'Z-Score',
+    outletCount: 'Resto',
+    flip: 'Flip',
+    recordCount: 'Jumlah Record',
+  };
+  const sortHeaderProps = (key: SortKey) =>
+    sortableHeaderProps(key, SORT_LABELS[key], sortKey, sortDir, toggleSort);
 
   return (
     <div className="max-h-96 overflow-auto border-t">

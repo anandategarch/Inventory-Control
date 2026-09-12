@@ -497,3 +497,13 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   keluarga amber tunggal; copy EN/ID disatukan; normalisasi koma-desimal seluruh display
   di pohon 5 tab (`fmtDecimal` diekspor, `fmtGrowth` akhirnya sesuai docstring). Tetap
   NOL perubahan perhitungan/API/query-key. Aturan interior tab ditambahkan ke §4 L6.
+- **v1.2 (BH-1 — bug-hunt 4 agent + fix)**: audit menyeluruh pasca-VH-7 ("cari bug dengan
+  sebar agent"): 2 regresi layout mobile TINGGI di-fix (Area tab 375px page-overflow 745px —
+  grid item wajib `min-w-0`; Pareto 375px 454px — `flex-wrap` SectionHeader dipulihkan;
+  plus `ScrollBar orientation="horizontal"` kini default di `ui/scroll-area.tsx` agar
+  tabel lebar dalam ScrollArea terjangkau) + puluhan fix SEDANG/RENDAH presentasi
+  (ikon DeltaPill berbasis tanda, token chart FIX #23 akhirnya dikonsumsi, semantik warna
+  GrowthComparison deviasi dibalik sesuai IBCS, keyboard-a11y tabel via `sortableHeaderProps`
+  tanpa `role="button"` di th, sweep EN/ID, koma-desimal sisa, retry button di error-state,
+  aria-expanded, hex→token, safe-area footer, guard shortcut keyboard). Tetap NOL
+  perubahan perhitungan/API/query-key. Detail: AUDIT-REPORT.md seksi BUG-HUNT.

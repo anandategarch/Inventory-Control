@@ -9,6 +9,7 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { HistoricalAnalysisMeta } from '@/hooks/useAnalysis/types';
 import { fmtIDR, fmtPctAbs, fmtDecimal } from '@/lib/format';
+import { sortableHeaderProps } from '@/lib/a11y';
 import { zScoreColor } from '@/lib/zScoreHelpers';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown, AlertTriangle, Database, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
@@ -312,6 +313,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
               {(['devBom', 'qtyDeviasi'] as const).map(m => (
                 <button
                   key={m}
+                  aria-pressed={metricView === m}
                   onClick={() => { setMetricView(m); setDisplayCount(PAGE_SIZE); }}
                   className={`text-[10px] px-2 py-0.5 rounded-md transition-colors ${
                     metricView === m
@@ -326,6 +328,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
             {(['all', 'abnormal', 'warning', 'elevated'] as const).map(f => (
               <button
                 key={f}
+                aria-pressed={severityFilter === f}
                 onClick={() => { setSeverityFilter(f); setDisplayCount(PAGE_SIZE); }}
                 className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
                   severityFilter === f
@@ -348,23 +351,44 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 w-8">#</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => handleSort('itemName')}>
+                  {/* FIX (BUG-HUNT B12/B2-03): sortable headers were onClick-only —
+                      shared helper adds keyboard + AT access while keeping the th's
+                      columnheader semantics; "Historical Avg" label localized (B2-12). */}
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('itemName', 'Item', sortKey, sortDir, handleSort)}
+                  >
                     Item <SortIcon col="itemName" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40" onClick={() => handleSort('area')}>
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('area', 'Area', sortKey, sortDir, handleSort)}
+                  >
                     Area <SortIcon col="area" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('currentDevBom')}>
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('currentDevBom', metricView === 'qtyDeviasi' ? 'QTY Deviasi' : 'Dev/BOM', sortKey, sortDir, handleSort)}
+                  >
                     {metricView === 'qtyDeviasi' ? 'QTY Deviasi' : 'Dev/BOM'} <SortIcon col="currentDevBom" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('historicalAvg')}>
-                    Historical Avg <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('historicalAvg', 'Rata-rata Historis', sortKey, sortDir, handleSort)}
+                  >
+                    Rata-rata Historis <SortIcon col="historicalAvg" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('zScore')}>
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('zScore', 'Z-Score', sortKey, sortDir, handleSort)}
+                  >
                     Z-Score <SortIcon col="zScore" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-center">Status</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40" onClick={() => handleSort('absNominal')}>
+                  <TableHead
+                    className="text-xs font-semibold uppercase tracking-wider h-10 px-3 text-right cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('absNominal', 'Nominal', sortKey, sortDir, handleSort)}
+                  >
                     |Nominal| <SortIcon col="absNominal" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                 </TableRow>

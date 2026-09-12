@@ -99,7 +99,8 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
           <div className="flex flex-col items-center justify-center py-10 text-center">
             <TrendingUp className="h-8 w-8 text-muted-foreground/40 mb-2" />
             <p className="text-sm text-muted-foreground">
-              No previous period data available. Upload multiple weeks to enable growth analysis.
+              {/* FIX (BUG-HUNT C15/BUG-3-11): EN copy in an otherwise Indonesian card. */}
+              Belum ada data periode sebelumnya. Unggah beberapa minggu untuk mengaktifkan analisis pertumbuhan.
             </p>
           </div>
         ) : (
@@ -122,7 +123,18 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                       const devMismatch =
                         (d.name === 'Nominal Deviasi' && mismatchSales) ||
                         (d.name === 'QTY Deviasi' && mismatchBom);
-                      return <Cell key={i} fill={mismatch || devMismatch ? 'var(--chart-loss)' : d.growth! >= 0 ? 'var(--chart-surplus)' : 'var(--chart-waste)'} />;
+                      // FIX (BUG-HUNT B8/BUG-3-04): for the deviasi metrics
+                      // growth UP is BAD (the card's own tooltip says "Naik =
+                      // memburuk"), so positive bars must not render emerald.
+                      // Semantics now: emerald = movement in the good direction,
+                      // amber = movement in the bad direction, red = mismatch
+                      // alarm (unchanged).
+                      const badWhenUp = d.key === 'qtyDeviasi' || d.key === 'nominalDeviasi';
+                      // Rows are pre-filtered to growth != null above; the ?? 0
+                      // only satisfies TS without stacking non-null assertions.
+                      const g = d.growth ?? 0;
+                      const good = badWhenUp ? g < 0 : g >= 0;
+                      return <Cell key={i} fill={mismatch || devMismatch ? 'var(--chart-loss)' : good ? 'var(--chart-surplus)' : 'var(--chart-waste)'} />;
                     })}
                   </Bar>
                 </BarChart>

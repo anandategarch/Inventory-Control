@@ -164,7 +164,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           icon={<Package className="h-3.5 w-3.5" />}
           data={paretoData.byItem}
           color="bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground"
-          barColor="bg-amber-500"
+
           tooltip={QUADRANT_TOOLTIPS['Top Items (80% Deviation)']}
         />
         <QuadrantCard
@@ -172,7 +172,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           icon={<Store className="h-3.5 w-3.5" />}
           data={paretoData.byOutlet}
           color="bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground"
-          barColor="bg-amber-500"
+
           tooltip={QUADRANT_TOOLTIPS['Top Outlets (80% Deviation)']}
         />
         <QuadrantCard
@@ -180,7 +180,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           icon={<Boxes className="h-3.5 w-3.5" />}
           data={paretoData.byKelompok}
           color="bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground"
-          barColor="bg-amber-500"
+
           tooltip={QUADRANT_TOOLTIPS['Top Kelompok (80% Deviation)']}
         />
         <QuadrantCard
@@ -188,7 +188,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           icon={<MapPin className="h-3.5 w-3.5" />}
           data={paretoData.byArea}
           color="bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground"
-          barColor="bg-amber-500"
+
           tooltip={QUADRANT_TOOLTIPS['Top Areas (80% Deviation)']}
         />
         <QuadrantCard
@@ -196,7 +196,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           icon={<Users className="h-3.5 w-3.5" />}
           data={paretoData.byPIC}
           color="bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground"
-          barColor="bg-amber-500"
+
           tooltip={QUADRANT_TOOLTIPS['Top PIC (80% Deviation)']}
         />
       </div>

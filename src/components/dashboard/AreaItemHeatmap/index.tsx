@@ -30,6 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
+import { fmtDecimal } from '@/lib/format';
 import { Grid3x3 as HeatMapIcon } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 
@@ -221,14 +222,14 @@ function AreaItemHeatmapInner() {
                     <Badge variant="secondary" className="text-[9px] h-4 px-1.5">Pareto 80%</Badge>
                     <span>Menampilkan <span className="font-medium text-foreground">{paretoInfo.selectedItems}</span> dari <span className="font-medium text-foreground">{paretoInfo.totalItems}</span> item</span>
                     <span>•</span>
-                    <span>Kontribusi: <span className="font-medium text-foreground">{paretoInfo.cumulativePct}%</span> dari total</span>
+                    <span>Kontribusi: <span className="font-medium text-foreground">{fmtDecimal(paretoInfo.cumulativePct, 1)}%</span> dari total</span>
                   </>
                 ) : (
                   <>
                     <Badge variant="secondary" className="text-[9px] h-4 px-1.5">Top {paretoInfo.selectedItems}</Badge>
                     <span>Dari <span className="font-medium text-foreground">{paretoInfo.totalItems}</span> item</span>
                     <span>•</span>
-                    <span>Kontribusi: <span className="font-medium text-foreground">{paretoInfo.cumulativePct}%</span></span>
+                    <span>Kontribusi: <span className="font-medium text-foreground">{fmtDecimal(paretoInfo.cumulativePct, 1)}%</span></span>
                   </>
                 )}
                 <span className="ml-auto text-amber-700 dark:text-amber-400">💡 Total di atas · Ø rata-rata/resto · Klik sel untuk detail</span>

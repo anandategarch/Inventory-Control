@@ -117,8 +117,10 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.timeline?.map((t: ItemHistoryTimelineRow, i: number) => (
-                        <TableRow key={i} className={t.isCurrent ? 'bg-primary/5 font-semibold' : ''}>
+                      {/* FIX (BUG-HUNT C8/B2-15): stable key = period identity
+                          (monthLabel+weekLabel is unique per row) instead of index. */}
+                      {data.timeline?.map((t: ItemHistoryTimelineRow) => (
+                        <TableRow key={`${t.monthLabel}-${t.weekLabel}`} className={t.isCurrent ? 'bg-primary/5 font-semibold' : ''}>
                           <TableCell className="text-xs py-1.5 whitespace-nowrap">
                             {t.weekLabel} {t.monthLabel?.split(' ')[0]?.slice(0, 3)}
                             {t.isCurrent && <span className="ml-1 text-xs text-primary">●</span>}

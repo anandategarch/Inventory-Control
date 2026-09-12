@@ -46,17 +46,25 @@ export const TrendChartCard = memo(function TrendChartCard({
         </p>
       </CardHeader>
       <CardContent>
+        {/* FIX (BUG-HUNT B1/B2-01): error must be checked BEFORE !data — on fetch
+            failure TanStack Query keeps data undefined and sets error, so the
+            old `!data` branch always won and real errors rendered as a perpetual
+            "Menunggu peer data...". Mirrors the order used by items-table. */}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           </div>
+        ) : error ? (
+          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
+            Error: {error.message || 'Unknown'}
+          </p>
         ) : !data ? (
           <p className="text-center text-xs text-muted-foreground py-6">
             Menunggu peer data...
           </p>
-        ) : error || !data?.success ? (
+        ) : !data?.success ? (
           <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {error?.message || data?.error || 'Unknown'}
+            Error: {data?.error || 'Unknown'}
           </p>
         ) : chartData.length === 0 ? (
           <p className="text-center text-xs text-muted-foreground py-6">
@@ -109,10 +117,10 @@ export const TrendChartCard = memo(function TrendChartCard({
                   type="monotone"
                   dataKey="peerAvg"
                   name="Peer Avg"
-                  stroke="#71717a"
+                  stroke="var(--chart-residual)"
                   strokeWidth={2}
                   strokeDasharray="5 4"
-                  dot={{ r: 3, fill: '#71717a' }}
+                  dot={{ r: 3, fill: 'var(--chart-residual)' }}
                   isAnimationActive={false}
                 />
               </LineChart>

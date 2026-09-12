@@ -7,7 +7,7 @@
 import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lightbulb } from 'lucide-react';
-import { fmtIDR, fmtDecimal } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtDecimal } from '@/lib/format';
 import type { PeerRow, PeerAverages } from './types';
 
 interface Insight {
@@ -35,7 +35,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
       const pctAbove = fmtDecimal((devBomRatio - 1) * 100, 0);
       out.push({
         type: 'warn',
-        text: `Dev/BOM ${fmtDecimal(target.devBom * 100, 1)}% adalah ${pctAbove}% di atas peer average — outlier.`,
+        text: `Dev/BOM ${fmtDecimal(target.devBom * 100, 1)}% adalah ${pctAbove}% di atas rata-rata peer — outlier.`,
       });
     }
 
@@ -64,7 +64,9 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (residualRatio > 2) {
       out.push({
         type: 'warn',
-        text: `Residual ${target.residualQty} adalah ${fmtDecimal(residualRatio, 1)}× peer average — potensi data entry error atau fraud.`,
+        // FIX (BUG-HUNT B16/B2-11): residualQty was interpolated raw — every other
+        // number in the card goes through fmtIDR/fmtNum/fmtDecimal.
+        text: `Residual ${fmtNum(target.residualQty)} adalah ${fmtDecimal(residualRatio, 1)}× rata-rata peer — potensi data entry error atau fraud.`,
       });
     }
 
@@ -73,7 +75,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (lossRatio > 1.5) {
       out.push({
         type: 'warn',
-        text: `Total LOSS ${fmtIDR(target.totalLoss)} adalah ${fmtDecimal((lossRatio - 1) * 100, 0)}% di atas peer average — investigasi penyebab utama.`,
+        text: `Total LOSS ${fmtIDR(target.totalLoss)} adalah ${fmtDecimal((lossRatio - 1) * 100, 0)}% di atas rata-rata peer — investigasi penyebab utama.`,
       });
     }
 
@@ -82,7 +84,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (salesRatio < 0.9 && salesRatio > 0) {
       out.push({
         type: 'info',
-        text: `Sales ${fmtIDR(target.sales)} adalah ${fmtDecimal((1 - salesRatio) * 100, 0)}% di bawah peer average — walaupun dalam ±10% band, target ada di sisi bawah.`,
+        text: `Sales ${fmtIDR(target.sales)} adalah ${fmtDecimal((1 - salesRatio) * 100, 0)}% di bawah rata-rata peer — walaupun dalam ±10% band, target ada di sisi bawah.`,
       });
     }
 
@@ -130,8 +132,10 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
       </CardHeader>
       <CardContent>
         <ul className="space-y-2">
-          {insights.map((ins, i) => (
-            <li key={i} className={`text-xs rounded-md border-l-4 px-3 py-2 ${colorByType(ins.type)}`}>
+          {/* FIX (BUG-HUNT C8/B2-15): index keys on a dynamic insight list —
+              insights rebuild per outlet/period; the text itself is the identity. */}
+          {insights.map((ins) => (
+            <li key={ins.text} className={`text-xs rounded-md border-l-4 px-3 py-2 ${colorByType(ins.type)}`}>
               <span className="mr-1">{iconByType(ins.type)}</span>
               <span className="text-foreground">{ins.text}</span>
             </li>

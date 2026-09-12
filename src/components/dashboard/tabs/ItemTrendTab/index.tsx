@@ -281,7 +281,7 @@ function FlipSummaryCard({ score }: FlipSummaryCardProps) {
       </div>
       <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] leading-tight">
         <span className="font-medium tabular-nums">{score.totalPairs}</span>
-        <span className="text-muted-foreground">same-week pairs:</span>
+        <span className="text-muted-foreground">pasangan minggu sama:</span>
         {parts.length === 0 ? (
           <span className="text-muted-foreground">—</span>
         ) : (
@@ -297,10 +297,10 @@ function FlipSummaryCard({ score }: FlipSummaryCardProps) {
       </div>
       <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px]">
         <span className="text-muted-foreground">
-          Avg Disparity: <span className="font-medium tabular-nums text-foreground">{avgPct}%</span>
+          Disparitas Rata-rata: <span className="font-medium tabular-nums text-foreground">{avgPct}%</span>
         </span>
         <span className="text-muted-foreground/60">·</span>
-        <span className="text-muted-foreground">Risk:</span>
+        <span className="text-muted-foreground">Risiko:</span>
         <Badge variant="outline" className={`text-[10px] h-5 px-1.5 font-semibold ${riskBadgeClass}`}>
           {riskLabel}
         </Badge>
@@ -645,12 +645,12 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           />
           {trend.data?.cached && (
             <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground h-5">
-              cached
+              cache
             </Badge>
           )}
           {trend.data?.stale && (
             <Badge variant="outline" className="text-[10px] font-normal text-amber-600 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5">
-              stale (revalidating)
+              stale (memvalidasi ulang)
             </Badge>
           )}
           {trend.isFetching && (
@@ -664,7 +664,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               pattern — once data is loaded, the badge is hidden even on
               background revalidation to avoid flicker). */}
           {rankFetching && rankPeriods.length === 0 && (
-            <Badge variant="outline" className="text-[10px] font-normal text-blue-600 dark:text-blue-400 border-blue-300/70 dark:border-blue-800/70 bg-blue-50/60 dark:bg-blue-950/30 h-5">
+            <Badge variant="outline" className="text-[10px] font-normal text-amber-600 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-5">
               <Loader2 className="h-2.5 w-2.5 mr-0.5 animate-spin" />
               Memuat Rank
             </Badge>
@@ -781,6 +781,16 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               title="Gagal memuat trend"
             >
               <p>{trend.error.message}</p>
+              {/* FIX (BUG-HUNT C20/B2-13): recovery affordance — ParetoDashboard
+                  and the peer table already offer "Coba Lagi" on errors; the trend
+                  error was message-only. */}
+              <button
+                type="button"
+                onClick={() => { void trend.refetch(); }}
+                className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-red-700"
+              >
+                Coba Lagi
+              </button>
             </Callout>
           </div>
         ) : trend.isLoading && periods.length === 0 ? (
@@ -819,7 +829,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
               <div className="px-4 pt-3 pb-1">
                 <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1.5">
                   <span aria-hidden>📊</span> Period Status Tracker
-                  <span className="text-muted-foreground/60">(green=baik, amber=normal, red=abnormal, gray=no data)</span>
+                  <span className="text-muted-foreground/60">(hijau=baik, amber=normal, merah=abnormal, abu=tanpa data)</span>
                 </p>
                 <Tracker
                   blocks={chronological.map((p) => {

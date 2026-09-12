@@ -186,7 +186,7 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
   // sort chips) expand on demand (progressive disclosure).
   const [tableOpen, setTableOpen] = useState(false);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['price-effect', monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic],
     queryFn: async () => {
       const month = monthLabel ?? '';
@@ -256,6 +256,15 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <p className="text-sm text-red-600 dark:text-red-400">Gagal memuat data efek harga.</p>
             <p className="mt-1 text-xs text-muted-foreground">{error instanceof Error ? error.message : String(error)}</p>
+            {/* FIX (BUG-HUNT C22/BUG-3-13): retry affordance — parity with
+                RestoRecommendationCard's inline "Coba Lagi" + refetch(). */}
+            <button
+              type="button"
+              onClick={() => { void refetch(); }}
+              className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-red-700"
+            >
+              Coba Lagi
+            </button>
           </div>
         ) : isLoading ? (
           <div className="space-y-3">

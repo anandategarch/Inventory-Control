@@ -104,7 +104,9 @@ export const MenuAnalysis = memo(function MenuAnalysis({ outletCode, monthLabel,
           <InfoTooltip content="Outlier = Dev/BOM > (avg + 2σ) DAN > 1.5× avg menu. Group by 2 kata pertama nama bahan." />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Group by menu (2 kata pertama nama bahan) — deteksi bahan yang deviation tidak proporsional vs bahan lain di menu yang sama
+          {/* FIX (BUG-HUNT B14/B2-05): leftover EN "deviation" — VH-7 unified the
+              tab copy to Indonesian but missed this sentence. */}
+          Group by menu (2 kata pertama nama bahan) — deteksi bahan yang deviasinya tidak proporsional vs bahan lain di menu yang sama
         </p>
       </CardHeader>
       <CardContent>

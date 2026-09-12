@@ -19,8 +19,10 @@ export interface DashboardFooterProps {
 export function DashboardFooter({ status, analysisData }: DashboardFooterProps) {
   return (
     <footer className="sticky bottom-0 mt-auto border-t border-border/60 bg-background/95 backdrop-blur z-30">
-      {/* FIX (UI2-05): text-xs on mobile (12px min readable), sm:text-[11px] on desktop */}
-      <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
+      {/* FIX (UI2-05): text-xs on mobile (12px min readable), sm:text-[11px] on desktop
+          FIX (BUG-HUNT C17/BUG-3-10): respect the iOS home-indicator safe area so the
+          stats don't sit in the notch zone on notched phones. */}
+      <div className="px-4 sm:px-6 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] flex flex-wrap items-center justify-between gap-2 text-xs sm:text-[11px] text-muted-foreground max-w-[1600px] mx-auto">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 font-medium text-foreground/80">
             <ShieldAlert className="h-3 w-3 text-amber-500" />
@@ -28,7 +30,11 @@ export function DashboardFooter({ status, analysisData }: DashboardFooterProps) 
           </span>
           {status?.stats && (
             <span className="hidden sm:inline tabular-nums">
-              {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString()} record
+              {/* FIX (BUG-HUNT C16/BUG-3-05): explicit id-ID — bare toLocaleString()
+                  follows the browser locale ("1,234,567" on EN browsers) and broke
+                  the app-wide "1.234.567" thousands convention (VH-7 fixed the same
+                  pattern in AnalysisCards but missed the footer). */}
+              {status.stats.totalOutlets} outlet · {status.stats.totalItems} item · {status.stats.totalRecords.toLocaleString('id-ID')} record
             </span>
           )}
         </div>

@@ -238,10 +238,10 @@ export const ItemTrendRankChart = memo(function ItemTrendRankChart({ periods, on
             {/* Severity threshold reference lines — only render when maxRank
                 reaches the threshold (avoids lines outside the visible domain). */}
             {maxRank >= 5 && (
-              <ReferenceLine y={5} stroke="#dc2626" strokeDasharray="2 4" strokeOpacity={0.5} />
+              <ReferenceLine y={5} stroke="var(--chart-loss)" strokeDasharray="2 4" strokeOpacity={0.5} />
             )}
             {maxRank >= 20 && (
-              <ReferenceLine y={20} stroke="#f59e0b" strokeDasharray="2 4" strokeOpacity={0.5} />
+              <ReferenceLine y={20} stroke="var(--chart-waste)" strokeDasharray="2 4" strokeOpacity={0.5} />
             )}
             {/* Rank trend line — single muted stroke (connecting line) with
                 per-period colored dots showing severity. connectNulls bridges

@@ -287,7 +287,7 @@ export default function DashboardPage() {
                 reading (narrative above) to working (deep analysis below).
                 -mx-3/px-3 sm:-mx-6/px-6 breaks out of main's horizontal
                 padding so the band spans the content column edge-to-edge. */}
-            <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-32">
+            <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-40">
               <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan heatmap." />
               <div className="-mx-3 px-3 sm:-mx-6 sm:px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
                 {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden

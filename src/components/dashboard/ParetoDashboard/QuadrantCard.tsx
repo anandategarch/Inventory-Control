@@ -14,7 +14,10 @@ import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { countSuffix } from './constants';
 import type { ParetoResult } from './types';
 
-export function QuadrantCard({ title, icon, data, color, barColor, tooltip }: { title: string; icon: React.ReactNode; data: ParetoResult; color: string; barColor: string; tooltip?: string }) {
+// FIX (BUG-HUNT C4/B4): `barColor` was declared and passed at all 5 call sites
+// but never referenced in the body — dead prop (the visible rainbow-kill comes
+// solely from the `color` prop). Pure deletion, zero render change.
+export function QuadrantCard({ title, icon, data, color, tooltip }: { title: string; icon: React.ReactNode; data: ParetoResult; color: string; tooltip?: string }) {
   const suffix = countSuffix(title);
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">

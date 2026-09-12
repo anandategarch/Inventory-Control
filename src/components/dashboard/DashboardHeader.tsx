@@ -195,9 +195,15 @@ export function DashboardHeader({
                   type="button"
                   onClick={onRefreshClick}
                   aria-label="Muat ulang data"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+                  // FIX (BUG-HUNT C3/B3): busy state — the button used to stay
+                  // enabled with a static icon during POST /api/refresh +
+                  // invalidation (rapid double-clicks fired duplicate refreshes).
+                  // Spin + disable while the analysis query refetches, matching
+                  // the affordance the FilterBar's Sinkron button already has.
+                  disabled={analysisFetching}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors disabled:opacity-60"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
+                  <RefreshCw className={`h-3.5 w-3.5 ${analysisFetching ? 'animate-spin' : ''}`} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" align="end">Muat Ulang Data (⌘/Ctrl+R)</TooltipContent>

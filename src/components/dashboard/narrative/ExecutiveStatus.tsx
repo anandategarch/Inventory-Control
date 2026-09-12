@@ -67,7 +67,12 @@ function DeltaPill({ growth, inverse }: { growth: number; inverse?: boolean }) {
       : colorCls.includes('amber')
         ? 'bg-amber-50/60 text-amber-700'
         : 'bg-muted text-muted-foreground';
-  const Icon = deltaType === 'increase' ? TrendingUp : deltaType === 'decrease' ? TrendingDown : Minus;
+  // FIX (BUG-HUNT B5/BUG-3-01): icon must follow the SIGN of the delta, not
+  // the 5-level bucket — moderateIncrease/moderateDecrease (the common case,
+  // |growth| ≤ 10%) used to render a Minus icon right next to a signed
+  // "+5,0%" (icon contradicts the number on the hero KPI pill). The deleted
+  // ExecutiveSummary KPICard used sign-based icons; restored here.
+  const Icon = growth > 0 ? TrendingUp : growth < 0 ? TrendingDown : Minus;
   return (
     <span className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums shrink-0 ${cls}`}>
       <Icon className="h-3 w-3" />

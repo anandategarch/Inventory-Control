@@ -99,8 +99,11 @@ function formatQty(v: number, unit?: string | null): string {
 }
 
 function formatQtySigned(v: number, unit?: string | null): string {
-  // Negative sign is already emitted by toLocaleString; only append "+".
-  return v > 0 ? `+${formatQty(v, unit)}` : formatQty(v, unit);
+  // FIX (BUG-HUNT B6/BUG-3-02): formatQty() strips the sign via Math.abs and
+  // toLocaleString never re-emits it, so negative Δ qty rendered as a bare
+  // "12,5 kg" (direction readable only from color) while the adjacent Δ
+  // nominal column IS signed. Restore the explicit minus; keep 0 unsigned.
+  return v > 0 ? `+${formatQty(v, unit)}` : v < 0 ? `-${formatQty(v, unit)}` : formatQty(v, unit);
 }
 
 /** "WEEK 2 · Mei 2026 · tgl 1–14" — week label + month + cumulative day range. */

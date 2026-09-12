@@ -23,6 +23,12 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {/* FIX (BUG-HUNT A2): horizontal scrollbar rendered by default — Radix
+          sets viewport overflow-x to "hidden" when no horizontal scrollbar
+          exists, so wide tables inside ScrollArea were clipped unreachable
+          once their container was width-constrained (mobile). The bar only
+          becomes visible when the axis is actually scrollable. */}
+      <ScrollBar orientation="horizontal" />
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

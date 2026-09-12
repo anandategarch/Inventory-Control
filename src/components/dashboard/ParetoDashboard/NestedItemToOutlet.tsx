@@ -40,7 +40,8 @@ export function NestedItemToOutlet({
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground mb-2">
-          Top 10 item by deviation. Klik untuk lihat outlet mana yang menyumbang 80% per item.
+          {/* FIX (BUG-HUNT B14/B2-05): leftover EN "by deviation" (VH-7 sweep miss). */}
+          Top 10 item berdasarkan deviasi. Klik untuk lihat outlet mana yang menyumbang 80% per item.
         </p>
         {/* Column headers */}
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
@@ -65,7 +66,7 @@ export function NestedItemToOutlet({
                   <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                   {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
                   <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
-                  <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} out</span>
+                  <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} resto</span>
                   <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
                   <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
                   <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>

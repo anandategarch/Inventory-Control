@@ -184,13 +184,17 @@ export function useDashboardActions({
       const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable === true;
 
       // Cmd/Ctrl+E → open export dialog
+      // FIX (BUG-HUNT C18/BUG-3-07): guard with isTyping — typing Ctrl+E inside
+      // an input used to hijack the keystroke and open the export dialog.
       if (mod && (e.key === 'e' || e.key === 'E')) {
+        if (isTyping) return;
         e.preventDefault();
         if (analysisData) setExportDialogOpen(true);
         return;
       }
       // Cmd/Ctrl+R → refresh data (prevent browser refresh)
       if (mod && (e.key === 'r' || e.key === 'R')) {
+        if (isTyping) return;
         e.preventDefault();
         void handleRefresh(); // async since TASK H-3 — intentionally fire-and-forget
         return;
@@ -203,6 +207,14 @@ export function useDashboardActions({
       if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6' || e.key === '7')) {
         const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
         if (isDropdownOpen) return;
+        // FIX (BUG-HUNT C18/BUG-3-08): also block while a Radix Popover/Dialog
+        // (e.g. QuickSettings) is open — focus sits inside the popper content,
+        // and the old check only matched combobox/listbox, so digits switched
+        // the tab BEHIND the open popover.
+        const focusInOverlay = Boolean(
+          (document.activeElement as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper], [role="dialog"]')
+        );
+        if (focusInOverlay) return;
         // VH-2 remap: 7 deep-analysis tabs (spec §6.8 — keyboard 1-7).
         const tabMap: Record<string, string> = { '1': 'area', '2': 'resto', '3': 'item', '4': 'peer', '5': 'pareto', '6': 'historical', '7': 'heatmap' };
         setActiveTab(tabMap[e.key]);

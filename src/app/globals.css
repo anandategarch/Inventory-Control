@@ -80,6 +80,13 @@
   --chart-loss: #dc2626;
   --chart-surplus: #10b981;
   --chart-waste: #f59e0b;
+  /* FIX (BUG-HUNT C19/BUG-3-06): pre-hydration fallback for the sticky tab
+     strip offset. The var is published by DashboardHeader's ResizeObserver
+     after mount, but a reload deep in L6 used to dock the strip at the old
+     104px fallback (37px too high vs the measured 141px desktop header) for
+     the first frames. 141px = the measured desktop header height; mobile
+     values are corrected by the observer within the first frame. */
+  --dashboard-header-h: 141px;
   /* FIX #23 (AUDIT8-FE-2): --chart-susut violet #7c3aed -> cyan-600 #0891b2
      to comply with the warm-tone-only UI modernization spec. */
   --chart-susut: #0891b2;

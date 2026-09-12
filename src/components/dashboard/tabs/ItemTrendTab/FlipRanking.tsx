@@ -51,7 +51,7 @@ import {
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { fmtNum, fmtDecimal } from '@/lib/format';
-import { clickableRowProps } from '@/lib/a11y';
+import { clickableRowProps, sortableHeaderProps } from '@/lib/a11y';
 // H-11 / #4c: per-outlet flip formulas come from the SINGLE shared module
 // (same one the backend flip-ranking query + flipHelpers use).
 import { isFlipPair, flipDisparityPct } from '@/lib/flip-metrics';
@@ -313,7 +313,7 @@ function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDri
         </span>
         {data?.cached && (
           <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground h-5">
-            cached
+            cache
           </Badge>
         )}
         {data?.stale && (
@@ -524,7 +524,7 @@ export const FlipRanking = memo(function FlipRanking() {
   // Only ONE drill-down can be open at a time — clicking another closes the previous.
   const [expandedFlip, setExpandedFlip] = useState<string | null>(null);
 
-  const { data, isLoading, error } = useQuery<FlipRankingResponse>({
+  const { data, isLoading, error, refetch } = useQuery<FlipRankingResponse>({
     // FIX (USER-REQ): include monthLabel in queryKey so ranking respects
     // dashboard month filter. When month is set, only flip pairs involving
     // that month are counted (backend filters P1 or P2 monthLabel match).
@@ -629,7 +629,7 @@ export const FlipRanking = memo(function FlipRanking() {
           </Tooltip>
           {data?.cached && (
             <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground h-5">
-              cached
+              cache
             </Badge>
           )}
           {data?.stale && (
@@ -645,15 +645,16 @@ export const FlipRanking = memo(function FlipRanking() {
         </CardTitle>
         {summary && (
           <p className="text-xs text-muted-foreground ml-9 flex items-center gap-3 flex-wrap">
+            {/* FIX (BUG-HUNT C6/B2-12): EN fragments in an Indonesian summary line. */}
             <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">
-              {summary.highCount} HIGH risk
+              {summary.highCount} risiko TINGGI
             </span>
             <span>·</span>
             <span className="text-amber-600 dark:text-amber-400 font-medium tabular-nums">
-              {summary.moderateCount} moderate
+              {summary.moderateCount} sedang
             </span>
             <span>·</span>
-            <span className="tabular-nums">{summary.totalFlips} total flips</span>
+            <span className="tabular-nums">{summary.totalFlips} total flip</span>
             <span>·</span>
             <span className="text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">
               {summary.totalSempurna} sempurna
@@ -670,7 +671,16 @@ export const FlipRanking = memo(function FlipRanking() {
           </div>
         ) : error ? (
           <div className="text-center text-red-600 dark:text-red-400 text-sm py-8 px-6">
-            Gagal memuat flip ranking: {error.message}
+            <p>Gagal memuat flip ranking: {error.message}</p>
+            {/* FIX (BUG-HUNT C20/B2-13): recovery affordance — parity with the
+                ParetoDashboard / peer-table error states that offer "Coba Lagi". */}
+            <button
+              type="button"
+              onClick={() => { void refetch(); }}
+              className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-medium text-white shadow-sm transition-colors hover:bg-red-700"
+            >
+              Coba Lagi
+            </button>
           </div>
         ) : sortedItems.length === 0 ? (
           // SHADCN-PATTERNS (Pattern 4) — replaced inline `<Shuffle ... />`
@@ -686,35 +696,38 @@ export const FlipRanking = memo(function FlipRanking() {
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
                   <TableHead className="w-12 text-center text-xs font-semibold uppercase tracking-wider h-9">#</TableHead>
+                  {/* FIX (BUG-HUNT B12/B2-03): sortable headers were onClick-only —
+                      keyboard/screen-reader users could not sort. Shared helper keeps
+                      th columnheader semantics + aria-sort; labels localized (B2-12). */}
                   <TableHead
-                    className="text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40"
-                    onClick={() => toggleSort('itemName')}
+                    className="text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('itemName', 'Item', sortKey, sortDir, toggleSort)}
                   >
                     Item <SortIcon active={sortKey === 'itemName'} dir={sortDir} />
                   </TableHead>
                   <TableHead
-                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40"
-                    onClick={() => toggleSort('flipCount')}
+                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('flipCount', 'Flip', sortKey, sortDir, toggleSort)}
                   >
-                    Flips <SortIcon active={sortKey === 'flipCount'} dir={sortDir} />
+                    Flip <SortIcon active={sortKey === 'flipCount'} dir={sortDir} />
                   </TableHead>
                   <TableHead
-                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40"
-                    onClick={() => toggleSort('sempurnaCount')}
+                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('sempurnaCount', 'Sempurna', sortKey, sortDir, toggleSort)}
                   >
                     🟢 Sempurna <SortIcon active={sortKey === 'sempurnaCount'} dir={sortDir} />
                   </TableHead>
                   <TableHead
-                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40"
-                    onClick={() => toggleSort('avgDisparity')}
+                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('avgDisparity', 'Disparitas Rata-rata', sortKey, sortDir, toggleSort)}
                   >
-                    Avg Disparity <SortIcon active={sortKey === 'avgDisparity'} dir={sortDir} />
+                    Disparitas Rata-rata <SortIcon active={sortKey === 'avgDisparity'} dir={sortDir} />
                   </TableHead>
                   <TableHead
-                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40"
-                    onClick={() => toggleSort('riskScore')}
+                    className="text-right text-xs font-semibold uppercase tracking-wider h-9 cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    {...sortableHeaderProps('riskScore', 'Skor Risiko', sortKey, sortDir, toggleSort)}
                   >
-                    Risk Score <SortIcon active={sortKey === 'riskScore'} dir={sortDir} />
+                    Skor Risiko <SortIcon active={sortKey === 'riskScore'} dir={sortDir} />
                   </TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider h-9">Top Flip Pair</TableHead>
                 </TableRow>
@@ -747,7 +760,7 @@ export const FlipRanking = memo(function FlipRanking() {
                           </div>
                           {isSelected && (
                             <Badge variant="default" className="text-[10px] ml-1 h-4 bg-amber-600 hover:bg-amber-600 text-white">
-                              SELECTED
+                              TERPILIH
                             </Badge>
                           )}
                         </TableCell>

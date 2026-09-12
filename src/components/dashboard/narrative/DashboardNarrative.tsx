@@ -61,7 +61,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
   return (
     <div className="space-y-8 md:space-y-10 min-w-0">
       {/* ====== L2 — EXECUTIVE STATUS (what / how much) ====== */}
-      <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-32">
+      <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-40">
         {/* VH-6 (Superset "Name with Purpose"): question-oriented story
             captions — WHAT → WHERE → WHY → HOW MUCH → EXPLORE (Minto). */}
         <LayerHeader number="01" title="EXECUTIVE STATUS" id="l2-header" description="Apa kondisinya sekarang? Empat angka utama beserta kaskade penyusun deviasi." />
@@ -74,7 +74,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L3 — WHAT NEEDS ATTENTION (where) ====== */}
-      <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-32">
+      <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-40">
         <LayerHeader number="02" title="WHAT NEEDS ATTENTION" id="l3-header" description="Di mana yang perlu ditindak? Resto dan item prioritas berdasarkan dampak." />
         <div className="grid lg:grid-cols-2 gap-4 min-w-0">
           {/* Section: Resto Recommendation Engine (self-fetch, no change to the
@@ -98,7 +98,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L4 — WHY IT HAPPENED (hypothesis) ====== */}
-      <section id="l4-why" aria-labelledby="l4-header" className="space-y-4 scroll-mt-32">
+      <section id="l4-why" aria-labelledby="l4-header" className="space-y-4 scroll-mt-40">
         <LayerHeader number="03" title="WHY IT HAPPENED" id="l4-header" description="Mengapa bisa terjadi? Hipotesis otomatis dari pola penyimpangan data." />
         <ErrorBoundary label="Insights Panel">
           <InsightsPanel data={data} />
@@ -106,7 +106,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L5 — DIAGNOSIS (measured why) ====== */}
-      <section id="l5-diagnosis" aria-labelledby="l5-header" className="space-y-4 scroll-mt-32">
+      <section id="l5-diagnosis" aria-labelledby="l5-header" className="space-y-4 scroll-mt-40">
         <LayerHeader number="04" title="DIAGNOSIS" id="l5-header" description="Berapa besar dampaknya? Dekomposisi terukur — pertumbuhan, sumber deviasi, dan efek harga." />
         {/* Row 1: the 3 diagnosis lenses (same grid-3 rhythm the old
             Health+Growth+Breakdown section used). */}

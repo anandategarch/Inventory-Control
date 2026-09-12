@@ -91,10 +91,10 @@ const METRIC_LABELS: Record<ItemTrendMetric, string> = {
 // Color for the Z-Score dot — matches the table coloring exactly.
 function zDotFill(z: number | null): string {
   if (z == null) return 'var(--muted-foreground)';
-  if (z > 3) return '#dc2626'; // red-600
-  if (z > 2) return '#f59e0b'; // amber-500
-  if (z > 1) return '#eab308'; // yellow-500
-  if (z < -2) return '#10b981'; // emerald-500
+  if (z > 3) return 'var(--chart-loss)'; // red-600
+  if (z > 2) return 'var(--chart-waste)'; // amber-500
+  if (z > 1) return 'var(--chart-warning)'; // yellow-500
+  if (z < -2) return 'var(--chart-surplus)'; // emerald-500
   if (z < -1) return '#34d399'; // emerald-400
   return '#9ca3af'; // gray-400 (near-zero)
 }
@@ -194,7 +194,7 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
         <span className="font-medium tabular-nums">{fmtNum(row.qtyBom)}</span>
       </div>
       <div className="flex justify-between gap-4">
-        <span className="text-muted-foreground">Historical Mean:</span>
+        <span className="text-muted-foreground">Mean Historis:</span>
         <span className="font-medium tabular-nums">{fmtNum(row.historicalMean)}</span>
       </div>
       <div className="flex justify-between gap-4">
@@ -213,7 +213,7 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
       </div>
       {z != null && (
         <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">Sample size:</span>
+          <span className="text-muted-foreground">Ukuran sampel:</span>
           <span className="font-medium tabular-nums">{row.sampleSize} weeks</span>
         </div>
       )}
@@ -245,8 +245,8 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
   // Built inside the component (memoized on `metric`) because the `qty`
   // label is metric-dependent ("QTY Deviasi" / "QTY Waste" / etc.).
   const chartConfig = useMemo(() => ({
-    qty: { label: METRIC_LABELS[metric], color: '#f59e0b' },
-    historicalMean: { label: 'Historical Mean', color: 'var(--muted-foreground)' },
+    qty: { label: METRIC_LABELS[metric], color: 'var(--chart-waste)' },
+    historicalMean: { label: 'Mean Historis', color: 'var(--muted-foreground)' },
     zScore: { label: 'Z-Score', color: 'var(--muted-foreground)' },
   } satisfies ChartConfig), [metric]);
 
@@ -286,7 +286,7 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
             cy={cy}
             r={7}
             fill="none"
-            stroke="#f59e0b"
+            stroke="var(--chart-waste)"
             strokeWidth={1.5}
             strokeDasharray="2 2"
             opacity={0.9}
@@ -345,7 +345,7 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
         {' · '}
         <span className="text-amber-600 dark:text-amber-400">▮ QTY</span>
         {' · '}
-        <span className="text-muted-foreground">▮ Historical Mean (baseline)</span>
+        <span className="text-muted-foreground">▮ Mean Historis (baseline)</span>
         {' · '}
         <span>Dots berwarna = Z-Score</span>
         {data.some(d => d.hasFlip) && (
@@ -478,11 +478,11 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
             name="zScore"
           />
           {/* Reference lines at z=±2 and z=±3 (visual guide for severity) */}
-          <ReferenceLine yAxisId="right" y={2} stroke="#f59e0b" strokeDasharray="2 4" strokeOpacity={0.4} />
-          <ReferenceLine yAxisId="right" y={3} stroke="#dc2626" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine yAxisId="right" y={2} stroke="var(--chart-waste)" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine yAxisId="right" y={3} stroke="var(--chart-loss)" strokeDasharray="2 4" strokeOpacity={0.4} />
           <ReferenceLine yAxisId="right" y={0} stroke="var(--muted-foreground)" strokeDasharray="1 3" strokeOpacity={0.3} />
-          <ReferenceLine yAxisId="right" y={-2} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.3} />
-          <ReferenceLine yAxisId="right" y={-3} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine yAxisId="right" y={-2} stroke="var(--chart-surplus)" strokeDasharray="2 4" strokeOpacity={0.3} />
+          <ReferenceLine yAxisId="right" y={-3} stroke="var(--chart-surplus)" strokeDasharray="2 4" strokeOpacity={0.4} />
         </LineChart>
       </ChartContainer>
     </div>

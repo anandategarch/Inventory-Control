@@ -90,10 +90,10 @@ const ItemComparisonBlock = memo(function ItemComparisonBlock({
       <Table>
         <TableHeader>
           <TableRow className="border-b hover:bg-transparent">
-            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7">Metric</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7">Metrik</TableHead>
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Target</TableHead>
-            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Avg</TableHead>
-            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Best</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Rata-rata Peer</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Terbaik</TableHead>
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Gap</TableHead>
           </TableRow>
         </TableHeader>
