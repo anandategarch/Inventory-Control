@@ -535,3 +535,26 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   metric ke-5 bar chart (naik=amber) + drill-down **item yang harganya naik** (klik → ItemDeepDive).
   Harga implisit dikonfirmasi = Σ|nominalDeviasi| / Σ|qtyDeviasi| per item (§22). NOL perubahan
   perhitungan/API/query-key. Detail: AUDIT-REPORT.md seksi UXFIX-1.
+- **v1.5 (ANA-1 — analytics roadmap fase 1 + koreksi UXFIX-1)**: user menyetujui eksekusi roadmap
+  metode analisis (upload "Analytical Methods & Feature Roadmap"; validasi ROADMAP-VALIDATE-1 —
+  ±70% metode didukung data; Action Log/Before-After/Intervention/DiD DITOLAK user "gak perlu
+  yang ada embel-embel aksi"). (0) **KOREKSI UXFIX-1(2)**: section "Breakdown 15 Sinyal Priority
+  Score" dihapus TOTAL dari PrioritySummaryCard (follow-up user "masih ada... aku suruh hapus
+  drill down itu" — list statis bukan maksud user); `priority-summary/constants.ts` +
+  `helpers.ts` dihapus (dead code), `types.ts` bertahan (re-ekspor). (1) **ANA-B Waterfall
+  "Jembatan Perubahan"** di dalam PriceEffectCard (L4 DIAGNOSTIC EVIDENCE): Sebelumnya → +Efek
+  Harga → +Efek Kuantitas → +Item Baru → −Item Hilang → Sekarang; backend +2 field additive
+  `prevTotalNominal`/`currTotalNominal` (identitas Bennet dev-assert); komponen baru
+  `BridgeWaterfall` (stacked-bar, token `--chart-*`, `isAnimationActive={false}`). (2) **ANA-C
+  strip "Konsentrasi masalah"** di tab PARETO — CR3/CR5/N80 + chip TINGGI (CR5≥70%) / SEDANG
+  (≥50%) / RENDAH; derivasi frontend murni dari payload pareto, reaktif ke dimensi aktif.
+  (3) **ANA-D rekurensi per resto**: query baru `outlet-recurrence` (same-week lintas bulan ≤12,
+  grain kumulatif dihormati; "periode bermasalah" = Dev/BOM > toleransi fallback 5% ATAU loss >
+  P1_NOMINAL 50jt — threshold existing, nol angka baru); field opsional `history` di
+  /api/recommendations (NOL perubahan skor/bobot/queryKey); chip "⟳ x/y bln" (amber REKUREN /
+  zinc SEKALI) + chip "↗ Memburuk" (sinyal existing) di baris resto L3. (4) **ANA-E kartu
+  "Peluang Perbaikan (Rp)"** di tab PEER: route baru /api/benchmark-opportunity (median loss per
+  area via `percentile_cont`, opportunity = GREATEST(0, loss − median area)), BarList top-5 +
+  caption TERUKUR. Verifikasi: 4 gerbang (tsc 0 · vitest 446/446 · eslint 0 err / 333 warn =
+  baseline persis 0 baru · build sukses) + harness mock 24/24 temuan (1440/375, 7 tab, 0
+  hydration/page error) + review visual VLM bersih. Detail: worklog ROADMAP-VALIDATE-1 + ANA-1-B/C/D/E.

@@ -40,6 +40,8 @@ import type { GapRow, RankItem, ScatterPoint, AnomalyFlag } from '@/components/d
 import { ItemLevelComparison } from './peer-comparison/items-table';
 import { TrendChartCard } from './peer-comparison/trend-chart';
 import { CorrelationInsightCard } from './peer-comparison/correlation-insight-card';
+import { BenchmarkOpportunityCard } from './peer-comparison/benchmark-opportunity-card';
+import type { BenchmarkOpportunityResponse } from './peer-comparison/benchmark-opportunity-card';
 
 // Re-export shared types so callers importing from this file still work.
 export type {
@@ -312,6 +314,38 @@ export function PeerComparison() {
     gcTime: 10 * 60_000,
   });
 
+  // Benchmark Opportunity query (ANA-1-E — "Peluang Perbaikan (Rp)").
+  // Network-wide per-area metric: does NOT depend on the target outlet or
+  // its peer set, so the queryKey omits activeOutlet (switching focus outlet
+  // re-uses the same cache entry — the number is identical by definition).
+  // Fires in parallel with main/items (independent inputs: month/week/kelompok).
+  const { data: opportunityData, isLoading: opportunityLoading, error: opportunityError, refetch: refetchOpportunity } = useQuery({
+    queryKey: ['peer-comparison', 'benchmark-opportunity', monthLabel, currentWeek, kelompok],
+    queryFn: async () => {
+      // Guard instead of non-null assertion — `enabled` guarantees both are
+      // defined by the time this runs, but the runtime check keeps TS strict
+      // happy without adding a new lint warning.
+      if (!monthLabel || !currentWeek) throw new Error('Periode belum dipilih');
+      const p = new URLSearchParams();
+      p.set('month', monthLabel);
+      if (currentWeek) p.set('week', currentWeek);
+      // Same kelompok scoping as the sibling peer modules.
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      const res = await fetch(`/api/benchmark-opportunity?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<BenchmarkOpportunityResponse>;
+    },
+    enabled: Boolean(monthLabel && currentWeek),
+    // PERF-FE (PAKET A): same staleTime/gcTime as the sibling peer queries —
+    // data only changes on ingest / manual refresh, not every 30s.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    // keepPreviousData so month/week switches keep the old number visible
+    // while the new one loads (same as the main query).
+    placeholderData: keepPreviousData,
+  });
+
   // Peer averages object (used by subcomponents) — memoized
   // FIX (rules-of-hooks): moved BEFORE early return so hooks are called unconditionally.
   const peerAverages: PeerAverages = useMemo(() => {
@@ -457,6 +491,16 @@ export function PeerComparison() {
             ]}
           />
         )}
+        {/* ANA-1-E (Benchmark Opportunity): measured Rp gap vs area median.
+            Always rendered (self-managed loading/error/empty) — the metric
+            is network-wide, so it stays useful even when the target has no
+            peers and the four cards above are hidden. */}
+        <BenchmarkOpportunityCard
+          data={opportunityData}
+          isLoading={opportunityLoading}
+          error={opportunityError}
+          onRetry={refetchOpportunity}
+        />
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}

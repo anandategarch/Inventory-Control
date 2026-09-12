@@ -28,6 +28,13 @@
 //  contribution so the aggregate reconciles honestly:
 //    ΔN_total = (matched netDelta) + newNominal − goneNominal
 //
+//  ANA-1-B (waterfall anchors): summary also carries prevTotalNominal /
+//  currTotalNominal — Σ|nominalDeviasi| over ALL items of each period
+//  (matched + new for current; matched + gone for compare). The bridge
+//  identity verified dev-side in this file:
+//    currTotalNominal − prevTotalNominal
+//      === qtyEffect + priceEffect + newNominal − goneNominal
+//
 //  SQL shape mirrors growth-drivers.ts aggregateItemMetrics: two CTE
 //  aggregations (curr + prev, GROUP BY item) + ONE FULL OUTER JOIN —
 //  ~154 rows per side instead of 35K raw records.
@@ -91,6 +98,14 @@ export interface PriceEffectSummary {
   medianPriceChangePct: number | null;
   itemsPriceUp: number;
   itemsPriceDown: number;
+  /** ANA-1-B waterfall anchor: Σ|nominalDeviasi| over ALL items in the
+   *  CURRENT period (matched + new). Bridge identity (exact, dev-checked):
+   *  currTotalNominal − prevTotalNominal
+   *    === qtyEffect + priceEffect + newNominal − goneNominal */
+  currTotalNominal: number;
+  /** ANA-1-B waterfall anchor: Σ|nominalDeviasi| over ALL items in the
+   *  COMPARE period (matched + gone). */
+  prevTotalNominal: number;
 }
 
 export interface PriceEffectResult {
@@ -160,6 +175,7 @@ export async function queryPriceEffect(
     nomCurr: 0, nomPrev: 0, netDelta: 0, qtyEffect: 0, priceEffect: 0,
     priceSharePct: null, avgPriceChangePct: null, medianPriceChangePct: null,
     itemsPriceUp: 0, itemsPriceDown: 0,
+    currTotalNominal: 0, prevTotalNominal: 0,
   };
   if (!hasCompare || rows.length === 0) {
     return { summary: { ...emptySummary, hasCompare }, items: [] };
@@ -168,6 +184,9 @@ export async function queryPriceEffect(
   const matched: PriceEffectItem[] = [];
   const priceGrowths: Array<{ g: number; w: number }> = []; // for weighted avg
   let newItems = 0, goneItems = 0, newNominal = 0, goneNominal = 0;
+  // ANA-1-B: waterfall anchors — per-period totals over ALL rows (matched +
+  // new + gone), accumulated independently of the branches below.
+  let currTotalNominal = 0, prevTotalNominal = 0;
 
   for (const r of rows) {
     if (r.name == null) continue;
@@ -175,6 +194,10 @@ export async function queryPriceEffect(
     const qPrev = Number(r.qPrev) || 0;
     const nCurr = Number(r.nCurr) || 0;
     const nPrev = Number(r.nPrev) || 0;
+
+    // ANA-1-B: anchors count every row — matched, new and gone alike.
+    currTotalNominal += nCurr;
+    prevTotalNominal += nPrev;
 
     // New / gone items — outside the decomposition, reported honestly.
     if (qPrev === 0 && nPrev === 0) {
@@ -274,7 +297,20 @@ export async function queryPriceEffect(
     priceSharePct,
     avgPriceChangePct, medianPriceChangePct,
     itemsPriceUp, itemsPriceDown,
+    currTotalNominal, prevTotalNominal,
   };
+
+  // ANA-1-B — waterfall reconciliation (dev-only assert): the bridge legs
+  // must sum back to the anchor delta EXACTLY. Per matched item Bennet is
+  // algebraically exact (ΔN = qtyEffect + priceEffect), and new/gone items
+  // contribute their full nominal, so any gap can only be float summation
+  // order. Tolerance: 1e-6 relative (double precision on Rp sums is ~1e-9).
+  const bridgeGap = (currTotalNominal - prevTotalNominal)
+    - (qtyEffect + priceEffect + newNominal - goneNominal);
+  if (process.env.NODE_ENV !== 'production'
+    && Math.abs(bridgeGap) > Math.max(0.01, Math.abs(currTotalNominal - prevTotalNominal) * 1e-6)) {
+    console.warn(`[price-effect] waterfall reconciliation gap Rp ${bridgeGap.toFixed(4)}`);
+  }
 
   const items = matched
     .sort((a, b) => Math.abs(b.netDelta) - Math.abs(a.netDelta))

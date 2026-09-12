@@ -35,6 +35,7 @@ import { ChevronDown, ChevronRight, Tags } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { BridgeWaterfall } from '@/components/dashboard/Charts/BridgeWaterfall';
 import { useDashboard } from '@/hooks/useDashboard';
 import { usePriceEffect, type PriceEffectItem } from '@/hooks/usePriceEffect';
 
@@ -190,6 +191,8 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[76px] rounded-lg" />)}
             </div>
+            {/* ANA-1-B: waterfall section skeleton (heading + 160px chart). */}
+            <Skeleton className="h-[190px] rounded-lg" />
             <Skeleton className="h-64 rounded-lg" />
           </div>
         ) : !s ? (
@@ -230,6 +233,16 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
                 sub={`median ${s.medianPriceChangePct != null ? fmtPct(s.medianPriceChangePct / 100, false, 1) : '—'} · naik ${s.itemsPriceUp} / turun ${s.itemsPriceDown} item`}
               />
             </div>
+
+            {/* ANA-1-B: Waterfall "Jembatan Perubahan" — bridges the ALL-items
+                totals (Σ|nominalDeviasi| per periode, matched + baru/hilang)
+                through the Bennet legs (harga / kuantitas / item baru /
+                item hilang). Compact (~190px incl. heading + legend) and
+                self-guarding — renders nothing without a compare period or
+                valid legs, keeping the L5 primary 2-col card lean. Placed
+                between the summary tiles and the per-item table area
+                ("flat card" placement — the table stays opt-in below). */}
+            <BridgeWaterfall summary={s} />
 
             {/* VH-3: domination badge (which effect drives the Δ overall) +
                 the collapsible toggle for the per-item Bennet table. */}

@@ -3,32 +3,30 @@
 // ============================================================
 //  PrioritySummaryCard — shows WHY this outlet is priority
 //  Displays: Priority Score + Level + 8 signal badges + analysis
-//  bullets + 15-signal breakdown (scores & contributions)
+//  bullets.
 //
-//  UX-DRILLDOWN-1 (user request 2025-12): the per-signal drill-down
-//  (accordion expand → illustrative SignalChart) was REMOVED — the
-//  breakdown is now a static, scannable list. Signal explanations
-//  survive as the row `title` (native hover tooltip). The signal
-//  computation in ./priority-summary/* is untouched.
+//  UX-DRILLDOWN-1 (user request 2025-12): per-signal drill-down
+//  charts removed — breakdown became a static list.
+//  UX-BREAKDOWN-2 (user follow-up, 2026-09): the ENTIRE
+//  "Breakdown 15 Sinyal Priority Score" section (toggle +
+//  static list + top contributors) is REMOVED per explicit
+//  user request ("masih ada... aku suruh hapus drill down itu").
+//  Dead shared modules constants.ts + helpers.ts deleted;
+//  types.ts survives (Recommendation/OutletItem re-exports).
+//  The signal computation in the Priority Engine is untouched.
 //
-//  Phase 3 split: implementation lives in ./priority-summary/*
-//  This file is a thin wrapper that re-exports types for backward
-//  compatibility (RestoAnalysis.tsx imports Recommendation + OutletItem).
+//  Phase 3 split: types live in ./priority-summary/types.ts
+//  This file is a thin component that re-exports types for
+//  backward compatibility (RestoAnalysis.tsx imports
+//  Recommendation + OutletItem).
 // ============================================================
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  Target, AlertTriangle, TrendingUp, ChevronDown, ChevronRight,
-  Activity, Trophy,
-} from 'lucide-react';
-import { useState, useMemo, memo } from 'react';
+import { Target, AlertTriangle, TrendingUp } from 'lucide-react';
+import { memo } from 'react';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
-import {
-  SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS,
-} from './priority-summary/constants';
-import { priorityBadge } from './priority-summary/helpers';
-import type { SignalScore, Recommendation, OutletItem } from './priority-summary/types';
+import type { Recommendation, OutletItem } from './priority-summary/types';
 
 // Backward-compat re-exports — RestoAnalysis.tsx imports these from here.
 export type { Recommendation, OutletItem };
@@ -39,30 +37,6 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
   recommendation: Recommendation | null | undefined;
   outletItems?: OutletItem[];
 }) {
-  const [showBreakdown, setShowBreakdown] = useState(false);
-
-  // Pull the parts of recommendation we depend on so React Compiler can
-  // track granular dependencies (optional chaining in deps arrays confuses it).
-  const signalScores = recommendation?.signalScores;
-
-  // Top 3 contributors by score × weight (memoized before early return)
-  const topContributors = useMemo(() => {
-    if (!signalScores) return [];
-    return [...signalScores]
-      .map((s) => ({ ...s, contribution: Math.round(s.score * s.weight) }))
-      .sort((a, b) => b.contribution - a.contribution)
-      .slice(0, 3);
-  }, [signalScores]);
-
-  // Signal lookup by name (memoized before early return)
-  const signalByName = useMemo(() => {
-    const m = new Map<string, SignalScore>();
-    if (signalScores) {
-      for (const s of signalScores) m.set(s.name, s);
-    }
-    return m;
-  }, [signalScores]);
-
   if (!recommendation) return null;
 
   const r = recommendation;
@@ -198,122 +172,6 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
             </p>
           ))}
         </div>
-
-        {/* ============================================================ */}
-        {/*  BREAKDOWN 15 SINYAL — static list of scores & contributions  */}
-        {/*  (UX-DRILLDOWN-1: drill-down charts removed per user request) */}
-        {/* ============================================================ */}
-        {r.signalScores && r.signalScores.length > 0 && (
-          <div className="border-t pt-3 space-y-3">
-            {/* Toggle button */}
-            <button
-              onClick={() => setShowBreakdown(!showBreakdown)}
-              aria-expanded={showBreakdown}
-              className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
-            >
-              {showBreakdown ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              Breakdown 15 Sinyal Priority Score
-              <span className="ml-auto text-xs text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif</span>
-            </button>
-
-            {showBreakdown && (
-              <div className="space-y-3">
-                {/* ---- Kontributor Teratas Highlight ---- */}
-                {topContributors.length > 0 && (
-                  <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2 flex items-center gap-1">
-                      <Trophy className="h-3 w-3" /> Kontributor Teratas
-                    </p>
-                    <div className="space-y-1.5">
-                      {topContributors.map((c, i) => (
-                        <div key={c.name} className="flex items-center gap-2 text-[11px]">
-                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[11px] font-bold shrink-0">
-                            {i + 1}
-                          </span>
-                          <span className="flex-1 truncate font-medium" title={c.name}>{c.name}</span>
-                          <span className="tabular-nums font-semibold text-amber-700 dark:text-amber-400">+{c.contribution}</span>
-                          <span className="tabular-nums text-muted-foreground/80 text-xs w-16 text-right">
-                            {Math.round(c.weight * 100)}% bobot
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* ---- Breakdown grouped by category (static rows) ---- */}
-                {SIGNAL_GROUPS.map((group) => {
-                  const groupSignals = group.signals
-                    .map((name) => signalByName.get(name))
-                    .filter((s): s is SignalScore => Boolean(s));
-                  if (groupSignals.length === 0) return null;
-                  const GroupIcon = group.icon;
-                  const groupContribution = groupSignals.reduce((sum, s) => sum + Math.round(s.score * s.weight), 0);
-
-                  return (
-                    <div key={group.name} className="rounded-lg border border-border/60 overflow-hidden">
-                      {/* Group header */}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border/60">
-                        <span className="text-sm">{group.emoji}</span>
-                        <GroupIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-[11px] font-semibold flex-1">{group.name}</span>
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          {groupSignals.length} sinyal · +{groupContribution}
-                        </span>
-                      </div>
-
-                      {/* Signal rows — static (hover title = explanation) */}
-                      <div className="divide-y divide-border/40">
-                        {groupSignals.map((s) => {
-                          const contribution = Math.round(s.score * s.weight);
-                          const badge = priorityBadge(s.score);
-                          const Icon = SIGNAL_ICONS[s.name] || Activity;
-                          return (
-                            <div
-                              key={s.name}
-                              className="w-full flex items-center gap-2 px-3 py-2 bg-background hover:bg-muted/20 transition-colors"
-                              title={`${s.name} — ${SIGNAL_EXPLANATIONS[s.name] || 'Sinyal priority score dari Priority Engine.'}\nNilai: ${s.value} · Skor: ${s.score} · Bobot: ${Math.round(s.weight * 100)}%`}
-                            >
-                              {/* Status dot */}
-                              <span className={`h-1.5 w-1.5 rounded-full ${badge.dot} shrink-0`} />
-                              {/* Icon */}
-                              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                              {/* Name */}
-                              <span className="text-[11px] font-medium flex-1 truncate" title={s.name}>{s.name}</span>
-                              {/* Score */}
-                              <span className="text-[11px] tabular-nums font-semibold w-7 text-right">{s.score}</span>
-                              {/* Contribution */}
-                              <span className="text-[11px] tabular-nums w-8 text-right text-muted-foreground">+{contribution}</span>
-                              {/* Value */}
-                              <span className="text-xs tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
-                              {/* Badge */}
-                              <Badge variant="outline" className={`text-[11px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* ---- Total ---- */}
-                {/* FIX CHART-2: show computed sum (not r.priorityScore which uses different rounding).
-                    Server computes priorityScore with single rounding at end;
-                    per-row contributions use double rounding (Math.round(Math.round(score) * weight)).
-                    Show the computed sum so the breakdown math reconciles. */}
-                <div className="flex items-center gap-2 text-[11px] pt-2 border-t">
-                  <span className="flex-1 font-semibold text-foreground">Total (dari breakdown)</span>
-                  <span className="tabular-nums font-bold text-foreground">
-                    = {(r.signalScores || []).reduce((sum, s) => sum + Math.round(Math.round(s.score) * s.weight), 0)}
-                  </span>
-                  <span className="text-xs text-muted-foreground/70">
-                    Score server: {r.priorityScore}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
   );

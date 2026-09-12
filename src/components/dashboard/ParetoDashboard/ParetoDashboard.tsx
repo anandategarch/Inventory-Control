@@ -20,10 +20,11 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { DIM_LABELS, QUADRANT_TOOLTIPS } from './constants';
 import { QuadrantCard } from './QuadrantCard';
+import { ConcentrationStrip } from './ConcentrationStrip';
 import { NestedItemToOutlet } from './NestedItemToOutlet';
 import { GeneralizedNested } from './GeneralizedNested';
 import { ActionPlanFooter } from './ActionPlanFooter';
-import type { ParetoData, ParetoDimension } from './types';
+import type { ParetoData, ParetoDimension, ParetoResult } from './types';
 
 export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
@@ -93,6 +94,16 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   const nestedItems = paretoData?.nested?.items || [];
   const nestedGen = paretoData?.nestedGeneralized;
 
+  // ANA-1-C: Pareto result for the ACTIVE dimension — the parentDim selector
+  // drives both the nested query and the concentration strip, so the strip
+  // reacts to dimension changes without touching the query/payload.
+  const activePareto: ParetoResult | undefined =
+    parentDim === 'item' ? paretoData?.byItem
+    : parentDim === 'outlet' ? paretoData?.byOutlet
+    : parentDim === 'area' ? paretoData?.byArea
+    : parentDim === 'kelompok' ? paretoData?.byKelompok
+    : paretoData?.byPIC;
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -156,6 +167,11 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
           </div>
         )}
       />
+
+      {/* ANA-1-C: concentration strip (CR3/CR5/N80 + level chip) for the
+          active dimension — slim summary row between the header and the
+          quadrant grid; pure frontend derivation from the same payload. */}
+      <ConcentrationStrip dimension={parentDim} data={activePareto} />
 
       {/* 5-Quadrant Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

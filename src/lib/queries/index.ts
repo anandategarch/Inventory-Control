@@ -13,6 +13,9 @@ export * from './items/global-search';
 // topOutletsBySales payload section.
 export * from './outlets/peer-comparison';
 export * from './outlets/resto-recommendations';
+// ANA-1-D: outlet recurrence/persistence history (additive `history` field
+// for /api/recommendations — no interaction with the existing queries).
+export * from './outlets/outlet-recurrence';
 export * from './areas';
 export * from './historical';
 // SQL-OPTIMIZE: pushed computeOutletHealthRanking + computeVarianceAnalysis +

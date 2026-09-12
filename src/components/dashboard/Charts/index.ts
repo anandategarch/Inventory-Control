@@ -23,3 +23,4 @@
 export { GrowthComparison } from './GrowthComparison';
 export { DeviationBreakdownChart } from './DeviationBreakdownChart';
 export { LossVsSurplusChart } from './LossVsSurplusChart';
+export { BridgeWaterfall } from './BridgeWaterfall';

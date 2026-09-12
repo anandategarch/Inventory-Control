@@ -497,6 +497,9 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // decomposition — reads per-item Σ|qtyDeviasi|/Σ|nominalDeviasi| for the
   // current + compare periods from InventoryRecord, so ingest/settings/
   // pic/delete mutations affect the decomposition).
+  // ANA-1-E: added `benchmark-opportunity` ("Peluang Perbaikan (Rp)" vs
+  // area-median loss — reads per-outlet loss/devBom from InventoryRecord for
+  // the running period, so ingest/settings/pic/delete mutations affect it).
   // H-8 QUICK WIN 6a: added `item-search` (autocomplete LIKE over the current
   // period's records — mutations change item names/records, and the 60s TTL
   // cache must not outlive a mutation).
@@ -518,6 +521,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
     'price-effect', 'item-search', 'heatmap-cell-detail',
+    'benchmark-opportunity',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
     'q-outlet-agg',
     // H-11 (#3): the remaining export-shared queries — every heavy query the

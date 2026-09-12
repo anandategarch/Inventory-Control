@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useRecommendations, type RestoRecommendation } from '@/hooks/useRecommendations';
+import type { RecommendationHistory } from './priority-summary/types';
 import { fmtIDR, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -52,6 +53,15 @@ function scoreBarColor(score: number): string {
   if (score >= 55) return 'bg-red-500';
   if (score >= 30) return 'bg-amber-500';
   return 'bg-emerald-500';
+}
+
+// ANA-1-D: hover explanation for the recurrence chip — plain language.
+// The < 4 note flags thin history (GRAIN: same-week cross-month is the only
+// valid series, so a short window is a real confidence limitation).
+function recurrenceTitle(h: RecommendationHistory): string {
+  let t = `Bermasalah di ${h.abnormalCount} dari ${h.periodCount} bulan sebelumnya (Dev/BOM di atas toleransi atau loss di atas threshold)`;
+  if (h.periodCount < 4) t += ' · data historis masih terbatas';
+  return t;
 }
 
 export interface RestoRecommendationCardProps {
@@ -230,12 +240,44 @@ export function RestoRecommendationCard({ data }: RestoRecommendationCardProps) 
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold leading-tight truncate" title={r.outletName}>{r.outletName}</p>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {r.outletCode} · {r.area} ·{' '}
-                  <span className={`font-medium tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {fmtIDR(r.metrics.nominalDeviasi)}
-                  </span>
-                </p>
+                {/* Meta line + ANA-1-D chips. The text <p> truncates first
+                    (overflow-hidden makes its flex min-width 0) so the small
+                    chips stay visible at 375px without breaking row rhythm. */}
+                <div className="mt-0.5 flex min-w-0 items-center gap-1">
+                  <p className="text-xs text-muted-foreground truncate">
+                    {r.outletCode} · {r.area} ·{' '}
+                    <span className={`font-medium tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {fmtIDR(r.metrics.nominalDeviasi)}
+                    </span>
+                  </p>
+                  {/* ANA-1-D recurrence chip — hidden when STABIL, when no
+                      historical month exists, or when `history` is absent
+                      (payload cached before the field was added). */}
+                  {r.history && r.history.periodCount > 0 && r.history.classification !== 'STABIL' && (
+                    <span
+                      className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-medium leading-4 ${
+                        r.history.classification === 'REKUREN'
+                          ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400'
+                          : 'border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400'
+                      }`}
+                      title={recurrenceTitle(r.history)}
+                    >
+                      {/* sr-only: readable form of the "⟳ x/y bln" glyph text */}
+                      <span className="sr-only">Bermasalah di {r.history.abnormalCount} dari {r.history.periodCount} bulan sebelumnya</span>
+                      <span aria-hidden>⟳ {r.history.abnormalCount}/{r.history.periodCount} bln</span>
+                    </span>
+                  )}
+                  {/* Trend chip — pure frontend, rides the existing
+                      signals.trendDeteriorating field (no API change). */}
+                  {r.signals.trendDeteriorating && (
+                    <span
+                      className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-red-300 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 dark:border-red-800 dark:text-red-400"
+                      title="Nominal deviasi naik >20% dibanding periode sebelumnya atau rata-rata historis (same-week)"
+                    >
+                      ↗ Memburuk
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="text-right shrink-0">
                 <p className={`text-lg font-bold leading-none tabular-nums ${scoreColor(r.priorityScore)}`}>{r.priorityScore}</p>

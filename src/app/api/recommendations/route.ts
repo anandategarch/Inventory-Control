@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryRestoRecommendations } from '@/lib/queries';
+import { queryRestoRecommendations, queryOutletRecurrence, type OutletRecurrenceHistory } from '@/lib/queries';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { validateQuery, recommendationsQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
@@ -149,18 +149,52 @@ export async function GET(req: NextRequest) {
         picOutletCodes,
       };
 
-      const recommendations = await queryRestoRecommendations(
-        resolvedMonth,
-        week!,
-        resolvedPrevWeek,
-        resolvedPrevMonth,
-        filters,
-        limit,
-        currentMonthKey,
-        thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
-      );
+      // ANA-1-D (recurrence/persistence): additive per-outlet `history` field —
+      // same-weekLabel months BEFORE the current period (max 12). Runs in
+      // PARALLEL with the (unchanged) scoring query; merged AFTER scoring so
+      // priorityScore/weights/signals are byte-identical. "Periode bermasalah"
+      // = devBom > thresholds.FALLBACK_TOLERANCE_PCT (canonical tolerance
+      // fallback, default 0.05) OR lossNominal > thresholds.
+      // HIGH_LOSS_NOMINAL_THRESHOLD (P1 nominal, default 50jt) — both existing
+      // runtime Settings, no new numbers.
+      // Non-fatal on failure: the field is optional, so the card simply hides
+      // the chip (logged, recommendations still returned).
+      const [recommendations, recurrenceMap] = await Promise.all([
+        queryRestoRecommendations(
+          resolvedMonth,
+          week!,
+          resolvedPrevWeek,
+          resolvedPrevMonth,
+          filters,
+          limit,
+          currentMonthKey,
+          thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+        ),
+        queryOutletRecurrence(
+          resolvedMonth,
+          week,
+          currentMonthKey,
+          filters,
+          thresholds.FALLBACK_TOLERANCE_PCT,
+          thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+        ).catch((e: unknown) => {
+          logger.error('[recommendations] outlet recurrence history failed (history omitted)', {
+            error: e instanceof Error ? e.message : String(e),
+          });
+          return new Map<string, OutletRecurrenceHistory>();
+        }),
+      ]);
 
-      return { success: true, recommendations };
+      // Merge: spread keeps every existing field untouched; `history` is only
+      // ADDED when the outlet has same-week historical months (otherwise the
+      // key stays absent — old-cache payloads without it remain type-valid).
+      return {
+        success: true,
+        recommendations: recommendations.map((r) => {
+          const history = recurrenceMap.get(r.outletCode);
+          return history ? { ...r, history } : r;
+        }),
+      };
     });
 
     // PERF-CACHE-06: add `cached: true` flag when served from cache (CONVENTIONS §2).

@@ -145,6 +145,16 @@ export const peerComparisonTrendQuerySchema = z.object({
   kelompok: kelompokSchema,
 });
 
+// /api/benchmark-opportunity?month=&week=&kelompok=
+// ANA-1-E ("Peluang Perbaikan (Rp)" — Rp gap vs AREA MEDIAN loss, PEER tab).
+// Same filter scope as the peer-comparison family (kelompok scopes the
+// outlet set; no target outlet — the metric is network-wide per area).
+export const benchmarkOpportunityQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  kelompok: kelompokSchema,
+});
+
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,

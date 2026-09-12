@@ -6,6 +6,7 @@
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout, type SqlFilterOpts } from '../shared';
 import { queryOutletAggregateScan } from './outlet-agg-scan';
+import type { OutletRecurrenceHistory } from './outlet-recurrence';
 
 // ============================================================
 //  Resto Recommendation Engine — rank all outlets by priority
@@ -50,6 +51,11 @@ export interface RestoRecommendation {
   };
   analysis: string[];   // auto-generated analysis bullet points
   signalScores?: Array<{ name: string; score: number; weight: number; value: string }>; // 15 signal breakdown
+  // ANA-1-D (recurrence/persistence): OPTIONAL, purely informational — same-weekLabel
+  // months BEFORE the current period (max 12). Attached by the /api/recommendations
+  // route AFTER scoring; never feeds priorityScore/weights/signals. Absent when the
+  // recurrence query fails or the outlet has no same-week history (old caches stay valid).
+  history?: OutletRecurrenceHistory;
 }
 
 export async function queryRestoRecommendations(

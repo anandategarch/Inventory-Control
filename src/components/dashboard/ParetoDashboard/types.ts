@@ -94,3 +94,31 @@ export interface ParetoData {
   childDim?: ParetoDimension;
   durationMs?: number;
 }
+
+// ============================================================
+//  ANA-1-C: Concentration Ratio stats (frontend-derived)
+//  --------------------------------------------------------
+//  NOT part of the backend payload mirror above — computed
+//  client-side by deriveConcentration() (see constants.ts) from
+//  an existing ParetoResult. Mirrors no API shape.
+// ============================================================
+export type ConcentrationLevel = 'TINGGI' | 'SEDANG' | 'RENDAH';
+
+export interface ConcentrationStats {
+  /** Cumulative share of the top-3 drivers, in percent (0-100). */
+  cr3: number;
+  /** Cumulative share of the top-5 drivers, in percent (0-100). */
+  cr5: number;
+  /** Drivers actually used for CR3 (≤ 3 — adapts when fewer exist). */
+  cr3Count: number;
+  /** Drivers actually used for CR5 (≤ 5 — adapts when fewer exist). */
+  cr5Count: number;
+  /**
+   * Drivers needed to reach cumPct ≥ 80% — equals drivers.length because the
+   * backend loop already stops there. null = the 20-driver cap truncated the
+   * list before 80% was reached (true N80 is larger, unknown client-side).
+   */
+  n80: number | null;
+  /** Classification from CR5: TINGGI ≥ 70 · SEDANG ≥ 50 · RENDAH below. */
+  level: ConcentrationLevel;
+}

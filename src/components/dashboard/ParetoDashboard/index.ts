@@ -20,6 +20,7 @@ export { QuadrantCard } from './QuadrantCard';
 export { NestedItemToOutlet } from './NestedItemToOutlet';
 export { GeneralizedNested } from './GeneralizedNested';
 export { ActionPlanFooter } from './ActionPlanFooter';
+export { ConcentrationStrip } from './ConcentrationStrip';
 
 // Types
 export type {
@@ -31,7 +32,15 @@ export type {
   NestedOutlet,
   NestedItem,
   ParetoData,
+  ConcentrationLevel,
+  ConcentrationStats,
 } from './types';
 
 // Constants & helpers
-export { DIM_LABELS, QUADRANT_TOOLTIPS, countSuffix } from './constants';
+export {
+  DIM_LABELS,
+  QUADRANT_TOOLTIPS,
+  countSuffix,
+  CONCENTRATION_LEVEL_STYLE,
+  deriveConcentration,
+} from './constants';
