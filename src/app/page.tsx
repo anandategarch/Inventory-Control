@@ -13,7 +13,7 @@
 //    • DashboardHeader      — sticky header (logo, period label, actions, FilterBar)
 //    • DashboardFooter      — sticky footer (stats + drill hint)
 //    • narrative/DashboardNarrative — L2-L5 layers ABOVE the tab strip
-//      (executive status → attention → why → diagnosis) — VH-1
+//      (control status → priority actions → findings → evidence) — VH-1/SPEC-1
 //    • tabs/AreaTab         — Area comparison + outlet health ranking
 //      (DEFAULT tab, static import — renders from the existing
 //      /api/analysis payload, no extra fetch) — VH-2

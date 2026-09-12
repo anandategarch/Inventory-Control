@@ -5,7 +5,7 @@
 //  (L2-L6) of the Visual Hierarchy restructure.
 //  --------------------------------------------------------
 //  MASTER-CONTEXT-VISUAL-HIERARCHY.md §5.1:
-//    [01] EXECUTIVE STATUS ─────────────────────────────────
+//    [01] CONTROL STATUS ───────────────────────────────────
 //    text-xs font-medium uppercase tracking-[0.14em]
 //    text-muted-foreground; number tabular-nums
 //    text-foreground/40; filler line h-px flex-1 bg-border.
@@ -24,7 +24,7 @@
 export interface LayerHeaderProps {
   /** Zero-padded layer number, e.g. "01" (tabular-nums, dimmed). */
   number: string;
-  /** Uppercase layer title, e.g. "EXECUTIVE STATUS". */
+  /** Uppercase layer title, e.g. "CONTROL STATUS". */
   title: string;
   /** Optional id — pass the value used by the section's aria-labelledby. */
   id?: string;

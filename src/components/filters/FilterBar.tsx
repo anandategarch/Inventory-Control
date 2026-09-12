@@ -10,7 +10,7 @@
 import dynamic from 'next/dynamic';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { RotateCcw, Database, AlertTriangle, CloudDownload, FolderSync, Loader2, Settings, Users, Upload } from 'lucide-react';
+import { RotateCcw, Database, AlertTriangle, CloudDownload, FolderSync, Loader2, Settings, SlidersHorizontal, Users, Upload } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus, usePrefetchAnalysis } from '@/hooks/useAnalysis';
@@ -18,6 +18,7 @@ import { findAutoCompareForStatus } from '@/lib/auto-compare';
 import { Badge } from '@/components/ui/badge';
 import { useState, useMemo, useEffect } from 'react';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidateAllData } from '@/lib/query-invalidation';
@@ -79,6 +80,9 @@ export function FilterBar() {
   // Data management & PIC management dialog state
   const [dataMgmtOpen, setDataMgmtOpen] = useState(false);
   const [picMgmtOpen, setPicMgmtOpen] = useState(false);
+
+  // SPEC-1 (§16.1): mobile filter-drawer open state
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // FIX (BUG-FE-9): After data upload/import, the status query invalidates and
   // refetches. If the new dataset doesn't have the currently-selected kelompok
@@ -232,35 +236,20 @@ export function FilterBar() {
     setPeriod(monthLabel, newWeek, compare?.weekLabel ?? null, compare?.monthLabel ?? null);
   }
 
-  return (
+  // ============================================================
+  //  SPEC-1 (§16.1): shared filter fields — the 3 period Selects +
+  //  4 org SearchableComboBoxes, parameterized by `stacked`:
+  //    stacked=false → desktop inline chips (min-w in a wrap row)
+  //    stacked=true  → full-width rows inside the mobile bottom drawer
+  //  Both instances bind to the SAME zustand state + handlers (they render
+  //  simultaneously — the desktop row is CSS-hidden on mobile, never
+  //  unmounted — so the drawer can never desync from the header row and
+  //  SSR/hydration stay deterministic).
+  // ============================================================
+  const periodSelects = (stacked: boolean) => (
     <>
-      {/* REDesign-HEADER: FilterBar now renders BARE content (no Card wrapper).
-          The parent in page.tsx wraps this in a single sticky container with
-          the header — saves ~100px vertical (no double padding, no labels, no stats row). */}
-      {isLoading && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
-          <span>Memuat filter...</span>
-        </div>
-      )}
-      {/* Filters row — left side: dropdowns, right side: actions */}
-      <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
-        {/* Filter dropdowns — no labels (placeholder in dropdown is clear enough) */}
-        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
-          {/* D7: active-filter count badge — at-a-glance signal of how many
-              of the 5 filters are constraining the data (amber = watch). */}
-          {activeFilterCount > 0 && (
-            <Badge
-              variant="outline"
-              className="h-8 shrink-0 rounded-lg border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 text-xs font-medium"
-              aria-label={`${activeFilterCount} filter aktif`}
-              title={`${activeFilterCount} filter aktif — klik Reset untuk membersihkan`}
-            >
-              Filter ({activeFilterCount})
-            </Badge>
-          )}
           <Select value={monthLabel || ''} onValueChange={handleMonthChange} disabled={isLoading}>
-            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[120px]"><SelectValue placeholder="Bulan" /></SelectTrigger>
+            <SelectTrigger className={`h-8 text-xs bg-background hover:bg-muted/40 transition-colors ${stacked ? 'w-full' : 'min-w-[120px]'}`}><SelectValue placeholder="Bulan" /></SelectTrigger>
                   <SelectContent>
                     {months.map((m) => (
                       <SelectItem
@@ -305,7 +294,7 @@ export function FilterBar() {
                 </Select>
 
           <Select value={currentWeek || ''} onValueChange={handleWeekChange} disabled={!monthLabel}>
-            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[90px]"><SelectValue placeholder="Minggu" /></SelectTrigger>
+            <SelectTrigger className={`h-8 text-xs bg-background hover:bg-muted/40 transition-colors ${stacked ? 'w-full' : 'min-w-[90px]'}`}><SelectValue placeholder="Minggu" /></SelectTrigger>
                   <SelectContent>
                     {weeks.map((w) => (
                       <SelectItem
@@ -356,7 +345,7 @@ export function FilterBar() {
             }}
             disabled={!currentWeek}
           >
-            <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className={`h-8 text-xs bg-background hover:bg-muted/40 transition-colors ${stacked ? 'w-full' : 'min-w-[150px]'}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="auto" className="text-xs">Otomatis (periode sebelumnya)</SelectItem>
                     {allComparePeriods.map((p) => (
@@ -370,7 +359,10 @@ export function FilterBar() {
                     ))}
                   </SelectContent>
                 </Select>
-
+    </>
+  );
+  const orgSelects = (stacked: boolean) => (
+    <>
           <SearchableComboBox
             options={pics.map((p) => ({ value: p, label: p }))}
             value={pic}
@@ -379,7 +371,7 @@ export function FilterBar() {
             searchPlaceholder="Cari PIC..."
             emptyText="PIC tidak ditemukan."
             allOptionLabel={`Semua PIC (${pics.length})`}
-            buttonClassName="min-w-[120px]"
+            buttonClassName={stacked ? 'w-full' : 'min-w-[120px]'}
             ariaLabel="Filter PIC"
           />
 
@@ -391,7 +383,7 @@ export function FilterBar() {
             searchPlaceholder="Cari area..."
             emptyText="Area tidak ditemukan."
             allOptionLabel={`Semua Area (${areas.length})`}
-            buttonClassName="min-w-[120px]"
+            buttonClassName={stacked ? 'w-full' : 'min-w-[120px]'}
             ariaLabel="Filter Area"
           />
 
@@ -407,7 +399,7 @@ export function FilterBar() {
             searchPlaceholder="Cari kelompok..."
             emptyText="Kelompok tidak ditemukan."
             allOptionLabel={`Semua Kelompok (${status?.kelompokOptions?.length || 0})`}
-            buttonClassName="min-w-[120px]"
+            buttonClassName={stacked ? 'w-full' : 'min-w-[120px]'}
             ariaLabel="Filter Kelompok"
           />
 
@@ -419,9 +411,106 @@ export function FilterBar() {
             searchPlaceholder="Cari outlet (kode/nama)..."
             emptyText="Outlet tidak ditemukan."
             allOptionLabel={`Semua Outlet (${outlets.length})`}
-            buttonClassName="min-w-[150px]"
+            buttonClassName={stacked ? 'w-full' : 'min-w-[150px]'}
             ariaLabel="Filter Outlet"
           />
+    </>
+  );
+
+  return (
+    <>
+      {/* REDesign-HEADER: FilterBar now renders BARE content (no Card wrapper).
+          The parent in page.tsx wraps this in a single sticky container with
+          the header — saves ~100px vertical (no double padding, no labels, no stats row). */}
+      {isLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+          <span>Memuat filter...</span>
+        </div>
+      )}
+      {/* Filters row — left side: dropdowns, right side: actions */}
+      <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
+        {/* SPEC-1 (§16.1): MOBILE — compact "Filter · N aktif" trigger +
+            bottom-sheet drawer. The mobile header stays one compact row
+            instead of a long stacked toolbar (anti-pattern: desktop filters
+            forced onto mobile). Desktop keeps the inline wrap-row below
+            (hidden lg:flex — same fields, CSS-switched, never unmounted). */}
+        <div className="lg:hidden flex items-center min-w-0">
+          <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+            <SheetTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-2 rounded-lg text-xs font-medium hover:bg-muted/50 transition-colors"
+                aria-label={activeFilterCount > 0 ? `Buka filter — ${activeFilterCount} aktif` : 'Buka filter'}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                Filter
+                {activeFilterCount > 0 && (
+                  <span className="inline-flex items-center rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
+                    {activeFilterCount} aktif
+                  </span>
+                )}
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="flex max-h-[85dvh] flex-col rounded-t-2xl px-4 pb-4 pt-3">
+              <SheetHeader className="space-y-0.5 text-left">
+                <SheetTitle className="text-sm text-left">Filter</SheetTitle>
+                <SheetDescription className="text-xs text-left">
+                  Perubahan diterapkan seketika — data dimuat ulang otomatis.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="flex-1 overflow-y-auto space-y-4 py-3">
+                <fieldset className="space-y-2">
+                  <legend className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Periode</legend>
+                  {periodSelects(true)}
+                </fieldset>
+                <fieldset className="space-y-2">
+                  <legend className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Organisasi</legend>
+                  {orgSelects(true)}
+                </fieldset>
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t pt-3">
+                {hasActiveFilter ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                    onClick={reset}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset filter aktif
+                  </Button>
+                ) : (
+                  <span aria-hidden />
+                )}
+                <SheetClose asChild>
+                  <Button size="sm" className="h-8 px-4 text-xs font-medium">Selesai</Button>
+                </SheetClose>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+        {/* Filter dropdowns — desktop only (no labels; placeholder in dropdown is clear enough) */}
+        <div className="hidden lg:flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+          {/* D7: active-filter count badge — at-a-glance signal of how many
+              of the 5 filters are constraining the data (amber = watch). */}
+          {activeFilterCount > 0 && (
+            <Badge
+              variant="outline"
+              className="h-8 shrink-0 rounded-lg border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 text-xs font-medium"
+              aria-label={`${activeFilterCount} filter aktif`}
+              title={`${activeFilterCount} filter aktif — klik Reset untuk membersihkan`}
+            >
+              Filter ({activeFilterCount})
+            </Badge>
+          )}
+          {/* SPEC-1 (§16.1): fields moved to the shared periodSelects()
+              helper so desktop row + mobile drawer render the SAME
+              controlled fields (single source, two layouts). */}
+          {periodSelects(false)}
+
+          {orgSelects(false)}
 
           {hasActiveFilter && (
             <Tooltip>

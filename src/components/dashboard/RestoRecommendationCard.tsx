@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-//  RestoRecommendationCard — L3 "WHAT NEEDS ATTENTION" (VH-3)
+//  RestoRecommendationCard — L3 "PRIORITY ACTIONS" (VH-3; SPEC-1 rename)
 //  --------------------------------------------------------
 //  Reskinned into the compact priority panel from
 //  MASTER-CONTEXT-VISUAL-HIERARCHY.md §4 L3 / D6:

@@ -348,6 +348,8 @@ export const TopGrowthCard = memo(function TopGrowthCard({
           />
           <InfoTooltip content={tooltipText} />
         </CardTitle>
+        {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}
+        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Siapa yang berubah paling besar?</span> — per resto dan per barang vs periode pembanding</p>
         {/* TASK H-5: explicit compared-periods legend — "growth dari periode
             apa aja" answered visually, including HOW the compare period was
             chosen (otomatis/dipilih badge). */}

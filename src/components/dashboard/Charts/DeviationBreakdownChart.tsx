@@ -73,7 +73,10 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">QTY Deviasi composition — klik kategori untuk detail Pareto 80%</p>
+        {/* SPEC-1 (§21): question-first subtitle — anti-pattern #12 (generic
+            chart title) fixed: the title names the lens, this line states
+            the ONE question the visual answers. */}
+        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Apa yang membentuk deviasi?</span> — klik kategori untuk detail Pareto 80%</p>
       </CardHeader>
       <CardContent>
         <div className="h-48">

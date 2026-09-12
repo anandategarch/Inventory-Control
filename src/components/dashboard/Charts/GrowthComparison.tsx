@@ -88,6 +88,8 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
             ]}
           />
         </CardTitle>
+        {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}
+        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Seberapa cepat masalah berubah?</span> — pertumbuhan |Dev/BOM| vs periode pembanding</p>
         <p className="text-xs text-muted-foreground ml-9 tabular-nums">
           Current vs {data.period.comparisonWeek
             ? `${data.period.comparisonWeek}${data.period.comparisonMonth && data.period.comparisonMonth !== data.period.monthLabel ? ` ${data.period.comparisonMonth}` : ''}`

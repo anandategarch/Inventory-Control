@@ -507,3 +507,19 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   tanpa `role="button"` di th, sweep EN/ID, koma-desimal sisa, retry button di error-state,
   aria-expanded, hex→token, safe-area footer, guard shortcut keyboard). Tetap NOL
   perubahan perhitungan/API/query-key. Detail: AUDIT-REPORT.md seksi BUG-HUNT.
+- **v1.3 (SPEC-1 — adopsi Master Spec upload, 6 delta)**: user meng-upload "Inventory Control —
+  Visual Hierarchy & UI/UX Master Specification" (1.189 baris; validasi pre-implementasi
+  SPEC-VALIDATE-1: ±90% konsisten dengan codebase) lalu memilih opsi A (kerjakan delta).
+  (a) Rename 4 layer: EXECUTIVE STATUS→CONTROL STATUS · WHAT NEEDS ATTENTION→PRIORITY
+  ACTIONS · WHY IT HAPPENED→KEY FINDINGS · DIAGNOSIS→DIAGNOSTIC EVIDENCE (anchor id stabil).
+  (b) Certainty hierarchy §6.1/§20: 11 insight berlabel TERUKUR (9) / INDIKASI (2) — chip
+  eyebrow netral di atas judul insight; HIPOTESIS didefinisikan tapi tak dipakai (§27-6).
+  (c) Regroup L4 §7.3: primary evidence 2-col (Deviation Breakdown + Price Effect) di atas,
+  supporting evidence 3-col (Growth/TopGrowth/LossSurplus) berlabel eyebrow di bawah.
+  (d) Hero §4.2: chip verdict (reuse klasifikasi Health — threshold identik) + caption
+  "N resto menjadi prioritas" (queryKey rekomendasi sama → dedupe, nol request tambahan).
+  (e) Mobile §16.1: filter = bottom-sheet drawer (trigger "Filter · N aktif", grup
+  Periode/Organisasi, footer Reset/Selesai) — desktop wrap-row tak berubah (helper
+  periodSelects/orgSelects = satu sumber dua layout). (f) Judul chart pertanyaan §21 di
+  5 modul diagnosis. Tetap NOL perubahan perhitungan/API/query-key. Detail: AUDIT-REPORT.md
+  seksi SPEC-1.

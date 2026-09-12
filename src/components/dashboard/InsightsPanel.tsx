@@ -24,11 +24,25 @@ interface Insight {
   id: string;
   icon: React.ReactNode;
   severity: 'critical' | 'warning' | 'info' | 'positive';
+  /** SPEC-1 (upload spec §6.1/§20): certainty level — presentation-layer
+   *  epistemic label, NOT a new calculation. TERUKUR = the finding states
+   *  directly verifiable values/concentrations from the payload; INDIKASI
+   *  = a strong measured pattern that is not a root cause; HIPOTESIS = a
+   *  possible cause that still needs validation (none generated today —
+   *  §27-6 forbids adding new root-cause claims). */
+  certainty: 'TERUKUR' | 'INDIKASI' | 'HIPOTESIS';
   title: string;
   body: string;
   action?: string;
   actionTarget?: { type: 'area' | 'outlet' | 'item'; value: string };
 }
+
+// SPEC-1 (§6.1): hover explanations for each certainty level.
+const CERTAINTY_TOOLTIPS: Record<Insight['certainty'], string> = {
+  TERUKUR: 'Temuan langsung dari nilai/kalkulasi yang dapat diverifikasi pada data.',
+  INDIKASI: 'Pola kuat dari data — bukan root cause. Perlu validasi lanjutan.',
+  HIPOTESIS: 'Kemungkinan penyebab yang masih perlu validasi — bukan kesimpulan.',
+};
 
 const SEVERITY_STYLES: Record<Insight['severity'], {
   container: string;
@@ -78,6 +92,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'health',
       icon: <ShieldAlert className="h-4 w-4" />,
       severity: 'critical',
+      certainty: 'TERUKUR',
       title: 'Kondisi Inventory KRITIS',
       body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (>20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record memerlukan investigasi segera.`,
     });
@@ -86,6 +101,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'health',
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'warning',
+      certainty: 'TERUKUR',
       title: 'Kondisi Inventory Perlu Perhatian',
       body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (5-20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record perlu monitoring.`,
     });
@@ -94,6 +110,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'health',
       icon: <Lightbulb className="h-4 w-4" />,
       severity: 'positive',
+      certainty: 'TERUKUR',
       title: 'Kondisi Inventory Sehat',
       body: `Hanya ${fmtPct(abnormalPct / 100, false, 1)} record abnormal (<5%). ${hs.normal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record dalam kondisi normal.`,
     });
@@ -106,6 +123,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'growth-mismatch',
       icon: <Zap className="h-4 w-4" />,
       severity: 'critical',
+      certainty: 'INDIKASI',
       title: 'Pertumbuhan DEVIASI Tidak Proporsional',
       body: `Sales tumbuh ${fmtPct(g.salesGrowth, true, 1)} tetapi |NOMINAL DEVIASI| tumbuh ${fmtPct(g.nominalDeviasiGrowth, true, 1)} (>2× sales). Indikasi cost leak yang tidak mengikuti pertumbuhan revenue.`,
     });
@@ -120,6 +138,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'residual',
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'warning',
+      certainty: 'TERUKUR',
       title: 'RESIDUAL Dominan',
       body: `${fmtPct(residualPct, false, 1)} QTY Deviasi tidak terjelaskan oleh Waste/Susut/Trial. Perlu validasi actual usage vs SOC dan sampling fisik.`,
     });
@@ -140,6 +159,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'area-worst',
       icon: <MapPin className="h-4 w-4" />,
       severity: sev,
+      certainty: 'TERUKUR',
       title: `Area Terburuk: ${worst.area}`,
       body: `LOSS/PENJUALAN ${fmtPct(worst.lossToSales ?? 0, false, 2)} (vs ${best.area} ${fmtPct(best.lossToSales ?? 0, false, 2)}). Selisih ${delta > 0 ? '+' : ''}${formatByPreset(delta, 'num2')} ppt. ${worst.outletCount} outlet di area ini.`,
       action: `Fokus ke ${worst.area}`,
@@ -156,6 +176,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'cost-impact',
       icon: <Coins className="h-4 w-4" />,
       severity: sev,
+      certainty: 'TERUKUR',
       title: 'Biaya Bocor',
       body: `Total |NOMINAL DEVIASI| ${fmtIDR(ci.totalCost)} setara ${fmtPct(ci.pctOfSales ?? 0, false, 2)} dari PENJUALAN. LOSS ${fmtIDR(ci.lossNominal)} · SURPLUS ${fmtIDR(ci.surplusNominal)}.`,
     });
@@ -169,6 +190,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'systemic',
       icon: <Package className="h-4 w-4" />,
       severity: 'critical',
+      certainty: 'INDIKASI',
       title: `Item Massal: ${top.itemName}`,
       body: `${top.itemName} muncul dengan deviation signifikan di ${top.occurrences} outlet. Pola recurring — kemungkinan masalah struktural (SOC/recipe/receiving).`,
       action: 'Drill-down item',
@@ -187,6 +209,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         id: 'nct-worsening',
         icon: <TrendingDown className="h-4 w-4" />,
         severity: 'warning',
+        certainty: 'TERUKUR',
         title: 'Tren Biaya Neto Memburuk',
         body: `Net cost ratio naik dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (+${formatByPreset(delta, 'num2')} ppt). LOSS meningkat lebih cepat dari SURPLUS.`,
       });
@@ -195,8 +218,10 @@ function buildInsights(data: AnalysisData): Insight[] {
         id: 'nct-improving',
         icon: <TrendingUp className="h-4 w-4" />,
         severity: 'positive',
+        certainty: 'TERUKUR',
         title: 'Tren Biaya Neto Membaik',
-        body: `Net cost ratio turun dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (${formatByPreset(delta, 'num2')} ppt). Investigasi mitigasi berhasil atau SURPLUS naik.`,
+        // SPEC-1 (§6.2): hedged — the improvement CAUSE is unverified.
+        body: `Net cost ratio turun dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (${formatByPreset(delta, 'num2')} ppt). Investigasi apakah mitigasi berhasil atau SURPLUS naik.`,
       });
     }
   }
@@ -211,6 +236,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         id: 'loss-dominance',
         icon: <TrendingDown className="h-4 w-4" />,
         severity: 'warning',
+        certainty: 'TERUKUR',
         title: 'Dominasi LOSS',
         body: `${fmtPct(lossShare, false, 1)} nominal deviation adalah LOSS (pemakaian aktual > SOC). Hanya ${fmtPct(1 - lossShare, false, 1)} SURPLUS. Fokus pada pencegahan over-usage.`,
       });
@@ -219,6 +245,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         id: 'surplus-dominance',
         icon: <TrendingUp className="h-4 w-4" />,
         severity: 'warning',
+        certainty: 'TERUKUR',
         title: 'Dominasi SURPLUS',
         body: `${fmtPct(1 - lossShare, false, 1)} nominal deviation adalah SURPLUS (pemakaian aktual < SOC). Hanya ${fmtPct(lossShare, false, 1)} LOSS. Periksa apakah SOC terlalu tinggi atau ada under-reporting.`,
       });
@@ -233,6 +260,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       id: 'historical-anomaly',
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'critical',
+      certainty: 'TERUKUR',
       title: `Anomali Historical: ${top.outletCode}`,
       body: `${top.itemName} di ${top.outletCode} (${top.area}) memiliki z-score ${formatByPreset(top.zScore, 'num2')} vs rata-rata historical. Current Dev/BOM ${fmtPct(top.currentDevBom, false, 1)} vs rata-rata ${fmtPct(top.historicalAvg, false, 1)}.`,
       action: 'Drill-down item',
@@ -344,6 +372,18 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
                 >
                   <span className={`shrink-0 mt-0.5 ${style.icon}`}>{insight.icon}</span>
                   <div className="flex-1 min-w-0">
+                    {/* SPEC-1 (§20): CERTAINTY → FINDING → EVIDENCE → ACTION —
+                        the certainty eyebrow rides above the title so the
+                        reader knows HOW to read the finding (measured vs
+                        pattern) before reading it. Neutral zinc styling on
+                        purpose: certainty is epistemics, NOT urgency — it
+                        must not fight the severity colors (§11.1). */}
+                    <p
+                      title={CERTAINTY_TOOLTIPS[insight.certainty]}
+                      className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70"
+                    >
+                      {insight.certainty}
+                    </p>
                     <p className={`text-sm font-semibold ${style.title}`}>{insight.title}</p>
                     <p className="text-sm leading-relaxed text-foreground/90 mt-1">{insight.body}</p>
                     {insight.action && insight.actionTarget && (

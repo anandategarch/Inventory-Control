@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-//  ExecutiveStatus — L2 "EXECUTIVE STATUS" (VH-3 reskin, D1-c)
+//  ExecutiveStatus — L2 "CONTROL STATUS" (VH-3 reskin, D1-c; SPEC-1 rename)
 //  --------------------------------------------------------
 //  Replaces the old ExecutiveSummary (6 KPI + 2 secondary
 //  cards) + HealthAlert pair with the 4-KPI executive block
@@ -30,6 +30,7 @@ import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct, numberColor } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { useRecommendations } from '@/hooks/useRecommendations';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { DeltaBar } from '@/components/dashboard/shared/DeltaBar';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
@@ -85,8 +86,12 @@ function DeltaPill({ growth, inverse }: { growth: number; inverse?: boolean }) {
 //  One KPI card — dt (label + tooltip) + dd (value + delta +
 //  caption + bar). Rendered as the direct <div> child of the
 //  grid <dl> so the description-list semantics stay valid.
+//  SPEC-1 (§4.2): optional `eyebrow` — the hero's interpretive
+//  verdict chip (SEHAT / PERLU PERHATIAN / KRITIS) rendered
+//  ABOVE the label so the user never has to interpret the number
+//  alone ("Operational Intelligence", not "KPI wall").
 // ------------------------------------------------------------
-function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar }: {
+function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar, eyebrow }: {
   label: string;
   tooltip: string;
   value: string;
@@ -95,6 +100,7 @@ function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar }: 
   pill?: React.ReactNode;
   caption?: React.ReactNode;
   bar?: React.ReactNode;
+  eyebrow?: React.ReactNode;
 }) {
   return (
     <Card
@@ -103,9 +109,12 @@ function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar }: 
       className={`@container/card gap-0 p-4 pt-3.5 ${hero ? 'border-t-2 border-t-amber-500' : ''}`}
     >
       <dt className="flex items-start justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground">
-          <span className="truncate">{label}</span>
-          <InfoTooltip content={tooltip} />
+        <span className="flex min-w-0 flex-col items-start gap-1">
+          {eyebrow}
+          <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground">
+            <span className="truncate">{label}</span>
+            <InfoTooltip content={tooltip} />
+          </span>
         </span>
         {pill}
       </dt>
@@ -126,6 +135,13 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   const s = data.executiveSummary;
   const hs = data.healthStatus;
   const dq = data.dqStatus;
+
+  // SPEC-1 (§4.2 hero interpretation): "N resto menjadi prioritas" —
+  // same /api/recommendations query as the L3 RestoRecommendationCard
+  // (same dashboard scope → identical queryKey → TanStack dedupes; no
+  // extra request). Count = rows the existing engine flags as priority.
+  const { data: recsResp } = useRecommendations(null);
+  const priorityRestoCount = recsResp?.recommendations?.length ?? 0;
 
   // Health score + verdict — same fields + thresholds as the old HealthAlert.
   const total = hs.normal + hs.warning + hs.abnormal;
@@ -153,6 +169,24 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
     ? `vs ${cmpWeek}${cmpMonth && cmpMonth !== data.period.monthLabel ? ` ${cmpMonth}` : ''}`
     : null;
 
+  // SPEC-1 (§4.2): the hero's interpretive eyebrow — SAME verdict
+  // classification the Health KPI computes (thresholds unchanged), so the
+  // two can never disagree. Copy-only reuse, no new logic.
+  const heroVerdictChip = (
+    <span
+      title={verdict === 'SEHAT' ? 'Kondisi inventory sehat' : verdict === 'KRITIS' ? 'Kondisi inventory kritis — investigasi segera' : 'Kondisi inventory perlu perhatian'}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
+        verdict === 'KRITIS'
+          ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+          : verdict === 'PERLU PERHATIAN'
+            ? 'bg-amber-100/80 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400'
+            : 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+      }`}
+    >
+      {verdict}
+    </span>
+  );
+
   // Cascade GROSS → W/S/T → NET (§50) — the same QTY fields the old
   // ExecutiveSummary's Gross/Explained/Net KPI cards read.
   const grossQty = Math.abs(s.qtyDeviasi.current ?? 0);
@@ -165,14 +199,17 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
       {/* KPI grid — spec §4 L2: grid-cols-2 md:grid-cols-4 gap-4, <dl> semantics */}
       <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <KpiCard
-          label="Deviasi"
+          label="Nominal Deviasi"
           tooltip={KPI_TOOLTIPS.nominalDeviasi}
           value={fmtIDR(s.nominalDeviasi.current)}
           hero
+          eyebrow={heroVerdictChip}
           pill={s.nominalDeviasi.growth != null ? (
             <DeltaPill growth={s.nominalDeviasi.growth} inverse />
           ) : undefined}
-          caption={compareLabel ?? (s.nominalDeviasi.previous != null ? `vs ${fmtIDR(s.nominalDeviasi.previous)}` : undefined)}
+          caption={priorityRestoCount > 0 ? (
+            <span className="tabular-nums">{priorityRestoCount} resto menjadi prioritas</span>
+          ) : (compareLabel ?? (s.nominalDeviasi.previous != null ? `vs ${fmtIDR(s.nominalDeviasi.previous)}` : undefined))}
           bar={s.nominalDeviasi.growth != null ? (
             <DeltaBar value={s.nominalDeviasi.growth * 100} isIncreasePositive={false} label="" showAnimation />
           ) : undefined}

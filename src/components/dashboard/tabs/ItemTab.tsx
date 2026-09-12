@@ -42,7 +42,7 @@ export const ItemTab = memo(function ItemTab({ data }: ItemTabProps) {
           Pareto dimensions); outlet prioritization is covered by Resto
           Prioritas Analisa (L3) + Ranking Kondisi Outlet (Area tab).
           STRUCTURAL (S-1, adapted): this is the FULL version — the compact
-          copy lives in the L3 narrative layer (WHAT NEEDS ATTENTION). */}
+          copy lives in the L3 narrative layer (PRIORITY ACTIONS). */}
       <section>
         <SectionHeader
           icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}

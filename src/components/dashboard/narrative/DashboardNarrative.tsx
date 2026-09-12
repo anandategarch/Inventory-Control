@@ -10,12 +10,17 @@
 //  narrative and its scroll position survives.
 //
 //  Layer story (Minto pyramid — answer first, evidence later):
-//    01 EXECUTIVE STATUS      — WHAT / HOW MUCH (4 KPI + cascade)
-//    02 WHAT NEEDS ATTENTION  — WHERE (priority resto + items)
-//    03 WHY IT HAPPENED       — WHY, hypothesis (auto insights)
-//    04 DIAGNOSIS             — WHY, measured (growth /
-//                               breakdown / price effect /
-//                               top growth / loss vs surplus)
+//    01 CONTROL STATUS        — WHAT / HOW MUCH (4 KPI + cascade)
+//    02 PRIORITY ACTIONS      — WHERE (priority resto + items)
+//    03 KEY FINDINGS          — WHY, certainty-aware (auto insights)
+//    04 DIAGNOSTIC EVIDENCE   — WHY, measured (deviation /
+//                               price effect / growth / top growth /
+//                               loss vs surplus)
+//
+//  SPEC-1 (upload spec §23/§30): layer renames — EXECUTIVE STATUS →
+//  CONTROL STATUS, WHAT NEEDS ATTENTION → PRIORITY ACTIONS, WHY IT
+//  HAPPENED → KEY FINDINGS, DIAGNOSIS → DIAGNOSTIC EVIDENCE. Epistemic
+//  honesty: "findings/evidence" never claim confirmed root cause.
 //
 //  VH-3: the presentation layers are now reskinned per the spec
 //  tokens (ExecutiveStatus 4-KPI, compact L3 panels, callout
@@ -60,22 +65,22 @@ export interface DashboardNarrativeProps {
 export const DashboardNarrative = memo(function DashboardNarrative({ data, onRefresh }: DashboardNarrativeProps) {
   return (
     <div className="space-y-8 md:space-y-10 min-w-0">
-      {/* ====== L2 — EXECUTIVE STATUS (what / how much) ====== */}
+      {/* ====== L2 — CONTROL STATUS (what / how much) ====== */}
       <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-40">
         {/* VH-6 (Superset "Name with Purpose"): question-oriented story
             captions — WHAT → WHERE → WHY → HOW MUCH → EXPLORE (Minto). */}
-        <LayerHeader number="01" title="EXECUTIVE STATUS" id="l2-header" description="Apa kondisinya sekarang? Empat angka utama beserta kaskade penyusun deviasi." />
+        <LayerHeader number="01" title="CONTROL STATUS" id="l2-header" description="Apa kondisinya sekarang? Empat angka utama beserta kaskade penyusun deviasi." />
         {/* VH-3 (D1-c): the old ExecutiveSummary + HealthAlert pair is
             absorbed into ExecutiveStatus — 4 KPI (Deviasi hero + Residual
             + Dev/BOM + Health) + the GROSS→W/S/T→NET cascade strip. */}
-        <ErrorBoundary label="Executive Status">
+        <ErrorBoundary label="Control Status">
           <ExecutiveStatus data={data} />
         </ErrorBoundary>
       </section>
 
-      {/* ====== L3 — WHAT NEEDS ATTENTION (where) ====== */}
+      {/* ====== L3 — PRIORITY ACTIONS (where) ====== */}
       <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-40">
-        <LayerHeader number="02" title="WHAT NEEDS ATTENTION" id="l3-header" description="Di mana yang perlu ditindak? Resto dan item prioritas berdasarkan dampak." />
+        <LayerHeader number="02" title="PRIORITY ACTIONS" id="l3-header" description="Di mana harus bertindak lebih dulu? Resto dan item prioritas berdasarkan dampak." />
         <div className="grid lg:grid-cols-2 gap-4 min-w-0">
           {/* Section: Resto Recommendation Engine (self-fetch, no change to the
               hook/query; the analysis payload rides along for the D6 adaptive
@@ -97,23 +102,21 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
         </div>
       </section>
 
-      {/* ====== L4 — WHY IT HAPPENED (hypothesis) ====== */}
+      {/* ====== L4 — KEY FINDINGS (certainty-aware why) ====== */}
       <section id="l4-why" aria-labelledby="l4-header" className="space-y-4 scroll-mt-40">
-        <LayerHeader number="03" title="WHY IT HAPPENED" id="l4-header" description="Mengapa bisa terjadi? Hipotesis otomatis dari pola penyimpangan data." />
+        <LayerHeader number="03" title="KEY FINDINGS" id="l4-header" description="Temuan apa yang paling penting? Diurut berdasarkan kepastian — TERUKUR (kalkulasi terverifikasi) dan INDIKASI (pola kuat, perlu validasi)." />
         <ErrorBoundary label="Insights Panel">
           <InsightsPanel data={data} />
         </ErrorBoundary>
       </section>
 
-      {/* ====== L5 — DIAGNOSIS (measured why) ====== */}
+      {/* ====== L5 — DIAGNOSTIC EVIDENCE (measured why) ====== */}
       <section id="l5-diagnosis" aria-labelledby="l5-header" className="space-y-4 scroll-mt-40">
-        <LayerHeader number="04" title="DIAGNOSIS" id="l5-header" description="Berapa besar dampaknya? Dekomposisi terukur — pertumbuhan, sumber deviasi, dan efek harga." />
-        {/* Row 1: the 3 diagnosis lenses (same grid-3 rhythm the old
-            Health+Growth+Breakdown section used). */}
-        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
-          <ErrorBoundary label="Growth Comparison">
-            <GrowthComparison data={data} />
-          </ErrorBoundary>
+        <LayerHeader number="04" title="DIAGNOSTIC EVIDENCE" id="l5-header" description="Bukti terukur apa yang menjelaskan kondisi ini? Dekomposisi deviasi + efek harga (bukti primer); konteks pertumbuhan (pendukung)." />
+        {/* SPEC-1 (§7.3): PRIMARY EVIDENCE — the two lenses that decompose
+            the deviation itself get the 2-col top row and the strongest
+            visual weight. Growth context moves DOWN to supporting. */}
+        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
           <ErrorBoundary label="Deviation Breakdown">
             <DeviationBreakdownChart data={data} />
           </ErrorBoundary>
@@ -126,19 +129,28 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
             <PriceEffectCard />
           </ErrorBoundary>
         </div>
-        {/* Row 2: Top Growth (per resto & barang)
-            Task H-2c (CHANGE 6): biggest SALES movers vs the compare period,
-            toggleable Per Resto / Per Barang — kept right below the growth
-            context so the aggregate bars flow straight into WHO/WHAT moved
-            (same compare-period semantics). Display-only v1. */}
-        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
-          <ErrorBoundary label="Top Growth">
-            <TopGrowthCard data={data} onRefresh={onRefresh} />
-          </ErrorBoundary>
-          {/* Loss/Surplus (TrendChart removed per user request) */}
-          <ErrorBoundary label="Loss vs Surplus">
-            <LossVsSurplusChart data={data} />
-          </ErrorBoundary>
+        {/* SPEC-1 (§7.3): SUPPORTING EVIDENCE — growth context (how fast,
+            who moved, direction vs SOC) demoted to a labeled sub-row with
+                less visual weight (eyebrow label + 3-col grid). */}
+        <div className="space-y-3 min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">
+            Supporting Evidence
+          </p>
+          <div className="grid lg:grid-cols-3 gap-4 min-w-0">
+            <ErrorBoundary label="Growth Comparison">
+              <GrowthComparison data={data} />
+            </ErrorBoundary>
+            {/* Top Growth (per resto & barang)
+                Task H-2c (CHANGE 6): biggest SALES movers vs the compare period,
+                toggleable Per Resto / Per Barang — display-only v1. */}
+            <ErrorBoundary label="Top Growth">
+              <TopGrowthCard data={data} onRefresh={onRefresh} />
+            </ErrorBoundary>
+            {/* Loss/Surplus (TrendChart removed per user request) */}
+            <ErrorBoundary label="Loss vs Surplus">
+              <LossVsSurplusChart data={data} />
+            </ErrorBoundary>
+          </div>
         </div>
       </section>
     </div>

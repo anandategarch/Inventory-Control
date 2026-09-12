@@ -37,7 +37,8 @@ export const LossVsSurplusChart = memo(function LossVsSurplusChart({ data }: { d
             side="bottom"
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">Direction split (magnitude)</p>
+        {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}
+        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Bagaimana arah penggunaan aktual terhadap SOC?</span> — direction split (magnitude)</p>
       </CardHeader>
       <CardContent>
         <div className="h-48">

@@ -248,7 +248,8 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
           <InfoTooltip content="Harga implisit dihitung dari data deviation saja — item tanpa deviation di suatu periode tidak punya harga teramati dan masuk kategori item baru/hilang." />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Pemisahan efek harga vs kuantitas atas perubahan |Nominal Deviasi| vs periode pembanding
+          {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}
+          <span className="font-medium text-foreground/70">Harga atau kuantitas yang mendorong perubahan?</span> — pemisahan efek atas Δ|Nominal Deviasi| vs periode pembanding
         </p>
       </CardHeader>
       <CardContent className="pt-4">

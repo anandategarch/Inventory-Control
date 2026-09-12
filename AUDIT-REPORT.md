@@ -385,6 +385,19 @@ Permintaan user: *"Cari bug dengan sebar agent di UI terbaru ini"*. 4 agent para
 
 **Sisa (backlog, sengaja tidak disentuh)**: error-state items-table/FlipDrillPanel tanpa retry (refetch tidak tersedia di scope — butuh threading) · hex scatter-plot (backlog lama) · `#34d399`/`#9ca3af` z-palette tanpa token padanan · medal kuadran amber/zinc/orange (terdokumentasi VH-7) · baris nested Pareto fixed-width (kini ter-scroll in-card, aman) · `--chart-trial` (#ca8a04) vs `--chart-waste` (#f59e0b) satu keluarga amber — kelas risiko color-blind jika keduanya berdampingan.
 
+### SPEC-1 — adopsi Master Spec Visual Hierarchy (upload) — 6 delta — `SPEC-1`
+User meng-upload dokumen *"Inventory Control — Visual Hierarchy & UI/UX Master Specification"* (1.189 baris, status *Recommended / Next UI Direction*) dan memilih **opsi A: kerjakan delta-nya**. Validasi pre-implementasi (SPEC-VALIDATE-1): ±90% klaim dokumen konsisten dengan codebase (daftar komponen §26 = 15/15 eksis; urutan layer/tab persis) — bagian "Diubah" §30 = 6 delta presentation-layer. **NOL perubahan perhitungan/logika/API/query-key** (aturan §27-1..4 dipatuhi penuh).
+
+**Delta yang diimplementasi:**
+1. **Rename 4 layer (§30)**: `EXECUTIVE STATUS → CONTROL STATUS` · `WHAT NEEDS ATTENTION → PRIORITY ACTIONS` · `WHY IT HAPPENED → KEY FINDINGS` · `DIAGNOSIS → DIAGNOSTIC EVIDENCE` (DashboardNarrative + komentar terkait di 5 file; anchor id `l2…l5` sengaja TIDAK diubah agar deep-link stabil).
+2. **Certainty hierarchy (§6.1/§20)**: field `certainty` pada 11 insight di InsightsPanel — `TERUKUR` (9: health, residual, area-worst, cost-impact, nct-worsening/improving, loss/surplus-dominance, historical-anomaly) vs `INDIKASI` (2: growth-mismatch, systemic — persis contoh spec §6.1). Eyebrow chip netral zinc DI ATAS judul (epistemika ≠ urgency — tidak bentrok warna severity); tooltip penjelasan per level. Label HIPOTESIS ada di tipe tapi tidak dipakai (§27-6: dilarang klaim root-cause baru). Hedge §6.2: satu kalimat insight nct-improving dilunakkan ("Investigasi **apakah** mitigasi berhasil…").
+3. **Regroup L4 evidence (§7.3)**: PRIMARY = Deviation Breakdown + AVG Price Effect (grid 2-col baris atas) → SUPPORTING = eyebrow "Supporting Evidence" + Growth / Top Growth / Loss vs Surplus (grid 3-col). Deskripsi LayerHeader 04 diarahkan ke pertanyaan bukti.
+4. **Interpretasi hero (§4.2)**: chip verdict (SEHAT/PERLU PERHATIAN/KRITIS — **klasifikasi & threshold sama persis dengan KPI Health**, reuse murni) di atas label "Nominal Deviasi" (label "Deviasi" → "Nominal Deviasi" sesuai spec) + caption "N resto menjadi prioritas" (N = baris engine rekomendasi eksisting; queryKey identik dengan RestoRecommendationCard → TanStack dedupe, **nol request tambahan**; fallback ke caption vs-pembanding lama saat belum termuat).
+5. **Filter mobile drawer/sheet (§16.1)**: trigger kompak "Filter · N aktif" (badge amber) + bottom-sheet `side="bottom"` bergrup **Periode/Organisasi** (fieldset+legend) + footer Reset/Selesai. Desktop TIDAK berubah (wrap-row inline, `hidden lg:flex`); helper `periodSelects(stacked)`/`orgSelects(stacked)` = SATU sumber field terkontrol untuk dua layout (state zustand sama — drawer mustahil desync; CSS-switch → hydration deterministik). Tombol aksi data (Upload/Import/Sinkron/Settings/PIC) tetap inline di mobile (ikon) — satu-satunya akses fitur tsb, tidak disembunyikan ke drawer.
+6. **Judul chart jadi pertanyaan (§21, anti-pattern #12)**: subtitle question-first di 5 modul diagnosis — "Apa yang membentuk deviasi?" · "Harga atau kuantitas yang mendorong perubahan?" · "Seberapa cepat masalah berubah?" · "Siapa yang berubah paling besar?" · "Bagaimana arah penggunaan aktual terhadap SOC?" (frasa pertanyaan foreground, sisa caption tetap).
+
+**Verifikasi SPEC-1**: 4 gerbang (`tsc` 0 · vitest 446/446 · eslint 0 err/≤298 warn · `next build` sukses) + browser mock-fetch (lihat worklog SPEC-1) — detail di bawah.
+
 ---
 
 ## 🔒 SECURITY (ringkas)
