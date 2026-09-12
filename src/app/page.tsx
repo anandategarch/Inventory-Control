@@ -284,7 +284,16 @@ export default function DashboardPage() {
                     for connections. Keep-alive semantics are preserved: once
                     visited, the subtree stays mounted. */}
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
-                  <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-muted/40 dark:bg-zinc-900/40 p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20">
+                  {/* VH-4 (spec §4 L6 / §6.5): sticky tab strip — the strip
+                    docks below the sticky header while scrolling inside the
+                    DEEP ANALYSIS band (top offset measured from the ACTUAL
+                    header height via --dashboard-header-h, set by
+                    DashboardHeader's ResizeObserver; 104px fallback ≈ brand
+                    row + period line + filter row at desktop). z-30 sits
+                    under the header's z-40 — layered sticky, no sticky-ception
+                    beyond these two. bg-background/85 + backdrop-blur keeps
+                    scrolled content readable behind the strip. */}
+                <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-background/85 backdrop-blur p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20 sticky top-[var(--dashboard-header-h,104px)] z-30">
                     <TabsTrigger value="area" className={tabTriggerClass}>
                       <MapPin className="h-3.5 w-3.5" /> Area
                     </TabsTrigger>

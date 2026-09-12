@@ -14,6 +14,7 @@
 //  Tier 2: FilterBar (bare, no Card wrapper) — only when hasData
 // ============================================================
 
+import { useEffect, useRef } from 'react';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -56,19 +57,45 @@ export function DashboardHeader({
     comparisonMonth: s.comparisonMonth,
   })));
 
-  // Single line "{month} · {week} · vs {compareWeek || compareMonth}" —
+  // Single line "{month} · {week} · vs {compareWeek} {compareMonth}" —
   // built from the store's existing strings AS-IS (spec forbids new date
   // formatting). Segments only render when their value exists, so the
-  // pre-auto-select transient (nulls) never shows "· · vs".
-  const compareLabel = comparisonWeek || comparisonMonth;
+  // pre-auto-select transient (nulls) never shows "· · vs". VH-4 fix: "vs W4"
+  // alone is ambiguous when the compare is the same weekLabel in a DIFFERENT
+  // month — append the compare month when it differs (mirrors the Deviasi KPI
+  // caption + the Pembanding combobox "W4 — Juni 2026" label).
+  const compareLabel = comparisonWeek
+    ? (comparisonMonth && comparisonMonth !== monthLabel
+        ? `${comparisonWeek} ${comparisonMonth}`
+        : comparisonWeek)
+    : comparisonMonth;
   const periodParts: string[] = [];
   if (monthLabel) periodParts.push(monthLabel);
   if (currentWeek) periodParts.push(currentWeek);
   if (compareLabel) periodParts.push(`vs ${compareLabel}`);
   const showPeriodLabel = hasData && periodParts.length > 0;
 
+  // VH-4 (spec §4 L6 / §6.5 — layered sticky): publish the header's ACTUAL
+  // height as a CSS variable so the L6 tab strip can dock exactly below it
+  // (sticky top-[var(--dashboard-header-h)]). Measured with a ResizeObserver —
+  // the header height varies with the period line + filter wrap + viewport,
+  // so a hardcoded offset would misalign at some breakpoints. Set on
+  // <html> so page.tsx's TabsList (a different subtree) can consume it.
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--dashboard-header-h', `${el.offsetHeight}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <header className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
+    <header ref={headerRef} className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
       {/* Tier 1: Brand + actions */}
       <div className="px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 max-w-[1600px] mx-auto">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -173,9 +200,10 @@ export function DashboardHeader({
         </div>
       )}
 
-      {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists */}
+      {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists.
+          VH-4: id="l1-filter" completes the §6.6 anchor set (l1-filter … l6-deep). */}
       {hasData && (
-        <div className="px-3 sm:px-6 pb-1.5 max-w-[1600px] mx-auto overflow-x-auto">
+        <div id="l1-filter" className="px-3 sm:px-6 pb-1.5 max-w-[1600px] mx-auto overflow-x-auto">
           <FilterBar />
         </div>
       )}

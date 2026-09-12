@@ -32,7 +32,10 @@ export const EmptyState = memo(function EmptyState() {
           <Boxes className="h-10 w-10 text-amber-600 dark:text-amber-400" />
         </div>
       </div>
-      <h3 className="text-xl font-semibold tracking-tight text-foreground">Belum Ada Data Inventory</h3>
+      {/* VH-4 (spec §10 — no level skips): this state REPLACES the whole main
+          content (same role as a layer heading) → h2, sitting directly under
+          the h1 without skipping h2. */}
+      <h2 className="text-xl font-semibold tracking-tight text-foreground">Belum Ada Data Inventory</h2>
       <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
         Database masih kosong. Mulai dengan upload file Excel rekoniliasi atau import langsung dari Google Drive untuk analisis pertama.
       </p>
@@ -173,9 +176,9 @@ export function ErrorState({ message }: { message: string }) {
             {isNoData ? <Calendar className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className={`text-base font-semibold ${isNoData ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
+            <h2 className={`text-base font-semibold ${isNoData ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
               {isNoData ? 'Data Belum Tersedia' : 'Gagal Memuat Analisis'}
-            </h3>
+            </h2>
             <p className={`text-sm mt-1 leading-relaxed ${isNoData ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
               {message}
             </p>
